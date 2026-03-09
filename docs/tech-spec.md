@@ -23,7 +23,7 @@ No existing open-source framework provides these as a cohesive, extensible platf
 ### 1.3 Design Principles
 
 - **Scopes govern visibility, not authority.** The registry is a recursive tree of scopes. Each scope is a bounded context with its own skills, commands, agents, and child scopes. Navigation through the tree is progressive disclosure. Authority remains centralized in the control plane.
-- **The registry is authored as a scope tree, compiled into an index, and delegated through bounded subprocesses.** Scope definitions live in a Git repo as a recursive folder hierarchy. At startup they're compiled into a runtime index. At execution time each scope runs as an isolated subprocess that sees only its own assets, inherited shared assets, and descriptions of its immediate children.
+- **The registry is authored as a scope tree, compiled into an index, and delegated through bounded agent sessions.** Scope definitions live in a Git repo as a recursive folder hierarchy. At startup they're compiled into a runtime index. At execution time each scope runs as an isolated Agent SDK session that sees only its own assets, inherited shared assets, and descriptions of its immediate children.
 - **Default deny, everywhere.** If a capability, scope, or policy rule is missing, execution fails closed.
 - **Pluggable at every boundary.** Storage, search, policy, workflow, audit, and approval are all interfaces. The framework ships defaults (PostgreSQL, in-memory, basic RBAC) but never hard-codes them.
 
@@ -32,7 +32,7 @@ No existing open-source framework provides these as a cohesive, extensible platf
 | Decision | Rationale |
 |----------|-----------|
 | TypeScript | Agent SDK has first-class TS support. Enterprise ecosystem. |
-| Each scope is a full Claude Code process | Within a scope, all Claude Code capabilities are available — including subagents, skills, commands, and agents. The boundary is the scope: entering a child scope requires spawning a new Claude process via `scope.enter`. The control plane manages each scope process's lifecycle, prompt, tools, and lease. |
+| Each scope is its own Agent SDK session | Within a scope, the session can leverage subagents, skills, commands, and agents. The boundary is the scope: entering a child scope requires spawning a new Agent SDK session via `scope.enter`. The control plane manages each session's lifecycle, prompt, tools, and lease. |
 | REST + SSE for external API | Compatible with LibreChat, Slack bots, custom UIs. No WebSocket complexity initially. |
 | Capability registry in a separate Git repo | Decouples domain knowledge from framework code. Different owners, different review cadence. |
 | A2A support in MVP | External agent collaboration is a first-class concern, not an afterthought. |
@@ -108,7 +108,7 @@ Consuming Clients (LibreChat, Slack, CLI, custom)
 
 **Policy / Lease Engine.** Evaluates whether a given actor may perform actions within a given scope in the current environment. Issues leases. Validates lease constraints on every tool invocation. A child lease must always be anchored to a descendant scope path of its parent.
 
-**Agent Runtime Manager.** Starts and supervises Agent SDK sessions. Each scope runs as its own subprocess with a system prompt, tools (MCP servers from manifest + meta-tools), and a lease. The manager maps meta-tool calls (from the worker) back to control-plane operations (scope navigation, child spawning).
+**Agent Runtime Manager.** Starts and supervises Agent SDK sessions. Each scope runs as its own Agent SDK session with a system prompt, tools (MCP servers from manifest + meta-tools), and a lease. The manager maps meta-tool calls (from the worker) back to control-plane operations (scope navigation, child spawning).
 
 **Tool Gateway.** The single enforcement point. Every sensitive action passes through it. It re-checks the lease, re-evaluates policy, requests approval if needed, injects scoped credentials, validates that invoked MCP tools belong to the scope's manifest, and logs an audit event.
 
@@ -120,7 +120,7 @@ Consuming Clients (LibreChat, Slack, CLI, custom)
 
 **A2A Adapter.** Discovers external A2A-compliant agents via their Agent Card, dispatches tasks, streams results. External agents are configured in scope manifests and accessible within those scopes.
 
-**Sandbox Runner.** Runs scope subprocesses in ephemeral containers with no standing credentials, allowlisted network egress, and filesystem isolation. Sandbox constraints are defined per scope in the manifest. Important for code execution, repo mutations, and shell tasks.
+**Sandbox Runner.** Runs scope agent sessions in ephemeral containers with no standing credentials, allowlisted network egress, and filesystem isolation. Sandbox constraints are defined per scope in the manifest. Important for code execution, repo mutations, and shell tasks.
 
 ---
 
@@ -156,10 +156,10 @@ Each child description is a single line from the child's `manifest.yaml`. Enough
 
 1. Root scope worker starts with its own assets and descriptions of immediate child scopes.
 2. Worker calls `scope.describe` to inspect a child scope in more detail — sees the child's description, its own child scopes, and a summary of its available assets.
-3. Worker calls `scope.enter` to delegate work to a child scope, spawning a new subprocess. The child scope worker starts with its own full view (own assets + inherited shared + its own child descriptions).
+3. Worker calls `scope.enter` to delegate work to a child scope, spawning a new agent session. The child scope worker starts with its own full view (own assets + inherited shared + its own child descriptions).
 4. If the child scope has further children, the process repeats recursively.
 
-The capability surface grows with the task. It never starts large. Each subprocess only loads the tools (MCP servers) defined in its scope's manifest.
+The capability surface grows with the task. It never starts large. Each session only loads the tools (MCP servers) defined in its scope's manifest.
 
 ---
 
@@ -167,7 +167,7 @@ The capability surface grows with the task. It never starts large. Each subproce
 
 ### 4.1 Scope Workers
 
-Every scope in the registry maps to a potential worker subprocess. There is no distinction between "planner" and "executor" — every scope worker has the same structure:
+Every scope in the registry maps to a potential worker session. There is no distinction between "planner" and "executor" — every scope worker has the same structure:
 
 - Its own context, skills, commands, and agents
 - MCP tools from its manifest
@@ -175,19 +175,19 @@ Every scope in the registry maps to a potential worker subprocess. There is no d
 - Inherited shared assets from ancestors
 - Meta-tools for scope navigation and task reporting
 
-Each scope runs as a full Claude Code process with access to all Claude Code capabilities — including subagents, skills, commands, and agents. Subagents spawned within a scope operate under the same lease and see the same assets as the scope worker. The scope boundary is the key constraint: only `scope.enter` can cross into a child scope, which starts a new isolated process with its own context, tools, and lease.
+Each scope runs as its own Agent SDK session. Within a session, the worker can spawn subagents — these operate under the same lease and see the same assets. The scope boundary is the key constraint: only `scope.enter` can cross into a child scope, which starts a new isolated session with its own context, tools, and lease.
 
 A scope can be both a container (has child scopes) and directly executable (has its own skills, commands, agents, and MCP tools). Whether a worker delegates to children or does work itself depends on the task and the scope's structure.
 
 ### 4.2 Worker Lifecycle
 
-Every scope worker is a Claude Code process. The control plane creates the process with:
+Every scope worker is an Agent SDK session. The control plane creates the session with:
 
 - A system prompt containing the task objective, inherited context, scope-local context, available assets, and child scope descriptions.
 - MCP tools defined in the scope's manifest, plus meta-tools (§6) that route back to the control plane.
 - A lease (§4.3) that bounds what the worker can see and do.
 
-Within the process, all Claude Code features are available — including spawning subagents, using skills, running commands, and invoking agents. These operate within the scope's boundary and lease. The control plane intercepts every tool call and enforces the lease.
+Within the session, the worker can spawn subagents, use skills, run commands, and invoke agents. These all operate within the scope's boundary and lease. The Agent SDK's `canUseTool` callback is where the control plane intercepts every tool call and enforces the lease.
 
 ### 4.3 Leases
 
@@ -223,10 +223,10 @@ A worker calls `scope.enter` to delegate work to a child scope. The control plan
 1. Validates the target scope path is a descendant of the parent's scope path.
 2. Checks depth and budget limits.
 3. If valid, issues a child lease with `current_depth = parent.current_depth + 1` and `scope_path` set to the child scope.
-4. Starts a new Claude Code process with a system prompt built from the child scope's view (own assets + inherited shared + its child descriptions).
+4. Starts a new Agent SDK session with a system prompt built from the child scope's view (own assets + inherited shared + its child descriptions).
 5. The child runs to completion and returns structured output.
 
-**Note:** Subagents spawned *within* a scope (via Claude Code's built-in agent capabilities) are distinct from `scope.enter`. In-scope subagents share the parent's context, tools, and lease — they are internal to the scope. `scope.enter` crosses into a *child scope*, which creates a new isolated process with different context, tools, and lease. The scope boundary is what `scope.enter` enforces.
+**Note:** Subagents spawned *within* a scope are distinct from `scope.enter`. In-scope subagents share the scope's context, tools, and lease — they are internal to the session. `scope.enter` crosses into a *child scope*, which creates a new isolated Agent SDK session with different context, tools, and lease. The scope boundary is what `scope.enter` enforces.
 
 **Default limits (adjustable per deployment):**
 - Max delegation depth: configurable (default: 5)
@@ -302,12 +302,12 @@ The tree can nest to arbitrary depth. A scope at any level can have its own exec
 
 ### 5.2 Scope Manifest Schema
 
-Each scope has a `manifest.yaml` that configures the subprocess:
+Each scope has a `manifest.yaml` that configures the session:
 
 ```yaml
 description: "Accounts payable — invoice lookup, payment drafting, payment submission"
 
-# MCP tool servers available in this scope's subprocess
+# MCP tool servers available in this scope's session
 mcpServers:
   - name: finance-ap-tools
     transport: stdio
@@ -322,7 +322,7 @@ externalAgents:
     description: "Verifies vendor compliance and banking details"
     a2aCardUrl: "https://agents.example.com/vendor-verify/.well-known/agent.json"
 
-# Sandboxing constraints for this scope's subprocess
+# Sandboxing constraints for this scope's session
 sandbox:
   allowedPaths:
     - "/workspace/finance/**"
@@ -338,7 +338,7 @@ policy:
   dataClass: internal
   requiresApproval: false
 
-# Permissions for the subprocess
+# Permissions for the session
 permissions:
   allowedTools: []
   disallowedTools: []
@@ -399,14 +399,14 @@ Workers interact with the control plane through a small, fixed set of meta-tools
 | Tool | Description | Available to |
 |------|-------------|-------------|
 | `scope.describe` | Inspect a child or descendant scope without entering it. Returns description, child scopes, and asset summary. | All workers |
-| `scope.enter` | Delegate work to a child scope by spawning a new subprocess with an objective. | All workers |
+| `scope.enter` | Delegate work to a child scope by spawning a new agent session with an objective. | All workers |
 | `scope.search` | Search visible scopes by natural language query. | All workers |
 | `approval.request` | Pre-request HITL approval for a planned action within the current scope. | All workers |
 | `task.update` | Report structured findings/artifacts to the parent. | All workers |
 
-Each scope's subprocess also has direct access to the MCP tools defined in its manifest. Unlike the previous design, there is no `gateway.invoke` indirection for tool calls — MCP tools are registered directly into the session. The gateway still mediates sensitive actions (approval gating, credential injection, audit logging) but this happens transparently.
+Each scope's session also has direct access to the MCP tools defined in its manifest. Unlike the previous design, there is no `gateway.invoke` indirection for tool calls — MCP tools are registered directly into the session. The gateway still mediates sensitive actions (approval gating, credential injection, audit logging) but this happens transparently.
 
-This design avoids tool explosion. Each subprocess only loads the MCP tools relevant to its scope. A root scope with 3 child scopes sees 5 meta-tools + its own MCP tools — not every tool in the registry.
+This design avoids tool explosion. Each session only loads the MCP tools relevant to its scope. A root scope with 3 child scopes sees 5 meta-tools + its own MCP tools — not every tool in the registry.
 
 ---
 
@@ -445,7 +445,7 @@ The client calls the Session API's resolve-approval endpoint. The approval servi
 Worker retries the action with the grant token. The gateway validates the grant (one-time, action-bound, not expired), injects scoped credentials, executes, and returns the result.
 
 **Step 11 — Recursive delegation (if needed).**
-If the task grows beyond the current scope, the worker calls `scope.enter` to delegate to a child scope. The wrapper validates the scope path, issues a child lease, and starts a new subprocess. The child runs, returns structured output, and the parent synthesizes.
+If the task grows beyond the current scope, the worker calls `scope.enter` to delegate to a child scope. The wrapper validates the scope path, issues a child lease, and starts a new agent session. The child runs, returns structured output, and the parent synthesizes.
 
 **Step 12 — Completion.**
 Root returns the final result. The Session API streams a `done` event. The audit trail is complete.
@@ -568,7 +568,7 @@ Policy rules are authored in the registry (e.g., in the root scope's `shared/` o
 
 ### 11.1 MCP Tools
 
-External systems are exposed to Lenny as MCP servers configured in scope manifests. Each scope's subprocess connects to the MCP servers listed in its `mcpServers` field. The gateway mediates credential injection and audit logging.
+External systems are exposed to Lenny as MCP servers configured in scope manifests. Each scope's session connects to the MCP servers listed in its `mcpServers` field. The gateway mediates credential injection and audit logging.
 
 ### 11.2 A2A Agents
 
@@ -639,7 +639,7 @@ Every significant event, each carrying a trace ID:
 | `tool.failed` | Tool call errored |
 | `approval.requested` | Approval prompt created |
 | `approval.resolved` | User approved or denied |
-| `scope.entered` | Worker spawned subprocess in a child scope |
+| `scope.entered` | Worker spawned agent session in a child scope |
 | `scope.described` | Worker inspected a child scope's description |
 | `policy.evaluated` | Policy engine made a decision |
 
@@ -679,7 +679,7 @@ Every major subsystem boundary is a pluggable interface:
 1. Root sees child scopes including `hr`.
 2. Calls `scope.describe("hr")` → sees `benefits` child scope.
 3. Calls `scope.enter("hr.benefits", objective: "Find parental leave policy for Canada")`.
-4. Child subprocess starts with `hr.benefits` scope. Has MCP tools for policy search.
+4. Child session starts with `hr.benefits` scope. Has MCP tools for policy search.
 5. Uses policy search tool directly → returns policy document.
 6. Child returns findings to root.
 7. Root summarizes with citations.
@@ -691,7 +691,7 @@ Simple delegation. No approval needed (low risk scope).
 > User: "Pay invoice INV-9831 from ACME for $50,000."
 
 1. Root sees `finance` child scope. Calls `scope.enter("finance.ap", objective: "Pay invoice INV-9831")`.
-2. AP subprocess starts. Has invoice and payment MCP tools.
+2. AP session starts. Has invoice and payment MCP tools.
 3. Uses invoice lookup tool → returns invoice details.
 4. Uses payment draft tool → returns `draft_id`.
 5. Calls payment submit tool. Scope manifest has `policy.requiresApproval: true`.
@@ -709,7 +709,7 @@ Same as above, but at step 3, invoice lookup reveals the vendor has an incomplet
 4. AP worker sees it needs vendor verification, which lives in a sibling scope (`finance.procurement`). It can't access it directly.
 5. AP worker returns findings to root: "Vendor compliance incomplete. Need procurement check before proceeding."
 6. Root calls `scope.enter("finance.procurement", objective: "Check vendor compliance status for ACME")`.
-7. Procurement subprocess investigates → returns: "Vendor W-9 unverified. Banking details incomplete. Recommend: block payment, notify procurement."
+7. Procurement session investigates → returns: "Vendor W-9 unverified. Banking details incomplete. Recommend: block payment, notify procurement."
 8. Root synthesizes findings from both scopes and asks the user what to do.
 
 The task adapted by routing through sibling scopes. Neither child could see the other's internals.
@@ -719,7 +719,7 @@ The task adapted by routing through sibling scopes. Neither child could see the 
 > User: "Add rate limiting to /v1/export, update tests, open a PR."
 
 1. Root sees `engineering` child scope. Calls `scope.enter("engineering.platform", objective: "Add rate limiting to /v1/export, update tests, open a PR")`.
-2. Platform subprocess starts in an ephemeral container (sandbox constraints from manifest). Clones the repo (gateway injects short-lived Git token). Makes changes. Runs tests.
+2. Platform session starts in an ephemeral container (sandbox constraints from manifest). Clones the repo (gateway injects short-lived Git token). Makes changes. Runs tests.
 3. If tests fail, iterates (Reason → Act → Verify loop within the scope's turn budget).
 4. PR creation requires approval per scope policy. Gateway returns `approval_required`.
 5. User approves. PR created.
@@ -760,7 +760,7 @@ The task adapted by routing through sibling scopes. Neither child could see the 
 |------|------------|
 | Agent SDK API changes | Pin SDK version. Wrap SDK calls behind internal interfaces. |
 | Scope tree too deep or wide | Monitor scope tree depth/breadth. Set hard caps on child scope count and nesting depth per deployment. |
-| Runaway subprocess spawning | Depth limits, turn budgets, cost caps enforced in leases. Subprocess-per-scope cost mitigated by scope design (keep trees shallow). |
+| Runaway session spawning | Depth limits, turn budgets, cost caps enforced in leases. Session-per-scope cost mitigated by scope design (keep trees shallow). |
 | Approval fatigue (too many prompts) | Tunable thresholds. Batch approvals. Auto-approve for low-risk + non-prod. |
 | Prompt injection via scope manifests or context | Manifests and context files are authored by trusted scope authors in a reviewed Git repo. Registry is read-only to workers. |
 | Latency from multi-hop routing | Policy evaluation must be < 50ms. Cache compiled registry index. Minimize child spawning for simple tasks. |
