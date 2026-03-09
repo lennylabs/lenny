@@ -17,6 +17,8 @@ Building reliable, enterprise-scale AI agent systems requires solving several in
 3. **Safe execution.** Side effects (money movement, production changes, data writes) must flow through gated, auditable pathways. The model proposes; infrastructure disposes.
 4. **Adaptability.** Tasks grow mid-execution. A request that starts in one domain may need capabilities from another. The system must reveal new capabilities on demand without pre-loading everything.
 5. **Coordination.** When a task becomes large enough to justify multiple reasoning contexts, those contexts must be scoped, bounded, and unable to escape their lease.
+6. **Governance.** As organizations accumulate hundreds of skills, agents, prompts, and context files, they need structured ownership, review, and layering. Without a registry model that supports multiple contributors — teams, individuals, platform — asset sprawl becomes ungovernable.
+7. **Runtime ceilings.** Claude Code and similar agentic tools are remarkably capable for individual tasks. But enterprise workloads hit structural limits: a single level of subagents, finite context windows, and no mechanism for an outer system to scope, supervise, or recombine multiple reasoning sessions. Pushing past these ceilings requires a control plane that manages agent sessions as bounded workers.
 
 No existing open-source framework provides these as a cohesive, extensible platform.
 
@@ -29,15 +31,16 @@ No existing open-source framework provides these as a cohesive, extensible platf
 
 ### 1.4 Constraints and Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| TypeScript | Agent SDK has first-class TS support. Enterprise ecosystem. |
-| Each scope is its own Agent SDK session | Within a scope, the session can leverage subagents, skills, commands, and agents. The boundary is the scope: entering a child scope requires spawning a new Agent SDK session via `scope.enter`. The control plane manages each session's lifecycle, prompt, tools, and lease. |
-| REST + SSE for external API | Compatible with LibreChat, Slack bots, custom UIs. No WebSocket complexity initially. |
-| Capability registry in a separate Git repo | Decouples domain knowledge from framework code. Different owners, different review cadence. |
-| A2A support in MVP | External agent collaboration is a first-class concern, not an afterthought. |
-| PostgreSQL as default backing store | With pgvector for semantic search. Pluggable interface for alternatives. |
-| Custom minimal workflow engine | Behind a pluggable interface. Users can swap in Temporal, BullMQ, etc. |
+| Decision                                   | Rationale                                                                                                                                                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TypeScript                                 | Agent SDK has first-class TS support. Enterprise ecosystem.                                                                                                                                                                                                                    |
+| Each scope is its own Agent SDK session    | Within a scope, the session can leverage subagents, skills, commands, and agents. The boundary is the scope: entering a child scope requires spawning a new Agent SDK session via `scope.enter`. The control plane manages each session's lifecycle, prompt, tools, and lease. |
+| REST + SSE for external API                | Compatible with LibreChat, Slack bots, custom UIs. No WebSocket complexity initially.                                                                                                                                                                                          |
+| Capability registry in a separate Git repo | Decouples domain knowledge from framework code. Different owners, different review cadence.                                                                                                                                                                                    |
+| A2A support in MVP                         | External agent collaboration is a first-class concern, not an afterthought.                                                                                                                                                                                                    |
+| PostgreSQL as default backing store        | With pgvector for semantic search. Pluggable interface for alternatives.                                                                                                                                                                                                       |
+| Custom minimal workflow engine             | Behind a pluggable interface. Users can swap in Temporal, BullMQ, etc.                                                                                                                                                                                                         |
+| Multiple registries via overlays           | Individuals and teams can layer their own skills, agents, and context onto the base registry. Overlays are applied in order; same-scope assets are combined. Name collisions within a scope are errors.                                                                        |
 
 ---
 
@@ -135,6 +138,7 @@ Capability saturation: if a model sees 500 tools, planning quality degrades. The
 The registry is a recursive tree of scopes. Each scope is a self-contained unit with its own context, skills, commands, agents, and child scopes — mirroring the structure of a Claude Code project.
 
 A worker operating within a scope sees:
+
 1. **Its own assets** — context.md, skills/, commands/, agents/ from its scope directory.
 2. **Inherited shared assets** — context, skills, commands, agents that ancestor scopes have explicitly placed in their `shared/` directories, accumulated down the tree.
 3. **Child scope descriptions** — a short description (from each child's manifest) of what each immediate child scope handles.
@@ -226,9 +230,10 @@ A worker calls `scope.enter` to delegate work to a child scope. The control plan
 4. Starts a new Agent SDK session with a system prompt built from the child scope's view (own assets + inherited shared + its child descriptions).
 5. The child runs to completion and returns structured output.
 
-**Note:** Subagents spawned *within* a scope are distinct from `scope.enter`. In-scope subagents share the scope's context, tools, and lease — they are internal to the session. `scope.enter` crosses into a *child scope*, which creates a new isolated Agent SDK session with different context, tools, and lease. The scope boundary is what `scope.enter` enforces.
+**Note:** Subagents spawned _within_ a scope are distinct from `scope.enter`. In-scope subagents share the scope's context, tools, and lease — they are internal to the session. `scope.enter` crosses into a _child scope_, which creates a new isolated Agent SDK session with different context, tools, and lease. The scope boundary is what `scope.enter` enforces.
 
 **Default limits (adjustable per deployment):**
+
 - Max delegation depth: configurable (default: 5)
 - Budget and turn limits inherited from parent, with decrements
 
@@ -255,7 +260,7 @@ A child response returns:
 
 ### 5.1 Physical Structure
 
-The registry lives in a separate Git repo. Authored as a recursive scope tree, compiled into an index at startup.
+The registry is authored as a recursive scope tree and compiled into an index at startup. The control plane accepts an ordered list of registry roots (overlays). The first registry is the base; subsequent registries layer additional assets on top. Each overlay follows the same directory structure. At compile time, overlays are merged scope-by-scope: if the same scope path exists in multiple overlays, their assets (skills, commands, agents, context, shared assets, MCP servers, external agents) are combined. A skill, command, or agent with the same name in the same scope across overlays is a compile-time error. The `description` field uses last-overlay-wins. Security-sensitive manifest fields (`sandbox`, `policy`, `permissions`) use most-restrictive-wins: the compiler takes the most restrictive value from any overlay. For example, if the base sets `requiresApproval: false` but an overlay sets `requiresApproval: true`, the result is `true`. If one overlay allows network access but another denies it, the result is denied. Allowlists (like `allowedTools`, `allowedPaths`) are intersected; denylists (like `disallowedTools`, `deniedPaths`) are unioned. Overlays can add new child scopes but cannot remove scopes defined by earlier overlays.
 
 Each scope is a directory that mirrors a Claude Code project structure: `context.md` for instructions, `manifest.yaml` for configuration, `skills/`, `commands/`, `agents/` for assets, `shared/` for assets inherited by children, and `scopes/` for child scopes.
 
@@ -299,6 +304,43 @@ capability-registry/
 ```
 
 The tree can nest to arbitrary depth. A scope at any level can have its own executable assets (skills, commands, agents, MCP tools) AND child scopes — there is no distinction between "container" and "leaf" scopes.
+
+## Overlay example
+
+Base registry (company-wide):
+
+```
+company-registry/
+├── registry.yaml
+└── main/
+    └── scopes/
+        └── engineering/
+            ├── manifest.yaml
+            ├── skills/
+            │   └── deploy.md
+            └── scopes/
+                └── platform/
+                    └── manifest.yaml
+```
+
+Team overlay:
+
+```
+team-platform-overlay/
+├── registry.yaml
+└── main/
+    └── scopes/
+        └── engineering/
+            └── scopes/
+                └── platform/
+                    ├── skills/
+                    │   └── canary-deploy.md    # new skill added to platform scope
+                    ├── agents/
+                    │   └── oncall-helper.md    # new agent added to platform scope
+                    └── context.md              # additional context appended
+```
+
+After merging, `main.engineering.platform` has both `deploy` (from base) and `canary-deploy` + `oncall-helper` (from overlay). If the overlay also defined a skill named `deploy`, compilation would fail.
 
 ### 5.2 Scope Manifest Schema
 
@@ -352,7 +394,7 @@ inherit:
     blacklist: ["legacy-guidelines"]
   skills:
     whitelist: ["code-review", "testing"]
-  commands: {}                       # accept all inherited commands
+  commands: {} # accept all inherited commands
   agents:
     blacklist: ["deprecated-agent"]
 ```
@@ -371,6 +413,7 @@ Each scope can place assets in its `shared/` directory to make them available to
 1. **Accumulated by default.** A scope sees shared assets from ALL ancestors, accumulated top-down. If `main` shares a skill and `main.finance` shares another skill, then `main.finance.ap` sees both.
 2. **Filterable per scope.** A scope's manifest can declare `inherit` filters to whitelist or blacklist specific inherited assets. A whitelist takes precedence over a blacklist if both are set.
 3. **Non-transitive filtering.** If scope B blacklists an inherited skill, scope B's children also won't see it (since B's `shared/` won't re-export it). But B's filtering does not affect its siblings.
+4. **Overlays accumulate.** Shared assets from overlays are combined with the base registry's shared assets at each scope level. The same name-collision rule applies: a shared skill, command, or agent with the same name in the same scope across overlays is a compile-time error.
 
 ### 5.4 Scripts in Skills
 
@@ -383,12 +426,37 @@ Skills can include executable scripts (shell scripts, TypeScript files, etc.) as
 
 ### 5.5 Runtime Compilation
 
-At startup, the registry loader recursively walks the scope tree. The compiler produces:
+At startup, the registry loader processes each registry root in overlay order. For each registry, it recursively walks the scope tree. The compiler then merges the trees:
 
-- A `ScopeTree` with the root `ScopeNode` and all descendants
-- A `byPath` map for O(1) lookup of any scope by its dot-delimited path (e.g., `"main.finance.ap"`)
+1. Walk the base registry to produce the initial `ScopeTree`.
+2. For each subsequent overlay, walk its tree and merge into the base:
+   - If a scope path exists in both, combine their assets (skills, commands, agents, context, shared assets). Error on name collisions.
+   - If a scope path exists only in the overlay, graft it into the tree at the appropriate parent.
+   - For `description`, last-overlay-wins. For `sandbox`, `policy`, and `permissions`, most-restrictive-wins (see §5.1 text above).
+3. Produce the final `ScopeTree` with root `ScopeNode` and all descendants, plus a `byPath` map for O(1) lookup.
 
-The resolver navigates this tree, filtered by lease scope path.
+Context files (`context.md`) from overlays are appended to the base scope's context, separated by a delimiter. This allows overlays to add instructions without replacing existing ones.
+
+The resolver navigates the merged tree, filtered by lease scope path. Workers see the combined view — they have no awareness of which registry contributed which assets.
+
+### 5.6 Overlay Configuration
+
+The control plane accepts an ordered list of registry roots:
+
+```yaml
+registries:
+  - path: ./company-registry # base
+  - path: ./team-platform-overlay # overlay 1
+  - path: ./personal-overlay # overlay 2
+```
+
+Each entry points to a directory following the standard registry structure (with a `registry.yaml` and a root scope folder). Overlays are applied left-to-right. Typical layering:
+
+- **Base:** Organization-wide scopes, policies, shared context.
+- **Team overlay:** Team-specific skills, agents, and scope extensions.
+- **Personal overlay:** Individual developer customizations.
+
+The compile-time name-collision check ensures overlays cannot silently shadow each other's assets. To intentionally replace a skill, the base must remove it first (or the skill must be renamed).
 
 ---
 
@@ -396,13 +464,13 @@ The resolver navigates this tree, filtered by lease scope path.
 
 Workers interact with the control plane through a small, fixed set of meta-tools. These are registered alongside the scope's MCP tools (from its manifest) into each Agent SDK session.
 
-| Tool | Description | Available to |
-|------|-------------|-------------|
-| `scope.describe` | Inspect a child or descendant scope without entering it. Returns description, child scopes, and asset summary. | All workers |
-| `scope.enter` | Delegate work to a child scope by spawning a new agent session with an objective. | All workers |
-| `scope.search` | Search visible scopes by natural language query. | All workers |
-| `approval.request` | Pre-request HITL approval for a planned action within the current scope. | All workers |
-| `task.update` | Report structured findings/artifacts to the parent. | All workers |
+| Tool               | Description                                                                                                    | Available to |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | ------------ |
+| `scope.describe`   | Inspect a child or descendant scope without entering it. Returns description, child scopes, and asset summary. | All workers  |
+| `scope.enter`      | Delegate work to a child scope by spawning a new agent session with an objective.                              | All workers  |
+| `scope.search`     | Search visible scopes by natural language query.                                                               | All workers  |
+| `approval.request` | Pre-request HITL approval for a planned action within the current scope.                                       | All workers  |
+| `task.update`      | Report structured findings/artifacts to the parent.                                                            | All workers  |
 
 Each scope's session also has direct access to the MCP tools defined in its manifest. Unlike the previous design, there is no `gateway.invoke` indirection for tool calls — MCP tools are registered directly into the session. The gateway still mediates sensitive actions (approval gating, credential injection, audit logging) but this happens transparently.
 
@@ -504,6 +572,7 @@ PolicyContext:
 ```
 
 It returns one of:
+
 - `{ allowed: true }`
 - `{ allowed: false, reason: "..." }`
 - `{ requires_approval: true, reason: "..." }`
@@ -624,24 +693,24 @@ The workflow engine interface is pluggable. The default is a minimal in-memory s
 
 Every significant event, each carrying a trace ID:
 
-| Event | When |
-|-------|------|
-| `task.created` | Root or child task created |
-| `task.updated` | Task status or output changed |
-| `lease.issued` | New lease created |
-| `lease.expired` | Lease expired or revoked |
-| `worker.started` | Agent SDK session started |
-| `worker.stopped` | Session completed, failed, or cancelled |
-| `tool.requested` | Worker attempted a tool call |
-| `tool.allowed` | Policy allowed the call |
-| `tool.denied` | Policy denied the call |
-| `tool.executed` | Tool call succeeded |
-| `tool.failed` | Tool call errored |
-| `approval.requested` | Approval prompt created |
-| `approval.resolved` | User approved or denied |
-| `scope.entered` | Worker spawned agent session in a child scope |
-| `scope.described` | Worker inspected a child scope's description |
-| `policy.evaluated` | Policy engine made a decision |
+| Event                | When                                          |
+| -------------------- | --------------------------------------------- |
+| `task.created`       | Root or child task created                    |
+| `task.updated`       | Task status or output changed                 |
+| `lease.issued`       | New lease created                             |
+| `lease.expired`      | Lease expired or revoked                      |
+| `worker.started`     | Agent SDK session started                     |
+| `worker.stopped`     | Session completed, failed, or cancelled       |
+| `tool.requested`     | Worker attempted a tool call                  |
+| `tool.allowed`       | Policy allowed the call                       |
+| `tool.denied`        | Policy denied the call                        |
+| `tool.executed`      | Tool call succeeded                           |
+| `tool.failed`        | Tool call errored                             |
+| `approval.requested` | Approval prompt created                       |
+| `approval.resolved`  | User approved or denied                       |
+| `scope.entered`      | Worker spawned agent session in a child scope |
+| `scope.described`    | Worker inspected a child scope's description  |
+| `policy.evaluated`   | Policy engine made a decision                 |
 
 ### 13.2 PII Redaction
 
@@ -657,16 +726,16 @@ The audit sink is an interface. The default writes to the storage adapter. Users
 
 Every major subsystem boundary is a pluggable interface:
 
-| Interface | Default | Purpose |
-|-----------|---------|---------|
-| `StorageAdapter` | PostgreSQL (in-memory for dev) | Tasks, leases, approvals, audit records |
-| `PolicyEngine` | Rule-based RBAC/ABAC | Policy evaluation |
-| `RegistrySearchProvider` | In-memory text match (pgvector for prod) | Semantic + metadata search over scopes |
-| `WorkflowEngine` | In-memory state machine | Async job lifecycle |
-| `AuditSink` | Storage adapter | Event logging |
-| `CredentialBroker` | No-op | Ephemeral credential issuance |
-| `A2AAdapter` | HTTP-based | External agent communication |
-| `ToolExecutor` | Pass-through | Dispatches to MCP/A2A/workflow |
+| Interface                | Default                                  | Purpose                                 |
+| ------------------------ | ---------------------------------------- | --------------------------------------- |
+| `StorageAdapter`         | PostgreSQL (in-memory for dev)           | Tasks, leases, approvals, audit records |
+| `PolicyEngine`           | Rule-based RBAC/ABAC                     | Policy evaluation                       |
+| `RegistrySearchProvider` | In-memory text match (pgvector for prod) | Semantic + metadata search over scopes  |
+| `WorkflowEngine`         | In-memory state machine                  | Async job lifecycle                     |
+| `AuditSink`              | Storage adapter                          | Event logging                           |
+| `CredentialBroker`       | No-op                                    | Ephemeral credential issuance           |
+| `A2AAdapter`             | HTTP-based                               | External agent communication            |
+| `ToolExecutor`           | Pass-through                             | Dispatches to MCP/A2A/workflow          |
 
 ---
 
@@ -729,19 +798,19 @@ The task adapted by routing through sibling scopes. Neither child could see the 
 
 ## 16. MVP Build Sequence
 
-| Phase | What | Why first |
-|-------|------|-----------|
-| 1 | Core types and pluggable interfaces | Everything depends on these contracts |
-| 2 | Scope tree loader and compiler | Progressive disclosure is the foundation |
-| 3 | Policy engine + lease management | Security must be structural from day one |
-| 4 | Tool Gateway | The single enforcement point |
-| 5 | Agent Runtime Manager + scope meta-tools | The Agent SDK integration |
-| 6 | Orchestrator | The control-plane loop connecting everything |
-| 7 | Approval flow | HITL for side effects |
-| 8 | A2A adapter | External agent support (MVP requirement) |
-| 9 | Audit logger | Observability |
-| 10 | Session API (REST + SSE) | External client connectivity |
-| 11 | Example scope registry | Prove end-to-end |
+| Phase | What                                     | Why first                                    |
+| ----- | ---------------------------------------- | -------------------------------------------- |
+| 1     | Core types and pluggable interfaces      | Everything depends on these contracts        |
+| 2     | Scope tree loader and compiler           | Progressive disclosure is the foundation     |
+| 3     | Policy engine + lease management         | Security must be structural from day one     |
+| 4     | Tool Gateway                             | The single enforcement point                 |
+| 5     | Agent Runtime Manager + scope meta-tools | The Agent SDK integration                    |
+| 6     | Orchestrator                             | The control-plane loop connecting everything |
+| 7     | Approval flow                            | HITL for side effects                        |
+| 8     | A2A adapter                              | External agent support (MVP requirement)     |
+| 9     | Audit logger                             | Observability                                |
+| 10    | Session API (REST + SSE)                 | External client connectivity                 |
+| 11    | Example scope registry                   | Prove end-to-end                             |
 
 ---
 
@@ -756,11 +825,11 @@ The task adapted by routing through sibling scopes. Neither child could see the 
 
 ## 18. Key Risks and Mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| Agent SDK API changes | Pin SDK version. Wrap SDK calls behind internal interfaces. |
-| Scope tree too deep or wide | Monitor scope tree depth/breadth. Set hard caps on child scope count and nesting depth per deployment. |
-| Runaway session spawning | Depth limits, turn budgets, cost caps enforced in leases. Session-per-scope cost mitigated by scope design (keep trees shallow). |
-| Approval fatigue (too many prompts) | Tunable thresholds. Batch approvals. Auto-approve for low-risk + non-prod. |
-| Prompt injection via scope manifests or context | Manifests and context files are authored by trusted scope authors in a reviewed Git repo. Registry is read-only to workers. |
-| Latency from multi-hop routing | Policy evaluation must be < 50ms. Cache compiled registry index. Minimize child spawning for simple tasks. |
+| Risk                                            | Mitigation                                                                                                                       |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Agent SDK API changes                           | Pin SDK version. Wrap SDK calls behind internal interfaces.                                                                      |
+| Scope tree too deep or wide                     | Monitor scope tree depth/breadth. Set hard caps on child scope count and nesting depth per deployment.                           |
+| Runaway session spawning                        | Depth limits, turn budgets, cost caps enforced in leases. Session-per-scope cost mitigated by scope design (keep trees shallow). |
+| Approval fatigue (too many prompts)             | Tunable thresholds. Batch approvals. Auto-approve for low-risk + non-prod.                                                       |
+| Prompt injection via scope manifests or context | Manifests and context files are authored by trusted scope authors in a reviewed Git repo. Registry is read-only to workers.      |
+| Latency from multi-hop routing                  | Policy evaluation must be < 50ms. Cache compiled registry index. Minimize child spawning for simple tasks.                       |
