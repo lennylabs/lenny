@@ -138,7 +138,9 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 
 ### 4.3 Connector / Token Service
 
-**Role:** Manages credentials for external MCP tools and third-party APIs.
+**Role:** Manages two categories of credentials:
+1. **MCP tool tokens** — OAuth tokens for external tools (GitHub, Jira, etc.) used via the MCP fabric
+2. **LLM provider credentials** — API keys, cloud IAM roles, and service accounts that runtimes need to access their backing LLM (see Section 4.9 for the full credential leasing design)
 
 **Deployment:** Runs as a **separate process** (Deployment) with its own ServiceAccount and KMS access. This is the only component with KMS decrypt permissions for downstream OAuth tokens. Gateway replicas call the Token Service over mTLS — they cannot directly decrypt stored tokens.
 
@@ -219,8 +221,19 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
 | `ExportPaths` | Package specified files for delegation |
+| `AssignCredentials` | Push a credential lease to the runtime before session start |
+| `RotateCredentials` | Push replacement credentials mid-session (fallback/rotation) |
 | `Resume` | Restore from checkpoint on a replacement pod |
 | `Terminate` | Graceful shutdown |
+
+**Runtime → Gateway events (sent over the control channel):**
+
+| Event | Description |
+|-------|-------------|
+| `RATE_LIMITED` | Current credential is rate-limited; request fallback |
+| `AUTH_EXPIRED` | Credential lease expired or was rejected by provider |
+| `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable |
+| `LEASE_REJECTED` | Runtime cannot use the assigned credential (incompatible provider, etc.) |
 
 **Deployment model:**
 - **Default: Sidecar container** communicating with the agent binary over a local Unix socket on a shared `emptyDir` volume. `shareProcessNamespace: false`. This minimizes what third-party binary authors need to implement — just a binary that reads/writes on a well-defined socket protocol.
@@ -247,6 +260,135 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 
 **Backs onto:** SessionStore, QuotaStore, TokenStore, UserStateStore, RuntimeRegistry
 
+### 4.9 Credential Leasing Service
+
+**Role:** Supplies runtime pods with the credentials they need to access their backing LLM provider (Anthropic API, AWS Bedrock, Vertex AI, etc.). This is distinct from the MCP tool token flow in Section 4.3 — this is about the runtime's own LLM access, not downstream tool OAuth.
+
+**Design principle:** Runtimes receive **short-lived credential leases**, never long-lived API keys or root credentials. The Token Service owns all durable credential material.
+
+#### Credential Provider
+
+A pluggable interface per LLM provider type. Each provider knows how to mint usable runtime credentials from its source material.
+
+| Provider | Source Material | Runtime Receives |
+|----------|----------------|-----------------|
+| `anthropic_direct` | API key | Short-lived API key or scoped token |
+| `aws_bedrock` | IAM role / access keys | Short-lived STS session credentials + region/endpoint config |
+| `vertex_ai` | GCP service account | Short-lived access token + project/region config |
+| `azure_openai` | Azure AD / API key | Short-lived token + endpoint config |
+| Custom | Provider-specific | Provider-specific config bundle |
+
+New providers are added by implementing the `CredentialProvider` interface — no gateway changes required.
+
+#### Credential Pool
+
+An admin-managed set of credentials for a given provider. Deployers register pools via configuration:
+
+```yaml
+credentialPools:
+  - name: claude-direct-prod
+    provider: anthropic_direct
+    credentials:
+      - id: key-1
+        secretRef: lenny-system/anthropic-key-1   # K8s Secret reference
+      - id: key-2
+        secretRef: lenny-system/anthropic-key-2
+    assignmentStrategy: least-loaded     # least-loaded | round-robin | sticky-until-failure
+    maxConcurrentSessions: 10            # per credential
+    cooldownOnRateLimit: 60s
+
+  - name: bedrock-us-east-prod
+    provider: aws_bedrock
+    credentials:
+      - id: role-1
+        roleArn: arn:aws:iam::123456789:role/lenny-bedrock
+        region: us-east-1
+    assignmentStrategy: sticky-until-failure
+    maxConcurrentSessions: 50
+```
+
+#### Credential Lease
+
+A session-scoped assignment from the gateway to a runtime pod:
+
+```json
+{
+  "leaseId": "cl_abc123",
+  "sessionId": "s_xyz789",
+  "provider": "anthropic_direct",
+  "poolId": "claude-direct-prod",
+  "credentialId": "key-1",
+  "materializedConfig": {
+    "apiKey": "sk-ant-...<short-lived or scoped>",
+    "baseUrl": "https://api.anthropic.com"
+  },
+  "expiresAt": "2026-03-23T15:30:00Z",
+  "renewBefore": "2026-03-23T15:25:00Z",
+  "fallbackAllowed": true,
+  "source": "pool"
+}
+```
+
+The runtime receives the `materializedConfig` — a provider-specific bundle with everything needed to authenticate. It never receives the pool's root secret or long-lived key.
+
+#### Credential Policy
+
+Attached to a pool or RuntimeType, controls how credentials are selected and managed:
+
+```yaml
+credentialPolicy:
+  preferredSource: pool           # pool | user | prefer-user-then-pool | prefer-pool-then-user
+  allowedProviders:
+    - anthropic_direct
+    - aws_bedrock
+  defaultPool: claude-direct-prod
+  fallback:
+    enabled: true
+    order: [claude-direct-prod, bedrock-us-east-prod]
+    cooldownOnRateLimit: 60s
+    maxRotationsPerSession: 3
+    requiresRuntimeRestart: false   # per-provider; overridden by runtime capability
+  userCredentialMode: elicitation   # elicitation | pre-authorized | disabled
+```
+
+#### Three Credential Modes
+
+| Mode | How It Works | Use Case |
+|------|-------------|----------|
+| **Pool (admin-managed)** | Gateway picks a credential from a registered pool using the assignment strategy. Runtime gets a lease. | Shared team/org API keys, service accounts |
+| **User-scoped** | User provides their own credential via MCP elicitation or pre-authorized flow. Token Service stores it. Runtime gets a lease. | "Bring your own API key", user-specific Bedrock roles |
+| **Hybrid** | Policy determines precedence. E.g., prefer user credential, fall back to pool on failure. | Flexible enterprise deployments |
+
+#### Fallback Flow
+
+```
+1. Runtime reports RATE_LIMITED (or AUTH_EXPIRED, PROVIDER_UNAVAILABLE) to gateway
+2. Gateway marks current lease as degraded, records cooldown timestamp
+3. Gateway evaluates CredentialPolicy fallback chain:
+   a. Same provider, different credential from pool?
+   b. Different provider allowed by policy?
+   c. User credential available as fallback?
+4. Gateway issues replacement CredentialLease
+5. Gateway pushes new credentials to runtime via RotateCredentials RPC
+6. Runtime performs provider rebind (if hotRotation supported) or session restart/resume
+```
+
+**Credential health scoring:** For pooled credentials, the gateway tracks per-credential:
+- Recent rate-limit events and cooldown expiry
+- Auth failure count
+- Concurrent session count
+- Spend tracking (if provider reports it)
+
+Assignment strategies use this health data to avoid assigning degraded credentials.
+
+#### Security Boundaries
+
+- Long-lived credentials (API keys, IAM role ARNs, service account keys) live **only** in the Token Service and Kubernetes Secrets
+- Pods receive **materialized short-lived credentials** (scoped tokens, STS sessions) via the `AssignCredentials` RPC
+- Leases are **revocable** — on user invalidation or credential compromise, the gateway revokes the lease and the runtime loses access
+- Credential material is **never logged** in audit events, transcripts, or agent output — only lease IDs and provider/pool names are logged
+- The `env` allowlist (Section 14) blocks keys like `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY` — credentials flow through the leasing system, not environment variables
+
 ---
 
 ## 5. Runtime Registry and Pool Model
@@ -268,6 +410,12 @@ capabilities:
   checkpoint: true
   preConnect: false        # true = supports SDK-warm mode
   midSessionUpload: false  # true = supports mid-session file uploads
+supportedProviders:          # LLM providers this runtime can use
+  - anthropic_direct
+  - aws_bedrock
+credentialCapabilities:
+  hotRotation: true          # can swap credentials mid-session without restart
+  requiresRestartOnProviderSwitch: true  # needs session restart if provider type changes
 mcpFeatures:
   tasks: true
   elicitation: true
@@ -345,6 +493,7 @@ A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runti
 - `/workspace/staging` exists for upload staging
 - `/sessions` directory present for session files
 - Projected service account token mounted (audience: `gateway-internal`)
+- No LLM provider credentials assigned (credential lease is assigned at claim time, not warm time)
 - No user session bound
 - No client files present
 - Marked "idle and claimable" via readiness gate
@@ -454,30 +603,33 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 2. Gateway:              Authenticate, authorize, evaluate policy
 3. Gateway:              Select pool, claim idle warm pod
 4. Gateway → Store:      Persist session metadata (session_id, pod, state)
-5. Gateway → Client:     Return session_id + upload token
+5. Gateway:              Evaluate CredentialPolicy → assign CredentialLease from pool or user source
+6. Gateway → Pod:        AssignCredentials(lease) — push materialized provider config to runtime
+7. Gateway → Client:     Return session_id + upload token
 
-6. Client → Gateway:     UploadWorkspaceContent(files, archives)
-7. Gateway → Pod:        Stream files over mTLS into /workspace/staging
+8. Client → Gateway:     UploadWorkspaceContent(files, archives)
+9. Gateway → Pod:        Stream files over mTLS into /workspace/staging
 
-8. Client → Gateway:     FinalizeWorkspace()
-9. Gateway → Pod:        Validate staging, materialize to /workspace/current
-10. Pod:                 Run setup commands (bounded, logged)
+10. Client → Gateway:    FinalizeWorkspace()
+11. Gateway → Pod:       Validate staging, materialize to /workspace/current
+12. Pod:                 Run setup commands (bounded, logged)
 
-11. Gateway → Pod:       StartSession(cwd=/workspace/current, options)
+13. Gateway → Pod:       StartSession(cwd=/workspace/current, options)
                          (SDK-warm pods: skip this step — session already connected,
                           send ConfigureWorkspace to point it at finalized cwd)
-12. Pod:                 Start agent binary/runtime session (or resume pre-connected one)
+14. Pod:                 Start agent binary/runtime session (or resume pre-connected one)
 
-13. Client → Gateway:    AttachSession(session_id)
-14. Gateway ↔ Pod:       Bidirectional stream proxy
-15. Client ↔ Gateway:    Full interactive session (prompts, responses, tool use,
-                         interrupts, elicitation)
+15. Client → Gateway:    AttachSession(session_id)
+16. Gateway ↔ Pod:       Bidirectional stream proxy
+17. Client ↔ Gateway:    Full interactive session (prompts, responses, tool use,
+                         interrupts, elicitation, credential rotation on RATE_LIMITED)
 
-16. Session completes or client disconnects
-17. Gateway → Pod:       Seal workspace — export final workspace snapshot to Artifact Store
-18. Gateway → Pod:       Terminate
-19. Gateway → Store:     Mark session completed, persist final state, record artifact refs
-20. Warm Pool:           Release pod to draining → eventual cleanup
+18. Session completes or client disconnects
+19. Gateway → Pod:       Seal workspace — export final workspace snapshot to Artifact Store
+20. Gateway → Pod:       Terminate
+21. Gateway → Store:     Mark session completed, persist final state, record artifact refs
+22. Gateway:             Release credential lease back to pool
+23. Warm Pool:           Release pod to draining → eventual cleanup
 ```
 
 **Artifact retention:** Session artifacts (workspace snapshots, logs, transcripts) are retained for a configurable TTL (default: 7 days, deployer-configurable). A background GC job deletes expired artifacts. Clients can extend retention on specific sessions via `extend_artifact_retention(session_id, ttl)`.
@@ -631,7 +783,8 @@ Every delegating session carries a **delegation lease** that defines its authori
   "perChildMaxAge": 3600,
   "fileExportLimits": { "maxFiles": 100, "maxTotalSize": "100MB" },
   "approvalMode": "policy",
-  "cascadeOnFailure": "cancel_all"
+  "cascadeOnFailure": "cancel_all",
+  "credentialPropagation": "independent"
 }
 ```
 
@@ -640,6 +793,14 @@ Child leases are always **strictly narrower** than parent leases (depth decremen
 **Isolation monotonicity:** Children must use an isolation profile **at least as restrictive** as their parent. The enforcement order is: `standard` (runc) < `sandboxed` (gVisor) < `microvm` (Kata). A `sandboxed` parent cannot delegate to a `standard` child. The `minIsolationProfile` field in the lease enforces this, and the gateway validates it before approving any delegation.
 
 **Tree-wide limits:** `maxTreeSize` caps the total number of pods across the entire task tree (all depths), preventing exponential fan-out. `maxTokenBudget` caps total LLM token consumption across the tree.
+
+**Credential propagation:** Controls how child sessions get LLM provider credentials:
+
+| Mode | Behavior |
+|------|----------|
+| `inherit` | Child uses the same credential pool/source as parent (gateway assigns from same pool) |
+| `independent` | Child gets its own credential lease based on its own RuntimeType's default policy |
+| `deny` | Child receives no LLM credentials (for runtimes that don't need LLM access, e.g., pure file-processing tools) |
 
 ### 8.4 Approval Modes
 
@@ -1010,6 +1171,7 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 | `QuotaStore` | Redis + Postgres | Rate limit counters, budget tracking |
 | `ArtifactStore` | MinIO (dev: local disk) | Uploaded files, checkpoints, workspace snapshots |
 | `EventStore` | Postgres | Audit events, session logs, stream cursors |
+| `CredentialPoolStore` | Postgres (encrypted) | Credential pool definitions, lease assignments, health scores, cooldown state |
 
 ### 12.3 Postgres HA Requirements
 
@@ -1090,7 +1252,7 @@ GenericStore.put(key, value)
 | Root filesystem | Read-only |
 | Writable paths | tmpfs (`/tmp`), workspace, sessions, artifacts |
 | Egress | Default-deny NetworkPolicy; allow only gateway + required internal services |
-| Credentials | None standing; projected SA token only |
+| Credentials | No standing credentials; projected SA token + short-lived credential lease only (see Section 4.9) |
 | File delivery | Gateway-mediated only |
 
 ### 13.2 Network Isolation
@@ -1171,12 +1333,26 @@ spec:
 
 ### 13.3 Credential Flow
 
+**MCP tool credentials (OAuth):**
 ```
 Client authenticates → Gateway validates → Gateway mints session context
-                                         → Gateway holds all downstream tokens
+                                         → Gateway holds all downstream OAuth tokens
                                          → Pod receives: session context + projected SA token
                                          → Pod never receives: client tokens, downstream OAuth tokens
 ```
+
+**LLM provider credentials (credential leasing):**
+```
+Gateway evaluates CredentialPolicy → Token Service selects from pool or user source
+                                   → Token Service materializes short-lived credentials
+                                   → Gateway pushes CredentialLease to pod via AssignCredentials
+                                   → Pod receives: materialized short-lived provider config
+                                   → Pod never receives: pool root API keys, IAM role ARNs, long-lived secrets
+                                   → On RATE_LIMITED: gateway rotates → pushes new lease via RotateCredentials
+                                   → On session end: lease released back to pool
+```
+
+**Key distinction:** MCP tool tokens are used by the gateway on behalf of pods (pods never see them). LLM provider credentials are used directly by the runtime process inside the pod — but only as short-lived, scoped, revocable leases.
 
 ### 13.4 Upload Security
 
@@ -1254,6 +1430,13 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
     "maxRetries": 2,
     "maxResumeWindowSeconds": 900
   },
+  "credentialPolicy": {
+    "preferredSource": "pool",
+    "provider": "anthropic_direct",
+    "pool": "claude-direct-prod",
+    "allowPoolFallback": true,
+    "allowProviderSwitch": false
+  },
   "callbackUrl": "https://ci.example.com/hooks/lenny-complete",
   "delegationLease": {
     "maxDepth": 2,
@@ -1268,6 +1451,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
 - `labels`: User-defined metadata for querying and organizing sessions. Not used for internal routing.
 - `timeouts`: Per-session overrides, capped by deployer policy. Cannot exceed the RuntimeType's `limits.maxSessionAge`.
 - `callbackUrl`: Optional webhook. Gateway POSTs a `SessionComplete` payload when the session reaches a terminal state.
+- `credentialPolicy`: Controls how LLM provider credentials are assigned. `preferredSource` can be `pool`, `user`, `prefer-user-then-pool`, or `prefer-pool-then-user`. If omitted, the RuntimeType's default policy is used. See Section 4.9.
 - `runtimeOptions`: Passed through to the agent binary. Schema is runtime-specific.
 
 ---
@@ -1398,6 +1582,11 @@ This is the primary document for community runtime adapter authors.
 | Postgres connection pool utilization (per replica) | Gauge |
 | Redis memory usage and eviction rate | Gauge + Counter |
 | mTLS handshake latency (gateway-to-pod) | Histogram |
+| Credential lease assignments (by provider, pool, source) | Counter |
+| Credential rotations (by reason: rate_limit, auth_expired, provider_unavailable) | Counter |
+| Credential pool utilization (active leases / total credentials, by pool) | Gauge |
+| Credential pool health (credentials in cooldown, by pool) | Gauge |
+| Credential lease duration | Histogram |
 
 ### 16.2 Key Latency Breakpoints
 
@@ -1554,10 +1743,11 @@ The design avoids baking in cloud-specific assumptions:
 | 8 | Checkpoint/resume + artifact seal-and-export | Sessions survive pod failure; artifacts retrievable |
 | 9 | Delegation primitives (TaskResult, await_children, tree recovery) | Parent → child task flow with partial failure handling |
 | 10 | MCP fabric (virtual child interfaces, elicitation chain with provenance) | Recursive delegation with MCP semantics |
-| 11 | Token/Connector service (separate deployment, KMS, OAuth flows) | External MCP tool auth |
-| 12 | Audit logging, OpenTelemetry tracing, observability | Operational readiness |
-| 13 | Hardening (gVisor/Kata, NetworkPolicy manifests, image signing, egress lockdown) | Security profiles |
-| 14 | Local development mode (docker-compose) | Community onboarding |
+| 11 | Credential leasing (CredentialProvider interface, pool management, lease assignment, rotation) | Runtimes can access LLM providers |
+| 12 | Token/Connector service (separate deployment, KMS, OAuth flows, credential pools) | External MCP tool auth + LLM credential management |
+| 13 | Audit logging, OpenTelemetry tracing, observability | Operational readiness |
+| 14 | Hardening (gVisor/Kata, NetworkPolicy manifests, image signing, egress lockdown) | Security profiles |
+| 15 | Local development mode (docker-compose) | Community onboarding |
 
 ---
 
