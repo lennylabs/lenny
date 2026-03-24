@@ -220,7 +220,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 | `Attach` | Connect client stream to running session |
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
-| `ExportPaths` | Package specified files for delegation |
+| `ExportPaths` | Package files for delegation, rebased per export spec (Section 8.7) |
 | `AssignCredentials` | Push a credential lease to the runtime before session start |
 | `RotateCredentials` | Push replacement credentials mid-session (fallback/rotation) |
 | `Resume` | Restore from checkpoint on a replacement pod |
@@ -426,6 +426,20 @@ limits:
   maxSessionAge: 7200
   maxUploadSize: 500MB
   maxSetupTimeout: 300
+setupCommandPolicy:
+  mode: blocklist                # blocklist | allowlist
+  blocklist:                     # denied command prefixes (blocklist mode)
+    - curl
+    - wget
+    - nc
+    - ssh
+    - scp
+  # allowlist:                   # allowed command prefixes (allowlist mode)
+  #   - npm ci
+  #   - pip install
+  #   - make
+  #   - chmod
+  maxCommands: 10                # max setup commands per session
 defaultPoolConfig:
   warmCount: 5
   resourceClass: medium
@@ -725,11 +739,20 @@ All uploads are gateway-mediated. **Pre-start uploads** are the default. **Mid-s
 Run after workspace finalization, before session start.
 
 **Constraints:**
-- Time-bounded (configurable timeout)
+- Time-bounded (configurable timeout per command and total)
 - Resource-bounded
 - Fully logged (stdout/stderr captured)
 - Network **blocked by default** during setup (static NetworkPolicy; no dynamic toggling which would require NET_ADMIN)
-- Only allowed commands per policy (deployer can restrict)
+- Max commands per session enforced (`setupCommandPolicy.maxCommands`)
+
+**Command policy:** The gateway validates every setup command against the RuntimeType's `setupCommandPolicy` before forwarding to the pod:
+
+| Mode | Behavior |
+|------|----------|
+| `blocklist` (default) | Commands matching any blocked prefix are rejected. Everything else is allowed. Suitable for most deployments where the sandbox already limits blast radius. |
+| `allowlist` | Only commands matching an allowed prefix are permitted. Everything else is rejected. Use for high-security or multi-tenant deployments where setup commands come from untrusted sources. |
+
+Matching is by **command prefix** — e.g., a blocklist entry `curl` blocks `curl`, `curl -s http://...`, etc. The gateway rejects invalid commands before they reach the pod, and the rejection reason is included in the session's setup output.
 
 ---
 
@@ -746,13 +769,13 @@ Every pod runs the same orchestration-capable runtime. Whether it acts as a pure
 When a parent pod wants to delegate:
 
 1. Parent calls `delegate_task` (a gateway-backed tool injected into its session)
-2. Request includes: child runtime name, task spec, file scope, delegation lease
+2. Request includes: child runtime name, task spec, file export spec, delegation lease
 3. Gateway validates against parent's lease (depth, fan-out, budget)
-4. Gateway asks parent runtime to export specified files
-5. Gateway stores exported files durably
+4. Gateway asks parent runtime to export files matching the export spec (see Section 8.7)
+5. Gateway stores exported files durably (rebased to child workspace root)
 6. Gateway allocates child pod from specified pool
-7. Gateway streams files into child before it starts
-8. Child starts with its own local workspace
+7. Gateway streams rebased files into child before it starts
+8. Child starts with its own local workspace containing the exported files
 9. Gateway creates a **virtual MCP child interface** and injects it into parent
 10. Parent interacts with child through this virtual interface
 
@@ -821,9 +844,93 @@ Injected into every delegation-capable pod:
 | `await_children(child_ids, mode)` | Wait for multiple children (`all`, `any`, or `settled`) |
 | `list_children()` | List active children with current status |
 | `cancel_child(child_id)` | Cancel a child (cascades to its descendants per policy) |
-| `export_workspace(paths)` | Internal helper for file export |
+| `export_workspace(paths)` | Internal helper for file export (see Section 8.7 for rebasing rules) |
+| `request_lease_extension(request)` | Request more budget mid-session (see Section 8.6) |
 
-### 8.6 TaskResult Schema
+### 8.6 Lease Extension
+
+A parent agent can request more budget mid-session via the `request_lease_extension` tool. This allows long-running orchestration tasks to adapt when the initial lease proves insufficient.
+
+**Request:**
+
+```json
+{
+  "extensions": {
+    "additionalChildren": 5,
+    "additionalTokenBudget": 200000,
+    "additionalMaxAge": 1800
+  },
+  "reason": "Initial estimate insufficient; 3 more modules need review"
+}
+```
+
+**Extendable fields:** `maxChildrenTotal`, `maxTokenBudget`, `maxTreeSize`, `perChildMaxAge`, `fileExportLimits`. Not extendable: `maxDepth`, `minIsolationProfile`, `allowedRuntimes`, `allowedConnectors` (these are security boundaries, not resource budgets).
+
+**Hard ceilings — extensions can never exceed:**
+1. **Deployer caps** on the RuntimeType or pool (e.g., if the deployer sets `maxChildrenTotal: 20`, no extension can push beyond 20)
+2. **The parent's own lease limits** — a child requesting an extension cannot exceed what the parent was granted
+
+**Approval modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `elicitation` (default) | Gateway surfaces the request to the client via MCP elicitation: "Agent requests 5 more children and 200K more tokens. Approve?" Client can approve, deny, or modify. |
+| `auto` | Gateway auto-approves if the new totals remain within deployer caps. No client interaction. Opt-in via `delegationLease.extensionApproval: "auto"`. |
+
+**Scope:**
+- Extensions apply to the requesting session only
+- Existing children are **unaffected** — their leases remain as originally granted
+- Only new children spawned after the extension benefit from the expanded parent budget
+
+**Audit:** Every extension request is logged with: requesting session, requested amounts, approval mode, outcome (approved/denied/modified), approver (gateway-auto or client), resulting new limits.
+
+### 8.8 File Export Model
+
+When a parent delegates to a child, it specifies which files to export and how they should appear in the child's workspace.
+
+**Export spec (part of `delegate_task`):**
+
+```json
+{
+  "fileExport": {
+    "source": "./exports/export1/*",
+    "destPrefix": "input/"
+  }
+}
+```
+
+**Rebasing rule:** The source glob's base path is stripped, and matched files are placed at the child's workspace root (or under `destPrefix` if specified). The child always sees a clean root-relative structure.
+
+**Examples:**
+
+| Parent workspace | Source glob | destPrefix | Child sees |
+|-----------------|------------|------------|------------|
+| `./exports/export1/foo.ts` | `./exports/export1/*` | _(none)_ | `./foo.ts` |
+| `./exports/export1/lib/bar.ts` | `./exports/export1/*` | _(none)_ | `./lib/bar.ts` |
+| `./exports/export1/foo.ts` | `./exports/export1/*` | `input/` | `./input/foo.ts` |
+| `./src/auth.ts` | `./src/*` | `project/src/` | `./project/src/auth.ts` |
+| `./results.json` | `./results.json` | _(none)_ | `./results.json` |
+
+This means the parent controls what slice of its workspace becomes the child's world. The child has no visibility into the parent's broader directory structure.
+
+**Multiple exports:** A `delegate_task` can include multiple export entries. They are applied in order; if paths overlap, later entries overwrite earlier ones.
+
+```json
+{
+  "fileExport": [
+    { "source": "./src/*", "destPrefix": "src/" },
+    { "source": "./config/child-config.json", "destPrefix": "" }
+  ]
+}
+```
+
+**Validation:**
+- Source globs are resolved inside the parent's `/workspace/current` only — no traversal outside the workspace
+- `destPrefix` must be a relative path, no `..`, no absolute paths
+- Total exported size is checked against `fileExportLimits` in the delegation lease
+- File count is checked against `fileExportLimits.maxFiles`
+
+### 8.9 TaskResult Schema
 
 Returned by `await_child` and `await_children`:
 
@@ -866,7 +973,7 @@ On failure:
 - `any` — return as soon as any child completes. Returns the first `TaskResult`.
 - `settled` — wait until all children reach a terminal state (completed, failed, or cancelled). Returns list of `TaskResult`.
 
-### 8.8 Task Tree
+### 8.10 Task Tree
 
 The gateway maintains a complete task DAG:
 
@@ -879,7 +986,7 @@ root_task (client → pod A)
 
 Each node tracks: session_id, generation, pod, state, lease, budget consumed, failure history.
 
-### 8.9 Delegation Tree Recovery
+### 8.11 Delegation Tree Recovery
 
 The gateway tracks the full task tree **independently of pods** in the TaskStore. This enables recovery when any node in the tree fails.
 
@@ -1764,17 +1871,13 @@ These were open questions from the initial design, now resolved:
 | 5 | Service mesh dependency | cert-manager + manual mTLS for v1. No Istio/Linkerd requirement (fewer deps for community adoption). |
 | 6 | Default isolation | gVisor (`sandboxed`) is the default. `runc` requires explicit deployer opt-in. |
 | 7 | Blob storage | MinIO from v1. Never Postgres for blobs. |
+| 8 | Delegation file export structure | Source glob base path is stripped; files are rebased to child workspace root. Optional `destPrefix` prepends a path. Parent controls the slice; child sees clean root-relative structure. See Section 8.7. |
+| 9 | Inter-child data passing | No first-class `pipe_artifacts` operation. Parents use the existing export→re-upload flow via `delegate_task` file exports. Simpler; avoids a new gateway primitive. |
+| 10 | Setup command policy | Support both blocklist (default) and allowlist modes, deployer's choice per RuntimeType. Blocklist suits most sandboxed deployments; allowlist for high-security/multi-tenant. See Section 7.4. |
+| 11 | Billing/showback | Track per-session, per-token, and per-minute usage. Expose via REST API (`GET /v1/usage`). Filterable by tenant, user, runtime, and time window. |
+| 12 | Session forking | Not supported in v1. The `fork_session` concept is dropped. Clients can achieve similar results by creating a new session with the previous session's workspace snapshot as input. |
+| 13 | Lease extension | Supported. Parents can request more budget mid-session via `request_lease_extension`. Default approval via client elicitation; auto-approval opt-in. Extensions can never exceed deployer caps or the parent's own lease. See Section 8.6. |
 
 ## 20. Open Questions
 
-1. **Setup command policy granularity:** Should deployers allowlist specific commands, or just set timeouts and resource limits? Current position: timeouts + resource limits only, with deployer-configurable command blocklist.
-
-2. **Delegation file export structure:** When a parent exports files for a child, should the child see the parent's full directory structure or a flattened view?
-
-3. **Billing/showback:** What granularity of usage tracking is needed for chargeback? Per-session, per-token, per-minute? Current position: track all three, expose via REST API.
-
-4. **Lease extension:** Should parents be able to request lease extensions (e.g., more children, more tokens) mid-session? If so, should this require client approval?
-
-5. **Inter-child data passing:** Should there be a first-class `pipe_artifacts(from_child, to_child, paths)` operation, or is the current export→re-upload flow sufficient?
-
-6. **Session forking:** The `fork_session` concept is referenced but not fully designed. What exactly gets forked — workspace, conversation, both? What about delegation tree state?
+All open questions have been resolved. See Section 19 for decisions.
