@@ -213,7 +213,8 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 | `PrepareWorkspace` | Accept streamed files into staging area |
 | `FinalizeWorkspace` | Validate, materialize to `/workspace/current` |
 | `RunSetup` | Execute bounded setup commands |
-| `StartSession` | Start the agent runtime with final `cwd` |
+| `StartSession` | Start the agent runtime with final `cwd` (pod-warm mode) |
+| `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode) |
 | `Attach` | Connect client stream to running session |
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
@@ -265,6 +266,8 @@ capabilities:
   delegation: false
   elicitation: true
   checkpoint: true
+  preConnect: false        # true = supports SDK-warm mode
+  midSessionUpload: false  # true = supports mid-session file uploads
 mcpFeatures:
   tasks: true
   elicitation: true
@@ -332,7 +335,7 @@ Each `RuntimeClass` should define `Pod Overhead` so scheduling accounts for the 
 
 ### 6.1 What a Pre-Warmed Pod Looks Like
 
-A warm pod is **runtime-warm** but not **session-warm**:
+A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runtime capability):
 
 - Pod scheduled and running
 - Selected `RuntimeClass` active (runc/gVisor/Kata)
@@ -346,19 +349,28 @@ A warm pod is **runtime-warm** but not **session-warm**:
 - No client files present
 - Marked "idle and claimable" via readiness gate
 
-**What's NOT pre-started:** The actual agent session. Because workspace contents (including `CLAUDE.md`, `.claude/*`) are unknown until request time, the session must start after workspace finalization.
+**Pod-warm (default):** The agent process is NOT started. Because workspace contents (including `CLAUDE.md`, `.claude/*`) are unknown until request time, the session must start after workspace finalization. This is the safest and most general mode.
+
+**SDK-warm (optional):** The agent process IS pre-connected and waiting for its first prompt. See below for constraints.
 
 **Security invariant: pods are one-session-only.** After a session completes or fails, the pod is terminated and replaced — never recycled for a different session. This prevents cross-session data leakage through residual workspace files, session transcripts, cached DNS, or runtime memory. If economics later require pod reuse, a mandatory verified scrub protocol must be defined first.
 
-**Optional optimization (later):** For runtimes that support it, pre-connect the SDK without sending a prompt. Only safe when the request doesn't inject top-level project config files.
+**Optional: SDK-warm mode.** Runtimes that declare `capabilities.preConnect: true` can pre-connect their agent process during the warm phase (before workspace finalization) without sending a prompt. The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt. This eliminates SDK cold-start latency from the hot path. **Constraint:** SDK-warm mode is only safe when the request does not inject top-level project config files (e.g., `CLAUDE.md`) that must be present at session start. The gateway selects between SDK-warm and pod-warm pods based on the workspace plan contents — if the plan includes top-level config files, a pod-warm (non-pre-connected) pod is used instead.
 
 ### 6.2 Pod State Machine
 
 ```
-warming ──→ idle ──→ claimed ──→ receiving_uploads ──→ finalizing_workspace
-                                                              │
-                                                              ▼
-                         attached ←── starting_session ←── running_setup
+Pod-warm path:
+  warming ──→ idle ──→ claimed ──→ receiving_uploads ──→ finalizing_workspace
+                                                                │
+                                                                ▼
+                           attached ←── starting_session ←── running_setup
+
+SDK-warm path (preConnect: true):
+  warming ──→ sdk_connecting ──→ idle ──→ claimed ──→ receiving_uploads
+                                                           │
+                                                           ▼
+                           attached ←── finalizing_workspace ──→ running_setup
                             │
                     ┌───────┼───────────────┐
                     ▼       ▼               ▼
@@ -395,12 +407,18 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 - Runtime adapter/binary boot
 - Health/readiness checks
 
-**Still on hot path:**
+**Still on hot path (pod-warm):**
 - Pod claim and routing (~ms)
 - File upload and workspace materialization (depends on payload size)
 - Setup commands (depends on commands)
 - Agent session start (depends on runtime)
 - First prompt / first token
+
+**Still on hot path (SDK-warm):**
+- Pod claim and routing (~ms)
+- File upload and workspace materialization (depends on payload size)
+- Setup commands (depends on commands)
+- First prompt / first token (session start is already done)
 
 **Estimated latency savings:**
 - runc with cached image: ~1–3s
@@ -446,7 +464,9 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 10. Pod:                 Run setup commands (bounded, logged)
 
 11. Gateway → Pod:       StartSession(cwd=/workspace/current, options)
-12. Pod:                 Start agent binary/runtime session
+                         (SDK-warm pods: skip this step — session already connected,
+                          send ConfigureWorkspace to point it at finalized cwd)
+12. Pod:                 Start agent binary/runtime session (or resume pre-connected one)
 
 13. Client → Gateway:    AttachSession(session_id)
 14. Gateway ↔ Pod:       Bidirectional stream proxy
@@ -1557,16 +1577,14 @@ These were open questions from the initial design, now resolved:
 
 ## 20. Open Questions
 
-1. **Session-warm optimization:** When exactly is it safe to pre-connect an agent runtime before workspace finalization? Need empirical data per runtime.
+1. **Setup command policy granularity:** Should deployers allowlist specific commands, or just set timeouts and resource limits? Current position: timeouts + resource limits only, with deployer-configurable command blocklist.
 
-2. **Setup command policy granularity:** Should deployers allowlist specific commands, or just set timeouts and resource limits? Current position: timeouts + resource limits only, with deployer-configurable command blocklist.
+2. **Delegation file export structure:** When a parent exports files for a child, should the child see the parent's full directory structure or a flattened view?
 
-3. **Delegation file export structure:** When a parent exports files for a child, should the child see the parent's full directory structure or a flattened view?
+3. **Billing/showback:** What granularity of usage tracking is needed for chargeback? Per-session, per-token, per-minute? Current position: track all three, expose via REST API.
 
-4. **Billing/showback:** What granularity of usage tracking is needed for chargeback? Per-session, per-token, per-minute? Current position: track all three, expose via REST API.
+4. **Lease extension:** Should parents be able to request lease extensions (e.g., more children, more tokens) mid-session? If so, should this require client approval?
 
-5. **Lease extension:** Should parents be able to request lease extensions (e.g., more children, more tokens) mid-session? If so, should this require client approval?
+5. **Inter-child data passing:** Should there be a first-class `pipe_artifacts(from_child, to_child, paths)` operation, or is the current export→re-upload flow sufficient?
 
-6. **Inter-child data passing:** Should there be a first-class `pipe_artifacts(from_child, to_child, paths)` operation, or is the current export→re-upload flow sufficient?
-
-7. **Session forking:** The `fork_session` concept is referenced but not fully designed. What exactly gets forked — workspace, conversation, both? What about delegation tree state?
+6. **Session forking:** The `fork_session` concept is referenced but not fully designed. What exactly gets forked — workspace, conversation, both? What about delegation tree state?
