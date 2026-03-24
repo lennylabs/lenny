@@ -131,4 +131,4 @@ Please open an issue to discuss before submitting large changes.
 
 ## License
 
-TBD
+[MIT](LICENSE)
