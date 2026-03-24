@@ -1,6 +1,6 @@
 # Lenny Technical Design
 
-**Status:** Draft v1
+**Status:** Draft
 **Date:** 2026-03-23
 **Source:** Synthesized from design conversation (chatgpt-conversation.md)
 
@@ -37,7 +37,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 - Support deployer-selectable isolation profiles (runc, gVisor, Kata)
 - Provide rate limiting, token budgets, concurrency controls, and audit logging
 
-### Non-Goals (v1)
+### Non-Goals
 
 - Shared RWX storage mounts across agent pods
 - Git-based or object-store-based workspace population by pods
@@ -134,7 +134,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 - Pod-to-session binding
 - Delegation lease tracking
 
-**Multi-tenancy:** `tenant_id` is carried on all session, task, quota, and token store records from v1. v1 provides **logical isolation** via tenant_id filtering on all queries and policy enforcement. Namespace-level or cluster-level isolation is a future goal. All quotas, rate limits, and usage reports can be scoped by tenant.
+**Multi-tenancy:** `tenant_id` is carried on all session, task, quota, and token store records. The platform provides **logical isolation** via tenant_id filtering on all queries and policy enforcement. Namespace-level or cluster-level isolation is a future goal. All quotas, rate limits, and usage reports can be scoped by tenant.
 
 ### 4.3 Connector / Token Service
 
@@ -175,7 +175,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 - Runtime checkpoints
 - Large logs and artifacts
 
-**Implementation:** MinIO (S3-compatible) from v1. Local disk for development mode. **Never** Postgres for blob storage — the TOAST overhead and vacuum pressure degrade transactional workload performance. See Section 12.5 for retention policy.
+**Implementation:** MinIO (S3-compatible). Local disk for development mode. **Never** Postgres for blob storage — the TOAST overhead and vacuum pressure degrade transactional workload performance. See Section 12.5 for retention policy.
 
 ### 4.6 Warm Pool Controller
 
@@ -246,7 +246,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 
 **Role:** Centralized policy evaluation on the request path.
 
-**Physically embedded** in edge gateway replicas (not a separate service in v1).
+**Physically embedded** in edge gateway replicas (not a separate service). Can be split out later if policy evaluation becomes a scaling or organizational bottleneck.
 
 **Evaluators:**
 
@@ -1269,7 +1269,7 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 
 ### 12.2 Storage Roles
 
-| Role | v1 Backend | Purpose |
+| Role | Backend | Purpose |
 |------|-----------|---------|
 | `SessionStore` | Postgres | Sessions, tasks, lineage, retry state |
 | `TaskStore` | Postgres | Task metadata, delegation tree |
@@ -1312,7 +1312,7 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 
 ### 12.5 Artifact Store
 
-**v1 backend:** MinIO (S3-compatible). For local development, use local disk with the same interface.
+**Backend:** MinIO (S3-compatible). For local development, use local disk with the same interface.
 
 **Do not use Postgres for blob storage.** Workspace checkpoints (up to 500MB) cause TOAST overhead, vacuum pressure, and degrade transactional workload performance.
 
@@ -1341,10 +1341,10 @@ GenericStore.put(key, value)
 ### 12.7 Extensibility
 
 - Define small role-based interfaces
-- v1: Postgres + Redis only
+- Start with Postgres + Redis
 - Keep migrations/schema explicit and backend-specific
 - Add new backends only under real pressure
-- Token store module is separate even if backed by Postgres in v1 (allows future Vault/KMS migration)
+- Token store module is separate even if initially backed by Postgres (allows future Vault/KMS migration)
 
 ---
 
@@ -1832,11 +1832,11 @@ The design avoids baking in cloud-specific assumptions:
 - Storage backends are pluggable
 - Network policies are standard Kubernetes
 - RuntimeClass works with any conformant runtime
-- No cloud-specific CRDs required in v1
+- No cloud-specific CRDs required
 
 ---
 
-## 18. Build Sequence (v1 MVP)
+## 18. Build Sequence (MVP)
 
 | Phase | Components | Milestone |
 |-------|-----------|-----------|
@@ -1864,18 +1864,18 @@ These were open questions from the initial design, now resolved:
 
 | # | Question | Decision |
 |---|----------|----------|
-| 1 | Checkpointing strategy | Full snapshots with size cap for v1. Keep latest 2 per session. Incrementals deferred. |
+| 1 | Checkpointing strategy | Full snapshots with size cap. Keep latest 2 per session. Incrementals deferred. |
 | 2 | Agent binary packaging | Sidecar container with local Unix socket. `shareProcessNamespace: false`. Lower barrier for third-party authors. |
-| 3 | Multi-tenancy | `tenant_id` in all data models from v1. Logical isolation via filtering. Namespace-level isolation deferred. |
+| 3 | Multi-tenancy | `tenant_id` in all data models. Logical isolation via filtering. Namespace-level isolation deferred. |
 | 4 | Controller framework | kubebuilder (controller-runtime). Standard Go operator pattern. |
-| 5 | Service mesh dependency | cert-manager + manual mTLS for v1. No Istio/Linkerd requirement (fewer deps for community adoption). |
+| 5 | Service mesh dependency | cert-manager + manual mTLS. No Istio/Linkerd requirement (fewer deps for community adoption). |
 | 6 | Default isolation | gVisor (`sandboxed`) is the default. `runc` requires explicit deployer opt-in. |
-| 7 | Blob storage | MinIO from v1. Never Postgres for blobs. |
+| 7 | Blob storage | MinIO. Never Postgres for blobs. |
 | 8 | Delegation file export structure | Source glob base path is stripped; files are rebased to child workspace root. Optional `destPrefix` prepends a path. Parent controls the slice; child sees clean root-relative structure. See Section 8.7. |
 | 9 | Inter-child data passing | No first-class `pipe_artifacts` operation. Parents use the existing export→re-upload flow via `delegate_task` file exports. Simpler; avoids a new gateway primitive. |
 | 10 | Setup command policy | Support both blocklist (default) and allowlist modes, deployer's choice per RuntimeType. Blocklist suits most sandboxed deployments; allowlist for high-security/multi-tenant. See Section 7.4. |
 | 11 | Billing/showback | Track per-session, per-token, and per-minute usage. Expose via REST API (`GET /v1/usage`). Filterable by tenant, user, runtime, and time window. |
-| 12 | Session forking | Not supported in v1. The `fork_session` concept is dropped. Clients can achieve similar results by creating a new session with the previous session's workspace snapshot as input. |
+| 12 | Session forking | Not supported. The `fork_session` concept is dropped. Clients can achieve similar results by creating a new session with the previous session's workspace snapshot as input. |
 | 13 | Lease extension | Supported. Parents can request more budget mid-session via `request_lease_extension`. Default approval via client elicitation; auto-approval opt-in. Extensions can never exceed deployer caps or the parent's own lease. See Section 8.6. |
 
 ## 20. Open Questions
