@@ -21,61 +21,61 @@
 
 ## Critical Findings
 
-### K8s-C1 — Pod Claim Mechanism Has a Race Condition (Section 4.6)
+### K8s-C1 — Pod Claim Mechanism Has a Race Condition (Section 4.6) ✅ Fixed
 
 The claim mechanism says gateways create `AgentSession` resources referencing idle `AgentPod` objects, and the controller reconciles via optimistic concurrency on the `AgentPod` status subresource. However, there is a window between `AgentSession` creation and the controller's reconcile loop where two `AgentSession` objects can exist for one `AgentPod`. The document does not specify how the controller handles multiple `AgentSession` objects referencing the same pod, or how the losing gateway is notified. This is a genuine race that can result in double-allocation.
 
 **Recommendation:** Gateways should patch `AgentPod.status.claimedBy` directly using `resourceVersion`-based optimistic locking. Only one patch wins; others get a 409. `AgentSession` is created only after the claim succeeds. Alternatively, expose a claim API via the controller so gateways never write pod state directly.
 
-### K8s-C2 — Pod Security Standards Conflict with gVisor/Kata RuntimeClass (Section 17.2)
+### K8s-C2 — Pod Security Standards Conflict with gVisor/Kata RuntimeClass (Section 17.2) ✅ Fixed
 
 The Restricted PSS requires `seccompType: RuntimeDefault`, which is a no-op for gVisor and may conflict with some Kata configurations (e.g., `allowPrivilegeEscalation: false` can be violated by certain Kata device plugins). In `enforce` mode, pods will be silently rejected, causing warm pool deadlock as the controller spins recreating failed pods.
 
 **Recommendation:** Use `warn` + `audit` PSS modes initially. Consider OPA/Gatekeeper or Kyverno with more surgical policies instead of blanket Restricted PSS.
 
-### Sec-C1 — Multi-Tenancy Relies on Application-Layer Query Filtering Only (Section 4.2)
+### Sec-C1 — Multi-Tenancy Relies on Application-Layer Query Filtering Only (Section 4.2) ✅ Fixed
 
 Tenant isolation depends entirely on `tenant_id` filtering in application queries. A single missing `WHERE tenant_id = ?` clause breaks isolation. For a platform running untrusted LLM-generated code on behalf of multiple tenants, this is a critical gap.
 
 **Recommendation:** PostgreSQL Row-Level Security (RLS) policies tied to the database role should be the primary isolation enforcement, with application-layer filtering as defense-in-depth.
 
-### Sec-C2 — Dev Mode Disables mTLS With No Guard Rails (Section 17.4)
+### Sec-C2 — Dev Mode Disables mTLS With No Guard Rails (Section 17.4) ✅ Fixed
 
 Local development mode runs with "no mTLS (plain HTTP)." If accidentally used in staging/production, all gateway-to-pod traffic is unencrypted. Session JWTs and credential leases transit in plaintext.
 
 **Recommendation:** Hard startup assertion that fails if TLS is disabled outside an explicit `LENNY_DEV_MODE=true` flag with a prominent warning.
 
-### Biz-C1 — No Billing or Pricing Hooks (Section 11.2, 15.1)
+### Biz-C1 — No Billing or Pricing Hooks (Section 11.2, 15.1) ✅ Fixed
 
 The design tracks usage via `GET /v1/usage` but provides no billing event stream, cost attribution beyond token counts (no pod-minutes, no idle cost allocation, no per-delegation rollup), metering API, or invoice-grade immutability guarantee. Usage counters in Redis fail open. Any deployer wanting to charge tenants has no integration point.
 
 **Recommendation:** Add a billing event stream (webhook or message queue) with per-tenant, per-session cost events. Define a metering API separate from the observability usage endpoint.
 
-### Biz-C2 — No Billing or Cost Attribution for Delegated Task Trees (Section 8.9, 11.2)
+### Biz-C2 — No Billing or Cost Attribution for Delegated Task Trees (Section 8.9, 11.2) ✅ Fixed
 
 `TaskResult.usage` reports per-child tokens, but there is no rolled-up cost for entire trees. The `GET /v1/sessions/{id}/usage` response schema is not defined. Deployers cannot produce accurate invoices for recursive delegation.
 
 **Recommendation:** Define tree-aggregated usage in the API response. Include pod-minutes and credential usage, not just LLM tokens.
 
-### DevOps-C1 — MinIO Has No HA Topology and 24h RPO (Section 17.3)
+### DevOps-C1 — MinIO Has No HA Topology and 24h RPO (Section 17.3) ✅ Fixed
 
 MinIO's RPO is "last backup (daily)" with no mention of erasure coding or replication. A single-node MinIO StatefulSet is a SPOF for all artifact recovery. This contradicts the seal-and-export invariant ("session output is never lost due to pod cleanup").
 
 **Recommendation:** Specify MinIO with erasure coding (minimum 4 nodes), versioning, and continuous replication to a second bucket/region for near-zero RPO.
 
-### DevOps-C2 — PgBouncer Is "Required" But Entirely Underspecified (Section 12.3)
+### DevOps-C2 — PgBouncer Is "Required" But Entirely Underspecified (Section 12.3) ✅ Fixed
 
 No topology (sidecar vs. shared Deployment), no pool mode (transaction vs. session), no sizing guidance, no HA design for PgBouncer itself (single instance is a SPOF in front of HA Postgres), no monitoring of pool saturation.
 
 **Recommendation:** Specify PgBouncer deployment topology, pool mode (transaction mode for stateless gateway queries), sizing defaults, and HA approach (at minimum two replicas behind a Service).
 
-### DevOps-C3 — Schema Migration Strategy Has No Tooling or Runbook (Section 10.5)
+### DevOps-C3 — Schema Migration Strategy Has No Tooling or Runbook (Section 10.5) ✅ Fixed
 
 Expand-contract is mentioned but there is no migration tool specified, no process for who runs migrations, no rollback procedure, no guidance on locking behavior, and no dual-write window documentation.
 
 **Recommendation:** Select a migration tool (e.g., golang-migrate, Atlas). Document the migration runbook: who runs it, how to roll back, how to handle partial completion.
 
-### Arch-C1 — Gateway Monolith Risk (Section 4.1, 4.8, 9, 10)
+### Arch-C1 — Gateway Monolith Risk (Section 4.1, 4.8, 9, 10) ✅ Fixed
 
 The gateway conflates three fundamentally different workload profiles in one process:
 
@@ -114,27 +114,27 @@ This is the lightest lift. It doesn't change the deployment model but makes futu
 
 ### Kubernetes
 
-**K8s-H1 — AgentPod Finalizer Design Not Specified (Section 4.6)**
+**K8s-H1 — AgentPod Finalizer Design Not Specified (Section 4.6) ✅ Fixed**
 Without finalizers, deleting an `AgentPool` cascades to all `AgentPod` objects immediately via GC, potentially while sessions are active. Add finalizers; only remove after confirming no active session and checkpoint completion.
 
-**K8s-H2 — HPA Custom Metric Requires Unspecified External Metrics Adapter (Section 10.1)**
+**K8s-H2 — HPA Custom Metric Requires Unspecified External Metrics Adapter (Section 10.1) ✅ Fixed**
 `lenny_gateway_active_streams` requires a metrics adapter (KEDA, Prometheus Adapter). If unavailable, HPA scale-down uses defaults, potentially killing active-session pods. Specify the adapter and add a preStop hook that blocks termination while streams > 0.
 
-**K8s-H3 — NetworkPolicy Uses Mutable Labels for Trust (Section 13.2)**
+**K8s-H3 — NetworkPolicy Uses Mutable Labels for Trust (Section 13.2) ✅ Fixed**
 Policies trust pods matching `lenny.dev/component: gateway` in namespaces matching `lenny.dev/component: system`. Labels are mutable. Any pod acquiring these labels is trusted. Use immutable `kubernetes.io/metadata.name` for namespace selection.
 
-**K8s-H4 — Node Isolation for Kata Is Advisory, Not Enforced (Section 17.2)**
+**K8s-H4 — Node Isolation for Kata Is Advisory, Not Enforced (Section 17.2) ✅ Fixed**
 Taints/tolerations are recommended but do not prevent runc pods from landing on Kata nodes. Use `nodeAffinity` with `requiredDuringSchedulingIgnoredDuringExecution` and `RuntimeClass.scheduling.nodeSelector`. Explicitly state runc pods must not share nodes with gVisor or Kata.
 
-**K8s-H5 — No PodDisruptionBudget Mechanism Defined for Agent Pods (Section 4.6, 17.1)**
+**K8s-H5 — No PodDisruptionBudget Mechanism Defined for Agent Pods (Section 4.6, 17.1) ✅ Fixed**
 "PDB via CRD" is mentioned but the mechanism is not specified. A blanket PDB on all managed pods blocks node drain even for idle pods. Use preStop hooks that checkpoint before allowing termination as the primary guard.
 
-**K8s-H6 — AgentSession Owner Reference Creates Problematic GC Chain (Section 4.6)**
+**K8s-H6 — AgentSession Owner Reference Creates Problematic GC Chain (Section 4.6) ✅ Fixed**
 `AgentSession` owned by `AgentPod` means pod deletion cascade-deletes session metadata before the gateway can perform cleanup, billing finalization, and audit logging. Use a field reference (`spec.agentPodRef`) instead of an owner reference.
 
 ### Security
 
-**Sec-H1 — Session JWT Key Management Not Specified (Section 10.2)**
+**Sec-H1 — Session JWT Key Management Not Specified (Section 10.2) ✅ Fixed**
 The gateway mints session capability JWTs (containing `session_id`, `user_id`, `tenant_id`, `delegation_depth`, `allowed_operations`) signed with "a gateway-internal key" using HMAC-SHA256. The design specifies nothing about where this key lives, how it is distributed across replicas, or how it is rotated. HMAC is symmetric — every replica holds the full signing secret. One compromised replica can forge JWTs for any session, any tenant, and any delegation depth, undoing the blast-radius protections the rest of the design carefully builds (per-replica mTLS certs, credential leasing, one-session-only pods). Key rotation with a shared HMAC key invalidates all in-flight sessions unless a dual-key validation window is implemented, which is also unspecified.
 
 **Recommendation:** Sign session JWTs via KMS. Gateway replicas call KMS to sign and verify locally with the cached public key. No replica ever holds the private key. Rotation is a KMS operation with automatic dual-key support.
@@ -143,7 +143,7 @@ The gateway mints session capability JWTs (containing `session_id`, `user_id`, `
 - **Local development mode** — support a `local` signing backend that uses a file-based ES256 keypair (auto-generated on first run) or a `none`/`insecure` mode that disables JWT signing entirely. Gate the insecure mode behind an explicit `LENNY_DEV_MODE=true` flag with a startup warning, consistent with the dev-mode mTLS bypass (Section 17.4).
 - **Design doc must specify:** the `JWTSigner` interface, supported backends, key rotation procedure per backend, dual-key validation window semantics, and what happens to in-flight sessions during rotation.
 
-**Sec-H2 — API-Key Providers (Anthropic, OpenAI, etc.) Have No Short-Lived Token Mechanism (Section 4.9)**
+**Sec-H2 — API-Key Providers (Anthropic, OpenAI, etc.) Have No Short-Lived Token Mechanism (Section 4.9) ✅ Fixed**
 The credential leasing model assumes all providers support short-lived token derivation. This is true for cloud-hosted providers (Bedrock via STS, Vertex via OAuth2, Azure via AAD), but not for direct API-key providers: Anthropic, OpenAI, Mistral, Cohere, and most smaller providers have no token exchange endpoint. The `anthropic_direct` provider claims to deliver a "short-lived or scoped" API key, but no such mechanism exists — pods would receive the full long-lived `sk-ant-...` key. A compromised pod has the key indefinitely.
 
 **Recommendation: Credential-injecting LLM reverse proxy for API-key providers.**
@@ -181,7 +181,7 @@ _Deployment considerations:_
 
 The proxy is a separate Deployment with its own HPA and HA (it becomes a SPOF for all API-key provider traffic). Latency overhead is sub-millisecond (cluster-internal hop, negligible vs. LLM response time). It must handle SSE streaming passthrough for streaming responses. Deployers who accept the risk of key exposure can opt out via `mode: direct` on the credential pool config, with a clear security warning.
 
-**Sec-H3 — Shared Unix Socket Between Adapter and Agent Binary Is Unprotected (Section 4.7)**
+**Sec-H3 — Shared Unix Socket Between Adapter and Agent Binary Is Unprotected (Section 4.7) ✅ Fixed**
 The runtime adapter (sidecar) communicates with the agent binary over a Unix socket on a shared `emptyDir` volume. `shareProcessNamespace: false` prevents cross-container process visibility, but the shared volume is read-write for both containers. A compromised agent binary can: (1) delete the socket and create a fake one, intercepting adapter commands including credential delivery; (2) connect to the socket and impersonate the adapter, sending fake events (`RATE_LIMITED`, `AUTH_EXPIRED`) to the gateway via the control channel; (3) read/write the socket file if both containers share a UID.
 
 Socket-level authentication (TLS over Unix socket, shared secret handshake) is **not recommended** — both containers share a filesystem trust boundary, so any secret accessible to the adapter is also accessible to the compromised agent binary. More importantly, requiring TLS client auth or token handshakes on the socket contradicts the stated goal of "minimizing what third-party binary authors need to implement."
@@ -198,7 +198,7 @@ Socket-level authentication (TLS over Unix socket, shared secret handshake) is *
 
 These four measures reduce the socket to a control channel where the adapter is the trusted initiator and the agent binary is an untrusted responder that can answer questions but not ask them. The design doc should specify these constraints as part of the runtime adapter contract (Section 15.4).
 
-**Sec-H4 — DNS Exfiltration Mitigation Is Optional (Section 13.2)**
+**Sec-H4 — DNS Exfiltration Mitigation Is Optional (Section 13.2) ✅ Fixed**
 The design proposes a DNS rate-limiting proxy only "for high-security profiles," but every Lenny pod runs untrusted LLM-generated code with access to workspace files. When all other egress is blocked (the design's default), DNS is the only remaining exfiltration channel. Data is encoded in DNS subdomain labels (`base64data.attacker.com`), forwarded by CoreDNS to upstream resolvers, and received by an attacker-controlled nameserver. At ~200 bytes/query and 50-100 qps, an attacker can steal API keys instantly and source files within minutes. This is not a niche threat — it is the primary data exfiltration vector for the platform's core threat model.
 
 **Recommendation: DNS proxy as default for all agent namespaces, not opt-in.**
@@ -247,10 +247,10 @@ _Operational overhead:_
 
 Lightweight — a 2-replica CoreDNS Deployment using ~20MB RAM per replica. Sub-millisecond added latency per query. Agent pods make very few DNS queries in practice (gateway and LLM proxy are cluster-internal, already resolved). The main ongoing cost is maintaining alerting rules for anomalous query patterns flagged by the proxy's logging.
 
-**Sec-H5 — Rate Limits Fail Open Without Bounds (Section 12.4)**
+**Sec-H5 — Rate Limits Fail Open Without Bounds (Section 12.4) ✅ Fixed**
 On Redis unavailability, rate limits fail open with no maximum window. An attacker inducing Redis unavailability bypasses rate limiting entirely. Define a configurable maximum fail-open window (e.g., default 60s) after which the gateway switches to fail-closed. Add a configurable emergency hard limit at the gateway (in-memory, no external dependency) that caps requests per tenant/user regardless of Redis state. Both the fail-open window duration and the hard limit thresholds must be deployer-configurable to accommodate different risk tolerances. Alert immediately when fail-open activates.
 
-**Sec-H6 — callbackUrl Is an SSRF Vector (Section 14)**
+**Sec-H6 — callbackUrl Is an SSRF Vector (Section 14) ✅ Fixed**
 The `callbackUrl` field in `WorkspacePlan` is a client-supplied URL the gateway POSTs to on session completion. The gateway is the most privileged network position in the architecture — it has mTLS credentials to every pod, access to the Token Service (all KMS-decrypted secrets), Postgres (all tenants), and Redis. An SSRF from the gateway can reach cloud metadata endpoints (`169.254.169.254` — returns node IAM credentials), cluster-internal services (Token Service, Postgres, Redis), and can be used for port scanning. The URL is stored and used later (at session completion), giving attackers time to set up DNS rebinding between registration and callback.
 
 **Recommendation: four mitigation layers.**
@@ -282,7 +282,7 @@ Clients can only register callback URLs matching these patterns.
 
 Layers 1 and 2 are the minimum for any deployment. Layer 3 is recommended for production. Layer 4 is optional for enterprise. All layers should be implemented. The design doc should also specify the callback payload schema (currently undefined — see Biz-L2) and require HMAC signing so receivers can verify authenticity.
 
-**Sec-H7 — Blocklist Mode for Setup Commands Is Easily Bypassed (Section 7.4)**
+**Sec-H7 — Blocklist Mode for Setup Commands Is Easily Bypassed (Section 7.4) ✅ Fixed**
 The default `blocklist` mode blocks command prefixes (`curl`, `wget`, `nc`, `ssh`, `scp`), but prefix matching on raw command strings is trivially bypassed: language interpreters (`python3 -c "import urllib..."`, `node -e "require('https')..."`), shell builtins (`bash -c "exec 5<>/dev/tcp/..."`), alternative binaries (`busybox wget`, `socat`, `telnet`), and indirect execution (`/usr/bin/curl`, `env curl`, `bash -c "curl ..."`, `$(which curl)`). Unless `bash`, `sh`, and `env` are also blocklisted (which would break most setup commands), the blocklist is cosmetic against adversarial input.
 
 Network is blocked during setup (static NetworkPolicy), which mitigates most direct exfiltration — but setup commands can: (1) write malicious scripts to workspace files (`.bashrc`, `Makefile`) that execute later when the session is active and network may be available; (2) use DNS exfiltration if the DNS proxy from Sec-H4 is not deployed; (3) make connections to allowed egress destinations if the pool has a relaxed egress profile for package installation.
@@ -297,12 +297,12 @@ Network is blocked during setup (static NetworkPolicy), which mitigates most dir
 
 4. **Document the real security model** — the command policy's role is catching mistakes and providing clear error messages. The sandbox + network policy is the security boundary. This framing prevents deployers from developing false confidence in the blocklist.
 
-**Sec-H8 — Image Supply Chain Controls Need Clearer Phasing in Build Sequence (Section 5.3, 18)**
+**Sec-H8 — Image Supply Chain Controls Need Clearer Phasing in Build Sequence (Section 5.3, 18) ✅ Fixed**
 Section 5.3 describes image signing and trusted registry enforcement as hard requirements, but Section 18 defers all of this to Phase 14 ("Hardening"). Since all phases are prerequisites for production (no go-live before Phase 15), there is no actual window of exposure. However, Section 18 should explicitly note that image supply chain controls (digest pinning, admission webhook, cosign verification) are a prerequisite for any production or staging deployment — and that running earlier phases in shared or pre-production environments without these controls requires a conscious risk acceptance. This prevents teams from normalizing unsigned images during development and carrying that habit into production.
 
 ### DevOps
 
-**DevOps-H1 — Postgres Deployment Guidance Missing (Section 12.3)** *(downgraded from High to Medium)*
+**DevOps-H1 — Postgres Deployment Guidance Missing (Section 12.3) ✅ Fixed** *(downgraded from High to Medium)*
 Section 12.3 lists Patroni, CloudNativePG, and managed services as options without guidance on when to use which. Postgres HA is the deployer's concern and should be transparent to Lenny — the platform should only specify what it needs from Postgres, not how Postgres is deployed. Section 12.3 should be reframed as minimum requirements that any deployment must meet:
 
 - Version: 14+
@@ -316,10 +316,10 @@ The design should note that managed services (AWS RDS, GCP Cloud SQL, Azure Data
 
 Read/write splitting is an application-level concern: the gateway maintains two connection pools (primary for writes + strong reads, replica for eventually-consistent reads) configured via two connection strings. This should be documented in the gateway configuration, not in the Postgres HA section.
 
-**DevOps-H2 — No Alerting Rules or SLO Definitions (Section 16)**
+**DevOps-H2 — No Alerting Rules or SLO Definitions (Section 16) ✅ Fixed**
 Comprehensive metrics are defined but zero alerting rules, SLO definitions, or runbook references exist. Key missing alerts: warm pool exhaustion, Postgres replication lag, Redis memory, credential pool utilization, gateway stream limits, artifact GC failure.
 
-**DevOps-H3 — cert-manager Failure Modes and CA Rotation Undocumented (Section 10.3)** *(downgraded from High to Medium)*
+**DevOps-H3 — cert-manager Failure Modes and CA Rotation Undocumented (Section 10.3) ✅ Fixed** *(downgraded from High to Medium)*
 cert-manager is the right choice and the TTL design is sound (4h pod certs > 2h max session age — active sessions don't hit cert expiry). However, the design doesn't document failure modes or CA rotation.
 
 The most impactful failure mode is not cert expiry — it's **warm pool stall during cert-manager outage**: new pods can't get certificates, never reach `idle`, and the warm pool drains as existing pods are consumed by sessions with no replacements. This starts affecting capacity immediately, not after 4h.
@@ -334,10 +334,10 @@ The design should add:
 
 4. **CA rotation procedure** — document the process: deploy new `ClusterIssuer` with new CA keypair, distribute dual trust bundle (old + new CA) via `trust-manager`, update Certificate resources to use new issuer, wait one full TTL cycle (24h) for all certs to renew, remove old CA from trust bundle. For Vault-backed CA, document the PKI secrets engine integration.
 
-**DevOps-H4 — Token Service Envelope Key Rotation Undocumented (Section 4.9, 10.5)** *(downgraded from High to Medium; JWT signing key rotation now covered by Sec-H1)*
+**DevOps-H4 — Token Service Envelope Key Rotation Undocumented (Section 4.9, 10.5) ✅ Fixed** *(downgraded from High to Medium; JWT signing key rotation now covered by Sec-H1)*
 The Token Service encrypts stored OAuth refresh tokens and credential pool secrets using envelope encryption via KMS. Section 10.5 mentions "re-encrypt stored tokens in a background migration job; old and new envelope keys coexist during rotation" but gives no operational detail: what triggers the re-encryption job, how to monitor progress, how to verify completion, what happens if the job fails mid-way (partially re-encrypted state), and how long the dual-key coexistence window lasts. The design should document the rotation procedure as an operational runbook for the Token Service.
 
-**DevOps-H5 — Controller Failover Impact on Warm Pool Undocumented (Section 4.6)** *(downgraded from High to Medium)*
+**DevOps-H5 — Controller Failover Impact on Warm Pool Undocumented (Section 4.6) ✅ Fixed** *(downgraded from High to Medium)*
 The ~17-second controller failover window is standard Kubernetes controller behavior, not a design flaw. Existing sessions are unaffected. If the K8s-C1 fix is adopted (gateways directly patch `AgentPod.status.claimedBy`), the controller is not on the claim hot path at all — only warm pod replenishment pauses during failover. The design should document:
 
 1. **Warm pool sizing guidance** — `minWarm` should account for the failover window: `minWarm >= peak_requests_per_second × 17s + buffer`. Document this formula so deployers size pools correctly.
@@ -346,20 +346,20 @@ The ~17-second controller failover window is standard Kubernetes controller beha
 
 3. **Alerting** — `lenny_warmpool_available_pods` (alert when below `minWarm`), `lenny_warmpool_claim_queue_depth` (alert when > 0 for sustained period), `lenny_warmpool_claim_wait_seconds` (alert on P99 regression), `lenny_controller_leader_transitions_total` (alert on frequent transitions indicating instability).
 
-**DevOps-H6 — Packaging Strategy Not Stated (Section 17)** *(downgraded from High to Low)*
+**DevOps-H6 — Packaging Strategy Not Stated (Section 17) ✅ Fixed** *(downgraded from High to Low)*
 The original finding bundled several concerns: Helm chart, CI/CD pipeline, environment promotion, and CRD versioning. CI/CD pipeline and environment promotion are deployer concerns, not platform design. CRD versioning is covered by K8s-M3 and Arch-M3. The only actionable design doc change is: Section 17 should state the packaging strategy (Helm chart as the primary install mechanism) as a delivery item to be built alongside the components.
 
 ### Architecture
 
-**Arch-H1 — Split-Brain Risk in Session Coordination (Section 10.1)**
+**Arch-H1 — Split-Brain Risk in Session Coordination (Section 10.1) ✅ Fixed**
 Postgres advisory locks (Redis fallback) are connection-scoped. A gateway replica losing and recovering its Postgres connection doesn't know it lost its lock. Use `SELECT ... FOR UPDATE SKIP LOCKED` with generation counters instead.
 
-**Arch-H2 — Token Service Is a Hidden SPOF (Section 4.3, 4.9)**
+**Arch-H2 — Token Service Is a Hidden SPOF (Section 4.3, 4.9) ✅ Fixed**
 The Token Service is the only component with KMS decrypt permissions. With the LLM proxy (Sec-H2) and KMS-based JWT signing (Sec-H1), its blast radius is narrower than it first appears: in-flight sessions are unaffected (the proxy validates lease tokens against Postgres/Redis, not the Token Service), and ongoing LLM API calls don't touch it. However, it remains a SPOF for: (1) new session creation — the gateway needs it to select and decrypt a credential from the pool for lease assignment; (2) OAuth flows for external MCP tools — no Token Service means no refresh token decryption; (3) credential rotation that requires bringing in a new pool credential needing KMS decryption.
 
 **Recommendation:** Run the Token Service as a multi-replica Deployment (2+ replicas) with a PDB. Add a circuit breaker in the gateway — when the Token Service is unavailable, new session creation fails immediately with a clear error rather than hanging. No graceful degradation: sessions without credentials should not start.
 
-**Arch-H3 — Elicitation Chain Has No Timeout or Timer Semantics (Section 9.2, 11.3)**
+**Arch-H3 — Elicitation Chain Has No Timeout or Timer Semantics (Section 9.2, 11.3) ✅ Fixed**
 An elicitation blocks every session in the delegation chain while waiting for the human to respond. At depth 3, a human going to lunch can cause the grandchild's `maxSessionAge` or `maxIdleTime` to expire, collapsing the entire tree via cascade policy — all because the human was slow. The design defines no timeout for elicitations, no timer-pausing semantics, no cancellation mechanism, and no budget to prevent prompt spam.
 
 **Recommendation: add elicitation timeout semantics to Sections 9.2 and 11.3.**
@@ -374,19 +374,19 @@ An elicitation blocks every session in the delegation chain while waiting for th
 
 5. **Elicitation budgets** — max elicitations per session (e.g., 5) and max concurrent pending elicitations per tree (e.g., 3), configurable per pool and per delegation lease. Prevents a runaway agent from spamming the human with prompts.
 
-**Arch-H4 — SessionStore and TaskStore Are Redundant (Section 4.2, 12.2)**
+**Arch-H4 — SessionStore and TaskStore Are Redundant (Section 4.2, 12.2) ✅ Fixed**
 The design is internally inconsistent: Section 4.2 (Session Manager) already says it is the "source of truth for all session and task metadata" and manages "task records and parent/child lineage (task DAG)." But Section 12.2 lists a separate `TaskStore` for "task metadata, delegation tree." Every consumer accesses tasks through a session ID (`GET /v1/sessions/{id}/tree`, `get_task_tree(session_id)`). The Policy Engine backs onto `SessionStore`, not `TaskStore`. Sessions and tasks are one tightly coupled domain — every task maps 1:1 to a session, and the delegation tree is keyed by session IDs.
 
 **Recommendation:** Merge `TaskStore` into `SessionStore`. Remove the `TaskStore` row from the Section 12.2 table. Update Section 8.11's reference to "TaskStore" to say "SessionStore." The merged store still exposes domain operations (e.g., `CreateChildTask`, `GetTaskTree`, `UpdateTaskStatus`) — the role-based interface principle from Section 12.1 is preserved. This fixes the inconsistency between Section 4.2 and Section 12.2 rather than creating new problems.
 
 ### Business Logic
 
-**Biz-H1 — User Invalidation Propagation Mechanism Not Specified (Section 11.4)** *(downgraded from High to Medium)*
+**Biz-H1 — User Invalidation Propagation Mechanism Not Specified (Section 11.4) ✅ Fixed** *(downgraded from High to Medium)*
 The design says revocation "propagates through the task tree" but doesn't specify the mechanism. With the LLM proxy (Sec-H2), NetworkPolicy, and DNS proxy (Sec-H4), the blast radius is smaller than it appears: the gateway can revoke all credential leases in the tree with one query, and the next LLM API call from any child is rejected by the proxy. Children cannot exfiltrate data (network blocked, DNS filtered) or make further LLM calls. The worst case is a child doing local-only compute (running tests, writing files) for minutes until it hits the proxy and dies — but this produces no externally-visible side effects since the workspace is pod-local and ephemeral.
 
 **Recommendation:** On full revocation, the gateway should actively send `Terminate` RPCs to all pods in the task tree (it already knows every pod via the task DAG), not just passively wait for proxy rejection. This makes revocation reach all descendants within seconds. Section 11.4 should specify this as the mechanism for "full revoke" level invalidation.
 
-**Biz-H2 — No Data Residency, Legal Hold, or Right to Erasure (Section 12.5, 4.5)** *(downgraded from High to Medium)*
+**Biz-H2 — No Data Residency, Legal Hold, or Right to Erasure (Section 12.5, 4.5) ✅ Fixed** *(downgraded from High to Medium)*
 The finding bundles three compliance features at different urgency levels. None are architecturally blocked — the design just needs to build in the right interfaces now.
 
 *Legal hold (v1 — trivial):*
@@ -427,13 +427,13 @@ type CredentialPoolStore interface {
 *Data residency (post-v1 — ensure nothing blocks it):*
 Per-tenant geographic routing requires a tenant-to-region mapping and region-aware store routing. Not needed for single-region deployments (most early adopters). The `ArtifactStore` interface should be instantiable per-region (not a global singleton) so multi-region deployers can route tenant data to the correct bucket. No v1 work needed beyond ensuring the interface design doesn't preclude it — e.g., `ArtifactStore` methods should accept a context carrying tenant metadata, not hardcode a single bucket.
 
-**Biz-H3 — No Per-Tenant Quotas or Hierarchical Quota Model (Section 11.2)**
+**Biz-H3 — No Per-Tenant Quotas or Hierarchical Quota Model (Section 11.2) ✅ Fixed**
 Quotas exist at user, global, and per-session levels but not per-tenant aggregate. No hierarchy (tenant > team > user), no soft warnings, no configurable reset periods. A single tenant can exhaust shared resources.
 
-**Biz-H4 — Callback/Webhook Model Is Insufficient for CI/CD (Section 14, 15.1)**
+**Biz-H4 — Callback/Webhook Model Is Insufficient for CI/CD (Section 14, 15.1) ✅ Fixed**
 No payload schema, no HMAC authentication, no retry behavior, no event types beyond terminal state, no idempotency key. Every CI/CD system needs all of these.
 
-**Biz-H5 — Session Forking Dropped Without Viable Alternative (Section 19, 6.4)** *(downgraded from High to Medium)*
+**Biz-H5 — Session Forking Dropped Without Viable Alternative (Section 19, 6.4) ✅ Fixed** *(downgraded from High to Medium)*
 The decision to drop `fork_session` was correct — true forking with LLM context window state is impossible without provider support. However, the "create new session from workspace snapshot" workaround is closer to viable than it appears, if the design clarifies what gets snapshotted.
 
 The pod filesystem has `/workspace/current` (agent's working directory, disk-backed), `/sessions/` (runtime conversation state like Claude's JSONL transcript, tmpfs), and `/artifacts/` (exportable outputs, disk-backed). The seal-and-export step (Section 7.1) exports a "workspace snapshot," and Section 4.4 separately stores "Claude session file snapshots." But the design doesn't clarify: does the workspace snapshot include `/sessions/` content? The resume flow (Section 7.3 step d) restores the session file as a separate step from replaying the workspace checkpoint, confirming they are independent artifacts.
@@ -448,12 +448,12 @@ If the session transcript (JSONL) is available as a downloadable artifact, a new
 
 3. **Add a convenience API** — `POST /v1/sessions/{id}/derive` creates a new session pre-populated with the parent session's latest workspace snapshot and session transcript file. This is sugar over "create session + upload parent's artifacts" but makes the fork-like workflow a single call. The derived session's transcript is injected into the workspace (e.g., at `/workspace/current/.session-history/`) so the agent can read it, not loaded into the LLM context automatically.
 
-**Biz-H6 — No Tenant Self-Service API or Admin RBAC (Section 15.1)**
+**Biz-H6 — No Tenant Self-Service API or Admin RBAC (Section 15.1) ✅ Fixed**
 Admin endpoints have no access control scoping. No tenant-scoped admin role, no self-service portal path, no RBAC model beyond "authenticated client."
 
 ### Open Source Community
 
-**OSS-H1 — No Quick-Start Experience (Section 1, 17, 18)**
+**OSS-H1 — No Quick-Start Experience (Section 1, 17, 18) ✅ Fixed**
 7+ infrastructure components, 3 CRDs, separate namespaces, CNI requirements, and optional gVisor/Kata. No "run one agent session on my laptop in 15 minutes" story. Primary adoption killer. The dev mode in Section 17.4 addresses this but is Phase 15 of 15 in the build sequence.
 
 **Recommendation: two-tier local dev mode, starting at Phase 2.**
@@ -477,7 +477,7 @@ The setup described in Section 17.4: gateway, controller simulator, real Postgre
    Everything else uses sensible defaults. No isolation profiles, delegation leases, or egress profiles required.
 4. **Sample echo runtime** — built as part of Phase 2, doubles as the reference implementation and the quick-start's default runtime.
 
-**OSS-H3 — gVisor Default Blocks First-Time K8s Deployment (Section 5.3)** *(downgraded from High to Medium; OSS-H2 removed — fully subsumed by OSS-H1)*
+**OSS-H3 — gVisor Default Blocks First-Time K8s Deployment (Section 5.3) ✅ Fixed** *(downgraded from High to Medium; OSS-H2 removed — fully subsumed by OSS-H1)*
 Local dev is handled by OSS-H1 (`make run` / docker-compose, no K8s needed). For production K8s, gVisor is the correct default, but most clusters don't have it installed (EKS, AKS, self-managed all require manual `runsc` setup; GKE supports it but not on default node pools). A deployer's first experience on most clusters is pods stuck in Pending with no clear error. However, the target audience (platform teams) routinely handles RuntimeClass setup — this is a UX issue, not an architecture gap.
 
 **Recommendation: clear error messages and a dev-cluster escape hatch.**
@@ -488,7 +488,7 @@ Local dev is handled by OSS-H1 (`make run` / docker-compose, no K8s needed). For
 
 3. **`devMode: true` Helm value** — creates a default pool with `runc` isolation and `allowStandardIsolation: true`, skips RuntimeClass checks, and prints a warning in the install notes: "Development mode: using runc isolation. Not recommended for production."
 
-**OSS-H4 — Runtime Adapter Contract Underspecified for Third Parties (Section 4.7, 15.4)**
+**OSS-H4 — Runtime Adapter Contract Underspecified for Third Parties (Section 4.7, 15.4) ✅ Fixed**
 Section 15.4 correctly plans a standalone adapter spec with .proto files, error codes, and a reference implementation. The gateway↔adapter gRPC contract (Section 4.7) is outlined with 13 RPCs and 4 events. However, the design has critical gaps that prevent a third-party author from evaluating feasibility:
 
 The most important gap is the **adapter↔binary protocol** — the sidecar model says the binary "reads/writes on a well-defined socket protocol," but this protocol is completely absent. This is the only contract third-party authors actually implement (the adapter is provided by Lenny). The gateway↔adapter gRPC is Lenny's internal concern.
@@ -522,7 +522,7 @@ Also missing: RPC lifecycle ordering (can `Interrupt` be called during `Attach`?
 
 4. **Build the sample echo runtime (OSS-H1)** as the living reference implementation — makes the contract concrete and testable. Third-party authors can fork and modify rather than implementing from scratch.
 
-**OSS-H5 — No API Versioning or Stability Guarantees (Section 5.1, 15)**
+**OSS-H5 — No API Versioning or Stability Guarantees (Section 5.1, 15) ✅ Fixed**
 Lenny has four versioned surfaces that third parties depend on: REST API, MCP tools, adapter↔binary protocol, and CRDs. The tech spec is the v1 blueprint, so the versioning policy must ship with v1 — third-party adapter authors need to know the stability contract before they start building.
 
 **Recommendation: add a "Versioning and Stability" section to the tech spec covering all four surfaces.**
