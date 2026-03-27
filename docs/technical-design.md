@@ -116,7 +116,7 @@ The platform solves a specific problem: teams need cloud-hosted agent sessions (
 **Deployment:**
 
 - Stateless-ish replicas behind ingress/load balancer
-- HPA on CPU, memory, active sessions, open streams
+- HPA on CPU, memory, active sessions, open streams (`active sessions` is sourced from the gateway's in-memory Prometheus gauge `lenny_gateway_active_sessions`, surfaced to the HPA via Prometheus Adapter as described in Section 10.1)
 - Sticky routing is an optimization, not a correctness requirement
 - PodDisruptionBudget to limit simultaneous disruptions
 
@@ -166,6 +166,8 @@ Until those triggers are hit, a single binary with internal boundaries is prefer
 
 **Multi-tenancy:** `tenant_id` is carried on all session, task, quota, and token store records. The **primary** tenant isolation mechanism is PostgreSQL Row-Level Security (RLS) policies tied to the database session role. Every tenant-scoped table has an RLS policy that filters rows using `current_setting('app.current_tenant')`. At the start of each transaction, the gateway connection executes `SET app.current_tenant = '<tenant_id>'`, ensuring the database enforces tenant boundaries independently of application code. Application-layer `tenant_id` filtering in queries remains as defense-in-depth, but a missing WHERE clause in application code **cannot** break isolation — the database enforces it regardless. Namespace-level or cluster-level isolation is a future goal. All quotas, rate limits, and usage reports can be scoped by tenant.
 
+**Single-tenant default:** For single-tenant deployments, `tenant_id` defaults to a built-in value (`default`). The field is always present internally — RLS policies and queries always filter by it — but single-tenant deployers never need to set or think about it; the gateway automatically applies the default tenant. Multi-tenant mode is enabled by configuring OIDC claims that carry tenant identity, or by setting `tenant_id` explicitly in the API. No additional configuration is required for single-tenant use.
+
 ### 4.3 Connector / Token Service
 
 **Role:** Manages two categories of credentials:
@@ -206,8 +208,10 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 - Event cursors / stream offsets
 - Session logs and runtime stderr
 - Workspace checkpoint references
-- Claude session file snapshots
+- Agent session file snapshots
 - Resume metadata
+
+**Checkpoint Atomicity:** A checkpoint is an atomic unit comprising a workspace snapshot (tar of `/workspace/current`), a session file snapshot (copy of `/sessions/` contents), and a checkpoint metadata record (generation, timestamp, pod state). The adapter pauses the agent process (`SIGSTOP`) before starting the checkpoint to ensure a consistent point-in-time snapshot; the agent is resumed (`SIGCONT`) after both snapshots are captured. If either snapshot fails, the entire checkpoint is discarded — partial checkpoints are never stored. The metadata record in Postgres references both artifacts and is written only after both are successfully uploaded to MinIO.
 
 ### 4.5 Artifact Store
 
@@ -223,6 +227,8 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 
 **Implementation:** MinIO (S3-compatible). Local disk for development mode. **Never** Postgres for blob storage — the TOAST overhead and vacuum pressure degrade transactional workload performance. See Section 12.5 for retention policy.
 
+**Workspace lineage:** Each workspace snapshot is immutable and identified by a content-addressed hash (SHA-256 of the tar archive). The session record tracks lineage via a `parent_workspace_ref` field that links to the workspace snapshot that seeded the session (from uploads or a derived session per Section 7.1). This enables lineage queries such as "which sessions were derived from this workspace?" and "what was the workspace history for this session?" Full workspace versioning (tracking incremental changes within a session) is not supported — snapshots are full workspace captures at checkpoint or seal time.
+
 ### 4.6 Warm Pool Controller
 
 **Role:** Keeps pre-warmed pods available and manages their lifecycle.
@@ -236,6 +242,7 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 - Claim/release/drain lifecycle
 - Garbage-collect orphaned pods via owner references
 - Handle node drain gracefully (checkpoint active sessions before eviction)
+- Track certificate expiry on idle pods; proactively replace (drain and recreate) any idle pod whose certificate will expire within 30 minutes, preventing a claimed pod from having insufficient cert validity for a full session (see Section 10.3 for cert TTLs)
 
 **Implementation:** Built with **kubebuilder** (controller-runtime) as a standard Go operator. Defines three custom CRDs:
 
@@ -251,7 +258,15 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 
 **Scaling:** Pools support `minWarm`, `maxWarm`, and an optional `scalePolicy` with time-of-day schedules or demand-based rules. Low-traffic pools can scale to zero warm pods with documented cold-start latency as fallback.
 
+**Idle cost visibility and scale-to-zero:** The metric `lenny_warmpool_idle_pod_minutes` (counter, labeled by pool and resource class) tracks cumulative idle pod-minutes, letting deployers estimate warm pool cost from their monitoring stack. Pools support `minWarm: 0` for off-hours via time-of-day rules in `scalePolicy`: `scaleToZero: { schedule: "0 22 * * *", resumeAt: "0 6 * * *" }` sets `minWarm: 0` during the window; sessions arriving in zero-warm periods incur cold-start latency. A `WarmPoolIdleCostHigh` warning alert fires when idle pod-minutes exceed a deployer-configured threshold over a 24 h window (see Section 16.5).
+
+**CRD validation:** All CRDs include OpenAPI schema validation with CEL rules to catch common misconfigurations at admission time. Key rules: `minWarm <= maxWarm`, `maxWarm > 0`, valid RuntimeClass reference format, resource class values within the allowed set, and `maxSessionAge > 0`. Malformed specs are rejected by the API server before reaching the controller, preventing reconciliation loops on invalid input. The controller also validates at reconciliation time as defense-in-depth.
+
 **Controller failover and warm pool sizing:** During a leader-election failover (~15s), the controller cannot create new pods or reconcile pool scaling. If the warm pool is undersized, this pause can exhaust available pods. To prevent this, `minWarm` should account for the failover window: `minWarm >= peak_claims_per_second * (failover_seconds + pod_startup_seconds)`. For example, at 2 claims/sec with a 15s failover pause and 10s pod startup time: `minWarm >= 2 * 25 = 50`. During the failover window, the gateway queues incoming pod claim requests for up to `podClaimQueueTimeout` (default: 30s). If no pod becomes available before the timeout, the session creation fails with a retryable error so the client can back off and retry. As an early-warning mechanism, the `WarmPoolLow` alert (Section 16.5) fires when available pods drop below 25% of `minWarm`, giving operators time to investigate before exhaustion occurs.
+
+**API server rate limiting:** The controller uses controller-runtime's default client-side rate limiter (token bucket: 10 QPS, burst 100) for all API server requests. During large pool-scale events (e.g., scaling from 0 to 50 warm pods), pod creation is processed sequentially through the work queue rather than in parallel bursts. The work queue max depth is configurable (default: 500); if the queue exceeds this depth, new reconciliation events are dropped and a `lenny_controller_queue_overflow_total` metric is incremented. These defaults prevent the controller from overwhelming the API server or etcd during scale-up events.
+
+**etcd write pressure at scale:** At 500+ concurrent sessions, CRD status updates can generate significant etcd write pressure. Mitigations: (1) The state machine uses 3 coarse label values instead of 10+ fine-grained labels, reducing label mutation frequency (Section 6.2). (2) Status updates are batched by the controller's work queue — not every state transition is immediately written. (3) The controller's client-side rate limiter (10 QPS) bounds the update rate. (4) For deployments exceeding 1000 concurrent sessions, operators should monitor etcd write latency and consider increasing etcd resources or reducing status update frequency.
 
 **Disruption protection for agent pods:** Traditional PodDisruptionBudgets are not the right fit for active agent pods — each pod runs a single session, so `minAvailable` doesn't apply in the usual sense. Instead, the primary protection against voluntary disruption (node drains, cluster upgrades) is a **preStop hook** on every agent pod that triggers a checkpoint via the runtime adapter's `Checkpoint` RPC before allowing termination. The pod's `terminationGracePeriodSeconds` is set high enough (default: 120s) to give the checkpoint time to complete and be persisted to object storage. For active pods whose sessions have been checkpointed (or that have no session at all), the session retry mechanism described in Section 7.2 handles resumption on a replacement pod — PDBs are not involved.
 
@@ -275,7 +290,7 @@ The warm pool controller can optionally create a PDB **per `AgentPool`** with `m
 | `Attach`             | Connect client stream to running session                             |
 | `Interrupt`          | Interrupt current agent work                                         |
 | `Checkpoint`         | Export recoverable session state                                     |
-| `ExportPaths`        | Package files for delegation, rebased per export spec (Section 8.7)  |
+| `ExportPaths`        | Package files for delegation, rebased per export spec (Section 8.8)  |
 | `AssignCredentials`  | Push a credential lease to the runtime before session start          |
 | `RotateCredentials`  | Push replacement credentials mid-session (fallback/rotation)         |
 | `Resume`             | Restore from checkpoint on a replacement pod                         |
@@ -296,6 +311,18 @@ The warm pool controller can optionally create a PDB **per `AgentPool`** with `m
 - **Alternative: Embedded** — first-party binaries can embed the adapter directly and expose the same gRPC contract to the gateway.
 - Same external contract either way.
 
+**Sidecar vs embedded trade-offs:**
+
+| Aspect                 | Sidecar (default)                           | Embedded                                   |
+| ---------------------- | ------------------------------------------- | ------------------------------------------ |
+| Complexity for authors | Low — implement stdin/stdout JSON protocol  | High — implement full gRPC contract        |
+| Resource overhead      | ~50 MB memory for adapter sidecar           | None (shared process)                      |
+| Language support       | Any language (stdin/stdout)                 | Go only (or language with gRPC support)    |
+| Isolation              | Process isolation between adapter and agent | Single process, shared memory              |
+| Recommended for        | Third-party runtimes, community adapters    | First-party runtimes where latency matters |
+
+> **Note:** Third-party authors should always use the sidecar model. The embedded model is for first-party runtimes where the adapter and agent binary are developed together.
+
 **Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
 
 #### Adapter-Agent Security Boundary
@@ -311,6 +338,8 @@ The Unix socket between the runtime adapter (sidecar) and the agent binary is an
 4. **No credential material over socket:** LLM credentials (whether direct lease or proxy URL) are injected into the agent process via environment variables at start time, not passed over the Unix socket. The adapter never sends credential material to the agent post-startup.
 
 5. **Agent crash isolation:** If the agent process crashes, the adapter detects it (socket EOF), reports the failure to the gateway, and does not restart the agent. The gateway handles retry at the session level.
+
+6. **Credential-sensitive RPC logging exclusion:** `AssignCredentials` and `RotateCredentials` RPCs carry credential material in their payloads. These RPCs must be excluded from gRPC access log payload capture, OpenTelemetry span attributes, and any request/response logging middleware. Only the RPC name, lease ID, provider type, and success/failure status should be logged — never the `materializedConfig` contents.
 
 ### 4.8 Gateway Policy Engine
 
@@ -427,7 +456,9 @@ credentialPolicy:
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | **Pool (admin-managed)** | Gateway picks a credential from a registered pool using the assignment strategy. Runtime gets a lease.                        | Shared team/org API keys, service accounts            |
 | **User-scoped**          | User provides their own credential via MCP elicitation or pre-authorized flow. Token Service stores it. Runtime gets a lease. | "Bring your own API key", user-specific Bedrock roles |
-| **Hybrid**               | Policy determines precedence. E.g., prefer user credential, fall back to pool on failure.                                     | Flexible enterprise deployments                       |
+| **Fallback chain**       | Policy determines precedence. E.g., prefer user credential, fall back to pool on failure.                                     | Flexible enterprise deployments                       |
+
+> The `preferredSource` field determines which mode is used. When `fallback.enabled: true`, the gateway automatically tries the next source in the chain on failure. There are effectively three configurations: pool-only (`preferredSource: pool`, no fallback), user-only (`preferredSource: user`, no fallback), or fallback chain (`preferredSource: prefer-user-then-pool` or `prefer-pool-then-user`, with fallback enabled).
 
 #### Fallback Flow
 
@@ -480,7 +511,7 @@ Assignment strategies use this health data to avoid assigning degraded credentia
 - Pods receive **materialized short-lived credentials** (scoped tokens, STS sessions) via the `AssignCredentials` RPC
 - Leases are **revocable** — on user invalidation or credential compromise, the gateway revokes the lease and the runtime loses access
 - Credential material is **never logged** in audit events, transcripts, or agent output — only lease IDs and provider/pool names are logged
-- The `env` allowlist (Section 14) blocks keys like `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY` — credentials flow through the leasing system, not environment variables
+- The `env` blocklist (Section 14) rejects keys matching sensitive patterns (e.g., `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`, `*_SECRET_*`) regardless of whether credential leasing is configured. When leasing is enabled, credentials flow through the leasing system rather than environment variables; when leasing is not configured, the blocklist still prevents accidental credential exposure via env vars
 
 ---
 
@@ -534,11 +565,38 @@ setupCommandPolicy:
   #   - ssh
   #   - scp
   maxCommands: 10 # max setup commands per session
+runtimeOptionsSchema: # optional JSON Schema validating client-supplied runtimeOptions
+  type: object
+  properties:
+    model: { type: string }
+    temperature: { type: number, minimum: 0, maximum: 2 }
+  additionalProperties: false
 defaultPoolConfig:
   warmCount: 5
   resourceClass: medium
   egressProfile: restricted
 ```
+
+#### Minimal Configuration
+
+Most fields above have sensible defaults. The absolute minimum to register a runtime and start handling sessions:
+
+```yaml
+# Minimal Lenny configuration — everything else uses sensible defaults
+runtimes:
+  - name: my-agent
+    image: registry.example.com/my-agent:latest
+    supportedProviders:
+      - anthropic_direct
+credentialPools:
+  - name: default
+    provider: anthropic_direct
+    credentials:
+      - id: key-1
+        secretRef: lenny-system/anthropic-key
+```
+
+This is the minimum configuration for a single-runtime deployment. All other fields (isolation profile, resource class, warm count, delegation, egress profile, etc.) use deployer-safe defaults. See the full RuntimeType schema above for customization options.
 
 ### 5.2 Pool Configuration
 
@@ -568,6 +626,13 @@ Each pool is a warmable deployment target for one runtime type + operational pro
 
 This prevents the combinatorial explosion of 3 runtimes × 3 isolation × 3 resource = 27 pools each holding idle pods. In practice, most deployments need 3-5 hot pools.
 
+**Topology spread constraints:** Agent pods use `topologySpreadConstraints` to distribute across availability zones and nodes. The default applied by the warm pool controller:
+
+- `maxSkew: 1`, `topologyKey: topology.kubernetes.io/zone`, `whenUnsatisfiable: ScheduleAnyway` (soft spread across zones)
+- `maxSkew: 1`, `topologyKey: kubernetes.io/hostname`, `whenUnsatisfiable: ScheduleAnyway` (soft spread across nodes)
+
+Deployers can override these defaults per pool via the AgentPool CRD's `topologySpreadConstraints` field. For pools where zone balance is critical (e.g., high-availability orchestrator pools), deployers should set `whenUnsatisfiable: DoNotSchedule` to enforce strict spread.
+
 ### 5.3 Isolation Profiles
 
 Lenny uses standard Kubernetes `RuntimeClass` for isolation:
@@ -580,12 +645,22 @@ Lenny uses standard Kubernetes `RuntimeClass` for isolation:
 
 **Security note:** `runc` provides no protection against kernel exploits. Even trusted developers can introduce malicious dependencies. `gvisor` is the minimum recommended isolation for any workload processing untrusted input (which includes all LLM-generated code execution). Deployers must explicitly opt in to `runc` via a pool configuration flag (`allowStandardIsolation: true`).
 
-Each `RuntimeClass` should define `Pod Overhead` so scheduling accounts for the isolation cost. A `RuntimeProvider` abstraction keeps the door open for future backends (e.g., KubeVirt).
+Each `RuntimeClass` should define `Pod Overhead` so scheduling accounts for the isolation cost. Reference overhead values:
+
+| Profile              | CPU Overhead | Memory Overhead | Notes                            |
+| -------------------- | ------------ | --------------- | -------------------------------- |
+| `standard` (runc)    | None         | None            | Native container runtime         |
+| `sandboxed` (gVisor) | ~200m        | ~200Mi          | gVisor userspace kernel overhead |
+| `microvm` (Kata)     | ~500m        | ~500Mi          | VM boot + guest kernel overhead  |
+
+> These are reference values; actual overhead depends on workload and should be tuned per deployment.
+
+A `RuntimeProvider` abstraction keeps the door open for future backends (e.g., KubeVirt).
 
 **Image supply chain controls:**
 
 - Images **must** be pinned by digest (not tag) in RuntimeType definitions
-- Image signature verification via cosign/Sigstore, enforced by a ValidatingAdmissionWebhook (or OPA/Gatekeeper policy)
+- Image signature verification via cosign/Sigstore, enforced by a ValidatingAdmissionWebhook (or OPA/Gatekeeper policy). The cosign admission webhook must be configured as **fail-closed** (`failurePolicy: Fail`). If the webhook is unavailable, pod admission is blocked. This prevents unsigned images from being admitted during webhook outages. Alert on webhook unavailability (`CosignWebhookUnavailable`).
 - Only images from deployer-configured trusted registries are admitted
 - Vulnerability scanning integrated into CI for all runtime images
 
@@ -613,7 +688,7 @@ A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runti
 - `/workspace/current` exists but is empty
 - `/workspace/staging` exists for upload staging
 - `/sessions` directory present for session files
-- Projected service account token mounted (audience: `gateway-internal`)
+- Projected service account token mounted (audience: deployment-specific, see Section 10.3)
 - No LLM provider credentials assigned (credential lease is assigned at claim time, not warm time)
 - No user session bound
 - No client files present
@@ -625,7 +700,7 @@ A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runti
 
 **Security invariant: pods are one-session-only.** After a session completes or fails, the pod is terminated and replaced — never recycled for a different session. This prevents cross-session data leakage through residual workspace files, session transcripts, cached DNS, or runtime memory. If economics later require pod reuse, a mandatory verified scrub protocol must be defined first.
 
-**Optional: SDK-warm mode.** Runtimes that declare `capabilities.preConnect: true` can pre-connect their agent process during the warm phase (before workspace finalization) without sending a prompt. The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt. This eliminates SDK cold-start latency from the hot path. **Constraint:** SDK-warm mode is only safe when the request does not inject top-level project config files (e.g., `CLAUDE.md`) that must be present at session start. The gateway selects between SDK-warm and pod-warm pods based on the workspace plan contents — if the plan includes top-level config files, a pod-warm (non-pre-connected) pod is used instead.
+**Optional: SDK-warm mode.** Runtimes that declare `capabilities.preConnect: true` can pre-connect their agent process during the warm phase (before workspace finalization) without sending a prompt. The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt. This eliminates SDK cold-start latency from the hot path. **Constraint:** SDK-warm mode is only safe when the request does not inject project config files that must be present at session start. The SDK-warm eligibility decision is based on an explicit `sdkWarmEligible` predicate defined in the `RuntimeType`, not ad-hoc workspace plan parsing. Each `RuntimeType` declares a `sdkWarmBlockingPaths` list (default: `["CLAUDE.md", ".claude/*"]`) — if the workspace plan includes files matching any of these glob patterns, the gateway selects a pod-warm pod instead of SDK-warm. This makes the decision deterministic, configurable per runtime, and independent of workspace plan parsing logic.
 
 ### 6.2 Pod State Machine
 
@@ -706,16 +781,16 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 /workspace/
   current/      # Agent's actual cwd — populated during workspace finalization
   staging/      # Upload staging area — files land here first
-/sessions/      # Session files (e.g., Claude .jsonl)        [tmpfs]
+/sessions/      # Session files (e.g., conversation logs, runtime state)        [tmpfs]
 /artifacts/     # Logs, outputs, checkpoints
 /tmp/           # tmpfs writable area                        [tmpfs]
 ```
 
 **Data-at-rest protection:**
 
-- `/sessions/` and `/tmp/` use `emptyDir.medium: Memory` (tmpfs) — data is guaranteed gone when the pod terminates. tmpfs usage counts against pod memory limits and must be accounted for in resource requests.
+- `/sessions/` and `/tmp/` use `emptyDir.medium: Memory` (tmpfs) — data is guaranteed gone when the pod terminates. tmpfs usage counts against pod memory limits and must be accounted for in resource requests. Resource class definitions (Section 5.2) must account for tmpfs usage in memory requests. For example, if a pod's memory limit is 2Gi and tmpfs usage can reach 500Mi, the effective memory available to the agent process is 1.5Gi. Deployers should set `emptyDir.sizeLimit` on tmpfs volumes to cap usage and provide predictable OOM boundaries rather than silent memory pressure. Recommended size limits: `/sessions/` sizeLimit of 256Mi (session transcripts), `/tmp/` sizeLimit of 256Mi (scratch space).
 - `/workspace/` and `/artifacts/` use disk-backed emptyDir. Node-level disk encryption (LUKS/dm-crypt or cloud-provider encrypted volumes) is **required** for production deployments.
-- `/dev/shm` is limited to 64MB. `procfs` and `sysfs` are masked/read-only. `shareProcessNamespace: false` when using sidecar containers.
+- `/dev/shm` is limited to 64MB. `procfs` and `sysfs` are masked/read-only. `shareProcessNamespace: false` when using sidecar containers. `shareProcessNamespace: false` is not enforceable via Pod Security Standards; a Kyverno or Gatekeeper policy must be deployed to reject pods in agent namespaces that set `shareProcessNamespace: true`, as part of the RuntimeClass-aware admission policies described in Section 17.2.
 - Combined with the one-session-only invariant, sensitive data never persists on disk after pod termination.
 
 ---
@@ -796,6 +871,8 @@ Once a session is attached, the client interacts via an **MCP Task** with bidire
 
 **Reconnect semantics:** The gateway persists an event cursor per session. On reconnect, the client provides its last-seen cursor and the gateway replays missed events from the EventStore. Events older than the checkpoint window may not be replayable; in that case the client receives a `checkpoint_boundary` marker and the current session state.
 
+**SSE buffer policy:** The gateway maintains a per-client event buffer (default: 1000 events or 10MB, whichever is smaller). If a slow client falls behind and the buffer fills, the gateway drops the connection and the client must reconnect with its last-seen cursor. Events beyond the buffer are replayed from the EventStore on reconnect (if within the checkpoint window). This prevents a single slow client from causing unbounded memory growth in the gateway.
+
 ### 7.3 Retry and Resume
 
 **Retry policy** is set per session by the client, bounded by deployer caps:
@@ -838,11 +915,17 @@ Once a session is attached, the client interacts via an **MCP Task** with bidire
 - Terminate session
 - Fork into a new session
 
+**`awaiting_client_action` semantics:**
+
+- **Expiry:** Sessions in `awaiting_client_action` expire after `maxResumeWindowSeconds` (default 900s). After expiry the session transitions to `expired` and artifacts are retained per the standard retention policy.
+- **Children behavior:** Active children continue running when the parent enters `awaiting_client_action`. Their results are stored in the task tree. When the parent resumes, pending child results are delivered.
+- **CI / automated discovery:** Automated clients can poll `GET /v1/sessions/{id}` and check for `state: awaiting_client_action`. The webhook system (Section 14) also fires a `session.awaiting_action` event so CI systems can react without polling.
+
 ### 7.3 Upload Safety
 
 All uploads are gateway-mediated. **Pre-start uploads** are the default. **Mid-session uploads** are supported as an opt-in capability.
 
-**Mid-session uploads:** If the runtime declares `capabilities.midSessionUpload: true` and the deployer policy allows it, clients can call `upload_to_session(session_id, files)` during an active session. Mid-session uploads go through the same gateway validation pipeline (path traversal protection, size limits, hash verification). Files are written directly to `/workspace/current` (no staging step). The runtime adapter receives a `FilesUpdated` notification so the agent can be informed.
+**Mid-session uploads:** If the runtime declares `capabilities.midSessionUpload: true` and the deployer policy allows it, clients can call `upload_to_session(session_id, files)` during an active session. Mid-session uploads use the same staging→validation→promotion pattern as pre-start uploads. Files are first written to `/workspace/staging`, validated (path traversal protection, size limits, hash verification), then atomically moved to `/workspace/current`. The runtime adapter receives a `FilesUpdated` notification only after promotion, so the agent never sees partially-written files.
 
 **Enforcement rules:**
 
@@ -850,10 +933,19 @@ All uploads are gateway-mediated. **Pre-start uploads** are the default. **Mid-s
 - Reject `..`, absolute paths, path traversal
 - Reject symlinks, hard links, device files, FIFOs, sockets
 - Per-file and total session size limits
-- Hash verification (optional but recommended)
+- Hash verification:
+  - **Optional** for client uploads (the client may not have pre-computed hashes)
+  - **Mandatory** for delegation file exports (the gateway computes and verifies hashes during the export-to-child flow to ensure no tampering between parent export and child delivery)
 - Write to staging first, promote only after validation
-- Archive extraction is especially strict (zip-slip protection)
+- Archive extraction is especially strict:
+  - **Supported formats:** `tar.gz`, `tar.bz2`, `zip`. Other formats are rejected.
+  - **Zip-slip protection:** Every extracted path is validated to resolve within the staging directory after canonicalization. Paths containing `..` components or absolute paths are rejected. Symlinks pointing outside the staging directory are rejected.
+  - **Symlink handling:** Symlinks within archives are rejected by default. A `allowSymlinks: true` option can be set per RuntimeType for runtimes that require them, but even then symlinks must resolve within the workspace root.
+  - **Atomic cleanup:** If extraction fails at any point (invalid path, size limit, format error), all already-extracted files are removed from staging before the error is returned. The staging directory is returned to its pre-extraction state.
+  - **Size limits:** Total extracted size is checked against the per-session upload limit. Extraction aborts immediately if the limit is exceeded (no "extract then check").
 - Upload channel closes after workspace finalization
+
+> Clients can discover whether a runtime supports mid-session uploads by checking the `midSessionUpload` capability in the `GET /v1/runtimes` response before session creation.
 
 ### 7.4 Setup Commands
 
@@ -897,7 +989,7 @@ When a parent pod wants to delegate:
 1. Parent calls `delegate_task` (a gateway-backed tool injected into its session)
 2. Request includes: child runtime name, task spec, file export spec, delegation lease
 3. Gateway validates against parent's lease (depth, fan-out, budget)
-4. Gateway asks parent runtime to export files matching the export spec (see Section 8.7)
+4. Gateway asks parent runtime to export files matching the export spec (see Section 8.8)
 5. Gateway stores exported files durably (rebased to child workspace root)
 6. Gateway allocates child pod from specified pool
 7. Gateway streams rebased files into child before it starts
@@ -913,6 +1005,12 @@ When a parent pod wants to delegate:
 - (Later: richer MCP features as needed)
 
 **What the parent never sees:** Pod addresses, internal endpoints, raw credentials.
+
+**Virtual child interface lifecycle:**
+
+- **Storage:** Virtual child interfaces live in gateway per-session memory. On parent pod failure, the gateway reconstructs them from the task tree in SessionStore (which records all child session IDs, states, and pending results).
+- **Pending elicitations:** If a parent pod fails while an elicitation is pending from a child, the gateway holds that elicitation. When the parent resumes on a new pod, the gateway replays it via the re-injected virtual child interface (see the `children_reattached` event in Section 8.11).
+- **Replay on resume:** The gateway re-injects all active virtual child interfaces on parent resume. Each interface carries the child's current state (running, completed, failed) and any pending results or elicitations. The parent agent receives a `children_reattached` event with this state.
 
 ### 8.3 Delegation Lease
 
@@ -952,6 +1050,29 @@ Child leases are always **strictly narrower** than parent leases (depth decremen
 | `independent` | Child gets its own credential lease based on its own RuntimeType's default policy                             |
 | `deny`        | Child receives no LLM credentials (for runtimes that don't need LLM access, e.g., pure file-processing tools) |
 
+**Delegation Presets:** To reduce configuration burden, deployers can define named delegation presets:
+
+```yaml
+delegationPresets:
+  simple: # Single-level delegation, no fan-out
+    maxDepth: 1
+    maxChildrenTotal: 3
+    maxParallelChildren: 1
+    maxTokenBudget: 100000
+  standard: # Multi-level, moderate fan-out
+    maxDepth: 3
+    maxChildrenTotal: 10
+    maxParallelChildren: 3
+    maxTokenBudget: 500000
+  orchestrator: # Deep trees, high fan-out
+    maxDepth: 5
+    maxChildrenTotal: 50
+    maxParallelChildren: 10
+    maxTokenBudget: 2000000
+```
+
+Clients reference presets by name in the WorkspacePlan: `"delegationLease": "standard"`. Presets can be partially overridden with inline fields: `"delegationLease": {"preset": "standard", "maxDepth": 2}`. If no delegation lease is specified, the RuntimeType's default applies.
+
 ### 8.4 Approval Modes
 
 | Mode       | Behavior                                                                  |
@@ -971,7 +1092,7 @@ Injected into every delegation-capable pod:
 | `await_children(child_ids, mode)`  | Wait for multiple children (`all`, `any`, or `settled`)              |
 | `list_children()`                  | List active children with current status                             |
 | `cancel_child(child_id)`           | Cancel a child (cascades to its descendants per policy)              |
-| `export_workspace(paths)`          | Internal helper for file export (see Section 8.7 for rebasing rules) |
+| `export_workspace(paths)`          | Internal helper for file export (see Section 8.8 for rebasing rules) |
 | `request_lease_extension(request)` | Request more budget mid-session (see Section 8.6)                    |
 
 ### 8.6 Lease Extension
@@ -1011,7 +1132,7 @@ A parent agent can request more budget mid-session via the `request_lease_extens
 - Existing children are **unaffected** — their leases remain as originally granted
 - Only new children spawned after the extension benefit from the expanded parent budget
 
-**Audit:** Every extension request is logged with: requesting session, requested amounts, approval mode, outcome (approved/denied/modified), approver (gateway-auto or client), resulting new limits.
+**Audit:** Every extension request is logged with: requesting session, requested amounts, approval mode, outcome (approved/denied/modified), approver (gateway-auto or client), resulting new limits, gateway_replica_id, client_ip.
 
 ### 8.8 File Export Model
 
@@ -1055,10 +1176,12 @@ This means the parent controls what slice of its workspace becomes the child's w
 
 **Validation:**
 
+- Source glob resolution must not follow symlinks outside `/workspace/current`. The gateway resolves each matched path to its real path (`realpath`) and rejects any file whose resolved path is outside the workspace root. This prevents an agent from creating a symlink (e.g., `./data → /etc/passwd`) that would be included in the export.
 - Source globs are resolved inside the parent's `/workspace/current` only — no traversal outside the workspace
 - `destPrefix` must be a relative path, no `..`, no absolute paths
 - Total exported size is checked against `fileExportLimits` in the delegation lease
 - File count is checked against `fileExportLimits.maxFiles`
+- If multiple exports or `destPrefix` settings cause file overwrites in the child workspace, the gateway logs a warning with the overwritten paths and the export entry that caused it. This is audited in the session's delegation audit trail.
 
 ### 8.9 TaskResult Schema
 
@@ -1120,7 +1243,7 @@ On failure:
 **`await_children` modes:**
 
 - `all` — wait until all children complete or fail. Returns list of `TaskResult`.
-- `any` — return as soon as any child completes. Returns the first `TaskResult`.
+- `any` — return as soon as any child completes. Returns the first `TaskResult`. **Remaining children continue running** — they are not auto-cancelled. The parent can explicitly cancel them via `cancel_child` if desired.
 - `settled` — wait until all children reach a terminal state (completed, failed, or cancelled). Returns list of `TaskResult`.
 
 ### 8.10 Task Tree
@@ -1203,18 +1326,33 @@ Response flows back down the same chain. The gateway mediates every hop but **do
 
 **Elicitation provenance:** The gateway tags every elicitation with metadata before forwarding it up the chain:
 
-| Field              | Description                                                |
-| ------------------ | ---------------------------------------------------------- |
-| `origin_pod`       | Which pod initiated the elicitation                        |
-| `delegation_depth` | How deep in the task tree                                  |
-| `origin_runtime`   | Runtime type of the originating pod                        |
-| `purpose`          | Stated purpose (e.g., "oauth_login", "user_confirmation")  |
-| `connector_id`     | Registered connector ID (for OAuth flows)                  |
-| `expected_domain`  | Expected OAuth endpoint domain (for URL-mode elicitations) |
+| Field              | Description                                                             |
+| ------------------ | ----------------------------------------------------------------------- |
+| `origin_pod`       | Which pod initiated the elicitation                                     |
+| `delegation_depth` | How deep in the task tree                                               |
+| `origin_runtime`   | Runtime type of the originating pod                                     |
+| `purpose`          | Stated purpose (e.g., "oauth_login", "user_confirmation")               |
+| `connector_id`     | Registered connector ID (for OAuth flows)                               |
+| `expected_domain`  | Expected OAuth endpoint domain (for URL-mode elicitations)              |
+| `initiator_type`   | `connector` (gateway-registered connector) or `agent` (agent-initiated) |
 
-Client UIs **must** display provenance prominently so users can distinguish platform OAuth flows from agent-initiated prompts. URL-mode elicitation URLs are validated against the registered connector's expected OAuth endpoint domain.
+Client UIs **must** display provenance prominently so users can distinguish platform OAuth flows from agent-initiated prompts.
+
+**URL-mode elicitation security controls:**
+
+1. **Agent-initiated URL-mode blocked by default.** URL-mode elicitations (those containing a URL for the user to visit, e.g., OAuth flows) can only be initiated by gateway-registered connectors. Agent binaries cannot emit URL-mode elicitations unless explicitly allowlisted per-pool. This prevents a compromised agent from phishing users via crafted URLs.
+2. **URL domain validation is a hard enforcement boundary.** The gateway rejects any URL-mode elicitation whose URL domain does not match the registered connector's `expected_domain`. This is not a metadata annotation — the elicitation is dropped and an error is returned to the originator. Wildcards and subdomain matching follow the connector's registered domain policy.
+3. **Initiator type in provenance.** The provenance metadata includes an `initiator_type` field: `connector` (gateway-initiated via a registered connector) or `agent` (agent-initiated, only if allowlisted). Client UIs should render these with distinct trust indicators — connector-initiated elicitations carry higher trust than agent-initiated ones.
 
 **Depth-based restrictions:** Deployers can configure per-pool or global rules limiting which elicitation types are allowed at each delegation depth (e.g., children below depth 2 cannot trigger OAuth flows).
+
+**Deep elicitation suppression:** At delegation depth >= 3, agent-initiated elicitations are **auto-suppressed by default** unless the elicitation type appears in the pool's allow list. Suppressed elicitations return a `SUPPRESSED` response to the originating pod, which should handle it equivalently to "user declined." Deployers configure this via `elicitationDepthPolicy` per pool:
+
+- `allow_all` — no suppression at any depth
+- `suppress_at_depth: N` — suppress agent-initiated elicitations at depth N+
+- `block_all` — no elicitations from delegated sessions
+
+OAuth flows initiated by gateway-registered connectors are exempt from suppression at any depth, provided the connector is in the delegation lease's `allowedConnectors` list (these are gateway-initiated, not agent-initiated).
 
 **Elicitation Timeout Semantics:**
 
@@ -1238,7 +1376,7 @@ When a nested agent calls an external MCP tool requiring user auth:
 **Key invariants:**
 
 - Tokens never transit through pods. The gateway owns all downstream credential state.
-- **Connector access is scoped per delegation level.** The delegation lease includes `allowedConnectors` — a list of connector IDs the child is authorized to use. The gateway enforces this before proxying any external tool call. A child cannot use connectors not in its lease, even if tokens exist for them at the root level.
+- **Connector access is scoped per delegation level.** The delegation lease includes `allowedConnectors` — a list of connector IDs the child is authorized to use. The gateway validates the `connector_id` in every external tool call against the calling pod's delegation lease `allowedConnectors` list (see Section 8.3) before proxying. A child cannot use connectors not in its lease, even if tokens exist for them at the root level. This prevents a compromised child pod from accessing parent-level connectors it was not authorized to use.
 
 ---
 
@@ -1279,12 +1417,12 @@ Gateway replicas are stateless proxies over externalized state:
 
 ### 10.2 Authentication
 
-| Boundary          | Mechanism                                                          |
-| ----------------- | ------------------------------------------------------------------ |
-| Client → Gateway  | OIDC/OAuth 2.1 (MCP-standard protected resource server)            |
-| Automated clients | Service-to-service auth (client credentials grant)                 |
-| Gateway ↔ Pod     | mTLS + projected service account token (audience-bound, short TTL) |
-| Pod → Gateway     | Projected service account token (audience: `gateway-internal`)     |
+| Boundary          | Mechanism                                                                  |
+| ----------------- | -------------------------------------------------------------------------- |
+| Client → Gateway  | OIDC/OAuth 2.1 (MCP-standard protected resource server)                    |
+| Automated clients | Service-to-service auth (client credentials grant)                         |
+| Gateway ↔ Pod     | mTLS + projected service account token (audience-bound, short TTL)         |
+| Pod → Gateway     | Projected service account token (audience: deployment-specific, short TTL) |
 
 **Session capability context:** After authentication, the gateway mints a **signed JWT** via a pluggable `JWTSigner` interface. Two backends are supported:
 
@@ -1329,13 +1467,15 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 
 **Pod identity:** Agent pods use SPIFFE-compatible URIs as SANs. The gateway validates the SPIFFE URI against the expected pool/pod on each connection. Each gateway replica gets a distinct certificate so compromise of one replica can be detected and revoked independently.
 
-**Projected SA token:** Configured with `expirationSeconds: 900` (15 minutes). Kubelet auto-refreshes the token before expiry. The gateway validates the `aud: gateway-internal` audience claim on every pod→gateway request. The ServiceAccount bound to agent pods has **zero RBAC bindings** — no Kubernetes API access.
+**Projected SA token:** Configured with `expirationSeconds: 900` (15 minutes). Kubelet auto-refreshes the token before expiry. The gateway validates the audience claim on every pod→gateway request. The audience value **must be deployment-specific** — formatted as `lenny-gateway-<cluster-name>` — to prevent token replay across Lenny deployments sharing the same Kubernetes cluster. This is configurable via Helm value `global.saTokenAudience` (default: `lenny-gateway`). The ServiceAccount bound to agent pods has **zero RBAC bindings** — no Kubernetes API access. The projected SA token is one layer in a defense-in-depth strategy. It must be used alongside mTLS (the gateway validates the pod's SPIFFE certificate) and NetworkPolicy (only gateway pods can reach agent pods). None of these controls is sufficient alone — the SA token prevents token replay across audiences, mTLS prevents impersonation, and NetworkPolicy prevents unauthorized network access.
+
+**Admission-time RBAC enforcement:** A Kyverno or Gatekeeper policy must validate that ServiceAccounts used by agent pods in the `lenny-agents` and `lenny-agents-kata` namespaces have no RoleBindings or ClusterRoleBindings. This prevents accidental RBAC escalation — if a deployer or automation adds a binding to an agent SA, the policy blocks pod admission until the binding is removed. This complements the zero-RBAC-bindings design stated above by shifting enforcement left to admission time rather than relying solely on convention.
 
 **For long-running sessions (up to 7200s):** SA token refresh is handled transparently by kubelet. Certificate TTL (4h) is longer than max session age (2h), so no mid-session certificate rotation is needed under normal conditions.
 
 **cert-manager Failure Modes and CA Rotation:**
 
-1. **Warm pool cert awareness:** The warm pool controller should verify that newly created pods have valid certificates before marking them as `idle`. If cert-manager fails to issue a certificate within 60s of pod creation, the pod is marked as unhealthy and replaced.
+1. **Warm pool cert awareness:** The warm pool controller should verify that newly created pods have valid certificates before marking them as `idle`. If cert-manager fails to issue a certificate within 60s of pod creation, the pod is marked as unhealthy and replaced. Additionally, the controller continuously tracks certificate expiry on idle pods and proactively drains any idle pod whose certificate will expire within 30 minutes, replacing it with a fresh pod. This prevents the scenario where a pod idle for most of its 4h cert TTL is claimed with only minutes of validity remaining — insufficient for a session that may run up to 2h (see Section 4.6).
 2. **Alerting:** `CertExpiryImminent` alert (referenced in Section 16.5) fires if any certificate is within 1h of expiry — since auto-renewal should happen at 2/3 lifetime, this indicates a cert-manager failure.
 3. **cert-manager HA:** cert-manager should run with 2+ replicas and leader election in production. A single cert-manager failure should not prevent certificate renewal across the cluster.
 4. **CA rotation procedure:** When rotating the cluster-internal CA (e.g., annually or on compromise):
@@ -1344,6 +1484,8 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
    - Pods pick up new certificates on next rotation cycle (within 2/3 of their TTL)
    - After all certificates have rotated, remove the old CA from trust bundles
    - Gateway and controller trust bundles must include both CAs during the overlap window
+
+**Certificate revocation:** Short-lived certificates (4h TTL) are the primary mitigation against compromised pods — stolen certs expire quickly. For immediate revocation, the gateway maintains an in-memory **certificate deny list** keyed by SPIFFE URI or certificate serial number. When a pod is terminated for security reasons (e.g., anomalous behavior detected by the controller), the gateway adds its certificate to the deny list and rejects any subsequent mTLS connection presenting that cert. The deny list is propagated across gateway replicas via Redis pub/sub (with Postgres `LISTEN/NOTIFY` as fallback). Entries are ephemeral — each entry expires when the certificate's natural TTL lapses (at most 4h), keeping the list small.
 
 ### 10.4 Gateway Reliability
 
@@ -1378,6 +1520,8 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 
 **Warm Pool Controller:** Rolling update with leader election. During leader failover (~15s), existing sessions are unaffected; only new pod creation and scaling pause.
 
+**CRD schema versioning during rolling deploys:** CRDs follow Kubernetes API versioning conventions (shipping at `v1beta1` initially; see Section 15.5). During a rolling deploy, the gateway and controller may briefly run different versions that expect different CRD schemas. Conversion webhooks translate between CRD versions so both components operate correctly during the transition. CRD specs use `x-kubernetes-preserve-unknown-fields` on extensible sub-objects so that a controller running an older version does not crash on fields introduced by a newer gateway (or vice versa). CRD schema changes follow the same expand-contract discipline as database migrations (above): new fields are added first, both versions write them, then old fields are removed in a subsequent release.
+
 **Runtime adapters and agent binaries:** Versioned pool rotation:
 
 1. Deploy new `AgentPool` CRD with updated image (e.g., `claude-worker-v2-sandboxed-medium`)
@@ -1386,6 +1530,12 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 4. Once old pool is fully drained, remove old `AgentPool` CRD
 
 This avoids in-place image changes and ensures no session is disrupted by an upgrade.
+
+**Rollback and safe rotation rules:**
+
+- **Never delete the old `AgentPool` CRD until the new pool is verified and the old pool is fully drained.** This is the key safety rule.
+- **Safe rotation sequence:** (1) Deploy new pool, (2) verify new pool pods pass health checks, (3) route a canary percentage of new sessions to the new pool, (4) only after validation, set old pool's `minWarm` to 0, (5) only after old pool fully drains, delete old `AgentPool` CRD.
+- **Rollback procedure:** If the new pool version is broken, recreate the old `AgentPool` CRD (same config, old image digest). Since pool rotation is additive (new pool created before old pool is drained), the old pool's config should be retained in version control or Helm values until the new pool is verified.
 
 **Token/Connector Service:** Rolling Deployment update. Stateless — reads from Postgres/Redis, so no special migration needed for the service itself.
 
@@ -1430,6 +1580,8 @@ This avoids in-place image changes and ensures no session is disrupted by an upg
 **Budget inheritance:** Children inherit strictly narrower budgets. A parent cannot bypass top-level limits by spawning many children.
 
 **Hierarchical Quota Model:** Quotas are enforced hierarchically: global → tenant → user. A user quota cannot exceed its tenant's quota. Tenant quotas are configured via the admin API or Helm values. Soft warnings are emitted at 80% of quota utilization, surfaced as billing events per Section 11.2.1. Hard limits are enforced at 100% — new sessions or requests are rejected with a `QUOTA_EXCEEDED` error. Quota reset periods are configurable per quota type: hourly, daily, monthly, or rolling window.
+
+**Quota Update Timing:** Token usage quotas are updated in real-time via Redis counters. The runtime adapter extracts token counts from LLM provider responses and reports them to the gateway via the `ReportUsage` RPC (Section 4.7). The gateway increments Redis counters on each usage report — it does not parse LLM provider responses directly. Postgres is updated periodically (every 60 s per session) as a durable checkpoint, and on session completion as final reconciliation. The gateway enforces budget limits against Redis counters (fast path); if a session exceeds its token budget, the gateway terminates it immediately rather than waiting for session completion. During Redis unavailability (fail-open window), the gateway tracks usage in-memory per session and enforces the per-session budget locally. Only cross-session and per-tenant quotas may drift during this window (bounded per DevOps-M2).
 
 #### 11.2.1 Billing Event Stream
 
@@ -1485,6 +1637,10 @@ Events are published to a deployer-configured sink. Supported sinks:
 | Max elicitations/session | 50      | Yes (per pool)     |
 
 Cancellation is first-class: clients and parent agents can cancel sessions/tasks cleanly.
+
+**Session expiry warning:** The gateway sends a `session_expiring_soon` event to the client and pod 5 minutes before `maxSessionAge` expires. This gives the agent time to checkpoint and the client time to extend or wrap up. The agent receives a `DEADLINE_APPROACHING` signal via the adapter.
+
+> **Note:** The 2h default is a conservative starting point. Deployers should tune `maxSessionAge` per RuntimeType based on expected workload duration.
 
 ### 11.4 User Invalidation
 
@@ -1544,7 +1700,7 @@ Every session/task/delegation produces durable records:
 - External tool access and auth prompts
 - Denial reasons
 
-**Integrity:** Audit tables use **append-only semantics** — the gateway's database role has INSERT but no UPDATE or DELETE grants on audit tables. For high-assurance deployments, audit events should additionally be streamed to an external immutable log (e.g., SIEM, cloud audit service, or append-only object storage).
+**Integrity:** Audit tables use **append-only semantics** — the gateway's database role (`lenny_app`) has INSERT-only grants on audit tables (no UPDATE, DELETE). These grants are defined in the schema migration files and verified by a startup health check — the gateway queries `information_schema.role_table_grants` at startup and logs a warning if UPDATE or DELETE grants are found on audit tables. Deployers should run periodic drift checks (e.g., via CI) to ensure grants haven't been modified. For production deployments, audit events **must** be streamed to an external immutable log (SIEM, cloud audit service, or append-only object storage) in addition to Postgres storage. This ensures audit integrity even if the database is compromised.
 
 ### 11.8 Billing Event Stream
 
@@ -1635,13 +1791,13 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 - RPO: 0 (synchronous replication — no committed transaction lost)
 - RTO: < 30s (automatic failover)
 
-**Backups:** Daily base backups + continuous WAL archival. Restore tested quarterly.
+**Backups:** Daily base backups + continuous WAL archival. Restore tested monthly (see Section 17.3 for the `lenny-restore-test` CronJob procedure).
 
 ### 12.4 Redis HA and Failure Modes
 
 **Minimum topology:** Redis Sentinel (3 sentinels, 1 primary + 1 replica). Redis Cluster if sharding is needed at scale.
 
-**Security:** Redis AUTH (ACLs) and TLS are **required**. Cached access tokens are encrypted before storage in Redis (not stored as plaintext).
+**Security:** Redis AUTH (ACLs) and TLS are **required**. Cached access tokens are encrypted before storage in Redis (not stored as plaintext). Tokens are encrypted using AES-256-GCM with a key derived from the Token Service's envelope encryption key; each cached token is stored as `{nonce || ciphertext || tag}`, and the encryption key is rotated alongside the envelope key (Section 10.5).
 
 **Failure behavior per use case:**
 
@@ -1652,6 +1808,8 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 | Routing cache              | **Fall back** to Postgres lookup                                                                                            |
 | Cached access tokens       | **Re-fetch** from TokenStore (Postgres)                                                                                     |
 | Quota counters             | **Fail open** for short window, reconcile from Postgres when restored                                                       |
+
+**Quota counter reconciliation after fail-open:** When Redis recovers, the gateway reconciles quota counters by querying Postgres for actual usage (session token counts, active sessions) and resetting Redis counters to match. Maximum drift during fail-open is bounded by the window duration (default 60s per Sec-H5) multiplied by request rate — at 100 req/s per tenant, worst-case drift is ~6,000 requests. Reconciliation runs automatically when Redis becomes available and completes within seconds. During reconciliation, the gateway falls back to Postgres-backed counters (slower but accurate).
 
 **Bounded fail-open for rate limiting:** When Redis becomes unavailable, the gateway starts a fail-open timer per replica. During the fail-open window, requests are allowed, a `rate_limit_degraded` metric is incremented, and an alert fires. After the window expires, if Redis is still unavailable, rate limiting fails **closed** — new requests are rejected with 429 until Redis recovers. **Emergency hard limit:** Each gateway replica maintains an in-memory per-user request counter as a coarse emergency backstop. This counter is not shared across replicas (so the effective limit is `N * per_replica_limit`) but prevents a single user from sending unlimited requests through one replica during the fail-open window. The `rateLimitFailOpenMaxSeconds` is configurable per deployment (default 60s).
 
@@ -1667,11 +1825,16 @@ Abstract by **storage role**, not by raw database API. Each store exposes domain
 
 **Do not use Postgres for blob storage.** Workspace checkpoints (up to 500MB) cause TOAST overhead, vacuum pressure, and degrade transactional workload performance.
 
+**Encryption at rest:** All stored objects (checkpoints, workspace snapshots, session transcripts) contain sensitive data including conversation history and workspace file contents. MinIO server-side encryption (SSE-S3 or SSE-KMS) must be enabled for production deployments. For cloud deployments using managed object storage (S3, GCS, Azure Blob), encryption at rest is typically enabled by default. For self-hosted MinIO, enable SSE with a KMS backend (HashiCorp Vault, AWS KMS) or at minimum SSE-S3 with MinIO's internal key management.
+
 **Checkpoint retention policy:**
 
 - Keep only the latest 2 checkpoints per active session
 - Delete all checkpoints when session terminates and resume window expires
-- Background GC job runs every 15 minutes to clean expired artifacts
+- Background GC job runs every 15 minutes to clean expired artifacts. The job is owned by the gateway — it runs as a leader-elected goroutine inside the gateway process (not a separate CronJob). Only one gateway instance runs GC at a time via the existing leader-election lease.
+- The GC job is idempotent: it queries Postgres for artifacts past their TTL, deletes them from MinIO, then marks the rows as `deleted` in Postgres. Re-running on the same set is safe because MinIO delete-on-absent is a no-op and the Postgres update is conditional on current state.
+- Individual artifact deletion failures are retried independently — one stuck artifact does not block cleanup of others. On cycle failure the job logs the error, increments the error counter, and retries on the next 15-minute cycle.
+- **Monitoring:** `lenny_gc_runs_total` (counter), `lenny_gc_artifacts_deleted` (counter), `lenny_gc_errors_total` (counter), `lenny_gc_duration_seconds` (histogram). Alert rule `ArtifactGCBacklog` (Section 16.5) fires when expired artifacts pending cleanup exceeds 1 000.
 - Session artifact retention: configurable TTL (default 7 days), extendable per session
 
 ### 12.6 Interface Design
@@ -1803,7 +1966,17 @@ spec:
 
 > **Note:** The namespace selectors above use `kubernetes.io/metadata.name` rather than custom labels like `lenny.dev/component`. This is an immutable label set by the Kubernetes API server on namespace creation -- it cannot be added to or spoofed on other namespaces, unlike custom labels. This prevents an attacker who can create namespaces from bypassing network isolation by applying a matching custom label.
 
-**Per-pool egress relaxation:** Pools that need internet access (e.g., for LLM API calls) get additional NetworkPolicy resources allowing egress to specific CIDR ranges or services. These are created by the warm pool controller based on the pool's `egressProfile`.
+**Per-pool egress relaxation:** Pools that need internet access (e.g., for LLM API calls) get additional NetworkPolicy resources allowing egress to specific CIDR ranges or services. These policies are **pre-created** by the Helm chart (or deployer) using label selectors that match pool labels (e.g., `lenny.dev/pool: <pool-name>`, `lenny.dev/egress-profile: restricted`). The warm pool controller does NOT create or modify NetworkPolicies — it only labels pods with the appropriate pool and egress-profile labels so that the pre-created policies take effect. This avoids granting the controller RBAC permissions for NetworkPolicy resources.
+
+**`egressProfile` enum:**
+
+| Profile                | Egress Allowed                                 | Use Case                                              |
+| ---------------------- | ---------------------------------------------- | ----------------------------------------------------- |
+| `restricted` (default) | Gateway + DNS proxy only                       | Agent pods that use the LLM proxy; no direct internet |
+| `provider-direct`      | Gateway + DNS proxy + LLM provider CIDRs       | Direct LLM API access (Bedrock, Vertex endpoints)     |
+| `internet`             | Gateway + DNS proxy + all internet (0.0.0.0/0) | Pods needing package install, web access              |
+
+> **Note:** CIDR ranges for `provider-direct` are maintained in the Helm values (`egressCIDRs.providers`) and updated by deployers when provider endpoints change. NetworkPolicies reference these CIDRs via pre-created policies (per K8s-M3).
 
 **DNS exfiltration mitigation:** A dedicated **CoreDNS instance** runs in `lenny-system` (labeled `lenny.dev/component: coredns`) and serves as the DNS resolver for all agent namespaces by default. The `allow-pod-egress-base` NetworkPolicy above routes DNS traffic exclusively to this instance — agent pods cannot reach `kube-system` DNS directly.
 
@@ -1947,8 +2120,8 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
 
 **Field notes:**
 
-- `env`: Key-value environment variables injected into the agent session. Validated against a deployer-configured allowlist (blocks sensitive names like `AWS_SECRET_ACCESS_KEY`).
-- `labels`: User-defined metadata for querying and organizing sessions. Not used for internal routing.
+- `env`: Key-value environment variables injected into the agent session. Validated against a deployer-configured blocklist of denied environment variable names/patterns (e.g., `AWS_SECRET_ACCESS_KEY`, `ANTHROPIC_API_KEY`, `*_SECRET_*`). Any env var matching the blocklist is rejected; everything else is allowed.
+- `labels`: User-defined metadata for querying and organizing sessions. Not used for internal routing. Labels are indexed in the session store and filterable in all query APIs: `GET /v1/sessions` (list), `GET /v1/usage` (usage reports), `GET /v1/metering/events` (billing events). This enables cost attribution by project, team, ticket, or any custom dimension.
 - `timeouts`: Per-session overrides, capped by deployer policy. Cannot exceed the RuntimeType's `limits.maxSessionAge`.
 - `callbackUrl`: Optional webhook. Gateway POSTs a `SessionComplete` payload when the session reaches a terminal state. Because this field accepts a URL from the client, it is a potential SSRF vector. The following mitigations apply:
   1. **URL validation.** The value must be an HTTPS URL (no HTTP, no non-HTTP schemes). It must parse as a valid URL with a public DNS hostname. IP literals, `localhost`, loopback addresses, and link-local addresses are rejected at submission time.
@@ -1983,7 +2156,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
   **Idempotency:** Each event has a unique `idempotency_key`. Receivers should deduplicate by this key.
 
 - `credentialPolicy`: Controls how LLM provider credentials are assigned. `preferredSource` can be `pool`, `user`, `prefer-user-then-pool`, or `prefer-pool-then-user`. If omitted, the RuntimeType's default policy is used. See Section 4.9.
-- `runtimeOptions`: Passed through to the agent binary. Schema is runtime-specific.
+- `runtimeOptions`: Runtime-specific options passed through to the agent binary. If the target RuntimeType defines a `runtimeOptionsSchema` (a JSON Schema document), the gateway validates `runtimeOptions` against it at session creation time and rejects invalid options with a descriptive error. If no schema is registered, options are passed through as-is (backward compatible) but a warning is logged. Maximum size: 64 KB.
 
 ---
 
@@ -2034,12 +2207,40 @@ The REST API covers all non-interactive operations. It is the primary integratio
 
 **Admin:**
 
-| Method | Endpoint              | Description                                                                                  |
-| ------ | --------------------- | -------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/runtimes`        | List registered runtime types                                                                |
-| `GET`  | `/v1/pools`           | List pools and warm pod counts                                                               |
-| `GET`  | `/v1/usage`           | Usage report (filterable by tenant, user, window)                                            |
-| `GET`  | `/v1/metering/events` | Paginated billing event stream (filterable by tenant, user, session, time range, event type) |
+| Method | Endpoint                                  | Description                                                                                                                                                                                                            |
+| ------ | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/runtimes`                            | List registered runtime types and their capabilities (`midSessionUpload`, `delegation`, `elicitation`, `checkpoint`, `preConnect`). Clients can check these before creating a session to determine available features. |
+| `GET`  | `/v1/pools`                               | List pools and warm pod counts                                                                                                                                                                                         |
+| `GET`  | `/v1/usage`                               | Usage report (filterable by tenant, user, window, labels)                                                                                                                                                              |
+| `GET`  | `/v1/metering/events`                     | Paginated billing event stream (filterable by tenant, user, session, time range, event type, labels)                                                                                                                   |
+| `POST` | `/v1/admin/pools/{name}/drain`            | Drain a pool (set minWarm to 0, prevent new claims)                                                                                                                                                                    |
+| `PUT`  | `/v1/admin/pools/{name}/warm-count`       | Adjust minWarm/maxWarm at runtime                                                                                                                                                                                      |
+| `POST` | `/v1/admin/sessions/{id}/force-terminate` | Force-terminate a session (bypasses graceful shutdown)                                                                                                                                                                 |
+
+**`GET /v1/usage` response schema:**
+
+```json
+{
+  "period": { "start": "2025-01-01T00:00:00Z", "end": "2025-01-31T23:59:59Z" },
+  "totalSessions": 1523,
+  "totalTokens": { "input": 45000000, "output": 22000000 },
+  "totalPodMinutes": 12500.5,
+  "byTenant": [
+    {
+      "tenantId": "t1",
+      "sessions": 800,
+      "tokens": { "input": 25000000, "output": 12000000 }
+    }
+  ],
+  "byRuntime": [
+    {
+      "runtime": "claude-worker",
+      "sessions": 1200,
+      "tokens": { "input": 38000000, "output": 18000000 }
+    }
+  ]
+}
+```
 
 ### 15.2 MCP API
 
@@ -2072,6 +2273,16 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 - Tasks (for long-running session lifecycle and delegation)
 - Elicitation (for user prompts, auth flows)
 - Streamable HTTP transport
+
+#### 15.2.1 REST/MCP Consistency Contract
+
+The REST API (Section 15.1) and MCP tools (Section 15.2) intentionally overlap for operations like session creation, status queries, and artifact retrieval. Three rules govern this overlap:
+
+1. **Semantic equivalence.** REST and MCP endpoints that perform the same operation (e.g., `POST /v1/sessions` and `create_session` MCP tool) must return semantically identical responses. Both API surfaces share a common service layer in the gateway so that business logic, validation, and response shaping are implemented exactly once.
+
+2. **Tool versioning.** MCP tool schema evolution is governed by Section 15.5 (API Versioning and Stability), item 2.
+
+3. **Shared error taxonomy.** All error responses — REST and MCP — use the error categories defined in Section 16.3 (`TRANSIENT`, `PERMANENT`, `POLICY`, `UPSTREAM`). REST errors return a JSON body: `{"error": {"code": "QUOTA_EXCEEDED", "category": "POLICY", "message": "...", "retryable": false}}`. MCP tool errors use the same `code` and `category` fields inside the MCP error response format, so clients can apply a single error-handling strategy regardless of API surface.
 
 ### 15.3 Internal Control API (Custom Protocol)
 
@@ -2182,6 +2393,14 @@ Community contributors and integrators need clear guarantees about which APIs ar
    - `beta`: May change between minor releases with deprecation notice.
    - `alpha`: May change without notice.
 
+### 15.6 Client SDKs
+
+Lenny provides official client SDKs for **Go** and **TypeScript/JavaScript** as part of the v1 deliverables. SDKs encapsulate session lifecycle management, MCP streaming with automatic reconnect-with-cursor, file upload multipart handling, webhook signature verification, and error handling with retries — logic that is complex and error-prone to re-implement from the protocol specs alone.
+
+SDKs are generated from the OpenAPI spec (REST) and MCP tool schemas, with hand-written streaming and reconnect logic layered on top. Community SDKs for other languages can build on the published OpenAPI spec and the MCP protocol specification.
+
+Client SDKs follow the same versioning scheme as the API surfaces they wrap (Section 15.5): SDK major versions track REST API versions, and SDK releases note any MCP tool schema changes.
+
 ---
 
 ## 16. Observability
@@ -2258,6 +2477,8 @@ This lets operators identify whether bottlenecks are in pod allocation, file upl
 | `session.checkpoint`         | Gateway + Pod                         |
 | `session.seal_and_export`    | Gateway + Pod                         |
 
+**Sampling and backend:** Head-based sampling at a default rate of 10% for normal operations (configurable via `global.traceSamplingRate` Helm value). 100% sampling is applied for errors (any span with error status), slow requests (session creation exceeding P99 latency), and delegation trees (all spans in a tree are sampled if the root is sampled, preserving trace completeness). The trace pipeline uses OpenTelemetry Collector; the platform emits OTLP traces and the collector handles sampling, batching, and export. The backend is deployer-configured — Jaeger, Tempo, Zipkin, or cloud-native options (Cloud Trace, X-Ray) are all supported. In dev mode, 100% sampling is enabled with a local Jaeger instance (or stdout exporter for `make run`).
+
 **Error codes:** Structured error taxonomy with categories:
 
 - `TRANSIENT` — retryable (pod crash, network timeout)
@@ -2272,6 +2493,9 @@ This lets operators identify whether bottlenecks are in pod allocation, file upl
 - Setup command stdout/stderr captured and stored in EventStore
 - Audit events for all policy decisions
 - Error events include structured error codes (TRANSIENT/PERMANENT/POLICY/UPSTREAM)
+- **Credential-sensitive RPCs** (`AssignCredentials`, `RotateCredentials`) are excluded from payload-level logging, gRPC access logs, and OTel trace span attributes. Only RPC name, lease ID, provider type, and outcome are recorded.
+
+**Log retention and EventStore management.** EventStore tables (audit events, session logs, stream cursors) are partitioned by time using native Postgres range partitioning. A background job drops partitions beyond the retention window: 90 days for audit events, 30 days for session logs, 7 days for stream cursors. Estimated volume is ~10 KB per session for audit events and ~50 KB for logs; at 10K sessions/day this is ~600 MB/day before retention cleanup. Deployers should configure an external log aggregation stack (ELK, Loki, CloudWatch, etc.) for long-term retention beyond the Postgres window.
 
 ### 16.5 Alerting Rules and SLOs
 
@@ -2359,13 +2583,13 @@ pod-security.kubernetes.io/audit: restricted
 - Postgres: primary and sync replica in different availability zones
 - Redis: Sentinel nodes spread across zones
 - Gateway: replicas spread via topology spread constraints
-- Agent pods: spread via pool-level topology constraints
+- Agent pods: spread via pool-level topology constraints (see Section 5.2)
 
 **Backup schedule:**
 
 - Postgres: continuous WAL archival + daily base backups to object storage
 - MinIO: daily bucket replication or backup
-- Restore tested quarterly
+- Restore testing recommended monthly (configurable by deployer via CronJob schedule) via `lenny-restore-test` CronJob that: (1) creates a temporary Postgres instance from the latest base backup + WAL, (2) verifies schema integrity and row counts against the primary, (3) runs a smoke query (e.g., list recent sessions), (4) records elapsed restore time and emits `lenny_restore_test_success` / `lenny_restore_test_duration_seconds` metrics, and (5) tears down the test instance. Alert if measured RTO exceeds targets (< 30s Postgres, < 5min MinIO). MinIO restore is validated in the same job via a test bucket restore and object checksum comparison.
 
 **Zone failure blast radius:** Loss of one zone causes:
 
@@ -2419,6 +2643,10 @@ Suitable for:
 - CI integration tests
 - Production-like local environment validation
 
+#### Observability in dev mode (OSS-L2)
+
+Tier 2 (`docker compose up`) includes optional observability containers: Prometheus (metrics scraping), Grafana (pre-built Lenny dashboard), and Jaeger (distributed tracing). Enable with `docker compose --profile observability up`. Tier 1 (`make run`) outputs traces to stdout and exposes Prometheus metrics on `:9090/metrics`.
+
 #### Zero-credential mode
 
 In both tiers, the gateway can operate without LLM provider credentials by using a **built-in echo/mock agent runtime** that does not require an LLM provider. The echo runtime replays deterministic responses, allowing contributors to test platform mechanics (session lifecycle, workspace materialization, delegation flows) without providing any API keys. This is the default runtime in Tier 1 and can be selected explicitly in Tier 2 via `LENNY_AGENT_RUNTIME=echo`.
@@ -2430,6 +2658,12 @@ Dev mode relaxes security defaults (TLS, JWT signing) for local convenience, but
 1. **Hard startup assertion:** The gateway **refuses to start** with TLS disabled unless the environment variable `LENNY_DEV_MODE=true` is explicitly set. Any other value, or absence of the variable, causes an immediate fatal error at startup. This ensures a misconfigured staging or production deployment cannot silently run without encryption.
 2. **Prominent startup warning:** When `LENNY_DEV_MODE=true` is set, the gateway logs at `WARN` level on every startup: `"WARNING: TLS disabled — dev mode active. Do not use in production."` The warning is repeated every 60 seconds while the process is running.
 3. **Unified security-relaxation gate:** The `LENNY_DEV_MODE` flag is the single gate for all security relaxations in dev mode, including TLS bypass, JWT signing bypass (see Sec-H1), and any future relaxations. No individual security feature can be disabled independently without this flag.
+
+For adapter authors who need to test TLS behavior, setting `LENNY_DEV_TLS=true` (requires `LENNY_DEV_MODE=true`) enables self-signed mTLS certificates that are auto-generated on first run, allowing testing of certificate validation, rotation, and error handling without a full cert-manager setup.
+
+#### Smoke test
+
+Both dev mode tiers include a built-in smoke test: `make test-smoke` (Tier 1) or `docker compose run smoke-test` (Tier 2) creates a session with the echo runtime, sends a prompt, verifies a response, and exits. This validates the entire pipeline (gateway, controller-sim, runtime adapter, agent binary) in under 10 seconds.
 
 ### 17.5 Cloud Portability
 
@@ -2459,6 +2693,41 @@ CRDs are installed via the chart but can be managed separately for GitOps workfl
 
 **GitOps:** The Helm chart supports `helm template` rendering for ArgoCD/Flux integration.
 
+### 17.7 Operational Runbooks
+
+Lenny must ship with operational runbooks for key failure scenarios as part of the documentation deliverables. The minimum required set:
+
+- **Warm pool exhaustion** — diagnosis, emergency scaling, root cause analysis
+- **Postgres failover** — verification, connection pool drain, health checks
+- **Redis failure and recovery** — quota reconciliation, cache rebuild
+- **Credential pool exhaustion** — diagnosis, emergency key addition
+- **Gateway replica failure** — stream reconnection, session recovery
+- **cert-manager outage** — warm pool impact, manual certificate issuance
+- **MinIO failure** — artifact retrieval degradation, restore procedure
+
+Each runbook references the relevant alerts defined in Section 16.5. Runbooks are version-controlled alongside the platform code in `docs/runbooks/`.
+
+> **Note (OSS-L3):** The Lenny documentation targets three operator skill tiers: (1) **Developer** — uses `make run` or docker-compose, no K8s knowledge needed. (2) **Platform operator** — deploys via Helm, manages pools and scaling, follows runbooks for common issues. (3) **Cluster admin** — configures RuntimeClasses, node pools, network policies, and handles node drain/checkpoint integration. The Helm chart and documentation are structured to serve all three tiers, with progressive complexity.
+
+### 17.5 Operational Defaults — Quick Reference
+
+All tunable defaults collected in one place for operator convenience.
+
+| Setting                     | Default              | Reference |
+| --------------------------- | -------------------- | --------- |
+| Artifact retention TTL      | 7 days               | §12.5     |
+| Checkpoint retention        | Latest 2 per session | §12.5     |
+| GC cycle interval           | 15 min               | §12.5     |
+| Max session age             | 7200 s (2 h)         | §11.3     |
+| Max idle time               | 600 s                | §11.3     |
+| Max resume window           | 900 s                | §11.3     |
+| Rate limit fail-open window | 60 s                 | §12.4     |
+| Audit event retention       | 90 days              | §16.4     |
+| Session log retention       | 30 days              | §16.4     |
+| Pod cert TTL                | 4 h                  | §10.3     |
+
+All values are overridable via Helm values or the corresponding CRD field. See each referenced section for detailed semantics.
+
 ---
 
 ## 18. Build Sequence
@@ -2473,6 +2742,9 @@ CRDs are installed via the chart but can be managed separately for GitOps workfl
 
 | 4 | Session manager + session lifecycle + REST API | Full create → upload → attach → complete flow |
 | 5 | Gateway edge (auth, routing, upload proxy, MCP server) | Clients can create and use sessions via REST and MCP |
+
+> **Note:** Phase 5 sessions use the zero-credential echo runtime (Phase 2) for end-to-end testing. Real LLM credentials require Phase 11. The gateway supports sessions without credentials when the RuntimeType does not declare `supportedProviders`.
+
 | 6 | Interactive session model (streaming, prompts, reconnect with event replay) | Full interactive sessions work |
 | 7 | Policy engine (rate limits, auth, budgets, tenant_id) | Production-grade admission |
 | 8 | Checkpoint/resume + artifact seal-and-export | Sessions survive pod failure; artifacts retrievable |
@@ -2483,6 +2755,8 @@ CRDs are installed via the chart but can be managed separately for GitOps workfl
 | 13 | Audit logging, OpenTelemetry tracing, observability | Operational readiness |
 | 14 | Hardening (gVisor/Kata, NetworkPolicy manifests, image signing, egress lockdown) | Security profiles |
 | 15 | Production-grade docker-compose, documentation, community guides | Full community onboarding |
+
+> **Open-source readiness:** Lenny is designed as an open-source project. Contribution guidelines (`CONTRIBUTING.md`), governance model, and community communication channels will be established as part of Phase 2 (alongside the `make run` quick-start). The technical design prioritizes community extensibility through pluggable credential providers, a published runtime adapter contract, and a clear SDK boundary.
 
 ---
 
@@ -2499,12 +2773,14 @@ These were open questions from the initial design, now resolved:
 | 5   | Service mesh dependency          | cert-manager + manual mTLS. No Istio/Linkerd requirement (fewer deps for community adoption).                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 6   | Default isolation                | gVisor (`sandboxed`) is the default. `runc` requires explicit deployer opt-in.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 7   | Blob storage                     | MinIO. Never Postgres for blobs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 8   | Delegation file export structure | Source glob base path is stripped; files are rebased to child workspace root. Optional `destPrefix` prepends a path. Parent controls the slice; child sees clean root-relative structure. See Section 8.7.                                                                                                                                                                                                                                                                                                                                           |
+| 8   | Delegation file export structure | Source glob base path is stripped; files are rebased to child workspace root. Optional `destPrefix` prepends a path. Parent controls the slice; child sees clean root-relative structure. See Section 8.8.                                                                                                                                                                                                                                                                                                                                           |
 | 9   | Inter-child data passing         | No first-class `pipe_artifacts` operation. Parents use the existing export→re-upload flow via `delegate_task` file exports. Simpler; avoids a new gateway primitive.                                                                                                                                                                                                                                                                                                                                                                                 |
 | 10  | Setup command policy             | Allowlist is the recommended default for multi-tenant deployments; blocklist is a convenience guard (not a security boundary) for single-tenant scenarios. `shell: false` mode prevents metacharacter injection via direct exec. The real security boundary is the pod sandbox (gVisor/Kata, non-root UID, read-only root, network policy). See Section 7.4.                                                                                                                                                                                         |
 | 11  | Billing/showback                 | Track per-session, per-token, and per-minute usage. Expose via REST API (`GET /v1/usage`). Filterable by tenant, user, runtime, and time window.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | 12  | Session forking                  | Not supported. The `fork_session` concept is dropped. Clients can derive a new session from a previous one by: (1) downloading the previous session's workspace snapshot via `GET /v1/sessions/{id}/workspace`, (2) creating a new session, (3) uploading the snapshot as an `uploadArchive` source in the new session's WorkspacePlan. The gateway also provides a convenience endpoint `POST /v1/sessions/{id}/derive` that performs steps 1-3 atomically — it creates a new session pre-populated with the previous session's workspace snapshot. |
 | 13  | Lease extension                  | Supported. Parents can request more budget mid-session via `request_lease_extension`. Default approval via client elicitation; auto-approval opt-in. Extensions can never exceed deployer caps or the parent's own lease. See Section 8.6.                                                                                                                                                                                                                                                                                                           |
+
+Each decision above is a summary; full Architecture Decision Records (ADRs) with context, alternatives considered, and consequences will be maintained in `docs/adr/` as separate documents following the MADR format, with this table serving as an index.
 
 ## 20. Open Questions
 

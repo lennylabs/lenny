@@ -545,122 +545,122 @@ Lenny has four versioned surfaces that third parties depend on: REST API, MCP to
 
 ### Kubernetes
 
-| ID     | Finding                                                                                                                        | Section |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| K8s-M1 | Leader election params (15s/10s/2s) are controller-runtime defaults and are appropriate; increasing them would lengthen the failover dead zone. Keep defaults. The real mitigation is warm pool sizing and gateway queueing (see DevOps-H5). | 4.6 |
-| K8s-M2 | 4h cert TTL on pods idle for 3.9h leaves 6min validity when claimed; track cert expiry in pod health                           | 10.3    |
-| K8s-M3 | Controller creating NetworkPolicy per pool requires high-privilege RBAC; use pre-created policies with label selectors instead | 13.2    |
-| K8s-M4 | No topology spread constraints specified for agent pods; define defaults in AgentPool spec                                     | 17.3    |
-| K8s-M5 | RuntimeClass overhead values not quantified; provide reference manifests for gVisor (~200m/200Mi) and Kata (~500m/500Mi)       | 5.3     |
-| K8s-M6 | tmpfs memory accounting not included in resource class definitions; pods will OOMKill during large session file accumulation   | 6.4     |
-| K8s-M7 | SA token audience `gateway-internal` needs explicit statement that mTLS + NetworkPolicy are required companion controls        | 10.3    |
-| K8s-M8 | No CRD CEL/OpenAPI validation rules; malformed AgentPool specs (minWarm > maxWarm) will cause controller panics                | 4.6     |
+| ID     | Finding                                                                                                                        | Section | Status |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ | ------- | ------ |
+| K8s-M1 | Leader election params (15s/10s/2s) are controller-runtime defaults and are appropriate; increasing them would lengthen the failover dead zone. Keep defaults. The real mitigation is warm pool sizing and gateway queueing (see DevOps-H5). | 4.6 | ✅ Already resolved by DevOps-H5 fix — warm pool sizing formula and gateway queueing now in Section 4.6 |
+| K8s-M2 | 4h cert TTL on pods idle for 3.9h leaves 6min validity when claimed; track cert expiry in pod health                           | 10.3    | ✅ Controller proactively replaces idle pods whose certs expire within 30min (Sections 4.6, 10.3) |
+| K8s-M3 | Controller creating NetworkPolicy per pool requires high-privilege RBAC; use pre-created policies with label selectors instead | 13.2    | ✅ NetworkPolicies are now pre-created by Helm with label selectors; controller only labels pods (Section 13.2) |
+| K8s-M4 | No topology spread constraints specified for agent pods; define defaults in AgentPool spec                                     | 17.3    | ✅ Default `topologySpreadConstraints` added to Section 5.2 (soft spread across zones and nodes) |
+| K8s-M5 | RuntimeClass overhead values not quantified; provide reference manifests for gVisor (~200m/200Mi) and Kata (~500m/500Mi)       | 5.3     | ✅ Reference overhead table added to Section 5.3 (runc: none, gVisor: ~200m/200Mi, Kata: ~500m/500Mi) |
+| K8s-M6 | tmpfs memory accounting not included in resource class definitions; pods will OOMKill during large session file accumulation   | 6.4     | ✅ tmpfs `sizeLimit` guidance added to Section 6.4 (256Mi for /sessions/ and /tmp/) with resource accounting note |
+| K8s-M7 | SA token audience `gateway-internal` needs explicit statement that mTLS + NetworkPolicy are required companion controls        | 10.3    | ✅ Defense-in-depth statement added to Section 10.3 explaining SA token + mTLS + NetworkPolicy as complementary controls |
+| K8s-M8 | No CRD CEL/OpenAPI validation rules; malformed AgentPool specs (minWarm > maxWarm) will cause controller panics                | 4.6     | ✅ CRD validation paragraph added to Section 4.6 with CEL rules and reconciliation-time defense-in-depth |
 
 ### Security
 
-| ID     | Finding                                                                                                                           | Section   |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| Sec-M1 | AssignCredentials/RotateCredentials RPCs must be excluded from payload-level logging, gRPC access logs, and OTel trace attributes | 4.7, 13.3 |
-| Sec-M2 | MinIO encryption at rest not specified; checkpoints containing conversation history stored in plaintext                           | 4.4, 12.5 |
-| Sec-M3 | *(Reframed)* Cryptographic signing of elicitation provenance is unnecessary — the gateway already mediates all elicitations and sets provenance from its own records, not from pod-supplied data. The real control is URL domain validation (already in the design) and blocking agent-initiated URL-mode elicitations by default. The design should: (1) emphasize URL domain validation as a hard security control, not just a metadata check; (2) block URL-mode elicitations from agent binaries by default — only registered connectors can trigger URL-mode elicitations; (3) require the gateway to distinguish connector-initiated vs. agent-initiated elicitations in provenance metadata so client UIs can render them differently. See also Sec-M6 (connector_id validation). | 9.2 |
-| Sec-M4 | No pod certificate revocation path; compromised pod retains valid mTLS cert for up to 4h                                          | 10.3      |
-| Sec-M5 | Audit log streaming to external SIEM is "should" not "must"; compromised Postgres can modify audit tables                         | 11.7      |
-| Sec-M6 | Connector impersonation in elicitations not addressed; gateway must validate connector_id against pod's authorized connectors     | 8.3, 9.3  |
-| Sec-M7 | Mid-session uploads written directly to /workspace/current with no staging step; agent may read partial files                     | 7.3       |
-| Sec-M8 | No admission-time enforcement that agent pod ServiceAccounts have zero RBAC bindings                                              | 10.3      |
-| Sec-M9 | zip-slip protection mentioned but not specified: no supported formats, no symlink handling, no atomic cleanup on failure          | 7.3       |
+| ID     | Finding                                                                                                                           | Section   | Status |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------- | --------- | ------ |
+| Sec-M1 | AssignCredentials/RotateCredentials RPCs must be excluded from payload-level logging, gRPC access logs, and OTel trace attributes | 4.7, 13.3 | ✅ Credential-sensitive RPCs excluded from payload logging, OTel spans, and gRPC access logs (Sections 4.7, 16.4) |
+| Sec-M2 | MinIO encryption at rest not specified; checkpoints containing conversation history stored in plaintext                           | 4.4, 12.5 | ✅ SSE-S3/SSE-KMS encryption required for production; algorithm and KMS backend guidance added (Section 12.5) |
+| Sec-M3 | *(Reframed)* URL domain validation and agent-initiated URL-mode elicitation blocking needed | 9.2 | ✅ URL-mode elicitations blocked from agents by default; URL domain validation as hard enforcement; `initiator_type` provenance field added (Section 9.2) |
+| Sec-M4 | No pod certificate revocation path; compromised pod retains valid mTLS cert for up to 4h                                          | 10.3      | ✅ Gateway-side certificate deny list added with Redis pub/sub propagation; entries auto-expire with cert TTL (Section 10.3) |
+| Sec-M5 | Audit log streaming to external SIEM is "should" not "must"; compromised Postgres can modify audit tables                         | 11.7      | ✅ Changed to "must" for production deployments (Section 11.7) |
+| Sec-M6 | Connector impersonation in elicitations not addressed; gateway must validate connector_id against pod's authorized connectors     | 8.3, 9.3  | ✅ Explicit `connector_id` validation against delegation lease `allowedConnectors` added (Section 9.3) |
+| Sec-M7 | Mid-session uploads written directly to /workspace/current with no staging step; agent may read partial files                     | 7.3       | ✅ Mid-session uploads now use staging→validation→promotion pattern; `FilesUpdated` sent only after promotion (Section 7.3) |
+| Sec-M8 | No admission-time enforcement that agent pod ServiceAccounts have zero RBAC bindings                                              | 10.3      | ✅ Kyverno/Gatekeeper admission policy specified to block pods with RBAC-bound SAs (Section 10.3) |
+| Sec-M9 | zip-slip protection mentioned but not specified: no supported formats, no symlink handling, no atomic cleanup on failure          | 7.3       | ✅ Supported formats (tar.gz/tar.bz2/zip), symlink rejection, atomic cleanup, streaming size limits specified (Section 7.3) |
 
 ### DevOps
 
-| ID        | Finding                                                                                                               | Section |
-| --------- | --------------------------------------------------------------------------------------------------------------------- | ------- |
-| DevOps-M1 | No log aggregation stack, retention policy, or volume estimate; unbounded EventStore growth in Postgres               | 16.4    |
-| DevOps-M2 | Quota fail-open reconciliation mechanism undefined; max drift and recovery window unspecified                         | 12.4    |
-| DevOps-M3 | No K8s API server rate limiting for controller during pool-scale events; work queue depth limits not configured       | 4.6     |
-| DevOps-M4 | No restore testing procedure or RTO validation; "tested quarterly" is aspirational without a runbook                  | 17.3    |
-| DevOps-M5 | Zero operational runbooks for any failure mode (warm pool exhaustion, Postgres failover, credential exhaustion, etc.) | General |
-| DevOps-M6 | No trace sampling strategy or backend specified; 100% sampling not viable at production scale                         | 16.3    |
-| DevOps-M7 | No rollback procedure for pool rotation if new version is broken; old AgentPool CRD may already be deleted            | 10.5    |
-| DevOps-M8 | Checkpoint GC job failure mode unaddressed: no monitoring, no idempotency, no ownership specified                     | 12.5    |
-| DevOps-M9 | HPA custom metric sourcing mechanism not described (KEDA? Prometheus Adapter?)                                        | 10.1    |
+| ID        | Finding                                                                                                               | Section | Status |
+| --------- | --------------------------------------------------------------------------------------------------------------------- | ------- | ------ |
+| DevOps-M1 | No log aggregation stack, retention policy, or volume estimate; unbounded EventStore growth in Postgres               | 16.4    | ✅ Postgres partitioning, retention windows (90d/30d/7d), volume estimate (~600MB/day at 10K sessions), external aggregation guidance (Section 16.4) |
+| DevOps-M2 | Quota fail-open reconciliation mechanism undefined; max drift and recovery window unspecified                         | 12.4    | ✅ Reconciliation from Postgres on Redis recovery; max drift bounded by fail-open window × request rate (Section 12.4) |
+| DevOps-M3 | No K8s API server rate limiting for controller during pool-scale events; work queue depth limits not configured       | 4.6     | ✅ Client-side rate limiter (10 QPS, burst 100), configurable queue depth (default 500), overflow metric (Section 4.6) |
+| DevOps-M4 | No restore testing procedure or RTO validation; "tested quarterly" is aspirational without a runbook                  | 17.3    | ✅ `lenny-restore-test` CronJob with schema verification, smoke query, RTO metrics, monthly frequency (Section 17.3) |
+| DevOps-M5 | Zero operational runbooks for any failure mode (warm pool exhaustion, Postgres failover, credential exhaustion, etc.) | General | ✅ Section 17.7 added: 7 required runbooks listed as deliverables, cross-referenced to Section 16.5 alerts |
+| DevOps-M6 | No trace sampling strategy or backend specified; 100% sampling not viable at production scale                         | 16.3    | ✅ 10% head-based default, 100% for errors/slow/delegation trees; OTLP via OTel Collector; dev mode 100% (Section 16.3) |
+| DevOps-M7 | No rollback procedure for pool rotation if new version is broken; old AgentPool CRD may already be deleted            | 10.5    | ✅ 5-step safe rotation with canary validation; rollback from version control; "never delete old CRD until verified" (Section 10.5) |
+| DevOps-M8 | Checkpoint GC job failure mode unaddressed: no monitoring, no idempotency, no ownership specified                     | 12.5    | ✅ GC owned by gateway (leader-elected), idempotent, per-artifact retry, 4 monitoring metrics, ArtifactGCBacklog alert (Section 12.5) |
+| DevOps-M9 | HPA custom metric sourcing mechanism not described (KEDA? Prometheus Adapter?)                                        | 10.1    | ✅ Already resolved by K8s-H2 — Prometheus Adapter specified as custom metrics pipeline (Section 10.1) |
 
 ### Architecture
 
-| ID      | Finding                                                                                                                                                                                                                                                                                              | Section    |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| Arch-M1 | SDK-warm pod selection coupled to workspace plan content parsing; needs explicit predicate in RuntimeType                                                                                                                                                                                            | 6.1, 14    |
-| Arch-M2 | Checkpoint atomicity not defined; workspace and session file snapshots may be inconsistent                                                                                                                                                                                                           | 4.4, 7.3   |
-| Arch-M3 | CRD schema versioning not addressed; gateway writing v1 CRDs while controller expects v2 during rolling deploy                                                                                                                                                                                       | 4.6        |
-| Arch-M4 | Quota Postgres update timing unclear; if only on session completion, fail-open has unbounded overrun                                                                                                                                                                                                 | 12.4, 11.2 |
-| Arch-M5 | Virtual MCP child interface lifecycle underspecified: storage, pending elicitation handling, replay on parent resume                                                                                                                                                                                 | 8.2, 8.11  |
-| Arch-M6 | callbackUrl has no authentication or replay protection; define HMAC signing and retry semantics                                                                                                                                                                                                      | 14, 15.1   |
-| Arch-M7 | `env` field called both "allowlist" and "blocklist" across sections; standardize terminology and enforcement point                                                                                                                                                                                   | 14, 4.9    |
-| Arch-M8 | REST/MCP API overlap on session lifecycle is intentional (MCP clients need self-contained management), but three gaps remain: no consistency contract guaranteeing identical responses, no MCP tool versioning (REST has `/v1/`, MCP tools have none), and no shared error taxonomy between surfaces | 15.1, 15.2 |
+| ID      | Finding                                                                                                                                                                                                                                                                                              | Section    | Status |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------ |
+| Arch-M1 | SDK-warm pod selection coupled to workspace plan content parsing; needs explicit predicate in RuntimeType                                                                                                                                                                                            | 6.1, 14    | ✅ `sdkWarmBlockingPaths` list added to RuntimeType; deterministic, configurable predicate replaces ad-hoc parsing (Section 6.1) |
+| Arch-M2 | Checkpoint atomicity not defined; workspace and session file snapshots may be inconsistent                                                                                                                                                                                                           | 4.4, 7.3   | ✅ Checkpoint atomicity defined: SIGSTOP/SIGCONT pause, both snapshots or discard, metadata written only after both uploaded (Section 4.4) |
+| Arch-M3 | CRD schema versioning not addressed; gateway writing v1 CRDs while controller expects v2 during rolling deploy                                                                                                                                                                                       | 4.6        | ✅ CRD versioning during rolling deploys specified: v1beta1, conversion webhooks, `x-kubernetes-preserve-unknown-fields`, expand-contract (Section 10.5) |
+| Arch-M4 | Quota Postgres update timing unclear; if only on session completion, fail-open has unbounded overrun                                                                                                                                                                                                 | 12.4, 11.2 | ✅ Real-time Redis counters (per LLM response), periodic Postgres checkpoint (60s), immediate enforcement, in-memory fallback (Section 11.2) |
+| Arch-M5 | Virtual MCP child interface lifecycle underspecified: storage, pending elicitation handling, replay on parent resume                                                                                                                                                                                 | 8.2, 8.11  | ✅ Virtual child interface lifecycle specified: gateway-memory storage, reconstructed from SessionStore, pending elicitations held and replayed on resume (Section 8.2) |
+| Arch-M6 | callbackUrl has no authentication or replay protection; define HMAC signing and retry semantics                                                                                                                                                                                                      | 14, 15.1   | ✅ Already resolved by Biz-H4 — HMAC-SHA256 signing, 5-attempt exponential retry, idempotency keys (Section 14) |
+| Arch-M7 | `env` field called both "allowlist" and "blocklist" across sections; standardize terminology and enforcement point                                                                                                                                                                                   | 14, 4.9    | ✅ Standardized to "blocklist" — denied names/patterns with wildcard support; Sections 4.9 and 14 aligned |
+| Arch-M8 | REST/MCP API overlap on session lifecycle is intentional (MCP clients need self-contained management), but three gaps remain: no consistency contract guaranteeing identical responses, no MCP tool versioning (REST has `/v1/`, MCP tools have none), and no shared error taxonomy between surfaces | 15.1, 15.2 | ✅ Section 15.2.1 added: semantic equivalence via shared service layer, MCP versioning cross-ref to 15.5, shared TRANSIENT/PERMANENT/POLICY/UPSTREAM error taxonomy |
 
 ### Business Logic
 
-| ID     | Finding                                                                                               | Section  |
-| ------ | ----------------------------------------------------------------------------------------------------- | -------- |
-| Biz-M1 | "Hybrid" credential mode naming is confusing; 5 effective modes across 2 fields needs a decision tree | 4.9      |
-| Biz-M2 | `awaiting_client_action` has no expiry, children behavior, or CI discovery mechanism defined          | 7.3      |
-| Biz-M3 | Delegation configuration is enormously complex with no progressive simplification or presets          | 8        |
-| Biz-M4 | No workspace versioning or lineage tracking; users manage snapshot references manually                | 4.5, 7.1 |
-| Biz-M5 | Session labels not confirmed as filterable in usage API; blocks project/team cost attribution         | 14, 15.1 |
-| Biz-M6 | Mid-session upload capability not discoverable by clients before session creation                     | 7.3      |
-| Biz-M7 | Elicitation at depth 3+ creates unpredictable UX with no suppression or batching for known-safe flows | 9.2      |
-| Biz-M8 | Warm pool idle cost has no deployer visibility, threshold alerts, or maintenance-window scale-to-zero | 4.6, 6   |
+| ID     | Finding                                                                                               | Section  | Status |
+| ------ | ----------------------------------------------------------------------------------------------------- | -------- | ------ |
+| Biz-M1 | "Hybrid" credential mode naming is confusing; 5 effective modes across 2 fields needs a decision tree | 4.9      | ✅ "Hybrid" renamed to "Fallback chain"; decision-tree note added clarifying 3 effective configurations (Section 4.9) |
+| Biz-M2 | `awaiting_client_action` has no expiry, children behavior, or CI discovery mechanism defined          | 7.3      | ✅ Expiry tied to `maxResumeWindowSeconds`, children continue running, `session.awaiting_action` webhook event for CI (Section 7.3) |
+| Biz-M3 | Delegation configuration is enormously complex with no progressive simplification or presets          | 8        | ✅ Three named delegation presets added (simple/standard/orchestrator) with inline override support (Section 8.3) |
+| Biz-M4 | No workspace versioning or lineage tracking; users manage snapshot references manually                | 4.5, 7.1 | ✅ Content-addressed workspace snapshots (SHA-256) and `parent_workspace_ref` lineage tracking added (Section 4.5) |
+| Biz-M5 | Session labels not confirmed as filterable in usage API; blocks project/team cost attribution         | 14, 15.1 | ✅ Labels confirmed as indexed and filterable in all query APIs: sessions, usage, metering (Sections 14, 15.1) |
+| Biz-M6 | Mid-session upload capability not discoverable by clients before session creation                     | 7.3      | ✅ `GET /v1/runtimes` now returns capabilities including `midSessionUpload`; discovery note added to Section 7.3 |
+| Biz-M7 | Elicitation at depth 3+ creates unpredictable UX with no suppression or batching for known-safe flows | 9.2      | ✅ Auto-suppression at depth ≥ 3 by default; `elicitationDepthPolicy` config (allow_all/suppress_at_depth/block_all); OAuth exempt (Section 9.2) |
+| Biz-M8 | Warm pool idle cost has no deployer visibility, threshold alerts, or maintenance-window scale-to-zero | 4.6, 6   | ✅ `lenny_warmpool_idle_pod_minutes` metric, `scaleToZero` schedule in scalePolicy, `WarmPoolIdleCostHigh` alert (Section 4.6) |
 
 ### Open Source Community
 
-| ID     | Finding                                                                                                          | Section      |
-| ------ | ---------------------------------------------------------------------------------------------------------------- | ------------ |
-| OSS-M1 | No SDK or client library strategy; complex protocols (MCP streaming, reconnect-with-cursor) hard to re-implement | 15.1, 15.2   |
-| OSS-M2 | Configuration surface is large and intimidating; no "minimal viable config" examples                             | 4.9, 5.1, 14 |
-| OSS-M3 | Single-tenant path unclear; is tenant_id optional? What is the default?                                          | 4.2          |
-| OSS-M4 | No competitive positioning against Argo, Temporal, Knative, Dapr                                                 | 1, 2         |
-| OSS-M5 | No contribution guidelines or governance model implied; reads as internal spec                                   | General      |
-| OSS-M6 | Build sequence has no demo-able milestones until Phase 5                                                         | 18           |
-| OSS-M7 | Sidecar vs. embedded adapter trade-offs not quantified; no authoring guide                                       | 4.7          |
-| OSS-M8 | `runtimeOptions` is a pass-through with no schema registry or validation; silent misconfiguration                | 5.1, 14      |
+| ID     | Finding                                                                                                          | Section      | Status |
+| ------ | ---------------------------------------------------------------------------------------------------------------- | ------------ | ------ |
+| OSS-M1 | No SDK or client library strategy; complex protocols (MCP streaming, reconnect-with-cursor) hard to re-implement | 15.1, 15.2   | ✅ Section 15.6 added: official Go + TypeScript SDKs as v1 deliverables; community SDK path via OpenAPI spec |
+| OSS-M2 | Configuration surface is large and intimidating; no "minimal viable config" examples                             | 4.9, 5.1, 14 | ✅ Minimal 8-line configuration example added to Section 5.1 with safe defaults note |
+| OSS-M3 | Single-tenant path unclear; is tenant_id optional? What is the default?                                          | 4.2          | ✅ `tenant_id` defaults to `default` for single-tenant; multi-tenant is opt-in via OIDC claims (Section 4.2) |
+| OSS-M4 | No competitive positioning against Argo, Temporal, Knative, Dapr                                                 | 1, 2         | ✅ Positioning subsection added to Section 2 differentiating from workflow engines, serverless, and service meshes |
+| OSS-M5 | No contribution guidelines or governance model implied; reads as internal spec                                   | General      | ✅ Note added to Section 18: CONTRIBUTING.md and governance planned for Phase 2; extensibility hooks highlighted |
+| OSS-M6 | Build sequence has no demo-able milestones until Phase 5                                                         | 18           | ✅ Already resolved by OSS-H1 — Phase 2 now includes `make run` with echo runtime as first demo-able milestone |
+| OSS-M7 | Sidecar vs. embedded adapter trade-offs not quantified; no authoring guide                                       | 4.7          | ✅ Comparison table added to Section 4.7 (complexity, overhead, language, isolation, recommendation per use case) |
+| OSS-M8 | `runtimeOptions` is a pass-through with no schema registry or validation; silent misconfiguration                | 5.1, 14      | ✅ `runtimeOptionsSchema` field added to RuntimeType; gateway validates against JSON Schema; 64KB size limit (Sections 5.1, 14) |
 
 ---
 
 ## Low Findings
 
-| ID        | Area         | Finding                                                                                          | Section   |
-| --------- | ------------ | ------------------------------------------------------------------------------------------------ | --------- |
-| K8s-L1    | K8s          | HPA "active sessions" metric sourcing (Postgres vs. gateway Prometheus metric) unspecified       | 4.1       |
-| K8s-L2    | K8s          | Section 8.7 referenced but does not exist; actual content is at 8.8                              | 4.7, 8.5  |
-| K8s-L3    | K8s          | Dev mode mTLS gap prevents adapter authors from testing TLS-related issues                       | 17.4      |
-| K8s-L4    | K8s          | `shareProcessNamespace: false` not enforceable via PSS; needs Kyverno/Gatekeeper policy          | 6.4       |
-| K8s-L5    | K8s          | MinIO daily RPO contradicts "session output never lost" invariant                                | 17.3, 7.1 |
-| K8s-L6    | K8s          | NetworkPolicy namespace selector `lenny.dev/component: system` too broad as lenny-system grows   | 13.2      |
-| Sec-L1    | Security     | SA token audience `gateway-internal` is a static string; use deployment-specific audience        | 10.3      |
-| Sec-L2    | Security     | File export `destPrefix` allows intentional overwriting with no logging                          | 8.8       |
-| Sec-L3    | Security     | Lease extension audit missing gateway replica ID and client IP                                   | 8.6       |
-| Sec-L4    | Security     | `runtimeOptions` passed through without validation or size limits                                | 14        |
-| Sec-L5    | Security     | Redis token cache encryption algorithm and key management not specified                          | 4.3, 12.4 |
-| Sec-L6    | Security     | Workspace file hash verification is optional; should be mandatory for delegation exports         | 7.3       |
-| DevOps-L1 | DevOps       | Cosign enforcement webhook fail-open vs. fail-closed behavior not specified                      | 5.3       |
-| DevOps-L2 | DevOps       | Audit table append-only enforcement relies on DB role grants not documented or drift-checked     | 11.7      |
-| DevOps-L3 | DevOps       | No health check or smoke test for dev mode                                                       | 17.4      |
-| DevOps-L4 | DevOps       | No admin API for manual pool drain, warm count adjustment, or force-terminate                    | 15.1      |
-| DevOps-L5 | DevOps       | etcd pressure from high-volume CRD status updates at 500+ concurrent sessions not addressed      | 4.6       |
-| DevOps-L6 | DevOps       | `egressProfile` enum and CIDR update procedures not defined                                      | 13.2      |
-| Arch-L1   | Architecture | AgentSession CRD overloaded as both claim signal and state container                             | 4.6       |
-| Arch-L2   | Architecture | File export globs may follow agent-created symlinks outside workspace                            | 8.8       |
-| Arch-L3   | Architecture | No SSE back-pressure mechanism; gateway buffer policy for slow clients undefined                 | 7.2, 9.1  |
-| Arch-L4   | Architecture | Build Phase 5 (gateway) cannot run sessions end-to-end without Phase 11 (credentials)            | 18        |
-| Arch-L5   | Architecture | Admin API has no authorization scoping; regular users may enumerate cross-tenant usage           | 15.1      |
-| Arch-L6   | Architecture | `await_children(mode="any")` does not specify whether remaining children are auto-cancelled      | 8.9       |
-| Biz-L1    | Business     | 2h default `maxSessionAge` may be too short; no `session_expiring_soon` event before hard kill   | 11.3      |
-| Biz-L2    | Business     | Callback payload schema not defined anywhere                                                     | 14, 15.1  |
-| Biz-L3    | Business     | `GET /v1/usage` response schema undefined                                                        | 15.1      |
-| Biz-L4    | Business     | No SLO targets for session creation P99, time-to-first-token, or resume latency                  | 17.3      |
-| OSS-L1    | Community    | Decision log (Section 19) should be formatted as proper ADRs                                     | 19        |
-| OSS-L2    | Community    | No observability defaults (Grafana dashboards, Jaeger) for dev mode                              | 16        |
-| OSS-L3    | Community    | Node drain/checkpoint integration assumes cluster-admin expertise; needs tiered deployment guide | 4.6, 17.2 |
-| OSS-L4    | Community    | Artifact retention defaults buried in storage section; need prominent operational defaults table | 12.5      |
+| ID        | Area         | Finding                                                                                          | Section   | Status |
+| --------- | ------------ | ------------------------------------------------------------------------------------------------ | --------- | ------ |
+| K8s-L1    | K8s          | HPA "active sessions" metric sourcing (Postgres vs. gateway Prometheus metric) unspecified       | 4.1       | ✅ Clarified: sourced from gateway in-memory gauge `lenny_gateway_active_sessions` via Prometheus Adapter (Section 4.1) |
+| K8s-L2    | K8s          | Section 8.7 referenced but does not exist; actual content is at 8.8                              | 4.7, 8.5  | ✅ All 4 references to "Section 8.7" corrected to "Section 8.8" |
+| K8s-L3    | K8s          | Dev mode mTLS gap prevents adapter authors from testing TLS-related issues                       | 17.4      | ✅ `LENNY_DEV_TLS=true` flag added for self-signed mTLS in dev mode (Section 17.4) |
+| K8s-L4    | K8s          | `shareProcessNamespace: false` not enforceable via PSS; needs Kyverno/Gatekeeper policy          | 6.4       | ✅ Kyverno/Gatekeeper enforcement policy referenced, cross-linked to Section 17.2 (Section 6.4) |
+| K8s-L5    | K8s          | MinIO daily RPO contradicts "session output never lost" invariant                                | 17.3, 7.1 | ✅ Already resolved by DevOps-C1 — MinIO RPO updated to near-zero with erasure coding + site replication |
+| K8s-L6    | K8s          | NetworkPolicy namespace selector `lenny.dev/component: system` too broad as lenny-system grows   | 13.2      | ✅ Already resolved by K8s-H3 — switched to immutable `kubernetes.io/metadata.name` labels |
+| Sec-L1    | Security     | SA token audience `gateway-internal` is a static string; use deployment-specific audience        | 10.3      | ✅ Changed to deployment-specific `lenny-gateway-<cluster-name>`, configurable via Helm `global.saTokenAudience` (Section 10.3) |
+| Sec-L2    | Security     | File export `destPrefix` allows intentional overwriting with no logging                          | 8.8       | ✅ Overwrite logging and audit trail added to Section 8.8 validation rules |
+| Sec-L3    | Security     | Lease extension audit missing gateway replica ID and client IP                                   | 8.6       | ✅ `gateway_replica_id` and `client_ip` added to audit fields (Section 8.6) |
+| Sec-L4    | Security     | `runtimeOptions` passed through without validation or size limits                                | 14        | ✅ Already resolved by OSS-M8 — `runtimeOptionsSchema` validation + 64KB size limit (Sections 5.1, 14) |
+| Sec-L5    | Security     | Redis token cache encryption algorithm and key management not specified                          | 4.3, 12.4 | ✅ AES-256-GCM specified with nonce/ciphertext/tag format; key derived from envelope key, rotated per Section 10.5 (Section 12.4) |
+| Sec-L6    | Security     | Workspace file hash verification is optional; should be mandatory for delegation exports         | 7.3       | ✅ Hash verification now mandatory for delegation exports, optional for client uploads (Section 7.3) |
+| DevOps-L1 | DevOps       | Cosign enforcement webhook fail-open vs. fail-closed behavior not specified                      | 5.3       | ✅ Specified as fail-closed (`failurePolicy: Fail`) with `CosignWebhookUnavailable` alert (Section 5.3) |
+| DevOps-L2 | DevOps       | Audit table append-only enforcement relies on DB role grants not documented or drift-checked     | 11.7      | ✅ `lenny_app` role grants documented; startup health check queries `information_schema`; CI drift checks recommended (Section 11.7) |
+| DevOps-L3 | DevOps       | No health check or smoke test for dev mode                                                       | 17.4      | ✅ `make test-smoke` and `docker compose run smoke-test` added (Section 17.4) |
+| DevOps-L4 | DevOps       | No admin API for manual pool drain, warm count adjustment, or force-terminate                    | 15.1      | ✅ Three admin endpoints added: pool drain, warm-count adjust, force-terminate (Section 15.1) |
+| DevOps-L5 | DevOps       | etcd pressure from high-volume CRD status updates at 500+ concurrent sessions not addressed      | 4.6       | ✅ Mitigations documented: coarse labels (Section 6.2), work queue batching, client-side rate limiter, monitoring guidance (Section 4.6) |
+| DevOps-L6 | DevOps       | `egressProfile` enum and CIDR update procedures not defined                                      | 13.2      | ✅ Three-value enum defined (restricted/provider-direct/internet) with CIDR maintenance via Helm values (Section 13.2) |
+| Arch-L1   | Architecture | AgentSession CRD overloaded as both claim signal and state container                             | 4.6       | ✅ Already resolved by K8s-H6 — AgentSession uses `spec.agentPodRef` (not ownerRef), created after claim succeeds |
+| Arch-L2   | Architecture | File export globs may follow agent-created symlinks outside workspace                            | 8.8       | ✅ `realpath` validation added: reject any resolved path outside `/workspace/current` (Section 8.8) |
+| Arch-L3   | Architecture | No SSE back-pressure mechanism; gateway buffer policy for slow clients undefined                 | 7.2, 9.1  | ✅ Per-client buffer (1000 events / 10MB), connection drop on overflow, reconnect with cursor replay (Section 7.2) |
+| Arch-L4   | Architecture | Build Phase 5 (gateway) cannot run sessions end-to-end without Phase 11 (credentials)            | 18        | ✅ Phase 5 uses zero-credential echo runtime from Phase 2; credential-free sessions supported when no providers declared (Section 18) |
+| Arch-L5   | Architecture | Admin API has no authorization scoping; regular users may enumerate cross-tenant usage           | 15.1      | ✅ Already resolved by Biz-H6 — RBAC model with platform-admin/tenant-admin/user roles (Section 10.2) |
+| Arch-L6   | Architecture | `await_children(mode="any")` does not specify whether remaining children are auto-cancelled      | 8.9       | ✅ Clarified: remaining children continue running; parent can cancel explicitly via `cancel_child` (Section 8.9) |
+| Biz-L1    | Business     | 2h default `maxSessionAge` may be too short; no `session_expiring_soon` event before hard kill   | 11.3      | ✅ `session_expiring_soon` event and `DEADLINE_APPROACHING` adapter signal sent 5min before expiry; tuning guidance added (Section 11.3) |
+| Biz-L2    | Business     | Callback payload schema not defined anywhere                                                     | 14, 15.1  | ✅ Already resolved by Biz-H4 — full JSON payload schema with event types, HMAC signing, retry behavior (Section 14) |
+| Biz-L3    | Business     | `GET /v1/usage` response schema undefined                                                        | 15.1      | ✅ Response schema example added with period, totals, byTenant, and byRuntime breakdowns (Section 15.1) |
+| Biz-L4    | Business     | No SLO targets for session creation P99, time-to-first-token, or resume latency                  | 17.3      | ✅ Already resolved by DevOps-H2 — SLO targets added in Section 16.5 (99.5% creation success, P95 TTFT < 10s) |
+| OSS-L1    | Community    | Decision log (Section 19) should be formatted as proper ADRs                                     | 19        | ✅ Note added: full MADR-format ADRs to be maintained in `docs/adr/`; Section 19 table serves as index (Section 19) |
+| OSS-L2    | Community    | No observability defaults (Grafana dashboards, Jaeger) for dev mode                              | 16        | ✅ Tier 2 optional observability profile (Prometheus + Grafana + Jaeger); Tier 1 stdout traces + `:9090/metrics` (Section 17.4) |
+| OSS-L3    | Community    | Node drain/checkpoint integration assumes cluster-admin expertise; needs tiered deployment guide | 4.6, 17.2 | ✅ Three operator skill tiers documented (Developer/Platform operator/Cluster admin) in Section 17.7 |
+| OSS-L4    | Community    | Artifact retention defaults buried in storage section; need prominent operational defaults table | 12.5      | ✅ Operational Defaults quick-reference table added to Section 17.5 with 10 key defaults and section cross-references |
 
 ---
 
