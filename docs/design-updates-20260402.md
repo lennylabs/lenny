@@ -204,6 +204,7 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Six message
 | `type` | Description |
 |---|---|
 | `message` | All content delivery: initial task, mid-session injection, reply to `request_input`, sibling notification. Carries optional `slotId` for concurrent-workspace mode. |
+| `tool_result` | Result of a tool call the runtime previously requested. Carries `slotId` in concurrent-workspace mode. |
 | `heartbeat` | Periodic liveness ping |
 | `shutdown` | Graceful shutdown with no new task |
 
@@ -889,22 +890,245 @@ Effective cross-environment access requires both sides to permit it. Neither sid
 
 **Identity:** OIDC. Groups from LDAP/AD carried as JWT claims. `introspectionEnabled: true` adds real-time group checks at latency cost.
 
-**Tenant RBAC Config:**
+**Full Configuration Template:**
+
 ```yaml
+# ─────────────────────────────────────────────────────────────────
+# TENANT-LEVEL RBAC CONFIGURATION
+# Managed via: PUT /v1/admin/tenants/{id}/rbac-config
+# ─────────────────────────────────────────────────────────────────
 tenantRbacConfig:
+  tenantId: acme-corp
+
+  # Behavior when no environments are defined for this tenant.
+  # deny-all: no access until environments are created (default)
+  # allow-all: all authenticated tenant users see all runtimes/connectors
+  noEnvironmentPolicy: deny-all   # deny-all | allow-all
+
+  # Identity provider configuration for this tenant.
+  # Lenny speaks OIDC; the IdP handles LDAP/AD translation.
   identityProvider:
     issuerUrl: https://idp.acme.com
     clientId: lenny-acme
-    groupsClaim: groups
-    usernameClaim: email
-    groupFormat: short-name
+    groupsClaim: groups            # JWT claim carrying group memberships
+    usernameClaim: email           # JWT claim used as user identity
+    groupFormat: short-name        # short-name | dn | uuid
+
+  # Token management
   tokenPolicy:
     maxTtlSeconds: 3600
-    introspectionEnabled: false
-    introspectionEndpoint: https://idp.acme.com/introspect
-  noEnvironmentPolicy: deny-all
-  mcpAnnotationMapping: ...    # optional tenant-level overrides
+    introspectionEnabled: false    # true = real-time group membership checks
+                                   # at cost of latency; false = rely on JWT TTL
+    introspectionEndpoint: https://idp.acme.com/introspect   # if enabled
+
+  # Tenant-level capability taxonomy.
+  # Extends or replaces platform defaults.
+  capabilities:
+    # Inherit platform defaults and add/override entries
+    inheritPlatformDefaults: true
+
+    # Custom capabilities for this tenant
+    custom:
+      - id: pii-access
+        description: "Access to tools that read PII data"
+      - id: financial-write
+        description: "Write access to financial systems"
+
+    # Restrict which capabilities may be granted within this tenant.
+    allowedCapabilities:
+      - read
+      - write
+      - delete
+      - execute
+      - network
+      - search
+      - admin
+      - pii-access        # tenant-custom
+      - financial-write   # tenant-custom
+
+    # Platform default capability assigned to unannotated tools.
+    # Overrides the system-wide default (admin) for this tenant.
+    defaultCapabilityForUnannotatedTools: admin   # any capability id
+
+  # MCP annotation → capability mapping for this tenant.
+  # Overrides platform defaults for all connectors in this tenant.
+  mcpAnnotationMapping:
+    readOnlyHint_true: [read]
+    readOnlyHint_false_destructiveHint_false: [write]
+    destructiveHint_true: [write, delete]
+    openWorldHint_true: [network]
+    noAnnotations: [admin]
+
+
+# ─────────────────────────────────────────────────────────────────
+# ENVIRONMENT DEFINITION
+# Managed via: POST /v1/admin/environments
+# ─────────────────────────────────────────────────────────────────
+environment:
+  name: security-team
+  tenantId: acme-corp
+  description: "Security engineering workspace"
+
+  # ── Member RBAC ────────────────────────────────────────────────
+  # Roles:
+  #   viewer   — list runtimes, read session status and artifacts
+  #   creator  — viewer + create sessions, call type:mcp tools
+  #   operator — creator + interrupt/resume/terminate sessions
+  #   admin    — operator + modify this environment's definition
+  members:
+    - identity:
+        type: oidc-group        # oidc-group | oidc-user | service-account
+        value: security-engineers
+      role: creator
+    - identity:
+        type: oidc-group
+        value: security-leads
+      role: admin
+    - identity:
+        type: oidc-user
+        value: alice@acme.com
+      role: operator
+    - identity:
+        type: service-account
+        value: sa-security-ci
+      role: creator
+
+  # ── Runtime Selector ───────────────────────────────────────────
+  # Determines which runtimes (type:agent and type:mcp) are visible
+  # and usable within this environment.
+  # All conditions are ANDed. Include/exclude override selector results.
+  runtimeSelector:
+    matchLabels:
+      team: security
+    matchExpressions:
+      - key: approved
+        operator: In            # In | NotIn | Exists | DoesNotExist
+        values: ["true"]
+      - key: experimental
+        operator: DoesNotExist
+    types: [agent, mcp]         # optional type filter
+    include: [legacy-code-auditor]   # include regardless of selector
+    exclude: [unstable-scanner]      # exclude regardless of selector
+
+  # ── MCP Runtime Filters ────────────────────────────────────────
+  # Capability-based tool filtering for type:mcp runtimes.
+  # Applied when a member calls tools via /mcp/runtimes/{name}
+  # or when an agent calls them via the adapter manifest.
+  # Multiple entries evaluated in order; first match wins.
+  mcpRuntimeFilters:
+    - runtimeSelector:
+        matchLabels:
+          category: execution
+      allowedCapabilities: [read, execute]
+      deniedCapabilities: [write, delete, admin]
+      # Fine-grained overrides when capability rules are insufficient.
+      # Uses runtime:tool qualified reference to avoid name collisions.
+      overrides:
+        allow:
+          - runtime: code-executor
+            tool: execute_python      # allowed even if execute not in allowedCapabilities
+        deny:
+          - runtime: code-executor
+            tool: read_env_vars       # denied even if read is in allowedCapabilities
+
+    - runtimeSelector:
+        matchLabels:
+          category: analysis
+      allowedCapabilities: [read, search, network]
+      deniedCapabilities: [write, delete, execute, admin]
+
+    # Catch-all for runtimes in this environment not matched above.
+    # If absent, unmatched runtimes get allowedCapabilities: [read] by default.
+    - runtimeSelector:
+        matchExpressions:
+          - key: team
+            operator: Exists
+      allowedCapabilities: [read]
+
+  # ── Connector Selector ─────────────────────────────────────────
+  # Controls which connectors are available to agents running
+  # sessions in this environment. Internal only — external
+  # clients never call connectors directly.
+  connectorSelector:
+    matchLabels:
+      team: security
+    matchExpressions:
+      - key: data-sensitivity
+        operator: NotIn
+        values: [restricted, confidential]
+    include: [snyk-scanner]
+    exclude: [prod-db-writer]
+    allowedCapabilities: [read, search, network]
+    deniedCapabilities: [write, delete, execute, admin]
+    overrides:
+      allow:
+        - connector: github
+          tool: create_issue
+      deny:
+        - connector: github
+          tool: delete_repository
+
+  # ── Delegation Policy ──────────────────────────────────────────
+  defaultDelegationPolicy: security-policy
+  crossEnvironmentDelegation: false   # true | false | structured form
+
+  # ── Explicit Environment Endpoint ─────────────────────────────
+  # When enabled, this environment is accessible at dedicated paths
+  # across ALL external interfaces:
+  #   /mcp/environments/security-team
+  #   /v1/environments/security-team/sessions
+  #   /v1/environments/security-team/runtimes
+  #   /v1/responses  (model namespace scoped to environment)
+  #   /v1/chat/completions  (model namespace scoped to environment)
+  # Transparent filtering at standard endpoints always applies
+  # regardless of this setting.
+  endpoint:
+    enabled: true
+    path: security-team              # URL slug; defaults to environment name
+    allowPublicDiscovery: false      # true = endpoint listed in /.well-known/
+
+
+# ─────────────────────────────────────────────────────────────────
+# CONNECTOR REGISTRATION (RBAC-RELEVANT FIELDS)
+# Managed via: POST /v1/admin/connectors
+# ─────────────────────────────────────────────────────────────────
+connector:
+  id: github
+  labels:
+    team: security
+    data-sensitivity: internal
+
+  # Gateway infers capabilities from MCP ToolAnnotations at
+  # registration time. No manual annotation required.
+  # Override here when MCP annotations are absent or inaccurate.
+  toolCapabilityOverrides:
+    - tool: run_workflow
+      capabilities: [execute, network]    # MCP has no execute hint yet
+    - tool: list_repositories
+      capabilities: [read, network]       # explicit; overrides inference
+
+
+# ─────────────────────────────────────────────────────────────────
+# RUNTIME LABELS (RBAC-RELEVANT FIELDS ON RUNTIME RESOURCE)
+# Managed via: POST/PUT /v1/admin/runtimes
+# ─────────────────────────────────────────────────────────────────
+runtime:
+  name: code-auditor
+  labels:
+    team: security
+    approved: "true"
+    category: analysis
+  # ... rest of runtime definition
 ```
+
+**Key Design Decisions Summarized:**
+
+- **Capabilities are tenant-customizable, platform-defaulted.** Platform ships with `read`, `write`, `delete`, `execute`, `network`, `search`, `admin`. Tenants can add domain-specific ones (`pii-access`, `financial-write`), rename, or restrict which can ever be granted.
+- **Capability inference from MCP annotations is automatic.** No connector author action required. The mapping table is tenant-overridable. Tools with no annotations get the tenant's configured `defaultCapabilityForUnannotatedTools` (default: `admin`).
+- **No environments = configurable per tenant.** `noEnvironmentPolicy: deny-all` is the platform default. Tenants can set `allow-all` for development deployments or small teams. Deployers can override the system-wide default at Helm time.
+- **Connectors are internal-only in the environment model.** `connectorSelector` controls what agents can call via the platform MCP server. External clients do not call connectors through environment policy.
+- **Two access paths, one consistent model.** Transparent filtering at standard endpoints covers the human-user and LLM-client case. Explicit environment endpoints cover CI/CD and automation. Both paths apply to all external interfaces — MCP, REST, Open Responses, OpenAI Completions — not just MCP.
+- **Identity is OIDC with LDAP/AD behind the provider.** Lenny never speaks LDAP directly. The IdP handles directory integration. Group memberships are JWT claims. `introspectionEnabled: true` adds real-time checks at latency cost.
 
 **V1 data model accommodations:**
 - `Runtime` resources need `labels` map from v1
