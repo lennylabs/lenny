@@ -20,14 +20,14 @@
 |---|-----------|---------|---------|
 | KIN-001 | 1. K8s Infrastructure | `kubernetes-sigs/agent-sandbox` dependency — 5-month-old project with no stability guarantees as load-bearing CRD foundation | 4.6.1 |
 | SEC-001 | 2. Security | SIGSTOP/SIGCONT checkpoint mechanism unvalidated under gVisor and Kata | 4.4 |
-| SCA-001 | 4. Scalability | No concrete performance targets or capacity planning numbers at any scale tier | 16.5 |
+| SCA-001 | 4. Scalability | No concrete performance targets or capacity planning numbers at any scale tier | 16.5 | FIXED |
 | SCA-002 | 4. Scalability | Gateway LLM reverse proxy as single throughput bottleneck for all LLM traffic | 4.9 |
-| DEV-001 | 6. Developer Experience | Insufficient standalone specification to build a Minimum-tier runtime | 15.4 |
+| DEV-001 | 6. Developer Experience | Insufficient standalone specification to build a Minimum-tier runtime | 15.4 | FIXED |
 | TEN-001 | 8. Multi-Tenancy | Postgres RLS `SET app.current_tenant` race condition under PgBouncer transaction mode | 4.2, 12.3 |
-| COM-001 | 13. Compliance | GDPR erasure flow incomplete — billing event immutability conflicts with deletion obligation | 12.8 |
-| OSS-001 | 15. Competitive | No differentiation narrative — "Why Lenny?" never articulated | 23 |
-| BLD-001 | 19. Build Sequence | Credential leasing (Phase 11) arrives too late for realistic integration testing | 18 |
-| BLD-002 | 19. Build Sequence | Security hardening (Phase 14) dangerously late — real credentials exposed without network isolation | 18 |
+| COM-001 | 13. Compliance | GDPR erasure flow incomplete — billing event immutability conflicts with deletion obligation | 12.8 | FIXED |
+| OSS-001 | 15. Competitive | No differentiation narrative — "Why Lenny?" never articulated | 23 | FIXED |
+| BLD-001 | 19. Build Sequence | Credential leasing (Phase 11) arrives too late for realistic integration testing | 18 | FIXED |
+| BLD-002 | 19. Build Sequence | Security hardening (Phase 14) dangerously late — real credentials exposed without network isolation | 18 | FIXED |
 
 ---
 
@@ -37,12 +37,14 @@
 
 ## 1. Kubernetes Infrastructure & Controller Design
 
-### KIN-001. `kubernetes-sigs/agent-sandbox` Dependency Maturity and Lock-in Risk [Critical]
+### KIN-001. `kubernetes-sigs/agent-sandbox` Dependency Maturity and Lock-in Risk [Critical] — FIXED
 **Section:** 4.6.1
 
 The entire pod lifecycle depends on a ~5-month-old upstream project (`SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, `SandboxClaim` CRDs). The project is almost certainly at `v1alpha1` stability with no breaking-change guarantees. The "pre-commit requirement" to verify optimistic-locking guarantees is noted but unresolved, with no fallback plan.
 
 **Recommendation:** Define an internal `PodLifecycleManager` interface abstracting over agent-sandbox CRDs. Resolve the pre-commit requirement as an ADR before further design work. Pin to a specific release with a one-release-delay upgrade cadence. Document a fallback plan with estimated effort for a custom kubebuilder replacement.
+
+**Status:** FIXED — Added two-interface abstraction layer (`PodLifecycleManager` + `PoolManager` with shared `PoolReader`) so no Lenny component touches agent-sandbox CRDs directly. Converted pre-commit requirement to ADR. Added dependency pinning policy with one-release-delay upgrade cadence. Documented fallback plan with 2-3 engineering-week effort estimate for custom kubebuilder replacement.
 
 ### KIN-002. Etcd Pressure Mitigations Insufficient at Scale [High]
 **Section:** 4.6.1
@@ -139,12 +141,14 @@ Three-hop pipeline (gateway->Prometheus->Adapter->HPA) introduces latency and fa
 
 ## 2. Security & Threat Modeling
 
-### SEC-001. SIGSTOP/SIGCONT Checkpoint Under gVisor/Kata Unvalidated [Critical]
+### SEC-001. SIGSTOP/SIGCONT Checkpoint Under gVisor/Kata Unvalidated [Critical] — FIXED
 **Section:** 4.4
 
 With `shareProcessNamespace: false`, the adapter cannot directly signal the agent process. gVisor and Kata have different signal delivery semantics. Inconsistent checkpoints could corrupt session state on resume.
 
 **Recommendation:** Validate in PoC before committing. Clarify cooperative checkpoint via lifecycle channel is the only reliable path under sandboxed/microvm. Document that Minimum-tier runtimes cannot produce consistent checkpoints.
+
+**Resolution:** Checkpoint quiescence restructured as tier-dependent in Section 4.4. Cooperative lifecycle channel (`checkpoint_request`/`checkpoint_ready`/`checkpoint_complete`) is the primary path for consistent checkpoints (Full-tier). Minimum/Standard-tier runtimes produce best-effort checkpoints only. `SIGSTOP`/`SIGCONT` restricted to embedded adapter mode under runc only. Signal-based checkpointing explicitly unsupported under gVisor/Kata.
 
 ### SEC-002. Adapter-Agent Shared emptyDir Volume Escape [High]
 **Section:** 4.7
@@ -378,19 +382,23 @@ Certificate and credential deny lists both depend on Redis pub/sub.
 
 ## 4. Scalability & Performance Engineering
 
-### SCA-001. No Concrete Performance Targets [Critical]
+### SCA-001. No Concrete Performance Targets [Critical] — FIXED
 **Section:** 16.5
 
 SLO targets stated without specifying at what scale. No max concurrent sessions, sessions/second, delegation throughput, tenant count, or gateway RPS targets.
 
 **Recommendation:** Define capacity tiers (100/1000/10000 concurrent sessions) with infrastructure sizing. Run capacity modeling. This becomes the basis for all performance decisions.
 
-### SCA-002. Gateway LLM Reverse Proxy Bottleneck [Critical]
+**Status:** FIXED — Added capacity tier definitions (Tier 1/2/3) in Section 16.5, centralized per-tier infrastructure sizing reference in Section 17.8, and cross-references in 7 high-priority sections (controller tuning, etcd pressure, warm pool sizing, PgBouncer, gateway HPA, Redis topology, operational defaults).
+
+### SCA-002. Gateway LLM Reverse Proxy Bottleneck [Critical] — FIXED
 **Section:** 4.9
 
 500 concurrent sessions in proxy mode = 1000+ LLM proxy requests/second through gateway, with streaming responses. No subsystem isolation for proxy path.
 
 **Recommendation:** Design LLM proxy as independently scalable component from day one. Add dedicated HPA metrics, goroutine pool, and circuit breaker. Consider sidecar proxy as alternative.
+
+**Status:** FIXED — LLM Proxy added as 4th gateway subsystem (Section 4.1) with dedicated goroutine pool, circuit breaker, per-subsystem metrics (`lenny_gateway_llm_proxy_active_connections`, `lenny_gateway_llm_proxy_request_duration_seconds`, `lenny_gateway_llm_proxy_circuit_state`), HPA metric (`active LLM proxy connections`), and extraction trigger for independent scaling. Subsystem isolation note added in Section 4.9.
 
 ### SCA-003. Startup Latency Based on Estimates, Not Benchmarks [High]
 **Section:** 6.3
@@ -610,12 +618,14 @@ No mechanism to detect unhealthy adapters or unsupported protocol features.
 
 ## 6. Developer Experience (Runtime Authors)
 
-### DEV-001. Insufficient Specification for Minimum-Tier Runtime [Critical]
+### DEV-001. Insufficient Specification for Minimum-Tier Runtime [Critical] — FIXED
 **Section:** 15.4.1, 15.4.3
 
 Message schemas (inbound/outbound), heartbeat format, shutdown expectations, and exit codes all undefined. Echo runtime is prose description only. A developer cannot build a runtime from the spec alone.
 
 **Recommendation:** Add Protocol Reference with complete JSON schemas for every message type. Include annotated protocol trace. Provide echo runtime as actual code or detailed pseudocode.
+
+**Status:** FIXED — Added Protocol Reference with JSON schemas for all message types (message, heartbeat, shutdown, tool_result, response, tool_call, heartbeat_ack, status). Full MessageEnvelope on stdin with ignore-unknown-fields convention documented. Exit codes table added (0, 1, 2, 137). Annotated protocol trace for a complete Minimum-tier session. Minimum-tier description updated to explicitly require heartbeat/shutdown handling. Echo runtime pseudocode added to Section 15.4.4. `heartbeat_ack` added to outbound message table.
 
 ### DEV-002. OutputPart Complexity for Minimum-Tier [High]
 **Section:** 15.4.1
@@ -854,6 +864,7 @@ Same finding — consolidate into single section.
 
 ### TEN-001. Postgres RLS Race Condition Under PgBouncer Transaction Mode [Critical]
 **Section:** 4.2, 12.3
+**Status:** FIXED — Spec updated to mandate `SET LOCAL` within explicit transactions, `current_setting(..., false)` for hard error on unset, PgBouncer `connect_query` sentinel value, and startup integration test for tenant isolation.
 
 `SET app.current_tenant` outside explicit transaction can execute on one connection while the next query uses a different connection where the tenant was never set (or set by prior tenant).
 
@@ -1154,12 +1165,14 @@ Numbering gap, likely from deleted content.
 
 ## 11. Session Lifecycle & State Management
 
-### SES-001. Checkpoint Failure May Permanently Freeze Agent [Critical]
+### SES-001. Checkpoint Failure May Permanently Freeze Agent [Critical] — FIXED
 **Section:** 4.4
 
 No guarantee `SIGCONT` sent on all failure paths. Adapter crash mid-checkpoint leaves agent SIGSTOPped with no recovery.
 
 **Recommendation:** Add `defer SIGCONT` invariant. Add checkpoint-level timeout (60s) with unconditional SIGCONT. Document adapter crash behavior.
+
+**Resolution:** Added 60-second checkpoint timeout for both Full-tier (lifecycle channel) and embedded adapter paths in Section 4.4. Full-tier runtimes autonomously resume after timeout. Embedded adapter requires `defer SIGCONT` invariant and a 60-second watchdog timer with unconditional SIGCONT on expiry. Adapter crash recovery documented: liveness probe failure triggers pod restart, session resumes from last successful checkpoint per Section 7.2.
 
 ### SES-002. Pod State Machine Missing Failure Transitions [High]
 **Section:** 6.2
@@ -1381,12 +1394,14 @@ Including: FinalizerStuck not in Section 16.5, CredentialPoolExhausted alert mis
 
 ## 13. Compliance, Governance & Data Sovereignty
 
-### COM-001. GDPR Erasure Flow Incomplete [Critical]
+### COM-001. GDPR Erasure Flow Incomplete [Critical] — FIXED
 **Section:** 12.8
 
 MemoryStore, Redis, semantic cache, shared workspace snapshots, and external SIEM not in scope. Billing event immutability directly conflicts with erasure obligation.
 
 **Recommendation:** Enumerate every storage backend in erasure spec. Use pseudonymization for billing events. Define erasure propagation contract to external sinks. Address workspace deduplication.
+
+**Status:** FIXED — Expanded erasure scope to cover all 11 storage backends in a detailed table. Added tenant-controlled billing erasure policy: pseudonymize by default, with an exempt option backed by GDPR Article 17(3)(b). Added external sink propagation via `erasure.requested` event with acknowledgment tracking. Added workspace deduplication safeguard using reference counting.
 
 ### COM-002. Data Residency Delegation Insufficient [High]
 **Section:** 12.8
@@ -1558,12 +1573,14 @@ Including: no bulk admin operations, derive endpoint unspecified, no rate-limit 
 
 ## 15. Competitive Positioning & Open Source Strategy
 
-### OSS-001. No "Why Lenny?" Narrative [Critical]
+### OSS-001. No "Why Lenny?" Narrative [Critical] — FIXED
 **Section:** 23
 
 Competitors listed but differentiation never articulated. No value proposition statement.
 
 **Recommendation:** Add "Why Lenny?" section with 3-5 concrete differentiators: runtime-agnostic adapter contract, recursive delegation primitive, self-hosted K8s-native, multi-protocol gateway, enterprise controls.
+
+**Status:** FIXED — Added Section 23.1 "Why Lenny?" with 5 concrete differentiators grounded in spec sections: runtime-agnostic adapter contract (Section 15.4), recursive delegation primitive (Section 5, Principle 5), self-hosted K8s-native (Section 17, 17.4), multi-protocol gateway (Section 15, 3), enterprise controls (Sections 2, 8, 16).
 
 ### OSS-002. `agent-sandbox` Upstream Risk Unaddressed [High]
 **Section:** 4.6.1
@@ -1918,19 +1935,23 @@ Including: `CredentialLease` missing extensibility, `WorkspacePlan.env` no allow
 
 ## 19. Build Sequence & Implementation Risk
 
-### BLD-001. Credential Leasing (Phase 11) Too Late [Critical]
+### BLD-001. Credential Leasing (Phase 11) Too Late [Critical] — FIXED
 **Section:** 18
 
 Phases 4-10 (core session + delegation) can only test with echo runtime. First end-to-end test with real LLM after 10 phases of code.
 
 **Recommendation:** Split credential leasing. Phase 5.5: basic pool-based direct leasing. Phase 11: rotation, fallback, proxy, user-scoped, health scoring.
 
-### BLD-002. Security Hardening (Phase 14) Dangerously Late [Critical]
+**Status:** FIXED — Basic credential leasing moved to Phase 5.5 (CredentialProvider interface, anthropic_direct provider, single-pool assignment, AssignCredentials RPC). Phase 11 narrowed to advanced features only. Real LLM testing possible from Phase 6.
+
+### BLD-002. Security Hardening (Phase 14) Dangerously Late [Critical] — FIXED
 **Section:** 18
 
 NetworkPolicies, gVisor enforcement, and image signing come after real credentials (Phase 11) and OAuth (Phase 12) are in play. Credentials can be exfiltrated by misbehaving agents.
 
 **Recommendation:** Introduce Phase 3.5: default-deny NetworkPolicy, gVisor validation, digest-pinned images. Full hardening stays at Phase 14.
+
+**Status:** FIXED — Basic security hardening moved to Phase 3.5 (default-deny NetworkPolicy, gVisor validation, digest-pinned images). Phase 14 narrowed to comprehensive hardening. Network isolation in place before credentials are introduced at Phase 5.5.
 
 ### BLD-003. Observability (Phase 13) After All Complex Subsystems [High]
 **Section:** 18
@@ -2022,12 +2043,14 @@ Including: Helm chart not in any phase, runbooks not in any phase, Phase 6 befor
 
 ## 20. Failure Modes & Resilience Engineering
 
-### FAI-001. MinIO Failure Causes Silent Session Loss [Critical]
+### FAI-001. MinIO Failure Causes Silent Session Loss [Critical] — FIXED
 **Section:** 4.4, 12.5
 
 Checkpoint fails during eviction. No fallback storage. Agent SIGSTOPped then killed. Session state permanently lost.
 
 **Recommendation:** Define fallback (node-local emergency storage or extended retry). Add `CheckpointStorageUnavailable` critical alert. Resume agent if checkpoint fails and pod isn't evicting.
+
+**Resolution:** Added checkpoint storage failure recovery in Section 4.4: all MinIO uploads retried with exponential backoff (~5s total). Non-eviction checkpoints resume the agent and log failure (`lenny_checkpoint_storage_failure_total` metric). Eviction checkpoints accept loss — session marked `checkpoint_failed` in Postgres, `CheckpointStorageUnavailable` critical alert fires (added to Section 16.5). Section 12.5 updated with deployer guidance on monitoring. No node-local fallback — accept-loss semantics for eviction scenarios.
 
 ### FAI-002. Redis Fail-Open Quota Bypass [High]
 **Section:** 12.4
@@ -2372,12 +2395,14 @@ Including: no elicitation ordering spec, `threadId` vestigial, one_shot + reques
 
 ## 24. Policy Engine & Admission Control
 
-### POL-001. Budget Propagation Lacks Atomic Reservation [Critical]
+### POL-001. Budget Propagation Lacks Atomic Reservation [Critical] — FIXED
 **Section:** 8.3, 11.2
 
 No specification of whether delegation budget slices are reserved or just ceilings. Parent can spawn children exceeding total budget. Default slice when `lease_slice` omitted undefined.
 
 **Recommendation:** Atomic budget reservation via Redis `INCR` at delegation time. Default slice = remaining parent budget or configurable fraction. Return unused budget on completion.
+
+**Status:** FIXED — Defined `LeaseSlice` type in Section 8.2. Added atomic reservation model in Section 8.3 with Redis `DECRBY`/`INCRBY`, default slice (50% remaining, configurable via `defaultDelegationFraction`), budget return on child completion, and concurrency safety via atomic operations. Added cross-reference in Section 11.2 linking delegation budget enforcement to the reservation model and confirming same durability model as token usage counters.
 
 ### POL-002. RequestInterceptor Chain Order/Short-Circuit Unspecified [High]
 **Section:** 4.8

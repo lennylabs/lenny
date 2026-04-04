@@ -78,6 +78,7 @@ Rules:
 - Keep the technical spec's design principles in mind at all times.
 - Update the finding's list of recommendations in `$1` if needed.
 - If multiple valid options exist and there isn't a clear winner, or if the recommendation requires major architectural changes, provide enough context to the user and ask them to select a path forward. Defer more or less to the user depending on the severity of the finding.
+- When asking the user for direction, provide a detailed explanation of the problem and the recommended/possible solution(s).
 
 ### Phase 3: Validate no regressions
 
