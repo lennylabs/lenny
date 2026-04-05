@@ -46,12 +46,14 @@ The entire pod lifecycle depends on a ~5-month-old upstream project (`SandboxTem
 
 **Status:** FIXED — Added two-interface abstraction layer (`PodLifecycleManager` + `PoolManager` with shared `PoolReader`) so no Lenny component touches agent-sandbox CRDs directly. Converted pre-commit requirement to ADR. Added dependency pinning policy with one-release-delay upgrade cadence. Documented fallback plan with 2-3 engineering-week effort estimate for custom kubebuilder replacement.
 
-### KIN-002. Etcd Pressure Mitigations Insufficient at Scale [High]
+### KIN-002. Etcd Pressure Mitigations Insufficient at Scale [High] — FIXED
 **Section:** 4.6.1
 
 At 1000 concurrent sessions with ~2-minute lifetimes, CRD status updates generate ~80+ writes/second — exceeding the 10 QPS rate limiter, causing unbounded queue growth. No etcd compaction/defrag guidance. The single rate limiter bucket starves pod creation during scale-up.
 
 **Recommendation:** Use separate rate limiters for pod creation and status updates. Consider moving the authoritative state machine to Postgres for >500 sessions, using CRD status only for K8s-native concerns. Add etcd tuning guidance (compaction interval, defrag schedule, quota monitoring).
+
+**Status:** FIXED — Replaced single rate limiter with two dedicated buckets (pod creation: 20 QPS/burst 50; status updates: 30 QPS/burst 100) with configurable controller flags. Added comprehensive etcd operational tuning guidance (compaction, defragmentation, quota monitoring, snapshot frequency). Updated Section 17.8 controller tuning table with per-tier rate limiter and etcd settings. Moving the authoritative state machine to Postgres was not applied — it is a significant architectural change beyond the scope of this fix.
 
 ### KIN-003. Controller Split Has Unclear CRD Ownership Boundary [High]
 **Section:** 4.6.1, 4.6.2
@@ -60,12 +62,16 @@ Both WarmPoolController and PoolScalingController interact with the same CRD typ
 
 **Recommendation:** Document explicit CRD field ownership per controller. Use RBAC to enforce write boundaries. Define separate leader election leases. Add a validating webhook to prevent manual CRD edits that conflict with Postgres-authoritative state.
 
+**Status:** FIXED — Added Section 4.6.3 with CRD field ownership table, per-controller RBAC boundaries, and a validating admission webhook for Postgres-authoritative state protection. Added explicit separate leader election lease names (`lenny-warm-pool-controller`, `lenny-pool-scaling-controller`) in Sections 4.6.1 and 4.6.2.
+
 ### KIN-004. PodSecurityStandards Warn+Audit Without Enforce [High]
 **Section:** 17.2
 
 OPA/Gatekeeper policies stated as "must" but not reflected in Helm chart or build sequence. `shareProcessNamespace: false` requires separate policy not in build sequence. Policy/spec drift can cause warm pool deadlock.
 
 **Recommendation:** Add an explicit build phase for admission policy deployment. Include manifests in Helm chart. Add integration tests verifying controller-generated pod specs pass admission policies. Use `enforce` for runc pods where seccomp concerns don't apply.
+
+**Status:** FIXED — Section 17.2 now specifies full Restricted PSS enforcement for runc pods via RuntimeClass-aware admission policies (OPA/Gatekeeper or Kyverno), with relaxed RuntimeClass-specific constraints for gVisor/Kata. Admission policy manifests added to Helm chart component list (Section 17.6). Admission policy deployment and integration tests added to Phase 3.5 build sequence (Section 18). `shareProcessNamespace` validation policy explicitly included in the admission policy set.
 
 ### KIN-005. Namespace Layout Lacks Tenant-Level Isolation [Medium]
 **Section:** 17.2
@@ -150,26 +156,32 @@ With `shareProcessNamespace: false`, the adapter cannot directly signal the agen
 
 **Resolution:** Checkpoint quiescence restructured as tier-dependent in Section 4.4. Cooperative lifecycle channel (`checkpoint_request`/`checkpoint_ready`/`checkpoint_complete`) is the primary path for consistent checkpoints (Full-tier). Minimum/Standard-tier runtimes produce best-effort checkpoints only. `SIGSTOP`/`SIGCONT` restricted to embedded adapter mode under runc only. Signal-based checkpointing explicitly unsupported under gVisor/Kata.
 
-### SEC-002. Adapter-Agent Shared emptyDir Volume Escape [High]
+### SEC-002. Adapter-Agent Shared emptyDir Volume Escape [High] — FIXED
 **Section:** 4.7
 
 Malicious agent can write arbitrary files to shared volume. Adapter manifest on shared path creates tamper/race risks.
 
 **Recommendation:** Separate volumes for socket, workspace, and manifest. Mount manifest read-only into agent container. Consider abstract Unix sockets.
 
-### SEC-003. Prompt Injection via Delegation Chains [High]
+**Resolution:** Replaced single shared `emptyDir` with abstract Unix sockets (`\0` namespace) for adapter-agent communication — no filesystem path needed. Manifest volume (`/run/lenny/`) is now a dedicated `emptyDir` mounted read-only into the agent container and read-write into the adapter container. Workspace remains a separate `emptyDir` (`/workspace/`). Updated manifest JSON to use abstract socket names (`@lenny-platform-mcp`, `@lenny-connector-github`). Added `SO_PEERCRED` peer UID verification on abstract sockets. No shared writable volume between adapter and agent.
+
+### SEC-003. Prompt Injection via Delegation Chains [High] -- FIXED
 **Section:** 8
 
 Gateway validates structure but not content. Compromised parent can craft malicious `TaskSpec.input`. `GuardrailsInterceptor` disabled by default.
 
 **Recommendation:** Add `contentPolicy` to `DelegationPolicy`. Restrict `lenny/send_message` to direct children/parent. Rate-limit message injection. Warn deployers about prompt injection risk without guardrails.
 
-### SEC-004. Credential Material via Environment Variables [High]
+**Resolution:** Added `contentPolicy` (with `maxInputSize` default 128KB and `interceptorRef`) to `DelegationPolicy` (Section 8.3). Added `PreDelegation` phase and full gRPC protobuf interface for external `RequestInterceptor` (Section 4.8). Added Section 13.5 (Delegation Chain Content Security) documenting the layered mitigation model. Strengthened Section 22.3 warning about residual risk without content scanning. Messaging scope and rate limits were already in place.
+
+### SEC-004. Credential Material via Environment Variables [High] — FIXED
 **Section:** 4.7
 
 Env vars are weak for credential delivery — readable via `/proc`, persist in crash dumps, often logged by frameworks.
 
 **Recommendation:** Deliver via tmpfs file (mode 0400) instead. Recommend proxy mode as default for multi-tenant. Clear credential env var after agent reads it.
+
+**Status:** FIXED — Replaced environment variable credential delivery with tmpfs-backed file (`/run/lenny/credentials.json`, mode `0400`, agent UID-owned). Proxy mode now recommended as default for multi-tenant deployments. Security boundaries in Section 4.9 updated to reflect tmpfs file delivery.
 
 ### SEC-005. Isolation Monotonicity Gap for Task Mode Pod Reuse [High]
 **Section:** 5.2, 8.3
@@ -177,6 +189,8 @@ Env vars are weak for credential delivery — readable via `/proc`, persist in c
 Task-mode pod reuse between different tenants has no isolation boundary. Residual data in memory, caches, `/dev/shm` can leak.
 
 **Recommendation:** Enforce tenant pinning — task-mode pods never reuse across tenants. Require `microvm` for any cross-tenant reuse consideration.
+
+**Status:** FIXED — Added tenant-pinning rule to Section 5.2: task-mode pods record `tenantId` on first assignment, gateway enforces match on subsequent assignments, cross-tenant reuse only permitted with `microvm` isolation. Also addresses TEN-005.
 
 ### SEC-006. DNS Exfiltration via DoH/DoT Bypass [Medium]
 **Section:** 13.2
@@ -280,26 +294,32 @@ Process-level isolation between slots explicitly weak. Correctly flagged, needs 
 
 ## 3. Network Security & Isolation
 
-### NET-001. Missing NetworkPolicies for `lenny-agents-kata` Namespace [High]
+### NET-001. Missing NetworkPolicies for `lenny-agents-kata` Namespace [High] — FIXED
 **Section:** 13.2, 17.2
 
 All three NetworkPolicy manifests apply only to `lenny-agents`. `lenny-agents-kata` defaults to allow-all.
 
 **Recommendation:** Templatize NetworkPolicies in Helm chart to apply to all agent namespaces.
 
-### NET-002. Lateral Movement via `internet` Egress Profile [High]
+**Status:** FIXED — Section 13.2 NetworkPolicy manifests now specify they apply to all agent namespaces (`lenny-agents`, `lenny-agents-kata`, and any future additions) via Helm chart templatization over `.Values.agentNamespaces`. YAML examples annotated with `# repeated per agent namespace via Helm range`.
+
+### NET-002. Lateral Movement via `internet` Egress Profile [High] — FIXED
 **Section:** 13.2
 
 `0.0.0.0/0` includes pod CIDR. Agent pods with `internet` profile can reach other agent pods.
 
 **Recommendation:** Exclude cluster pod/service CIDRs from `internet` profile. Require gVisor/Kata isolation for `internet` profile.
 
-### NET-003. Direct Credential Mode Bypasses Gateway Data Plane [High]
+**Status:** FIXED — The `internet` egress profile table entry now specifies cluster pod/service CIDR exclusions. Added hardening note documenting `except` clauses via Helm values (`egressCIDRs.excludeClusterPodCIDR`, `egressCIDRs.excludeClusterServiceCIDR`) and the requirement that `internet` profile pools must use `sandboxed` or `microvm` isolation (controller rejects `standard` + `internet` combinations at validation time).
+
+### NET-003. Direct Credential Mode Bypasses Gateway Data Plane [High] — FIXED
 **Section:** 4.9
 
 `direct` mode with `provider-direct` egress creates a network path bypassing the gateway, violating gateway-centric principle.
 
 **Recommendation:** Document `proxy` as recommended default. Add monitoring channel for direct-mode usage. Flag `direct` + `runc` as dangerous combination.
+
+**Status:** FIXED — Proxy mode was already documented as recommended default for multi-tenant deployments (SEC-004). Added warning about `direct` + `standard` (runc) isolation as a dangerous combination, with controller warning event. Added monitoring guidance: `lenny_gateway_credential_leases_active{delivery_mode="direct"}` metric, `deliveryMode` field on `credential.leased` audit event, and recommendation for admin approval in regulated environments.
 
 ### NET-004. Gateway Egress Rule Lacks Port Restrictions [Medium]
 **Section:** 13.2
@@ -400,26 +420,32 @@ SLO targets stated without specifying at what scale. No max concurrent sessions,
 
 **Status:** FIXED — LLM Proxy added as 4th gateway subsystem (Section 4.1) with dedicated goroutine pool, circuit breaker, per-subsystem metrics (`lenny_gateway_llm_proxy_active_connections`, `lenny_gateway_llm_proxy_request_duration_seconds`, `lenny_gateway_llm_proxy_circuit_state`), HPA metric (`active LLM proxy connections`), and extraction trigger for independent scaling. Subsystem isolation note added in Section 4.9.
 
-### SCA-003. Startup Latency Based on Estimates, Not Benchmarks [High]
+### SCA-003. Startup Latency Based on Estimates, Not Benchmarks [High] — FIXED
 **Section:** 6.3
 
 Competitors cite 150-300ms. Lenny's estimates are in seconds with unknown hot-path additions.
 
 **Recommendation:** Establish benchmarks per phase. Build benchmark harness in Phase 2. Measure SDK-warm vs pod-warm to validate complexity tradeoff.
 
-### SCA-004. Redis as Scalability Ceiling [High]
+**Status:** FIXED — Section 6.3 latency numbers explicitly marked as targets pending benchmark validation. Added per-phase histogram instrumentation requirement (`lenny_session_startup_phase_duration_seconds`). Added startup benchmark harness to Phase 2 build sequence (pod-warm vs SDK-warm comparison per runtime class, CI-integrated). Added startup latency SLO targets to Section 16.5 (P95 < 2s runc, P95 < 5s gVisor, excluding file upload).
+
+### SCA-004. Redis as Scalability Ceiling [High] — FIXED
 **Section:** 12.4
 
 Per-session leases, per-request quota increments, and pub/sub on single Sentinel topology. No analysis of when Sentinel becomes insufficient.
 
 **Recommendation:** Separate Redis into ephemeral coordination and quota enforcement. Consider in-memory budgets with Postgres reconciliation for high-value limits.
 
-### SCA-005. HPA Scaling Lag for Gateway [High]
+**Status:** FIXED — Section 12.4 now documents the scalability ceiling of single Sentinel topology with specific monitoring signals (CPU saturation, memory pressure, operation latency, pub/sub fan-out, ops rate). Added logical separation of Redis concerns into three instance groups (coordination, quota/rate-limiting, cache/pub-sub) as a deployment-time configuration change when ceiling signals trigger. Added in-memory quota budgets with Postgres reconciliation as an opt-in mode for high-value limits. Section 17.8 Redis table updated with per-tier concern separation guidance and capacity ceiling monitoring recommendations.
+
+### SCA-005. HPA Scaling Lag for Gateway [High] — FIXED
 **Section:** 10.1
 
 30-60s minimum lag between spike and new replica. Bursty workloads exhaust existing replicas.
 
 **Recommendation:** Aggressive scale-up policies. Leading metrics (queue depth, rejection rate). Higher `minReplicas` for burst absorption.
+
+**Status:** FIXED — Section 10.1 now includes an HPA scale-up policy paragraph with aggressive scale-up behavior (stabilization window 0s, 100%/15s + 4 pods/15s via selectPolicy Max), leading-indicator metrics (queue depth and rejection rate) surfaced through Prometheus Adapter/KEDA, and minReplicas burst-absorption guidance. Section 17.8 Gateway tier table updated with per-tier queue depth targets, scale-up stabilization windows, and scale-up max policies.
 
 ### SCA-006. Checkpoint SIGSTOP Duration Impact [High]
 **Section:** 4.4
@@ -428,19 +454,25 @@ Per-session leases, per-request quota increments, and pub/sub on single Sentinel
 
 **Recommendation:** Benchmark checkpoint duration. Set SLO (<2s for <100MB). Consider copy-on-write snapshots or incremental checkpoints.
 
-### SCA-007. Postgres Connection Pressure Under Scale [High]
+**Status:** FIXED — Section 4.4 now includes a checkpoint duration SLO (P95 < 2s for ≤ 100MB workspaces), documents workspace size impact on checkpoint duration per tier (best-effort, cooperative, SIGSTOP), and references the Phase 2 checkpoint duration benchmark (Section 18). Section 16.5 SLO table updated with the checkpoint duration target. Incremental checkpoints noted as deferred mitigation for larger workspaces.
+
+### SCA-007. Postgres Connection Pressure Under Scale [High] — FIXED
 **Section:** 12.3
 
 Multiple components hitting Postgres: quota checkpoints, audit inserts, billing writes, session state updates. Write amplification not analyzed.
 
 **Recommendation:** Estimate write IOPS at capacity tiers. Batch audit/billing writes. Consider separate Postgres for write-heavy paths.
 
-### SCA-008. Delegation Tree Unbounded Gateway Memory [High]
+**Status:** FIXED — Added per-tier write IOPS estimation table (4 write sources, 3 tiers) to Section 12.3 with burst headroom analysis. Added batching guidance for billing events and audit logs with configurable flush intervals and batch sizes. Documented optional separate Postgres instance for billing/audit writes at Tier 3. Added write IOPS and batching parameters to Section 17.8 tier reference table.
+
+### SCA-008. Delegation Tree Unbounded Gateway Memory [High] — FIXED
 **Section:** 8.2
 
 50-node tree with virtual child interfaces, event buffers, and elicitation state in single replica memory.
 
 **Recommendation:** Calculate per-node memory footprint. Set `maxTreeMemoryBytes`. Offload completed subtree results to Postgres.
+
+**Status:** FIXED — Added per-node memory footprint table (~12 KB/node, ~600 KB for 50-node tree) to Section 8.2. Added `maxTreeMemoryBytes` field (default 2 MB) to the delegation lease with atomic Redis enforcement. Added completed subtree offloading to Postgres (`session_tree_archive` table) with lightweight in-memory stubs and on-demand LRU-cached fetch.
 
 ### SCA-009. Warm Pool Claim Contention Under Burst [Medium]
 **Section:** 4.6.1
@@ -523,12 +555,14 @@ Identical topic with different field names (`tokens_in`/`tokens_out` vs `tokens_
 
 ## 5. Protocol Design & Future-Proofing
 
-### PRO-001. `ExternalProtocolAdapter` Interface Too Thin for Stateful Protocols [High]
+### PRO-001. `ExternalProtocolAdapter` Interface Too Thin for Stateful Protocols [High] — FIXED
 **Section:** 15
 
 Only `HandleInbound`, `HandleDiscovery`, `Capabilities`. No lifecycle hooks for A2A's task lifecycle or push notifications.
 
 **Recommendation:** Extend with `OnSessionCreated`, `OnSessionEvent`, `OnSessionTerminated`. Add `OutboundCapabilities` declaration.
+
+**Status:** FIXED — Extended `ExternalProtocolAdapter` interface with three lifecycle hooks (`OnSessionCreated`, `OnSessionEvent`, `OnSessionTerminated`) and `OutboundCapabilities()` declaration. All new methods are optional via `BaseAdapter` embedding with no-op defaults, so existing adapters require no changes.
 
 ### PRO-002. MCP Task Semantics Hardcoded into Core [High]
 **Section:** 7, 8, 9.2
@@ -537,12 +571,16 @@ Session lifecycle, task tree, and delegation deeply structured around MCP Tasks.
 
 **Recommendation:** Define canonical task state machine as Lenny-native. Add `canceled` state now. Define inbound A2A task mapping to session creation.
 
-### PRO-003. MCP Spec Version Pinning Missing [High]
+**Status:** FIXED — Defined Lenny-native canonical task state machine in Section 8.9 with all states (`submitted`, `running`, `completed`, `failed`, `cancelled`, `expired`, `input_required`) and explicit transitions. Added protocol mapping table for MCP and A2A (including `canceled`/`unknown`/`expired` mappings). Extended session state machine in Section 7 with `cancelled` and `expired` transitions. Expanded Section 21.1 with inbound A2A task-to-session mapping details, artifact mapping, and `canceled`/`unknown` state handling.
+
+### PRO-003. MCP Spec Version Pinning Missing [High] — FIXED
 **Section:** 15
 
 No target MCP version specified. No version negotiation. No compatibility matrix for client/server version mismatch.
 
 **Recommendation:** Pin target MCP version. Add version negotiation to `MCPAdapter`. Support two concurrent versions.
+
+**Status:** FIXED — Pinned target MCP spec version to 2025-03-26 in Section 15.2. Added version negotiation protocol to `MCPAdapter` (client sends `protocolVersion`, gateway responds with highest mutual version, rejects unsupported with `MCP_VERSION_UNSUPPORTED`). Documented compatibility policy: two concurrent versions (current + previous) with 6-month deprecation window. Updated Section 15.5 item 2 to cross-reference negotiation details.
 
 ### PRO-004. `publishedMetadata` Lacks Schema Validation [Medium]
 **Section:** 5.1
@@ -627,12 +665,14 @@ Message schemas (inbound/outbound), heartbeat format, shutdown expectations, and
 
 **Status:** FIXED — Added Protocol Reference with JSON schemas for all message types (message, heartbeat, shutdown, tool_result, response, tool_call, heartbeat_ack, status). Full MessageEnvelope on stdin with ignore-unknown-fields convention documented. Exit codes table added (0, 1, 2, 137). Annotated protocol trace for a complete Minimum-tier session. Minimum-tier description updated to explicitly require heartbeat/shutdown handling. Echo runtime pseudocode added to Section 15.4.4. `heartbeat_ack` added to outbound message table.
 
-### DEV-002. OutputPart Complexity for Minimum-Tier [High]
+### DEV-002. OutputPart Complexity for Minimum-Tier [High] — FIXED
 **Section:** 15.4.1
 
 Minimum-tier runtimes must produce `OutputPart[]` but minimal valid form undefined. `from_mcp_content` helper implies SDK dependency contradicting "zero knowledge" promise.
 
 **Recommendation:** Allow simplified response shorthand (`{type: "response", text: "hello"}`). Document minimal required fields. Make SDK helpers explicitly optional.
+
+**Status:** FIXED — Added minimal required fields documentation (only `type` and `inline` required, all other fields optional with defaults). Added simplified text-only response shorthand (`{type: "response", text: "..."}`) normalized by adapter. Made `from_mcp_content` helper explicitly optional with no-SDK-dependency clarification. Updated protocol reference and annotated trace to show shorthand form.
 
 ### DEV-003. Degraded Experience for Minimum-Tier Poorly Documented [High]
 **Section:** 4.7, 15.4.3
@@ -641,19 +681,25 @@ Minimum-tier runtimes must produce `OutputPart[]` but minimal valid form undefin
 
 **Recommendation:** Add Tier Comparison Matrix listing every capability by tier with fallback behaviors.
 
-### DEV-004. tool_call/tool_result Format Unspecified [High]
+**Status:** FIXED — Added comprehensive Tier Comparison Matrix in Section 15.4.3 enumerating all tier-sensitive capabilities (checkpoint/restore, interrupt, credential rotation, deadline warning, graceful drain, protocol features) with explicit fallback behaviors for Minimum and Standard tiers.
+
+### DEV-004. tool_call/tool_result Format Unspecified [High] — FIXED
 **Section:** 15.4.1
 
 No JSON schema for tool calls or results. No correlation mechanism. Sync vs async delivery undefined. Minimum-tier tool access unclear.
 
 **Recommendation:** Add complete schemas with correlation mechanism. Clarify tool access per tier.
 
-### DEV-005. No Quickstart Path or Tutorial Structure [High]
+**Status:** FIXED — Added formal JSON schemas with field descriptions for both `tool_call` (outbound) and `tool_result` (inbound) in Protocol Reference. Added correlation mechanism documentation (`id` field uniqueness, adapter validation, out-of-order delivery). Specified synchronous request/response delivery semantics with interleaved message handling. Added tool access per tier table (Minimum: adapter-local tools only, no MCP; Standard: platform + connector MCP servers; Full: same as Standard plus lifecycle).
+
+### DEV-005. No Quickstart Path or Tutorial Structure [High] — FIXED
 **Section:** 15.4
 
 Relevant runtime-author info scattered across 7+ sections in a 3700-line doc.
 
 **Recommendation:** Create separate "Runtime Author Guide" with tutorial-order presentation.
+
+**Status:** FIXED — Added Section 15.4.5 "Runtime Author Roadmap" providing a tier-organized reading order through 15 sections across the spec. Covers Minimum-tier (6 sections: echo runtime, binary protocol, state machine, tiers, filesystem layout, local dev), Standard-tier (4 sections: adapter component, MCP integration, delegation, runtime definition), and Full-tier (5 sections: pool config, session lifecycle, security, workspace schema, API versioning). All cross-references validated.
 
 ### DEV-006. Adapter Manifest Discovery Underspecified [Medium]
 **Section:** 4.7
@@ -748,26 +794,32 @@ Same finding as 4.17.
 
 ## 7. Operator & Deployer Experience
 
-### OPS-001. No Bootstrap Seed Mechanism for Day-1 [High]
+### OPS-001. No Bootstrap Seed Mechanism for Day-1 [High] — FIXED
 **Section:** 15.1
 
 After `helm install`, Postgres is empty. No runtimes, pools, or credentials. Operator must manually call dozens of API endpoints.
 
 **Recommendation:** Define bootstrap seed mechanism (Helm values section, init ConfigMap, or `lenny-ctl bootstrap` CLI). Make idempotent.
 
-### OPS-002. No Preflight Validation for Infrastructure Dependencies [High]
+**Status:** FIXED — Added idempotent bootstrap seed mechanism in Section 17.6: Helm `bootstrap` values section, `lenny-bootstrap` init Job (post-install/post-upgrade hook), `lenny-ctl bootstrap` CLI command with dry-run and force-update modes. Defined minimum Day-1 seed (default tenant, runtime, pool). Added `POST /v1/admin/bootstrap` endpoint. Integrated into build sequence Phase 4.5. Local dev `make run` auto-applies seed.
+
+### OPS-002. No Preflight Validation for Infrastructure Dependencies [High] — FIXED
 **Section:** 12.3, 12.4, 12.5
 
 Missing prerequisite (wrong PgBouncer mode, no CNI support, etc.) causes cryptic failures.
 
 **Recommendation:** Add `lenny-preflight` Job validating Postgres, PgBouncer, Redis, MinIO, RuntimeClasses, cert-manager, CNI support.
 
-### OPS-003. Helm Upgrade Doesn't Update CRDs [High]
+**Status:** FIXED — Added `lenny-preflight` Job specification in Section 17.6: Helm pre-install/pre-upgrade hook (`hook-weight: "-10"`) validating all infrastructure dependencies before deployment. Checks: Postgres (connectivity, version ≥ 14), PgBouncer (transaction-mode, connect_query sentinel), Redis (connectivity, AUTH, TLS), MinIO (connectivity, SSE), RuntimeClasses, cert-manager, CNI NetworkPolicy support, Kubernetes version. Configurable via `preflight.enabled` and `preflight.timeoutSeconds`. Dev mode skips non-essential checks. CLI equivalent via `lenny-ctl preflight`. Updated existing RuntimeClass pre-install hook reference in Section 5 to point to full preflight spec.
+
+### OPS-003. Helm Upgrade Doesn't Update CRDs [High] — FIXED
 **Section:** 10.5, 17.6
 
 Helm's known CRD limitation. Silently stale CRDs cause production incidents.
 
 **Recommendation:** Document separate CRD application before `helm upgrade`. Add startup check validating CRD schema version.
+
+**Status:** FIXED — Added Helm CRD upgrade limitation warning and controller startup schema-version validation in Section 10.5. Added required CRD upgrade procedure (apply CRDs before `helm upgrade`, GitOps sync-wave guidance) and preflight CRD version check in Section 17.6.
 
 ### OPS-004. SQLite in Tier 1 Dev Mode Behavioral Divergence [Medium]
 **Section:** 17.4
@@ -870,26 +922,31 @@ Same finding — consolidate into single section.
 
 **Recommendation:** Mandate `BEGIN; SET LOCAL app.current_tenant = '<id>'; ... COMMIT;` — `SET LOCAL` is explicitly transaction-scoped. RLS policy must use `current_setting('app.current_tenant', false)` to error on unset. Add startup integration test verifying isolation. Set sentinel value on connection init.
 
-### TEN-002. Redis Tenant Isolation Absent [High]
+### TEN-002. Redis Tenant Isolation Absent [High] — FIXED
 **Section:** 12.2, 12.4
+**Status:** FIXED — Spec updated to mandate `t:{tenant_id}:` key prefix convention for all Redis-backed roles (Section 12.2 cross-reference, Section 12.4 detailed convention). Prefix enforced in Redis wrapper layer. Integration test (`TestRedisTenantKeyIsolation`) required.
 
 No key-naming convention with tenant prefix. Cache poisoning and routing cross-contamination risk.
 
 **Recommendation:** Mandate `t:{tenant_id}:` key prefix convention. Document as implementation requirement. Add integration test.
 
-### TEN-003. MinIO Tenant Isolation Unspecified [High]
+### TEN-003. MinIO Tenant Isolation Unspecified [High] — FIXED
 **Section:** 4.5, 12.5
 
 No per-tenant bucket or path-based isolation strategy. `DeleteByTenant` implies scoping but mechanism undefined.
 
 **Recommendation:** Specify path-based isolation with mandatory `tenant_id` prefix validation at `ArtifactStore` interface level.
 
-### TEN-004. Tenant Deletion Path Incomplete [High]
+**Status:** FIXED — Added mandatory `/{tenant_id}/` path prefix for all MinIO object keys with interface-level validation in Sections 4.5 and 12.5. Added `ArtifactStore` tenant isolation requirement to Section 12.2 storage roles. `DeleteByTenant` now maps to a deterministic prefix-scoped bulk delete.
+
+### TEN-004. Tenant Deletion Path Incomplete [High] — FIXED
 **Section:** 12.8
 
 No active session termination, credential revocation, Redis cleanup, environment teardown, CRD cleanup, ordering, or legal hold interaction specified.
 
 **Recommendation:** Define full tenant deletion lifecycle with phases (soft-disable -> terminate sessions -> revoke credentials -> delete data -> clean CRDs -> produce receipt). Add `TenantState` enum.
+
+**Status:** FIXED — Added six-phase tenant deletion lifecycle (soft-disable, terminate sessions, revoke credentials, delete data, clean CRDs, produce receipt) with `TenantState` enum (`active`, `disabling`, `deleting`, `deleted`). Added legal hold interaction check before data deletion with audit trail and force-delete escape hatch. Added idempotency and resumption guarantees.
 
 ### TEN-005. Task-Mode Pod Reuse Cross-Tenant Risk [High]
 **Section:** 5.2
@@ -897,6 +954,8 @@ No active session termination, credential revocation, Redis cleanup, environment
 No explicit prohibition of cross-tenant task-mode pod reuse.
 
 **Recommendation:** Add explicit statement: task-mode pods NEVER reuse across tenants. Enforce in gateway task assignment logic.
+
+**Status:** FIXED — Addressed by SEC-005 fix. Tenant-pinning rule added to Section 5.2 with gateway enforcement of `tenantId` match on task-mode pod assignment.
 
 ### TEN-006. Three-Role RBAC Lacks Granularity [Medium]
 **Section:** 10.2
@@ -970,19 +1029,23 @@ Gap-free sequences reveal activity volume if exposed cross-tenant.
 
 ## 9. Storage Architecture & Data Management
 
-### STO-001. Redis Fail-Open Enables Per-Tenant Budget Bypass [High]
+### STO-001. Redis Fail-Open Enables Per-Tenant Budget Bypass [High] — FIXED
 **Section:** 12.4
 
 10 gateway replicas = 10x per-tenant budget during outage. Per-tenant budgets have no local enforcement.
 
 **Recommendation:** Add per-tenant in-memory counters. Apply conservative ceiling per replica during fail-open.
 
-### STO-002. Data-at-Rest Encryption Gaps [High]
+**Resolution:** Added per-tenant fail-open budget enforcement to Section 12.4. Each replica enforces `per_replica_limit = tenant_limit / replica_count` during Redis unavailability. Added cumulative fail-open timer (`quotaFailOpenCumulativeMaxSeconds`, default 300s/1h window) that transitions to fail-closed after threshold. Updated quota counters table row to reference per-replica ceiling. Also resolves FAI-002 and POL-003.
+
+### STO-002. Data-at-Rest Encryption Gaps [High] — FIXED
 **Section:** 12.3, 12.4
 
 Postgres, Redis, WAL archives, and backup encryption never mentioned.
 
 **Recommendation:** Require Postgres encryption at rest. Document Redis data as ephemeral with app-layer encryption. Require encrypted WAL archives/backups.
+
+**Resolution:** Added encryption-at-rest requirements to Section 12.3: Postgres storage must use volume-level encryption (managed or LUKS), WAL archives and backups must be encrypted (SSE or client-side). Updated backup paragraph to cross-reference encryption requirement. Added data-at-rest posture paragraph to Section 12.4: Redis documented as ephemeral with durable fallbacks, sensitive cached values require app-layer encryption, volume-level encryption recommended for defense-in-depth.
 
 ### STO-003. Orphaned MinIO Objects from Failed Checkpoints [Medium]
 **Section:** 4.4, 12.5
@@ -1063,12 +1126,16 @@ Rejection permanently starves entire tree. No scoped rejection, no cool-off, no 
 
 **Recommendation:** Allow per-subtree rejection. Add cool-off period. Provide admin API to clear flag.
 
+**Status:** FIXED — Rejection now scoped to the requesting subtree only (other subtrees unaffected). Added configurable `rejectionCoolOffSeconds` (default 300s, same layering as other lease extension settings) after which the subtree may request extensions again. Added admin API endpoint (`DELETE /admin/v1/trees/{treeId}/subtrees/{sessionId}/extension-denial`) to clear the denial flag immediately.
+
 ### DEL-002. Deep Tree Recovery Has No Timeout or Ordering [High]
 **Section:** 8.11
 
 Multi-level failure recovery has no ordering guarantee, no per-level timeout, no total tree recovery bound.
 
 **Recommendation:** Specify bottom-up recovery. Add `maxTreeRecoverySeconds`. Document interaction with `maxResumeWindowSeconds`.
+
+**Status:** FIXED — Section 8.11 now specifies bottom-up (leaves-first) recovery ordering. Added `maxLevelRecoverySeconds` (default 120s) and `maxTreeRecoverySeconds` (default 600s) with clear semantics for timeout expiry. Documented interaction with `maxResumeWindowSeconds` (effective window is the minimum of both).
 
 ### DEL-003. Orphan Cleanup Interval Underspecified [Medium]
 **Section:** 8.11
@@ -1174,33 +1241,41 @@ No guarantee `SIGCONT` sent on all failure paths. Adapter crash mid-checkpoint l
 
 **Resolution:** Added 60-second checkpoint timeout for both Full-tier (lifecycle channel) and embedded adapter paths in Section 4.4. Full-tier runtimes autonomously resume after timeout. Embedded adapter requires `defer SIGCONT` invariant and a 60-second watchdog timer with unconditional SIGCONT on expiry. Adapter crash recovery documented: liveness probe failure triggers pod restart, session resumes from last successful checkpoint per Section 7.2.
 
-### SES-002. Pod State Machine Missing Failure Transitions [High]
+### SES-002. Pod State Machine Missing Failure Transitions [High] — FIXED
 **Section:** 6.2
 
 No `running_setup -> failed` or `finalizing_workspace -> failed` transitions shown.
 
 **Recommendation:** Add explicit failure transitions from all pre-`attached` states. Define retry policy for pre-attached failures.
 
-### SES-003. Generation Counter Race During Postgres Fallback [High]
+**Resolution:** Added explicit failure transitions from all six pre-attached states (`warming`, `sdk_connecting`, `receiving_uploads`, `running_setup`, `finalizing_workspace`, `starting_session`) to the state machine diagram in Section 6.2. Added pre-attached failure retry policy: 2 retries with exponential backoff (500ms, 1s), fresh pod per retry, non-retryable for validation/policy errors, correlation ID on exhaustion.
+
+### SES-003. Generation Counter Race During Postgres Fallback [High] — FIXED
 **Section:** 10.1
 
 Brief lock release window allows coordinator thrashing. Stale replica handling undefined.
 
 **Recommendation:** Specify coordinator handoff protocol. Stale replica must stop RPCs, clear state, back off.
 
-### SES-004. `awaiting_client_action` Expiry Orphans Children [High]
+**Resolution:** Added coordinator handoff protocol to Section 10.1: new coordinator must atomically increment generation, send a `CoordinatorFence` RPC to the pod before issuing any other RPCs, and include the generation stamp on all subsequent RPCs. Added stale replica behavior: on generation-stale rejection, the replica must immediately stop RPCs, clear cached session state, apply jittered exponential backoff (500ms–8s) before re-contending, and emit structured log/metric (`lenny_coordinator_handoff_stale_total`).
+
+### SES-004. `awaiting_client_action` Expiry Orphans Children [High] — FIXED
 **Section:** 7.3
 
 Transition to `expired` doesn't trigger `cascadeOnFailure`. Running children left orphaned.
 
 **Recommendation:** `awaiting_client_action -> expired` must trigger cascade policy. Add `expired` as terminal state.
 
-### SES-005. Concurrent Checkpoint and Interrupt Operations [High]
+**Resolution:** Section 7.3 `awaiting_client_action` expiry now explicitly triggers `cascadeOnFailure`. `expired` added as terminal state in sections 7.3, 8.4 (budget return), 8.6 (`settled` mode), 8.8 (delegation cascade trigger), and 14 (webhook events).
+
+### SES-005. Concurrent Checkpoint and Interrupt Operations [High] — FIXED
 **Section:** 4.7
 
 Both target the running process. No mutual exclusion. Interrupt during SIGSTOP is undeliverable.
 
 **Recommendation:** Define mutual exclusion via adapter per-session lock. Queue operations. Document ordering semantics.
+
+**Resolution:** Section 4.7 now specifies a per-session operation lock in the adapter that serializes `Checkpoint` and `Interrupt` RPCs. Defines queuing behavior for interrupt-during-checkpoint and checkpoint-during-interrupt, queue depth limits, and coalescing/drop semantics.
 
 ### SES-006. Session Derive Credential State Undefined [Medium]
 **Section:** 19 #12
@@ -1295,26 +1370,32 @@ Same finding — consolidate.
 
 ## 12. Observability & Operational Monitoring
 
-### OBS-001. No Elicitation Chain Metrics [High]
+### OBS-001. No Elicitation Chain Metrics [High] — FIXED
 **Section:** 16.1
 
 Zero metrics for elicitation round-trip latency, pending count, suppression, timeouts.
 
 **Recommendation:** Add `lenny_elicitation_roundtrip_seconds`, `_pending`, `_suppressed_total`, `_timeout_total`. Add `ElicitationBacklogHigh` alert.
 
-### OBS-002. No Credential Lifecycle Tracing Spans [High]
+**Status:** FIXED — Added four elicitation metrics to Section 16.1 (`lenny_elicitation_roundtrip_seconds` histogram, `lenny_elicitation_pending` gauge, `lenny_elicitation_suppressed_total` counter, `lenny_elicitation_timeout_total` counter) and `ElicitationBacklogHigh` warning alert to Section 16.5.
+
+### OBS-002. No Credential Lifecycle Tracing Spans [High] — FIXED
 **Section:** 16.3
 
 No spans for credential assignment, rotation, or fallback chain. Critical latency path invisible.
 
 **Recommendation:** Add `credential.assign`, `credential.rotate`, `credential.fallback_chain`, `credential.proxy_request` spans.
 
-### OBS-003. Delegation Budget Consumption Not Tracked [High]
+**Status:** FIXED — Added four credential lifecycle spans to Section 16.3's span boundaries table: `credential.assign`, `credential.rotate`, `credential.fallback_chain` (Gateway credential service), and `credential.proxy_request` (Gateway LLM proxy).
+
+### OBS-003. Delegation Budget Consumption Not Tracked [High] — FIXED
 **Section:** 16.1
 
 No metrics for token budget utilization, extension rates, or tree-wide consumption trends.
 
 **Recommendation:** Add `lenny_delegation_budget_utilization_ratio`, `_lease_extension_total`, `_tree_token_usage_total`. Add `DelegationBudgetNearExhaustion` alert.
+
+**Status:** FIXED — Added three delegation budget metrics to Section 16.1 (`lenny_delegation_budget_utilization_ratio` gauge, `lenny_delegation_lease_extension_total` counter, `lenny_delegation_tree_token_usage_total` counter) and `DelegationBudgetNearExhaustion` warning alert to Section 16.5.
 
 ### OBS-004. Warm Pool Claim Queue Wait Missing [Medium]
 **Section:** 16.1
@@ -1410,12 +1491,16 @@ Delegation trees can span regions. No region-awareness in routing. No per-tenant
 
 **Recommendation:** Add optional `dataResidencyRegion` on Tenant/Environment. Enforce region constraints on pod pools and storage. Provide multi-region reference architecture.
 
+**Status:** FIXED — Added optional `dataResidencyRegion` field on Tenant and Environment configuration. Region constraints enforced at three levels: pod pool routing (including transitive delegation), storage routing via `StorageRouter` interface, and session creation validation. Added inheritance model (tenant → environment, restrict-only). Added multi-region reference architecture with region-local control planes and global tenant catalog.
+
 ### COM-003. Audit Log Integrity Best-Effort [High]
 **Section:** 11.7
 
 Startup check warns only. No continuous monitoring. No cryptographic integrity. Superuser bypass unaddressed.
 
 **Recommendation:** Hard-fail startup check in production. Add periodic background check. Add hash chaining. Validate SIEM connectivity.
+
+**Status:** FIXED — Section 11.7 rewritten with four layered integrity controls: (1) startup grant check hard-fails in production, (2) periodic background grant and chain verification every 5 minutes with critical alerts and optional graceful shutdown on drift, (3) SHA-256 hash chaining on audit entries for tamper-evident sequencing, (4) SIEM connectivity validated at startup (hard-fail) and monitored at runtime. Superuser bypass explicitly mitigated via hash chain detection and independent SIEM copy.
 
 ### COM-004. Billing Event No Correction Mechanism [High]
 **Section:** 11.2.1, 11.8
@@ -1424,12 +1509,16 @@ Absolute immutability makes error correction impossible.
 
 **Recommendation:** Add `billing_correction` event type referencing original. Consumers reconstruct by applying corrections.
 
+**Status:** FIXED — Added `billing_correction` event type to the billing event types table in Section 11.2.1, with `corrects_sequence` and `correction_reason` fields in the event schema. Documented consumer reconstruction semantics: corrections carry replacement values, are applied in sequence-number order, and the latest correction to a given original takes precedence. Append-only immutability is preserved — corrections are new events, original events remain unchanged.
+
 ### COM-005. No Data Classification Tiers [High]
 **Section:** various
 
 All data treated uniformly despite PII, PHI, credentials, business data having different requirements.
 
 **Recommendation:** Define classification tiers. Allow per-tenant workspace classification. Drive controls from classification.
+
+**Status:** FIXED — Added Section 12.9 Data Classification. Defines four tiers (Public, Internal, Confidential, Restricted) with default mappings for all data types. Per-tenant workspace classification override via `dataClassification.workspaceTier`. Controls table specifying encryption, access, audit, retention, erasure, and residency requirements per tier. Enforcement at storage interface boundary. Cross-references to existing legal hold, data residency, credential encryption, and erasure mechanisms.
 
 ### COM-006. Retention Doesn't Align With Regulations [Medium]
 **Section:** 7.1, 16.4, 11.8
@@ -1481,12 +1570,14 @@ Including: no PIA/DPIA integration, experiment compliance safeguards, SOC 2 Trus
 
 ## 14. API Design & External Interface Quality
 
-### API-001. REST/MCP Consistency Not Enforceable [High]
+### API-001. REST/MCP Consistency Not Enforceable [High] — FIXED
 **Section:** 15.2.1
 
 "Shared service layer" is implementation aspiration without testing strategy.
 
 **Recommendation:** Generate MCP schemas from OpenAPI. Add contract tests calling both surfaces.
+
+**Status:** FIXED — Section 15.2.1 now specifies OpenAPI as the single authoritative schema with MCP tool schemas generated from OpenAPI definitions (item 4). Added contract testing requirement covering success paths, validation errors, and authz rejections across both API surfaces (item 5). Contract tests added to Phase 5 build sequence (Section 18) alongside OpenAPI→MCP schema generation build step.
 
 ### API-002. Admin API Error Response Schema Absent [High]
 **Section:** 15.1
@@ -1495,19 +1586,25 @@ One inline example. No error code catalog, no per-endpoint docs, no validation e
 
 **Recommendation:** Add canonical error envelope, error code table, validation error format, rate-limit headers.
 
-### API-003. `dryRun` Semantics Undefined [High]
+**Status:** FIXED — Section 15.1 now includes: canonical error response JSON envelope with all required fields, error code catalog (18 codes across all four categories with HTTP status mappings), structured validation error format with per-field details for 400 responses, and rate-limit headers specification (X-RateLimit-Limit/Remaining/Reset, Retry-After). Error codes cross-reference Section 16.3 taxonomy. Shared error taxonomy in Section 15.2.1 item 3 remains consistent.
+
+### API-003. `dryRun` Semantics Undefined [High] — FIXED
 **Section:** 15.1, 21.5
 
 No definition of behavior, supported endpoints, response format, or interaction with etags.
 
 **Recommendation:** Define full semantics: performs validation without persistence. Enumerate supported endpoints.
 
-### API-004. ETag Concurrency Completely Unspecified [High]
+**Status:** FIXED — Section 15.1 now includes full `dryRun` specification: validation-only semantics (no persistence, no side effects, no audit events), enumerated supported endpoints (all admin POST/PUT), response format (identical to non-dry-run with `X-Dry-Run: true` header), ETag interaction (validates `If-Match` on PUT, ignores on POST), and explicit exclusions (DELETE and action endpoints). Section 21.5 cross-references the Section 15.1 definition.
+
+### API-004. ETag Concurrency Completely Unspecified [High] — FIXED
 **Section:** 15.1
 
 No generation mechanism, required headers, mismatch behavior, or interaction with DELETE.
 
 **Recommendation:** Specify ETags on all GET responses. Require `If-Match` on PUT (428 on missing, 412 on mismatch). Use version counters.
+
+**Status:** FIXED — Section 15.1 now includes full "ETag-based optimistic concurrency" specification: Postgres integer `version` column as generation mechanism, ETag header on all GET responses (including per-item in lists), `If-Match` required on PUT (428 `ETAG_REQUIRED` on missing, 412 `ETAG_MISMATCH` on mismatch), optional `If-Match` on DELETE, and `UPDATE ... WHERE version = $2` implementation pattern. Added `ETAG_REQUIRED` to the error code catalog.
 
 ### API-005. No Pagination Specification [High]
 **Section:** 15.1
@@ -1515,6 +1612,8 @@ No generation mechanism, required headers, mismatch behavior, or interaction wit
 Multiple list endpoints with no pagination contract.
 
 **Recommendation:** Define cursor-based pagination envelope. Standard query parameters (`cursor`, `limit`, `sort`).
+
+**Status:** FIXED — Section 15.1 now includes full "Cursor-based pagination" specification: standard query parameters (`cursor`, `limit` with default 50/max 200, `sort` with `field:asc`/`field:desc` syntax), JSON response envelope (`items`, `cursor`, `hasMore`), opaque URL-safe cursors with 24-hour expiry, and explicit enumeration of all list endpoints covered by the pagination contract.
 
 ### API-006. Admin API Resource Schemas Not Defined [Medium]
 **Section:** 15.1
@@ -1582,10 +1681,12 @@ Competitors listed but differentiation never articulated. No value proposition s
 
 **Status:** FIXED — Added Section 23.1 "Why Lenny?" with 5 concrete differentiators grounded in spec sections: runtime-agnostic adapter contract (Section 15.4), recursive delegation primitive (Section 5, Principle 5), self-hosted K8s-native (Section 17, 17.4), multi-protocol gateway (Section 15, 3), enterprise controls (Sections 2, 8, 16).
 
-### OSS-002. `agent-sandbox` Upstream Risk Unaddressed [High]
+### OSS-002. `agent-sandbox` Upstream Risk Unaddressed [High] — SKIPPED
 **Section:** 4.6.1
 
 Same as C1 — no abstraction layer, engagement strategy, or fallback plan.
+
+**Status:** SKIPPED — Already resolved by KIN-001 fix. Section 4.6.1 now includes: (1) two-interface abstraction layer (`PodLifecycleManager` + `PoolManager`) so no Lenny component touches agent-sandbox CRDs directly, (2) dependency pinning with one-release-delay upgrade cadence as engagement strategy, (3) documented fallback plan with 2-3 engineering-week effort estimate for custom kubebuilder replacement.
 
 ### OSS-003. No Community Adoption Strategy [High]
 **Section:** 18
@@ -1594,12 +1695,16 @@ No target persona, adoption funnel, "time to hello world" metric, or governance 
 
 **Recommendation:** Define personas. Set <5min TTHW target. Decide governance early (Phase 1-2). Plan comparison guides.
 
+**Status:** FIXED — Section 23.2 adds community adoption strategy with: (1) three target personas (runtime authors, platform operators, enterprise teams) with entry points, (2) < 5-minute TTHW target validated by CI smoke test, (3) BDfN governance model with steering committee transition plan and ADR-based decision process established in Phase 2, (4) comparison guides planned for Phase 17. Section 18 open-source readiness note updated to cross-reference Section 23.2.
+
 ### OSS-004. Missing Temporal/Modal/LangGraph Comparison [High]
 **Section:** 23
 
 Most direct competitive threats omitted.
 
 **Recommendation:** Expand Section 23 with Temporal, Modal, LangGraph entries and specific differentiation.
+
+**Status:** FIXED — Section 23 comparison table expanded with Temporal, Modal, and LangGraph entries including specific differentiation points. Section 23.1 differentiators updated to reference new competitors (runtime-agnostic vs SDK-coupled, self-hosted vs hosted-only). Section 23.2 comparison guides list updated to include all three.
 
 ### OSS-005. "Hooks and Defaults" May Create Hollow Day-One Experience [Medium]
 **Section:** 22.6
@@ -1651,26 +1756,32 @@ Including: multi-protocol may dilute focus, billing open-core boundary undefined
 
 ## 16. Warm Pool & Pod Lifecycle Management
 
-### WAR-001. SDK-Warm Creates Dual-Pool Inventory Problem [High]
+### WAR-001. SDK-Warm Creates Dual-Pool Inventory Problem [High] — FIXED
 **Section:** 6.1
 
 No mechanism to control SDK-warm vs pod-warm ratio. Degradation path for wrong pod type undefined.
 
 **Recommendation:** Introduce `sdkWarmRatio` or make SDK-warm pods degradable to pod-warm with documented penalty.
 
-### WAR-002. Pool Sizing Formula Lacks Burst Term [High]
+**Resolution:** Added `sdkWarmRatio` field (0.0–1.0) on `SandboxWarmPool` CRD to control SDK-warm vs pod-warm split. Documented degradation path: SDK-warm pods can be demoted to pod-warm with SDK teardown penalty (1–3 s). Added `lenny_warmpool_sdk_demotions_total` metric. Updated CRD field ownership table and CEL validation rules.
+
+### WAR-002. Pool Sizing Formula Lacks Burst Term [High] — FIXED
 **Section:** 4.6.1, 4.6.2
 
 Formula doesn't model refill rate or burst absorption.
 
 **Recommendation:** Extend formula with burst absorption term: `burst_p99_claims * pod_warmup_seconds`.
 
-### WAR-003. Execution Mode / Warm Pool Interaction Underspecified [High]
+**Status:** FIXED — Added `burst_p99_claims * pod_warmup_seconds` burst absorption term to the PoolScalingController default formula (Section 4.6.2), the failover sizing guidance (Section 4.6.1), and the per-tier sizing formula (Section 17.8). Documented refill rate rationale and variable definitions.
+
+### WAR-003. Execution Mode / Warm Pool Interaction Underspecified [High] — FIXED
 **Section:** 5.2, 4.6
 
 Task mode reuse and concurrent mode slot division not reflected in scaling formulas.
 
 **Recommendation:** Add "Execution Mode Scaling Implications" subsection with per-mode formula variants.
+
+**Resolution:** Added "Execution Mode Scaling Implications" subsection in Section 5.2 with per-mode `mode_factor` adjustment (session=1.0, task=avg reuse count, concurrent=maxConcurrent), adjusted formula, and caveats for cold start and slot saturation. Added cross-reference in Section 4.6.2 default formula.
 
 ### WAR-004. `sdkWarmBlockingPaths` Fragile and Static [Medium]
 **Section:** 6.1
@@ -1744,26 +1855,32 @@ Client blocks up to 30s with no feedback.
 
 ## 17. Credential Management & Secret Handling
 
-### CRD-001. LLM Proxy as SPOF and Latency Bottleneck [High]
+### CRD-001. LLM Proxy as SPOF and Latency Bottleneck [High] — SKIPPED
 **Section:** 4.9
 
 No subsystem isolation. Gateway outage kills all LLM calls in proxy mode.
 
 **Recommendation:** Define as fourth gateway subsystem. Consider separate scalable deployment. Document availability tradeoff.
 
-### CRD-002. Credential Rotation Unreliable for Non-Full Runtimes [High]
+**Status:** SKIPPED — Already resolved by the SCA-002 fix, which added LLM Proxy as the 4th gateway subsystem (Section 4.1) with dedicated goroutine pool, circuit breaker, per-subsystem metrics, HPA metric for independent scaling, and documented extraction trigger. All three aspects of the recommendation (subsystem definition, scalable deployment path, availability tradeoff) are covered.
+
+### CRD-002. Credential Rotation Unreliable for Non-Full Runtimes [High] — FIXED
 **Section:** 4.7
 
 Minimum/Standard tiers cannot receive rotated credentials. No restart/resume path defined.
 
 **Recommendation:** Document per-tier rotation behavior. Auto-trigger checkpoint+restart for non-Full tiers.
 
-### CRD-003. Credential Pool Exhaustion Handling Gaps [High]
+**Resolution:** Added per-tier credential rotation behavior table in Section 4.7 Runtime Integration Tiers. Full tier uses lifecycle channel in-place rebind; Standard/Minimum tiers use checkpoint+restart with new lease. Updated Fallback Flow (Section 4.7) step 6 to reference tier-specific delivery.
+
+### CRD-003. Credential Pool Exhaustion Handling Gaps [High] -- FIXED
 **Section:** 4.9
 
 No pre-claim availability check. Pod claimed then fails at credential assignment.
 
 **Recommendation:** Pre-claim credential availability check. Define `CREDENTIAL_POOL_EXHAUSTED` error code. Track mismatch metric.
+
+**Resolution:** Added pre-claim credential availability check in Section 4.9 (new "Pre-Claim Credential Availability Check" subsection) and Section 7.1 (new step 3 in session creation flow). Defined `CREDENTIAL_POOL_EXHAUSTED` error code under POLICY category in Section 16.3. Added `lenny_gateway_credential_preclaim_mismatch_total` metric in Section 16.1. Race condition between check and assignment is handled by releasing the pod back to the warm pool.
 
 ### CRD-004. Three Credential Modes Operator Confusion [Medium]
 **Section:** 4.9, 14
@@ -1845,19 +1962,23 @@ Same as C9.
 
 ## 18. Content Model, Data Formats & Schema Design
 
-### SCH-001. `OutputPart` Lacks Schema Version [High]
+### SCH-001. `OutputPart` Lacks Schema Version [High] — FIXED
 **Section:** 15.4.1
 
 No version identifier on the universal content model. Future schema evolution breaks durable data.
 
 **Recommendation:** Add `schemaVersion` integer field (default 1). Define forward-compatibility contract.
 
-### SCH-002. `OutputPart` Translation Fidelity Undocumented [High]
+**Status:** FIXED — Added `schemaVersion` integer field (default `1`) to `OutputPart` schema. Defined forward-compatibility contract: producers must set `schemaVersion`, consumers must ignore unknown fields and must not reject higher versions. Updated minimum required fields to list `schemaVersion` as optional with default.
+
+### SCH-002. `OutputPart` Translation Fidelity Undocumented [High] — FIXED
 **Section:** 15, 15.4.1
 
 Round-trip through multiple adapters causes undocumented information loss.
 
 **Recommendation:** Define translation fidelity matrix per adapter. Add `protocolHints` annotations.
+
+**Status:** FIXED — Added "Translation Fidelity Matrix" subsection under 15.4.1 documenting field-level fidelity (lossless/lossy/dropped) for all `OutputPart` fields across MCP, OpenAI Completions, REST, and A2A adapters. Added `protocolHints` annotation field specification with per-adapter directive structure.
 
 ### SCH-003. Durable Data Schema Versioning Missing [High]
 **Section:** 15.5
@@ -1865,6 +1986,8 @@ Round-trip through multiple adapters causes undocumented information loss.
 No version stamp on Postgres records. 13-month billing events will span schema changes.
 
 **Recommendation:** Add `schemaVersion` to all durable records: TaskRecord, BillingEvent, AuditEvent, CheckpointMetadata, SessionRecord.
+
+**Status:** FIXED — Added `schemaVersion` cross-cutting requirement as item 7 in Section 15.5, covering all durable record types (TaskRecord, billing events, audit events, checkpoint metadata, session records). Added `schema_version` field to the billing event schema table (Section 11.2.1) and `schemaVersion` to the TaskRecord JSON schema (Section 8.9). Added `schema_version` to session record field list (Section 5).
 
 ### SCH-004. `MessageEnvelope` Missing Metadata Field [Medium]
 **Section:** 15.4.1
@@ -1960,12 +2083,16 @@ Phases 6-12 (streaming, delegation, credentials) built without distributed traci
 
 **Recommendation:** Phase 2.5: structured logging with correlation fields + OpenTelemetry trace propagation. Full observability stack at Phase 13.
 
+**Status:** FIXED — Phase 2.5 added with structured logging (correlation fields: tenantId, sessionId, taskId, sandboxId), OpenTelemetry trace propagation, and request-scoped correlation IDs. Phase 13 updated to reference Phase 2.5 as foundation; now scoped to full observability stack (metrics, dashboards, alerting, SLO monitoring).
+
 ### BLD-004. Missing Load Testing Phase [High]
 **Section:** 18
 
 No phase for benchmarking, capacity planning, or load testing.
 
 **Recommendation:** Add Phase 13.5/14.5 for load testing covering all documented scaling concerns.
+
+**Status:** FIXED — Phase 13.5 added between full observability (Phase 13) and security hardening (Phase 14). Covers seven key load testing scenarios: concurrent session creation latency, checkpoint SLO validation, gateway horizontal scaling to 10K sessions, pool scaling under burst demand, delegation chain throughput, streaming reconnect under load, and credential rotation latency. Produces capacity planning baselines and validates all documented SLOs before production hardening.
 
 ### BLD-005. Phase 12 Bundles Too Many Concerns [High]
 **Section:** 18
@@ -1974,12 +2101,16 @@ MCP runtimes, concurrent execution, Token Service, and OAuth in one phase.
 
 **Recommendation:** Split: 12a (Token Service + KMS), 12b (type:mcp support), 12c (concurrent modes).
 
+**Status:** FIXED — Phase 12 split into three sub-phases: 12a (Token/Connector service with KMS and OAuth), 12b (`type: mcp` runtime support), 12c (concurrent execution modes with `slotId` multiplexing). Total scope preserved; each sub-phase has a single concern and distinct milestone.
+
 ### BLD-006. Echo Runtime Insufficient for Delegation Testing [High]
 **Section:** 18
 
 Echo can't call MCP tools. Phases 9-10 delegation untestable.
 
 **Recommendation:** Build "delegation-capable test runtime" (scripted tool call sequences) as Phase 2/9 deliverable.
+
+**Status:** FIXED — Added `delegation-echo` test runtime as a Phase 9 deliverable: a scripted test runtime that executes pre-defined tool call sequences (`lenny/delegate_task`, `lenny/send_message`), delegates to child sessions, and handles results. Clarified in Section 17.4 that the echo runtime cannot invoke MCP tools and that delegation testing requires `delegation-echo`.
 
 ### BLD-007. Admin API Foundation Should Precede Phase 3 [Medium]
 **Section:** 18
@@ -2052,10 +2183,12 @@ Checkpoint fails during eviction. No fallback storage. Agent SIGSTOPped then kil
 
 **Resolution:** Added checkpoint storage failure recovery in Section 4.4: all MinIO uploads retried with exponential backoff (~5s total). Non-eviction checkpoints resume the agent and log failure (`lenny_checkpoint_storage_failure_total` metric). Eviction checkpoints accept loss — session marked `checkpoint_failed` in Postgres, `CheckpointStorageUnavailable` critical alert fires (added to Section 16.5). Section 12.5 updated with deployer guidance on monitoring. No node-local fallback — accept-loss semantics for eviction scenarios.
 
-### FAI-002. Redis Fail-Open Quota Bypass [High]
+### FAI-002. Redis Fail-Open Quota Bypass [High] — FIXED
 **Section:** 12.4
 
 Same as 9.1 — per-tenant counters, cumulative timer, worst-case documentation.
+
+**Resolution:** Fixed via STO-001. Per-tenant in-memory counters with conservative ceiling and cumulative fail-open timer added to Section 12.4.
 
 ### FAI-003. Postgres Failover Coordination Gap [High]
 **Section:** 12.3, 10.1
@@ -2064,6 +2197,8 @@ Dual-store (Redis + Postgres) simultaneous unavailability orphans sessions for 3
 
 **Recommendation:** Define behavior during dual-store unavailability. Clarify billing write blocking. Consider gateway-local coordination fallback.
 
+**Resolution:** Fixed. Added dual-store unavailability behavior to Section 10.1 (existing sessions continue, new sessions rejected, coordination handoffs frozen, bounded duration, observability). Added Postgres failover cross-reference to Section 12.3. Added bounded in-memory billing write-ahead buffer to Section 11.2.1 with backpressure (reject new requests when buffer full).
+
 ### FAI-004. etcd Unavailability Not Addressed [High]
 **Section:** 4.6.1
 
@@ -2071,12 +2206,16 @@ Pod claims, state transitions, pool reconciliation all freeze.
 
 **Recommendation:** Document etcd as critical dependency. Add `EtcdUnavailable` alert. Define degraded-mode serving existing sessions from Postgres.
 
+**Resolution:** Fixed. Added "etcd unavailability (degraded mode)" paragraph to Section 4.6.1 documenting etcd as critical dependency, defining degraded-mode behavior (existing sessions continue, new sessions rejected, pool replenishment frozen), and referencing the new `EtcdUnavailable` critical alert. Added `EtcdUnavailable` alert to Section 16.5 critical alerts table.
+
 ### FAI-005. PgBouncer as SPOF [High]
 **Section:** 12.3
 
 Bad rolling update takes all replicas down. No readiness probe verifying backend connectivity.
 
 **Recommendation:** Add PDB. Implement readiness probe with backend verification. Consider gateway direct-to-Postgres fallback.
+
+**Resolution:** Fixed. Added PDB requirement (`minAvailable: 1`) to Section 12.3 to prevent simultaneous replica termination during rolling updates. Added readiness probe specification with backend Postgres connectivity verification (lightweight query through PgBouncer, recommended settings). Documented full PgBouncer unavailability behavior: system treats it as Postgres outage, Redis-backed roles continue, Postgres-dependent operations rejected with 503, ties to dual-store unavailability rules in Section 10.1. Gateway direct-to-Postgres fallback was not added — the PDB + readiness probe combination is the standard Kubernetes approach; a direct fallback would bypass connection pooling and risk exhausting Postgres connection limits.
 
 ### FAI-006. Gateway preStop SIGKILL Cliff [Medium]
 **Section:** 10.1
@@ -2160,26 +2299,32 @@ Same as credential revocation propagation concerns.
 
 ## 21. Experimentation & A/B Testing Primitives
 
-### EXP-001. Eval Score Ingestion Pipeline Undefined [High]
+### EXP-001. Eval Score Ingestion Pipeline Undefined [High] — FIXED
 **Section:** 10.7
 
 Results API references scores by variant but no schema, storage, or aggregation logic defined.
 
 **Recommendation:** Define `EvalResult` schema. Gateway auto-associates with variant. Define Results API response.
 
-### EXP-002. Health-Based Rollback Unspecified [High]
+**Resolution:** Added `EvalResult` Postgres schema, gateway auto-association logic, eval submission request body, and Results API aggregated response format to Section 10.7.
+
+### EXP-002. Health-Based Rollback Unspecified [High] — FIXED
 **Section:** 10.7
 
 No metrics, conditions, or automation for experiment status transitions.
 
 **Recommendation:** Either make explicit non-goal (admin-only transitions) or define pluggable `ExperimentHealthEvaluator`.
 
-### EXP-003. Experiment Propagation Through Delegation Underspecified [High]
+**Resolution:** Made admin-only status transitions the explicit v1 design in Section 10.7. Defined valid transition graph, audit event on transition, and reserved `ExperimentHealthEvaluator` interface as a declared future extension point. Updated "will not build" list to include auto-rollback.
+
+### EXP-003. Experiment Propagation Through Delegation Underspecified [High] — FIXED
 **Section:** 10.7
 
 `inherit`/`control`/`independent` meanings unclear. Cross-experiment interaction undefined.
 
 **Recommendation:** Define each mode precisely. "Innermost wins" for cross-experiment. Specify eval attribution.
+
+**Resolution:** Added precise definition table for all three propagation modes (`inherit`, `control`, `independent`) in Section 10.7. Specified cross-experiment conflict resolution rule (innermost wins, only possible under `independent` mode). Defined eval result attribution semantics per mode. Clarified the `inherited` field in the experiment context JSON.
 
 ### EXP-004. PoolScalingController Variant Pool Waste [Medium]
 **Section:** 4.6.2, 10.7
@@ -2222,10 +2367,12 @@ Including: no experiment lifecycle hooks, cohort targeting undefined, experiment
 
 ## 22. Document Quality, Consistency & Completeness
 
-### DOC-001. Duplicate Billing Event Sections [High]
+### DOC-001. Duplicate Billing Event Sections [High] — FIXED
 **Section:** 11.2.1, 11.8
 
 Two definitions with divergent field names. Same finding as 4.17.
+
+**Status:** FIXED — Consolidated into single authoritative definition in Section 11.2.1 using the more detailed content. Standardized on `tokens_input`/`tokens_output`, `token_usage.checkpoint`, and `credential.leased` naming. Flattened cost dimensions into top-level schema fields. Section 11.8 replaced with cross-reference to 11.2.1.
 
 ### DOC-002. Duplicate Section 17.5 [High]
 **Section:** 17.5
@@ -2234,12 +2381,16 @@ Two definitions with divergent field names. Same finding as 4.17.
 
 **Recommendation:** Renumber second to 17.8.
 
+**Status:** FIXED — Renumbered second 17.5 ("Operational Defaults — Quick Reference") to 17.9, since 17.8 was already taken by "Capacity Tier Reference".
+
 ### DOC-003. Broken Cross-References to Section 14 [High]
 **Section:** 14
 
 "Webhook system" and "env blocklist" references point to WorkspacePlan schema. `session.awaiting_action` event referenced but not defined.
 
 **Recommendation:** Add missing webhook event. Extract webhooks to subsection. Extract env blocklist.
+
+**Status:** FIXED — Added `session.awaiting_action` to webhook event types in Section 14. Clarified cross-references at lines 718 and 1372 to point to specific fields (`env` field and `callbackUrl` respectively) within Section 14, making the references unambiguous without needing subsection extraction.
 
 ### DOC-004. Missing Section 8.7 [Medium]
 **Section:** 8
@@ -2296,33 +2447,41 @@ Including: empty Section 20, inconsistent event naming, empty code block, no tab
 
 ## 23. Messaging, Conversational Patterns & Multi-Turn Interactions
 
-### MSG-001. "Runtime Available" Under-Specified [High]
+### MSG-001. "Runtime Available" Under-Specified [FIXED]
 **Section:** 7.2
 
 Delivery path 2 undefined for runtimes mid-tool-call or not reading stdin.
 
 **Recommendation:** Define precisely. Add delivery timeout. Document unread message behavior.
 
-### MSG-002. No Dead-Letter for Inter-Session Messages [High]
+**Resolution:** Defined "runtime available" as `ready_for_input` state (between tool calls, after output, explicit input-wait). Added 30s configurable delivery timeout with fallback to inbox buffering. Documented that undelivered messages are never dropped — they buffer in FIFO order until consumed or session termination.
+
+### MSG-002. No Dead-Letter for Inter-Session Messages [High] — RESOLVED
 **Section:** 7.2, 8.5
 
 Message to terminated task silently lost. No TTL, no confirmation, no dead-letter.
 
 **Recommendation:** Return error for terminal targets. Queue with TTL for recovering targets. Add delivery receipt.
 
-### MSG-003. Agent Teams / Sibling Coordination No First-Class Support [High]
+**Resolution:** Added dead-letter handling to Section 7.2 message delivery routing. Terminal targets (completed/failed/cancelled/expired) return `TARGET_TERMINAL` error immediately. Recovering targets (resume_pending/awaiting_client_action) queue messages in a DLQ with configurable TTL tied to `maxResumeWindowSeconds`. Added `deliveryReceipt` return value to all `send_message`/`send_to_child` calls with status `delivered|queued|error`. Added `message_expired` event for TTL-exceeded DLQ messages. Updated Section 8.5 tool table to reference delivery receipts.
+
+### MSG-003. Agent Teams / Sibling Coordination No First-Class Support [High] — RESOLVED
 **Section:** 8.5
 
 Children can't discover siblings. No sibling messaging or broadcast mechanism.
 
 **Recommendation:** Clarify `get_task_tree` child visibility. Consider `get_siblings()` or `broadcast(scope)` tools.
 
-### MSG-004. Potential Deadlock in Circular request_input/await_children [High]
+**Resolution:** Clarified in Section 8.5 that `get_task_tree` exposes sibling tasks (taskId, state, runtimeRef), enabling sibling discovery. Combined with `send_message` under `siblings` messaging scope (Section 7.2, added by SEC-003), this provides first-class sibling coordination without additional tools.
+
+### MSG-004. Potential Deadlock in Circular request_input/await_children [High] — RESOLVED
 **Section:** 8.9, 9.2
 
 Multiple children in `input_required` with no re-await semantics. All-blocked subtree has no detection.
 
 **Recommendation:** Specify re-await semantics. Document multi-child handling pattern. Add deadlock detection.
+
+**Resolution:** Section 8.9 now specifies re-await semantics for multiple `input_required` children (stream yields independent partial results per child, no close/reopen needed). Added a multi-child handling pattern with example sequence. Added subtree deadlock detection: gateway detects all-blocked subtrees, emits `deadlock_detected` event, and fails deepest tasks with `DEADLOCK_TIMEOUT` after configurable `maxDeadlockWaitSeconds`. Section 9.2 updated to clarify the interaction between elicitation chains and `input_required` deadlock detection.
 
 ### MSG-005. `input_required` No Independent Timeout [Medium]
 **Section:** 8.9
@@ -2404,31 +2563,39 @@ No specification of whether delegation budget slices are reserved or just ceilin
 
 **Status:** FIXED — Defined `LeaseSlice` type in Section 8.2. Added atomic reservation model in Section 8.3 with Redis `DECRBY`/`INCRBY`, default slice (50% remaining, configurable via `defaultDelegationFraction`), budget return on child completion, and concurrency safety via atomic operations. Added cross-reference in Section 11.2 linking delegation budget enforcement to the reservation model and confirming same durability model as token usage counters.
 
-### POL-002. RequestInterceptor Chain Order/Short-Circuit Unspecified [High]
+### POL-002. RequestInterceptor Chain Order/Short-Circuit Unspecified [High] — FIXED
 **Section:** 4.8
 
 No priority, no short-circuit behavior, no mutability, no timeout failure mode.
 
 **Recommendation:** Explicit numeric priority. Rejection short-circuits. Timeout defaults to fail-closed. Document built-in ordering.
 
-### POL-003. Fail-Open Rate Limiting Per-Replica Only [High]
+**Status:** FIXED — Added numeric `priority` field to interceptor registration (default 500, lower runs first). Documented built-in interceptor ordering table with default priorities (AuthEvaluator 100, QuotaEvaluator 200, ExperimentRouter 300, GuardrailsInterceptor 400). Specified short-circuit on REJECT and MODIFY payload propagation. Changed `failPolicy` default from fail-open to fail-closed. Added interceptor registration table with priority, failPolicy, and timeout fields.
+
+### POL-003. Fail-Open Rate Limiting Per-Replica Only [High] — FIXED
 **Section:** 12.4
 
 Same as 2.6 / 4.4 — 10x effective limit with 10 replicas.
 
-### POL-004. Cross-Session Budget Enforcement Race [High]
+**Resolution:** Fixed via STO-001. Per-replica ceiling formula (`tenant_limit / replica_count`) bounds total cluster-wide usage to the tenant's configured budget.
+
+### POL-004. Cross-Session Budget Enforcement Race [High] — FIXED
 **Section:** 8.3
 
 `maxTreeSize` and `maxTokenBudget` under concurrent delegation lack atomic enforcement.
 
 **Recommendation:** Redis `INCR` for tree-size. Budget reservation model (not just ceiling).
 
-### POL-005. Quota Redis/Postgres Consistency Gap [High]
+**Resolution:** Section 8.3 already had atomic budget reservation via Redis DECRBY/INCRBY (from POL-001 fix) and tree-size INCR. The concurrency safety paragraph (step 4) was expanded to explicitly describe the tree-size overflow check: INCR, compare against maxTreeSize, rollback with DECR on overflow. Both token and tree-size rollbacks are coordinated on any single-delegation failure.
+
+### POL-005. Quota Redis/Postgres Consistency Gap [High] — FIXED
 **Section:** 11.2
 
 60s sync = 60s stale data on crash recovery. Drift unbounded during fail-open.
 
 **Recommendation:** Configurable sync interval (min 10s). Recover from pod-side usage on crash. Document max overshoot formula.
+
+**Resolution:** Section 11.2 updated: sync interval is now configurable (`quotaSyncIntervalSeconds`, default 30s, min 10s). Added crash recovery paragraph — gateway reconstructs counters from Postgres checkpoints and pod-side `ReportUsage` cumulative totals on reconnection, taking the maximum. Added max overshoot formula for both normal operation and fail-open windows, with cross-reference to Section 12.4 per-replica ceiling and cumulative fail-open timer.
 
 ### POL-006. Timeout Table Incompleteness [Medium]
 **Section:** 11.3
@@ -2501,31 +2668,39 @@ Including: env blocklist pattern rules, cross-env policy concurrent update, bill
 
 ## 25. Execution Modes & Concurrent Workloads
 
-### EXM-001. Task Mode Cleanup Lacks Concrete Failure Definitions [High]
+### EXM-001. Task Mode Cleanup Lacks Concrete Failure Definitions [High] — FIXED
 **Section:** 5.2
 
 "Lenny scrub" undefined. `onCleanupFailure` behavior unspecified. Deployer acknowledgment mechanism missing.
 
 **Recommendation:** Define explicit scrub procedure. Specify both failure mode behaviors. Define acknowledgment mechanism. Consider `replace` option.
 
-### EXM-002. Concurrent-Workspace No Per-Slot Failure Semantics [High]
+**Resolution:** Defined 6-step Lenny scrub procedure (process kill, workspace removal, env var purge, tmp/shm clear, log truncation, verification). Specified `warn` (return to pool with annotation) and `fail` (terminate pod and replace) behaviors. Added `acknowledgeBestEffortScrub` required flag to `taskPolicy`. Updated all YAML examples for consistency.
+
+### EXM-002. Concurrent-Workspace No Per-Slot Failure Semantics [High] — FIXED
 **Section:** 5.2, 15.4.1
 
 Slot failure, reclamation, checkpoint, resource contention all undefined.
 
 **Recommendation:** Add "Concurrent Mode Internals" section with per-slot state machine, failure isolation, cleanup, checkpoint granularity.
 
-### EXM-003. Execution Mode / Warm Pool Interaction Underspecified [High]
+**Resolution:** Added per-slot failure semantics inline in Section 5.2 concurrent-workspace mode: failure isolation (slot fails independently, pod continues), slot cleanup procedure with timeout, per-slot checkpoint granularity, and resource contention guidance with mode_factor degradation. Kept as concise addition rather than a separate section.
+
+### EXM-003. Execution Mode / Warm Pool Interaction Underspecified [High] — FIXED
 **Section:** 5.2, 4.6
 
 Same as 16.3 — scaling formulas assume session mode.
 
-### EXM-004. Concurrent-Workspace Filesystem Layout Undefined [High]
+**Resolution:** Duplicate of WAR-003. Fixed via "Execution Mode Scaling Implications" subsection in Section 5.2 and cross-reference in Section 4.6.2.
+
+### EXM-004. Concurrent-Workspace Filesystem Layout Undefined [High] — FIXED
 **Section:** 5.2, 6.4
 
 Single `/workspace/current` shown but per-slot workspace structure never specified.
 
 **Recommendation:** Define per-slot layout, cwd strategy, and adapter vs runtime responsibility for slot directories.
+
+**Status:** FIXED — Added per-slot filesystem layout to Section 6.4: `/workspace/slots/{slotId}/current/` and `/workspace/slots/{slotId}/staging/` with per-slot `/sessions/{slotId}/` and `/artifacts/{slotId}/` directories. Defined adapter vs runtime vs gateway responsibility split for slot directory lifecycle, cwd assignment, and checkpoint export. Updated Section 5.2 concurrent-workspace description with cross-reference to Section 6.4 and explicit adapter responsibility for slot directory creation and cwd assignment.
 
 ### EXM-005. Concurrent-Stateless vs Connector Distinction Fuzzy [Medium]
 **Section:** 5.2

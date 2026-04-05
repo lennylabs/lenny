@@ -70,6 +70,7 @@ Follow this process:
 - For each option/recommendation:
   - Come up with a list of critical questions. Challenge the assumptions (explicit or implicit) in the recommendation
   - Revisit the recommendation based on the answers to your challenges
+  - If the recommendation alters the capabilities of the project, clearly indicate so
 
 ### Phase 3: Apply the fix
 
@@ -87,9 +88,11 @@ Rules:
 - Find the simplest possible solution that aligns with the intent of the technical spec and isn't a hack. Try to minimize impact to other parts of the design.
 - Keep the technical spec's design principles in mind at all times.
 - Update the finding's list of recommendations in `$1` if needed.
-- If multiple valid options exist and there isn't a clear winner, or if the recommendation requires major architectural changes, provide enough context to the user and ask them to select a path forward. Defer more or less to the user depending on the severity of the finding.
-- If your selected recommendation goes against a design decision in the tech spec, as the user for approval.
+- If your selected recommendation goes against a previous design decision in the tech spec, as the user for approval.
 - If your selected recommendation alters the project's capabilities, or the capabilities available to the users of the project, always ask the user for approval.
+- If multiple valid options exist and there isn't a clear winner, ask the user for input.
+- Do not assume recommendations are set in stone. Ask the user when needed.
+- Do not factor in the total number of findings in your calculation on whether to ask the user. Ask purely based on the characteristics of the finding's recommendations.
 - When asking the user for direction, provide a detailed explanation of the problem and the recommended/possible solution(s).
 
 ### Phase 4: Validate no regressions
@@ -142,5 +145,6 @@ If any findings were `PARTIAL` or `SKIPPED`, list them separately with explanati
 
 - **Sequential execution is mandatory.** Each fix can change the spec in ways that affect subsequent findings. Never run finding-fix subagents in parallel.
 - **Never skip the verification phase.** A finding that was valid when the review was written may already be resolved by an earlier fix in this run.
+- **Ask the user when needed.** Ask the user for approval based on the aforementioned rules. Do not assume recommendations are set in stone and ask the user when needed.
 - **Never skip the regression check.** Even a small edit can break cross-references or introduce contradictions.
 - If a finding's recommendation is vague or would require major architectural decisions, ask the user for input.

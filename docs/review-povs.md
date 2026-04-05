@@ -4,13 +4,26 @@ This document defines the review perspectives for evaluating `docs/technical-des
 
 Each perspective has a broad focus area and a set of example concerns. The examples are starting points that must be checked, but each review should go beyond them -- identify any gaps, inconsistencies, risks, or improvements relevant to the perspective, even if not listed.
 
+**WHAT TO FOCUS ON:**
+
+- Security gaps
+- Missing details in specification
+- Documentation errors and inconsistencies
+- Design flaws that can lead to malfunction, edge cases, and exploits
+- Observability gaps
+- Low-hanging-fruit changes that will improve the product without introducing more complexity
+
+**WHAT NOT TO FOCUS ON:**
+
+- Everything else, including improvements that introduce complexity
+
 ---
 
 ## 1. Kubernetes Infrastructure & Controller Design
 
 **Focus:** Evaluate whether the Kubernetes-native design choices are idiomatic, scalable, and operationally sound. Look at CRD design, controller patterns, resource management, cluster topology, and upstream dependencies.
 
-**Must-check examples:**
+**Examples:**
 
 - The `kubernetes-sigs/agent-sandbox` dependency -- maturity, lock-in risk, the "pre-commit requirement" to verify its optimistic-locking guarantee
 - Etcd pressure mitigations (3-label coarse state, leader-election, claim batching)
@@ -24,7 +37,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Perform a threat model review of the entire system. Consider attack surfaces, trust boundaries, isolation guarantees, and defense-in-depth across all components.
 
-**Must-check examples:**
+**Examples:**
 
 - SIGSTOP/SIGCONT checkpoint mechanism under gVisor and Kata -- unvalidated assumption?
 - Adapter-agent security boundary -- what if a malicious runtime tries to escape?
@@ -38,7 +51,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the network architecture from a defense perspective. Assess whether the gateway-centric model creates a sound network perimeter and whether internal traffic is properly segmented.
 
-**Must-check examples:**
+**Examples:**
 
 - The three NetworkPolicy manifests -- completeness and correctness
 - Lateral movement risk between pods in the same pool namespace
@@ -52,7 +65,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Assess whether the architecture can meet production-scale demands. Look for bottlenecks, missing performance targets, unvalidated capacity assumptions, and scaling lag.
 
-**Must-check examples:**
+**Examples:**
 
 - Gateway-centric model as a potential throughput bottleneck
 - Absence of concrete performance targets (max sessions, latency budgets)
@@ -66,7 +79,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate whether the protocol strategy is sound for today and extensible for tomorrow. Assess the abstraction layer, protocol-specific assumptions in the core, and translation fidelity.
 
-**Must-check examples:**
+**Examples:**
 
 - MCP-specific assumptions baked into core logic that would break under A2A
 - `ExternalProtocolAdapter` abstraction -- can it support A2A and Agent Protocol without refactoring?
@@ -79,7 +92,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the experience from the perspective of someone building a new runtime for Lenny. Assess the learning curve, integration tiers, tooling, and whether the spec alone is sufficient to get started.
 
-**Must-check examples:**
+**Examples:**
 
 - Whether a developer with no Lenny knowledge can build a Minimum-tier runtime from the spec
 - Degraded experience for Minimum-tier runtimes (no lifecycle channel) -- clearly documented?
@@ -93,7 +106,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the experience of deploying and running Lenny in production. Cover initial setup, day-2 operations, configuration management, upgrade paths, and the local development story.
 
-**Must-check examples:**
+**Examples:**
 
 - Bootstrap vs operational plane split (Helm-only vs API-managed) -- any operations that require Helm but shouldn't?
 - Operational runbooks -- sufficient for common failure scenarios?
@@ -107,7 +120,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the multi-tenancy model end-to-end. Assess isolation guarantees across all storage backends, the RBAC model, environment scoping, and the tenant lifecycle.
 
-**Must-check examples:**
+**Examples:**
 
 - Postgres RLS with `SET app.current_tenant` under PgBouncer transaction mode -- robust?
 - 3-role RBAC model (platform-admin, tenant-admin, user) -- sufficient? Custom roles?
@@ -121,7 +134,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the storage layer for correctness, durability, scalability, and operational complexity. Assess each storage backend's role, failure behavior, and data lifecycle management.
 
-**Must-check examples:**
+**Examples:**
 
 - Redis fail-open behavior -- security risks (e.g., quota bypass)?
 - Artifact GC strategy (reference counting + periodic sweep) -- storage leak risk?
@@ -135,7 +148,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the recursive delegation model for correctness, safety, and recovery. Assess policy propagation, resource budgets, tree lifecycle, and edge cases at depth.
 
-**Must-check examples:**
+**Examples:**
 
 - "Rejection is permanent for the tree" rule for lease extensions -- too aggressive for long-running workflows?
 - Recovery of deep delegation trees (depth 5+) after multiple node failures
@@ -149,7 +162,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the session lifecycle for correctness and completeness. Assess state machines, transitions, edge cases, and the guarantees provided to clients.
 
-**Must-check examples:**
+**Examples:**
 
 - Pod and session state machines -- unreachable or deadlock states?
 - Generation counter mechanism for split-brain prevention -- correct in all edge cases?
@@ -163,7 +176,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate whether the observability stack provides sufficient visibility for understanding system health, diagnosing incidents, and meeting SLOs.
 
-**Must-check examples:**
+**Examples:**
 
 - Metrics blind spots -- any subsystems with insufficient coverage?
 - Delegation tree observability (parent-child relationships, budget consumption)
@@ -177,7 +190,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate regulatory readiness across the full data lifecycle. Assess whether the design meets common compliance frameworks and handles data sovereignty requirements.
 
-**Must-check examples:**
+**Examples:**
 
 - GDPR erasure flow completeness across all storage backends
 - Data residency "punted to the deployer" -- sufficient for regulated industries?
@@ -191,7 +204,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the external API surface for usability, consistency, completeness, and suitability for third-party tooling. The user explicitly required the admin API be good enough for others to build UIs/CLIs on top.
 
-**Must-check examples:**
+**Examples:**
 
 - REST/MCP consistency contract -- enforceable? How is parity tested?
 - Admin API quality for third-party UI/CLI development
@@ -205,7 +218,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate Lenny's market position, differentiation, and community adoption strategy. Assess whether the design choices create a compelling open-source project.
 
-**Must-check examples:**
+**Examples:**
 
 - Missing differentiation narrative -- competitors listed but "why Lenny?" not articulated
 - `kubernetes-sigs/agent-sandbox` upstream risk -- what if the project changes direction?
@@ -219,7 +232,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the warm pool model for correctness, efficiency, and operational complexity. Assess whether the pre-warming strategy delivers its promised latency benefits without excessive waste.
 
-**Must-check examples:**
+**Examples:**
 
 - SDK-warm mode complexity vs. latency benefit tradeoff
 - `sdkWarmBlockingPaths` mechanism -- robust or fragile?
@@ -233,7 +246,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the credential lifecycle end-to-end -- provisioning, leasing, rotation, revocation, and propagation through delegation. Assess both security and operational manageability.
 
-**Must-check examples:**
+**Examples:**
 
 - LLM reverse proxy as a bottleneck risk
 - Credential rotation mid-session via lifecycle channel -- reliable?
@@ -247,7 +260,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the internal data formats for correctness, extensibility, and clean protocol translation. Assess whether schemas will age well and handle future requirements.
 
-**Must-check examples:**
+**Examples:**
 
 - `OutputPart` translation fidelity to/from MCP, OpenAI, and future A2A formats
 - `MessageEnvelope` sufficiency for future multi-turn conversational patterns
@@ -261,7 +274,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the 17-phase build sequence for feasibility, risk ordering, and dependency correctness. Identify the critical path and highest-risk phases.
 
-**Must-check examples:**
+**Examples:**
 
 - Phase dependency ordering (e.g., credential leasing needed for real LLM usage but comes late)
 - Missing phases (security audit, benchmarking/load testing, compliance validation?)
@@ -275,7 +288,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the system's behavior under failure. Assess whether every component has defined failure behavior and whether cascading failures are prevented.
 
-**Must-check examples:**
+**Examples:**
 
 - Redis fail-open tradeoff (quota bypass during outage) -- acceptable?
 - Cascading failure scenarios (e.g., MinIO down -> checkpoint failure -> session loss)
@@ -289,7 +302,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the experimentation model for clarity, completeness, and correct boundary-setting between platform primitives and full experimentation features.
 
-**Must-check examples:**
+**Examples:**
 
 - Experiment results API references "eval scores by variant" without defining how scores flow in
 - Health-based rollback specification -- what metrics trigger it?
@@ -303,7 +316,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Review the document itself for structural issues, internal consistency, and editorial quality. This is a meta-review of the spec as a document.
 
-**Must-check examples:**
+**Examples:**
 
 - Billing event stream duplication (Sections 11.2.1 and 11.8)
 - Section numbering errors (two sections labeled 17.5)
@@ -318,7 +331,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the messaging and conversational model for completeness, edge case handling, and readiness for future interaction patterns.
 
-**Must-check examples:**
+**Examples:**
 
 - 3 message delivery paths -- complete and unambiguous? Edge cases (timeout, terminated recipient)?
 - `input_required` task state integration with session lifecycle state machine
@@ -332,7 +345,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the policy engine for correctness, completeness, and safe behavior under edge conditions. Assess the interaction between policy layers and the extensibility model.
 
-**Must-check examples:**
+**Examples:**
 
 - `RequestInterceptor` chain execution order and short-circuit behavior -- specified?
 - Budget propagation through delegation trees -- can a child exceed parent's remaining budget?
@@ -346,7 +359,7 @@ Each perspective has a broad focus area and a set of example concerns. The examp
 
 **Focus:** Evaluate the three execution modes for design soundness, security implications, and clear communication of tradeoffs to deployers.
 
-**Must-check examples:**
+**Examples:**
 
 - Task mode cleanup ("best-effort, not a security boundary") -- sufficient?
 - Concurrent `concurrencyStyle: workspace` -- `slotId` multiplexing failure semantics per-slot?

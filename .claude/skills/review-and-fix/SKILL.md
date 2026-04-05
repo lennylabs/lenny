@@ -186,6 +186,8 @@ Iteration {iteration} review complete: {total} findings ({critical} Critical, {h
 
 Evaluate whether to proceed with fixes:
 
+- Do not include Medium findings until there are no Critical and High findings left.
+- Do not include Low findings until there are no Medium findings left.
 - If there are **0 findings**: the spec is clean. Go to Step 4.
 - If all findings are **Info** severity only: report them and go to Step 4 (no fixes needed).
 - Otherwise: proceed to Step 3.
@@ -199,7 +201,7 @@ If this is the **last iteration** (iteration == max_iterations), report remainin
 Invoke the `/fix-findings` skill:
 
 ```
-/fix-findings {SPEC_FILE} {FINDINGS_FILE}
+/fix-findings {SPEC_FILE} {FINDINGS_FILE} {which findings to fix (for example, "All critical and high")}
 ```
 
 This will process each finding sequentially with verification, fixing, and regression checking.
