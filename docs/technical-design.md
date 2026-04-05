@@ -278,7 +278,7 @@ Pod lifecycle management is split into two controllers with distinct responsibil
 - `GetPoolStatus(ctx, poolName) → (PoolStatus, error)` — single pool status
 
 **`PodLifecycleManager`** (gateway-facing, embeds `PoolReader`):
-- `ClaimPod(ctx, poolName, sessionID, opts ClaimOpts) → (PodHandle, error)` — acquire idle pod. `ClaimOpts` includes `preferredWarmMode` (pod-warm vs SDK-warm), optional `priority`, optional `clusterID` (nullable, for future multi-cluster). `PodHandle` carries metadata: `warmMode`, `certExpiresAt`, `adapterEndpoint`.
+- `ClaimPod(ctx, poolName, sessionID, opts ClaimOpts) → (PodHandle, error)` — acquire idle pod. `ClaimOpts` includes `requiresDemotion` (true when workspace plan includes `sdkWarmBlockingPaths` — gateway signals that the claimed SDK-warm pod must be demoted before use), optional `priority`, optional `clusterID` (nullable, for future multi-cluster). `PodHandle` carries metadata: `warmMode`, `certExpiresAt`, `adapterEndpoint`.
 - `ReleasePod(ctx, podHandle) → error` — release pod after session ends
 - `DrainPod(ctx, podHandle, checkpointFirst bool) → (DrainResult, error)` — gracefully terminate. `DrainResult` includes retry state for seal-and-export hold semantics.
 - `GetPodStatus(ctx, podHandle) → (PodStatus, error)` — read pod state, health, cert expiry
@@ -315,11 +315,11 @@ This indirection means a breaking upstream change or a decision to replace agent
 
 **Leader election:** The WarmPoolController runs as a Deployment with 2+ replicas using Kubernetes Lease-based leader election with lease name `lenny-warm-pool-controller` (lease duration: 15s, renew deadline: 10s, retry period: 2s). The PoolScalingController uses a separate lease (`lenny-pool-scaling-controller`); see Section 4.6.2. During failover (~15s), existing sessions continue unaffected; only new pod creation and pool scaling pause.
 
-**Scaling:** Pools support `minWarm`, `maxWarm`, an optional `scalePolicy` with time-of-day schedules or demand-based rules, and `sdkWarmRatio` to control the SDK-warm vs pod-warm split (see Section 6.1). Low-traffic pools can scale to zero warm pods with documented cold-start latency as fallback.
+**Scaling:** Pools support `minWarm`, `maxWarm`, and an optional `scalePolicy` with time-of-day schedules or demand-based rules. Pools referencing a `preConnect`-capable runtime warm all pods to SDK-warm state; demotion to pod-warm happens on demand at claim time (see Section 6.1). Low-traffic pools can scale to zero warm pods with documented cold-start latency as fallback.
 
 **Idle cost visibility and scale-to-zero:** The metric `lenny_warmpool_idle_pod_minutes` (counter, labeled by pool and resource class) tracks cumulative idle pod-minutes, letting deployers estimate warm pool cost from their monitoring stack. Pools support `minWarm: 0` for off-hours via time-of-day rules in `scalePolicy`: `scaleToZero: { schedule: "0 22 * * *", resumeAt: "0 6 * * *" }` sets `minWarm: 0` during the window; sessions arriving in zero-warm periods incur cold-start latency. `scaleToZero` disabled by default for `type: mcp` pools (deployer opt-in required). A `WarmPoolIdleCostHigh` warning alert fires when idle pod-minutes exceed a deployer-configured threshold over a 24 h window (see Section 16.5).
 
-**CRD validation:** All CRDs include OpenAPI schema validation with CEL rules to catch common misconfigurations at admission time. Key rules: `minWarm <= maxWarm`, `maxWarm > 0`, `sdkWarmRatio` in [0.0, 1.0] and non-zero only when the referenced runtime declares `preConnect: true`, valid RuntimeClass reference format, resource class values within the allowed set, and `maxSessionAge > 0`. Malformed specs are rejected by the API server before reaching the controller, preventing reconciliation loops on invalid input. The controller also validates at reconciliation time as defense-in-depth.
+**CRD validation:** All CRDs include OpenAPI schema validation with CEL rules to catch common misconfigurations at admission time. Key rules: `minWarm <= maxWarm`, `maxWarm > 0`, valid RuntimeClass reference format, resource class values within the allowed set, and `maxSessionAge > 0`. Malformed specs are rejected by the API server before reaching the controller, preventing reconciliation loops on invalid input. The controller also validates at reconciliation time as defense-in-depth.
 
 **Controller failover and warm pool sizing:** During a leader-election failover (~15s), the controller cannot create new pods or reconcile pool scaling. If the warm pool is undersized, this pause can exhaust available pods. To prevent this, `minWarm` should account for both the failover window and burst absorption: `minWarm >= peak_claims_per_second * (failover_seconds + pod_startup_seconds) + burst_p99_claims * pod_warmup_seconds`. The burst term ensures the pool is not exhausted by demand spikes that arrive faster than replacement pods can become ready (see Section 4.6.2 for full formula and variable definitions). For example, at 2 claims/sec with a 15s failover pause, 10s pod startup, and a p99 burst rate of 4 claims/sec with 10s warmup: `minWarm >= 2 * 25 + 4 * 10 = 90`. Per-tier claim rate estimates and recommended minWarm values are in Section 17.8. During the failover window, the gateway queues incoming pod claim requests for up to `podClaimQueueTimeout` (default: 30s). If no pod becomes available before the timeout, the session creation fails with a retryable error so the client can back off and retry. As an early-warning mechanism, the `WarmPoolLow` alert (Section 16.5) fires when available pods drop below 25% of `minWarm`, giving operators time to investigate before exhaustion occurs.
 
@@ -395,7 +395,7 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 |---|---|---|---|
 | `SandboxTemplate` | `spec.*` | PoolScalingController | Reconciled from Postgres pool definitions |
 | `SandboxTemplate` | `status.*` | WarmPoolController | Pool health conditions, observed generation |
-| `SandboxWarmPool` | `spec.minWarm`, `spec.maxWarm`, `spec.scalePolicy`, `spec.sdkWarmRatio` | PoolScalingController | Scaling parameters from Postgres |
+| `SandboxWarmPool` | `spec.minWarm`, `spec.maxWarm`, `spec.scalePolicy` | PoolScalingController | Scaling parameters from Postgres |
 | `SandboxWarmPool` | `status.*` | WarmPoolController | Current warm count, ready count, conditions |
 | `Sandbox` | `spec.*` | WarmPoolController | Pod creation and configuration |
 | `Sandbox` | `status.*` | WarmPoolController | State machine transitions, health |
@@ -418,6 +418,7 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 | `RunSetup`           | Execute bounded setup commands                                       |
 | `StartSession`       | Start the agent runtime with final `cwd` (pod-warm mode)             |
 | `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode) |
+| `DemoteSDK`          | Tear down the pre-connected SDK process and return the pod to pod-warm state (see Section 6.1). Required for runtimes that declare `preConnect: true`. |
 | `Attach`             | Connect client stream to running session                             |
 | `Interrupt`          | Interrupt current agent work                                         |
 | `Checkpoint`         | Export recoverable session state                                     |
@@ -1235,9 +1236,13 @@ A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runti
 
 **Session mode security invariant: pods are one-session-only.** After a session completes or fails in `executionMode: session`, the pod is terminated and replaced — never recycled for a different session. This prevents cross-session data leakage through residual workspace files, session transcripts, cached DNS, or runtime memory. **Task mode** (`executionMode: task`) relaxes this invariant with explicit deployer acknowledgment — pods are reused across sequential tasks with workspace scrub between tasks (see Section 5.2). **Concurrent mode** allows multiple simultaneous tasks on a single pod (see Section 5.2).
 
-**Optional: SDK-warm mode.** Runtimes that declare `capabilities.preConnect: true` can pre-connect their agent process during the warm phase (before workspace finalization) without sending a prompt. The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt. This eliminates SDK cold-start latency from the hot path. **Constraint:** SDK-warm mode is only safe when the request does not inject project config files that must be present at session start. The SDK-warm eligibility decision is based on an explicit `sdkWarmEligible` predicate defined in the `Runtime`, not ad-hoc workspace plan parsing. Each `Runtime` declares a `sdkWarmBlockingPaths` list (default: `["CLAUDE.md", ".claude/*"]`) — if the workspace plan includes files matching any of these glob patterns, the gateway selects a pod-warm pod instead of SDK-warm. This makes the decision deterministic, configurable per runtime, and independent of workspace plan parsing logic.
+**Optional: SDK-warm mode.** Runtimes that declare `capabilities.preConnect: true` can pre-connect their agent process during the warm phase (before workspace finalization) without sending a prompt. The warm pool controller starts the SDK process after the pod reaches `idle` state, leaving it waiting for its first prompt. This eliminates SDK cold-start latency from the hot path.
 
-**SDK-warm pool ratio.** Pools that reference a `preConnect`-capable runtime use the `sdkWarmRatio` field on `SandboxWarmPool` (float, 0.0–1.0, default `0.0`) to control the fraction of warm pods that are brought to SDK-warm state. The WarmPoolController maintains `ceil(readyPods * sdkWarmRatio)` pods in SDK-warm and the remainder as pod-warm. Setting `sdkWarmRatio: 0.0` (the default) disables SDK-warm entirely; `1.0` makes all warm pods SDK-warm. **Degradation path:** When a request requires a pod-warm pod (e.g., workspace plan includes `sdkWarmBlockingPaths` files) but only SDK-warm pods are available, the gateway may claim an SDK-warm pod and demote it: the controller tears down the pre-connected SDK process, transitions the pod back to `idle` (pod-warm), and the normal pod-warm setup path proceeds. This incurs an SDK teardown penalty (typically 1–3 s depending on runtime) but avoids a pool-exhaustion failure. The metric `lenny_warmpool_sdk_demotions_total` (counter, labeled by pool) tracks demotion frequency so deployers can tune the ratio. CRD validation enforces `sdkWarmRatio` is only non-zero when the referenced runtime declares `preConnect: true`.
+**All pods are SDK-warm when the runtime supports it.** Pools referencing a `preConnect`-capable runtime warm **all** pods to SDK-warm state. There is no pod-warm/SDK-warm split or ratio to configure — simplicity over micro-optimization.
+
+**Demotion on demand.** SDK-warm mode is only safe when the request does not inject project config files that must be present at session start. Each `Runtime` declares a `sdkWarmBlockingPaths` list (default: `["CLAUDE.md", ".claude/*"]`) — if the workspace plan includes files matching any of these glob patterns, the gateway sets `requiresDemotion: true` on the `ClaimOpts` and the adapter calls the `DemoteSDK` RPC (Section 4.7) to tear down the pre-connected SDK process, transitions the pod back to `idle` (pod-warm), and the normal pod-warm setup path proceeds. This incurs an SDK teardown penalty (typically 1–3s depending on runtime) but avoids the complexity of maintaining a dual-pool inventory. The metric `lenny_warmpool_sdk_demotions_total` (counter, labeled by pool) tracks demotion frequency for observability.
+
+**Demotion support is mandatory for `preConnect` runtimes.** Declaring `capabilities.preConnect: true` implies that the runtime's adapter supports the `DemoteSDK` RPC — the ability to cleanly tear down and restart the agent process without restarting the pod. This is not optional: since all pods in a `preConnect` pool are SDK-warm, any request that includes `sdkWarmBlockingPaths` files requires demotion. A runtime that cannot safely tear down its SDK process must not declare `preConnect: true`. The gateway validates this at runtime registration: if `preConnect: true` is set and `sdkWarmBlockingPaths` is non-empty (which it is by default), the registration response includes a warning reminding the runtime author that their adapter must implement `DemoteSDK`. If the adapter does not implement `DemoteSDK`, the RPC returns `UNIMPLEMENTED` and the gateway fails the session with a clear error (`SDK_DEMOTION_NOT_SUPPORTED`) rather than silently proceeding with stale SDK state.
 
 ### 6.2 Pod State Machine
 
@@ -2792,6 +2797,7 @@ The `inherited` field is `true` when the context was propagated from a parent (`
 | `variant_id`    | string   | Auto-populated by gateway from session's experiment context        |
 | `scorer`        | string   | Identifier for the scoring method (e.g., `llm-judge`, `exact-match`) |
 | `score`         | float64  | Normalized score value (0.0–1.0)                                   |
+| `scores`        | jsonb    | Optional. Multi-dimensional scores as key-value pairs (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When present, `score` should be the aggregate/summary score. Keys are scorer-defined dimension names; values are float64. |
 | `metadata`      | jsonb    | Arbitrary key-value pairs (model version, prompt hash, etc.)       |
 | `created_at`    | RFC 3339 | Server-generated UTC timestamp                                     |
 
@@ -2803,12 +2809,19 @@ The `inherited` field is `true` when the context was propagated from a parent (`
 {
   "scorer": "llm-judge",
   "score": 0.82,
+  "scores": {
+    "coherence": 0.90,
+    "relevance": 0.78,
+    "safety": 1.0
+  },
   "metadata": {
     "judge_model": "gpt-4o",
     "rubric_version": "v3"
   }
 }
 ```
+
+Both `score` and `scores` are optional individually, but at least one must be provided. When both are present, `score` is the aggregate and `scores` contains the per-dimension breakdown. When only `scores` is provided, the gateway does not auto-compute `score` — the caller is responsible for providing the aggregate if needed.
 
 **Results API response (`GET /v1/experiments/{id}/results`).** Returns aggregated eval scores grouped by variant. Uses cursor-based pagination per Section 15.
 
@@ -2821,7 +2834,14 @@ The `inherited` field is `true` when the context was propagated from a parent (`
       "variant_id": "control",
       "sample_count": 412,
       "scorers": {
-        "llm-judge": { "mean": 0.74, "p50": 0.76, "p95": 0.91, "count": 412 },
+        "llm-judge": {
+          "mean": 0.74, "p50": 0.76, "p95": 0.91, "count": 412,
+          "dimensions": {
+            "coherence": { "mean": 0.80, "p50": 0.82, "p95": 0.95, "count": 412 },
+            "relevance": { "mean": 0.71, "p50": 0.73, "p95": 0.89, "count": 412 },
+            "safety": { "mean": 0.99, "p50": 1.0, "p95": 1.0, "count": 412 }
+          }
+        },
         "exact-match": { "mean": 0.68, "p50": 0.70, "p95": 0.88, "count": 390 }
       }
     },
@@ -2829,7 +2849,14 @@ The `inherited` field is `true` when the context was propagated from a parent (`
       "variant_id": "treatment",
       "sample_count": 45,
       "scorers": {
-        "llm-judge": { "mean": 0.81, "p50": 0.83, "p95": 0.94, "count": 45 },
+        "llm-judge": {
+          "mean": 0.81, "p50": 0.83, "p95": 0.94, "count": 45,
+          "dimensions": {
+            "coherence": { "mean": 0.88, "p50": 0.90, "p95": 0.97, "count": 45 },
+            "relevance": { "mean": 0.78, "p50": 0.80, "p95": 0.92, "count": 45 },
+            "safety": { "mean": 0.99, "p50": 1.0, "p95": 1.0, "count": 45 }
+          }
+        },
         "exact-match": { "mean": 0.72, "p50": 0.74, "p95": 0.90, "count": 42 }
       }
     }
@@ -2838,7 +2865,7 @@ The `inherited` field is `true` when the context was propagated from a parent (`
 }
 ```
 
-Aggregation is computed on read (no pre-materialized rollups). For experiments with high eval volume, deployers can configure a Postgres materialized view refresh interval via Helm (`evalAggregationRefreshSeconds`, default: 60).
+Aggregation is computed on read (no pre-materialized rollups). The `dimensions` object is present only when at least one `EvalResult` for that scorer has a non-null `scores` field; dimension keys are the union of all keys found across results for that scorer/variant. For experiments with high eval volume, deployers can configure a Postgres materialized view refresh interval via Helm (`evalAggregationRefreshSeconds`, default: 60).
 
 PoolScalingController manages variant pool lifecycle automatically — variant warm count derived from base pool demand signals × variant weight × safety factor.
 
@@ -3075,7 +3102,7 @@ The `ArtifactStore` (MinIO) **must** use `/{tenant_id}/` path prefixes for all o
 | On-prem / self-managed | CloudNativePG operator or Patroni on Kubernetes            |
 | Local dev              | Single PostgreSQL container (via docker-compose)           |
 
-**Connection pooling:** PgBouncer (or pgcat) is **required** in front of Postgres. Each gateway replica maintains a connection pool; without pooling, HPA-scaled replicas exhaust Postgres connection limits. PgBouncer must be configured in **transaction-mode** pooling (not session-mode) to ensure compatibility with RLS enforcement via `SET LOCAL app.current_tenant` (see Section 4.2) — `SET LOCAL` is transaction-scoped (cleared on `COMMIT`/`ROLLBACK`), so transaction-mode guarantees the setting does not leak across tenants sharing the same pooled connection. PgBouncer's `connect_query` must set a sentinel value (`SET app.current_tenant = '__unset__'`) on every fresh connection checkout so that any query reaching RLS without a prior `SET LOCAL` is rejected.
+**Connection pooling:** A connection pooler is **required** in front of Postgres. Each gateway replica maintains a connection pool; without pooling, HPA-scaled replicas exhaust Postgres connection limits. **Cloud-managed deployments** should use the provider's built-in connection proxy (AWS RDS Proxy, GCP Cloud SQL Auth Proxy, Azure PgBouncer integration) instead of deploying a self-managed PgBouncer — see Section 17.9 for deployment profile guidance. **Self-managed deployments** deploy PgBouncer (or pgcat) as described below. Regardless of implementation, the pooler must operate in **transaction-mode** pooling (not session-mode) to ensure compatibility with RLS enforcement via `SET LOCAL app.current_tenant` (see Section 4.2) — `SET LOCAL` is transaction-scoped (cleared on `COMMIT`/`ROLLBACK`), so transaction-mode guarantees the setting does not leak across tenants sharing the same pooled connection. The pooler's `connect_query` (or equivalent initialization hook) must set a sentinel value (`SET app.current_tenant = '__unset__'`) on every fresh connection checkout so that any query reaching RLS without a prior `SET LOCAL` is rejected.
 
 - **Deployment topology:** PgBouncer runs as a separate Deployment (minimum 2 replicas) fronted by a ClusterIP Service — not as a sidecar on each gateway pod. This centralizes pool management and avoids per-pod connection sprawl toward Postgres.
 - **Pool mode:** Transaction mode (`pool_mode = transaction`). This is required for RLS enforcement because `SET LOCAL app.current_tenant` is transaction-scoped (cleared on `COMMIT`/`ROLLBACK`); session mode would leak tenant context across unrelated requests sharing a backend connection.
@@ -3121,7 +3148,7 @@ At Tier 3, total sustained write IOPS (~1,300/s) with burst headroom (~3,900/s) 
 
 ### 12.4 Redis HA and Failure Modes
 
-**Minimum topology:** Redis Sentinel (3 sentinels, 1 primary + 1 replica). Redis Cluster if sharding is needed at Tier 3. See Section 17.8 for per-tier Redis topology recommendations.
+**Minimum topology:** For self-managed deployments: Redis Sentinel (3 sentinels, 1 primary + 1 replica). Redis Cluster if sharding is needed at Tier 3. For cloud-managed deployments: use the provider's managed cache service (AWS ElastiCache, GCP Memorystore, Azure Cache for Redis) which provides equivalent HA, replication, and scaling — see Section 17.9 for deployment profile guidance. See Section 17.8 for per-tier Redis topology recommendations.
 
 **Tenant key isolation:** All Redis keys **must** use the prefix `t:{tenant_id}:` followed by the storage role and logical key — e.g., `t:acme-corp:lease:session:abc123`, `t:acme-corp:quota:tokens:user42:2026-04`. This convention is enforced in the Redis wrapper layer; no raw Redis command may be issued without the tenant prefix. An integration test (`TestRedisTenantKeyIsolation`) must verify that operations scoped to one tenant cannot read or mutate keys belonging to another tenant.
 
@@ -3169,7 +3196,7 @@ At Tiers 1 and 2, all concerns run on a single Sentinel instance. The separation
 
 ### 12.5 Artifact Store
 
-**Backend:** MinIO (S3-compatible). For local development, use local disk with the same interface.
+**Backend:** Any S3-compatible object store. Cloud-managed deployments should use the provider's native object storage (AWS S3, GCP Cloud Storage, Azure Blob Storage) — see Section 17.9 for deployment profile guidance. Self-managed deployments use MinIO. For local development, use local disk with the same interface.
 
 **HA topology requirements:**
 
@@ -4010,7 +4037,7 @@ The REST API (Section 15.1) and MCP tools (Section 15.2) intentionally overlap f
 
 4. **OpenAPI as source of truth.** The REST API's OpenAPI spec is the single authoritative schema for all overlapping operations. MCP tool schemas for overlapping operations (e.g., `create_session`, `get_session_status`, `list_artifacts`) are generated from the OpenAPI spec's request/response definitions, not maintained independently. A code generation step in the build pipeline produces MCP tool JSON schemas from OpenAPI operation definitions, ensuring structural consistency by construction. Any manual MCP-only tool (e.g., `lenny/delegate_task`) that has no REST counterpart is authored independently but must use the shared error taxonomy (item 3).
 
-5. **Contract testing.** CI includes contract tests that call both the REST endpoint and the corresponding MCP tool for every overlapping operation and assert semantic equivalence of responses. These tests cover: (a) success paths — identical response payloads modulo transport envelope, (b) validation errors — same error `code` and `category` for identical invalid inputs, (c) authz rejections — same denial behavior. Contract tests run on every PR; a failure blocks merge. The test harness is introduced in Phase 5 (Section 18) alongside the first phase where both REST and MCP surfaces are active.
+5. **Contract testing.** CI includes contract tests that call the REST endpoint and **every built-in external adapter** (MCP, OpenAI Completions, Open Responses) for every overlapping operation and assert semantic equivalence of responses. These tests cover: (a) success paths — identical response payloads modulo transport envelope, (b) validation errors — same error `code` and `category` for identical invalid inputs, (c) authz rejections — same denial behavior. Contract tests run on every PR; a failure blocks merge. The test harness is introduced in Phase 5 (Section 18) alongside the first phase where both REST and MCP surfaces are active. **Future adapters** added via config-driven plugins or the admin API (`POST /v1/admin/external-adapters`) are responsible for passing the same contract test suite before being enabled in production. The contract test harness exposes a `RegisterAdapterUnderTest(adapter ExternalProtocolAdapter)` entry point so that third-party adapter authors can run the suite against their implementation.
 
 ### 15.3 Internal Control API (Custom Protocol)
 
@@ -4028,6 +4055,8 @@ The runtime adapter contract will be published as a **standalone specification**
 - Reference implementation in Go
 
 This is the primary document for community runtime adapter authors.
+
+**SDK-warm demotion contract:** Adapters for runtimes that declare `capabilities.preConnect: true` **must** implement the `DemoteSDK` RPC. This RPC cleanly terminates the pre-connected agent process and returns the pod to a pod-warm state so that workspace files (including those matching `sdkWarmBlockingPaths`) can be materialized before the agent starts. The specification must document: expected teardown behavior, timeout (default: 10s — if the SDK process does not exit within this window, the adapter sends SIGKILL), post-demotion pod state (equivalent to a freshly warmed pod-warm pod), and the `UNIMPLEMENTED` error code for adapters that do not support demotion. Runtime authors who set `preConnect: true` without implementing `DemoteSDK` will see session failures whenever a client uploads files matching `sdkWarmBlockingPaths`.
 
 #### 15.4.1 Adapter↔Binary Protocol
 
@@ -4625,9 +4654,9 @@ The following tiers define the scale points at which SLOs and alerting rules mus
 | Warm Pool Controller    | Deployment (2+ replicas, leader election) | Manages pod lifecycle via `PoolManager` interface (default implementation: `kubernetes-sigs/agent-sandbox` CRDs) |
 | PoolScalingController   | Deployment (2+ replicas, leader election) | Reconciles pool config from Postgres into CRDs; manages scaling intelligence |
 | Agent Pods              | Pods owned by `Sandbox` CRD              | RuntimeClass per pool; preStop checkpoint hook for active pods; optional PDB per pool on warm (idle) pods to enforce `minWarm` during voluntary disruption |
-| Postgres                | StatefulSet or managed service            | HA: primary + sync replica, PgBouncer required                                                                                                             |
-| Redis                   | StatefulSet or managed service            | HA: Sentinel (3 nodes), TLS + AUTH required                                                                                                                |
-| MinIO                   | StatefulSet or managed service            | Artifact/checkpoint storage                                                                                                                                |
+| Postgres                | StatefulSet or managed service            | HA: primary + sync replica; connection pooling required (PgBouncer for self-managed, provider proxy for cloud-managed — see Section 17.9) |
+| Redis                   | StatefulSet or managed service            | HA: Sentinel (3 nodes) for self-managed, managed cache service for cloud — see Section 17.9; TLS + AUTH required |
+| MinIO                   | StatefulSet or managed service            | Artifact/checkpoint storage; S3/GCS/Azure Blob for cloud-managed — see Section 17.9 |
 
 ### 17.2 Namespace Layout
 
@@ -4946,7 +4975,7 @@ Formula: `minWarm >= claim_rate * (failover_seconds + pod_startup_seconds) + bur
 | etcd quota-backend-bytes | 4 GB | 8 GB | 8 GB (dedicated cluster recommended) |
 | etcd monitoring | Standard | Enhanced (write latency + quota alerts) | Dedicated etcd cluster with full metrics |
 
-**Postgres and PgBouncer:**
+**Postgres and connection pooling** (self-managed profile — for cloud-managed equivalents see Section 17.9):
 
 | Parameter | Tier 1 | Tier 2 | Tier 3 |
 |---|---|---|---|
@@ -4961,7 +4990,7 @@ Formula: `minWarm >= claim_rate * (failover_seconds + pod_startup_seconds) + bur
 | Billing/audit batch flush interval | 500ms / 1000ms | 500ms / 1000ms | 250ms / 500ms |
 | Separate billing/audit Postgres | No | No | Optional (recommended if replication lag > 100ms) |
 
-**Redis:**
+**Redis** (self-managed profile — for cloud-managed equivalents see Section 17.9):
 
 | Parameter | Tier 1 | Tier 2 | Tier 3 |
 |---|---|---|---|
@@ -4971,11 +5000,11 @@ Formula: `minWarm >= claim_rate * (failover_seconds + pod_startup_seconds) + bur
 | Concern separation | Single instance (all concerns) | Single instance; split if ceiling signals trigger (Section 12.4) | Separate instances: coordination (Sentinel), quota (Cluster), cache/pub-sub (Sentinel or Cluster) |
 | Capacity ceiling monitoring | Basic (`redis_memory_used`, `redis_commands_processed`) | Enhanced (add P99 latency per store role, pub/sub channel count) | Per-instance dashboards with alerting on all ceiling signals (Section 12.4) |
 
-**MinIO / Object Storage:**
+**Object storage** (self-managed profile — for cloud-managed equivalents see Section 17.9):
 
 | Parameter | Tier 1 | Tier 2 | Tier 3 |
 |---|---|---|---|
-| Topology | Single-node (dev) or 4-node | 4-node erasure coding | 8+ node erasure coding |
+| Topology | Single-node (dev) or 4-node MinIO | 4-node MinIO erasure coding | 8+ node MinIO erasure coding |
 | GC cycle interval | 15 min | 15 min | 5 min |
 | ArtifactGCBacklog alert threshold | 100 | 1,000 | 10,000 |
 
@@ -4989,6 +5018,102 @@ Formula: `minWarm >= claim_rate * (failover_seconds + pod_startup_seconds) + bur
 | Quota drift bound (worst case) | ~600 req | ~6,000 req | ~30,000 req |
 | Log volume estimate (per day) | ~30 MB | ~300 MB | ~3 GB |
 | Billing event storage (13 mo) | ~1M rows | ~10M rows | ~100M rows |
+
+### 17.9 Deployment Profiles
+
+Lenny's data store layer (Postgres, Redis, object storage) is accessed exclusively through pluggable interfaces (Section 12.6). The implementation behind each interface varies by deployment environment. This section defines two deployment profiles — **cloud-managed** and **self-managed** — so that Lenny takes advantage of cloud-provider redundancy and scalability when available, and falls back to self-managed components when deployed outside major cloud environments.
+
+**Design principle:** Lenny must not depend on any single cloud provider. Cloud-managed profiles use provider-native services for operational simplicity, but the self-managed profile is always a fully supported first-class path. Helm values select the active profile; the gateway and controllers are unaware of which profile is active.
+
+#### Cloud-Managed Profile
+
+Use this profile when deploying on AWS, GCP, or Azure. The provider's managed services handle HA, replication, scaling, patching, and backups. Fewer Kubernetes Deployments to operate; the Helm chart omits PgBouncer, Redis Sentinel, and MinIO resources.
+
+| Component | Cloud-Managed Equivalent | Provider Examples | Notes |
+|---|---|---|---|
+| **Postgres** | Managed relational database with multi-AZ HA | AWS RDS for PostgreSQL, GCP Cloud SQL, Azure Database for PostgreSQL | Same schema, same RLS enforcement. Managed service handles failover, backups, encryption at rest. |
+| **Connection pooler** (PgBouncer) | Provider connection proxy | AWS RDS Proxy, GCP Cloud SQL Auth Proxy, Azure PgBouncer (built-in) | Must support transaction-mode pooling for RLS compatibility (Section 12.3). RDS Proxy supports `SET LOCAL` in transaction mode. Cloud SQL Auth Proxy terminates IAM auth but does not pool — if using Cloud SQL, deploy PgBouncer or pgcat alongside it, or use AlloyDB with built-in pooling. Verify `connect_query` / initialization hook support for the `__unset__` sentinel. |
+| **Redis** | Managed cache/data store with HA | AWS ElastiCache for Redis, GCP Memorystore for Redis, Azure Cache for Redis | Same AUTH + TLS requirements. ElastiCache Cluster Mode and Memorystore provide the horizontal sharding that self-managed Redis Cluster provides at Tier 3. Logical concern separation (Section 12.4) maps to separate ElastiCache replication groups or Memorystore instances. |
+| **Object storage** (MinIO) | Provider-native object storage | AWS S3, GCP Cloud Storage, Azure Blob Storage | `ArtifactStore` interface uses S3-compatible API; S3 and GCS are natively compatible. Azure Blob requires the S3-compatible gateway or a thin `ArtifactStore` implementation using Azure SDK. Encryption at rest, versioning, and lifecycle policies are provider-managed. |
+
+**Helm configuration (cloud-managed):**
+
+```yaml
+deploymentProfile: cloud-managed
+
+postgres:
+  # No PgBouncer Deployment created; gateway connects through provider proxy
+  connectionPooler: external   # "external" = provider-managed, "pgbouncer" = self-managed
+  dsn: "postgres://..."        # Provider-issued endpoint (e.g., RDS Proxy endpoint)
+  readDsn: "postgres://..."   # Read replica endpoint (provider reader endpoint)
+
+redis:
+  provider: external           # "external" = provider-managed, "sentinel" / "cluster" = self-managed
+  endpoints:
+    - "rediss://elasticache-primary.example.com:6379"
+  # For Tier 3 concern separation, configure per-role endpoints:
+  # coordinationEndpoints: [...]
+  # quotaEndpoints: [...]
+  # cacheEndpoints: [...]
+
+objectStorage:
+  provider: s3                 # "s3" | "gcs" | "azure" | "minio"
+  bucket: "lenny-artifacts"
+  region: "us-east-1"
+  # Encryption, versioning, lifecycle managed by provider
+```
+
+#### Self-Managed Profile
+
+Use this profile when deploying on bare-metal, on-premises Kubernetes, or any environment without managed database/cache services. The Helm chart deploys PgBouncer, Redis Sentinel (or Cluster), and MinIO as Kubernetes workloads alongside Lenny's own components.
+
+| Component | Self-Managed Implementation | Notes |
+|---|---|---|
+| **Postgres** | CloudNativePG operator or Patroni on Kubernetes | See Section 12.3 for HA, encryption, backup requirements. |
+| **Connection pooler** | PgBouncer Deployment (2+ replicas) with PDB | See Section 12.3 for sizing, pool mode, readiness probe, and monitoring. |
+| **Redis** | Redis Sentinel (Tiers 1–2) or Redis Cluster (Tier 3) | See Section 12.4 for topology, TLS, AUTH, failure behavior, and concern separation triggers. |
+| **Object storage** | MinIO with erasure coding | See Section 12.5 for HA topology, encryption, tenant isolation, and GC. |
+
+**Helm configuration (self-managed):**
+
+```yaml
+deploymentProfile: self-managed
+
+postgres:
+  connectionPooler: pgbouncer
+  pgbouncer:
+    replicas: 2
+    poolMode: transaction
+    defaultPoolSize: 25
+    # See Section 17.8 for per-tier sizing
+
+redis:
+  provider: sentinel           # "sentinel" | "cluster"
+  sentinels:
+    - "redis-sentinel-0.redis:26379"
+    - "redis-sentinel-1.redis:26379"
+    - "redis-sentinel-2.redis:26379"
+
+objectStorage:
+  provider: minio
+  endpoint: "http://minio.lenny-system:9000"
+  bucket: "lenny-artifacts"
+```
+
+#### Local Development Profile
+
+A third implicit profile exists for local development (Section 17.4): single Postgres container, no pooler, single Redis container, local disk for artifacts. This profile is activated by `make run` / docker-compose and requires zero cloud dependencies.
+
+#### Profile-Invariant Requirements
+
+Regardless of deployment profile, the following requirements apply uniformly:
+
+- **Transaction-mode pooling** for Postgres connections (RLS compatibility)
+- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access)
+- **Tenant key prefix** (`t:{tenant_id}:`) enforced at the Redis wrapper layer
+- **S3-compatible API** for object storage (all providers above satisfy this)
+- **Encryption at rest** for all persistent stores
+- **Interface contracts** (Section 12.6) are identical across profiles — the gateway does not branch on deployment profile
 
 ---
 

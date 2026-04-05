@@ -1577,7 +1577,7 @@ Including: no PIA/DPIA integration, experiment compliance safeguards, SOC 2 Trus
 
 **Recommendation:** Generate MCP schemas from OpenAPI. Add contract tests calling both surfaces.
 
-**Status:** FIXED — Section 15.2.1 now specifies OpenAPI as the single authoritative schema with MCP tool schemas generated from OpenAPI definitions (item 4). Added contract testing requirement covering success paths, validation errors, and authz rejections across both API surfaces (item 5). Contract tests added to Phase 5 build sequence (Section 18) alongside OpenAPI→MCP schema generation build step.
+**Status:** FIXED — Section 15.2.1 now specifies OpenAPI as the single authoritative schema with MCP tool schemas generated from OpenAPI definitions (item 4). Added contract testing requirement covering success paths, validation errors, and authz rejections across **all built-in adapters** (MCP, OpenAI Completions, Open Responses) — not just REST + MCP (item 5). Future adapters added via config or admin API must pass the same contract test suite; the test harness exposes `RegisterAdapterUnderTest` for third-party adapter authors. Contract tests added to Phase 5 build sequence (Section 18) alongside OpenAPI→MCP schema generation build step.
 
 ### API-002. Admin API Error Response Schema Absent [High]
 **Section:** 15.1
@@ -1763,7 +1763,7 @@ No mechanism to control SDK-warm vs pod-warm ratio. Degradation path for wrong p
 
 **Recommendation:** Introduce `sdkWarmRatio` or make SDK-warm pods degradable to pod-warm with documented penalty.
 
-**Resolution:** Added `sdkWarmRatio` field (0.0–1.0) on `SandboxWarmPool` CRD to control SDK-warm vs pod-warm split. Documented degradation path: SDK-warm pods can be demoted to pod-warm with SDK teardown penalty (1–3 s). Added `lenny_warmpool_sdk_demotions_total` metric. Updated CRD field ownership table and CEL validation rules.
+**Resolution:** Eliminated the dual-pool inventory problem entirely: pools referencing a `preConnect`-capable runtime now warm **all** pods to SDK-warm state (no ratio to configure). When a request includes files matching `sdkWarmBlockingPaths`, the gateway signals demotion at claim time (`requiresDemotion: true` on `ClaimOpts`); the adapter tears down the pre-connected SDK and proceeds via the pod-warm path (1–3s penalty). This is simpler than a configurable ratio — no tuning knob, no split to manage. Added `lenny_warmpool_sdk_demotions_total` metric for observability. Updated CRD field ownership table (removed `sdkWarmRatio`).
 
 ### WAR-002. Pool Sizing Formula Lacks Burst Term [High] — FIXED
 **Section:** 4.6.1, 4.6.2
