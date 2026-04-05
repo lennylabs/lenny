@@ -61,7 +61,17 @@ Read the relevant section(s) of the spec file. Elaborate on the finding and conf
 - If the finding is **already resolved** (by a prior fix or because the description doesn't match reality): report `SKIPPED — already resolved` and explain why. Do NOT make any edits to the technical spec.
 - If the finding is **partially resolved**: note what remains and proceed to Phase 2 for the remaining issue only.
 
-### Phase 2: Apply the fix
+### Phase 2: Re-assess possible options
+
+Follow this process:
+
+- Elaborate on the finding
+- Come up with alternative options. Think out of the box
+- For each option/recommendation:
+  - Come up with a list of critical questions. Challenge the assumptions (explicit or implicit) in the recommendation
+  - Revisit the recommendation based on the answers to your challenges
+
+### Phase 3: Apply the fix
 
 Edit the spec file to address the finding. Review the recommendations and come up with alternatives if needed. Follow the recommendation as closely as possible, but use your judgment — the recommendation is guidance, not a script. In general, the goal is to find the simplest possible solution that aligns with the intent of the technical spec and isn't a hack.
 
@@ -78,9 +88,11 @@ Rules:
 - Keep the technical spec's design principles in mind at all times.
 - Update the finding's list of recommendations in `$1` if needed.
 - If multiple valid options exist and there isn't a clear winner, or if the recommendation requires major architectural changes, provide enough context to the user and ask them to select a path forward. Defer more or less to the user depending on the severity of the finding.
+- If your selected recommendation goes against a design decision in the tech spec, as the user for approval.
+- If your selected recommendation alters the project's capabilities, or the capabilities available to the users of the project, always ask the user for approval.
 - When asking the user for direction, provide a detailed explanation of the problem and the recommended/possible solution(s).
 
-### Phase 3: Validate no regressions
+### Phase 4: Validate no regressions
 
 After editing, re-read the sections you modified AND any sections that cross-reference them. Check for:
 
