@@ -22,7 +22,7 @@
 
 ## Critical Findings
 
-### MKT-001 Startup Latency Claim Is Undefended Against Competitors' Published Numbers [Critical]
+### MKT-001 Startup Latency Claim Is Undefended Against Competitors' Published Numbers [Critical] — VALIDATED/FIXED
 **Section:** 6.1, 23.0, 23.1
 
 The competitive landscape table (Section 23) lists concrete, sourced numbers for every competitor Lenny must beat: E2B at ~150ms boot, Fly.io Sprites at ~300ms checkpoint/restore, Daytona at sub-90ms cold starts. Section 6.1 and 16.5 give Lenny's own SLO target: P95 pod-warm session start < 2s for runc, < 5s for gVisor. The spec explicitly notes these are "targets, not benchmarks." This means Lenny currently claims SLO targets that are 13–33× slower than the primary competitors' published numbers, with no published benchmark to validate even these targets, while simultaneously positioning latency parity as a given.
@@ -30,6 +30,8 @@ The competitive landscape table (Section 23) lists concrete, sourced numbers for
 This is not an engineering problem at the design level — pre-warmed pools on Kubernetes can plausibly match Firecracker-class latency for pod-warm claims. The problem is that the spec provides no narrative explaining why a Kubernetes pod-warm claim under gVisor can be competitive with Firecracker microVMs, and it defers all validation to a Phase 2 benchmark harness. A developer reading Section 23 today will see "Daytona: sub-90ms / Lenny: < 2s runc / < 5s gVisor" and draw the obvious conclusion that Lenny is orders of magnitude slower, regardless of whether that comparison is apples-to-oranges (cold start vs. pre-warmed pod claim).
 
 **Recommendation:** Add a latency comparison note directly in Section 23, not just in Section 6.1, that (1) clarifies the comparison is pre-warmed pod claim time (P95 < 2s for runc) vs. competitors' cold-start or cold-checkpoint numbers — these are different measurements, and (2) states what Lenny actually claims for the pod-claim hot path once the pool is warm (which from Section 6.1 is described as "~ms" for pod claim and routing). The Section 23 table should add a "Comparison basis" column noting whether each competitor figure is cold or warm. Until Phase 2 benchmarks are available, the spec should say so explicitly in Section 23.1 and set the expectation that latency parity is to be demonstrated, not assumed. Without this, Lenny will lose evaluators at first glance on the metric they care most about.
+
+**Resolution:** A blockquote note was added to Section 23 immediately after the competitor table. The note: (1) names the measurement difference — competitors' numbers measure cold-start only (container scheduling + runtime init), Lenny's SLO measures full TTFT including workspace setup, (2) surfaces the ~ms pod-claim figure from Section 6.3 as the operation most comparable to competitors' cold-start numbers, (3) states Lenny's figures are unvalidated targets pending Phase 2 benchmarks.
 
 ---
 

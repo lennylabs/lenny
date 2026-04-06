@@ -20,16 +20,18 @@
 
 ## Findings
 
-### RES-001 Redis fail-open quota bypass window is too long and unbounded across repeated outages [Critical]
+### RES-001 Redis fail-open quota bypass window is too long and unbounded across repeated outages [Critical] — VALIDATED/FIXED
 **Section:** 12.4
 
 The spec permits quota enforcement to fail open for up to 60 seconds per outage (`rateLimitFailOpenMaxSeconds`). During this window, every gateway replica applies a conservative per-replica ceiling (`tenant_limit / replica_count`), but the effective cluster-wide enforcement degrades to full tenant budget. A cumulative fail-open timer (`quotaFailOpenCumulativeMaxSeconds`, default 300s) exists but only limits repeated drift across a 1-hour window — meaning up to 5 minutes of fail-open behaviour per hour is permitted. At Tier 3 with 30+ gateway replicas and hundreds of sessions per tenant, a sustained Redis outage can result in significant token overshoot before fail-closed triggers. The tradeoff is documented but the 60-second default for Tier 3 and the 300-second cumulative cap are too permissive for tenants billed per token. Section 17.8 notes Tier 3 should use a 30-second window, but the systemic risk of per-tenant drift accumulation across repeated short Redis outages (each under 60s, so each resets the cumulative timer independently) is not addressed.
 
 **Recommendation:** (1) Reduce `rateLimitFailOpenMaxSeconds` default to 30s for Tier 2+ and 15s for Tier 3; enforce these as tier-locked maximums, not recommendations. (2) Fix the cumulative timer logic so it measures total fail-open time within a rolling 1-hour window regardless of outage count — currently five separate 60-second outages each reset the per-outage clock without accumulating toward the 300-second cap. (3) Add a per-session hard ceiling enforced locally without Redis: once a session has consumed 110% of its `maxTokenBudget` (as last recorded in Postgres), terminate it with `QUOTA_EXCEEDED` regardless of Redis state. (4) Document the acceptable overshoot budget explicitly in the SLO table (Section 16.5).
 
+**Resolution:** Section 12.4 was updated to: (1) source `replica_count` from the Kubernetes Endpoints object (not Redis), with fallback to 1, (2) explicitly state the cumulative timer is a true sliding 1-hour rolling window accumulating across all outages, (3) clarify timer is in-memory (resets on restart), (4) label `quotaFailOpenCumulativeMaxSeconds` as a financial security control, (5) add `quota_failopen_started` audit event. This is the same fix as STR-001/POL-001 — all three findings addressed the same spec gap from different perspectives.
+
 ---
 
-### RES-002 Cascading failure: MinIO outage during eviction checkpoint causes unrecoverable session loss with no fallback store [Critical]
+### RES-002 Cascading failure: MinIO outage during eviction checkpoint causes unrecoverable session loss with no fallback store [Critical] — VALIDATED/FIXED
 **Section:** 4.4, 12.5
 
 When MinIO is unavailable during a pod eviction (node drain, voluntary disruption), the preStop hook attempts checkpoint upload with exponential backoff (up to ~5 seconds), then gives up. The session record is marked `checkpoint_failed` and a `CheckpointStorageUnavailable` alert fires. If no prior successful checkpoint exists, the session's workspace state is permanently lost. There is no fallback storage path (the spec explicitly states "there is no fallback storage"). This creates a hard dependency: MinIO unavailability during any node drain causes irrecoverable session loss.
@@ -37,6 +39,8 @@ When MinIO is unavailable during a pod eviction (node drain, voluntary disruptio
 The cascading scenario is concrete: a node drain during a MinIO rolling upgrade or network partition triggers simultaneous preStop hooks across all pods on that node, all competing for an unavailable MinIO, all failing. The fact that sessions can resume from the *previous* checkpoint is cold comfort when sessions may not have been checkpointed recently (periodic checkpoints have no guaranteed freshness window specified).
 
 **Recommendation:** (1) Define a checkpoint freshness SLO: the maximum time between successful checkpoints for active sessions (e.g., "at least one successful checkpoint every 10 minutes"). Alert when any active session has no checkpoint within this window. (2) For eviction checkpoints, implement a two-phase fallback: attempt MinIO with the current backoff, then fall back to writing a minimal session state record (cursor position, conversation ID, generation) directly to Postgres if MinIO remains unavailable. This cannot store the workspace tar, but it allows the session to be resumed from last-known conversation state on a fresh pod rather than losing the session entirely. (3) Stagger node drains by default to limit the number of simultaneous eviction checkpoints competing for MinIO. (4) Add a `lenny_session_last_checkpoint_age_seconds` gauge to the alert inventory in Section 16.5.
+
+**Resolution:** Section 4.4 now specifies: (1) `periodicCheckpointIntervalSeconds` (default 600s) as a checkpoint freshness SLO, tracked by `lenny_session_last_checkpoint_age_seconds` gauge, with `CheckpointStale` alert on breach, (2) a two-phase eviction fallback — MinIO retries first, then falls back to a Postgres minimal state record (`session_eviction_state` table with 6 scalar fields: `session_id`, `generation`, `conversation_cursor`, `last_message_context` max 64KB, `evicted_at`, `workspace_lost`), (3) client notified via `session.resumed` with `resumeMode: "conversation_only"` and `workspaceLost: true`. No workspace blobs stored in Postgres — the fallback provides conversation continuity only. Section 12.5 updated to reference the fallback. Section 16.5 adds `CheckpointStale` warning alert and updates `CheckpointStorageUnavailable` description.
 
 ---
 

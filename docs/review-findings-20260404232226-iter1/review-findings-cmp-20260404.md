@@ -21,7 +21,7 @@
 
 ## Critical
 
-### CMP-001 SIEM Requirement Is Conditional, Not Mandatory — Compliant Deployments Can Ship Without External Audit Trail [Critical]
+### CMP-001 SIEM Requirement Is Conditional, Not Mandatory — Compliant Deployments Can Ship Without External Audit Trail [Critical] — VALIDATED/FIXED
 **Section:** 11.7
 
 Section 11.7 establishes a rigorous four-layer audit integrity model and correctly states that "audit events **must** be streamed to an external immutable log (SIEM, cloud audit service, or append-only object storage)." However, this requirement is only enforced when `audit.siem.endpoint` is configured — the gateway checks SIEM connectivity at startup only if the deployer has already configured an endpoint. A deployer who never sets `audit.siem.endpoint` faces no startup error, no warning, and no operational consequence.
@@ -35,9 +35,11 @@ Regulated workloads under SOC2 (CC7.2, CC7.3), FedRAMP (AU-9), and HIPAA (§164.
 2. Add a `lenny-preflight` check (Section 17.6) that fails installation if `audit.siem.endpoint` is unset in production mode, with the message: `"audit.siem.endpoint is required in production mode (Section 11.7); audit integrity requires an external immutable log."`
 3. Add `AuditSIEMNotConfigured` to the warning alert table in Section 16.5, firing immediately on startup if the endpoint is absent in production.
 
+**Resolution:** Section 11.7 now includes an "Audit integrity gap — Postgres-only deployments" block that: names the superuser bypass gap explicitly, declares compliance-grade deployments (SOC2, FedRAMP, HIPAA) require `audit.siem.endpoint`, and defines startup behavior (WARN-level repeated every 60s in multi-tenant production; logged once in single-tenant production; silent in non-production). Section 16.5 adds `AuditSIEMNotConfigured` alert (Warning for single-tenant, Critical for multi-tenant production). Section 17.6 adds a non-blocking preflight check that emits a named warning when SIEM is unconfigured in production mode, referencing SOC2 CC7.2, FedRAMP AU-9, HIPAA §164.312(b).
+
 ---
 
-### CMP-002 Audit Log Batching Creates a Data-Loss Window on Gateway Crash [Critical]
+### CMP-002 Audit Log Batching Creates a Data-Loss Window on Gateway Crash [Critical] — VALIDATED/FIXED
 **Section:** 11.7, 12.3
 
 Section 12.3 recommends batching audit log inserts for performance (`auditFlushIntervalMs`, default 1000ms; `auditFlushBatchSize`, default 100 entries). Audit entries are explicitly described as "non-critical-path (they do not block request processing), so a longer flush interval is acceptable." This optimization is correct for throughput but introduces a compliance gap: if a gateway replica crashes during the flush interval, up to 1 second of audit events (up to 100 entries at Tier 3 write rates of ~300/s) are silently lost. The flush buffer is in-memory and is not described as having any write-ahead log or persistence mechanism.
@@ -50,6 +52,8 @@ For SOC2 (CC7.2), FedRAMP (AU-9), and HIPAA (§164.312(b)) the audit log must be
 1. Document that the audit flush buffer is a deliberate durability trade-off and is only acceptable when a SIEM is also receiving the same events in real-time (making the in-Postgres copy redundant on crash). If no SIEM is configured, audit inserts must be synchronous (direct write, no batching) in production mode.
 2. When SIEM is configured and real-time SIEM delivery is confirmed, the in-Postgres audit batching remains acceptable as the secondary copy — the SIEM provides the durable primary.
 3. Add a reconciliation procedure: on gateway startup, verify the audit chain continuity (the hash-chain check in item 3 of Section 11.7) and log a warning identifying the gap if the chain breaks, so operators can replay from the SIEM.
+
+**Resolution:** Section 12.3 audit batching guidance was expanded: (1) `auditFlushIntervalMs` default reduced from 1000ms to 250ms, with a bounded-loss table (2/13/75 events at Tiers 1/2/3), (2) when SIEM is configured, Postgres batching is acceptable (SIEM is the durable primary), (3) in `LENNY_ENV=production` without SIEM, audit inserts become synchronous (batching disabled) using a dedicated 4-connection pool — no new infrastructure, (4) a startup chain-continuity check verifies the hash chain on restart and fires `AuditChainGap` alert if a gap is found. Section 16.5 adds `AuditChainGap` Warning alert. Section 17.8 tier sizing table updated to 250ms audit flush interval.
 
 ---
 

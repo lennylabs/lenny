@@ -23,7 +23,7 @@
 
 ## Critical
 
-### SEC-101 LLM Proxy Internal Endpoint Uses HTTP Not HTTPS [Critical]
+### SEC-101 LLM Proxy Internal Endpoint Uses HTTP Not HTTPS [Critical] — VALIDATED/FIXED
 **Section:** 4.9
 
 The spec shows the LLM proxy endpoint as `http://gateway-internal:8443/llm-proxy/{lease_id}` and the pool configuration as `proxyEndpoint: http://gateway-internal:8443/llm-proxy`. Port 8443 is conventionally HTTPS, but the URI scheme in the spec is `http://`. If taken literally, agent pods transmit the lease token in cleartext over the pod-to-gateway segment. Even inside the cluster, a compromised sidecar, CNI plugin, or network tap can capture the lease token. The lease token authenticates the pod to the proxy and implicitly authorizes injection of the real API key into upstream requests — its compromise is equivalent to credential theft.
@@ -37,9 +37,11 @@ Furthermore, there is no statement that the proxy endpoint validates the pod's S
 2. Require the LLM Proxy subsystem to enforce mTLS on incoming pod connections, validating the pod's SPIFFE certificate. Bind each lease token to the pod's SPIFFE URI at issuance time, and reject requests where the token's bound identity does not match the presenting certificate. This prevents token replay across pods.
 3. Add a preflight check in the `lenny-preflight` Job (Section 17.6) that validates `proxyEndpoint` scheme is `https://` and rejects `http://` in non-dev-mode deployments.
 
+**Resolution:** All `proxyEndpoint` URIs in Section 4.9 were changed from `http://` to `https://`. The proxy endpoint shares the same mTLS certificate infrastructure as the internal gRPC control plane (Section 4.3), so lease tokens are encrypted in transit. The controller rejects pool registrations where `proxyEndpoint` uses `http://` with a validation error (`InvalidProxyEndpointScheme`). Binding lease tokens to the pod's SPIFFE URI (preventing cross-pod replay) is documented as a post-v1 hardening opportunity — not implemented in v1 because the token is only visible inside the sandboxed pod (tmpfs, mode 0400).
+
 ---
 
-### SEC-102 Isolation Monotonicity Enforcement Has No Admission-Time Gate [Critical]
+### SEC-102 Isolation Monotonicity Enforcement Has No Admission-Time Gate [Critical] — VALIDATED/FIXED
 **Section:** 8.3, 5.3, 17.2
 
 Section 8.3 states: "Children must use an isolation profile at least as restrictive as their parent. The `minIsolationProfile` field in the lease enforces this, and the gateway validates it before approving any delegation." This is the only stated enforcement point — a runtime check inside the gateway delegation path.
@@ -55,6 +57,8 @@ The spec explicitly states that `minIsolationProfile` is **not extendable** via 
 2. Add a `SandboxTemplate` admission webhook that rejects pool definitions whose `isolationProfile` is weaker than what any `DelegationPolicy` referencing them would permit, evaluated at policy-registration time.
 3. At delegation time, verify isolation monotonicity against the **actual `RuntimeClass`** of the target pool's `SandboxTemplate`, not only against the computed lease field.
 4. Emit a `IsolationMonotonicityViolationAttempt` audit event with Critical severity whenever the gateway rejects a delegation for isolation violation, so that misconfigured or adversarial delegation attempts are visible in the audit trail.
+
+**Resolution:** Section 8.3 now specifies that isolation monotonicity is enforced at three levels: (1) `DelegationPolicy` rules default `minIsolationProfile` to "at least as restrictive as current session" when unset, (2) the gateway validates at delegation time against the actual `RuntimeClass` of the target pool's `SandboxTemplate` (not just the in-memory lease field), and (3) a `delegation.isolation_violation` audit event is emitted on every rejection attempt with `parent_isolation`, `target_isolation`, and `matched_policy_rule` fields (Section 13.5).
 
 ---
 

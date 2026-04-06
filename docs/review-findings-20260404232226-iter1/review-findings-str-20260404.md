@@ -20,7 +20,7 @@
 
 ## Critical
 
-### STR-001 Redis Quota Fail-Open Enables Deliberate Quota Bypass [Critical]
+### STR-001 Redis Quota Fail-Open Enables Deliberate Quota Bypass [Critical] — VALIDATED/FIXED
 **Section:** 12.4, 11.2
 
 The spec describes a 60-second fail-open window for quota counters when Redis is unavailable (§12.4). During this window, each gateway replica enforces only a per-replica ceiling (`tenant_limit / replica_count`). An adversary who can force Redis unavailability — even briefly — gains a guaranteed open window to consume up to N×(tenant_limit/N) = tenant_limit additional tokens *on every replica simultaneously*. Because the per-replica ceiling is computed from `tenant_limit / replica_count` but each replica acts independently, the aggregate worst case is the full `tenant_limit` (§11.2: "at most 1x the tenant's configured budget"). That means a sustained Redis outage lasting longer than the 60-second default can cause actual cumulative consumption of 2× the tenant limit before the cumulative timer kicks in (`quotaFailOpenCumulativeMaxSeconds` default: 300 s). The rate-limit path has an identical exposure: the "emergency hard limit" counter is per-replica and explicitly not shared (§12.4: "the effective limit is N * per_replica_limit"). For multi-tenant deployments, a single disrupted tenant could also pollute counters during reconciliation (§12.4: "reconciliation runs automatically... completes within seconds") without auditable attribution of the overshoot.
@@ -29,9 +29,11 @@ The spec acknowledges this risk (§11.2, "Maximum Overshoot Formula") but treats
 
 **Recommendation:** Add a threat model classification distinguishing *availability degradation* fail-open (acceptable) from *financial security boundary* fail-open (requires additional controls). Specifically: (1) reduce the default fail-open window to 10 s (not 60 s) for `QuotaStore` in multi-tenant deployments, with the 60 s default reserved for single-tenant; (2) emit a `quota_failopen_started` audit event with tenant_id, replica_id, and timestamp when fail-open begins — this makes the overshoot window attributable and detectable by billing consumers; (3) document in §12.4 that `quotaFailOpenCumulativeMaxSeconds` is a *security control*, not just an operational knob, and that its default (300 s) should be reviewed per deployment's financial exposure.
 
+**Resolution:** Section 12.4 was updated to: (1) clarify that `replica_count` for the per-replica budget ceiling is sourced from the Kubernetes Endpoints object via the API server (not Redis), with maximum staleness 30s and fallback to `replica_count = 1` when the Endpoints object is unavailable, (2) explicitly state the cumulative fail-open timer is a true sliding 1-hour rolling window (not calendar-aligned) that accumulates across all outages — five 59-second outages sum to 295 seconds, not zero, (3) clarify the timer is stored in-memory (not Redis) and resets to zero on gateway restart, (4) label `quotaFailOpenCumulativeMaxSeconds` as a financial security control with guidance to review the default per deployment, and (5) add a `quota_failopen_started` audit event emitted when fail-open begins.
+
 ---
 
-### STR-002 Artifact GC Strategy Lacks Reference-Counting for Shared Blobs — Storage Leak Risk [Critical]
+### STR-002 Artifact GC Strategy Lacks Reference-Counting for Shared Blobs — Storage Leak Risk [Critical] — VALIDATED/FIXED
 **Section:** 12.5, 12.8
 
 Section 12.5 defines the GC lifecycle: "the GC job queries Postgres for artifacts past their TTL, deletes them from MinIO, then marks the rows as `deleted` in Postgres." Section 12.8 introduces workspace deduplication as a future optimization with this note: "if a future optimization introduces content-addressed deduplication for workspace snapshots in the `ArtifactStore`, the erasure job must use reference counting: a blob is only deleted when no other user's artifact references it."
@@ -41,6 +43,8 @@ The problem is that the current design already creates implicit shared-blob scen
 Additionally, the GC job is described as "idempotent" because "MinIO delete-on-absent is a no-op" — but this only handles the case where an artifact was already deleted, not the case where an artifact that *should not yet be deleted* was deleted by a prior GC cycle because its Postgres row was past TTL while another row still referenced the same object.
 
 **Recommendation:** (1) Explicitly specify in §4.5 and §7.1 whether `derive` creates a new MinIO object or adds a reference to an existing one. (2) If any path shares MinIO objects across artifact records, implement reference counting in the `artifacts` Postgres table immediately (not deferred) — a `reference_count` integer column with FK-scoped decrement-on-delete triggers is sufficient. (3) Make the GC job's deletion condition `WHERE reference_count = 0 AND expires_at < NOW()` rather than purely TTL-based. (4) Add an integration test that creates a derived session from a parent, expires the parent's retention window, runs GC, and verifies the derived session can still retrieve its workspace artifact.
+
+**Resolution:** Sections 4.5, 7.1, 12.5, and 12.8 were updated to explicitly specify copy-on-derive semantics. `parent_workspace_ref` is now documented as a metadata lineage pointer only — it does not create a shared MinIO object reference. `POST /v1/sessions/{id}/derive` always performs a full byte copy into the derived session's own MinIO path (`/{tenant_id}/checkpoints/{derived_session_id}/...`). No MinIO objects are shared across sessions. TTL-based GC is safe because each artifact is owned by exactly one session. Reference counting is deferred to whenever content-addressed deduplication is added (§12.8).
 
 ---
 

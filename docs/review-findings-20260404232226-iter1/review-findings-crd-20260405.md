@@ -21,7 +21,7 @@
 
 ## Critical
 
-### CRD-001 No Emergency Credential Revocation Path for Compromised Pool Keys [Critical]
+### CRD-001 No Emergency Credential Revocation Path for Compromised Pool Keys [Critical] — VALIDATED/FIXED
 **Section:** 4.9, 11.4, 16.5
 
 The spec describes lease revocation only in the context of user invalidation (Section 11.4, step 6: "Credential leases held by the user's sessions are revoked — returned to pool"). There is no documented procedure for revoking all leases from a **specific credential** within a pool — the scenario where a single API key or IAM role is suspected compromised and must be pulled immediately from all active sessions.
@@ -34,6 +34,8 @@ The `CredentialPoolLow` alert fires only at `Warning` level and only at 20% avai
 1. Add `POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke` to the admin API. The operation MUST: mark the credential as `revoked` in `CredentialPoolStore`, terminate all active leases backed by that credential (via in-process signal or Redis pub/sub, matching the cert deny-list pattern from Section 10.3), and, for proxy mode, cause the proxy to reject further requests from sessions holding those leases immediately.
 2. Add a `CredentialCompromised` critical alert (`CredentialPoolStore` sees a credential in `revoked` state while sessions still hold active leases against it for > 30s — indicating revocation propagation failure).
 3. Document the emergency revocation runbook alongside the credential pool exhaustion runbook already referenced in Section 4.9.
+
+**Resolution:** Section 4.9 now includes an "Emergency Credential Revocation" subsection defining: (1) `POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke` with a 7-step operation contract (mark revoked, terminate active leases, add to in-memory deny list propagated via Redis pub/sub, immediate LLM proxy rejection, `RotateCredentials` RPC for direct-mode sessions, `credential.revoked` audit event, summary response), (2) `POST /v1/admin/credential-pools/{poolId}/revoke` for whole-pool revocation, (3) credential deny-list mechanism (Redis pub/sub propagation, Postgres LISTEN/NOTIFY fallback, auto-expiry on natural TTL, rebuilt from `CredentialPoolStore` at gateway startup). Admin API table updated with both endpoints. Section 16.5 adds `CredentialPoolExhausted` Critical alert (0 assignable credentials > 30s) and `CredentialCompromised` Critical alert (revoked credential with active leases > 30s).
 
 ---
 

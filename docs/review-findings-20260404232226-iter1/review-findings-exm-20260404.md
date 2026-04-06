@@ -21,7 +21,7 @@
 
 ## Critical
 
-### EXM-001 Concurrent-Workspace Mode Lacks a Deployer Acknowledgment Field [Critical]
+### EXM-001 Concurrent-Workspace Mode Lacks a Deployer Acknowledgment Field [Critical] — VALIDATED/FIXED
 **Section:** 5.2
 
 Task mode requires an explicit `acknowledgeBestEffortScrub: true` field that the pool controller validates at admission time. If absent, the pool definition is rejected. The spec text says `concurrencyStyle: workspace` also requires "deployer acknowledgment" — the security exposure is materially comparable (process-level cross-slot isolation, shared `/tmp`, shared cgroup memory) — but no acknowledgment field is defined, no YAML schema is shown, and there is no statement that the controller enforces anything at validation time. The sentence "Deployer acknowledgment required." appears inline in the description with no corresponding configuration artifact.
@@ -32,6 +32,8 @@ A deployer enabling `concurrencyStyle: workspace` with `maxConcurrent: 8` across
 1. Define a `concurrentWorkspacePolicy` block (analogous to `taskPolicy`) with a required `acknowledgeProcessLevelIsolation: true` field.
 2. Have the pool controller reject any pool definition with `concurrencyStyle: workspace` if this field is absent or `false`, with a descriptive error that cites section 5.2 and lists the specific isolation properties the deployer is accepting.
 3. Add a YAML example block in section 5.2 showing the full concurrent-workspace configuration including the acknowledgment, symmetrically with the task mode example.
+
+**Resolution:** Section 5.2 concurrent-workspace mode now includes a `concurrentWorkspacePolicy.acknowledgeProcessLevelIsolation: true` required field with YAML example, mirroring the task mode `acknowledgeBestEffortScrub` pattern. The pool controller rejects pool definitions where this field is absent or false, with a descriptive error listing the specific isolation properties accepted (shared process namespace, shared `/tmp`, shared cgroup memory, shared network stack). `concurrentWorkspacePolicy` added to the independently-configurable fields list for derived runtimes.
 
 ---
 

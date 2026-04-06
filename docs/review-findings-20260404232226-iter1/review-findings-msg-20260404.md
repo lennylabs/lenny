@@ -21,7 +21,7 @@
 
 ## Critical
 
-### MSG-001 Session Inbox Has No Persistence, Size Bound, or Durability Contract [Critical]
+### MSG-001 Session Inbox Has No Persistence, Size Bound, or Durability Contract [Critical] — VALIDATED/FIXED
 **Section:** 7.2
 
 The delivery routing specification (paths 2 and 3) routes messages to a session "inbox" when the runtime is unavailable or blocked in `await_children`. The spec states "The gateway never drops undelivered messages; they remain in the session inbox until consumed or the session terminates." However, the inbox is never defined as a data structure anywhere in the spec. There is no statement of:
@@ -34,6 +34,8 @@ The delivery routing specification (paths 2 and 3) routes messages to a session 
 The DLQ (for recovering sessions) is separately defined with TTL semantics, but the live-session inbox is given a stronger "never drops" guarantee with zero supporting infrastructure. The inconsistency is a correctness gap: the guarantee cannot be implemented without durability.
 
 **Recommendation:** Define the inbox as a named, bounded, durable structure stored in Redis (sorted set keyed by `session_id`, ordered by arrival timestamp, with a configurable `maxInboxSize` per session). Specify that inbox contents are replicated from Redis on coordinator handoff, and that inbox entries surviving a pod failure are delivered in order on resume alongside the existing checkpoint-based state. Document the `maxInboxSize` cap (suggested default: 500 messages) and the behavior on overflow: drop oldest with a `message_dropped` event to the sender, consistent with the SSE buffer drop-and-reconnect pattern.
+
+**Resolution:** Section 7.2 now defines the session inbox as an in-memory bounded FIFO queue on the coordinating gateway replica with a 5-row contract table: backing store (in-memory only), size bound (`maxInboxSize` default 500), overflow behavior (drop oldest, emit `message_dropped` receipt with `reason: "inbox_overflow"`), durability (none — lost on coordinator crash), crash recovery (new coordinator starts empty; senders must re-send). The "never drops" guarantee was scoped to "while the coordinating replica remains alive." DLQ updated to specify Redis-backed sorted set with `maxDLQSize` cap of 500. `dropped` added as a new `deliveryReceipt.status` value.
 
 ---
 

@@ -21,7 +21,7 @@ This review begins at NET-015 to avoid re-numbering collisions with the existing
 
 ---
 
-### NET-015 LLM Proxy URL Uses Plain HTTP in Spec Example [Critical]
+### NET-015 LLM Proxy URL Uses Plain HTTP in Spec Example [Critical] — VALIDATED/FIXED
 **Section:** 4.9
 
 The spec example for proxy-mode credential delivery reads:
@@ -39,6 +39,8 @@ proxyEndpoint: http://gateway-internal:8443/llm-proxy
 Port 8443 strongly implies TLS intent, but the scheme is `http://`, not `https://`. The proxy mode's entire security argument rests on the real API key never leaving the gateway. If the pod contacts the proxy over cleartext HTTP, the lease token — and in turn the traffic content including LLM prompts — transits the pod network unencrypted. A network-adjacent pod (or a compromised CNI node agent) can intercept the lease token and impersonate the pod against the LLM proxy for the duration of the lease TTL. This directly undermines the stronger security guarantee that makes proxy mode worth using in the first place. Because the spec labels proxy mode the "recommended default for multi-tenant deployments," this is the common path, not an edge case.
 
 **Recommendation:** Change the scheme to `https://` in both the descriptive text and the YAML example. Add an explicit statement that the pod-to-gateway LLM proxy path is protected by the same mTLS channel as the gRPC control connection (or is at minimum TLS with server-side authentication using the gateway's cert). The `proxyEndpoint` field validation must reject `http://` URLs at pool registration time, or emit a hard warning that blocks pool creation in multi-tenant mode.
+
+**Resolution:** All `proxyEndpoint` URIs in Section 4.9 were changed from `http://` to `https://`. The proxy endpoint shares the same mTLS certificate infrastructure as the internal gRPC control plane (Section 4.3), so lease tokens are encrypted in transit. The controller rejects pool registrations where `proxyEndpoint` uses `http://` with a validation error (`InvalidProxyEndpointScheme`). Binding lease tokens to the pod's SPIFFE URI (preventing cross-pod replay) is documented as a post-v1 hardening opportunity — not implemented in v1 because the token is only visible inside the sandboxed pod (tmpfs, mode 0400).
 
 ---
 

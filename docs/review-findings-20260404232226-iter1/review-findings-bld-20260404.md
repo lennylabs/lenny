@@ -18,7 +18,7 @@ The 17-phase build sequence is broadly logical and has several commendable struc
 
 ---
 
-### BLD-001 Token/Connector Service Ships Too Late for Its Declared Role [Critical]
+### BLD-001 Token/Connector Service Ships Too Late for Its Declared Role [Critical] — VALIDATED/FIXED
 
 **Section:** 18 (Phase table, Phase 12a note)
 
@@ -37,6 +37,8 @@ Phases 5–11 are described as using the echo runtime (Phase 5 note) and basic c
 3. Phase 12b ("type: mcp" runtime support) and Phase 12c (concurrent execution modes) are listed after Phase 12a but are functionally independent; splitting them as sub-phases of 12 instead of sequential phases suggests the sequencing was not carefully reviewed.
 
 **Recommendation:** Restructure the phase table so that a basic Token/Connector Service (single-replica, no KMS) is introduced no later than Phase 5.5 alongside basic credential leasing — since credential leasing already requires `AssignCredentials` RPC delivery that semantically belongs there. The production-hardened version (KMS integration, multi-replica, OAuth flows) can remain in a later hardening phase (current Phase 12a becomes Phase 12a-hardened). Add an explicit note to Phase 5.5 naming the interim credential store component and its limitations.
+
+**Resolution:** Phase 5.5 in Section 18 was expanded to include a Basic Token Service (single-replica, K8s Secrets backend, no KMS) alongside basic credential leasing. The phase now names the component, its RPCs (`AssignCredentials`/`RevokeCredentials`), states it is the authoritative `TokenStore` owner from Phase 5.5 onward, and documents Phase 7 and Phase 11's dependency on it. Phase 12a was retitled "Token/Connector Service hardening" with explicit "builds on Phase 5.5 Basic Token Service" framing, listing what hardening adds: KMS envelope encryption, multi-replica PDB, OAuth flows, `RotateCredentials` RPC, per-user OAuth token storage.
 
 ---
 
@@ -238,7 +240,7 @@ Phases 12b, 12c, and 16 are off the critical path and could be resourced separat
 
 | ID | Title | Severity |
 |----|-------|----------|
-| BLD-001 | Token/Connector Service ships too late for its declared role | Critical |
+| BLD-001 | Token/Connector Service ships too late for its declared role | Critical — VALIDATED/FIXED |
 | BLD-002 | Policy engine (Phase 7) operates without auth infrastructure validation | High |
 | BLD-003 | mTLS PKI required before Phase 3 but no phase installs cert-manager | High |
 | BLD-004 | Load testing arrives after full security hardening is impossible to validate | High |

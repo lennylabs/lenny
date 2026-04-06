@@ -24,7 +24,7 @@
 
 ---
 
-### POL-001 Quota Fail-Open Window Allows Full Tenant Budget Overshoot With No Cross-Replica Coordination [Critical]
+### POL-001 Quota Fail-Open Window Allows Full Tenant Budget Overshoot With No Cross-Replica Coordination [Critical] — VALIDATED/FIXED
 
 **Section:** 11.2, 12.4
 
@@ -39,6 +39,8 @@ Additionally, the `quotaFailOpenCumulativeMaxSeconds` circuit-breaker (default 3
 2. Define a safe fallback value for `replica_count` when peer discovery is unavailable (recommended: `1`, which makes the per-replica ceiling equal to the full tenant limit — conservative but safe).
 3. Store the cumulative fail-open timer in a small in-memory structure with Postgres persistence on each increment; document its behavior on replica restart (reset to zero or re-read from Postgres).
 4. Clarify whether the 1-hour rolling window is calendar-aligned or a true sliding window, and which store backs it.
+
+**Resolution:** Section 12.4 was updated with the same fix as STR-001/RES-001: (1) `replica_count` sourced from Kubernetes Endpoints (not Redis), fallback to 1, (2) cumulative timer is a true sliding 1-hour rolling window accumulating across all outages, (3) timer stored in-memory (resets on restart), (4) `quotaFailOpenCumulativeMaxSeconds` labeled as a financial security control, (5) `quota_failopen_started` audit event added. The per-replica ceiling formula `tenant_limit / replica_count` is now robust against stale replica counts because the fallback to `replica_count = 1` is conservative (per-replica ceiling equals full tenant limit, preventing unlimited overshoot).
 
 ---
 

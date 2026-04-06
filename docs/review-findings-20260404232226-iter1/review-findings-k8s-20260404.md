@@ -23,7 +23,7 @@
 
 ---
 
-### K8S-001 `agent-sandbox` Claim Architecture Differs from Spec Assumption — Controller Is on the Hot Path [Critical]
+### K8S-001 `agent-sandbox` Claim Architecture Differs from Spec Assumption — Controller Is on the Hot Path [Critical] — VALIDATED/FIXED
 
 **Section:** 4.6.1, 17.8, 18
 
@@ -98,6 +98,8 @@ The original Critical rating was based on: "if the semantics diverge and the wor
 5. **Add a Phase 2 validation gate:** during the startup benchmark harness, measure `agent_sandbox_claim_startup_latency_ms` under simulated Tier 3 burst load. If p95 exceeds 500ms with 30 workers, escalate to contributing a direct-claim mode upstream (gateway creates `SandboxClaim` targeting a specific `Sandbox` by name, with API-server-level conflict on the claim resource itself).
 
 6. **Revise the `minWarm` formula** in Sections 4.6.1 and 17.8 to include a replenishment lag buffer: `minWarm >= claim_rate * (failover_seconds + pod_startup_seconds) + burst_term + replenishment_lag_buffer`, where `replenishment_lag_buffer` accounts for the reactive delay between burst adoption and replacement sandbox readiness.
+
+**Resolution:** Section 4.6.1 was rewritten to reflect the actual agent-sandbox controller-mediated claim model. The ADR-TBD block was closed and replaced with a spike summary documenting the server-side claim architecture. The claim flow now correctly describes: gateway creates `SandboxClaim` referencing a `SandboxTemplate` → claim controller selects and adopts an idle `Sandbox` via optimistic concurrency → gateway watches for `Ready=True`. The "controller off the hot path" statement was replaced with accurate guidance that the claim controller is on the hot path and `--sandbox-claim-concurrent-workers` must be tuned per tier. Section 17.8 was updated with per-tier worker counts and expected p95 claim latencies. Phase 1 of the build sequence includes the field-index upstream contribution. The `minWarm` formula includes the replenishment lag buffer.
 
 ---
 

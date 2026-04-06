@@ -21,7 +21,7 @@
 
 ## Critical
 
-### SLC-001 `resuming` State Has No Failure Transition — Potential Deadlock [Critical]
+### SLC-001 `resuming` State Has No Failure Transition — Potential Deadlock [Critical] — VALIDATED/FIXED
 **Section:** 6.2
 
 The pod/session state machine diagram shows `resuming` as a transient state that leads only to `attached`. There is no defined transition from `resuming` to `resume_pending`, `awaiting_client_action`, or any failure state. This means that if a pod failure, gRPC error, or workspace restoration hang occurs while the gateway is attempting to restore a session onto a new pod, the session is stuck in `resuming` with no documented path forward. The spec defines a timeout for `resume_pending` and `resuming` (SES-011 in the existing findings) as a gap but does not specify the failure transition itself — even if a timeout is added, the destination state on timeout is undefined.
@@ -30,9 +30,11 @@ Unlike `resuming`, every pre-attached pod state (`warming`, `sdk_connecting`, `r
 
 **Recommendation:** Add an explicit `resuming → resume_pending` transition (triggers another retry attempt if `retryCount < maxRetries`) and a `resuming → awaiting_client_action` transition (triggers when retries are exhausted while in `resuming`). Add a `resuming` timeout (recommended: 300s, the same as setup command timeout) that fires both paths. Document the state machine transition in Section 6.2 with the same notation used for pre-attached failures.
 
+**Resolution:** Section 6.2 state machine was updated with four new failure transitions from `resuming`: (1) `resuming → resume_pending` on pod crash/gRPC error when `retryCount < maxRetries`, (2) `resuming → awaiting_client_action` when retries exhausted, (3) `resuming → resume_pending` on 300s watchdog timeout when retries remain, (4) `resuming → awaiting_client_action` on timeout when retries exhausted. Non-retryable errors (corrupt checkpoint, policy rejection) transition directly to `awaiting_client_action`. A prose block documents the transitions and confirms `resuming` now has the same failure coverage as every pre-attached pod state.
+
 ---
 
-### SLC-002 Generation Counter Increment Committed Before `CoordinatorFence` — Window for Stale Coordinator to Proceed [Critical]
+### SLC-002 Generation Counter Increment Committed Before `CoordinatorFence` — Window for Stale Coordinator to Proceed [Critical] — VALIDATED/FIXED
 **Section:** 10.1
 
 The coordinator handoff protocol (Section 10.1) requires:
@@ -45,6 +47,8 @@ There is no specified behavior if step 2 fails — either the pod is unreachable
 The stale replica behavior section (Section 10.1) describes what the old coordinator should do once it *receives* a generation-stale rejection, but that rejection can only happen if the old coordinator sends an RPC *after* the fence is delivered. Before the fence delivery is confirmed, the old coordinator has no signal to stop. If the `CoordinatorFence` RPC is delayed (network partition, pod backpressure), the window can be several seconds.
 
 **Recommendation:** Specify that step 2 (fence delivery) must complete successfully before the new coordinator sends any operational RPCs. If `CoordinatorFence` fails or times out (recommended: 5s timeout), the new coordinator must either retry the fence or relinquish the lease (by not extending the Redis TTL and releasing the Postgres lock). Add this to the handoff protocol as an atomic precondition: "fence must be acknowledged before coordination begins." The pod's fence acknowledgement response to the gateway closes the split-brain window. Without this, the generation increment provides eventual-consistency protection but not immediate protection during the fence delivery gap.
+
+**Resolution:** Section 10.1 coordinator handoff step 2 was rewritten to make `CoordinatorFence` confirmation a hard precondition for step 3. The fence RPC now has a 5-second deadline. The new coordinator MUST NOT send any operational RPC until the fence acknowledgement is received. If the fence fails or times out, the coordinator retries up to 3 times with 1-second backoff; on exhaustion, it relinquishes the lease (stops extending Redis TTL, releases Postgres lock) and backs off with jittered delay. The orphaned generation increment in Postgres is harmless — the next coordinator increments to a higher value. Step 3 explicitly states the split-brain window is closed by step 2's confirmation requirement.
 
 ---
 

@@ -18,7 +18,7 @@
 
 ---
 
-### API-001 REST/MCP Parity Contract Has No Runtime Enforcement Path [Critical]
+### API-001 REST/MCP Parity Contract Has No Runtime Enforcement Path [Critical] — VALIDATED/FIXED
 **Section:** 15.2.1
 
 The REST/MCP consistency contract (Section 15.2.1) is well-articulated in prose with five named rules, but only rule 4 (OpenAPI→MCP schema generation) and rule 5 (CI contract tests) create enforceable guarantees. Rules 1–3 are human-auditable principles without machine verification: "semantic equivalence" is stated but not tested at the semantic level, only structural. The CI contract tests assert "identical response payloads modulo transport envelope," which catches schema divergence but not behavioral divergence (e.g., different pagination behavior, different default field values, different error messages for identical invalid inputs, or divergent state machine transitions returned on edge cases). Furthermore, the contract test harness entry point for third-party adapters (`RegisterAdapterUnderTest`) is mentioned but its scope is undefined: does it cover the full operation matrix or only the basic success path? A future adapter that passes structural checks but returns different `retryable` semantics or different `category` classifications for the same error would break client error-handling logic without tripping any test.
@@ -26,6 +26,8 @@ The REST/MCP consistency contract (Section 15.2.1) is well-articulated in prose 
 The requirement that future adapters "pass the same contract test suite before being enabled in production" is unenforceable at the admin API level — `POST /v1/admin/external-adapters` has no mechanism to gate registration on test passage.
 
 **Recommendation:** (1) Extend contract tests to cover behavioral equivalence: same `retryable` flag and `category` for identical error conditions, same session state returned on `GET /v1/sessions/{id}` vs `get_session_status` MCP tool after identical operations, same pagination behavior. (2) Define the full test matrix for `RegisterAdapterUnderTest` explicitly in the spec (which operations, which error cases, which edge cases). (3) Add a `PUT /v1/admin/external-adapters/{name}/validate` endpoint that runs the contract test suite against a registered adapter in a dry-run mode and returns the results — this makes compliance testable without requiring out-of-band coordination. (4) Document which categories of behavioral divergence are intentional (e.g., MCP streaming granularity differs from REST polling) vs. prohibited.
+
+**Resolution:** Section 15.2.1 Rule 5 was expanded from structural to behavioral equivalence: added sub-items (d) `retryable`/`category` flag identity across surfaces, (e) session state transition identity via fixed operation sequences, and (f) pagination behavior identity (page size, cursor, empty-result shape). The `RegisterAdapterUnderTest` test matrix was defined explicitly: all session lifecycle operations, six error classes, three state transition sequences, and multi-page pagination. The adapter registration gate was added: `POST /v1/admin/external-adapters` creates adapters in `status: pending_validation` (no traffic); `PUT /v1/admin/external-adapters/{name}/validate` runs the suite and transitions to `active` or `validation_failed`. Adapters not in `active` are excluded from routing.
 
 ---
 

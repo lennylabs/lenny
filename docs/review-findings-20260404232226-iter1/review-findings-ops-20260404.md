@@ -22,7 +22,7 @@
 
 ## Critical Findings
 
-### OPS-001 CRD Upgrades Require Out-of-Band Manual Step That Helm Cannot Enforce [Critical]
+### OPS-001 CRD Upgrades Require Out-of-Band Manual Step That Helm Cannot Enforce [Critical] — VALIDATED/FIXED
 **Section:** 10.5, 17.6
 
 The spec correctly identifies that Helm does not update CRDs on `helm upgrade` and provides the mitigation: apply CRDs manually before upgrading, with controller startup validation to detect stale CRDs. However, the spec positions this as a documented procedure rather than a workflow-enforced constraint. An operator who runs `helm upgrade` without the preceding `kubectl apply -f charts/lenny/crds/` step will see controllers start, fail their CRD version check, crash-loop, and surface a `FATAL` log message. This is a correct detection mechanism but a poor operational experience: the upgrade partially applies before the crash is noticed, Helm marks the release as deployed successfully (because Helm's success criterion is "all non-CRD resources applied"), and the operator must manually recover.
@@ -31,9 +31,11 @@ Concretely: Section 17.6 says "Run `helm upgrade`" as step 2 and controllers "wi
 
 **Recommendation:** (1) Document the partial-upgrade failure mode explicitly in the upgrade runbook so operators know what to look for if it happens. (2) Add a section to the CRD upgrade runbook covering recovery steps: how to detect that CRDs were not applied before an upgrade, how to apply them retroactively without downtime, and how to restart the affected controller Deployments. (3) For the ArgoCD path, provide a tested example `Application` manifest showing the correct sync-wave configuration, not just a prose description. (4) Make `preflight.enabled` default to `true` even in upgrades (it already is) and add a stern warning in documentation that disabling preflight in production upgrades risks partial-upgrade failures.
 
+**Resolution:** Section 17.6 now includes: (1) a detailed "CRD upgrade procedure" block with the exact required sequence (apply CRDs first, then `helm upgrade`), marked as **required reading before every upgrade**. (2) A "Recovery procedure for stale CRDs after a failed upgrade" with 5 concrete steps covering symptom identification, correct CRD application, controller restart, verification, and rollback as a last resort. (3) GitOps sync-wave configuration is marked as **not optional** with a clear statement that ArgoCD/Flux must use a separate sync wave for CRDs. (4) A `lenny-crd-validate` post-upgrade hook Job that polls controller Deployments for the `Available` condition within 120s, converting a soft runtime failure into a visible upgrade failure. (5) The CRD upgrade failure runbook is listed in Section 17.7 with a cross-reference to the detailed recovery steps in Section 17.6.
+
 ---
 
-### OPS-002 No Runbook for the CRD Finalizer Stuck Scenario [Critical]
+### OPS-002 No Runbook for the CRD Finalizer Stuck Scenario [Critical] — VALIDATED/FIXED
 **Section:** 4.6.1, 17.7
 
 Section 4.6.1 describes a `FinalizerStuck` alert that fires when a `Sandbox` resource remains in `Terminating` state for more than 5 minutes because the warm pool controller did not remove its finalizer (`lenny.dev/session-cleanup`). The spec states: "Operators can then investigate and manually remove the finalizer once they have confirmed the session state is safe."
@@ -43,6 +45,8 @@ This is a production incident scenario with real user impact (a stuck pod cannot
 This is categorized Critical because a stuck finalizer degrades warm pool capacity and the only documented recovery action is "manually remove the finalizer" without a safe procedure.
 
 **Recommendation:** Add a `FinalizerStuck` runbook to Section 17.7 covering: (1) how to diagnose whether the session referenced by the stuck `Sandbox` is actually terminated (check `SandboxClaim`, session state in Postgres, gateway logs), (2) the exact `kubectl patch` command to remove the finalizer with an explanation of what Kubernetes will do after removal, (3) what state to verify before and after removal to confirm the session artifact seal-and-export completed (check MinIO and Postgres), and (4) when it is safe to force-remove even without confirmation.
+
+**Resolution:** Section 17.7 now includes a full "Stuck finalizer remediation" runbook (`docs/runbooks/stuck-finalizer.md`) with 7 concrete steps: (1) identify the stuck pod via `kubectl get sandbox` filtering on `Terminating` state, (2) check for an active `SandboxClaim` — do not remove the finalizer if a claim exists, (3) verify session state in Postgres confirming terminal state or recent checkpoint, (4) verify no in-flight artifacts remain in MinIO, (5) exact `kubectl patch` command to remove the `lenny.dev/session-cleanup` finalizer, (6) post-removal verification that the pod is deleted and warm pool replenishes within 2 minutes, (7) root cause investigation with common causes (leader election gap, API server throttling). The runbook includes guidance on when force-removal is safe even without confirmation, and specifies filing an incident if stuck finalizers recur on >2 pods within 24h.
 
 ---
 

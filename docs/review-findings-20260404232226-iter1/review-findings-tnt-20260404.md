@@ -21,7 +21,7 @@
 
 ## Findings
 
-### TNT-001 Cloud-Managed Connection Proxy `connect_query` Sentinel Not Guaranteed [Critical]
+### TNT-001 Cloud-Managed Connection Proxy `connect_query` Sentinel Not Guaranteed [Critical] — VALIDATED/FIXED
 **Section:** 12.3, 17.9
 
 The spec correctly mandates the `__unset__` sentinel via PgBouncer's `connect_query` and validates this in the preflight job (Section 17.6). However, Section 17.9 identifies GCP Cloud SQL Auth Proxy as a supported alternative and explicitly notes it "does not pool." For this path the spec recommends deploying PgBouncer or pgcat alongside Cloud SQL Auth Proxy, but does not state whether the preflight check for `connect_query` is applied when the provider proxy is `external`. The preflight job (Section 17.6) only checks "PgBouncer pool mode" and "PgBouncer connect_query" — checks that are skipped when `connectionPooler: external`.
@@ -29,6 +29,8 @@ The spec correctly mandates the `__unset__` sentinel via PgBouncer's `connect_qu
 If a deployer uses RDS Proxy, Azure PgBouncer, or AlloyDB, the spec notes "Verify `connect_query` / initialization hook support for the `__unset__` sentinel" but this is advisory text, not an enforced requirement. AWS RDS Proxy supports `SET LOCAL` in transaction mode but its equivalent of `connect_query` initialization is not a standard feature. If the sentinel is absent, the defense-in-depth layer that catches bare queries reaching RLS is silently disabled — no runtime alarm fires and isolation degrades to application-layer WHERE clauses alone.
 
 **Recommendation:** Require that the preflight job actively verifies RLS defense-in-depth for all pooler types, not just PgBouncer. For `connectionPooler: external`, the preflight job must execute a canary query _without_ `SET LOCAL app.current_tenant` and verify it returns zero rows (not an error, since provider proxies may not support `connect_query`). If it returns rows, fail preflight with: `"Provider connection pooler does not enforce RLS sentinel; configure initialization hook or switch to transaction-mode PgBouncer."` Document this check as a profile-invariant requirement in Section 17.9 and add it to the integration test that validates tenant isolation at startup.
+
+**Resolution:** Section 12.3 now includes an "Alternative RLS defense for cloud-managed poolers" block specifying that deployments using `connectionPooler: external` (cloud-managed proxies lacking `connect_query` support) must implement a per-transaction tenant validation trigger (`lenny_tenant_guard`) as a second defense layer. The trigger is created automatically by the Lenny schema migration when `connectionPooler = external`. Section 17.6 adds a preflight check for `connectionPooler: external` that verifies the `lenny_tenant_guard` trigger exists on tenant-scoped tables, failing with a specific error message if absent. Section 17.9 lists the two-layer RLS defense as a profile-invariant requirement: either `connect_query` sentinel (self-managed PgBouncer) or per-transaction trigger (cloud-managed poolers) — at least one must be active.
 
 ---
 
