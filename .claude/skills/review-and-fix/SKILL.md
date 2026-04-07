@@ -19,8 +19,8 @@ You are given a technical specification and a review guidelines file. Your job i
 
 Each iteration produces a findings file:
 
-- Iteration 1: `{spec-dir}/review-findings-{datetime}-iter1.md`
-- Iteration 2: `{spec-dir}/review-findings-{datetime}-iter2.md`
+- Iteration 1: `{spec-dir}/review-findings-{datetime}-iter1/review-findings-{datetime}-iter1.md`
+- Iteration 2: `{spec-dir}/review-findings-{datetime}-iter2/review-findings-{datetime}-iter2.md`
 - etc.
 
 where `{spec-dir}` is the directory containing the spec file and `{datetime}` is today's date and time in `YYYYMMDDHHMMSS` format. All iteration files in this run must use the same date and time (the date and time as of the time the run was initiated).
@@ -172,12 +172,20 @@ Assign unique identifiers to every finding using the format `{CAT}-{NNN}`:
 - `{CAT}` is a 3-letter category code derived from the perspective (use the same codes as any prior iteration if they exist; otherwise derive sensible 3-letter abbreviations)
 - `{NNN}` is a zero-padded sequential number starting at 001 within each category
 
-Write this file to `{spec-dir}/review-findings-{date}-iter{iteration}.md`.
+Write this file to `{spec-dir}/review-findings-{date}-iter{iteration}/review-findings-{date}-iter{iteration}.md`.
 
 Report to the user:
 
 ```
 Iteration {iteration} review complete: {total} findings ({critical} Critical, {high} High, {medium} Medium, {low} Low, {info} Info)
+```
+
+#### Commit findings
+
+After writing the findings file, commit all changes to git:
+
+```bash
+git add -A && git commit -m "Review iteration {iteration}: {total} findings ({critical} Critical, {high} High, {medium} Medium, {low} Low)"
 ```
 
 ---
@@ -186,10 +194,8 @@ Iteration {iteration} review complete: {total} findings ({critical} Critical, {h
 
 Evaluate whether to proceed with fixes:
 
-- Do not include Medium findings until there are no Critical and High findings left.
-- Do not include Low findings until there are no Medium findings left.
-- If there are **0 findings**: the spec is clean. Go to Step 4.
-- If all findings are **Info** severity only: report them and go to Step 4 (no fixes needed).
+- **Focus on Critical an High findings only**.
+- If there are **0 Critical/High findings**: the spec is clean. Go to Step 4.
 - Otherwise: proceed to Step 3.
 
 If this is the **last iteration** (iteration == max_iterations), report remaining findings without fixing and go to Step 4.
@@ -201,12 +207,20 @@ If this is the **last iteration** (iteration == max_iterations), report remainin
 Invoke the `/fix-findings` skill:
 
 ```
-/fix-findings {SPEC_FILE} {FINDINGS_FILE} {which findings to fix (for example, "All critical and high")}
+/fix-findings {SPEC_FILE} {FINDINGS_FILE} {which findings to fix ("Critical and high only")}
 ```
 
 This will process each finding sequentially with verification, fixing, and regression checking.
 
-After `/fix-findings` completes, increment `iteration` and go back to **Step 1** for re-review.
+#### Commit fixes
+
+After `/fix-findings` completes, commit all changes to git:
+
+```bash
+git add -A && git commit -m "Fix iteration {iteration}: applied fixes for {severity_scope} findings"
+```
+
+Then increment `iteration` and go back to **Step 1** for re-review.
 
 ---
 

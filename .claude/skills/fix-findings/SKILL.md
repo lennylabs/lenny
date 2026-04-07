@@ -12,7 +12,7 @@ You are given a technical specification and a document containing review finding
 ## Inputs
 
 - **Spec file**: `$0` — the technical specification to fix
-- **Findings file**: `$1` — the review findings document headings with description and `**Recommendation:**` blocks)
+- **Findings file**: `$1` — the review findings document (headings with description and `**Recommendation:**` blocks)
 - **Scope** (optional): `$2` — a single finding ID (e.g. `KIN-001`), a comma-separated list (`KIN-001,KIN-002`), a category prefix (`KIN`), a severity filter (`Critical`, `High`), or a range (`KIN-001..KIN-005`). If omitted, process ALL findings.
 
 ## Procedure
@@ -25,11 +25,9 @@ Read `$1` and extract every finding that matches the scope filter. Each finding 
 - **Title**: heading text
 - **Severity**: e.g. `[Critical]`, `[High]`, `[Medium]`, `[Low]`, `[Info]`
 - **Description**: the body text explaining the problem
-- **Recommendation**: the body text presenting with the recommendation(s)
+- **Recommendation**: the body text presenting the recommendation(s)
 
-Build an ordered list of findings to process. Sort by severity (Critical first, then High, Medium, Low, Info), preserving document order within each severity. Then adjust ordering based on what you think is the most appropriate implementation sequence (goal: minimize refactoring as we progress through the list of findings)
-
-Report the list to the user with ID, title, and severity. Wait for confirmation before proceeding. If the user says to skip specific findings, remove them from the list.
+Build an ordered list of findings to process **in document order**. Report the list to the user with ID, title, and severity. Wait for confirmation before proceeding. If the user says to skip specific findings, remove them from the list.
 
 ### Step 2: Process each finding sequentially
 
@@ -42,6 +40,7 @@ Give the subagent this exact prompt structure (fill in the placeholders):
 **Your task**: Fix finding `{FINDING_ID}` in the technical spec.
 
 **Spec file**: `$0`
+**Findings file**: `$1`
 **Finding ID**: `{FINDING_ID}`
 **Finding title**: `{FINDING_TITLE}`
 **Severity**: `{SEVERITY}`
@@ -51,30 +50,49 @@ Give the subagent this exact prompt structure (fill in the placeholders):
 
 ## Instructions
 
-You MUST follow these three phases in order.
+You MUST follow these steps in exact order. Do not deviate or combine steps.
 
-### Phase 1: Verify the finding
+### Step 1 — Validate
 
-Read the relevant section(s) of the spec file. Elaborate on the finding and confirm that the problem described in the finding actually exists in the current state of the document. The spec may have been modified by previous fixes in this session.
+Read the relevant section(s) of the spec file. Determine whether the finding is still valid and unaddressed in the current state of the document. The spec may have been modified by previous fixes in this session.
 
-- If the finding is **still valid**: proceed to Phase 2.
-- If the finding is **already resolved** (by a prior fix or because the description doesn't match reality): report `SKIPPED — already resolved` and explain why. Do NOT make any edits to the technical spec.
-- If the finding is **partially resolved**: note what remains and proceed to Phase 2 for the remaining issue only.
+- If the finding is **already resolved** (by a prior fix or because the description doesn't match reality): mark the finding **"Already Fixed"** in `$1` with a one-sentence explanation and **stop processing this finding**.
+- If the finding is **partially resolved**: note what remains and proceed to Step 2 for the remaining issue only.
+- If the finding is **still valid**: proceed to Step 2.
 
-### Phase 2: Re-assess possible options
+### Step 2 — Decompose
 
-Follow this process:
+Break the finding down thoroughly:
 
-- Elaborate on the finding
-- Come up with alternative options. Think out of the box
-- For each option/recommendation:
-  - Come up with a list of critical questions. Challenge the assumptions (explicit or implicit) in the recommendation
-  - Revisit the recommendation based on the answers to your challenges
-  - If the recommendation alters the capabilities of the project, clearly indicate so
+- Identify which concerns are genuine correctness/reliability/security issues
+- Identify which concerns are style preferences, nice-to-haves, or over-engineering
+- List all affected components, interfaces, and contracts in the technical design
+- Go deeper than the recommendation in the findings doc — surface root causes and second-order effects
 
-### Phase 3: Apply the fix
+### Step 3 — Generate Alternatives
 
-Edit the spec file to address the finding. Review the recommendations and come up with alternatives if needed. Follow the recommendation as closely as possible, but use your judgment — the recommendation is guidance, not a script. In general, the goal is to find the simplest possible solution that aligns with the intent of the technical spec and isn't a hack.
+Propose distinct solutions. For each, briefly note tradeoffs (complexity, risk, scope of change).
+
+### Step 4 — Select Best Solution
+
+Choose the simplest solution that addresses only the real problems identified in Step 2. The tech spec is already mature — think critically before acting. Challenge the finding itself and the original recommendation. Bias strongly toward minimal, targeted fixes over refactoring or enhancement.
+
+- If the best solution is **"do nothing"** (e.g., the concern is a nice-to-have or the risk is acceptable): mark the finding **"Skipped"** in `$1`, update the finding's recommendation field with your rationale, and **stop processing this finding**. Do NOT modify the spec file.
+
+### Step 5 — Gate Check (before touching any files)
+
+Ask: Does the selected solution introduce any of the following?
+
+- An architectural change
+- A change to the project's external capabilities or runtime contracts
+
+If **yes** to either: mark the finding **"Deferred - Input Required"** in `$1`, update the finding's recommendation with the selected solution from Step 4, and **stop processing this finding**. Do NOT modify the spec file.
+
+If **no**: proceed to Step 6.
+
+### Step 6 — Implement
+
+Apply the fix directly in the spec file. Be surgical — only change what is necessary to address the finding.
 
 Rules:
 
@@ -84,45 +102,37 @@ Rules:
 - If the fix requires removing content, ensure no dangling cross-references remain.
 - If the recommendation is to "document X", add the missing specification text — do not just add a TODO or placeholder.
 - If the finding is about an inconsistency between two sections, fix both sections to be consistent.
-- Do not add speculative content beyond what the recommendation calls for.
-- Find the simplest possible solution that aligns with the intent of the technical spec and isn't a hack. Try to minimize impact to other parts of the design.
-- Keep the technical spec's design principles in mind at all times.
-- Update the finding's list of recommendations in `$1` if needed.
-- If your selected recommendation goes against a previous design decision in the tech spec, as the user for approval.
-- If your selected recommendation alters the project's capabilities, or the capabilities available to the users of the project, always ask the user for approval.
-- If multiple valid options exist and there isn't a clear winner, ask the user for input.
-- Do not assume recommendations are set in stone. Ask the user when needed.
-- Do not factor in the total number of findings in your calculation on whether to ask the user. Ask purely based on the characteristics of the finding's recommendations.
-- When asking the user for direction, provide a detailed explanation of the problem and the recommended/possible solution(s).
+- Do not add speculative content beyond what the fix calls for.
 
-### Phase 4: Validate no regressions
+### Step 7 — Regression Check
 
-After editing, re-read the sections you modified AND any sections that cross-reference them. Check for:
+Re-read the modified sections AND any sections that cross-reference them. Verify no existing behavior, constraint, or contract was inadvertently broken. Check for:
 
 1. **Internal consistency**: Do the changes contradict anything else in the spec?
-2. **Cross-reference integrity**: Are all section references (`Section X.Y`) still valid? Did any referenced content move or get renamed?
+2. **Cross-reference integrity**: Are all section references still valid? Did any referenced content move or get renamed?
 3. **Formatting**: Is the markdown well-formed? Are heading levels, list indentation, and code blocks intact?
 4. **Scope creep**: Did you accidentally change something unrelated to this finding?
 
-If you find a regression, fix it before reporting.
+- If regressions found: revert the change and return to Step 2 with the new information.
+- If clean: mark the finding **"Fixed"** in `$1` and append a precise description of what was changed and why.
+
+---
 
 Report your result as:
 
 ```
 FINDING: {FINDING_ID}
-STATUS: FIXED | SKIPPED | PARTIAL
-CHANGES: <brief summary of what was changed, or why it was skipped>
-SECTIONS MODIFIED: <list of section numbers touched>
+STATUS: Fixed | Skipped | Deferred - Input Required | Already Fixed
+CHANGES: <brief summary of what was changed, or why it was skipped/deferred>
+SECTIONS MODIFIED: <list of section numbers touched, or "None">
 REGRESSION CHECK: PASS | <description of issue found and fixed>
 ```
-
-Update the status of the finding in `$1`, clearly indicating what the resolution was in detail.
 
 ---
 
 ### Step 3: After each subagent completes
 
-Record the subagent's result. If the status is `PARTIAL`, note what remains unresolved.
+Record the subagent's result.
 
 Print a progress line:
 
@@ -139,12 +149,17 @@ Print a summary table:
 |---|---------|----------|--------|-------------------|
 ```
 
-If any findings were `PARTIAL` or `SKIPPED`, list them separately with explanations.
+If any findings were `Skipped`, `Deferred - Input Required`, or `Already Fixed`, list them separately with explanations.
+
+## Status values
+
+Use exactly these strings: `Fixed` | `Skipped` | `Deferred - Input Required` | `Already Fixed`
 
 ## Important constraints
 
+- **Document order is mandatory.** Process findings strictly in the order they appear in the findings document.
 - **Sequential execution is mandatory.** Each fix can change the spec in ways that affect subsequent findings. Never run finding-fix subagents in parallel.
-- **Never skip the verification phase.** A finding that was valid when the review was written may already be resolved by an earlier fix in this run.
-- **Ask the user when needed.** Ask the user for approval based on the aforementioned rules. Do not assume recommendations are set in stone and ask the user when needed.
+- **Never skip validation.** A finding that was valid when the review was written may already be resolved by an earlier fix in this run. Each sub-agent operates independently — re-read source files fresh at Step 1.
 - **Never skip the regression check.** Even a small edit can break cross-references or introduce contradictions.
-- If a finding's recommendation is vague or would require major architectural decisions, ask the user for input.
+- **Do not modify the spec file for Skipped or Deferred findings.** Only `Fixed` (and regression-fix) statuses result in spec edits.
+- **Bias toward minimal fixes.** The tech spec is mature. Challenge findings and recommendations — prefer doing nothing over over-engineering.
