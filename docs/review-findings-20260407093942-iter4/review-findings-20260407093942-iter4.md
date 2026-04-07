@@ -35,139 +35,764 @@
 
 ---
 
-## High Findings
-
-| # | ID | Perspective | Finding | Section |
-|---|-----|-------------|---------|---------|
-| 1 | NET-021 | Network | Redis TLS port regression in lenny-system NetworkPolicy table (6379 instead of 6380) | 13.2, 10.3 |
-| 2 | PRT-020 | Protocol | Annotated protocol trace contains invalid `delivery: "at-least-once"` value | 15.4.1 |
-| 3 | SCH-029 | Schema | `EvalResult.scores` JSONB has no minimum schema or dimension vocabulary | 10.7 |
-| 4 | SLC-026 | Session | `await_children` re-attach protocol after parent resume unspecified | 8.8, 8.10 |
-| 5 | DEL-021 | Delegation | Detached children's own cascade behavior and budget-return unspecified | 8.10 |
-| 6 | MSG-023 | Messaging | `lenny/request_input` expiry not surfaced to awaiting parent | 8.8, 9.2 |
-| 7 | BLD-021 | Build | Real-LLM testing precedes auth completion — Phase 5.75 gate is documentation-only | 18 |
-| 8 | FLR-021 | Failure | Coordinator hold-state timeout produces orphaned pod with no session record | 10.1 |
-| 9 | WPL-021 | Warm Pool | `sdkWarmBlockingPaths` default not overridable — derived runtimes with CLAUDE.md always demote | 6.1 |
-| 10 | CRD-021 | Credentials | Proactive lease renewal race — exhaustion silently falls through to fault rotation | 4.9 |
-| 11 | EXP-021 | Experiments | External targeting `sticky: user` cache has no invalidation path | 10.7 |
+## Detailed Findings
 
 ---
 
-## Medium Findings by Perspective
+## High Findings
 
-### Kubernetes Infrastructure (K8S)
-- **K8S-020** Controller anti-affinity remains advisory — not enforced by Helm chart (§4.6.1, 17.8)
-- **K8S-021** agent-sandbox CRD presence not validated at controller startup (§4.6)
-- **K8S-022** Kata node pool taint has no post-scheduling validation (§5.3, 17.2)
+---
 
-### Network Security (NET)
-- **NET-022** Internet egress CIDR exclusions require manually-maintained Helm values with no validation (§13.2)
-- **NET-023** PgBouncer-to-Postgres NetworkPolicy not specified in lenny-system table (§13.2)
+### NET-021 Redis TLS Port Regression in lenny-system NetworkPolicy Table [High]
+**Section:** 13.2, 10.3
 
-### Scalability (SCL)
-- **SCL-023** Experiment targeting webhook on session creation hot path has no circuit breaker (§10.7)
-- **SCL-024** KEDA and standalone HPA coexistence not specified (§10.1, 17.8)
-- **SCL-025** `statusUpdateDeduplicationWindow` controller flag undocumented (§4.6.1, 17.8)
+Section 10.3 (NET-004 fix) mandates Redis must disable plaintext port (`port 0`) and listen only on the TLS port (default 6380). However, the lenny-system component NetworkPolicy allow-list table (§13.2) shows gateway egress as `Redis (TCP 6379)` and token-service egress as `Redis (TCP 6379)` — the plaintext port that is supposed to be disabled. This is a regression introduced when the lenny-system table was added: it hard-codes the wrong port. Any deployer who builds NetworkPolicies from this table will allow the wrong port and block TLS Redis connections.
 
-### Security (SEC)
-- **SEC-029** Agent-initiated URL-mode elicitation allowlist requires no domain constraint (§9.2)
-- **SEC-030** Session inbox `from` field origin not documented as security invariant (§7.2)
-- **SEC-031** Webhook callbackUrl DNS pinning has no re-validation at delivery time (§14)
-- **SEC-032** No content-type/MIME validation on uploaded files (§7.4, 13.4)
-- **SEC-033** Admin bootstrap endpoint has no explicit audit logging specification (§15.1, 17.6)
-- **SEC-034** Semantic cache `user_id` scoping not required for pool-scoped credentials (§4.9)
+**Recommendation:** Update the lenny-system NetworkPolicy table to use `Redis (TCP 6380)` (the TLS port, matching `{{ .Values.redis.tlsPort }}`) for both gateway and token-service egress rows.
 
-### Compliance (CMP)
-- **CMP-020** No compliance controls mapping for SOC2/HIPAA/FedRAMP (§12.8)
-- **CMP-021** KMS key residency not required to match dataResidencyRegion (§12.8, 4.3)
-- **CMP-022** Erasure SLA has no hard stop on new data processing for the subject (§12.8)
-- **CMP-023** Task-mode residual state can retain PHI without routing enforcement (§5.2, 12.9)
+---
 
-### Policy Engine (POL)
-- **POL-024** Circuit breaker specification is a bare stub (§11.6)
-- **POL-025** Canonical timeout table is incomplete — 9+ operation timeouts only in prose (§11.3)
-- **POL-026** `maxDelegationPolicy` field in delegation lease is undefined (§8.3)
-- **POL-027** Interceptor timeout has no distinct error code (§4.8)
-- **POL-028** Budget return script does not specify in-flight usage quiescence (§8.3)
-- **POL-029** DelegationPolicy tag evaluation uses live labels — policy window undocumented (§8.3)
+### PRT-020 Protocol Trace Example Contains Invalid `delivery` Value [High]
+**Section:** 15.4.1
 
-### Protocol Design (PRT)
-- **PRT-021** `publishedMetadata` auto-generation contradicts opaque pass-through design (§5.1, 21.1)
-- **PRT-022** MCP feature dependency vs adapter-layer version not distinguished (§15.2, 15.5)
-- **PRT-023** OpenAI Completions adapter lifecycle limitations not declared in AdapterCapabilities (§15)
+The annotated minimum-tier protocol trace shows `"delivery": "at-least-once"`. The `delivery` field is a closed enum with exactly two valid values: `"immediate"` and `"queued"`. The spec explicitly states: "No other values are valid. The gateway rejects unknown `delivery` values with `400 INVALID_DELIVERY_VALUE`." This example is the primary copy-paste reference for Minimum-tier runtime authors — any author following it verbatim will produce protocol-invalid messages.
 
-### Schema Design (SCH)
-- **SCH-030** DelegationLease budget fields have no overflow semantics (§8.3)
-- **SCH-031** Capability inference default for unannotated tools is counterintuitively `admin` (§5.1)
-- **SCH-032** BillingEvent sequence_number gap-detection remediation undefined (§11.2.1)
-- **SCH-033** Adapter manifest version is integer not semver; minPlatformVersion absent (§4.7)
+**Recommendation:** Replace `"delivery": "at-least-once"` with `"queued"` or omit the field entirely (absent defaults to `"queued"`). Audit other protocol trace examples for similar inconsistencies.
 
-### API Design (API)
-- **API-027** OpenAPI spec has no published well-known URL (§15.1, 15.5)
-- **API-028** `RESOURCE_HAS_DEPENDENTS` details omit per-resource IDs (§15.1)
-- **API-029** Sortable fields not enumerated per resource type (§15.1)
-- **API-030** No PATCH endpoints for complex admin resources (§15.1)
+---
 
-### Developer Experience (DXP)
-- **DXP-022** No "For Runtime Authors: Start Here" entry in §1 (§1, 15.4.5)
-- **DXP-023** Local dev does not document custom runtime substitution (§17.4)
-- **DXP-024** Abstract Unix socket transport documented without macOS compatibility note (§15.4.3, 4.7)
+### SCH-029 `EvalResult.scores` JSONB Has No Minimum Schema or Dimension Vocabulary [High]
+**Section:** 10.7
 
-### Session Lifecycle (SLC)
-- **SLC-027** Session `created` state has no maximum TTL — pod and credential held indefinitely (§15.1, 7.1)
-- **SLC-028** `resuming` timeout and `coordinatorHoldTimeoutSeconds` gap (§6.2, 10.1)
+The `scores` field in `EvalResult` is unschematized JSONB. Different scorers using different key names for the same concept (`coherence` vs `Coherence` vs `coherence_score`) produce disjoint aggregation buckets, making cross-scorer comparison impossible. The aggregation query must do a full union scan of all JSONB keys with no index support. Community integrators building scorers have no standard vocabulary to conform to.
 
-### Delegation (DEL)
-- **DEL-022** `maxTreeRecoverySeconds` default shorter than `maxResumeWindowSeconds` — no formula (§8.10, 7.3)
-- **DEL-023** No cycle detection in delegation target resolution (§8.2, 8.3)
-- **DEL-024** Detached orphan pods not counted toward concurrency quota (§8.10)
+**Recommendation:** Define a minimal required schema for each `scores` entry: `{"value": float64 (0.0–1.0, required), "weight": float64 (optional)}`. Add an informational standard dimension vocabulary (`coherence`, `relevance`, `safety`, `faithfulness`, `helpfulness`) as a registry in §10.7.
 
-### Messaging (MSG)
-- **MSG-024** `ready_for_input` signal undefined for concurrent tool execution (§7.2)
-- **MSG-025** `await_children(mode: any)` cascade on parent completion unspecified (§8.8, 8.5)
-- **MSG-026** Sibling membership instability — no documented limitation (§7.2)
+---
 
-### Operator Experience (OPS)
-- **OPS-024** `lenny-ctl` command surface undocumented (throughout)
-- **OPS-025** Scale-to-zero cron timezone unspecified (§5.2)
-- **OPS-026** cert-manager minimum version not specified (§10.3, 17.6)
+### SLC-026 `await_children` Re-Attach Protocol After Parent Resume Unspecified [High]
+**Section:** 8.8, 8.10
 
-### Storage (STR)
-- **STR-021** `last_message_context` 64KB TEXT triggers TOAST — contradicts §12.1 principle (§4.4)
-- **STR-022** GC cycle interval tier-configurability incomplete (§12.5, 17.8)
-- **STR-023** Custom semantic cache implementations have no runtime tenant enforcement (§4.9, 9.4)
+When a parent pod recovers from failure, §8.10 specifies that the gateway re-injects virtual child interfaces with `children_reattached`. However, the parent's `await_children` streaming call was lost on pod failure. The spec never describes the "re-await protocol": when the resumed parent re-issues `await_children`, how does the gateway stream already-settled child results from `session_tree_archive` before entering live-wait for still-running children? Without this, implementations will diverge on whether to replay archived results or only report live children.
 
-### Multi-Tenancy (TNT)
-- **TNT-019** `session_eviction_state` table has no tenant_id column or RLS policy (§4.4, 12.3)
-- **TNT-020** Detached orphan sessions exempt from quota enforcement (§8.10)
-- **TNT-021** Tenant deletion lifecycle has no SLA or overdue alert (§12.8)
+**Recommendation:** Add a "re-await protocol" subsection to §8.10: when `await_children` is re-issued after `children_reattached`, the gateway streams all archived settled results from `session_tree_archive` in original-settlement order before entering live-wait for remaining unsettled children.
 
-### Observability (OBS)
-- **OBS-027** Budget operation OTel spans absent from tracing specification (§8.3, 16.3)
-- **OBS-028** Metric name inconsistency for pod claim wait time (§16.1, 17.8.2)
-- **OBS-029** Memory store operation metrics absent from canonical table (§9.4, 16.1)
-- **OBS-030** PgBouncer alerts missing from §16.5 canonical alert table (§12.3, 16.5)
+---
 
-### Build Sequence (BLD)
-- **BLD-022** Phase 16 after Phase 15 despite PoolScalingController needing both (§18)
+### DEL-021 Detached Children's Own Cascade Behavior and Budget-Return Unspecified [High]
+**Section:** 8.10
 
-### Failure Modes (FLR)
-- **FLR-022** Dual-store forced termination event delivery gap (§10.1)
+When a parent fails with `cascadeOnFailure: detach`, children become orphaned. If an orphaned child subsequently fails, §8.10 is silent on: (1) whether the orphan's own `cascadeOnFailure` policy applies to its descendants, and (2) whether unused token budget is returned to the parent's (now-terminal) tree. The budget accounting model is incomplete: allocated budget in detached subtrees appears permanently consumed with no reconciliation path.
 
-### Warm Pool (WPL)
-- **WPL-022** Pool fill grace period not applied during experiment re-activation (§4.6.1, 16.5)
+**Recommendation:** Add to §8.10: (1) detached orphans retain and execute their own `cascadeOnFailure` policy when they fail; (2) on orphan completion, budget return is a no-op — the parent session is terminal and the `INCRBY` call is discarded. Document this explicitly in §8.3.
 
-### Credentials (CRD)
-- **CRD-022** `maxRotationsPerSession` not per-provider — one noisy provider blocks all (§4.9)
+---
 
-### Execution Modes (EXM)
-- **EXM-026** Concurrent-workspace slot retry has no atomic reservation (§5.2)
+### MSG-023 `lenny/request_input` Expiry Not Surfaced to Awaiting Parent [High]
+**Section:** 8.8, 9.2
 
-### Experiments (EXP)
-- **EXP-022** Results API cursor leaks cross-variant ordering information (§10.7)
+When a child's `lenny/request_input` call expires (via `maxElicitationWait`) before the parent processes the `input_required` partial result on its `await_children` stream, no follow-up event notifies the parent. The parent attempts to respond via `lenny/send_message` with `inReplyTo`, but the request has expired and the child has transitioned to terminal. The parent receives `TARGET_TERMINAL` with no explanation of the race.
 
-### Document Quality (DOC)
-- **DOC-023** §17.8 referenced 30+ times but content partially specified (§17.8)
+**Recommendation:** Add a `request_input_expired` event type to the `await_children` stream: `{ "type": "request_input_expired", "childId": "...", "requestId": "...", "expiredAt": "<ISO8601>" }`. Emit when a child's pending `request_input` expires while the parent is in `await_children`.
 
-### Competitive (CPS)
-- **CPS-021** §23.1 MCP Tasks differentiator needs clarification on internal vs external (§23.1)
+---
+
+### BLD-021 Real-LLM Testing Precedes Auth Completion — Phase 5.75 Gate Is Documentation-Only [High]
+**Section:** 18
+
+Phase 5.5 introduces the Basic Token Service and credential pools with real API keys — two sub-phases before the Phase 5.75 auth gate. If Phase 5.5 is implemented before 5.75, real secrets exist in the cluster without JWT-auth and quota enforcement. The Phase 5.75 note states it is a "hard prerequisite for Phase 6" but this is a documentation constraint with no technical enforcement (no feature flag, env var, or startup check prevents the Token Service from loading real credentials before 5.75 is deployed).
+
+**Recommendation:** Either (a) require the Token Service startup to refuse non-bootstrap credentials unless an `auth_gate_cleared` config value is present (set by Phase 5.75), or (b) restructure Phase 5.5 to store credentials in sealed form that the gateway cannot unwrap until the auth interceptor is wired. Add a CI gate preventing integration tests from using real credentials without `AUTH_GATE_CLEARED=1`.
+
+---
+
+### FLR-021 Coordinator Hold-State Timeout Produces Orphaned Pod with No Session Record [High]
+**Section:** 10.1
+
+When the adapter enters hold state and no coordinator fences within `coordinatorHoldTimeoutSeconds` (120s), the adapter "emits a `session.terminated` event once a coordinator reconnects (or writes it to local disk for post-mortem if no coordinator ever returns)." If no coordinator ever reconnects, the session record in Postgres is never updated to terminal state. The pod terminates but the session row remains `running`/`attached` indefinitely — an orphaned session occupying quota.
+
+**Recommendation:** The adapter must write a minimal termination record to pod-local tmpfs before shutdown. The preStop hook must attempt to write to Postgres. The gateway must detect stale `running` sessions whose pods are `Terminated` in Kubernetes (via `agent_pod_state` mirror table) and forcibly transition them to `failed` during periodic reconciliation.
+
+---
+
+### WPL-021 `sdkWarmBlockingPaths` Default Not Overridable for Inherited Defaults [High]
+**Section:** 6.1
+
+`sdkWarmBlockingPaths` defaults to `["CLAUDE.md", ".claude/*"]`. Files from `workspaceDefaults` (in the Runtime definition) are included in the matching check. A derived runtime that includes `CLAUDE.md` in `workspaceDefaults` — a very natural thing for Claude-based agents — triggers 100% demotion, hitting the circuit breaker immediately. There is no documented way to set `sdkWarmBlockingPaths: []` to opt out of demotion matching entirely.
+
+**Recommendation:** Explicitly document in §6.1 that setting `sdkWarmBlockingPaths: []` on the Runtime definition disables demotion-path checking entirely. Add a note that derived runtimes inheriting `CLAUDE.md` in `workspaceDefaults` should set `sdkWarmBlockingPaths: []` if the file is always present and the SDK process is designed to tolerate it.
+
+---
+
+### CRD-021 Proactive Lease Renewal Race — Exhaustion Falls Through to Fault Rotation [High]
+**Section:** 4.9
+
+The `CredentialRenewalWorker` retries proactive renewal up to 3 times at half the remaining TTL interval. If all retries fail, it falls through to the standard Fallback Flow at `expiresAt`, which **consumes a `maxRotationsPerSession` slot** (proactive renewals are excluded, but the fallback fault rotation is not). At short TTLs, the total retry window could extend past `expiresAt`, meaning the lease expires before all retries complete. There is no alert for proactive renewal exhaustion distinct from fault rotation exhaustion.
+
+**Recommendation:** Add `lenny_credential_proactive_renewal_exhausted_total` counter (labeled by pool, provider) and `CredentialProactiveRenewalExhausted` warning alert. Document that the fallback fault rotation at `expiresAt` counts against `maxRotationsPerSession`, and deployers should set `maxRotationsPerSession >= 1 + expected_proactive_retries` for long sessions.
+
+---
+
+### EXP-021 External Targeting `sticky: user` Cache Has No Invalidation Path [High]
+**Section:** 10.7
+
+`sticky: user` caches variant assignments across sessions. No invalidation mechanism is specified for: (1) variant paused or concluded, (2) user eligibility changes, (3) variant list changes. A concluded variant's cached assignment may route sessions to a non-existent pool (causing `WARM_POOL_EXHAUSTED` or `RUNTIME_NOT_FOUND`).
+
+**Recommendation:** Key caches by `(user_id, experiment_id)` with a `stickyAssignmentTtlSeconds` field (default 86400s). On `active → paused` and `active → concluded` transitions, flush all sticky caches for the experiment. Add `lenny_experiment_sticky_cache_invalidations_total` counter.
+
+---
+
+## Medium Findings
+
+---
+
+## 1. Kubernetes Infrastructure & Controller Design
+
+### K8S-020 Controller Anti-Affinity Remains Advisory [Medium]
+**Section:** 4.6.1, 17.8
+
+§4.6.1 states "operators should use pod anti-affinity" but the actual Helm chart default is `preferredDuringSchedulingIgnoredDuringExecution` (soft). Under resource pressure, both controllers can land on the same node, doubling the blast radius of a node failure.
+
+**Recommendation:** Change to `requiredDuringSchedulingIgnoredDuringExecution` for Tier 2/3 Helm chart defaults. Add a `lenny-preflight` check that warns if anti-affinity is downgraded to `preferred` in non-development profiles.
+
+---
+
+### K8S-021 agent-sandbox CRD Presence Not Validated at Controller Startup [Medium]
+**Section:** 4.6
+
+No startup check verifies the four agent-sandbox CRDs (`SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, `SandboxClaim`) are installed and at the expected API version. A deployment that omits the CRD apply step will fail with opaque API errors at reconciliation time.
+
+**Recommendation:** Add `validateAgentSandboxCRDs()` startup check alongside `validateRuntimeClasses()`. Verify all four CRD names exist and `spec.versions[*].name` includes the expected version. Mirror in the `lenny-preflight` Job.
+
+---
+
+### K8S-022 Kata Node Pool Taint Has No Post-Scheduling Validation [Medium]
+**Section:** 5.3, 17.2
+
+The admission webhook enforces the RuntimeClass reference at creation time, but a misconfigured RuntimeClass with no `scheduling.nodeSelector` would allow Kata pods to schedule on standard runc nodes with no post-scheduling check.
+
+**Recommendation:** Add a controller reconciliation check verifying every `Sandbox` pod with `runtimeClassName: kata-microvm` is on a node labeled `lenny.dev/node-pool: kata`. Define a `KataIsolationViolation` critical alert in §16.5.
+
+---
+
+## 3. Network Security & Isolation
+
+### NET-022 Internet Egress CIDR Exclusions Require Manual Helm Values [Medium]
+**Section:** 13.2
+
+The `internet` egress profile uses `egressCIDRs.excludeClusterPodCIDR` and `egressCIDRs.excludeClusterServiceCIDR` Helm values. If wrong or stale (e.g., after a cluster CIDR resize), agent pods can reach internal cluster IPs directly. No automated CIDR extraction or validation webhook exists.
+
+**Recommendation:** Add a `lenny-preflight` Job check that retrieves the cluster's actual CIDRs and asserts Helm values match. Alternatively, add a ValidatingAdmissionWebhook rejecting `internet`-profile pods if `egressCIDRs` except blocks don't cover all RFC-1918 ranges.
+
+---
+
+### NET-023 PgBouncer-to-Postgres NetworkPolicy Not Specified [Medium]
+**Section:** 13.2
+
+The lenny-system NetworkPolicy table covers gateway, token-service, controller, and CoreDNS but PgBouncer is absent. If PgBouncer runs in `lenny-system` as a Deployment, the default-deny policy blocks PgBouncer-to-Postgres traffic.
+
+**Recommendation:** Add PgBouncer as a row in the table specifying allowed egress (TCP 5432 to Postgres). Alternatively, add a note that PgBouncer is external and NetworkPolicy does not govern it.
+
+---
+
+## 4. Scalability & Performance Engineering
+
+### SCL-023 Experiment Targeting Webhook Has No Circuit Breaker [Medium]
+**Section:** 10.7
+
+The external webhook is called synchronously on the session creation hot path with a 200ms timeout. No circuit breaker exists. At 200/s session creation rate, repeated 200ms timeouts reduce throughput by ~40× with no escape.
+
+**Recommendation:** Add a circuit breaker: after 5 consecutive failures in 10s, open the circuit and return empty assignment for 30s. Document config fields alongside `timeoutMs`. Emit `lenny_experiment_targeting_circuit_open` gauge and alert.
+
+---
+
+### SCL-024 KEDA and Standalone HPA Coexistence Not Specified [Medium]
+**Section:** 10.1, 17.8
+
+§10.1 describes both HPA `behavior` configuration and KEDA `ScaledObject` without clarifying they are mutually exclusive. KEDA creates and manages the HPA resource — a deployer who also applies a standalone HPA creates a conflict.
+
+**Recommendation:** Add explicit note: when using KEDA, do NOT deploy a standalone HPA. All `behavior.*` settings go in ScaledObject's `advanced.horizontalPodAutoscalerConfig`. Provide a migration note for Prometheus Adapter → KEDA upgrades.
+
+---
+
+### SCL-025 `statusUpdateDeduplicationWindow` Controller Flag Undocumented [Medium]
+**Section:** 4.6.1, 17.8
+
+This flag is listed as the primary etcd write-pressure mitigation for managed Kubernetes but is never defined: no default value, no min/max bounds, no per-tier recommendations, no description of deduplication semantics (trailing window? minimum inter-write interval?).
+
+**Recommendation:** Define as `--status-update-dedup-window` (type: duration, default: 500ms, semantics: minimum interval between consecutive status writes for the same `Sandbox` resource). Add per-tier values to §17.8 controller tuning table.
+
+---
+
+## 2. Security & Threat Modeling
+
+### SEC-029 Agent-Initiated URL-Mode Elicitation Allowlist Requires No Domain Constraint [Medium]
+**Section:** 9.2
+
+The per-pool allowlist for agent-initiated URL-mode elicitations has no defined structure and no mandatory `domainAllowlist`. A deployer could enable URL-mode elicitation with an empty domain constraint, allowing agents to craft arbitrary phishing URLs.
+
+**Recommendation:** Define the allowlist as a structured object with a required non-empty `domainAllowlist` array. Reject pool registrations where URL-mode is enabled but `domainAllowlist` is empty.
+
+---
+
+### SEC-030 Session Inbox `from` Field Authentication Not Documented as Security Invariant [Medium]
+**Section:** 7.2
+
+The spec does not explicitly state that `from` is always set by the gateway from the authenticated caller's session identity and cannot be forged. A compromised pod might supply a spoofed `from` value.
+
+**Recommendation:** Add a security invariant paragraph: "The `from` field is always set by the gateway. The gateway ignores any `from` value supplied by the sender. `messagingScope` enforcement uses the gateway-authenticated caller identity."
+
+---
+
+### SEC-031 Webhook callbackUrl DNS Pinning Has No Re-Validation at Delivery [Medium]
+**Section:** 14
+
+DNS pinning at registration time has no specified re-validation at delivery time. Over a long session (up to 7200s), the pinned IP could become stale. The `dryRun` interaction with DNS resolution is also ambiguous.
+
+**Recommendation:** Specify that the pinned IP is validated at every delivery attempt — re-resolve on TCP failure and re-validate the new IP. Clarify `dryRun` DNS resolution behavior.
+
+---
+
+### SEC-032 No Content-Type/MIME Validation on Uploaded Files [Medium]
+**Section:** 7.4, 13.4
+
+No server-side content-type sniffing or MIME-type validation. A client can upload a `.txt` file containing a PE binary or a polyglot file. Runtimes parsing based on extension may behave unexpectedly.
+
+**Recommendation:** Add server-side MIME detection via magic-byte sniffing. Reject files where detected type is inconsistent with declared extension. At minimum, document as a gap with deployer mitigation note.
+
+---
+
+### SEC-033 Admin Bootstrap Endpoint Has No Explicit Audit Logging Specification [Medium]
+**Section:** 15.1, 17.6
+
+`POST /v1/admin/bootstrap` can silently downgrade isolation profiles. Neither §15.1 nor §17.6 specifies that every bootstrap call is audit-logged with the acting service account identity and a summary of changes.
+
+**Recommendation:** Specify that every bootstrap call emits a `platform.bootstrap_applied` audit event (T3) recording service account identity, seed file SHA-256 hash, and resource changes. The bootstrap Job should use a minimal-RBAC ServiceAccount.
+
+---
+
+### SEC-034 Semantic Cache `user_id` Not Required for Pool-Scoped Credentials [Medium]
+**Section:** 4.9
+
+For pool-scoped credentials, the cache key is `(tenant_id, query_embedding, model, provider)` — `user_id` is omitted. Two users in the same tenant with semantically similar queries could share cached responses, leaking conversation context.
+
+**Recommendation:** Default to always including `user_id` in the cache key. Add a `cacheScope` field with options `tenant` (explicit opt-in for cross-user sharing), `per-user` (default), `per-session`.
+
+---
+
+## 13. Compliance, Governance & Data Sovereignty
+
+### CMP-020 No Compliance Controls Mapping for SOC2/HIPAA/FedRAMP [Medium]
+**Section:** 12.8, 12.9, 16.4
+
+The spec defines `complianceProfile` values and enforces SIEM requirements, but there is no systematic mapping from each framework's controls to platform mechanisms. Deployers cannot perform gap analysis. Critical for FedRAMP (requires controls traceability) and HIPAA (§164.312 technical safeguards).
+
+**Recommendation:** Add a compliance controls appendix mapping each framework's controls to: platform mechanism, required configuration, and responsibility tier (platform/deployer/out-of-scope). Flag unaddressed controls. This is a pre-GA deliverable for regulated deployments.
+
+---
+
+### CMP-021 KMS Key Residency Not Required to Match `dataResidencyRegion` [Medium]
+**Section:** 12.8, 12.9, 4.3
+
+Data residency is enforced for storage (Postgres, MinIO, Redis) but the KMS key used for envelope encryption may reside in a different jurisdiction. Under GDPR and data localization laws, decryption capability in another jurisdiction may constitute a cross-border data transfer.
+
+**Recommendation:** Add a `kmsRegion` field derived from `dataResidencyRegion`. Validate at session creation that the KMS endpoint is in the same region. Fail-closed if no KMS endpoint matches.
+
+---
+
+### CMP-022 Erasure SLA Has No Hard Stop on New Data Processing [Medium]
+**Section:** 12.8
+
+When an erasure request is submitted, the platform continues accepting new sessions for that user. GDPR Article 18 requires restricting processing during pending erasure. New sessions generate PII not in scope for the running erasure job.
+
+**Recommendation:** Set `processing_restricted: true` on the user record when erasure is initiated. Block `POST /v1/sessions` for that `user_id` with `403 ERASURE_IN_PROGRESS`. Clear when the erasure job completes.
+
+---
+
+### CMP-023 Task-Mode Residual State Can Retain PHI Without Routing Enforcement [Medium]
+**Section:** 5.2, 12.9
+
+Workspace classification is per-tenant, not per-session. A tenant with `workspaceTier: T3` cannot route individual high-sensitivity sessions to T4-isolation pools at session creation time. A HIPAA deployer could inadvertently route PHI to standard runc pools with task-mode reuse.
+
+**Recommendation:** Add a `dataClassification` field to the session request or WorkspacePlan. When `T4`, enforce routing to T4-compatible pools at admission time via the Policy Engine.
+
+---
+
+## 24. Policy Engine & Admission Control
+
+### POL-024 Circuit Breaker Specification Is a Bare Stub [Medium]
+**Section:** 11.6
+
+§11.6 lists five circuit breaker scenarios but specifies no storage mechanism, no replica propagation, no admin API endpoint, no AdmissionController evaluation rules, and no audit logging. Operators have no documented procedure for engaging or disengaging circuit breakers during incidents.
+
+**Recommendation:** Specify: (a) Redis storage with pub/sub propagation; (b) `POST /v1/admin/circuit-breakers/{name}/{action}` endpoint; (c) AdmissionController reads circuit state on every admission; (d) `circuit_breaker.state_changed` audit events; (e) `CircuitBreakerActive` metric/alert.
+
+---
+
+### POL-025 Canonical Timeout Table Is Incomplete [Medium]
+**Section:** 11.3
+
+§11.3 has 8 timeout entries. 9+ operation timeouts are defined only in prose elsewhere: `CoordinatorFence` (5s), gRPC keepalive (10s+5s), `checkpointBarrierAckTimeoutSeconds` (45s), `coordinatorHoldTimeoutSeconds` (120s), elicitation per-hop forwarding (30s), interceptor PreLLMRequest (100ms), cert expiry warning (1h), DNS resolution timeout, admission webhook timeout (5s).
+
+**Recommendation:** Extend §11.3 to include all platform timeouts, with Helm value names and configurability columns. Or add a separate "Platform Timeout Reference" subsection cross-referenced from §11.3.
+
+---
+
+### POL-026 `maxDelegationPolicy` Field in Delegation Lease Is Undefined [Medium]
+**Section:** 8.3
+
+The lease schema shows `"maxDelegationPolicy": null` with only "Session-level override" as description. Type (named reference vs inline?), interaction with `delegationPolicyRef`, precedence rules, and `null` semantics are all unspecified.
+
+**Recommendation:** Add a definition block: type is named `DelegationPolicy` reference, applied as additional intersection with `delegationPolicyRef` (restriction only, never expansion), `null` means no additional restriction. Include a concrete example.
+
+---
+
+### POL-027 Interceptor Timeout Has No Distinct Error Code [Medium]
+**Section:** 4.8
+
+A `PreLLMRequest` interceptor timeout with `fail-closed` returns `LLM_REQUEST_REJECTED` — same as an explicit DENY. Callers cannot distinguish "policy blocked this" from "interceptor service is degraded."
+
+**Recommendation:** Add `INTERCEPTOR_TIMEOUT` to the error catalog (category `TRANSIENT`, HTTP 503, `retryable: true`). Return this on timeout regardless of `failPolicy`. Include `timeout_ms`, `interceptor_ref`, `phase` in the audit event.
+
+---
+
+### POL-028 Budget Return Does Not Specify In-Flight Usage Quiescence [Medium]
+**Section:** 8.3
+
+`budget_return.lua` fires when a child reaches terminal state, but the last `ReportUsage` RPC may still be in-flight. The parent receives slightly more budget than correct.
+
+**Recommendation:** Specify a quiescence step: wait for a `FINAL_USAGE_REPORT` from the child pod (or gRPC close) before executing `budget_return.lua`, with a bounded timeout (default 5s). On timeout, use last known usage counter and emit `delegation.budget_return_usage_lag` warning.
+
+---
+
+### POL-029 DelegationPolicy Tag Evaluation Uses Live Labels — Policy Window Undocumented [Medium]
+**Section:** 8.3
+
+"Tags can change without redeploying — policy re-evaluated on each delegation." A pool's labels changed mid-session can dynamically grant or revoke delegation permissions with no documentation of whether this is intentional.
+
+**Recommendation:** Clarify: (a) whether evaluation is point-in-time at delegation or live on every spawn; (b) whether mid-session label changes affect active trees; (c) document the security implication. Consider `snapshotPolicyAtLease: true` option.
+
+---
+
+## 5. Protocol Design & Future-Proofing
+
+### PRT-021 `publishedMetadata` Auto-Generation Contradicts Opaque Pass-Through [Medium]
+**Section:** 5.1, 21.1
+
+§5.1 says gateway treats `publishedMetadata` as "opaque pass-through." §21.1 references "A2A card auto-generation" from the data. These conflict: auto-generation implies parsing; pass-through means no parsing.
+
+**Recommendation:** Clarify whether A2A card generation is write-time (runtime stores pre-formatted card; gateway serves verbatim) or read-time (gateway constructs on the fly). Add a `?format=a2a` query parameter for format-specific retrieval.
+
+---
+
+### PRT-022 MCP Feature Dependency vs Adapter-Layer Version Not Distinguished [Medium]
+**Section:** 15.2, 15.5
+
+MCP spec version negotiation (adapter-layer) is well-handled. But MCP Tasks and Elicitation are structural gateway dependencies, not just adapter features. If a future MCP spec revises these, gateway internals are affected.
+
+**Recommendation:** Add a "MCP core dependency inventory" note identifying Tasks and Elicitation as structural dependencies with mitigation: Lenny maintains an internal canonical task state machine independent of MCP spec wording.
+
+---
+
+### PRT-023 OpenAI Completions Adapter Lifecycle Limitations Not Declared [Medium]
+**Section:** 15
+
+No `AdapterCapabilities` structure declares which lifecycle operations each adapter supports. The OpenAI adapter has no session continuity, delegation, interrupt, or multi-turn inbox — but clients have no machine-readable way to discover this.
+
+**Recommendation:** Define `AdapterCapabilities` with boolean fields (`sessionContinuity`, `delegation`, `interrupt`, `elicitation`, `streaming`). Expose via metadata endpoint. Document behavior on unsupported operations (`405` or `400 UNSUPPORTED_BY_ADAPTER`).
+
+---
+
+## 18. Content Model, Data Formats & Schema Design
+
+### SCH-030 DelegationLease Budget Fields Have No Overflow Semantics [Medium]
+**Section:** 8.3
+
+The reservation model caps what a child is granted, but a pod can consume more tokens than its slice before per-turn counting catches up. The spec doesn't define what happens when a child's actual consumption exceeds its slice at settlement time.
+
+**Recommendation:** Add "over-run semantics" subsection: define whether children are hard-capped at grant (LLM proxy enforces ceiling per lease) or soft-capped with settlement against parent budget. Document the settlement calculation.
+
+---
+
+### SCH-031 Capability Inference Default for Unannotated Tools Is Counter-Intuitively `admin` [Medium]
+**Section:** 5.1
+
+Most third-party MCP tools omit annotations. Unannotated tools are inferred as requiring `admin` — the most restrictive level. This silently fails when assigned to pools without `admin` capability, with no clear error.
+
+**Recommendation:** Change default from `admin` to `write`. Add `capabilityInferenceMode` field on RuntimeDefinition (`strict` keeps `admin`; `permissive` uses `write`). Log a warning when capability is inferred from absent annotations.
+
+---
+
+### SCH-032 BillingEvent `sequence_number` Gap-Detection Remediation Undefined [Medium]
+**Section:** 11.2.1
+
+`sequence_number` enables gap detection but no remediation protocol exists: no replay API, no sequencing authority named, no failover behavior defined.
+
+**Recommendation:** Name the sequencing authority (Postgres sequence per tenant). Specify provisional numbers in the in-memory buffer are renumbered on flush. Document a replay endpoint `GET /v1/metering/events?since_sequence=N`.
+
+---
+
+### SCH-033 Adapter Manifest `version` Is Integer Not Semver; `minPlatformVersion` Absent [Medium]
+**Section:** 4.7, 15.4
+
+Manifest `version` is a single integer with no major/minor/patch distinction. No `minPlatformVersion` field exists to declare minimum gateway compatibility. The gateway's compatibility check on registration is not documented.
+
+**Recommendation:** Change to semver string. Add `minPlatformVersion` semver field. Document: gateway rejects `minPlatformVersion > current`; accepts higher manifest `version` for additive changes; rejects breaking manifests.
+
+---
+
+## 14. API Design & External Interface Quality
+
+### API-027 OpenAPI Spec Has No Published Well-Known URL [Medium]
+**Section:** 15.1, 15.5, 15.6
+
+SDKs are generated from the OpenAPI spec, but no well-known endpoint (e.g., `GET /openapi.yaml`) is documented. Community integrators have no URL, format, or versioning strategy for the live spec.
+
+**Recommendation:** Specify `GET /openapi.yaml` as a gateway-served well-known endpoint. Document OpenAPI version (3.x), authentication, and API-version alignment.
+
+---
+
+### API-028 `RESOURCE_HAS_DEPENDENTS` Details Omit Per-Resource IDs [Medium]
+**Section:** 15.1
+
+The error includes `type`, `name`, and `count` but no `id` for individual blocking resources. UIs cannot construct links to blocking sessions. Operators must issue separate queries.
+
+**Recommendation:** Add an `ids` array (capped at 20) per entry where a stable identifier exists. When `count > 20`, set `truncated: true`.
+
+---
+
+### API-029 Sortable Fields Not Enumerated Per Resource Type [Medium]
+**Section:** 15.1
+
+The `sort` query parameter is accepted but valid fields vary by resource with no documentation. Clients must guess by trial-and-error.
+
+**Recommendation:** Add per-resource sortable-fields to each list endpoint. At minimum: sessions (`created_at`, `state`, `runtime`), pools (`name`, `created_at`), billing events (`sequence_number`, `timestamp`).
+
+---
+
+### API-030 No PATCH Endpoints for Complex Admin Resources [Medium]
+**Section:** 15.1
+
+All admin updates are full-body PUT. For large resources like `RuntimeDefinition` or `DelegationPolicy`, this requires read-modify-write with race conditions even with ETags.
+
+**Recommendation:** Add `PATCH` (JSON Merge Patch, RFC 7396) for at minimum `RuntimeDefinition`, `DelegationPolicy`, and `SandboxWarmPool`. Require `If-Match`. Document merge semantics for array fields.
+
+---
+
+## 6. Developer Experience (Runtime Authors)
+
+### DXP-022 No "For Runtime Authors: Start Here" Entry in §1 [Medium]
+**Section:** 1, 15.4.5
+
+§15.4.5 has a well-structured Runtime Author Roadmap but §1 has no forward reference to it. A runtime author reading the spec encounters the executive summary with no indication of the author-specific entry point at page ~175.
+
+**Recommendation:** Add a "For Runtime Authors: Start Here" callout in §1 (after Core Design Principles) with a one-paragraph summary and direct reference to §15.4.5.
+
+---
+
+### DXP-023 Local Dev Does Not Document Custom Runtime Substitution [Medium]
+**Section:** 17.4
+
+§17.4 documents `make run` and `docker compose up` but has no guidance on substituting a custom runtime binary. This is the first practical step after reading §15.4.4.
+
+**Recommendation:** Add a "Plugging in a custom runtime" subsection: (a) Tier 1 `make run` variable override for custom binary path; (b) Tier 2 `LENNY_AGENT_RUNTIME=<name>` env var and seed file registration. A 10-line example is sufficient.
+
+---
+
+### DXP-024 Abstract Unix Socket Transport Without macOS Compatibility Note [Medium]
+**Section:** 15.4.3, 4.7
+
+Abstract Unix sockets (`@` prefix) are Linux-only. §17.4 implies macOS is a supported dev platform, but Standard-tier development on macOS fails silently.
+
+**Recommendation:** Add platform compatibility note: "Abstract Unix sockets require Linux. macOS development of Standard/Full-tier runtimes requires Docker (`docker compose up`). `make run` supports macOS for Minimum-tier only."
+
+---
+
+## 11. Session Lifecycle & State Management
+
+### SLC-027 Session `created` State Has No Maximum TTL [Medium]
+**Section:** 15.1, 7.1
+
+A session in `created` state holds a claimed pod and credential lease indefinitely. No `maxCreatedStateTimeoutSeconds` exists. Stalled sessions silently exhaust warm pool and credential pool at scale.
+
+**Recommendation:** Define `maxCreatedStateTimeoutSeconds` (default 300s). On expiry, release pod and credential, transition to `expired`. Clarify whether `created`-state sessions count against concurrency quotas.
+
+---
+
+### SLC-028 `resuming` Timeout and `coordinatorHoldTimeoutSeconds` Gap [Medium]
+**Section:** 6.2, 10.1
+
+The pod self-terminates at 120s hold but the gateway's 300s resuming watchdog hasn't fired yet, leaving a ~180s window where the pod is dead but the session appears `resuming`. No mechanism notifies the gateway of orphan pod self-termination.
+
+**Recommendation:** Specify that on hold timeout, the adapter writes `Sandbox.status.phase = failed` to the CRD before exiting. The gateway's pod health monitoring detects this and fires `resuming → resume_pending` independently of the 300s watchdog.
+
+---
+
+## 10. Recursive Delegation & Task Trees
+
+### DEL-022 `maxTreeRecoverySeconds` Default Shorter Than `maxResumeWindowSeconds` [Medium]
+**Section:** 8.10, 7.3
+
+Tree recovery timeout (600s) is shorter than individual resume window (900s). Leaf nodes are force-terminated at 600s even though their own policy allows 900s. The existing deep-tree formula doesn't account for `maxResumeWindowSeconds` at leaf level.
+
+**Recommendation:** Extend the formula: `maxTreeRecoverySeconds ≥ maxResumeWindowSeconds + (maxDepth - 1) × maxLevelRecoverySeconds`. Add a note that the default 600s intentionally truncates leaf windows for bounded worst-case recovery.
+
+---
+
+### DEL-023 No Cycle Detection in Delegation Target Resolution [Medium]
+**Section:** 8.2, 8.3
+
+`maxDepth` prevents infinite depth but not graph cycles (A→B→A). `lenny/discover_agents` doesn't filter out ancestors. Cross-tree cycles create undetected deadlocks not covered by the §8.8 subtree deadlock detector.
+
+**Recommendation:** Record full session lineage in the delegation lease. Reject targets whose `session_id` appears in the caller's lineage with `DELEGATION_CYCLE_DETECTED`. Add a note that the deadlock detector covers subtree cycles, not cross-tree.
+
+---
+
+### DEL-024 Detached Orphan Pods Not Counted Toward Concurrency Quota [Medium]
+**Section:** 8.10
+
+Orphaned detached pods run for up to `cascadeTimeoutSeconds` (3600s) without quota accounting. No `maxOrphanTasksPerTenant` limit exists. A malicious orchestrator can accumulate unbounded orphan pods.
+
+**Recommendation:** Add `maxOrphanTasksPerTenant` (default 100). If exceeded, `detach` falls back to `cancel_all`. Add `lenny_orphan_tasks_active_per_tenant` gauge and `OrphanTasksPerTenantHigh` alert.
+
+---
+
+## 23. Messaging, Conversational Patterns & Multi-Turn
+
+### MSG-024 `ready_for_input` Signal Undefined for Concurrent Tool Execution [Medium]
+**Section:** 7.2
+
+When a runtime executes multiple tool calls simultaneously, `ready_for_input` is undefined. Different adapters will emit it at different points, creating non-deterministic path 2/3 routing.
+
+**Recommendation:** Define normatively: adapter MUST emit `ready_for_input` only when the runtime has no in-flight tool calls AND is actively polling stdin. During concurrent tool calls, messages route to path 3 (inbox buffer).
+
+---
+
+### MSG-025 `await_children(mode: any)` Cascade on Parent Completion Unspecified [Medium]
+**Section:** 8.8, 8.5
+
+§8.10 defines `cascadeOnFailure` for parent failure, but not for parent completion. A parent that completes after `await_children(mode="any")` may leave siblings running indefinitely.
+
+**Recommendation:** Specify that `cascadeOnFailure` applies on all parent terminal states (completed, failed, cancelled, expired), not just failure. Document that `detach` allows children to outlive the parent.
+
+---
+
+### MSG-026 Sibling Membership Instability Not Documented as Limitation [Medium]
+**Section:** 7.2
+
+`get_task_tree` is a snapshot. Siblings spawned after enumeration are missed with no notification. No `sibling_joined` event or `subscribe_task_tree` streaming call exists. Agent authors building dynamic teams will discover this at runtime.
+
+**Recommendation:** Add a normative statement documenting snapshot semantics as a v1 limitation. Recommend coordinator-hub patterns for dynamic fan-out. Note that `sibling_joined` notification is deferred to post-v1.
+
+---
+
+## 7. Operator & Deployer Experience
+
+### OPS-024 `lenny-ctl` Command Surface Undocumented [Medium]
+**Section:** Throughout
+
+12+ `lenny-ctl` subcommands are referenced across the spec but no consolidated command reference exists. Operators must hunt across 8,000+ lines to discover available commands.
+
+**Recommendation:** Add a `lenny-ctl` command reference appendix listing each command group, sub-commands, required flags, API endpoint mapping, and minimum role. Cross-reference from §17.7 runbooks.
+
+---
+
+### OPS-025 Scale-to-Zero Cron Timezone Unspecified [Medium]
+**Section:** 5.2
+
+Cron expressions for `scaleToZero` don't specify whether they're UTC, cluster-local, or configurable. Operators in non-UTC timezones will misconfigure scale-to-zero windows.
+
+**Recommendation:** Specify UTC default. Add optional `timezone` field (IANA string). Document minimum K8s 1.27 for native timezone support.
+
+---
+
+### OPS-026 cert-manager Minimum Version Not Specified [Medium]
+**Section:** 10.3, 17.6
+
+No minimum cert-manager version, required CRDs, or install ordering documented. An incompatible cert-manager passes CRD existence checks but fails at runtime with schema mismatches.
+
+**Recommendation:** Add minimum version `v1.12.0`. Add cert-manager webhook health check to preflight. Document as optional Helm dependency.
+
+---
+
+## 9. Storage Architecture & Data Management
+
+### STR-021 `last_message_context` 64KB TEXT Triggers TOAST [Medium]
+**Section:** 4.4, 12.1
+
+The `session_eviction_state.last_message_context` field (64KB TEXT) consistently triggers TOAST storage, contradicting the "never Postgres for blobs" principle at §12.1.
+
+**Recommendation:** Cap in-Postgres storage at 2KB. Store full context as a MinIO object when exceeding 2KB, with the Postgres row holding only the MinIO key. Truncate to 2KB on MinIO unavailability with `context_truncated: true`.
+
+---
+
+### STR-022 GC Cycle Interval Tier-Configurability Incomplete [Medium]
+**Section:** 12.5, 17.8
+
+§17.8 shows Tier 3 GC at 5min, but the interval is not exposed as a Helm value. T4 tenants with 1-hour erasure SLAs have no sub-5-minute per-tenant priority path.
+
+**Recommendation:** Expose `gc.cycleIntervalSeconds` as a Helm value (default 900, min 60). Add per-tenant `gcPriority: high` flag that triggers immediate GC sweep when an erasure job completes.
+
+---
+
+### STR-023 Custom Semantic Cache Implementations Have No Runtime Tenant Enforcement [Medium]
+**Section:** 4.9, 9.4
+
+The gateway does not proxy or wrap calls to third-party cache backends. A buggy custom implementation can silently serve cross-tenant cache hits. The contract test is development-time only.
+
+**Recommendation:** Introduce a `TenantScopedSemanticCacheWrapper` in the gateway that prepends `tenant_id` to every cache key before delegating to the backend, making cross-tenant access structurally impossible.
+
+---
+
+## 8. Multi-Tenancy & Tenant Isolation
+
+### TNT-019 `session_eviction_state` Has No `tenant_id` Column or RLS Policy [Medium]
+**Section:** 4.4, 12.3
+
+The table schema has no `tenant_id` column. It is absent from the RLS-protected tables list and the `lenny_tenant_guard` trigger scope. The table stores T3 Confidential data (`last_message_context`).
+
+**Recommendation:** Add `tenant_id` column. Include in RLS policy scope and `TestRLSTenantGuardMissingSetLocal` coverage.
+
+---
+
+### TNT-020 Detached Orphan Sessions Exempt from Quota Enforcement [Medium]
+**Section:** 8.10
+
+Explicitly stated: "Detached orphan pods are not counted toward the originating user's concurrency quota." With `maxParallelChildren: 50` and `cascadeTimeoutSeconds: 3600`, a single tenant can generate 50×N unquoted pods.
+
+**Recommendation:** Count detached children toward tenant concurrency quota during the detached window. Add `maxDetachedSessionsPerTenant` limit.
+
+---
+
+### TNT-021 Tenant Deletion Has No SLA or Overdue Alert [Medium]
+**Section:** 12.8
+
+The deletion lifecycle has 6 phases but no wall-clock SLA and no `TenantDeletionOverdue` alert. An unbounded deletion window is a compliance exposure for T4 tenants.
+
+**Recommendation:** Define SLA (T3: 72h, T4: 4h). Add `TenantDeletionOverdue` warning alert. Add `lenny_tenant_deletion_duration_seconds` histogram.
+
+---
+
+## 12. Observability & Operational Monitoring
+
+### OBS-027 Budget Operation OTel Spans Absent [Medium]
+**Section:** 8.3, 16.3
+
+`budget_reserve.lua` and `budget_return.lua` have no OTel spans in §16.3. Lua serialization contention is invisible in traces, making the SCL-016 contention analysis unobservable.
+
+**Recommendation:** Add `delegation.budget_reserve` and `delegation.budget_return` spans with `outcome`, `tenant_id`, `root_session_id`, `lua_queue_wait_ms` attributes.
+
+---
+
+### OBS-028 Metric Name Inconsistency for Pod Claim Wait Time [Medium]
+**Section:** 16.1, 17.8.2
+
+`lenny_pod_claim_queue_wait_seconds` in §16.1 vs `lenny_warmpool_claim_wait_seconds_p99` in §17.8.2. Operators will query a metric that doesn't match the canonical table.
+
+**Recommendation:** Designate `lenny_pod_claim_queue_wait_seconds` as canonical. Update §17.8.2 to reference it with a note that P99 is derived from the histogram.
+
+---
+
+### OBS-029 Memory Store Operation Metrics Absent [Medium]
+**Section:** 9.4, 16.1
+
+No metrics for `MemoryStore` operations (latency, errors, record count). Custom backends have no instrumentation contract. Degradation is invisible.
+
+**Recommendation:** Add `lenny_memory_store_operation_duration_seconds`, `lenny_memory_store_errors_total`, `lenny_memory_store_record_count` to §16.1. Require for all implementations via the contract helper.
+
+---
+
+### OBS-030 PgBouncer Alerts Missing from §16.5 [Medium]
+**Section:** 12.3, 16.5
+
+§12.3 specifies PgBouncer metrics but no alerts in §16.5. PgBouncer saturation manifests as session 503s with no distinguishable root cause.
+
+**Recommendation:** Add `PgBouncerPoolSaturated` (Warning, `cl_waiting_time > 1s` for 60s) and `PgBouncerAllReplicasDown` (Critical). Cross-reference from §17.7 runbook.
+
+---
+
+## 19. Build Sequence & Implementation Risk
+
+### BLD-022 Phase 16 After Phase 15 Despite PoolScalingController Needing Both [Medium]
+**Section:** 18
+
+Phase 16 (experiments) comes after Phase 15 (environments), but experiment variant routing has no per-environment scoping. An A/B experiment could route a user from a sandboxed-environment session to an unsandboxed variant pool.
+
+**Recommendation:** Add a Phase 16 prerequisite: variant pools must satisfy the requesting session's environment `minIsolationProfile`. Or document the limitation that variant pools are not environment-scoped in v1.
+
+---
+
+## 20. Failure Modes & Resilience Engineering
+
+### FLR-022 Dual-Store Forced Termination Event Delivery Gap [Medium]
+**Section:** 10.1
+
+If dual unavailability exceeds 60s, sessions are terminated but the `session.terminated` event is emitted only when Postgres recovers — possibly hours later. During this window, terminated sessions have no terminal record and quota counters are frozen.
+
+**Recommendation:** Enqueue terminated sessions in an in-memory buffer, batch-write to Postgres on recovery. Add `lenny_dual_store_forced_terminations_total` counter. Clarify whether pods receive `terminate` RPCs or only the session record is updated.
+
+---
+
+## 16. Warm Pool & Pod Lifecycle Management
+
+### WPL-022 Pool Fill Grace Period Not Applied During Experiment Re-Activation [Medium]
+**Section:** 4.6.1, 16.5
+
+`WarmPoolExhausted` grace period applies only on first pool creation. Re-activating a variant pool (`paused → active`) sets `minWarm` from 0 to positive but triggers no grace period, causing immediate `WarmPoolLow` alerts.
+
+**Recommendation:** Reset `fill_grace_period_until` timestamp whenever `minWarm` transitions from 0 to positive, regardless of whether it's first-creation or re-activation.
+
+---
+
+## 17. Credential Management & Secret Handling
+
+### CRD-022 `maxRotationsPerSession` Not Per-Provider [Medium]
+**Section:** 4.9
+
+The counter applies across all providers. If one noisy provider exhausts the budget (3 rotations), a healthy unused provider is also blocked. Operators cannot diagnose which provider caused exhaustion.
+
+**Recommendation:** Track per-provider. Add `perProviderRotations` map alongside the global `maxRotationsPerSession`. Add `lenny_credential_rotation_budget_exhausted_total` counter labeled by `provider`.
+
+---
+
+## 25. Execution Modes & Concurrent Workloads
+
+### EXM-026 Concurrent-Workspace Slot Retry Has No Atomic Reservation [Medium]
+**Section:** 5.2
+
+Two concurrent retries targeting the same pod can both see "1 slot available" and both be assigned, temporarily exceeding `maxConcurrent`. No atomic slot reservation (CAS) is specified for the retry path.
+
+**Recommendation:** Use atomic Redis INCR with cap check (INCR only if result ≤ `maxConcurrent`). If CAS fails, fall through to another pod. Add `lenny_slot_assignment_conflict_total` counter.
+
+---
+
+## 21. Experimentation & A/B Testing Primitives
+
+### EXP-022 Results API Cursor Leaks Cross-Variant Ordering Information [Medium]
+**Section:** 10.7
+
+The cursor encodes a raw `EvalResult` primary key. Time-ordered UUIDs leak when evals were submitted across variants, potentially biasing manual experiment interpretation.
+
+**Recommendation:** Encrypt cursors with a gateway-managed key (or use server-side cursor). Document that cursor values are opaque and non-stable.
+
+---
+
+## 22. Document Quality, Consistency & Completeness
+
+### DOC-023 §17.8 Referenced 30+ Times But Content Partially Specified [Medium]
+**Section:** 17.8
+
+§17.8 is cited for per-tier HPA configs, `minReplicas`, `minWarm`, controller tuning, and `terminationGracePeriodSeconds`. Many promised values are absent. Readers following cross-references reach an incomplete section.
+
+**Recommendation:** Either populate §17.8 with promised per-tier tables (as concrete or provisional values) or change cross-references to say "see Section 17.8 (Phase 2 deliverable)" to make incomplete state transparent.
+
+---
+
+## 15. Competitive Positioning & Open Source Strategy
+
+### CPS-021 §23.1 MCP Tasks Differentiator Needs Internal vs External Clarification [Medium]
+**Section:** 23.1
+
+§23.1 positions MCP Tasks as a key differentiator but the internal delegation machinery uses custom gRPC, not MCP. Potential adopters may overestimate MCP end-to-end integration.
+
+**Recommendation:** Add one sentence in §23.1: "Lenny implements MCP Tasks at the gateway's external MCP interface; internal delegation uses a custom gRPC protocol with equivalent semantics (see §4.7 and §9)."
