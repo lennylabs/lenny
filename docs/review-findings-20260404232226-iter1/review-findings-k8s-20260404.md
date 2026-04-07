@@ -103,7 +103,7 @@ The original Critical rating was based on: "if the semantics diverge and the wor
 
 ---
 
-### K8S-002 PDB Label Mismatch: `lenny.dev/pod-state: idle` vs `lenny.dev/state: idle` [High]
+### K8S-002 PDB Label Mismatch: `lenny.dev/pod-state: idle` vs `lenny.dev/state: idle` [High] — Fixed
 
 **Section:** 4.6.1, 6.2
 
@@ -123,9 +123,11 @@ The `lenny-preflight` Job (Section 17.6) does not include a check for PDB select
 
 **Recommendation:** Fix the PDB selector in Section 4.6.1 to use `lenny.dev/state: idle`. Add an integration test that verifies the PDB selector resolves to at least `minWarm` pods when the pool is healthy. Add a preflight check (or startup controller validation) that confirms the PDB exists and its selector is non-empty.
 
+**Resolution:** Fixed the PDB label selector in Section 4.6.1 from `lenny.dev/pod-state: idle` to `lenny.dev/state: idle`, aligning it with the authoritative label taxonomy defined in Section 6.2. The integration test and preflight check suggestions from the recommendation were not added to the design doc as they are implementation-level test concerns rather than design specification issues.
+
 ---
 
-### K8S-003 Warm Pool Controller Rate Limiter Is Still Undersized at Tier 3 Scale [High]
+### K8S-003 Warm Pool Controller Rate Limiter Is Still Undersized at Tier 3 Scale [High] — Fixed
 
 **Section:** 4.6.1, 17.8
 
@@ -137,9 +139,11 @@ Additionally, the work queue's default depth of 500 at Tier 1 is raised to 10,00
 
 **Recommendation:** (1) Add a parallel pod-creation path for initial pool fill (cold-start), separate from the sequential steady-state path. The sequential constraint is intended to prevent scale-up storms, not to gate initial pool fill from zero. (2) Add a formula and note for work queue memory overhead: estimate per-item size × max depth and include in the controller's resource requests. (3) Add a `WarmPoolFillTime` metric (histogram of time to fill a pool from 0 to minWarm) and an SLO target for this case.
 
+**Resolution:** The sequential processing constraint in Section 4.6.1 was replaced with controlled-concurrency processing via `--max-concurrent-reconciles` (standard controller-runtime tuning), with per-tier recommendations added to Section 17.8.2 (Tier 1: 1, Tier 2: 5, Tier 3: 15). This addresses the cold-start bottleneck without introducing a separate parallel code path — the rate limiter remains the throughput ceiling, so API server/etcd overload protection is preserved regardless of worker count. A cold-start pool fill paragraph was added to Section 4.6.1 with: (a) an initial fill grace period (`--initial-fill-grace-period`) to suppress false-positive `WarmPoolExhausted` alerts during expected fill time, and (b) a `lenny_warmpool_fill_duration_seconds` histogram metric for cold-start recovery observability. The work queue memory overhead concern from recommendation (2) was not addressed because it is based on an incorrect premise — Kubernetes work queue items are namespace/name string keys, not full API objects; a 10,000-entry queue consumes kilobytes, not hundreds of MB.
+
 ---
 
-### K8S-004 Kata Node Isolation Uses `requiredDuringSchedulingIgnoredDuringExecution` — Ignored During Execution Is a Security Gap [High]
+### K8S-004 Kata Node Isolation Uses `requiredDuringSchedulingIgnoredDuringExecution` — Ignored During Execution Is a Security Gap [High] — Fixed
 
 **Section:** 17.2
 
@@ -149,9 +153,11 @@ This is the standard Kubernetes behavior, but for a security-critical isolation 
 
 **Recommendation:** Add a Kyverno or Gatekeeper policy that continuously validates that pods in `lenny-agents-kata` are running on nodes with the required `lenny.dev/node-pool: kata` label. If a drift is detected, emit a critical alert (`KataNodeLabelDrift`) and optionally mark the pod for eviction/replacement. This policy runs as a background audit (not inline admission) to avoid disrupting running workloads, but the alert gives operators immediate visibility. Document the `IgnoredDuringExecution` limitation explicitly.
 
+**Resolution:** The `IgnoredDuringExecution` limitation is now documented explicitly in Section 17.2 alongside the hard node affinity control. The note explains that this is the strongest node affinity semantic Kubernetes offers and that label drift alone cannot cause Kata/runc co-location because the dedicated-node taint (control 3) independently prevents non-Kata workloads from scheduling onto Kata nodes regardless of label state. The Kyverno/Gatekeeper background audit policy was not added — the triple-defense (RuntimeClass nodeSelector + hard affinity + NoSchedule taint) already prevents the described threat, and adding a continuous policy audit for a scenario that requires multiple independent failures is over-engineering.
+
 ---
 
-### K8S-005 No `ResourceQuota` or `LimitRange` for Agent Namespaces [High]
+### K8S-005 No `ResourceQuota` or `LimitRange` for Agent Namespaces [High] — Fixed
 
 **Section:** 17.2
 
@@ -167,9 +173,11 @@ The `lenny-preflight` Job checks connectivity and RuntimeClasses but does not ve
 
 **Recommendation:** Add a `ResourceQuota` per agent namespace to the Helm chart, configurable via `agentNamespaces[].resourceQuota`. Default values should cap total pods, CPU, and memory per namespace based on the tier's expected warm pool size (Section 17.8). Add a corresponding `LimitRange` with default resource requests/limits for agent pods (guards against pods with no resource requests that the scheduler treats as best-effort). Document that these defaults must be tuned for large `minWarm` values.
 
+**Resolution:** Added to Section 17.2: ResourceQuota and LimitRange per agent namespace, deployed by the Helm chart with configurable defaults via `.Values.agentNamespaces[].resourceQuota` and `.Values.agentNamespaces[].limitRange`. Default ResourceQuota caps pods at 200 with corresponding CPU/memory limits (2x expected pool size). Default LimitRange sets container resource requests/limits to prevent BestEffort QoS. Added Helm values (`agentNamespaces[].resourceQuota`, `agentNamespaces[].limitRange`) to Section 17.6. Added two preflight checks to the `lenny-preflight` Job: one validates ResourceQuota existence and pod limit adequacy against configured `minWarm`, the other validates LimitRange existence.
+
 ---
 
-### K8S-006 `SandboxClaim` Is Not Garbage-Collected Without `ownerReference` and Has No TTL [High]
+### K8S-006 `SandboxClaim` Is Not Garbage-Collected Without `ownerReference` and Has No TTL [High] — Fixed
 
 **Section:** 4.6.1
 
@@ -184,6 +192,8 @@ While the reasoning is sound, the consequence is that Kubernetes will never GC a
 In the crash scenario: gateway creates `SandboxClaim`, crashes before writing to Postgres → on recovery, the gateway has no record of the claim → the `Sandbox` pod is claimed but no session drives it → the pod idles indefinitely holding a claim, invisible to both the warm pool and the session manager.
 
 **Recommendation:** Add an explicit orphaned `SandboxClaim` detection loop to the WarmPoolController: any `SandboxClaim` older than `claimOrphanTimeout` (e.g., 5 minutes) that has no corresponding active session in Postgres is deleted and the underlying `Sandbox` pod is returned to `idle`. Add a `lenny_orphaned_claims_total` metric. Document the cleanup cadence.
+
+**Resolution:** Added an "Orphaned `SandboxClaim` detection" paragraph to Section 4.6.1 specifying: the WarmPoolController's `GarbageCollect` loop runs every 60s, lists claims older than `claimOrphanTimeout` (default 5min, configurable via `--claim-orphan-timeout`), cross-references Postgres for active sessions, deletes orphans and transitions the underlying pod back to `idle`. Added `lenny_orphaned_claims_total` metric and `SandboxClaimOrphanRateHigh` alert. Also expanded the `GarbageCollect` interface method description to explicitly include SandboxClaim orphan coverage.
 
 ---
 

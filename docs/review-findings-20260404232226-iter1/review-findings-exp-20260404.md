@@ -15,7 +15,7 @@ Section 10.7 is one of the more self-contained sections in the spec and its core
 
 ## Findings
 
-### EXP-001 PoolScalingController Variant Pool Behavior on Experiment Pause/Conclude Is Unspecified [High]
+### EXP-001 PoolScalingController Variant Pool Behavior on Experiment Pause/Conclude Is Unspecified [High] — Fixed
 **Section:** 4.6.2, 10.7
 
 Section 4.6.2 states the PoolScalingController "integrates with experiment definitions to automatically size variant pools" and Section 10.7 confirms variant warm counts are "derived from base pool demand signals × variant weight × safety factor." However, the spec never describes what the PoolScalingController does when an experiment transitions to `paused` or `concluded`. Does it immediately set the variant pool's `minWarm` to 0? Does it let sessions drain and then scale down? Does it delete the `SandboxTemplate` CRD? Does the variant pool persist indefinitely, burning warm pod capacity? The "pool phases: pre-warm, ramp, steady state, wind-down — all automatic" note in Section 4.6.2 is generic and does not address experiment-lifecycle-driven teardown. This is a direct cost and operational waste concern: concluded experiments whose variant pools remain at full `minWarm` silently consume cluster capacity.
@@ -25,23 +25,29 @@ Section 4.6.2 states the PoolScalingController "integrates with experiment defin
 - `active/paused → concluded`: PoolScalingController sets variant pool `minWarm` to 0 and `maxWarm` to 0, triggering full drain. Once `status.readyCount == 0`, the PoolScalingController deletes the variant's `SandboxWarmPool` (but does not delete the `SandboxTemplate`, which may be shared with other experiments or baseline pools). Deletion follows the same safe-rotation sequence as Section 13.1.
 - On re-activation (`paused → active`): PoolScalingController restores `minWarm` from the experiment definition.
 
+**Resolution:** Added a "PoolScalingController behavior on experiment status transitions" paragraph to Section 10.7 with a table specifying behavior for all three transitions (`active→paused`, `paused→active`, `active/paused→concluded`). Also added a cross-reference from Section 4.6.2's "Pool phases" line to the new specification. The fix covers: minWarm/maxWarm adjustments per transition, SandboxWarmPool deletion on conclude (but SandboxTemplate retention), restoration of demand-based scaling on re-activation, and reconciliation behavior when the controller is down during a transition.
+
 ---
 
-### EXP-002 Control Group `variant_id` Value Is Never Defined [High]
+### EXP-002 Control Group `variant_id` Value Is Never Defined [High] — Fixed
 **Section:** 10.7
 
 The ExperimentDefinition YAML schema defines only treatment variants explicitly. The `variants` list in the example contains only `id: treatment`. The control group — sessions routed to the `baseRuntime` — is implicit. Yet the Results API response example at line 2834 shows `"variant_id": "control"` as a literal string value, and the `EvalResult` schema includes a `variant_id` field that is described as "auto-populated by gateway from session's experiment context." There is no statement in the spec that defines: what string value is assigned as `variant_id` for sessions enrolled in the control group; whether `control` is a reserved keyword; whether deployers can name their control group something else; or what happens if a deployer creates an explicit variant with `id: "control"`. The Results API and EvalResult store would behave differently depending on undocumented implementation choices.
 
 **Recommendation:** Add a normative statement to Section 10.7 immediately after the ExperimentDefinition schema: "Sessions not assigned to any named variant run the `baseRuntime` and are assigned `variant_id: 'control'` automatically by the gateway. `'control'` is a reserved variant identifier — deployers cannot define a variant with `id: 'control'` in the `variants` list (enforced at experiment creation via `POST /v1/admin/experiments` validation). The control group's `minWarm` is not managed by experiment machinery; it falls through to the base runtime's existing pool." Also add `RESERVED_IDENTIFIER` as an error code for this case.
 
+**Resolution:** Added a "Control group identifier" normative paragraph to Section 10.7 immediately after the ExperimentDefinition YAML schema. The paragraph defines that: (1) sessions not assigned to any named variant are automatically assigned `variant_id: "control"` by the gateway; (2) `"control"` is a reserved variant identifier that deployers cannot use in the `variants` list; (3) the reservation is enforced at experiment creation and update time via POST/PUT validation; (4) the control group's warm pool capacity is managed by the base runtime's existing pool, not experiment machinery. Also added `RESERVED_IDENTIFIER` error code (HTTP 422, category PERMANENT) to the error catalog in the error code table, with `details.field` and `details.value` in the response body.
+
 ---
 
-### EXP-003 Cohort Targeting Mode Has No Schema Definition [High]
+### EXP-003 Cohort Targeting Mode Has No Schema Definition [High] — Fixed
 **Section:** 10.7
 
 Section 10.7 defines three targeting modes — `percentage`, `cohort`, and `combined` — but only `percentage` is mechanically described ("deterministic hash"). The `cohort` mode is described only as "explicit whitelist" and `combined` as "percentage within cohort." No schema is specified for how the whitelist is represented in the `ExperimentDefinition`: Is it an inline list of user IDs? A reference to an external resource? A tag/attribute match expression? What is the maximum cohort size? How does the gateway resolve whether a given user is in the cohort at request time — does it load the full list into memory, or is it a set lookup in Redis/Postgres? What happens if a user in the cohort also matches a different active `percentage` experiment? This is a blocking gap for any implementation of the cohort targeting path.
 
 **Recommendation:** Extend the ExperimentDefinition schema in Section 10.7 with a concrete `targeting` block for each mode. For `cohort`: define a `cohort.userIds` field (list of strings, max 10,000 entries enforced at validation) stored in Postgres alongside the experiment record, loaded into a per-experiment Redis Set by the PoolScalingController on experiment activation, and checked via `SISMEMBER` at assignment time. Document the maximum cohort size and that the gateway enforces it at `POST /v1/admin/experiments`. For `combined`: specify that `percentage` is evaluated first within the cohort population.
+
+**Resolution:** Revised the experiment targeting model in Section 10.7. The original fix added cohort infrastructure (Postgres `experiment_cohorts` table, Redis Set, 10K cohort limit). The revised design replaces `cohort` and `combined` modes with an `external` targeting mode that delegates assignment to the deployer's feature flag system via a webhook, with built-in provider adapters for LaunchDarkly, Statsig, and Unleash. `percentage` mode remains as the built-in default. The `external` mode defines: (1) a tenant-level `experimentTargeting` configuration block specifying the provider, timeout, and provider-specific credentials; (2) a webhook protocol where the gateway POSTs user context and receives experiment assignments; (3) sticky caching semantics consistent with percentage mode; (4) failure behavior that excludes the user from external experiments without affecting percentage experiments; (5) `lenny_experiment_targeting_webhook_duration_seconds` and `lenny_experiment_targeting_webhook_error_total` metrics. This is consistent with Lenny's hooks-and-defaults design philosophy (Section 22.6) — the platform provides a simple built-in default (percentage) and a well-defined extension point (external webhook) rather than reimplementing feature flag infrastructure.
 
 ---
 

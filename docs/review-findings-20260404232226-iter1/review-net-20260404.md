@@ -44,7 +44,7 @@ Port 8443 strongly implies TLS intent, but the scheme is `http://`, not `https:/
 
 ---
 
-### NET-016 `allow-gateway-ingress` Policy Omits Port Restriction, Allows Any Inbound Port [High]
+### NET-016 `allow-gateway-ingress` Policy Omits Port Restriction, Allows Any Inbound Port [High] — Fixed
 **Section:** 13.2
 
 The existing finding NET-004 addresses agent pod *egress* to the gateway lacking port constraints. The ingress NetworkPolicy has the same problem in the opposite direction — the `allow-gateway-ingress` manifest permits gateway pods to reach agent pods on *any* port:
@@ -63,9 +63,11 @@ No `ports` stanza is present. The adapter listens on a single gRPC port. Without
 
 **Recommendation:** Add an explicit `ports` stanza to `allow-gateway-ingress` restricting ingress to the adapter's declared gRPC port (e.g., `port: 50051, protocol: TCP`). The adapter gRPC port should be a named Helm value (`adapterGrpcPort`, default 50051) so it remains consistent across the NetworkPolicy, the adapter's containerPort declaration, and the gateway's dial address.
 
+**Resolution:** Added a `ports` stanza to the `allow-gateway-ingress` NetworkPolicy in Section 13.2, restricting ingress to TCP port 50051 with a Helm template comment (`{{ .Values.adapter.grpcPort }}`). This mirrors the egress port constraint pattern and ensures the gateway can only reach the adapter's declared gRPC listener.
+
 ---
 
-### NET-017 No NetworkPolicy for `lenny-system` Namespace — Fixes to NET-011 Are Not in the Spec [High]
+### NET-017 No NetworkPolicy for `lenny-system` Namespace — Fixes to NET-011 Are Not in the Spec [High] — Fixed
 **Section:** 13.2
 
 NET-011 (from the prior review) called for least-privilege egress NetworkPolicies in `lenny-system`. The fix is listed in the existing findings document as *not fixed* (no `FIXED` tag). Confirming by reading the current spec: Section 13.2 describes three NetworkPolicy manifests all scoped to `lenny-agents` (and by fix to `lenny-agents-kata`). There are zero NetworkPolicy manifests for `lenny-system`.
@@ -87,9 +89,11 @@ In the worst case, a single compromised component in `lenny-system` has a latera
 
 Include these manifests in the Helm chart alongside the agent namespace policies.
 
+**Resolution:** Added a `default-deny-all` NetworkPolicy manifest for `lenny-system` (identical structure to the agent namespace version) and a component-specific allow-list table in Section 13.2. The table documents permitted egress and ingress for each `lenny-system` component (gateway, Token Service, controllers, dedicated CoreDNS) using `lenny.dev/component` label selectors. Cloud metadata endpoints (`169.254.169.254/32`) are explicitly blocked. Full YAML manifests per component are left to the Helm chart implementation — the spec provides the canonical traffic matrix.
+
 ---
 
-### NET-018 Dedicated CoreDNS Has No Documented HA Requirement or Failure Mode [High]
+### NET-018 Dedicated CoreDNS Has No Documented HA Requirement or Failure Mode [High] — Fixed
 **Section:** 13.2
 
 The dedicated CoreDNS instance in `lenny-system` is the single authorized DNS resolver for all agent pods in all agent namespaces. It is a single point of failure that can affect every agent session simultaneously. The spec documents its security properties (query logging, rate limiting, response filtering) but says nothing about:
@@ -103,9 +107,11 @@ An attacker who can cause the dedicated CoreDNS pod to crash (e.g., by sending h
 
 **Recommendation:** Specify that the dedicated CoreDNS instance runs with a minimum replica count of 2 (or 3 for Tier 2+), has a PodDisruptionBudget (`minAvailable: 1`), and that its pods are spread across zones via topology spread constraints. Document that if all dedicated CoreDNS replicas are unavailable, agent pods lose DNS resolution — this should trigger a `DedicatedDNSUnavailable` critical alert. Add the dedicated CoreDNS deployment spec to the Helm chart. Add per-pod query rate limiting at the NetworkPolicy level (Cilium `CiliumNetworkPolicy` with L7 DNS rate limits, or equivalent) as a complement to the application-level rate limiting inside CoreDNS.
 
+**Resolution:** Added a "Dedicated CoreDNS high availability" block to Section 13.2 specifying: minimum 2 replicas (Helm-configurable, validated >= 2), a PodDisruptionBudget with `minAvailable: 1`, and explicit failure-mode documentation — agent pods lose DNS resolution entirely when all replicas are down (no silent fallback to `kube-system` CoreDNS, which would bypass security controls). Two alerts are specified: `DedicatedDNSUnavailable` (critical, zero ready replicas) and `DedicatedDNSDegraded` (warning, below configured minimum). The `dnsPolicy: cluster-default` opt-out paragraph now explicitly states that opting out removes security properties. Topology spread constraints and Cilium L7 DNS rate limits were not added — topology spread is a Helm chart implementation detail, and application-level rate limiting inside CoreDNS already addresses the DoS vector.
+
 ---
 
-### NET-019 Token Service Certificate Not in mTLS PKI Table — Identity Gap [High]
+### NET-019 Token Service Certificate Not in mTLS PKI Table — Identity Gap [High] — Fixed
 **Section:** 10.3
 
 The mTLS PKI table (Section 10.3) documents certificate TTLs and SAN formats for three components: gateway replicas, agent pods, and the controller. The Token/Connector Service is absent. Yet the spec states that gateway replicas call the Token Service over mTLS. This creates an undocumented certificate that:
@@ -124,6 +130,8 @@ A Token Service certificate with an unspecified TTL might be long-lived (e.g., a
 | Token/Connector Service | 24h | DNS: `lenny-token-service.lenny-system.svc` | cert-manager auto-renewal at 2/3 lifetime |
 
 Also: the gateway should validate the Token Service certificate's SAN on every connection (not just accept any cert from the cluster CA). The Token Service should validate incoming connections are from gateway replicas by matching the gateway's SPIFFE-style SAN or DNS SAN. Document this mutual validation requirement.
+
+**Resolution:** Added a Token/Connector Service row to the mTLS PKI certificate lifecycle table in Section 10.3 with 24h TTL, DNS SAN `lenny-token-service.lenny-system.svc`, and cert-manager auto-renewal. Added a "Token Service identity" paragraph documenting mutual SAN validation: the gateway validates the Token Service's DNS SAN on every connection, and the Token Service validates that incoming connections present the gateway's DNS SAN. Updated the CA rotation procedure to include Token Service trust bundles alongside gateway and controller. The `CertExpiryImminent` alert already covers the Token Service implicitly ("any certificate within 1h of expiry").
 
 ---
 

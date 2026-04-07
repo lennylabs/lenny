@@ -21,7 +21,7 @@
 
 ## High Findings
 
-### DOC-001 Section 11.8 is an empty redirect that adds no value [High]
+### DOC-001 Section 11.8 is an empty redirect that adds no value [High] — Fixed
 
 **Section:** 11.8 (line 3067)
 
@@ -31,9 +31,11 @@ The billing event stream is substantively defined at Section 11.2.1 (lines 2925�
 
 **Recommendation:** Either (a) relocate Section 11.2.1 content to replace the empty 11.8, making billing its own peer section under 11, or (b) remove 11.8 entirely and update the forward reference in 11.2.1 to note that it is the authoritative billing section. Also update the cross-reference in Section 12.8 (line 3273) which cites `Section 11.8` — that reference would need to point to 11.2.1. Do not leave a section whose entire content is a pointer to another section.
 
+**Resolution:** Removed Section 11.8 entirely. Updated two cross-references that cited "Section 11.8" (in the tenant-controlled billing erasure paragraph and the erasure propagation to external sinks paragraph) to point to Section 11.2.1 instead. No other references to Section 11.8 remain in the document.
+
 ---
 
-### DOC-002 Section 17.9 appears twice with different content [High]
+### DOC-002 Section 17.9 appears twice with different content [High] — Already Fixed
 
 **Section:** 17.9 (lines 4913 and 5022)
 
@@ -48,9 +50,11 @@ The 17.8 section (lines 4978–5001) cross-references itself as "Section 17.8" a
 
 **Recommendation:** Renumber to: 17.8 = Capacity Tier Reference, 17.9 = Operational Defaults — Quick Reference, 17.10 = Deployment Profiles. Update all internal cross-references that cite these sections. Verify the resulting sequence is: 17.1 → 17.2 → 17.3 → 17.4 → 17.5 → 17.6 → 17.7 → 17.8 → 17.9 → 17.10.
 
+**Resolution:** Already fixed by a prior iteration. The duplicate 17.9 and out-of-order 17.8 have been resolved by restructuring the sections as 17.8.1 (Operational Defaults — Quick Reference), 17.8.2 (Capacity Tier Reference), and 17.9 (Deployment Profiles). The current sequence is 17.1 through 17.7, then 17.8.1, 17.8.2, 17.9 — no duplicates, correct ordering. Cross-references to "Section 17.8" naturally encompass both subsections. The approach differs from the recommendation (flat 17.8/17.9/17.10) but achieves the same structural correctness.
+
 ---
 
-### DOC-003 Missing section 8.7 breaks the delegation section numbering sequence [High]
+### DOC-003 Missing section 8.7 breaks the delegation section numbering sequence [High] — Fixed
 
 **Section:** 8 (Recursive Delegation)
 
@@ -60,9 +64,11 @@ This gap is confusing for readers navigating the document and suggests either a 
 
 **Recommendation:** Either (a) introduce a Section 8.7 containing the Budget Reservation Model content currently embedded in Section 8.3 (lines 1839–1849), which would improve readability and give that important content a navigable header, or (b) renumber 8.8 → 8.7, 8.9 → 8.8, 8.10 → 8.9, 8.11 → 8.10, and update all cross-references. Option (a) is preferred as it also addresses the readability of the embedded budget reservation content.
 
+**Resolution:** Renumbered sections 8.8 through 8.11 to 8.7 through 8.10, closing the gap. Updated all cross-references throughout the document: "Section 8.8" (File Export) became 8.7, "Section 8.9" (TaskRecord) became 8.8, "Section 8.10" (Task Tree) became 8.9, "Section 8.11" (Delegation Tree Recovery) became 8.10. Verified no stale references to old section numbers remain.
+
 ---
 
-### DOC-004 Undefined shorthand references "Sec-H1", "Sec-H5", "DevOps-M2", "OSS-L2", "OSS-L3", "Sec-C2" used without definition [High]
+### DOC-004 Undefined shorthand references "Sec-H1", "Sec-H5", "DevOps-M2", "OSS-L2", "OSS-L3", "Sec-C2" used without definition [High] — Fixed
 
 **Sections:** Multiple (lines 2919, 3169, 4610, 4766, 4774, 4780, 4911)
 
@@ -79,9 +85,11 @@ These appear to be references to findings or requirements from external review d
 
 **Recommendation:** Either (a) remove these parenthetical codes from the design document — they are internal tracking artifacts that do not belong in a technical spec intended for community consumption, or (b) add a glossary section (or appendix) that defines each code and links it to its originating finding. The design document should be self-contained; requirements should be stated directly rather than by reference to opaque codes.
 
+**Resolution:** Removed all 7 instances of external tracking codes from the document. Specifically: removed `DevOps-M2` from quota update timing (replaced parenthetical with descriptive text referencing the per-replica ceiling formula), removed two `Sec-H5` references (from Redis fail-open description and alerting table), removed `OSS-L2` from the dev mode observability heading, removed `Sec-C2` from the dev mode guard rails heading, removed `Sec-H1` from the unified security-relaxation gate paragraph, and removed `OSS-L3` from the operator skill tiers note. In each case the surrounding prose remains clear and self-contained without the opaque codes.
+
 ---
 
-### DOC-005 "Section 4.5" cross-referenced from two different sections does not exist [High]
+### DOC-005 "Section 4.5" cross-referenced from two different sections does not exist [High] — Fixed
 
 **Sections:** Multiple (lines 5153, 5241)
 
@@ -93,6 +101,8 @@ Two locations cite "Section 4.5" in contexts that do not match any actual sectio
 Section 4 has subsections 4.1 through 4.9 (in the form 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9). However, **Section 4.5 is the Artifact Store** (line 236), which contains no P99 latency targets and no pre-warmed pool discussion. The intended target is likely Section 6.3 (Startup Latency Analysis, line 1321) or Section 16.5 (Alerting Rules and SLOs, line 4588), both of which contain startup latency SLO targets.
 
 **Recommendation:** Correct both references to point to Section 6.3 (for startup latency analysis and estimates) or Section 16.5 (for the formal SLO targets). Verify no other stale "Section 4.5" references exist by searching the document.
+
+**Resolution:** Corrected both incorrect "Section 4.5" references to "Section 6.3" (Startup Latency Analysis). The Phase 13.5 build sequence P99 latency target now cites Section 6.3, and the Competitive Landscape Modal comparison now cites Section 6.3. The one remaining "Section 4.5" reference (line 1687, about `parent_workspace_ref` lineage pointer) correctly refers to the Artifact Store and was left unchanged.
 
 ---
 
@@ -222,7 +232,7 @@ The platform MCP server tools appear in three locations:
 2. **Section 8.5** (lines 1893–1903): Delegation Tools table — same tools with descriptions
 3. **Section 9.1** (lines 2288–2303): Platform MCP Server Tools table — same tools again with descriptions
 
-All three lists are slightly inconsistent: Section 4.7 includes `lenny/send_message` and `lenny/send_to_child`; Section 9.1 includes `lenny/send_to_child` and `lenny/send_message`; Section 8.5 includes all but calls them "Delegation Tools" and includes `lenny/send_message`, `lenny/send_to_child`, `lenny/request_input`, `lenny/get_task_tree`. The tool `lenny/send_to_child` appears in 8.5 and 9.1 but not in the 4.7 manifest list. If 4.7 is the authoritative adapter manifest list, it should be complete.
+All three lists are slightly inconsistent: the tool sets differ between Sections 4.7, 8.5, and 9.1. If 4.7 is the authoritative adapter manifest list, it should be complete.
 
 **Recommendation:** Designate Section 9.1 as the single authoritative tool catalog. Replace the lists in Sections 4.7 and 8.5 with "see Section 9.1 for the complete platform MCP server tool catalog." This eliminates three-way synchronization burden and the current inconsistencies.
 

@@ -31,7 +31,7 @@ The requirement that future adapters "pass the same contract test suite before b
 
 ---
 
-### API-002 Admin API Resource Endpoints Mix Singular and Collective HTTP Method Notation [High]
+### API-002 Admin API Resource Endpoints Mix Singular and Collective HTTP Method Notation [High] — Fixed
 **Section:** 15.1
 
 The admin API table lists endpoints as `POST/PUT/GET/DELETE` on a collection path like `/v1/admin/runtimes`, conflating CRUD semantics onto one row. This notation is ambiguous for third-party UI/CLI developers: does `PUT /v1/admin/runtimes` update the entire collection or a single resource? What is the URL for a single runtime — `/v1/admin/runtimes/{name}` or `/v1/admin/runtimes/{id}`? The spec never explicitly defines singleton resource paths. The ETag section implies `PUT` operates on a specific resource (it requires a prior `GET` to obtain the ETag), but the endpoint table suggests `PUT /v1/admin/runtimes` (no path parameter). This ambiguity would cause a UI developer to guess at the URL structure.
@@ -40,9 +40,11 @@ The action endpoints `POST /v1/admin/pools/{name}/drain` and `PUT /v1/admin/pool
 
 **Recommendation:** Enumerate all resource endpoints explicitly with full paths: `GET /v1/admin/runtimes` (list), `POST /v1/admin/runtimes` (create), `GET /v1/admin/runtimes/{name}` (get), `PUT /v1/admin/runtimes/{name}` (update), `DELETE /v1/admin/runtimes/{name}` (delete). Declare that all admin resources use `{name}` as the path identifier (or `{id}` if preferred — choose one and state it). Apply this pattern consistently to every admin resource type in the table. This is foundational for the OpenAPI spec and for any CLI/UI developer reading the spec.
 
+**Resolution:** The admin API table in Section 15.1 was fully expanded: every collapsed `POST/PUT/GET/DELETE` row was replaced with individual rows showing explicit collection paths (`GET /v1/admin/runtimes` for list, `POST /v1/admin/runtimes` for create) and singleton paths (`GET /v1/admin/runtimes/{name}`, `PUT /v1/admin/runtimes/{name}`, `DELETE /v1/admin/runtimes/{name}`). A preamble was added declaring the universal convention: all admin resources use `{name}` as the path identifier (human-readable, unique within scope), with the single exception of tenants which use `{id}` (opaque UUID) because tenant names are mutable display labels. The dryRun endpoint table was also updated so that all `PUT` rows reference the singleton `{name}` path. The credential-pool action endpoints were updated from `{poolId}` to `{name}` in the admin API table for consistency with the declared convention.
+
 ---
 
-### API-003 `dryRun` Behavior Is Underspecified for Side-Effect-Adjacent Operations [High]
+### API-003 `dryRun` Behavior Is Underspecified for Side-Effect-Adjacent Operations [High] — Fixed
 **Section:** 15.1
 
 The `dryRun` description states the gateway performs "full request validation — schema, field constraints, referential integrity, policy checks, and quota evaluation — but does not persist the result, emit audit events, or trigger any side effects." Two ambiguities affect UI/CLI builders:
@@ -55,9 +57,11 @@ Third, `dryRun` on `PUT /v1/admin/environments` promises to "preview selector ma
 
 **Recommendation:** (1) State explicitly that `dryRun` never makes outbound network calls — connector URL format validation is syntactic only. Add a separate `POST /v1/admin/connectors/{name}/test` endpoint for live connectivity checks. (2) Document whether capacity validation is included in experiment `dryRun`. (3) Specify the response body shape for `PUT /v1/admin/environments` `dryRun`: add a `preview` object containing `matchedRuntimes: []string` and `matchedConnectors: []string` alongside the standard resource representation. This is the primary use case for the environment `dryRun` and is entirely absent from the spec.
 
+**Resolution:** All three ambiguities resolved in Section 15.1. (1) The `dryRun` paragraph now explicitly states "dryRun never makes outbound network calls" and that all referential integrity checks are syntactic/against locally cached state. A new `POST /v1/admin/connectors/{name}/test` endpoint was added (both in the admin API endpoint table and with a dedicated specification block) for live connectivity checks with staged pass/fail reporting (DNS, TLS, MCP handshake, auth). (2) Experiment `dryRun` semantics now explicitly state capacity validation is **not** included; capacity feasibility is evaluated asynchronously by PoolScalingController on activation, with guidance to use `GET /v1/admin/pools/{name}` for pre-checking. (3) Environment `dryRun` response now specifies a `preview` object containing `matchedRuntimes`, `matchedConnectors`, and `unmatchedSelectorTerms` arrays, with a JSON example. Section 21.5 was also updated to reference the preview response shape. The dryRun endpoint table notes were updated for connectors (no outbound calls), experiments (no capacity check), and environments (returns preview object).
+
 ---
 
-### API-004 ETag Semantics Gap: List Endpoints Return Per-Item ETags in Body But No Guidance on Race Window [High]
+### API-004 ETag Semantics Gap: List Endpoints Return Per-Item ETags in Body But No Guidance on Race Window [High] — Fixed
 **Section:** 15.1
 
 The ETag section specifies that `GET` list responses include per-item ETags in the response body (`"etag": "3"` on each object). This is correct for pre-fetching ETags before subsequent updates, but the spec does not address the race window between listing and updating: if a client lists 50 runtimes, processes them, and then issues a `PUT` for item #50 several seconds later, the ETag obtained from the list may already be stale. The spec correctly returns `412 ETAG_MISMATCH` in this case, but does not provide guidance on the retry pattern — specifically, should the client re-GET the single resource to refresh the ETag, or re-list? For a UI building a "bulk update" workflow (common in admin dashboards), this gap causes either over-fetching or silent lost updates.
@@ -66,9 +70,11 @@ Additionally, the `DELETE` endpoint makes `If-Match` optional with "last-writer-
 
 **Recommendation:** (1) Add a note stating that the recommended pattern after a `412 ETAG_MISMATCH` on `PUT` is to re-GET the specific resource (not re-list) and retry. (2) Document the deletion semantics for resources with dependents: does deleting a Runtime with active sessions return `409 INVALID_STATE_TRANSITION` with a `details.activeSessionCount` field? Enumerate for each resource type whether deletion is blocked, cascaded, or soft-deleted. (3) Consider adding a `details.currentEtag` field in the `412 ETAG_MISMATCH` error response so clients can refresh without a round-trip GET.
 
+**Resolution:** All three recommendations addressed in Section 15.1. (1) A new "Retry pattern after `412 ETAG_MISMATCH`" bullet was added to the ETag section documenting the recommended flow: use `details.currentEtag` from the error response if present, or re-`GET` the specific resource (not re-list); clients performing bulk updates should re-`GET` only the conflicted resource. (2) A new "Deletion semantics for resources with dependents" bullet enumerates per-resource-type deletion rules: all deletions are **blocked** (never cascaded) when active dependents exist, returning `409 RESOURCE_HAS_DEPENDENTS` with a `details.dependents` array listing blocking references by type, name, and count. Specific rules documented for Runtime, Pool, Delegation Policy, Connector, Credential Pool, Tenant, Environment, Experiment, and External Adapter. (3) The `ETAG_MISMATCH` error catalog entry and the PUT bullet now specify that the `412` response includes `details.currentEtag` with the resource's current ETag, allowing clients to retry without an additional `GET`. A new `RESOURCE_HAS_DEPENDENTS` error code (409, PERMANENT) was added to the error catalog.
+
 ---
 
-### API-005 Error Catalog Gaps: Missing Codes for Common Admin API Failure Modes [High]
+### API-005 Error Catalog Gaps: Missing Codes for Common Admin API Failure Modes [High] — Fixed
 **Section:** 15.1
 
 The error code catalog (Section 15.1) covers session and MCP interaction errors well, but is incomplete for admin API operations. Specific gaps that affect third-party UI/CLI development:
@@ -83,9 +89,11 @@ The error code catalog (Section 15.1) covers session and MCP interaction errors 
 
 **Recommendation:** Add the following error codes to the catalog: `RESOURCE_HAS_DEPENDENTS` (409, PERMANENT) for deletion blocked by references; `IMAGE_RESOLUTION_FAILED` (422, PERMANENT) for unresolvable image references; `CONFIGURATION_CONFLICT` (422, PERMANENT) for mutually incompatible field combinations; `SEED_CONFLICT` (409, PERMANENT) for bootstrap upsert conflicts where `--force-update` is not set. Each code should specify the `details` shape (e.g., `RESOURCE_HAS_DEPENDENTS.details.dependents: [{type, name, count}]`).
 
+**Resolution:** All four error codes are now present in the error catalog in Section 15.1. `RESOURCE_HAS_DEPENDENTS` (409, PERMANENT) was already added as part of the API-004 fix, with `details.dependents` listing blocking references by type, name, and count. Three new codes were added: `IMAGE_RESOLUTION_FAILED` (422, PERMANENT) with `details.image` and `details.reason` fields describing the unresolvable reference; `CONFIGURATION_CONFLICT` (422, PERMANENT) with `details.conflicts` array containing per-incompatibility entries identifying the conflicting fields and a human-readable message; `SEED_CONFLICT` (409, PERMANENT) with `details.resource` (type and name) and `details.conflictingFields` listing the fields that differ from the existing resource when `--force-update` is not set.
+
 ---
 
-### API-006 Session Lifecycle REST Endpoints Have Ambiguous State Machine Constraints [High]
+### API-006 Session Lifecycle REST Endpoints Have Ambiguous State Machine Constraints [High] — Fixed
 **Section:** 15.1
 
 The REST session lifecycle table lists endpoints like `POST /v1/sessions/{id}/interrupt`, `POST /v1/sessions/{id}/terminate`, `POST /v1/sessions/{id}/resume` without documenting which session states each endpoint is valid in. A UI developer building session controls (e.g., showing an "Interrupt" button) needs to know: is `interrupt` valid in state `running` only, or also in `starting_session`, `finalizing_workspace`, `suspended`? Is `resume` only valid in `awaiting_client_action`, or also in `suspended`? Is `terminate` valid in all non-terminal states?
@@ -95,6 +103,8 @@ The pod state machine is documented (Section 6.2), and the session state machine
 This problem is amplified by the fact that the spec describes two overlapping state machine representations — the pod state machine (Section 6.2) and the session/task state machine (Section 7.2, 8.9) — with no explicit mapping of which states are visible to external REST API callers vs. which are internal.
 
 **Recommendation:** (1) Add a table to Section 15.1 listing each state-mutating session endpoint with its valid precondition states and the resulting state transition. E.g., `POST interrupt` → valid in `{running}` → results in `suspended`; invalid in `{suspended, completed, failed, cancelled, expired}` → returns `INVALID_STATE_TRANSITION`. (2) Explicitly declare which states are externally visible (returned in `GET /v1/sessions/{id}`) vs. internal-only. The external state model should be the session/task states from Section 8.9, not the pod states from Section 6.2 — clarify this.
+
+**Resolution:** Both recommendations addressed in Section 15.1. (1) A "State-mutating endpoint preconditions" table was added immediately after the session lifecycle endpoint table, mapping each state-mutating endpoint (`upload`, `finalize`, `start`, `interrupt`, `terminate`, `resume`, `messages`, `derive`, `DELETE`) to its valid precondition states, resulting state transition, and notes. The table specifies that invalid-state calls return `409 INVALID_STATE_TRANSITION` with `details.currentState` and `details.allowedStates`. (2) An "Externally visible vs. internal-only states" section was added with two tables: one enumerating all 12 external session states returned by `GET /v1/sessions/{id}` (from `created` through the four terminal states), and a declaration that pod state machine states from Section 6.2 (`warming`, `idle`, `claimed`, `receiving_uploads`, `running_setup`, `sdk_connecting`, `resuming`) are internal-only and never returned in external API responses.
 
 ---
 

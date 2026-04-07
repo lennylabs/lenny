@@ -20,7 +20,7 @@ What remains are gaps that a developer actually building a runtime will hit: the
 
 ---
 
-### DXR-001 Lifecycle Channel Transport Mechanism Not Specified [High]
+### DXR-001 Lifecycle Channel Transport Mechanism Not Specified [High] — Fixed
 **Section:** 4.7
 
 Section 4.7 describes the lifecycle channel as "a separate stdin/stdout stream pair for operational signals." A developer building a Full-tier runtime cannot implement this. Two stdin/stdout streams cannot coexist on a single Unix process — each process has exactly one stdin (fd 0) and one stdout (fd 1). The actual transport must be a separate Unix socket, a pair of named pipes, or an additional file descriptor — but none of these options is stated.
@@ -29,9 +29,11 @@ The adapter manifest (Section 4.7) includes `platformMcpServer.socket` and `conn
 
 **Recommendation:** Specify the lifecycle channel transport mechanism precisely. If it is a Unix socket, add a `lifecycleChannel.socket` field to the adapter manifest JSON. If it is additional inherited file descriptors, document the FD numbers and how they are advertised to the binary. Add a JSON schema for lifecycle message types (using the same JSON Lines format as the binary protocol) and include a worked example in Section 15.4.4.
 
+**Resolution:** Fixed. The lifecycle channel transport is now specified as a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`), consistent with the existing MCP server transport pattern. The Part B description in Section 4.7 now states the transport (abstract Unix socket), the connection model (runtime connects as client, adapter listens), and the wire format (JSON Lines). A `lifecycleChannel.socket` field was added to the adapter manifest JSON example. The recommendation to add a lifecycle channel worked example in Section 15.4.4 is deferred to DXR-009 (echo runtime improvements).
+
 ---
 
-### DXR-002 Adapter Manifest Has No Formal Schema and Minimum-Tier Reading Requirements Are Undefined [High]
+### DXR-002 Adapter Manifest Has No Formal Schema and Minimum-Tier Reading Requirements Are Undefined [High] — Fixed
 **Section:** 4.7
 
 The adapter manifest is presented as a JSON example with narrative description. No formal JSON Schema is provided, no versioning mechanism is documented, and the spec does not state which fields a Minimum-tier runtime must read vs. can safely ignore. A developer reading this section cannot determine:
@@ -45,9 +47,11 @@ The "regenerated per task execution" note raises a question: does the runtime ne
 
 **Recommendation:** Define the adapter manifest JSON Schema (or at minimum a TypeScript-style interface definition). State explicitly which fields a Minimum-tier runtime needs (answer: none — Minimum-tier ignores the manifest entirely), which fields Standard-tier reads (`platformMcpServer.socket`, `connectorServers`), and which are Full-tier only. Clarify whether the manifest is stable for the session lifetime or may change between tasks. State that unknown fields should be ignored for forward compatibility.
 
+**Resolution:** Fixed. Section 4.7 now includes: (1) a complete field reference table listing every manifest field with its type, whether it is required, a description, and which integration tier needs it; (2) a `version` field added to the manifest JSON for schema versioning; (3) the `agentInterface` JSON example expanded with actual content matching the Runtime definition schema; (4) a "Tier reading requirements" block stating Minimum ignores the manifest, Standard reads MCP socket fields, Full adds the lifecycle channel; (5) a "Forward compatibility" statement requiring runtimes to silently ignore unknown fields; (6) clarification that the manifest is re-written before each task in task mode and the runtime must re-read it, but it is stable during task/session execution. `connectorServers` is documented as always present (empty array if none).
+
 ---
 
-### DXR-003 No Guidance on How Standard-Tier Runtimes Implement the MCP Client [High]
+### DXR-003 No Guidance on How Standard-Tier Runtimes Implement the MCP Client [High] — Fixed
 **Section:** 15.4.3, 4.7
 
 The spec correctly states that Standard-tier runtimes "connect to the adapter's platform MCP server and connector MCP servers" and that this uses "standard MCP — no Lenny-specific code." However, it provides no guidance on what implementing this means in practice:
@@ -61,6 +65,8 @@ The spec correctly states that Standard-tier runtimes "connect to the adapter's 
 This is directly relevant to the user's stated concern about minimizing SDK requirements. The spec says Standard-tier requires "no Lenny-specific code" but says nothing about whether a third-party MCP client library is needed. Implementing MCP from scratch over an abstract Unix socket is a significant and underspecified undertaking.
 
 **Recommendation:** Add a "Standard-Tier MCP Integration" subsection under 15.4.3. State which transport variant the adapter uses (recommendation: abstract Unix socket `@lenny-*` as specified in the manifest, always). State the MCP protocol version the local servers speak. Explicitly state whether an existing MCP client library (e.g., the official `@modelcontextprotocol/sdk` for Node.js, or `mcp-go` for Go) can be used out of the box against the adapter's local servers, and whether any Lenny-specific initialization is required. If the adapter always speaks standard MCP over the socket, state this clearly so runtime authors know a standard MCP client library is sufficient.
+
+**Resolution:** Fixed. A "Standard-Tier MCP Integration" block was added to Section 15.4.3, covering: (1) transport is abstract Unix sockets exclusively (not stdio), resolving the Part A header ambiguity which was also corrected from "stdio or abstract Unix socket" to "abstract Unix socket"; (2) protocol version is MCP 2025-03-26 with 2024-11-05 backward compatibility, cross-referencing Section 15.2; (3) existing MCP client libraries (mcp-go, @modelcontextprotocol/sdk, mcp for Python) work out of the box with no Lenny-specific code or authentication; (4) tool discovery via standard `tools/list` on each server; (5) no authentication required for intra-pod connections.
 
 ---
 
@@ -236,9 +242,9 @@ Section 11.8 "Billing Event Stream" contains only: "See Section 11.2.1 for the a
 
 | ID | Title | Severity | Section |
 |---|---|---|---|
-| DXR-001 | Lifecycle channel transport mechanism not specified | High | 4.7 |
-| DXR-002 | Adapter manifest has no formal schema and minimum-tier reading requirements undefined | High | 4.7 |
-| DXR-003 | No guidance on Standard-tier MCP client implementation | High | 15.4.3, 4.7 |
+| DXR-001 | Lifecycle channel transport mechanism not specified | High | 4.7 | Fixed |
+| DXR-002 | Adapter manifest has no formal schema and minimum-tier reading requirements undefined | High | 4.7 | Fixed |
+| DXR-003 | No guidance on Standard-tier MCP client implementation | High | 15.4.3, 4.7 | Fixed |
 | DXR-004 | `type: mcp` runtime requirements undocumented | Medium | 5.1 |
 | DXR-005 | Runtime image packaging requirements not documented | Medium | 4.7, 17.4 |
 | DXR-006 | Error reporting from runtime binary is incomplete | Medium | 15.4.1, 16.3 |

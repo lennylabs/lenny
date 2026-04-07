@@ -44,7 +44,7 @@ Additionally, the `quotaFailOpenCumulativeMaxSeconds` circuit-breaker (default 3
 
 ---
 
-### POL-002 Budget Rollback on Partial Delegation Failure Is Not Atomic — TOCTOU Between Token and Tree-Size Operations [High]
+### POL-002 Budget Rollback on Partial Delegation Failure Is Not Atomic — TOCTOU Between Token and Tree-Size Operations [High] — Fixed
 
 **Section:** 8.3 (Budget Reservation Model)
 
@@ -55,9 +55,11 @@ Between the successful `INCR` on tree size and the compensating `DECR` rollback,
 **Recommendation:**
 Use a single Lua script (evaluated atomically by Redis) to perform both the token `DECRBY` and tree-size `INCR` checks within one operation. The Lua script should check both values against their limits before committing either change, and return a structured result indicating which limit (if any) was exceeded. This makes the two-counter reservation a single atomic unit, eliminating the TOCTOU window and removing the need for compensating rollback.
 
+**Resolution:** Section 8.3 was updated to use Redis Lua scripts for all multi-counter budget operations. Step 1 (Reservation) now specifies a single Lua script that atomically checks both token budget and tree-size limits before committing either change, returning a structured result with the specific limit exceeded. Step 4 (Concurrency safety) was rewritten to describe the `budget_reserve.lua` and `budget_return.lua` Lua scripts that atomically perform both counter operations within a single Redis evaluation, eliminating the TOCTOU window and removing the need for compensating rollback operations.
+
 ---
 
-### POL-003 `PostAgentOutput` and `PreToolResult` Interceptor Phases — Content Payload Contract Unspecified [High]
+### POL-003 `PostAgentOutput` and `PreToolResult` Interceptor Phases — Content Payload Contract Unspecified [High] — Fixed
 
 **Section:** 4.8
 
@@ -68,9 +70,11 @@ This omission is particularly significant for `PostAgentOutput` and `PreToolResu
 **Recommendation:**
 Add a payload specification table for each of the seven phases, describing the `content` field type (e.g., serialized `OutputPart[]`, `ToolCallRequest`, raw prompt text) and what `MODIFY` is permitted to change. Define whether `MODIFY` on `PreAuth` or `PostAuth` is legal (these are unusual cases). At minimum, document `PostAgentOutput` (likely `OutputPart[]`) and `PreToolResult` (likely `ToolCallRequest` and its result) as these are the highest-value hooks for content safety.
 
+**Resolution:** Section 4.8 now includes a comprehensive "Interceptor phase payload specification" table covering all 8 phases (`PreAuth`, `PostAuth`, `PreRoute`, `PreDelegation`, `PreMessageDelivery`, `PostRoute`, `PreToolResult`, `PostAgentOutput`). Each row specifies the `content` field payload type (e.g., serialized MCP request envelope, `TaskSpec`, `OutputPart[]`, tool result object), a description of what the payload contains, and the permitted `MODIFY` semantics including what fields may and may not be changed. `PreAuth` and `PostAuth` are documented as unusual `MODIFY` cases. The `PreMessageDelivery` phase (added by SEC-105) is included.
+
 ---
 
-### POL-004 `fail-open` Interceptors Can Be Ordered Before Security-Critical Interceptors — No Priority Floor Enforced [High]
+### POL-004 `fail-open` Interceptors Can Be Ordered Before Security-Critical Interceptors — No Priority Floor Enforced [High] — Fixed
 
 **Section:** 4.8
 
@@ -81,9 +85,11 @@ An external interceptor registered at priority 50 with `failPolicy: fail-open` w
 **Recommendation:**
 Define a minimum priority floor for external interceptors (e.g., external interceptors may not register at priorities ≤ 100, reserving the 1–100 range for built-in security-critical interceptors). Document what session/auth context is available in `InterceptRequest.metadata` at each phase. Consider making priorities below the `AuthEvaluator` threshold an admin-only capability requiring explicit opt-in.
 
+**Resolution:** Section 4.8 was updated with three changes: (1) The `priority` field description in the interceptor registration table now states that external interceptors must use priority > 100, with priorities 1–100 reserved for built-in security-critical interceptors. (2) A new "Priority reservation" paragraph specifies that the gateway validates this constraint at registration time and rejects external interceptors with priority ≤ 100 with an `INVALID_INTERCEPTOR_PRIORITY` error, preventing MODIFY actions before auth and fail-open audit gaps from unauthenticated contexts. (3) A new "Authentication context availability" paragraph documents what `InterceptRequest.metadata` contains at each priority tier: transport-level info only for priority ≤ 100 (built-in), and full authenticated identity for priority > 100 (all external interceptors).
+
 ---
 
-### POL-005 Lease Extension "Success" Semantics Under Budget Ceiling Misrepresent Actual Grants — Silent Underfunding [High]
+### POL-005 Lease Extension "Success" Semantics Under Budget Ceiling Misrepresent Actual Grants — Silent Underfunding [High] — Fixed
 
 **Section:** 8.6
 
@@ -93,6 +99,8 @@ This design creates a class of "ghost approvals": sessions that believe they hav
 
 **Recommendation:**
 Distinguish between "your request was processed" (the elicitation ran) and "you received budget" (the actual grant). Return the granted amount in the extension response. If the grant is zero (ceiling already reached), return a specific status code (e.g., `CEILING_REACHED`) so the adapter can fail the session cleanly rather than looping. Define the adapter behavior when `additionalTokenBudget = 0` in the extension response: it should propagate a `BUDGET_EXHAUSTED` error to the runtime, not retry the extension.
+
+**Resolution:** Section 8.6 was updated in three places: (1) The trigger paragraph now specifies adapter behavior for each response status — on `GRANTED`/`PARTIALLY_GRANTED` the adapter retries the LLM call, on `CEILING_REACHED` (zero grant) the adapter propagates `BUDGET_EXHAUSTED` as a terminal error without retrying, on `REJECTED` the adapter also propagates `BUDGET_EXHAUSTED`. (2) The `auto` mode description now returns explicit statuses (`GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`) instead of blanket "success." (3) The elicitation mode step 3 was rewritten: extension responses now include granted amounts (`grantedTokenBudget`, etc.), with four explicit statuses (`GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, `REJECTED`). Zero-grant responses return `CEILING_REACHED` instead of success, and the adapter is prohibited from retrying after `CEILING_REACHED`. The cheat sheet row 13 was also updated to reflect the new response statuses.
 
 ---
 
@@ -203,7 +211,7 @@ The `messagingScope` setting controls which sessions can message each other (`di
 The admission table (Section 11.1) does not list inter-session messaging as a controlled resource at any granularity. Given that `taskId` values are UUIDs (potentially guessable via enumeration), a session in one tenant could attempt to message a session in another tenant by guessing or leaking a `taskId`. The spec's RLS-based tenant isolation in Postgres would prevent data leakage from SessionStore reads, but the gateway's routing layer would need to validate tenant ownership of the target session before delivering the message.
 
 **Recommendation:**
-Explicitly state that `lenny/send_message` and `lenny/send_to_child` validate that the target `task_id` belongs to the same tenant as the calling session (enforced at the gateway layer before any SessionStore lookup). Add this to the admission control table as "Inter-session message delivery: per-tenant." Add a test case to the integration test suite verifying that cross-tenant message delivery is rejected.
+Explicitly state that `lenny/send_message` validates that the target `task_id` belongs to the same tenant as the calling session (enforced at the gateway layer before any SessionStore lookup). Add this to the admission control table as "Inter-session message delivery: per-tenant." Add a test case to the integration test suite verifying that cross-tenant message delivery is rejected.
 
 ---
 

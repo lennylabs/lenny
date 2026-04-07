@@ -42,7 +42,7 @@ Phases 5–11 are described as using the echo runtime (Phase 5 note) and basic c
 
 ---
 
-### BLD-002 Policy Engine (Phase 7) Operates Without Auth Infrastructure Validation [High]
+### BLD-002 Policy Engine (Phase 7) Operates Without Auth Infrastructure Validation [High] — Fixed
 
 **Section:** 18 (Phase 4, Phase 4.5, Phase 5, Phase 7)
 
@@ -56,9 +56,11 @@ The practical risk: Phase 7 can be built only once JWT/OIDC validation is wired 
 
 **Recommendation:** Add an explicit "Authentication infrastructure" deliverable to Phase 4 or 4.5 covering OIDC/OAuth 2.1 JWT validation, `tenant_id` claim extraction, `UserStateStore` integration, and basic multi-tenant JWT fixtures used in CI. Name this explicitly in the phase milestone column so it is verifiable.
 
+**Resolution:** Phase 4.5 in Section 18 was expanded with an explicit "Authentication infrastructure" deliverable covering OIDC/OAuth 2.1 JWT validation wired into the gateway (referencing Section 10.2), `tenant_id` claim extraction and propagation, `UserStateStore` integration for role resolution, and multi-tenant JWT test fixtures in CI covering all three built-in roles across multiple tenants. The deliverable is explicitly named as the auth-complete milestone that Phase 7's `AuthEvaluator` depends on. The phase milestone text was updated to include "authentication verified for multi-tenant scenarios" as a verifiable gate.
+
 ---
 
-### BLD-003 mTLS PKI Required Before Phase 3 But No Phase Installs cert-manager [High]
+### BLD-003 mTLS PKI Required Before Phase 3 But No Phase Installs cert-manager [High] — Fixed
 
 **Section:** 18 (Phase 3, Phase 3.5); Section 10.3
 
@@ -70,9 +72,11 @@ Without a named phase for mTLS PKI, the Phase 2 milestone ("Can start an agent s
 
 **Recommendation:** Add "mTLS PKI setup: cert-manager installation, ClusterIssuer configuration, gateway and pod certificate issuance, trust bundle distribution" as an explicit deliverable in Phase 2 or Phase 3. Confirm in Phase 3.5's milestone text that mTLS is verified end-to-end in integration tests (not just admitted by policy). Phase 14 can then refer to "advanced certificate rotation hardening" building on Phase 3's baseline.
 
+**Resolution:** Phase 3 in Section 18 was expanded with an explicit "mTLS PKI setup" deliverable covering cert-manager installation, `ClusterIssuer` configuration, certificate issuance for gateway replicas and controller, and trust bundle distribution to agent pods, with mTLS enforcement on the gateway-pod gRPC channel (referencing Section 10.3). The phase milestone was updated to include "gateway↔pod mTLS operational." Phase 3.5 was expanded with an "mTLS end-to-end verification" deliverable: integration tests confirming gateway↔pod and gateway↔controller mTLS is functional, certificate auto-renewal works, and plain-text connections are rejected. The Phase 3.5 milestone was updated to include "mTLS verified end-to-end."
+
 ---
 
-### BLD-004 Load Testing Arrives After Full Security Hardening is Impossible to Validate [High]
+### BLD-004 Load Testing Arrives After Full Security Hardening is Impossible to Validate [High] — Fixed
 
 **Section:** 18 (Phase 13.5, Phase 14); Section 16.5
 
@@ -94,9 +98,11 @@ The spec's own load testing mandate (Section 16.5) says: "Before GA, load tests 
 
 **Recommendation:** Rename Phase 13.5's milestone to "Pre-hardening load baseline: identify bottlenecks, document capacity ceiling, not final SLO validation." Add a Phase 14.5 (or integrate into Phase 14's milestone) that re-runs load tests after security hardening is complete to produce the final SLO validation required for GA. Alternatively, reorder so Phase 14 precedes Phase 13.5, accepting the sequencing cost of hardening before load testing.
 
+**Resolution:** Phase 13.5 in Section 18 was renamed from "Load testing and capacity planning" to "Pre-hardening load baseline" with milestone text updated to "Pre-hardening load baseline established; bottlenecks identified; capacity plan documented" — explicitly framing it as baseline measurement, not final SLO validation. A new Phase 14.5 ("Post-hardening SLO re-validation") was added after Phase 14, requiring re-run of all Phase 13.5 load test scenarios with full security hardening active (image signing, advanced NetworkPolicy, seccomp profiles, hardened security contexts), comparison against Phase 13.5 baselines, and confirmation that all Section 16.5 SLOs hold. Phase 14.5 is designated as the final GA gate for SLO compliance. Section 16.5's benchmark requirement was updated to reference both phases: Phase 13.5 for baselines, Phase 14.5 for final validation.
+
 ---
 
-### BLD-005 Echo Runtime Cannot Test Key Phase 5–8 Behaviors, Gap Not Quantified [High]
+### BLD-005 Echo Runtime Cannot Test Key Phase 5–8 Behaviors, Gap Not Quantified [High] — Fixed
 
 **Section:** 18 (Phase 2, Phase 5 note, Phase 9); Section 17.4 (zero-credential mode)
 
@@ -110,6 +116,8 @@ This creates a window (Phases 5–8) where the following behaviors cannot be tes
 The spec acknowledges the delegation gap and introduces `delegation-echo` in Phase 9, but does not acknowledge or address the streaming, quota, and checkpoint testing gaps for Phases 6–8.
 
 **Recommendation:** Define a `streaming-echo` test runtime (or extend the existing echo runtime) that: (a) reports simulated token usage per message via `ReportUsage`, (b) simulates mid-stream disconnection and reconnect, and (c) implements the Full-tier lifecycle channel (`checkpoint_request`/`checkpoint_ready`). This runtime should ship no later than Phase 5.5 so Phases 6, 7, and 8 can be validated with meaningful CI coverage before real LLM provider integration.
+
+**Resolution:** A note was added to Section 18 after Phase 5.5 acknowledging the CI testing gap for Phases 6-8. The note clarifies that while Phase 5.5 enables real LLM provider testing from Phase 6 onward (sufficient for integration testing), CI pipelines should not depend exclusively on real credentials for milestone validation. It enumerates the specific echo runtime limitations (no streaming output, no `ReportUsage`, no Full-tier lifecycle channel) and requires that Phase 6-8 milestones be validatable in CI without external LLM credentials — either by extending the echo runtime or introducing an additional test runtime, following the `delegation-echo` (Phase 9) pattern. The exact test runtime design is left as an implementation detail rather than prescribed in the spec, consistent with the spec's role as design guidance rather than implementation prescription.
 
 ---
 
@@ -241,10 +249,10 @@ Phases 12b, 12c, and 16 are off the critical path and could be resourced separat
 | ID | Title | Severity |
 |----|-------|----------|
 | BLD-001 | Token/Connector Service ships too late for its declared role | Critical — VALIDATED/FIXED |
-| BLD-002 | Policy engine (Phase 7) operates without auth infrastructure validation | High |
-| BLD-003 | mTLS PKI required before Phase 3 but no phase installs cert-manager | High |
-| BLD-004 | Load testing arrives after full security hardening is impossible to validate | High |
-| BLD-005 | Echo runtime cannot test key Phase 5–8 behaviors, gap not quantified | High |
+| BLD-002 | Policy engine (Phase 7) operates without auth infrastructure validation | High — Fixed |
+| BLD-003 | mTLS PKI required before Phase 3 but no phase installs cert-manager | High — Fixed |
+| BLD-004 | Load testing arrives after full security hardening is impossible to validate | High — Fixed |
+| BLD-005 | Echo runtime cannot test key Phase 5–8 behaviors, gap not quantified | High — Fixed |
 | BLD-006 | ADR authoring has no dedicated phase | Medium |
 | BLD-007 | Helm chart and production packaging have no named phase | Medium |
 | BLD-008 | Compliance validation phase is absent | Medium |

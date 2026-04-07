@@ -39,7 +39,7 @@ A deployer enabling `concurrencyStyle: workspace` with `maxConcurrent: 8` across
 
 ## High
 
-### EXM-002 Task Mode Pod Scrub: "warn" Default Allows Residual State on Repeated Failures [High]
+### EXM-002 Task Mode Pod Scrub: "warn" Default Allows Residual State on Repeated Failures [High] — Fixed
 **Section:** 5.2
 
 The `onCleanupFailure: warn` behavior is the default. When the Lenny scrub fails its own verification step (step 6 — stat-checking workspace path, `/tmp`, and `/dev/shm` are non-empty), the pod is returned to the available pool with only a `scrub_warning` annotation. The spec acknowledges this as "best-effort, not a security boundary" and the deployer acknowledgment flag makes this explicit for tenants.
@@ -53,9 +53,11 @@ Additionally, the "best-effort, not a security boundary" phrasing, while technic
 2. Expand the "best-effort, not a security boundary" statement to enumerate the specific residual state vectors that scrub cannot address (named pipes, shared memory segments not under managed paths, kernel TCP state, inotify). This gives deployers accurate information to decide whether task mode is appropriate for their workload's sensitivity.
 3. Add `lenny_task_pod_scrub_failure_count` as a per-pod gauge metric (distinct from `lenny_task_scrub_failure_total`) to let operators identify specific pods accumulating failures before manual intervention is needed.
 
+**Resolution:** All three recommendations implemented. (1) `maxScrubFailures` field added to `taskPolicy` (default: `3`) across all three YAML examples in sections 5.1 and 5.2; when a pod's cumulative scrub failure count reaches the limit, the pod is retired and terminated regardless of `onCleanupFailure` setting, with replacement provisioned from the warm pool. (2) The "best-effort, not a security boundary" statement now enumerates specific residual state vectors that scrub cannot address: POSIX shared memory segments by IPC ID, kernel TCP `TIME_WAIT` state, DNS resolver cache timing, kernel buffer/page cache priming, `inotify`/`fanotify` watch registrations, and named pipes or UNIX domain sockets outside managed paths. (3) `lenny_task_pod_scrub_failure_count` added as a per-pod gauge metric (labeled by `pod_name`, `pool`, `runtime_class`) both in the `onCleanupFailure: warn` behavior text and in the observability metrics table (Section 16).
+
 ---
 
-### EXM-003 Concurrent-Workspace Slot Failure: Gateway Retry Semantics Unspecified [High]
+### EXM-003 Concurrent-Workspace Slot Failure: Gateway Retry Semantics Unspecified [High] — Fixed
 **Section:** 5.2
 
 Section 5.2 states that when a slot fails, "The gateway is notified via the lifecycle channel and may retry or report the failure to the client." The operative word "may" leaves retry behavior unspecified. The following questions are unanswered:
@@ -73,9 +75,11 @@ The pre-attached session retry policy (Section 6.2) is fully specified: max 2 re
 2. Specify whether a retried slot gets a fresh workspace (staging materialized from scratch) or inherits any state from the failed slot. The spec should say "always fresh workspace for retried slots."
 3. Define the error returned to the client when a slot fails and either no retry is attempted or all retries are exhausted, including the error category and whether it is marked retryable from the client's perspective.
 
+**Resolution:** All three recommendations implemented. (1) Section 5.2 now includes a "Concurrent-workspace slot retry policy" subsection specifying: max 1 retry on a new slot (same pod if available, different pod if saturated/unhealthy), exponential backoff not applied (single retry only). (2) Non-retryable failure categories explicitly enumerated: OOM, workspace validation error, and policy rejection — these are returned to the client immediately without retry. (3) Fresh workspace guarantee specified: retried slots always receive workspace staging materialized from scratch, never inheriting state from the failed slot. (4) Whole-pod replacement trigger added: when `ceil(maxConcurrent / 2)` or more slots fail within a rolling 5-minute window, the pod is marked unhealthy and replaced from the warm pool. (5) Client error structure defined for retry exhaustion and non-retryable failures, including `error.category`, `error.retryable: false`, and `error.slotId`. The ambiguous "may retry" language replaced with a reference to the new policy.
+
 ---
 
-### EXM-004 Task Mode Pod Lifecycle: No Maximum Pod Age or Maximum Reuse Count [High]
+### EXM-004 Task Mode Pod Lifecycle: No Maximum Pod Age or Maximum Reuse Count [High] — Fixed
 **Section:** 5.2, 6.2
 
 The spec describes task mode pods being reused across "multiple sequential tasks" and the `mode_factor` formula references `avg_tasks_per_pod_lifetime` — implying some limit exists — but there is no `maxTasksPerPod`, `maxPodAge`, or retirement policy defined anywhere in the spec. The pod state machine (Section 6.2) has no transition that accounts for task-mode pod retirement after accumulated reuse.
@@ -92,9 +96,11 @@ Second, the `mode_factor = avg_tasks_per_pod_lifetime` scaling formula has no gr
 3. Update the pod state machine diagram (Section 6.2) to include a `task_cleanup` intermediate state between task completion and return to `idle`, and a `draining` transition from `idle` when `maxTasksPerPod` is reached.
 4. Document the formula assumption explicitly: "the `mode_factor` estimate converges toward the configured `maxTasksPerPod` for predictable workloads; for variable workloads, use observed `lenny_task_reuse_count` p50."
 
+**Resolution:** All four recommendations implemented. (1) `maxTasksPerPod` added as a required field (no default) to `taskPolicy` across all three YAML examples in sections 5.1 and 5.2; the pool controller rejects task-mode pool definitions that omit it, and CRD validation enforces `maxTasksPerPod > 0`. (2) `maxPodUptimeSeconds` added as an optional field to `taskPolicy` across all three YAML examples; when the pod's wall-clock uptime exceeds this value, it transitions to `draining` after the current task completes. (3) Section 6.2 pod state machine updated with a full task-mode state transition diagram including `task_cleanup` as an intermediate state between `attached` and `idle`/`draining`, with transitions for scrub success, scrub failure, `maxTasksPerPod` reached, `maxPodUptimeSeconds` exceeded, and `onCleanupFailure: fail`. (4) The `mode_factor` formula documentation in the Execution Mode Scaling Implications subsection now explicitly states that the estimate converges toward `maxTasksPerPod` for predictable workloads and is bounded above by it, with guidance to use observed `lenny_task_reuse_count` p50 for variable workloads. Additionally, `lenny_task_pod_retirement_total` metric added to the observability table (Section 16) labeled by retirement reason.
+
 ---
 
-### EXM-005 Cross-Tenant Task Mode Reuse via microvm: Missing Acknowledgment Gate [High]
+### EXM-005 Cross-Tenant Task Mode Reuse via microvm: Missing Acknowledgment Gate [High] — Fixed
 **Section:** 5.2
 
 Section 5.2 states: "Cross-tenant pod reuse is only permitted with `microvm` isolation, where the VM boundary provides a hardware-level security domain between assignments." This is an important policy exception — it creates a carve-out from the tenant-pinning rule. However:
@@ -109,6 +115,8 @@ Section 5.2 states: "Cross-tenant pod reuse is only permitted with `microvm` iso
 1. Add an explicit `allowCrossTenantReuse: true` field to `taskPolicy` that is only accepted when `isolationProfile: microvm`. The pool controller must reject `allowCrossTenantReuse: true` on non-microvm pools at validation time.
 2. Define a Kata-specific scrub variant in section 5.2 that specifies whether the guest VM is restarted between cross-tenant tasks. If the VM guest is not restarted, document the known residual state vectors. If a guest restart is required, add it to the Lenny scrub procedure steps and note the additional latency cost.
 3. Qualify the "hardware-level security domain" claim to accurately reflect Kata's actual isolation model: "Kata provides a VM-level isolation boundary that is significantly stronger than runc or gVisor, but shares host virtio devices. It is appropriate for cross-tenant task reuse where tenants have been independently vetted but is not equivalent to dedicated hardware isolation."
+
+**Resolution:** All three recommendations implemented. (1) `allowCrossTenantReuse` field added to `taskPolicy` across all three YAML examples in sections 5.1 and 5.2; the pool controller rejects `allowCrossTenantReuse: true` on any pool whose `isolationProfile` is not `microvm` at validation time. Cross-tenant reuse is now an explicit opt-in, not an implicit consequence of isolation profile selection. (2) A Kata-specific scrub variant added to section 5.2: for cross-tenant microvm pods, the default `microvmScrubMode: restart` performs a full guest VM restart after the standard scrub steps 1-6, eliminating all guest-kernel-level residual state (DNS cache, TCP TIME_WAIT, page cache, inotify registrations). An alternative `microvmScrubMode: in-place` mode is available for deployers who accept the latency trade-off, requiring an additional `acknowledgeMicrovmResidualState: true` acknowledgment and documenting the specific residual vectors that persist. (3) The "hardware-level security domain" claim replaced with an accurate characterization: "VM-level isolation boundary that is significantly stronger than runc or gVisor but shares host virtio devices; appropriate for cross-tenant task reuse where tenants have been independently vetted but not equivalent to dedicated hardware isolation."
 
 ---
 

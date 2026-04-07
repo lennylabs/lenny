@@ -59,7 +59,7 @@ For SOC2 (CC7.2), FedRAMP (AU-9), and HIPAA (§164.312(b)) the audit log must be
 
 ## High
 
-### CMP-003 GDPR User-Level Erasure Has No SLA or Completion Guarantee — No Deadline, No Monitoring [High]
+### CMP-003 GDPR User-Level Erasure Has No SLA or Completion Guarantee — No Deadline, No Monitoring [High] — Fixed
 **Section:** 12.8
 
 Section 12.8 defines `DeleteByUser(user_id)` as a background job that "runs to completion and produces an erasure receipt." The data classification table (Section 12.9) states T3 data must be erased "within 72 hours (GDPR-aligned)" and T4 data must be erased "immediately." However:
@@ -76,9 +76,11 @@ GDPR Article 17 requires a response to a right-to-erasure request within one cal
 3. Specify a 72-hour SLA for T3 erasure and immediate (< 1 hour) SLA for T4. Add a `ErasureJobOverdue` alert (Section 16.5) that fires when an erasure job exceeds its tier-specific deadline.
 4. Add the following metrics: `lenny_erasure_job_started_total`, `lenny_erasure_job_completed_total`, `lenny_erasure_job_failed_total`, `lenny_erasure_job_duration_seconds` (histogram).
 
+**Resolution:** Section 12.8 now includes a "User-level erasure invocation" block defining `POST /v1/admin/users/{user_id}/erase` (initiates job, returns job ID) and `GET /v1/admin/erasure-jobs/{job_id}` (status polling with phase, completion percentage, time elapsed, errors). Both endpoints added to the Admin API table in Section 15.1. An "Erasure SLA enforcement" block specifies tier-specific deadlines (72h for T3, 1h for T4) aligned with the classification table in Section 12.9. Section 16.5 adds `ErasureJobOverdue` Warning alert. Metrics `lenny_erasure_job_duration_seconds` (histogram) and `lenny_erasure_jobs_active` (gauge) added to Section 12.8. The recommended per-phase counters (`started_total`, `completed_total`, `failed_total`) were consolidated into the histogram and gauge as sufficient for SLA monitoring at the tech spec level.
+
 ---
 
-### CMP-004 `erasure_salt` for Billing Pseudonymization Is Underdefined — Storage, Rotation, and Key Management Are Absent [High]
+### CMP-004 `erasure_salt` for Billing Pseudonymization Is Underdefined — Storage, Rotation, and Key Management Are Absent [High] — Fixed
 **Section:** 12.8
 
 The billing pseudonymization procedure replaces `user_id` with `SHA-256(user_id || erasure_salt)`. This correctly preserves referential integrity while removing direct identifiers. However, the specification says nothing about:
@@ -97,9 +99,11 @@ Under GDPR, pseudonymization is only a risk-reduction technique (Recital 26), no
 3. Document the salt rotation procedure: on rotation, all previously pseudonymized billing records must be re-hashed with the new salt (a one-time re-encryption job), or the old salt must be retained indefinitely (reducing the security benefit of rotation). Document which approach is taken.
 4. Add a compliance note that pseudonymized billing events with the original salt accessible remain GDPR-regulated personal data. Tenants with `billingErasurePolicy: exempt` must be clearly documented as retaining personal data subject to Article 17(3)(b) — this is done, but the corresponding risk warning about salt security is missing.
 
+**Resolution:** Section 12.8 now includes an "`erasure_salt` key management" block defining the salt as per-tenant, 256-bit, stored in the tenant configuration record in Postgres with KMS envelope encryption (same pattern as OAuth refresh tokens in Section 4.3). The salt is never stored alongside pseudonymized billing values — an adversary with Postgres read access must also compromise KMS to reverse pseudonymization. Access control scopes KMS decrypt permission to the erasure job's service account only. Rotation is documented: old salts are retained in a KMS-encrypted `previous_erasure_salts` array for referential integrity; an optional re-hash migration job is defined for tenants that require old-salt destruction. `POST /v1/admin/tenants/{id}/rotate-erasure-salt` added to the Admin API table in Section 15.1. A GDPR compliance note explicitly states that pseudonymized data remains personal data under Recital 26 and must be treated as T3 — Confidential. The recommendation to store the salt in the Token Service was adapted: storing in the tenant config record with KMS envelope encryption achieves the same separation-of-concerns without adding a Token Service dependency to the erasure job path.
+
 ---
 
-### CMP-005 Data Residency Enforcement Has No Runtime Audit — Violations Detectable Only by Rejections, Not by Independent Monitoring [High]
+### CMP-005 Data Residency Enforcement Has No Runtime Audit — Violations Detectable Only by Rejections, Not by Independent Monitoring [High] — Fixed
 **Section:** 12.8
 
 Section 12.8 describes three enforcement levels for `dataResidencyRegion`: pod pool routing, storage routing, and session-creation validation. These are preventive controls that block out-of-region operations at the time they are attempted. However:
@@ -116,9 +120,11 @@ For regulated industries (GDPR Chapter V, EU financial sector), data residency i
 3. Define the global catalog's data classification: what fields are replicated, which region it lives in, and whether it is excluded from residency constraints (and why, with a documented legal basis for that exclusion).
 4. Add a `lenny-preflight` check that validates `StorageRouter` configuration for all configured regions before accepting a production deployment.
 
+**Resolution:** Section 12.8 now includes a "Data residency audit events" block that defines three audit events: (1) `DataResidencyViolationAttempt` (critical) emitted when the `StorageRouter` rejects a write due to region mismatch or when pod pool routing rejects a delegation with `REGION_CONSTRAINT_VIOLATED` — recording `tenant_id`, `session_id`, requested vs. resolved region, storage backend, and operation; (2) `DataResidencyRegionUnavailable` (warning) emitted on session creation failure due to missing regional infrastructure. Section 16.5 adds a `DataResidencyViolationAttempt` Warning alert. Section 17.6 adds a `StorageRouter region coverage` preflight check that validates all declared regions have reachable storage backends and matching pools, and that tenant `dataResidencyRegion` values map to declared regions. The daily background verification job (recommendation 2) was not adopted — it is operationally heavyweight and the audit events on every storage/routing decision provide continuous monitoring that is more targeted than a periodic sweep. The global catalog data classification concern (recommendation 3) is addressed by finding CMP-009, which defines the catalog schema and classification in detail.
+
 ---
 
-### CMP-006 Billing Correction Events Have No Authorization or Approval Workflow — Any Authorized Writer Can Issue Corrections [High]
+### CMP-006 Billing Correction Events Have No Authorization or Approval Workflow — Any Authorized Writer Can Issue Corrections [High] — Fixed
 **Section:** 11.2.1
 
 Section 11.2.1 defines `billing_correction` events that override original billing records. The correction mechanism is well-designed for append-only immutability (the original record is preserved, corrections carry their own sequence numbers). However, the spec contains no controls over *who* can emit a correction or under what process:
@@ -136,9 +142,11 @@ For SOC2 (CC6.1) and financial record-keeping regulations, billing corrections a
 3. Consider requiring a second-factor confirmation (e.g., the submitting admin must re-authenticate with MFA, or a second `platform-admin` must approve the correction via `POST /v1/admin/billing-corrections/{id}/approve`) for corrections exceeding a configurable threshold (e.g., corrections adjusting more than N% of the original value or affecting more than M sessions in a 24h window).
 4. Add a `BillingCorrectionRateHigh` warning alert (Section 16.5) that fires when correction events exceed a deployer-configured percentage of total billing events in a rolling 24h window.
 
+**Resolution:** Section 11.2.1 now includes a "Billing correction authorization" block that splits corrections into two categories: (1) **Gateway-emitted automated reconciliation** — reason codes `RETRY_OVERCOUNTING`, `GATEWAY_CRASH_RECONSTRUCTION`, and `METERING_BUG` are emitted by the gateway through the normal `EventStore` write path during routine operational reconciliation (crash recovery, retry deduplication, metering self-correction). These are not operator-initiated and do not require the admin API. (2) **Operator-initiated manual corrections** — reason codes `TEST_SESSION_CLEANUP`, `OPERATOR_MANUAL_ADJUSTMENT`, and any deployer-added custom codes are gated behind a dedicated admin endpoint (`POST /v1/admin/billing-corrections`) requiring `platform-admin` RBAC. Both categories require structured `correction_reason_code` fields (replacing the original free-text `correction_reason`), emit `billing.correction_issued` audit events, and count toward the `BillingCorrectionRateHigh` Warning alert (fires when corrections exceed 5% of total billing events in a 24h window). The RBAC permission matrix row is clarified to refer to operator-initiated corrections only; automated gateway corrections are an internal gateway function. The MFA/dual-control recommendation (recommendation 3) was not adopted for v1 — it is over-engineering given the RBAC gating, structured audit trail, and anomaly alerting already provide defense-in-depth. The reason code enum is extensible via admin API to support deployer-specific justification categories.
+
 ---
 
-### CMP-007 Audit Log Retention of 90 Days Is Insufficient for SOC2, FedRAMP, and HIPAA Requirements [High]
+### CMP-007 Audit Log Retention of 90 Days Is Insufficient for SOC2, FedRAMP, and HIPAA Requirements [High] — Fixed
 **Section:** 16.4, 17.9
 
 The default audit event retention is 90 days (Section 16.4, Section 17.9). This is far below the retention periods required by major compliance frameworks:
@@ -155,6 +163,8 @@ The spec notes that "deployers should configure an external log aggregation stac
 2. Add a `ComplianceAuditRetentionLow` warning at startup if audit retention is configured below 365 days and `LENNY_ENV=production`.
 3. Add a `regulatoryAuditRetention` configuration option with named presets: `soc2` (1 year), `fedramp-moderate` (1 year), `fedramp-high` (3 years), `hipaa` (6 years), `custom` (deployer-specified). The preset selection drives the Postgres partition retention policy automatically.
 4. When SIEM is configured, document the responsibility split: Postgres provides short-term queryable storage; the SIEM is the system of record for long-term regulatory retention. The 90-day Postgres window is then defensible as a hot-tier cache.
+
+**Resolution:** Section 16.4 default audit event retention changed from 90 days to 365 days, satisfying SOC2 and FedRAMP Moderate out of the box. A new "Compliance-aware audit retention" block defines named presets (`soc2` at 365 days, `fedramp-high` at 3 years, `hipaa` at 6 years, `nis2-dora` at 5 years, `custom`) configurable via `audit.retentionPreset` or `audit.retentionDays` Helm values. A "SIEM responsibility split" block documents that when SIEM is configured, the SIEM is the system of record for long-term regulatory retention and the Postgres partition serves as a queryable hot tier — in this configuration, shorter Postgres retention is defensible. Section 16.5 adds `AuditRetentionLow` Warning alert that fires at startup when `audit.retentionDays` < 365 in production without a configured SIEM. Section 17.8.1 operational defaults table updated to 365 days. Recommendation 3 (named presets) was adopted. Recommendation 2 (startup warning) was adopted as an alert rather than a hard startup check, consistent with the SIEM-optional approach established by CMP-001.
 
 ---
 

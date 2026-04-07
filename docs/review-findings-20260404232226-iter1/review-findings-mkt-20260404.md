@@ -37,30 +37,36 @@ This is not an engineering problem at the design level — pre-warmed pools on K
 
 ## High Findings
 
-### MKT-002 LangSmith Gap Acknowledgement Has No Response [High]
+### MKT-002 LangSmith Gap Acknowledgement Has No Response [High] — Fixed
 **Section:** 23.0
 
 Section 23 includes one competitor entry with a self-undermining note: "LangSmith Deployment — Now has A2A + MCP + RemoteGraph. Gap with Lenny's delegation model is narrower than originally acknowledged." This is the only competitor entry that explicitly weakens Lenny's own differentiation claim, and it is left unresolved. Section 23.1's second differentiator ("Recursive delegation as a platform primitive") says LangSmith's RemoteGraph "offers graph-level delegation but without per-hop budget/scope controls." That is a real distinction, but the connection between the gap acknowledgement and the rebuttal is never made explicit — a reader has to mentally join Section 23.0 and 23.1 themselves. Worse, the gap note does not address A2A or MCP parity, only delegation.
 
 **Recommendation:** Expand the LangSmith row in Section 23.0 to include the specific rebuttal: what LangSmith/LangGraph has (RemoteGraph, A2A, MCP), what it still does not have (per-hop token budgets and scope controls enforced at the platform layer, runtime-agnostic adapter contract, self-hosted K8s-native deployment), and why those gaps matter for the target personas. This eliminates the awkward appearance of a concession with no answer and gives evaluators a complete comparison in one place.
 
+**Resolution:** Expanded the LangSmith row in Section 23.0 to acknowledge the protocol gap closure (A2A + MCP + RemoteGraph) while stating three specific differentiators LangSmith lacks: (1) per-hop token budget and scope controls at the platform layer, (2) runtime-agnostic adapter contract (LangSmith's protocol support operates within the LangChain ecosystem), and (3) self-hosted Kubernetes-native deployment path. The row now follows the same pattern as the Temporal, Modal, and LangGraph rows — concede what the competitor offers, then state what Lenny adds.
+
 ---
 
-### MKT-003 Hooks-and-Defaults Philosophy Is Not Framed as a Competitive Differentiator [High]
+### MKT-003 Hooks-and-Defaults Philosophy Is Not Framed as a Competitive Differentiator [High] — Fixed
 **Section:** 22.6, 23.1
 
 Section 22.6 describes Lenny's "Hooks-and-Defaults Design Principle" — every cross-cutting AI capability (memory, caching, guardrails, evaluation, routing) is an interface with a sensible default, disabled unless explicitly enabled, fully replaceable. This is a genuine and meaningful architectural position: it is why Lenny does not build in LLM-as-judge, memory extraction, or content classifiers. However, Section 22.6 is buried in the "Explicitly Not Implemented" section, which frames it as a limitation rather than a philosophy. Section 23.1 never mentions it. From a community and market perspective, this principle is actually one of the strongest arguments against LangSmith/LangChain (which bundles its own evaluators, tracing, and memory tightly) and against Modal (which has no agent-specific hooks at all). The hooks-and-defaults position enables Lenny to be the platform layer without competing with the ecosystem tools that adopters are already using.
 
 **Recommendation:** Add a sixth differentiator in Section 23.1 explicitly named "Ecosystem-composable via hooks-and-defaults" that references Section 22.6 and contrasts with LangChain's bundled approach and Modal's absence of hooks. Reframe Section 22.6 itself: move the design principle description to a standalone section (e.g., Section 8.2 or a new Section 1.x under Core Design Principles) and cross-reference it from 22.6 as the governing philosophy. This turns a "we don't do X" note into a deliberate architectural stance that becomes a selling point for ecosystem integrators and enterprise platform teams.
 
+**Resolution:** Added a sixth differentiator to Section 23.1 — "Ecosystem-composable via hooks-and-defaults" — that references Section 22.6 and contrasts with LangChain's bundled approach and Modal's absence of agent hooks. Section 22.6 was reframed in-place to read as a governing architectural principle (not a limitation) with a forward cross-reference to the new differentiator. The content was not moved to Core Design Principles (Section 1) to avoid structural reorganization — Section 22.6 remains the canonical definition, and 23.1 differentiator 6 is the competitive framing.
+
 ---
 
-### MKT-004 Open-Source License Is Never Stated [High]
+### MKT-004 Open-Source License Is Never Stated [High] — Deferred - Input Required
 **Section:** 23.2
 
 Section 23.2 describes Lenny as "designed as an open-source project" and outlines governance (BDfN, ADRs, CONTRIBUTING.md). However, no software license is mentioned anywhere in the spec — not Apache 2.0, MIT, BSL, AGPL, or any other. For a project positioning itself against E2B (AGPL + commercial), Temporal (MIT), LangChain (MIT), and Modal (closed SaaS), the license is a primary adoption signal. Enterprise platform teams (one of the three target personas) have legal review gates that will block evaluation of any project without a clear license. Runtime authors integrating with the adapter contract need to know whether there are copyleft obligations. The omission is particularly jarring given that the spec lists a governance model, contribution guidelines, and community channels — all the machinery of open source except the license.
 
 **Recommendation:** State the intended open-source license in Section 23.2, with a one-sentence rationale for the choice relative to the competitive landscape. If the decision is not yet made, add a note acknowledging it as an open question requiring resolution before Phase 2 (`CONTRIBUTING.md` publication). As a default recommendation: Apache 2.0 is the standard for infrastructure projects in the Kubernetes ecosystem (it is what kubebuilder, controller-runtime, and most CNCF projects use), avoids AGPL friction for enterprise adoption, and is compatible with the `kubernetes-sigs/agent-sandbox` upstream.
+
+**Resolution:** The finding is valid — the license omission is a real gap. However, choosing a specific license is a business/legal decision, not a technical design decision, and cannot be made unilaterally within the spec. An "Open-source license" paragraph was added to Section 23.2 that: (1) acknowledges the license has not yet been selected, (2) sets a deadline of before Phase 2 (before CONTRIBUTING.md publication), (3) lists the evaluation criteria (competitive landscape, enterprise legal gates, copyleft clarity, upstream compatibility), and (4) commits to recording the decision as an ADR. The actual license selection requires project owner input.
 
 ---
 

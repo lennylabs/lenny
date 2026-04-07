@@ -7,7 +7,7 @@
 
 ---
 
-### SCH-001 `OutputPart.type` is an open string with no canonical registry, making protocol translation non-deterministic [High]
+### SCH-001 `OutputPart.type` is an open string with no canonical registry, making protocol translation non-deterministic [High] — Fixed
 
 **Section:** 15.4.1 (Internal `OutputPart` Format), 15.4.1 (Translation Fidelity Matrix)
 
@@ -15,9 +15,11 @@ The spec states `type` is "an open string — not a closed enum" and lists examp
 
 **Recommendation:** Publish a versioned **canonical type registry** (a structured list in the runtime adapter spec, not an enum in code) of platform-defined types and their guaranteed translation behaviour per adapter. Unknown types (anything not in the current registry version) fall back to `text` with `annotations.originalType`. Types can be added to the registry in minor releases; removing or changing translation behaviour is a breaking change. This retains the open-string extensibility while making translation deterministic.
 
+**Resolution:** Added a versioned Canonical Type Registry (v1) to Section 15.4.1 as part of the `type` property description. The registry defines 10 platform-defined types (`text`, `code`, `reasoning_trace`, `citation`, `screenshot`, `image`, `diff`, `file`, `execution_result`, `error`) with their guaranteed translation behavior per adapter (MCP, OpenAI, A2A). Custom types (not in registry) fall back to `text` with `annotations.originalType`. The registry is versioned: additions are minor releases, removals or translation changes are breaking. Updated the Translation Fidelity Matrix `type` row to reference the registry for determining platform-defined vs custom type treatment.
+
 ---
 
-### SCH-002 `MessageEnvelope.from` field is underspecified — no schema for the `from` object, only a prose description [High]
+### SCH-002 `MessageEnvelope.from` field is underspecified — no schema for the `from` object, only a prose description [High] — Fixed
 
 **Section:** 15.4.1 (`MessageEnvelope` — Unified Message Format)
 
@@ -25,9 +27,11 @@ The spec shows `"from": { "kind": "client | agent | system | external", "id": ".
 
 **Recommendation:** Formally specify the `from` object schema: `kind` as a closed enum, and for each `kind`, the exact semantics and format of `id` (e.g., for `agent`: `sess_{id}`, for `external`: the registered connector ID, for `system`: the literal string `"lenny-gateway"`). Document this in the runtime adapter spec published in Section 15.4.
 
+**Resolution:** Added a formal `from` object schema table to the `MessageEnvelope` section in 15.4.1. `kind` is now a closed enum with four values (`client`, `agent`, `system`, `external`). Each `kind` has a defined `id` format: `client_{opaque}` for clients, `sess_{session_id}` for agents (enabling `inReplyTo` routing), the literal `lenny-gateway` for system messages, and `conn_{connector_id}` for external sources. The spec explicitly states that runtimes MUST NOT set these fields and that any runtime-supplied `from` is silently overwritten by the adapter.
+
 ---
 
-### SCH-003 `WorkspacePlan` has no `schemaVersion` field, making durable plans non-evolvable [High]
+### SCH-003 `WorkspacePlan` has no `schemaVersion` field, making durable plans non-evolvable [High] — Fixed
 
 **Section:** 14 (Workspace Plan Schema)
 
@@ -35,15 +39,19 @@ Section 15.5 item 7 establishes that all Postgres-persisted record types carry a
 
 **Recommendation:** Add `schemaVersion: 1` to the `WorkspacePlan` schema and add `WorkspacePlan` to the list of durable record types in Section 15.5 item 7. Apply the same forward-compatibility rules: unknown fields ignored, unknown `schemaVersion` rejected with a structured error.
 
+**Resolution:** Added `"schemaVersion": 1` to the `WorkspacePlan` JSON example in Section 14 as the first field inside the `workspacePlan` object. Added `WorkspacePlan (Section 14)` to the enumerated list of durable record types in Section 15.5 item 7. The existing forward-compatibility rules (immutable once written, reader selects deserialization path by version, unrecognized version rejected with structured error) now apply to `WorkspacePlan` by inclusion in that list.
+
 ---
 
-### SCH-004 `OutputPart.schemaVersion` forward-compatibility contract is one-sided — the "drop unknown fields" rule creates silent data loss for producers [High]
+### SCH-004 `OutputPart.schemaVersion` forward-compatibility contract is one-sided — the "drop unknown fields" rule creates silent data loss for producers [High] — Fixed
 
 **Section:** 15.4.1 (Internal `OutputPart` Format)
 
 The spec states: "consumers MUST ignore unknown fields and MUST NOT reject an `OutputPart` solely because its `schemaVersion` is higher than the consumer understands. When a consumer encounters a `schemaVersion` it does not recognize, it processes the fields it does understand and silently discards the rest." This is standard Postel's Law for forward compatibility. However, the spec provides no guidance for the **producer** side: when a new schema version adds a field that carries semantic weight (e.g., a `citations` field in v2), a v1 consumer that silently drops it may produce a coherent but materially incomplete response to the end user — with no indication that data was lost. For billing events retained 13 months and spanning multiple schema revisions, this silent loss is particularly dangerous.
 
 **Recommendation:** Add a producer-side obligation: when emitting an `OutputPart` with semantically required fields introduced in version N, the producer MUST set `schemaVersion: N`. Consumers that encounter a version they do not recognize SHOULD surface a degradation signal (e.g., a `schema_version_too_new` annotation on the parent message, or a gateway warning event) rather than silently truncating. For billing and audit records, the rejection-at-read rule in Section 15.5 item 7 is stronger and correct — extend that rule explicitly to `OutputPart` when stored as part of a `TaskRecord`.
+
+**Resolution:** Rewrote the `schemaVersion` property description in Section 15.4.1 to establish a two-sided forward-compatibility contract with three distinct obligations: (1) **Producer obligation** — producers MUST set `schemaVersion` to the highest version required by the fields they emit, so consumers can detect schema mismatches. (2) **Consumer obligation for live delivery** — consumers that encounter an unrecognized `schemaVersion` MUST surface a `schema_version_ahead` annotation on the parent `MessageEnvelope` (containing `knownVersion` and `encounteredVersion`) rather than silently discarding unknown fields, ensuring data loss is always visible. (3) **Consumer obligation for durable storage** — when `OutputPart` arrays are persisted within a `TaskRecord`, the rejection-at-read rule from Section 15.5 item 7 applies: readers MUST reject with a structured error rather than dropping fields, since durable records are authoritative and cannot be re-fetched. Also extended Section 15.5 item 7 to explicitly state that the rejection-at-read rule applies to `OutputPart` arrays nested within `TaskRecord`, with a cross-reference back to Section 15.4.1.
 
 ---
 
@@ -179,7 +187,7 @@ Here `type` is a MIME type string (`text/plain`). In `OutputPart`, `type` is a s
 
 **Section:** 7.2 (Delivery receipts)
 
-The `deliveryReceipt` object returned by `lenny/send_message` and `lenny/send_to_child` is:
+The `deliveryReceipt` object returned by `lenny/send_message` is:
 ```json
 {
   "messageId": "msg_abc123",

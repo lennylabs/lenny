@@ -29,7 +29,7 @@ DEL-001 and DEL-002 were identified in a prior review pass and are addressed in 
 
 ## Findings
 
-### DEL-003 Orphan Cleanup Interval and `cascadeTimeoutSeconds` Default Unspecified [High]
+### DEL-003 Orphan Cleanup Interval and `cascadeTimeoutSeconds` Default Unspecified [High] — Fixed
 **Section:** 8.11
 
 The spec documents the `detach` cascade policy and states that "a background job detects task tree nodes whose root session has been terminated and whose `cascadeTimeoutSeconds` has expired." However, three critical details are missing:
@@ -46,9 +46,11 @@ The `detach` policy is the only one where orphaned workloads are intentionally a
 - Emit `lenny_orphan_cleanup_runs_total`, `lenny_orphan_tasks_terminated`, `lenny_orphan_tasks_active` metrics. Alert when `lenny_orphan_tasks_active` exceeds a deployer threshold.
 - Count detached orphan pods and sessions toward their originating user's concurrency quota for the duration of the detached run. Document this explicitly.
 
+**Resolution:** Fixed items 1-3: added `cascadeTimeoutSeconds` default (3600s) with deployer-configurable Helm cap, specified cleanup job interval (60s, configurable), and added three orphan cleanup metrics with alerting guidance. Item 4 (quota counting for orphans) was intentionally deferred: detached orphans are bounded by `cascadeTimeoutSeconds`, making unbounded quota abuse unlikely. A documentation note acknowledges the gap and marks quota-aware orphan accounting as a future enhancement. This avoids adding concurrency-tracking complexity to a rare edge case in v1.
+
 ---
 
-### DEL-004 Credential Propagation `inherit` Has No Capacity Pre-Check [High]
+### DEL-004 Credential Propagation `inherit` Has No Capacity Pre-Check [High] — Fixed
 **Section:** 8.3
 
 The `inherit` credential propagation mode causes all child sessions to draw from the same credential pool as the parent. The spec defines `maxConcurrentSessions` per credential in the pool, but there is no pre-flight check at delegation time that verifies sufficient capacity exists for the about-to-be-created child.
@@ -61,6 +63,8 @@ The spec notes a pre-claim credential check in Section 4.9 (`CREDENTIAL_POOL_EXH
 - At `delegate_task` time, when `inherit` mode is active, validate that the credential pool has at least `1` available slot beyond current active leases (the immediate child). Add a comment that this is a point-in-time check, not a reservation.
 - Document explicitly that `inherit` mode is not suitable for high fan-out trees and recommend `independent` instead when `maxParallelChildren > pool.maxConcurrentSessions / expected_tree_depth`.
 - Alternatively, implement a soft reservation: when the gateway processes `delegate_task` with `inherit`, it atomically reserves a credential slot for the duration of pod startup, releasing it only once `AssignCredentials` succeeds or the pod fails. This closes the race between the pre-claim check and the actual assignment.
+
+**Resolution:** Fixed. Added a credential availability pre-check at `delegate_task` time in Section 8.3: for `inherit` mode, the gateway verifies that the parent's credential pool has at least one assignable slot before claiming a warm pod; for `independent` mode, the target runtime's default pool is checked. The check reuses the same pre-claim logic from Section 4.9 and rejects with `CREDENTIAL_POOL_EXHAUSTED` before pod allocation. The check is explicitly documented as point-in-time (not a reservation) — the existing race-detection metric (`lenny_gateway_credential_preclaim_mismatch_total`) and pod-release-on-failure behavior cover the residual race window. A deployer guidance callout was added warning that `inherit` mode is not suitable for high fan-out trees and recommending `independent` when `maxParallelChildren > pool.maxConcurrentSessions / expected_tree_depth`. Soft reservation was intentionally not implemented: it adds significant complexity (atomic slot holds, timeout-based releases, rollback paths) for a narrow race window that is already observable and recoverable.
 
 ---
 

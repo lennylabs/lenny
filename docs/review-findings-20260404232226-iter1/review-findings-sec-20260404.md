@@ -64,7 +64,7 @@ The spec explicitly states that `minIsolationProfile` is **not extendable** via 
 
 ## High
 
-### SEC-103 SIGSTOP/SIGCONT Embedded-Adapter Path Still Has a Deadlock Window [High]
+### SEC-103 SIGSTOP/SIGCONT Embedded-Adapter Path Still Has a Deadlock Window [High] — VALIDATED/FIXED
 **Section:** 4.4
 
 The prior finding SEC-001 is marked FIXED. The spec now correctly restricts `SIGSTOP`/`SIGCONT` to the embedded adapter mode only, and documents a 60-second watchdog timer and a `defer`-based `SIGCONT` to handle adapter crashes. However, a specific residual gap remains.
@@ -80,9 +80,11 @@ Additionally, the spec relies on the liveness probe targeting the adapter. If th
 2. Document that any Go `recover()` call wrapping the checkpoint goroutine must re-panic or explicitly signal the liveness endpoint as unhealthy if `SIGCONT` cannot be sent.
 3. Add an integration test simulating adapter goroutine panic during SIGSTOP hold to verify the liveness probe fails and Kubernetes restarts the pod.
 
+**Resolution:** Section 4.4 now specifies that the embedded adapter's `/healthz` liveness endpoint MUST incorporate checkpoint state via a shared atomic `checkpointStuck` flag. The watchdog timer sets this flag when a SIGSTOP has been held beyond `watchdogTimeoutSeconds` (default 60s) without checkpoint completion, causing `/healthz` to return HTTP 503 with `{"status": "unhealthy", "reason": "checkpoint_stuck"}`. This ensures the liveness probe fails and Kubernetes restarts the pod even when the adapter's HTTP server is still running. The spec also now forbids silently recovering checkpoint goroutine panics — any `recover()` wrapping checkpoint code must either re-panic or explicitly mark the liveness endpoint unhealthy if SIGCONT cannot be confirmed sent. The integration test recommendation (item 3) is deferred to implementation phase.
+
 ---
 
-### SEC-104 Adapter-Agent Boundary: `SO_PEERCRED` Check Is Insufficient for UID Spoofing in Rootless Containers [High]
+### SEC-104 Adapter-Agent Boundary: `SO_PEERCRED` Check Is Insufficient for UID Spoofing in Rootless Containers [High] — Fixed
 **Section:** 4.7 (Adapter-Agent Security Boundary)
 
 The spec states: "Abstract Unix sockets use `SO_PEERCRED` for peer UID verification — the adapter accepts connections only from the expected agent UID."
@@ -96,9 +98,11 @@ Under gVisor specifically, `SO_PEERCRED` semantics are implemented in gVisor's u
 2. Document that the expected agent UID must be the UID within the container's user namespace, and that the adapter must validate this against the pod spec rather than assuming a fixed UID mapping.
 3. Consider adding a connection-time HMAC-based handshake where the agent proves it read the manifest (which is read-only to the agent container) as an additional proof of identity, independent of `SO_PEERCRED`.
 
+**Resolution:** Fixed. Section 4.7 item 1 now clarifies that UID verification operates within the pod's user namespace (matching `runAsUser` from the pod spec), adds a mandatory manifest-nonce handshake as a defense-in-depth control independent of `SO_PEERCRED`, and requires gVisor `SO_PEERCRED` validation in Phase 3.5 security integration tests with the nonce handshake serving as primary authentication if behavior diverges.
+
 ---
 
-### SEC-105 Prompt Injection via Elicitation Responses in Delegation Chains [High]
+### SEC-105 Prompt Injection via Elicitation Responses in Delegation Chains [High] — Fixed
 **Section:** 9.2, 13.5
 
 Section 13.5 addresses prompt injection via `TaskSpec.input` in `delegate_task`. However, it does not address prompt injection through the elicitation response path.
@@ -111,12 +115,14 @@ The `contentPolicy.interceptorRef` hook is only on `DelegationPolicy` at the `Pr
 
 **Recommendation:**
 1. Add a `PostElicitationResponse` interceptor phase to the `RequestInterceptor` chain (Section 4.8) that fires when an elicitation response is delivered down the chain to a pod. The interceptor receives the response content and can ALLOW, REJECT, or MODIFY it before the pod receives it.
-2. Add a `PreMessageDelivery` interceptor phase that fires before `lenny/send_message` or `lenny/send_to_child` content is written to a session's stdin. Apply `contentPolicy.maxInputSize` to inter-session messages, not only to delegation inputs.
+2. Add a `PreMessageDelivery` interceptor phase that fires before `lenny/send_message` content is written to a session's stdin. Apply `contentPolicy.maxInputSize` to inter-session messages, not only to delegation inputs.
 3. Document this residual attack surface explicitly in Section 22.3 (Explicit Non-Decisions on Guardrails), so deployers understand that elicitation responses and inter-session messages are unscanned injection vectors.
+
+**Resolution:** Fixed (partial — inter-session messaging covered; elicitation responses documented as residual risk). Added `PreMessageDelivery` interceptor phase to the `RequestInterceptor` chain (Section 4.8) that fires before `lenny/send_message` content is delivered to the target session. The target session's `contentPolicy.maxInputSize` and `contentPolicy.interceptorRef` now apply to inter-session messages, not only delegation inputs. Section 13.5 updated with a new item (3) documenting inter-session message scanning. Section 7.2 updated with content policy enforcement paragraph. For elicitation responses: the recommendation to add a `PostElicitationResponse` interceptor phase was assessed as over-engineering for v1 — elicitation responses originate from humans or gateway-registered connectors (both in the trust boundary), not from untrusted agents. Section 22.3 updated to explicitly document elicitation responses as a residual attack surface with the reasoning for why content scanning is not applied to this path.
 
 ---
 
-### SEC-106 Upload Archive Extraction: Zip Bomb and Decompression Ratio Not Bounded [High]
+### SEC-106 Upload Archive Extraction: Zip Bomb and Decompression Ratio Not Bounded [High] — Fixed
 **Section:** 7.4
 
 Section 7.4 documents zip-slip protection, symlink rejection, and that "total extracted size is checked against the per-session upload limit." However, it does not address **decompression ratio** attacks (zip bombs).
@@ -131,9 +137,11 @@ Separately, the spec says "extraction aborts immediately if the limit is exceede
 3. Name the archive extraction library in the spec and add integration tests with known zip bomb payloads (e.g., a 42 KB "42.zip" bomb expanding to 4.5 PB) to verify abort behavior.
 4. Add `lenny_upload_extraction_aborted_total{reason}` (counter, labeled by `zip_bomb` / `size_limit` / `path_traversal`) to the metrics inventory (Section 16.1).
 
+**Resolution:** Fixed. Added zip bomb protection to Section 7.4 with: (1) configurable decompression ratio limit (default 100:1) with cumulative tracking during streaming extraction, (2) per-read size cap via `io.LimitedReader` to prevent unbounded memory allocation from a single `Read()` call, (3) `lenny_upload_extraction_aborted_total{reason}` metric added to Section 16.1 with labels for `zip_bomb`, `size_limit`, `path_traversal`, `symlink`, and `format_error`. Recommendations 3 (naming a specific Go library) and the test payload specifics were not adopted — those are implementation/test-level decisions, not spec-level concerns.
+
 ---
 
-### SEC-107 `callbackUrl` SSRF: DNS Pinning Does Not Prevent Cloud Metadata Endpoint Access [High]
+### SEC-107 `callbackUrl` SSRF: DNS Pinning Does Not Prevent Cloud Metadata Endpoint Access [High] — Fixed
 **Section:** 14
 
 The spec documents DNS pinning and private IP range rejection for `callbackUrl`. However, cloud metadata endpoints (e.g., AWS `169.254.169.254`, GCP `metadata.google.internal` → `169.254.169.254`, Azure `169.254.169.254`) are link-local addresses in the `169.254.0.0/16` range. The spec mentions "link-local addresses" are rejected, which would cover the AWS metadata IP directly.
@@ -147,9 +155,11 @@ Additionally, the spec does not document whether the callback worker's `http.Cli
 2. Enforce the pinned IP at the TCP connect level (via a custom dialer), not via `Host` header matching. The `http.Client.Transport` must use a custom dialer that always connects to the pinned IP regardless of the URL hostname.
 3. Add an integration test that attempts to register a `callbackUrl` resolving to each of the metadata ranges and verifies rejection.
 
+**Resolution:** The spec already rejected link-local (169.254.0.0/16) and RFC 6598 (100.64.0.0/10) ranges via its existing IP range checks, covering the standard cloud metadata IP addresses. Two clarifications were added to close the remaining gaps: (1) URL validation now explicitly rejects well-known cloud metadata hostnames (`metadata.google.internal`, `instance-data`) regardless of resolved IP, as defense-in-depth against non-standard metadata endpoint configurations. (2) DNS pinning now specifies that the callback `http.Client` uses a custom `DialContext` to connect directly to the pinned IP at the TCP level, making the enforcement mechanism explicit rather than ambiguous. Integration tests for metadata range rejection are an implementation concern, not a spec item.
+
 ---
 
-### SEC-108 Semantic Cache Poisoning via Shared Credential Pool Without Tenant Key Isolation [High]
+### SEC-108 Semantic Cache Poisoning via Shared Credential Pool Without Tenant Key Isolation [High] — Fixed
 **Section:** 4.9
 
 The `SemanticCache` interface is backed by Redis by default. Section 12.4 states all Redis keys must use `t:{tenant_id}:` prefix, and Section 12.4 says tenant key isolation is enforced at the Redis wrapper layer. However, Section 4.9's `CachePolicy` schema does not include a `tenantId` dimension, and the semantic cache stores query/response pairs keyed on semantic similarity (embedding vectors).
@@ -163,6 +173,8 @@ This is a data leakage risk: tenant B receives tenant A's LLM response, which ma
 2. Add to Section 4.9: "Semantic cache implementations MUST scope cache lookups and writes to the `tenant_id` of the current session. Cross-tenant cache hits are forbidden regardless of semantic similarity."
 3. Add an integration test that writes a cached response for tenant A and verifies it is not returned for an identical query from tenant B.
 4. For `user`-scoped credential mode where the credential is user-specific, the cache key should additionally include `user_id`, as the response may reflect user-specific context.
+
+**Resolution:** Added a "Tenant and user isolation" paragraph to Section 4.9 Semantic Caching subsection. The paragraph mandates `tenant_id` as a required cache key dimension, requires `user_id` for user-scoped credential mode, specifies that pluggable implementations must enforce equivalent scoping independently of the Redis wrapper, and requires an integration test (`TestSemanticCacheTenantIsolation`). Section 12.4's Redis wrapper enforcement already covered the default implementation; this fix makes the contract explicit at the interface level.
 
 ---
 

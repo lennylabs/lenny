@@ -370,12 +370,14 @@ Unclear which policy controls apply to proxied MCP tool calls.
 
 **Recommendation:** Clarify the limitation. Consider two-phase label approach for per-phase NetworkPolicies.
 
-### NET-011. No Egress Restriction on `lenny-system` Namespace [Medium]
+### NET-011. No Egress Restriction on `lenny-system` Namespace [Medium] — FIXED
 **Section:** 13.2
 
 Gateway, Token Service, and controllers can make arbitrary outbound connections.
 
 **Recommendation:** Apply least-privilege egress per component (Token Service: only Postgres/KMS/Redis; Controller: only API server/Postgres).
+
+**Resolution:** Fixed via NET-017. Section 13.2 now includes a `default-deny-all` NetworkPolicy for `lenny-system` and a component-specific allow-list table documenting permitted egress/ingress for each control-plane component.
 
 ### NET-012. No Internal Segmentation Within `lenny-system` [Low]
 **Section:** 17.2
@@ -2463,7 +2465,7 @@ Message to terminated task silently lost. No TTL, no confirmation, no dead-lette
 
 **Recommendation:** Return error for terminal targets. Queue with TTL for recovering targets. Add delivery receipt.
 
-**Resolution:** Added dead-letter handling to Section 7.2 message delivery routing. Terminal targets (completed/failed/cancelled/expired) return `TARGET_TERMINAL` error immediately. Recovering targets (resume_pending/awaiting_client_action) queue messages in a DLQ with configurable TTL tied to `maxResumeWindowSeconds`. Added `deliveryReceipt` return value to all `send_message`/`send_to_child` calls with status `delivered|queued|error`. Added `message_expired` event for TTL-exceeded DLQ messages. Updated Section 8.5 tool table to reference delivery receipts.
+**Resolution:** Added dead-letter handling to Section 7.2 message delivery routing. Terminal targets (completed/failed/cancelled/expired) return `TARGET_TERMINAL` error immediately. Recovering targets (resume_pending/awaiting_client_action) queue messages in a DLQ with configurable TTL tied to `maxResumeWindowSeconds`. Added `deliveryReceipt` return value to all `send_message` calls with status `delivered|queued|error`. Added `message_expired` event for TTL-exceeded DLQ messages. Updated Section 8.5 tool table to reference delivery receipts.
 
 ### MSG-003. Agent Teams / Sibling Coordination No First-Class Support [High] — RESOLVED
 **Section:** 8.5
@@ -2548,7 +2550,7 @@ Gateway behavior for unreachable target pods undefined.
 
 ### MSG-014. Various Low Findings
 
-Including: no elicitation ordering spec, `threadId` vestigial, one_shot + request_input inconsistency, send_to_child vs send_message redundancy, no output backpressure.
+Including: no elicitation ordering spec, `threadId` vestigial, one_shot + request_input inconsistency, `send_to_child` removed (redundant with `send_message` `direct` scope), no output backpressure.
 
 ---
 

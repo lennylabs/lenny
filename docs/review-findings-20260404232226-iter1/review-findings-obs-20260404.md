@@ -15,39 +15,47 @@ The observability design is substantially developed: Section 16 covers a well-st
 
 ## Findings
 
-### OBS-001 Warm Pool Claim Queue Metrics Absent [High]
+### OBS-001 Warm Pool Claim Queue Metrics Absent [High] — Fixed
 **Section:** 16.1, 4.6.1
 
 The spec defines `lenny_gateway_active_sessions` and `Warm pods available (by pool)` but has no metrics for the claim queue itself. Section 4.6.1 describes a `podClaimQueueTimeout` (default 30s) that queues incoming requests during controller failover, yet there is no `lenny_pod_claim_queue_depth` gauge, no `lenny_pod_claim_queue_wait_seconds` histogram, no `lenny_pod_claim_conflict_total` counter (optimistic-lock retries on `SandboxClaim`), and no `lenny_pod_claim_timeout_total`. The `WarmPoolExhausted` critical alert fires at zero pods but does not fire for queue saturation when pods exist but all are being claimed concurrently. An operator cannot distinguish "pool is fine, claims are batching normally" from "pool is fine, but claim queue is saturated and sessions are timing out" from metrics alone.
 
 **Recommendation:** Add to Section 16.1: `lenny_pod_claim_queue_depth` (gauge, by pool), `lenny_pod_claim_queue_wait_seconds` (histogram, by pool), `lenny_pod_claim_conflict_total` (counter, by pool — tracks optimistic-lock retry events on `SandboxClaim`), `lenny_pod_claim_timeout_total` (counter, by pool). Add a `PodClaimQueueSaturated` warning alert to Section 16.5: queue depth exceeds 50% of `maxConcurrent` session rate for > 30s.
 
+**Resolution:** All four metrics added to Section 16.1 metrics table: `lenny_pod_claim_queue_depth` (gauge), `lenny_pod_claim_queue_wait_seconds` (histogram), `lenny_pod_claim_conflict_total` (counter), and `lenny_pod_claim_timeout_total` (counter), all labeled by pool. `PodClaimQueueSaturated` warning alert added to Section 16.5 with the recommended condition (queue depth > 50% of `maxConcurrent` for > 30s).
+
 ---
 
-### OBS-002 Token Service Has No Metrics or Alert [High]
+### OBS-002 Token Service Has No Metrics or Alert [High] — Fixed
 **Section:** 16.1, 16.5
 
 The Token/Connector Service (Section 4.3) is the only component with KMS decrypt permissions, serves every credential-dependent session start, and has its own circuit breaker (Section 11.6). It is also explicitly called out as a failure mode that blocks new sessions for credential-requiring runtimes. Despite this, Section 16.1 contains zero Token Service metrics and Section 16.5 has no `TokenServiceUnavailable` alert. The LLM Proxy subsystem has three named metrics (Section 4.9: `lenny_gateway_llm_proxy_active_connections`, `_request_duration_seconds`, `_circuit_state`) but they live in body text and are not listed in Section 16.1. The Token Service itself — a separate deployment — has nothing.
 
 **Recommendation:** Add to Section 16.1: `lenny_token_service_request_duration_seconds` (histogram, by operation: `assign`, `rotate`, `refresh`), `lenny_token_service_errors_total` (counter, by error type), `lenny_token_service_circuit_state` (gauge: 0=closed, 1=half-open, 2=open). Also add the three LLM Proxy metrics already named in Section 4.9 to the Section 16.1 table so they appear in the canonical list. Add to Section 16.5 a critical alert `TokenServiceUnavailable`: Token Service circuit breaker in open state for > 30s (new sessions requiring credentials will fail; existing sessions are unaffected until lease expiry).
 
+**Resolution:** Added a "Token Service" block to Section 16.1 with four metrics: `lenny_token_service_request_duration_seconds` (histogram), `lenny_token_service_errors_total` (counter), `lenny_token_service_circuit_state` (gauge), and `lenny_token_service_secret_reloads_total` (counter, already existed in Section 4.9 body text from OPS-003 fix but was missing from the canonical table). Added an "LLM Proxy (Gateway Subsystem)" block to Section 16.1 with the three metrics from Section 4.9: `lenny_gateway_llm_proxy_active_connections`, `lenny_gateway_llm_proxy_request_duration_seconds`, and `lenny_gateway_llm_proxy_circuit_state`. Added `TokenServiceUnavailable` critical alert to Section 16.5.
+
 ---
 
-### OBS-003 Gateway Per-Subsystem Metrics Are Named in Body Text Only [High]
+### OBS-003 Gateway Per-Subsystem Metrics Are Named in Body Text Only [High] — Fixed
 **Section:** 16.1, 4.1
 
 Section 4.1 promises "per-subsystem metrics: Latency histograms, error rates, and queue depth are emitted per subsystem." Section 4.9 names three LLM Proxy metrics explicitly. But Section 16.1 — the canonical metrics table — does not enumerate any per-subsystem metrics for Stream Proxy, Upload Handler, or MCP Fabric. If engineers build from Section 16.1 only (the natural implementation reference), these metrics will not be instrumented. There are also no circuit breaker state metrics for any subsystem, meaning a tripped circuit breaker (e.g., Upload Handler in open state) is invisible until users report 503s on uploads.
 
 **Recommendation:** Add to Section 16.1 a "Gateway Subsystems" block with explicit metric names for all four subsystems: `lenny_gateway_{subsystem}_request_duration_seconds` (histogram), `lenny_gateway_{subsystem}_errors_total` (counter), `lenny_gateway_{subsystem}_queue_depth` (gauge), `lenny_gateway_{subsystem}_circuit_state` (gauge), where `{subsystem}` ∈ {`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`}. Add a `GatewaySubsystemCircuitOpen` warning alert to Section 16.5 that fires when any subsystem circuit breaker is in open state for > 60s.
 
+**Resolution:** Replaced the single "LLM Proxy (Gateway Subsystem)" block in Section 16.1 with a broader "Gateway Subsystems" block containing four templated metrics across all four subsystems (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`): `lenny_gateway_{subsystem}_request_duration_seconds` (histogram), `lenny_gateway_{subsystem}_errors_total` (counter), `lenny_gateway_{subsystem}_queue_depth` (gauge), and `lenny_gateway_{subsystem}_circuit_state` (gauge). Retained `lenny_gateway_llm_proxy_active_connections` as an additional LLM-Proxy-specific metric. Added a cross-reference note linking the templated metrics to the Section 4.1 per-subsystem contract and the extraction-threshold metrics table. Added `GatewaySubsystemCircuitOpen` warning alert to Section 16.5 (any subsystem circuit breaker in open state for > 60s).
+
 ---
 
-### OBS-004 No Warm Pool Replenishment Rate or Cold-Start Latency Metrics [High]
+### OBS-004 No Warm Pool Replenishment Rate or Cold-Start Latency Metrics [High] — Fixed
 **Section:** 16.1, 16.5
 
 The spec tracks `Warm pods available` and `Time-to-claim` but has no metric for how fast the pool is being replenished after claims drain it. Without a `lenny_warmpool_pod_startup_duration_seconds` histogram (from pod creation to `idle` state) or a `lenny_warmpool_replenishment_rate` gauge (pods becoming ready per minute, by pool), operators cannot determine whether a `WarmPoolLow` warning is self-correcting (pool is refilling fast) or is trending toward `WarmPoolExhausted` (startup latency is high). The spec's formula for `minWarm` depends on `pod_warmup_seconds`, but there is no metric that surfaces the actual observed startup duration for operators to validate the formula against. Similarly, when `minWarm: 0` pools serve cold-start sessions, there is no `lenny_warmpool_cold_start_latency_seconds` histogram to quantify the cold-start penalty referenced throughout the spec (Sections 4.6.1, 5.2, 6.1).
 
 **Recommendation:** Add to Section 16.1: `lenny_warmpool_pod_startup_duration_seconds` (histogram, by pool, by isolation profile — time from pod creation to `idle` state), `lenny_warmpool_replenishment_rate` (gauge, pods/min entering `idle` state, by pool), `lenny_warmpool_cold_start_total` (counter, by pool — increments when a session is served from a cold pod). Add a `WarmPoolReplenishmentSlow` warning alert to Section 16.5: P95 pod startup duration > 2× the pool's configured `pod_warmup_seconds` baseline for > 5 min.
+
+**Resolution:** Added a "Warm Pool Replenishment" block to Section 16.1 with four metrics: `lenny_warmpool_pod_startup_duration_seconds` (histogram, by pool and isolation profile), `lenny_warmpool_replenishment_rate` (gauge, pods/min by pool), `lenny_warmpool_cold_start_total` (counter, by pool), and `lenny_warmpool_fill_duration_seconds` (histogram, by pool — already defined in Section 4.6.1 from the K8S-003 fix but was missing from the canonical Section 16.1 table). Added `WarmPoolReplenishmentSlow` warning alert to Section 16.5 (P95 pod startup duration > 2x configured `pod_warmup_seconds` for > 5 min).
 
 ---
 

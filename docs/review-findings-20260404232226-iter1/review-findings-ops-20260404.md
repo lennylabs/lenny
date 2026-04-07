@@ -52,7 +52,7 @@ This is categorized Critical because a stuck finalizer degrades warm pool capaci
 
 ## High Findings
 
-### OPS-003 Bootstrap Plane vs. Operational Plane Split Incomplete — Credential Pool Secrets Require Kubernetes Secrets [High]
+### OPS-003 Bootstrap Plane vs. Operational Plane Split Incomplete — Credential Pool Secrets Require Kubernetes Secrets [High] — VALIDATED/FIXED
 **Section:** 15.1, 4.9, 17.6
 
 The spec defines a clean bootstrap/operational plane split: bootstrap infrastructure (DB URLs, Redis, MinIO, KMS, cert paths) is Helm-only; operational config (runtimes, pools, delegation policies, credential pools) is admin-API-managed. However, the credential pool configuration in Section 4.9 references Kubernetes Secrets directly:
@@ -69,9 +69,11 @@ This `secretRef` is a Kubernetes Secret reference baked into credential pool def
 
 **Recommendation:** (1) Add a documented workflow for the credential lifecycle: create the K8s Secret → register the credential pool via admin API (or bootstrap seed), and for rotation: update the K8s Secret → the Token Service picks up the new value (describe the mechanism — does the Token Service watch the secret? Is a pool reload required?). (2) Clarify whether the Token Service watches the referenced K8s Secrets for changes or requires an explicit reload/notification. If a reload is required, document the admin API call for it. (3) For GitOps users, describe the recommended pattern for managing credential secrets (e.g., external-secrets-operator populating `lenny-system/anthropic-key-*` from a vault, combined with the bootstrap seed for pool definitions).
 
+**Resolution:** Section 4.9 now includes a "Credential Lifecycle and Secret Management" subsection that addresses all three concerns: (1) Documents the initial setup workflow (create K8s Secrets first, then register pool via admin API or bootstrap seed) and explicitly states that the bootstrap Job does not create Secrets. (2) Specifies that the Token Service uses a Kubernetes informer (watch) on Secrets in `lenny-system` with a 30s resync interval — no explicit reload is required after Secret updates. Documents the `lenny_token_service_secret_reloads_total` metric for observability. (3) Documents the credential rotation workflow: update the Secret only (no pool definition change needed), Token Service picks up the new value automatically, existing leases expire naturally or can be force-rotated via the revocation endpoint. (4) Provides a GitOps pattern using external-secrets-operator for Secret management combined with bootstrap seed for pool definitions, including ArgoCD sync-wave ordering guidance.
+
 ---
 
-### OPS-004 Expand-Contract Migration Requires Three Separate Deployments — No Guidance on Timeline or Minimum Cadence [High]
+### OPS-004 Expand-Contract Migration Requires Three Separate Deployments — No Guidance on Timeline or Minimum Cadence [High] — Fixed
 **Section:** 10.5
 
 The spec correctly requires expand-contract schema migrations: Phase 1 (add new columns, deploy code writing both old and new), Phase 2 (switch reads to new schema), Phase 3 (drop old columns). Each phase is "a separate migration file and a separate deployment." This is sound practice, but the spec provides no guidance on:
@@ -82,9 +84,11 @@ The spec correctly requires expand-contract schema migrations: Phase 1 (add new 
 
 **Recommendation:** Add an "Expand-contract operation guide" subsection in Section 10.5 covering: (1) the rule that new columns must be nullable until old code no longer runs, (2) the minimum inter-phase wait as a function of `maxSessionAge` (or whatever the maximum record age is for the affected table), (3) idempotency requirements per step (ALTER TABLE ADD COLUMN IF NOT EXISTS is idempotent; DROP COLUMN is not), (4) a worked example showing an actual migration through all three phases with timeline.
 
+**Resolution:** Section 10.5 now includes an "Expand-contract operational rules" block with three concrete rules: (1) All new columns must be `NULL`-able or have a server-side `DEFAULT` until Phase 3 — explicit statement that `NOT NULL` constraints may only be added after all replicas run the new code. (2) Minimum inter-phase wait defined: Phase 2 waits for full Phase 1 rollout; Phase 3 waits for `max(maxSessionAge, longest_record_TTL)` and includes a verification query to confirm no un-migrated records remain. (3) Per-phase idempotency guidance: Phase 1 must use `IF NOT EXISTS` DDL, Phase 3 must use `DROP COLUMN IF EXISTS`, and the existing "idempotent where possible" text now cross-references these specific rules. A full worked example was not added — the concrete rules and verification query are sufficient for a technical spec.
+
 ---
 
-### OPS-005 No Operational Guidance for Adjusting etcd Tuning on a Live Cluster [High]
+### OPS-005 No Operational Guidance for Adjusting etcd Tuning on a Live Cluster [High] — Fixed
 **Section:** 4.6.1
 
 Section 4.6.1 provides detailed etcd operational tuning: compaction settings, defragmentation schedule, quota monitoring, snapshot frequency. However, all guidance is written as initial configuration. There is no guidance on:
@@ -97,9 +101,11 @@ At Tier 3, etcd defrag is scheduled "every 12h off-peak" — on a production clu
 
 **Recommendation:** Add an etcd operations runbook to Section 17.7 covering: (1) the `etcdctl defrag --cluster` command and when to use cluster-wide vs single-member defrag, (2) how to safely change compaction settings on a managed Kubernetes cluster (where etcd flags are set by the cloud provider), (3) the recovery procedure if etcd enters alarm state including `etcdctl alarm disarm` and the required preconditions, (4) the on-call escalation path for etcd-related incidents that cannot be resolved at the Lenny operator level (e.g., cloud-provider etcd unavailability).
 
+**Resolution:** Addressed in two places. Section 4.6.1's "etcd operational tuning" block now includes inline operational caveats for each tuning parameter: (1) Compaction — notes that these are startup flags requiring rolling member restarts to change, and that managed K8s providers control these flags directly. (2) Defragmentation — warns that `etcdctl defrag` blocks reads/writes on the target member, specifies follower-first-then-leader ordering, explicitly advises against `--cluster` in production, notes that managed K8s handles defrag automatically, and provides Tier 3 guidance for identifying low-traffic windows. (3) Quota monitoring — adds a full inline recovery procedure for alarm state (defrag, verify space, `etcdctl alarm disarm`, verify writes resume) and notes that managed K8s quota exhaustion requires provider escalation. Section 17.7 now includes an etcd operations runbook entry (`docs/runbooks/etcd-operations.md`) covering all four recommended topics: single-member defrag procedure, compaction setting changes (self-managed and managed K8s), quota exhaustion recovery, and escalation paths with diagnostic metrics to collect.
+
 ---
 
-### OPS-006 Warm Pool Sizing Formula Requires Metric Data Not Available at First Deployment [High]
+### OPS-006 Warm Pool Sizing Formula Requires Metric Data Not Available at First Deployment [High] — Fixed
 **Section:** 4.6.2, 17.8
 
 The PoolScalingController formula in Section 4.6.2 requires `base_demand_p95`, `burst_p99_claims`, and `pod_warmup_seconds` as inputs. The formula in Section 17.8 similarly requires `peak_claims_per_second` and `burst_p99_claims`. These are metrics derived from historical traffic — they are not available at first deployment. The spec acknowledges this for task mode (`mode_factor` falls back to 1.0 during cold start) but does not address the general case: what value should an operator use for `minWarm` before any traffic has been observed?
@@ -108,9 +114,11 @@ Section 17.8 provides per-tier recommended `minWarm` values (15, 125, 750), but 
 
 **Recommendation:** (1) Add a "First deployment sizing" subsection to Section 17.8 explaining that the formula requires historical metrics and providing a conservative starting recommendation that does not depend on observed traffic (e.g., `minWarm = tier_baseline` as a safe default until traffic data is available). (2) Describe the monitoring workflow for the first week: which metrics to watch (`lenny_warmpool_idle_pod_minutes`, `WarmPoolLow` alert threshold), how to know if `minWarm` is too low (sustained `WarmPoolLow` warnings) or too high (high `lenny_warmpool_idle_pod_minutes`), and how often to recalculate. (3) Add a note that the PoolScalingController cannot auto-configure `minWarm` for a new pool because it has no demand signal — the initial value must always be set manually.
 
+**Resolution:** Section 4.6.2 now includes a "Cold-start limitation" paragraph explicitly stating that the formula inputs are not available at first deployment and that operators must set `minWarm` manually, with a cross-reference to Section 17.8.2. Section 17.8.2 now includes: (1) a "First deployment sizing" paragraph explaining the assumptions behind per-tier `minWarm` values (10s warmup, 2x safety margin, single hot pool) and how to adjust for different environments. (2) A "First-week monitoring workflow" with four specific metrics to watch (`lenny_warmpool_idle_pods`, `WarmPoolLow` alert, `lenny_warmpool_idle_pod_minutes`, `lenny_warmpool_claim_wait_seconds_p99`) with concrete thresholds for determining whether `minWarm` is too low or too high. (3) Guidance on transitioning from manual `minWarm` to controller-managed scaling after 48-72 hours of traffic data.
+
 ---
 
-### OPS-007 `docker compose up` Dev Mode Lacks mTLS — Real LLM Credentials May Be Used Without TLS [High]
+### OPS-007 `docker compose up` Dev Mode Lacks mTLS — Real LLM Credentials May Be Used Without TLS [High] — Fixed
 **Section:** 17.4
 
 Section 17.4 explicitly states that Tier 2 (`docker compose up`) runs "no mTLS (plain HTTP)." This is a reasonable dev default, but the spec also describes a "zero-credential mode" using the echo runtime and then says "real LLM providers" can be tested "from Phase 6 onward." The danger is that a developer iterating on credential leasing (Phase 5.5+) may use `docker compose up` with real LLM credentials configured, and those credentials flow over plain HTTP between the gateway and the "agent pod" container.
@@ -118,6 +126,8 @@ Section 17.4 explicitly states that Tier 2 (`docker compose up`) runs "no mTLS (
 For a security-conscious development team or a CI environment that runs integration tests with real API keys, plain HTTP may be unacceptable. The spec provides `LENNY_DEV_TLS=true` as an option that generates self-signed certificates, but this requires `LENNY_DEV_MODE=true` and is described only for "adapter authors who need to test TLS behavior" — not positioned as the recommended mode for credential testing.
 
 **Recommendation:** (1) Add a note in Section 17.4 explicitly warning that `docker compose up` (Tier 2) uses plain HTTP and should not be used with real LLM credentials unless `LENNY_DEV_TLS=true` is set. (2) Update the docker-compose profile for credential testing (`docker compose --profile credentials up` or similar) to enable `LENNY_DEV_TLS=true` by default. (3) Document how to generate and trust the self-signed certificates that `LENNY_DEV_TLS=true` produces so that the API client in the developer's machine or CI system can verify them.
+
+**Resolution:** Section 17.4 now includes: (1) A prominent warning box in the Tier 2 description stating that real LLM credentials must not be used without TLS enabled. (2) A new "Credential-testing profile" (`docker compose --profile credentials up`) that sets `LENNY_DEV_TLS=true` automatically, so developers testing with real API keys get TLS by default. (3) A "Self-signed certificate trust setup" section documenting how to trust the auto-generated CA on macOS, Linux, per-process, and in CI environments. (4) The `LENNY_DEV_TLS=true` description was updated to position it as required for credential testing (not just for adapter authors), with a cross-reference to the credential-testing profile.
 
 ---
 
@@ -303,8 +313,8 @@ Section 17.4 says dev mode (Tier 2) "includes optional observability containers:
 
 | Must-Check Item | Finding | Assessment |
 |----------------|---------|------------|
-| Bootstrap vs operational plane split (Helm-only vs API-managed) | OPS-003 | **Gap**: Credential pool secrets require K8s Secrets management outside the clean API plane split; no documented workflow for keeping them in sync. |
+| Bootstrap vs operational plane split (Helm-only vs API-managed) | OPS-003 | **Fixed**: Credential lifecycle documented in Section 4.9 — Token Service watches Secrets via informer, rotation workflow specified, GitOps pattern with ESO provided. |
 | Operational runbooks — sufficient for common failure scenarios? | OPS-002, OPS-008 | **Gap**: `FinalizerStuck` scenario has no runbook despite being the documented recovery for a pool slot leak. Multiple high-impact scenarios (etcd alarm, Token Service failure, dual-store outage, KMS rotation) missing from the runbook list. |
 | Two-tier local dev mode (`make run` vs `docker compose`) — realistic? | OPS-007, OPS-012 | **Gap**: `docker compose` lacks mTLS — real credentials transmitted in plaintext. SQLite behavioral differences vs Postgres (especially RLS) not documented. The two-tier model is realistic but gaps exist for credential testing and multi-tenancy testing. |
-| Expand-contract migration strategy — practical for rolling upgrades? | OPS-004 | **Gap**: Three-deployment requirement is sound but minimum inter-phase wait window (determined by `maxSessionAge`) is not documented. Non-idempotent migration steps not flagged. |
+| Expand-contract migration strategy — practical for rolling upgrades? | OPS-004 | **Fixed**: Section 10.5 now includes operational rules for nullable columns during coexistence, minimum inter-phase wait as a function of `maxSessionAge`/record TTL with verification query, and per-phase idempotency requirements. |
 | Operational defaults — sensible for a first deployment? | OPS-009, OPS-006 | **Gap**: Defaults table doesn't show which mechanism controls each default. Warm pool sizing formula requires traffic history not available at first deployment. |

@@ -54,7 +54,7 @@ The stale replica behavior section (Section 10.1) describes what the old coordin
 
 ## High
 
-### SLC-003 SIGSTOP Watchdog (60s) Overlaps With Storage Retry Window (~5s) — Gap Not Documented [High]
+### SLC-003 SIGSTOP Watchdog (60s) Overlaps With Storage Retry Window (~5s) — Gap Not Documented [High] — Fixed
 **Section:** 4.4
 
 The embedded adapter path sends SIGSTOP to quiesce the agent, then:
@@ -71,9 +71,11 @@ There is a separate atomicity guarantee ("metadata record in Postgres references
 
 **Recommendation:** Add an explicit statement to the checkpoint failure recovery path (Section 4.4): "When the watchdog fires and the checkpoint is aborted, any partially uploaded MinIO objects for that checkpoint attempt are deleted using the MinIO abort-multipart-upload API or by deleting the partially written object. The checkpoint metadata record in Postgres is never written for an aborted checkpoint." This closes the ambiguity about partial object cleanup and makes the atomicity guarantee complete.
 
+**Resolution:** Added a new "Checkpoint abort cleanup" paragraph to Section 4.4 specifying that on any checkpoint abort (watchdog timeout, adapter crash, or other failure), the adapter MUST delete partially uploaded MinIO objects using `AbortMultipartUpload` for multipart uploads or `DeleteObject` for single-part uploads. Confirms that no Postgres metadata cleanup is needed (metadata is never written for aborted checkpoints). Documents that cleanup is best-effort — if the delete call fails, the orphaned object is harmless but consumes storage. Added a `lenny_checkpoint_orphaned_objects_total` metric for operators to detect cleanup failures and run periodic GC sweeps.
+
 ---
 
-### SLC-004 `POST /v1/sessions/{id}/derive` Allowed on Active Sessions — Credential and Connector State Undefined [High]
+### SLC-004 `POST /v1/sessions/{id}/derive` Allowed on Active Sessions — Credential and Connector State Undefined [High] — Fixed
 **Section:** 19 #12, 7.1
 
 The `POST /v1/sessions/{id}/derive` endpoint is described as creating a new session "pre-populated with this session's workspace snapshot." The spec does not define:
@@ -86,9 +88,11 @@ The `POST /v1/sessions/{id}/derive` endpoint is described as creating a new sess
 
 **Recommendation:** Add a `POST /v1/sessions/{id}/derive` specification section covering: (a) allowed source states (`completed` recommended; `failed` with explicit note that workspace is from last checkpoint; `running`/`suspended` explicitly rejected or clearly documented as checkpoint-based); (b) credential lease handling (derive triggers a fresh `CredentialPolicy` evaluation; fails with `CREDENTIAL_POOL_EXHAUSTED` if unavailable); (c) connector state (not inherited — derived session starts with no active connector tokens; connector re-authorization required by client).
 
+**Resolution:** Added a "Derive session semantics" specification block to Section 7.1 covering all three gaps: (1) Allowed source states — derive is permitted from any state with a resolvable workspace snapshot; `completed` uses the sealed workspace, all other states use the most recent successful checkpoint; the response includes `workspaceSnapshotSource` and `workspaceSnapshotTimestamp` so clients know the snapshot age; returns `400 INVALID_STATE` if no snapshot exists. (2) Credential lease handling — derive triggers a fresh `CredentialPolicy` evaluation (Section 7.1 step 6); leases are never inherited; fails with `503 CREDENTIAL_POOL_EXHAUSTED` if unavailable. (3) Connector state — not inherited; derived session starts with no active connector tokens; client must complete connector authorization independently per Section 9.3.
+
 ---
 
-### SLC-005 `suspended → resume_pending` Transition Missing [High]
+### SLC-005 `suspended → resume_pending` Transition Missing [High] — Fixed
 **Section:** 6.2, 7.2
 
 The session state machine (Section 6.2) shows `suspended → running` and `suspended → completed`, and Section 7.2 adds `suspended → cancelled` and `suspended → expired`. But there is no `suspended → resume_pending` transition.
@@ -99,9 +103,11 @@ The `suspended` state preserves the `maxSessionAge` timer pause and the intent f
 
 **Recommendation:** Add `suspended → resume_pending` as an explicit transition triggered by pod failure detection while in `suspended` state. On successful recovery (`resuming → attached`), transition directly to `running` (the interrupt context cannot be recovered, but the session and workspace can). Document the loss of interrupt context as an expected limitation.
 
+**Resolution:** Added `suspended → resume_pending` as an explicit transition in all three state machine locations: the Section 6.2 session state diagram, the Section 6.2 suspended-state transition list, and the Section 7.2 session state machine. Added a "Pod failure while suspended" prose block to Section 6.2 documenting the full behavior: pod failure triggers `resume_pending`, standard retry-and-resume path applies, recovery transitions to `running` (not back to `suspended`) because interrupt context is not checkpoint-recoverable. Documents that `maxSessionAge` timer resumes when the recovered session enters `running`.
+
 ---
 
-### SLC-006 `heartbeat_timeout` Referenced But Undefined — Dangling Section Reference [High]
+### SLC-006 `heartbeat_timeout` Referenced But Undefined — Dangling Section Reference [High] — Fixed
 **Section:** 10.1
 
 Section 10.1 states: "the pod's `heartbeat_timeout` (Section 7.3) will fire, and the pod will enter a hold state awaiting a new coordinator." Section 7.3 is "Retry and Resume" and does not define `heartbeat_timeout` or a pod "hold state." No section in the spec defines:
@@ -114,9 +120,11 @@ Without this, the behavior of active sessions during a gateway crash + dual-stor
 
 **Recommendation:** Define a gateway-to-pod heartbeat mechanism in Section 4.7 (Runtime Adapter) or 10.1: the adapter pings the gateway every N seconds (recommended: 15s) over the gRPC control channel; if no response within M seconds (recommended: 45s, i.e., 3 missed heartbeats), the adapter enters a "coordinator-lost" hold state where it continues running the agent but queues all outbound events and blocks all inbound operational RPCs (checkpoint, interrupt, terminate). Define `heartbeat_timeout` as the adapter configuration field controlling M. Fix the Section 7.3 reference to point to wherever `heartbeat_timeout` is defined (likely Section 4.7). Specify hold-state egress: if a new `CoordinatorFence` arrives before `maxHoldSeconds` (recommended: same as `maxResumeWindowSeconds`, 900s), the adapter flushes the queued events and resumes; if not, the adapter terminates the session and marks the pod as failed.
 
+**Resolution:** Removed the dangling `heartbeat_timeout` reference and incorrect "(Section 7.3)" cross-reference from Section 10.1. Instead of introducing a new application-level heartbeat RPC, the fix leverages existing gRPC transport keepalive probes (10s interval, 5s timeout) which already detect coordinator loss within 15 seconds. Added a new **Coordinator-loss detection** paragraph in Section 10.1 that defines: (1) how the pod detects coordinator loss via gRPC connection drop, (2) hold state semantics — adapter pauses runtime activity, rejects all RPCs except `CoordinatorFence` with `UNAVAILABLE` status, (3) hold state timeout of 120s after which the adapter terminates the session with reason `coordinator_lost`, and (4) observability via `lenny_adapter_coordinator_hold` gauge. This avoids architectural change by using existing gRPC transport behavior rather than adding a new protocol-level heartbeat mechanism.
+
 ---
 
-### SLC-007 `retry_exhausted` in State Machine Diagram Is Not a Defined State [High]
+### SLC-007 `retry_exhausted` in State Machine Diagram Is Not a Defined State [High] — Fixed
 **Section:** 6.2, 7.2, 7.3
 
 The state machine diagram in Section 6.2 shows `retry_exhausted / expired` as a named state that transitions to `draining`. However:
@@ -134,6 +142,8 @@ The diagram conflates pod-level and session-level states. The `awaiting_client_a
 - Add `cancelled` as a terminal state reachable from `running`, `suspended`, and `resume_pending`
 - Add `resume_pending → awaiting_client_action` for retry exhaustion
 - Ensure the diagram is consistent with the terminal state list in Section 7.2
+
+**Resolution:** Fixed the Section 6.2 session state machine diagram: (1) removed the spurious `retry_exhausted / expired` pseudo-state that was never a defined session state, (2) replaced it with the correct flow where `awaiting_client_action` transitions to `expired` (the actual terminal state, consistent with Section 7.2 and 7.3), (3) removed `draining` from the session diagram since it is a pod-level state not a session-level state, (4) added `cancelled` as a terminal state reachable from `attached`, consistent with the Section 7.2 terminal states list (`completed`, `failed`, `cancelled`, `expired`). The `resume_pending → awaiting_client_action` transition was already correctly shown in the diagram. The existing "Resuming failure transitions" block and Section 7.3 prose were already consistent and required no changes. This is a diagram-only fix with no behavioral change.
 
 ---
 

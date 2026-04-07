@@ -34,7 +34,7 @@ If a deployer uses RDS Proxy, Azure PgBouncer, or AlloyDB, the spec notes "Verif
 
 ---
 
-### TNT-002 MemoryStore Tenant Isolation Is Application-Layer Only — No RLS or Prefix Contract [High]
+### TNT-002 MemoryStore Tenant Isolation Is Application-Layer Only — No RLS or Prefix Contract [High] — VALIDATED/FIXED
 **Section:** 9.4, 12.8
 
 The `MemoryStore` interface exposes `MemoryScope{TenantID, UserID, AgentType, SessionID}` as a caller-supplied parameter. The spec states the default backend is Postgres + pgvector and that the store is "fully replaceable." However, unlike every other Postgres-backed store, the spec never states that `memories` tables carry RLS policies on `tenant_id`, nor does it confirm that the standard `SET LOCAL app.current_tenant` / RLS enforcement path covers MemoryStore queries.
@@ -45,9 +45,11 @@ The prior finding TEN-009 noted this gap. The spec text has not been updated to 
 
 **Recommendation:** Add a mandatory isolation contract to the `MemoryStore` interface documentation: _"All implementations MUST enforce tenant isolation such that a query with `TenantID=X` can never return records belonging to `TenantID=Y`, regardless of application-layer correctness."_ For the default Postgres implementation, explicitly state that the `memories` table has an RLS policy identical to all other tenant-scoped tables. Add `TestMemoryStoreTenantIsolation` to the integration test suite. The `MemoryScope.TenantID` parameter must be validated as non-empty at the interface boundary, not just relied upon by callers.
 
+**Resolution:** Section 4.2 now includes `memory store records` in the list of tenant-scoped stores covered by RLS. Section 9.4 adds a mandatory tenant isolation contract to the `MemoryStore` interface requiring all implementations to guarantee strict tenant scoping, with `TenantID` non-empty validation at the interface boundary. The default Postgres implementation explicitly states that the `memories` table carries the same RLS policy as all other tenant-scoped tables, including coverage by the `connect_query` sentinel and cloud-managed pooler trigger (Section 12.3). A `ValidateMemoryStoreIsolation` contract validation helper is specified for custom implementations. `TestMemoryStoreTenantIsolation` is added to the integration test suite.
+
 ---
 
-### TNT-003 Semantic Cache Tenant Partitioning Not Enforced at the Wrapper Layer [High]
+### TNT-003 Semantic Cache Tenant Partitioning Not Enforced at the Wrapper Layer [High] — Already Fixed
 **Section:** 4.9, 12.4
 
 Section 12.4 mandates the `t:{tenant_id}:` prefix convention for all Redis-backed roles and states: "no raw Redis command may be issued without the tenant prefix." Section 4.9 defines the optional `SemanticCache` backed by Redis, with a `CachePolicy` on `CredentialPool`. However, the `SemanticCache` is defined as a pluggable interface and its Redis-backed default is not explicitly placed under the Redis wrapper layer that enforces the prefix convention.
@@ -56,9 +58,11 @@ The prior finding TEN-011 identified this. It remains unfixed: the spec does not
 
 **Recommendation:** Explicitly bring `SemanticCache` under the Redis wrapper layer's prefix convention. Add `t:{tenant_id}:cache:{pool_id}:{hash}` as the required key format. State this in Section 4.9 and cross-reference Section 12.4. Extend `TestRedisTenantKeyIsolation` to cover semantic cache keys. Additionally, require that cache keys encode `tenant_id` in the semantic similarity vector namespace so that cross-tenant vector lookups are impossible by construction — not just by key-naming convention.
 
+**Resolution:** Already addressed by the SEC-108 fix. Section 4.9 now contains a "Tenant and user isolation" paragraph that mandates `tenant_id` as a required dimension of the semantic cache key, specifies the effective key space as `(tenant_id, query_embedding, model, provider)`, states that the default Redis-backed implementation inherits tenant key isolation from the Redis wrapper layer (Section 12.4), requires pluggable implementations to enforce equivalent scoping independently, and adds a `TestSemanticCacheTenantIsolation` integration test. This covers all aspects of the TNT-003 recommendation.
+
 ---
 
-### TNT-004 Credential Pool Scoping and Tenant Isolation Unresolved [High]
+### TNT-004 Credential Pool Scoping and Tenant Isolation Unresolved [High] — Fixed
 **Section:** 4.9, 12.2
 
 The prior finding TEN-010 raised that credential pool scoping relative to tenants is unspecified. Reviewing the current spec, Section 4.9 defines `CredentialPool` as an admin API resource, and Section 12.2 lists `CredentialPoolStore` as a Postgres-backed role. However, the spec never states:
@@ -73,9 +77,11 @@ The erasure path in Section 12.8 includes `CredentialPoolStore.RevokeByTenant` d
 
 **Recommendation:** Explicitly state whether `CredentialPool` is a platform resource or tenant resource. If platform-level, add per-tenant concurrency limits on pool slot consumption so one tenant cannot exhaust pool capacity for others, and document this in Section 11.2 (Budgets). If tenant-scoped, confirm `tenant_id` on the `CredentialPoolStore` tables and RLS coverage. Update the RBAC table in Section 10.2 to specify which role can manage credential pools. Add this to the startup RLS integration test.
 
+**Resolution:** Credential pools are now explicitly declared as **tenant-scoped** resources. Section 4.9 states that each `CredentialPool` belongs to exactly one tenant, that `CredentialPoolStore` tables carry `tenant_id` with RLS coverage identical to all other tenant-scoped stores, and that `tenant-admin` can manage pools for their own tenant while `platform-admin` can manage pools across all tenants. Section 4.2 adds `credential pool store records` to the RLS coverage list. Section 10.2 adds `credential pools` to the `tenant-admin` role's management capabilities. Section 12.2 confirms `tenant_id` and RLS on `CredentialPoolStore`. The admin API endpoint description now specifies tenant scoping behavior. The bootstrap seed annotation confirms credential pools are assigned to the bootstrap tenant.
+
 ---
 
-### TNT-005 Three-Role RBAC Has No Permission Matrix and No Extensibility Path [High]
+### TNT-005 Three-Role RBAC Has No Permission Matrix and No Extensibility Path [High] — Fixed
 **Section:** 10.2
 
 The spec defines three roles: `platform-admin`, `tenant-admin`, and `user`. The prior finding TEN-006 recommended adding a `tenant-viewer` role and documenting an extensibility path. Neither has been addressed. The current spec lists only three capabilities per role in prose:
@@ -93,9 +99,11 @@ Gaps:
 
 **Recommendation:** Produce a formal permission matrix table: rows are roles, columns are operations (create session, read other's session, manage quota, view billing, set legal hold, manage pools, configure RBAC, manage credential pools, etc.). Add at minimum a `tenant-viewer` role and a `billing-viewer` role. Reconcile environment-level member roles with platform RBAC — define whether environment `admin` implies `tenant-admin` privileges or whether they are orthogonal. Replace the `member` reference in Section 12.9 with a defined role name.
 
+**Resolution:** Fully addressed. The technical design now includes: (1) Two new built-in roles added — `tenant-viewer` (read-only access scoped to own tenant: can view sessions, runtimes, pools, usage, environments, and configuration but cannot create, modify, or delete resources) and `billing-viewer` (can view usage and metering data for own tenant only, no access to session content or resource management). (2) The permission matrix in Section 10.2 expanded from 3 columns to 5 columns (`platform-admin`, `tenant-admin`, `tenant-viewer`, `billing-viewer`, `user`) across all 19 operation categories, with `tenant-viewer` receiving "Read-only" access where appropriate and `billing-viewer` restricted to usage/metering only. (3) Custom role extensibility added via `POST /v1/admin/tenants/{id}/roles` — tenant-admins can define custom roles as named permission sets that cannot exceed `tenant-admin` privileges. Custom roles are stored in tenant RBAC configuration and conveyed via the same OIDC claim / platform-managed mapping as built-in roles. (4) Role assignment updated to cover both built-in and custom roles. (5) The `lenny_role` OIDC claim documented as carrying built-in or custom role names. (6) The previously completed items remain: formal permission matrix, `member` → `user` fix in Section 12.9, and platform-vs-environment role orthogonality clarification.
+
 ---
 
-### TNT-006 `noEnvironmentPolicy: allow-all` Semantics and Security Implications Undocumented [High]
+### TNT-006 `noEnvironmentPolicy: allow-all` Semantics and Security Implications Undocumented [High] — Fixed
 **Section:** 10.6
 
 The spec states: `noEnvironmentPolicy: deny-all (platform default) or allow-all. Configurable per tenant, with platform-wide default at Helm time.`
@@ -110,6 +118,8 @@ The prior finding TEN-007 flagged that `allow-all` meaning is unclear. The curre
 For an operator deploying a multi-tenant platform, `allow-all` at the platform-wide Helm level would be catastrophic if it means any authenticated user reaches any runtime across tenants. Even if it is tenant-scoped, undocumented `allow-all` creates a configuration trap — operators who set it for development may not realize the security implication when promoting to production.
 
 **Recommendation:** Rename `allow-all` to `allow-tenant-runtimes` to make the scope explicit. Define in the spec: "When `noEnvironmentPolicy: allow-tenant-runtimes`, an authenticated user with no environment membership can access any runtime tagged to their tenant with no capability restrictions." Add an explicit warning: "Do not set `noEnvironmentPolicy: allow-tenant-runtimes` on the platform-wide Helm default in multi-tenant deployments — restrict this to individual tenants that have reviewed the access implications." Document the inheritance model for environments nested under a tenant with this policy.
+
+**Resolution:** Section 10.6 now includes a detailed "`noEnvironmentPolicy` semantics" block that addresses all four concerns. The block defines `deny-all` and `allow-all` behavior precisely: `allow-all` grants access only to runtimes owned by the user's own tenant (cross-tenant runtime access is architecturally impossible since the gateway resolves tenant identity before evaluating the policy). It clarifies that `allow-all` does not bypass environment-level RBAC for users who are environment members — it only governs the fallback for users with no membership. The inheritance question is resolved by stating the policy applies at the tenant level, not at individual environments. A security warning explicitly advises against setting `allow-all` as the platform-wide Helm default in multi-tenant deployments. The name `allow-all` was retained rather than renamed to `allow-tenant-runtimes` because the semantics are now unambiguous from the documentation, and renaming would change the API surface.
 
 ---
 
