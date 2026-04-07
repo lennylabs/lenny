@@ -179,12 +179,12 @@ The admission webhook enforces the RuntimeClass reference at creation time, but 
 
 ## 3. Network Security & Isolation
 
-### NET-022 Internet Egress CIDR Exclusions Require Manual Helm Values [Medium]
+### NET-022 Internet Egress CIDR Exclusions Require Manual Helm Values with No Drift Detection [Medium]
 **Section:** 13.2
 
-The `internet` egress profile uses `egressCIDRs.excludeClusterPodCIDR` and `egressCIDRs.excludeClusterServiceCIDR` Helm values. If wrong or stale (e.g., after a cluster CIDR resize), agent pods can reach internal cluster IPs directly. No automated CIDR extraction or validation webhook exists.
+The `internet` egress profile uses `egressCIDRs.excludeClusterPodCIDR` and `egressCIDRs.excludeClusterServiceCIDR` Helm values as `except` clauses on the `0.0.0.0/0` rule. These must be manually set to match the cluster's actual pod and service CIDRs. If wrong at deploy time, or stale after a cluster CIDR resize or node pool expansion between Helm deployments, agent pods with `internet` egress can reach internal cluster IPs — enabling lateral movement and internal service discovery. No automated extraction, deploy-time validation, or continuous drift detection exists.
 
-**Recommendation:** Add a `lenny-preflight` Job check that retrieves the cluster's actual CIDRs and asserts Helm values match. Alternatively, add a ValidatingAdmissionWebhook rejecting `internet`-profile pods if `egressCIDRs` except blocks don't cover all RFC-1918 ranges.
+**Recommendation:** Two-layer fix: (1) **Deploy-time preflight** — the `lenny-preflight` Job reads actual cluster CIDRs (from node `spec.podCIDR` and kube-controller-manager `--service-cluster-ip-range` or the `kubernetes` Service CIDR) and fails if the Helm values don't match. This catches misconfiguration at install/upgrade time. (2) **Continuous drift detection** — a lightweight goroutine in the WarmPoolController (or gateway) re-reads cluster CIDRs every 5 minutes and compares against the installed NetworkPolicy `except` blocks. On drift, emit a `NetworkPolicyCIDRDrift` critical alert. Auto-patching the NetworkPolicy is preferable but requires granting the controller NetworkPolicy write RBAC (currently avoided by design — §13.2 states "the warm pool controller does NOT create or modify NetworkPolicies"); if that RBAC is not granted, alerting-only is the pragmatic v1 answer, with the operator re-running `helm upgrade` to re-sync values. A ValidatingAdmissionWebhook is not the right tool here: it operates on pod specs, not NetworkPolicy content, and would need to read NetworkPolicies from the API server at admission time — adding latency and an availability dependency for every pod creation.
 
 ---
 
