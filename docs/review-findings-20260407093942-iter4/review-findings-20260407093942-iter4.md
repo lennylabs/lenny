@@ -88,12 +88,14 @@ When a parent fails with `cascadeOnFailure: detach`, children become orphaned. I
 
 ---
 
-### MSG-023 `lenny/request_input` Expiry Not Surfaced to Awaiting Parent [High]
-**Section:** 8.8, 9.2
+### MSG-023 `lenny/request_input` Has No Dedicated Timeout — Child Blocks Until Session Expires [High]
+**Section:** 8.8, 7.2, 11.3
 
-When a child's `lenny/request_input` call expires (via `maxElicitationWait`) before the parent processes the `input_required` partial result on its `await_children` stream, no follow-up event notifies the parent. The parent attempts to respond via `lenny/send_message` with `inReplyTo`, but the request has expired and the child has transitioned to terminal. The parent receives `TARGET_TERMINAL` with no explanation of the race.
+`lenny/request_input` is an inter-agent blocking tool call (agent-to-agent, NOT human elicitation — `lenny/request_elicitation` is the human-facing tool governed by `maxElicitationWait`). When a child calls `request_input`, it enters `input_required` sub-state and blocks until a parent/sibling responds via `lenny/send_message` with `inReplyTo`. The only expiry mechanisms are session-level: `maxSessionAge` or `maxIdleTime`. There is no dedicated `maxRequestInputWait` timeout for this inter-agent call. A child whose parent is slow, crashed, or simply ignoring the request will block for up to `maxSessionAge` (default 7200s) — consuming a pod slot and credential lease for the entire duration with no progress.
 
-**Recommendation:** Add a `request_input_expired` event type to the `await_children` stream: `{ "type": "request_input_expired", "childId": "...", "requestId": "...", "expiredAt": "<ISO8601>" }`. Emit when a child's pending `request_input` expires while the parent is in `await_children`.
+Additionally, when a `request_input` eventually resolves (by session expiry or cancellation), the parent's `await_children` stream transitions the child to `expired` or `cancelled` — but there is no distinct event distinguishing "child expired because nobody answered its `request_input`" from "child expired because it ran out of time doing normal work." The parent cannot diagnose the cause.
+
+**Recommendation:** (1) Add a `maxRequestInputWaitSeconds` timeout (default: 600s, configurable per pool) that governs how long `lenny/request_input` blocks before returning a `REQUEST_INPUT_TIMEOUT` error to the child runtime. This is distinct from `maxElicitationWait` (which governs human-facing elicitation). (2) Add a `request_input_expired` event to the `await_children` stream: `{ "type": "request_input_expired", "childId": "...", "requestId": "...", "expiredAt": "<ISO8601>" }` so the parent can distinguish this from normal expiry.
 
 ---
 
