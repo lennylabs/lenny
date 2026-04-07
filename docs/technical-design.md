@@ -135,9 +135,9 @@ Each gateway replica has a maximum number of concurrent sessions it can handle b
 | ---- | ----------------------------------- | ---------------------- |
 | Tier 1 (Starter) | 50 | 80% |
 | Tier 2 (Growth) | 200 | 80% |
-| Tier 3 (Scale) | 200 | 80% |
+| Tier 3 (Scale) | 400 | 80% |
 
-**These values are provisional first-principles estimates** derived from the Tier 2 max concurrent sessions target (1,000) and an assumed starting replica count. They must be replaced with empirically validated values produced by the Phase 2 benchmark harness before any production deployment.
+**These values are provisional first-principles estimates.** The Tier 1 and Tier 2 values are derived from the respective max concurrent sessions targets (100 and 1,000) and assumed starting replica counts. The Tier 3 value (400) assumes that the LLM Proxy subsystem has been extracted to a dedicated service before the Tier 2→3 promotion decision — removing the long-lived upstream goroutine workload from the gateway process reduces heap and GC pressure, roughly doubling the per-replica session capacity. **Tier 3 deployment therefore carries the following prerequisite:** the Phase 13.5 load tests must confirm that (a) the LLM Proxy subsystem has been extracted or `lenny_llm_proxy_active_connections / lenny_gateway_active_sessions` is sustainably below 0.3:1 at Tier 2 peak (see extraction threshold guidance in the "Extraction triggers" subsection below), and (b) `lenny_gateway_gc_pause_p99_ms` remains below 50 ms at Tier 2 peak load. If either condition is not met, the Tier 3 provisional value reverts to 200 and additional replicas must be used to reach the 10,000-session target. All values must be replaced with empirically validated measurements produced by the Phase 2 (Tier 1/2) and Phase 13.5 (Tier 3) benchmark harnesses before any production deployment.
 
 **Capacity budget calibration methodology (Phase 2 deliverable):**
 
@@ -538,6 +538,13 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 
 **Server-Side Apply (SSA) enforcement:** Field ownership is enforced via Kubernetes Server-Side Apply with named field managers. Each controller applies only its owned fields using a distinct field manager name (`lenny-warm-pool-controller` and `lenny-pool-scaling-controller`). If a controller attempts to update a field owned by another manager, the API server returns a conflict error (HTTP 409) without applying the update. This is the primary enforcement mechanism — it is enforced by the API server itself, without any additional controller logic.
 
+**SSA conflict retry policy (crash recovery).** When a controller crashes and restarts, its in-memory view of CRD state is stale. If the restarted controller immediately applies its owned fields using a cached resource version, the API server may return an HTTP 409 conflict (the resource has been updated by the other controller or by a prior apply that was not yet reflected). The required retry policy is:
+
+1. **Always re-read before re-applying.** On any SSA HTTP 409 conflict error, the controller **must** discard its cached copy of the resource and issue a fresh `GET` to the API server to obtain the current `resourceVersion` and the current managed fields map. The controller then re-computes its apply patch against the freshly read state.
+2. **Never force-conflict.** Controllers **must not** use `--force-conflicts` (SSA `Force: true`) except as a last-resort operator-initiated recovery action. Force-conflicts unconditionally steals field ownership from the other manager — it bypasses the isolation invariant that prevents the two controllers from overwriting each other's fields. Using `Force: true` in reconciliation code is explicitly prohibited and would defeat the ownership boundary enforced by the SSA mechanism.
+3. **Bounded retry with backoff.** After re-reading and re-computing the patch, the controller retries the apply. If a second 409 occurs (concurrent apply from the other controller), the controller backs off with jitter (initial 100ms, max 2s) and re-reads again. After 5 consecutive 409s without progress, the controller emits a `crd_ssa_conflict_stuck` structured log event (labeled by `controller`, `resource`, `name`) and increments the `lenny_crd_ssa_conflict_total` counter, then continues with exponential backoff. A `CRDSSAConflictStuck` warning alert fires when this counter exceeds 10 in a 5-minute window on any single resource, indicating an abnormal ownership dispute that requires operator investigation.
+4. **No force on normal startup.** After a crash and leader-election re-acquisition, the restarted controller executes a full list-and-sync reconciliation of all resources it owns before accepting new watch events. Each reconciliation apply follows the re-read policy above. This ensures the controller's first post-crash apply is always based on the current API server state, not stale pre-crash cache.
+
 **RBAC enforcement (coarse-grained backstop):** Each controller's ServiceAccount has RBAC rules granting access at resource and subresource granularity. The WarmPoolController ServiceAccount has `update` on `Sandbox` and `status` subresources of `SandboxTemplate` and `SandboxWarmPool`, and `get`/`list`/`watch` on the same. The PoolScalingController ServiceAccount has `create`/`update`/`delete` on `SandboxTemplate` and `SandboxWarmPool`, and `get`/`list`/`watch` on status subresources, with no access to `Sandbox` resources. Note: Kubernetes RBAC operates at resource and subresource granularity, not individual field granularity — it cannot distinguish which fields within `spec` a controller may write. Field-level boundaries are enforced by SSA (above), not RBAC.
 
 **Validating webhook for Postgres-authoritative state (defense-in-depth):** A validating admission webhook rejects manual `kubectl edit` or `kubectl apply` updates to `SandboxTemplate.spec` and `SandboxWarmPool.spec` fields unless the request carries the annotation `lenny.dev/managed-by: pool-scaling-controller`. The PoolScalingController sets this annotation on every update it performs. This prevents operators from manually editing CRD specs that would be silently overwritten on the next reconciliation cycle. The webhook returns an informative denial message directing operators to use the admin API instead. The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable, updates are denied (fail-closed) to protect Postgres-authoritative state. This webhook is a defense-in-depth backstop — SSA field manager conflicts provide the primary enforcement layer.
@@ -727,6 +734,15 @@ The Full-tier rotation via the lifecycle channel follows a strict protocol with 
 The boundary between the adapter and the agent binary is **untrusted**. A compromised or misbehaving agent binary must not be able to escalate privileges, extract credentials, or manipulate the adapter. The following controls enforce this:
 
 1. **Separate UIDs and connection authentication:** The adapter runs as a different UID than the agent binary (e.g., adapter as UID 1000, agent as UID 1001). Abstract Unix sockets use `SO_PEERCRED` for peer UID verification — the adapter accepts connections only from the expected agent UID. The expected UID is the UID within the pod's user namespace (matching the `runAsUser` in the pod spec), not a host UID — both sidecar containers share the same user namespace, so `SO_PEERCRED` reports consistent UIDs. As a defense-in-depth measure, the adapter also performs a manifest-nonce handshake on connection: the adapter writes a random nonce to the manifest file (read-only to the agent container) before spawning the agent, and the agent must present this nonce as the first message on the socket. This ensures the connecting process has legitimate access to the manifest, independent of UID verification. gVisor `SO_PEERCRED` semantics must be validated in Phase 3.5 security integration tests; if behavior diverges from the host kernel, the nonce handshake serves as the primary authentication control. The manifest volume is mounted read-only into the agent container, preventing tampering. Filesystem-level isolation prevents the agent from reading adapter config or memory.
+
+   **Mandatory `SO_PEERCRED` startup self-test (adapter prerequisite).** Before the adapter marks itself READY to the gateway (step 4 of the Startup Sequence above), it MUST execute a loopback self-test that verifies `SO_PEERCRED` is functional in the current pod environment:
+   1. The adapter opens a temporary abstract Unix socket (`@lenny-sopeercred-selftest`).
+   2. A goroutine connects to the socket from the same process (loopback connection).
+   3. The adapter calls `getsockopt(SO_PEERCRED)` on the accepted connection and asserts that the returned `uid` matches `os.Getuid()` (the adapter's own UID).
+   4. If the call fails (error) or the returned UID does not match, the adapter logs `"FATAL: SO_PEERCRED self-test failed — UID mismatch or syscall error; adapter security boundary cannot be enforced"`, emits the `lenny_adapter_sopeercred_selftest_failed_total` counter increment, and exits non-zero. The pod enters `CrashLoopBackOff`, preventing session assignment.
+   5. If the self-test passes, the adapter closes the temporary socket and proceeds to the READY signal.
+
+   This self-test ensures that environments where `SO_PEERCRED` is silently non-functional (e.g., some container runtimes with non-standard user namespace configurations) are caught before any agent process is spawned. The self-test runs on every pod start, not only in CI. If gVisor's `SO_PEERCRED` semantics diverge (Phase 3.5 validation), the self-test result determines whether UID verification is available; the nonce handshake remains active as the primary control in that case, and the self-test failure path is suppressed (configurable via `adapter.requireSoPeercred`, default `true`; set to `false` only when gVisor divergence is confirmed and nonce-only mode is explicitly accepted).
 
 2. **Adapter-initiated protocol:** The adapter is the protocol initiator — it sends messages and tool-call instructions to the agent and receives responses. The agent cannot initiate arbitrary requests to the adapter.
 
@@ -1843,8 +1859,8 @@ If `acknowledgeProcessLevelIsolation` is absent or `false`, the pool controller 
 **Concurrent-workspace slot failure and cleanup.** Slots fail independently — a single slot failure does not terminate the pod or affect other active slots. Per-slot behavior:
 
 - **Failure isolation:** When a slot's task fails (runtime error, OOM within the slot's cgroup, or unhandled exception), the adapter marks that `slotId` as `failed` and emits `lenny_slot_failure_total{reason}`. Other slots continue unaffected. The gateway is notified via the lifecycle channel and applies the slot retry policy below.
-- **Slot cleanup:** On slot completion or failure, the adapter removes the slot's workspace directory, kills any processes owned by the slot's process group, and releases the `slotId`. Cleanup timeout is `cleanupTimeoutSeconds / maxConcurrent` (minimum 5s). If cleanup fails, the slot is leaked — the pod continues but the slot is not reclaimed until pod termination.
-- **Checkpoint granularity:** Checkpoints are per-slot. Each slot's checkpoint includes only that slot's workspace state and conversation history. Whole-pod checkpoints are not supported in concurrent-workspace mode because slot lifecycles are independent.
+- **Slot cleanup:** On slot completion or failure, the adapter removes the slot's workspace directory, kills any processes owned by the slot's process group, and releases the `slotId`. Cleanup timeout is `max(cleanupTimeoutSeconds / maxConcurrent, 5)` seconds (minimum 5s enforced at runtime by the adapter). **CRD validation rule:** The `SandboxWarmPool` admission webhook rejects any pool configuration where `cleanupTimeoutSeconds / maxConcurrent < 5`, i.e., where `cleanupTimeoutSeconds < maxConcurrent × 5`. Rejection error: `422 INVALID_POOL_CONFIGURATION` with message `"cleanupTimeoutSeconds / maxConcurrent would produce a per-slot cleanup timeout below the 5s minimum; set cleanupTimeoutSeconds ≥ maxConcurrent × 5"`. This prevents silent sub-minimum timeouts at high `maxConcurrent` values. If cleanup fails, the slot is leaked — the pod continues but the slot is not reclaimed until pod termination.
+- **Checkpoint granularity:** Checkpoints are per-slot. Each slot's checkpoint includes only that slot's workspace state and conversation history. Whole-pod checkpoints are not supported in concurrent-workspace mode because slot lifecycles are independent. Per-slot checkpoints are subject to the same tiered cap as session-mode checkpoints (Section 10.1 preStop hook, stage 2): the cap is selected based on the slot's last measured workspace size (`last_checkpoint_workspace_bytes` for the `(session_id, slot_id)` pair in Postgres). The total preStop budget for a concurrent-workspace pod is the **sum** of per-slot caps across all active slots; the `SandboxWarmPool` CRD validation webhook enforces that `maxConcurrent × max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 ≤ terminationGracePeriodSeconds`. Deployers must set `terminationGracePeriodSeconds` accordingly when `maxConcurrent > 1` — the Helm chart provides a helper formula in `values.yaml` comments.
 - **Resource contention:** CPU and memory are shared across slots (no per-slot cgroup subdivision in v1). If a single slot monopolizes resources, the adapter's health probe degrades and the PoolScalingController reduces `mode_factor` for the pool. Deployers should set `maxConcurrent` conservatively relative to the resource class. Future versions may introduce per-slot resource quotas via cgroup nesting.
 
 **Concurrent-workspace slot retry policy.** When a slot fails, the gateway applies the following retry policy (analogous to the pre-attached failure retry policy in Section 6.2):
@@ -2870,6 +2886,25 @@ Delegation budgets use an **atomic reservation** model, not a ceiling model. Whe
 
 1. **Reservation:** The gateway reserves budget using a single Redis Lua script (`budget_reserve.lua`) that atomically reads the parent's token budget counter, the parent's actual token usage counter, and the tree-size counter, then applies both the token `DECRBY` and tree-size `INCR` within one evaluation. The effective remaining budget is computed inside the script as `parentBudget - parentUsage`; the child slice is capped to `min(requested_slice, parentBudget - parentUsage)` before any check. The Lua script checks both the effective remaining budget and the tree-size limit before committing either change; if either check fails, neither operation is applied and the script returns a structured result indicating which limit was exceeded (`TOKEN_BUDGET_EXHAUSTED` or `TREE_SIZE_EXCEEDED`). Reading the usage counter atomically inside the same script eliminates the race where a parent has nearly exhausted its own token usage while its delegation budget counter still reflects the full original allocation. This eliminates TOCTOU windows between all three counters and removes the need for compensating rollback operations. If the remaining budget is insufficient, the delegation is rejected with `BUDGET_EXHAUSTED` before pod allocation.
 
+   **Lua script serialization and contention analysis.** Redis executes Lua scripts atomically — the entire `budget_reserve.lua` script runs without interruption. This means that concurrent `delegate_task` calls from the same session (fan-out) are serialized: each invocation blocks all other Redis operations on that primary for the script duration. The script's operation count is fixed (3 READs + 2 conditional WRITEs = 5 operations); at modern Redis speeds this executes in under 100 µs on unloaded hardware, providing acceptable throughput for modest fan-out. However, at high `maxParallelChildren` values, serialization contention can become the bottleneck:
+
+   | `maxParallelChildren` | Estimated reservation burst rate | Approximate script serialization time per burst |
+   | --------------------- | --------------------------------- | ----------------------------------------------- |
+   | ≤ 10                  | ~100 reservations/s per session   | < 10 ms per burst (negligible)                  |
+   | 11–50                 | ~500 reservations/s per session   | < 50 ms per burst (low)                         |
+   | 51–100                | ~1,000 reservations/s per session | ~100 ms per burst (moderate; monitor P99)       |
+   | > 100                 | > 1,000 reservations/s            | > 100 ms per burst (high; see ceiling guidance) |
+
+   These estimates assume the Quota/Rate Limiting Redis instance is dedicated to that concern (separated from Coordination and Cache/Pub-Sub as recommended in Section 12.4) and that the Lua script is the primary operation in that window. Mixed workloads (concurrent rate limit `INCR`s, quota checkpoints) reduce throughput proportionally.
+
+   **`maxParallelChildren` ceiling guidance.** To prevent Lua script serialization from degrading the Redis P99 latency of other operations, deployers should observe the following limits per delegation lease:
+
+   - **Soft ceiling: `maxParallelChildren ≤ 50`** — safe at Tier 2 and Tier 3 for the default Quota/Rate Limiting Redis topology (single primary with Sentinel). Monitor `lenny_redis_lua_script_duration_seconds{script="budget_reserve"}` P99; if it exceeds 5 ms sustained, reduce fan-out or split the Redis instance.
+   - **Hard ceiling: `maxParallelChildren ≤ 100`** — above this value, Lua serialization bursts can spike Redis P99 latency above the 5 ms `LeaseStore` SLO ceiling (Section 12.4 "When Sentinel becomes insufficient"), impacting lease renewal reliability. Leases with `maxParallelChildren > 100` should be considered only for isolated workloads running on a dedicated Quota Redis instance with no other tenants sharing the primary.
+   - **The `orchestrator` preset (`maxParallelChildren: 10`) is safe for all tiers.** Deployments using only built-in presets do not need to review this guidance.
+
+   The metric `lenny_delegation_parallel_children_high_watermark` (gauge per active root session, labeled by `root_session_id`, `pool`, `tenant_id`) tracks the maximum simultaneous in-flight children observed for each delegation tree, enabling operators to detect fan-out that approaches the ceiling retroactively.
+
 2. **Default slice:** When `lease_slice` is omitted, the child receives `min(remaining_parent_budget, deployer_configurable_default_fraction)`. The default fraction is 50% of remaining budget, configurable per environment via `defaultDelegationFraction` (range: 0.1 to 1.0). If the remaining budget is below a minimum usable threshold (configurable, default 10,000 tokens), the delegation is rejected.
 
 3. **Return on completion:** When a child session reaches a terminal state (completed, failed, cancelled, expired), the gateway credits unused budget back to the parent's available pool via atomic Redis `INCRBY`. Unused budget = child's allocated budget minus child's actual consumption (including all descendants). The parent's `maxTokenBudget` ceiling is never exceeded — returns only restore up to the original allocation.
@@ -3589,7 +3624,11 @@ Gateway replicas are stateless proxies over externalized state:
 
 At Tier 2 with a session arrival rate of 200/s, a 60s lag window means up to **12,000 session attempts** arrive before the HPA reacts. This exposure window is mitigated by three mechanisms already specified in this section: (a) `minReplicas` sized to absorb expected burst peaks without scale-out, (b) leading-indicator metrics (`lenny_gateway_request_queue_depth`, `lenny_gateway_rejection_rate`) that detect saturation before CPU rises and trigger earlier scale-out, and (c) the `GatewaySessionBudgetNearExhaustion` alert (Section 16.5).
 
-**Reducing pipeline lag — KEDA option:** KEDA with a Prometheus scaler trigger can reduce the scrape-to-scale latency by bypassing the Prometheus Adapter cache: KEDA polls Prometheus directly on a configurable `pollingInterval` (default 30s, recommended 10s for Tier 2/3). With `pollingInterval: 10s` and KEDA's own evaluation cycle, worst-case pipeline lag drops to approximately 20s. KEDA is the **recommended option for Tier 3 deployments** where burst absorption capacity is limited. For Tier 1/2 deployments with generous `minReplicas`, the Prometheus Adapter path is sufficient.
+**Reducing pipeline lag — KEDA (mandatory for Tier 3, optional for Tier 1/2):** KEDA with a Prometheus scaler trigger can reduce the scrape-to-scale latency by bypassing the Prometheus Adapter cache: KEDA polls Prometheus directly on a configurable `pollingInterval` (default 30s, recommended 10s for Tier 2/3). With `pollingInterval: 10s` and KEDA's own evaluation cycle, worst-case pipeline lag drops to approximately 20s.
+
+**At Tier 3, KEDA is a mandatory platform requirement, not an optional enhancement.** The rationale: with `maxParallelChildren` at the `orchestrator` preset and 10,000 concurrent sessions, burst session arrival at 200/s means up to 12,000 session attempts arrive during the 60s worst-case Prometheus Adapter pipeline lag — a quantity that will exhaust any reasonable `minReplicas` buffer. The 20s worst-case KEDA pipeline lag reduces that exposure to ~4,000 session attempts, which is within the `minReplicas` burst absorption sizing defined in Section 17.8. The Tier 3 production gate (Phase 14.5) validates that KEDA is deployed and correctly configured as a precondition for GA sign-off. Deployers targeting Tier 3 who cannot deploy KEDA must increase `minReplicas` sufficiently to absorb the full 60s pipeline lag burst — Section 17.8 provides the `minReplicas` formula for both paths.
+
+For Tier 1/2 deployments with generous `minReplicas`, the Prometheus Adapter path is sufficient.
 
 **Recommended configuration to minimize lag (both paths):**
 - Prometheus scrape interval: reduce to 10s for gateway pods (`scrapeInterval: 10s` in PodMonitor/ServiceMonitor)
@@ -3613,6 +3652,14 @@ At Tier 2 with a session arrival rate of 200/s, a 60s lag window means up to **1
    | 301 MB – 512 MB (hard limit) | 90s                             |
 
    The gateway reads `last_checkpoint_workspace_bytes` from the session record in Postgres (updated after each successful checkpoint) to select the cap tier. If the field is absent (no prior checkpoint), the 30s default applies. The tiered cap must remain below `terminationGracePeriodSeconds - 30s` to leave at least 30 seconds for stream drain (stage 3); if the calculated cap would violate this constraint, it is clamped to `terminationGracePeriodSeconds - 30s`.
+
+   **CRD validation rule — tiered cap + BarrierAck budget:** The `SandboxWarmPool` CRD admission webhook enforces that the worst-case preStop budget does not exceed `terminationGracePeriodSeconds`. Specifically, the webhook rejects any pool configuration where:
+
+   ```
+   max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 > terminationGracePeriodSeconds
+   ```
+
+   where `max_tiered_checkpoint_cap` is the largest cap tier applicable to the pool's `workspaceSizeLimitBytes` (e.g., 90s for pools allowing up to 512 MB workspaces), `checkpointBarrierAckTimeoutSeconds` is the configured BarrierAck wait (default: 45s), and 30s is the minimum stream-drain budget (stage 3). With defaults (90s + 45s + 30s = 165s), `terminationGracePeriodSeconds` must be set to at least 165s on gateway pods coordinating pools that allow large workspaces. The Helm chart sets `terminationGracePeriodSeconds: 180` by default to provide a 15s safety margin. Rejection error: `422 INVALID_POOL_CONFIGURATION` with message `"tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 exceeds terminationGracePeriodSeconds; increase terminationGracePeriodSeconds or reduce checkpointBarrierAckTimeoutSeconds / workspaceSizeLimitBytes"`.  Metric: `lenny_pool_termination_budget_exceeded_total` (counter, labeled by `pool`) incremented when the webhook rejects a configuration.
 
    **Partial manifest on checkpoint timeout:** If a checkpoint upload does not complete within the applicable tier cap, the gateway does not simply abandon the session — it writes a **partial checkpoint manifest** to Postgres before proceeding. The partial manifest records: `session_id`, `coordination_generation`, `checkpoint_started_at`, `checkpoint_timeout_at`, `workspace_bytes_uploaded` (bytes successfully transferred to MinIO before timeout), `partial_object_keys` (list of MinIO object keys for any multipart parts already uploaded), and `partial: true`. On session resume, the new coordinator detects `partial: true` in the latest checkpoint record. If `workspace_bytes_uploaded >= partial_recovery_threshold_bytes` (configurable, default: 50% of last full checkpoint size), the coordinator attempts to reconstruct the workspace from the partial upload by listing and reassembling committed multipart parts. If reassembly succeeds, the session resumes with the partial workspace and the client receives a `session.resumed` event with `resumeMode: "partial_workspace"` and `workspaceRecoveryFraction` (bytes recovered / last full checkpoint bytes). If reassembly fails or `workspace_bytes_uploaded` is below the threshold, the session falls back to the last successful full checkpoint. The `lenny_checkpoint_partial_total` counter (labeled by `pool` and `recovered: true|false`) tracks partial checkpoint events.
 3. **Drain active streams (remaining grace period).** The hook polls `active_streams > 0` at 1-second intervals for the remainder of `terminationGracePeriodSeconds` after stages 1 and 2. This gives in-flight streams time to complete naturally or allows clients to detect the closing connection (via gRPC `GOAWAY` or SSE stream close) and reconnect to another replica via the load balancer.
@@ -3794,7 +3841,7 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 
 **Warm Pool Controller:** Rolling update with leader election. During leader failover (near-zero on clean shutdown via voluntary lease release; up to 25s on crash), existing sessions are unaffected; only new pod creation and scaling pause.
 
-**CRD schema versioning during rolling deploys:** CRDs follow Kubernetes API versioning conventions (shipping at `v1beta1` initially; see Section 15.5). During a rolling deploy, the gateway and controller may briefly run different versions that expect different CRD schemas. Conversion webhooks translate between CRD versions so both components operate correctly during the transition. CRD specs use `x-kubernetes-preserve-unknown-fields` on extensible sub-objects so that a controller running an older version does not crash on fields introduced by a newer gateway (or vice versa). CRD schema changes follow the same expand-contract discipline as database migrations (above): new fields are added first, both versions write them, then old fields are removed in a subsequent release.
+**CRD schema versioning during rolling deploys:** CRDs follow Kubernetes API versioning conventions (shipping at `v1alpha1` initially and graduating to `v1beta1` → `v1`; see Section 15.5 for the graduation criteria and conversion webhook deployment procedure). During a rolling deploy, the gateway and controller may briefly run different versions that expect different CRD schemas. Conversion webhooks translate between CRD versions so both components operate correctly during the transition. CRD specs use `x-kubernetes-preserve-unknown-fields` on extensible sub-objects so that a controller running an older version does not crash on fields introduced by a newer gateway (or vice versa). CRD schema changes follow the same expand-contract discipline as database migrations (above): new fields are added first, both versions write them, then old fields are removed in a subsequent release.
 
 **Helm CRD upgrade limitation:** Helm does not update CRDs on `helm upgrade` — this is a known Helm limitation. Stale CRDs after an upgrade can cause silent failures (e.g., new fields are stripped by the API server, controllers observe unexpected defaults). CRDs must be applied separately before running `helm upgrade`. See Section 17.6 for the full packaging and recovery details. To detect stale CRDs at runtime, each controller validates on startup that the installed CRD schema version (read from the `lenny.dev/schema-version` annotation on the CRD object) matches the version the controller binary expects. If there is a mismatch, the controller logs a `FATAL` error — `"CRD schema version mismatch: installed=<installed>, expected=<expected>. Apply updated CRDs before upgrading. See docs/runbooks/crd-upgrade.md"` — and exits with a non-zero code, preventing the Deployment rollout from completing. See Section 17.6 for the full recovery procedure when this occurs.
 
@@ -3993,6 +4040,7 @@ Effective cross-environment access requires both sides to permit it. Neither sid
 1. Resolve target runtime to its home environment
 2. Verify calling environment has an outbound declaration permitting target → `target_not_in_scope` if absent
 3. Verify target environment has an inbound declaration permitting calling environment → `target_not_in_scope` if absent
+3.5. **Isolation monotonicity check:** Verify the target pool's isolation profile is at least as restrictive as the calling session's `minIsolationProfile` (see Section 8.3 isolation monotonicity). Cross-environment delegation does not relax the monotonicity invariant — a `sandboxed` session in environment A cannot cross-environment-delegate to a `standard` pool in environment B. Violation is rejected with `ISOLATION_MONOTONICITY_VIOLATED` and a `delegation.isolation_violation` audit event is emitted (Section 11.7) with `cross_environment: true`.
 4. Apply DelegationPolicy as normal → `target_not_authorized` if policy doesn't permit
 
 **Connectors are never cross-environment.** Child sessions use their own environment's connector configuration.
@@ -4710,6 +4758,16 @@ At Tier 3, total sustained write IOPS (~1,300/s) with burst headroom (~3,900/s) 
 | Audit log inserts (T3/T4)         | **SLO-critical**     | Always synchronous; never batched or deferred. Write saturation on the primary Postgres instance is the trigger to activate the separate billing/audit instance (`LENNY_PG_BILLING_AUDIT_DSN`). |
 | Audit log inserts (T2)            | **Best-effort**      | Batched (opt-in); may be lost on crash. Highest tolerable drop under write saturation — increasing `auditFlushIntervalMs` to 500ms reduces write rate at the cost of increased data-loss exposure. |
 
+**Per-tier write ceiling reference table.** The `PostgresWriteSaturation` alert (Section 16.5) fires when sustained write IOPS exceed 80% of the estimated instance ceiling for more than 5 minutes. The following table defines the numeric ceilings used to evaluate that threshold. These values assume the recommended instance class for each tier (Section 17.8.2); operators who provision a smaller instance must scale the ceilings proportionally.
+
+| Tier   | Recommended primary instance | Estimated write ceiling (sustained) | 80% alert threshold | Burst ceiling (~3× sustained) |
+| ------ | ---------------------------- | ------------------------------------ | ------------------- | ------------------------------ |
+| Tier 1 | 2 vCPU / 8 GB (e.g., `db.t3.medium`) | ~200 IOPS | ~160 IOPS | ~600 IOPS |
+| Tier 2 | 4 vCPU / 16 GB (e.g., `db.r6g.xlarge`) | ~600 IOPS | ~480 IOPS | ~1,800 IOPS |
+| Tier 3 | 8 vCPU / 32 GB (e.g., `db.r6g.2xlarge`) | ~1,600 IOPS | ~1,280 IOPS | ~4,800 IOPS |
+
+These ceilings are empirical estimates derived from Postgres WAL write benchmarks on the reference instance types, not theoretical maximums. Operators MUST validate them in Phase 2 load tests (Tier 1/2) and Phase 13.5 load tests (Tier 3) and update the Helm `postgres.writeCeilingIops` override if their workload or instance type differs. The `PostgresWriteSaturation` alert uses the configured ceiling value, not a hard-coded constant — set `postgres.writeCeilingIops` to the measured ceiling for accurate alerting.
+
 **Horizontal write scaling route:** A single Postgres primary has no horizontal write scale-out path. The defined scaling route is:
 
 1. **Vertical scaling first:** Increase the primary instance class (Section 17.8). An 8-vCPU primary handles ~1,300/s sustained; a 16-vCPU instance extends the ceiling to approximately 2,500–3,000/s.
@@ -5105,7 +5163,9 @@ spec:
   policyTypes: [Ingress]
 ```
 
-**Allow pod-to-gateway and DNS (applied to all agent pods in every agent namespace):**
+**Allow pod-to-gateway and DNS — base policy (applied to all agent pods in every agent namespace):**
+
+This base policy allows only the gRPC control channel (port 50051) and DNS. Port 8443 (LLM proxy) is **not** included here — it is conditionally added by the supplemental `allow-pod-egress-llm-proxy` policy (see below) and applies only to pods in pools with `deliveryMode: proxy`.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -5118,7 +5178,7 @@ spec:
     matchLabels:
       lenny.dev/managed: "true"
   egress:
-    - to: # Gateway
+    - to: # Gateway — gRPC control channel only
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: lenny-system
@@ -5127,8 +5187,6 @@ spec:
               lenny.dev/component: gateway
       ports:
         - port: 50051 # {{ .Values.gateway.grpcPort }} — pod-to-gateway gRPC control channel
-          protocol: TCP
-        - port: 8443 # {{ .Values.gateway.llmProxyPort }} — LLM proxy (proxy-mode pools only)
           protocol: TCP
     - to: # DNS (lenny-system CoreDNS)
         - namespaceSelector:
@@ -5144,6 +5202,37 @@ spec:
           port: 53
   policyTypes: [Egress]
 ```
+
+**Allow LLM proxy egress — supplemental policy (applied only to pods in proxy-mode pools):**
+
+Pods in pools with `deliveryMode: proxy` need access to the gateway's LLM proxy port (8443). This supplemental policy is applied selectively using the `lenny.dev/delivery-mode: proxy` label, which the WarmPoolController sets on pods belonging to proxy-mode pools. Pods in pools with `deliveryMode: direct` (or no delivery mode) do not receive this label and therefore cannot reach port 8443 — limiting their blast radius if compromised.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-llm-proxy
+  namespace: lenny-agents # repeated per agent namespace via Helm range
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/delivery-mode: proxy  # {{ .Values.gateway.llmProxyLabel }} — set only on proxy-mode pools
+  egress:
+    - to: # Gateway — LLM proxy port only
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: lenny-system
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: 8443 # {{ .Values.gateway.llmProxyPort }} — LLM proxy (proxy-mode pools only)
+          protocol: TCP
+  policyTypes: [Egress]
+```
+
+> **Label immutability note:** The `lenny.dev/delivery-mode` label is subject to the same immutability enforcement as `lenny.dev/managed` — the `lenny-label-immutability` ValidatingAdmissionWebhook (see below) prevents post-creation mutation of this label. Only the WarmPoolController ServiceAccount may set it at pod creation time.
 
 > **Note:** The namespace selectors above use `kubernetes.io/metadata.name` rather than custom labels like `lenny.dev/component`. This is an immutable label set by the Kubernetes API server on namespace creation -- it cannot be added to or spoofed on other namespaces, unlike custom labels. This prevents an attacker who can create namespaces from bypassing network isolation by applying a matching custom label.
 
@@ -5216,6 +5305,58 @@ The dedicated CoreDNS instance provides:
 - **Failure mode:** If all dedicated CoreDNS replicas become unavailable, agent pods lose DNS resolution entirely — the `allow-pod-egress-base` NetworkPolicy does **not** permit fallback to `kube-system` CoreDNS. This is intentional: a silent fallback would bypass query logging, rate limiting, and response filtering without any indication to the operator. The monitoring stack must fire a `DedicatedDNSUnavailable` critical alert (Section 16) when the ready replica count drops to zero, and a `DedicatedDNSDegraded` warning alert when it drops below the configured minimum.
 
 For `standard` (runc) isolation profiles, deployers may explicitly opt out of the dedicated CoreDNS instance via pool configuration (`dnsPolicy: cluster-default`), which falls back DNS to `kube-system` CoreDNS. This must be a conscious choice — the dedicated instance is the default for all profiles. Note that opting out removes the security properties (query logging, rate limiting, response filtering) for pods in that pool.
+
+**Reference Corefile for the dedicated CoreDNS instance.** The ConfigMap `lenny-agent-dns-corefile` (rendered by the Helm chart from `templates/coredns-configmap.yaml`) provides the following reference configuration. Deployers may override individual plugin parameters via Helm values (`coredns.corefile.*`) — the structure below is the shipped default:
+
+```
+# lenny-agent-dns — dedicated CoreDNS for agent namespaces
+# Deployed in lenny-system; serves all namespaces in .Values.agentNamespaces
+
+.:53 {
+    # Query logging: all DNS queries from agent pods are logged for audit
+    log {
+        class all
+    }
+
+    # Per-pod rate limiting: prevent high-throughput DNS tunneling
+    # ratelimit is supplied by the coredns-ratelimit plugin (bundled in the lenny CoreDNS image)
+    ratelimit {
+        responses_per_second 10   # {{ .Values.coredns.rateLimit.responsesPerSecond }} default: 10
+        # Limit is per source IP (i.e., per pod when pod-cidr-per-pod is enforced)
+    }
+
+    # Response filtering: block record types commonly used for DNS exfiltration
+    # filter is supplied by the coredns-filter plugin (bundled in the lenny CoreDNS image)
+    filter {
+        # Drop oversized TXT records (tunneling carries data in TXT)
+        max_txt_size 255            # {{ .Values.coredns.filter.maxTxtSize }} default: 255 bytes (1 TXT string)
+        # Drop record types not needed by agent pods
+        block_types NULL PRIVATE KEY TYPE65534
+    }
+
+    # Forward to kube-system CoreDNS for cluster-internal and external resolution
+    forward . /etc/resolv.conf {
+        max_concurrent 1000
+        health_check 5s
+    }
+
+    # Health endpoint (used by readiness/liveness probes)
+    health :8080
+
+    # Prometheus metrics
+    prometheus :9153
+
+    # Cache: reduce upstream query load; short TTL to limit stale data exposure
+    cache 30                        # {{ .Values.coredns.cacheTTL }} default: 30s
+
+    # Reload Corefile changes without pod restart
+    reload
+
+    errors
+}
+```
+
+The `coredns-ratelimit` and `coredns-filter` plugins are non-standard CoreDNS plugins. They are compiled into the `lenny-coredns` container image (tag tracked in `values.yaml` under `coredns.image`). Source for both plugins is vendored under `build/coredns-plugins/` in the Lenny repository. Deployers who need to build a custom CoreDNS image must include both plugins; the Helm chart validates plugin availability via a readiness probe that queries the CoreDNS health endpoint on startup.
 
 ### 13.3 Credential Flow
 
@@ -5453,6 +5594,26 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
 
 ---
 
+### 14.1 WorkspacePlan Schema Versioning
+
+**`schemaVersion` field.** The `workspacePlan` object carries a `schemaVersion` integer field (shown as `"schemaVersion": 1` in the example above). This field identifies the schema revision used when the plan was written and governs forward-compatibility obligations for all consumers of persisted workspace plans.
+
+**Producer obligation.** The gateway MUST set `schemaVersion` to the highest version required by the fields it writes. When a new `schemaVersion` introduces new source types, new setup-command fields, or changes field semantics, producers MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
+
+**Consumer obligations by consumer type.** `WorkspacePlan` is persisted in Postgres as part of the session record and retained for the session's lifetime. Two consumer categories apply:
+
+- **Gateway reconciliation (live consumer):** The gateway reads back the stored `WorkspacePlan` when replaying workspace setup for resumed or retried sessions. If the gateway encounters a `schemaVersion` higher than it understands (e.g., a plan written by a newer gateway version is read by an older one during a rollback), it MUST NOT proceed with workspace materialization — instead it MUST reject the operation with error code `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` (HTTP 422), including `details.knownVersion` and `details.encounteredVersion`. Silently processing a plan at a higher schema version could materialize an incorrect workspace.
+
+- **Audit / analytics consumers (durable consumers):** Audit pipelines, compliance exporters, and analytics queries that read session records containing embedded `WorkspacePlan` objects are **durable consumers** and MUST apply the forward-read rule from Section 15.5 item 7: process all fields they understand and preserve unknown fields verbatim. They MUST NOT reject session records solely because the embedded `WorkspacePlan.schemaVersion` is unrecognized.
+
+**Migration window SLA.** When a new `WorkspacePlan` `schemaVersion` is introduced, all gateway replicas (which are live consumers) MUST be upgraded to understand the new version within the platform's standard rolling-upgrade window (typically within one deployment cycle, ≤ 24 hours). Durable consumers MUST be upgraded within **90 days** per the general schema migration SLA in Section 15.5 item 7.
+
+**Backwards compatibility guarantee.** New `schemaVersion` values MUST NOT remove or rename existing `sources` types or `setupCommands` fields. Adding new optional fields or new `type` values to `sources` is a non-breaking addition (existing consumers ignore unknown `type` values in `sources` entries per the open-string extensibility contract below). Changing the semantics of an existing field or making a previously optional field required is a breaking change requiring a `schemaVersion` bump and a corresponding gateway upgrade gate.
+
+**Unknown `source.type` handling.** The `type` field on each `sources` entry is an open string (not a closed enum). A consumer that encounters an unknown `source.type` MUST skip that source entry and emit a `workspace_plan_unknown_source_type` warning (fields: `schemaVersion`, `unknownType`) rather than rejecting the entire plan. This allows new source types to be added in minor releases without breaking existing readers.
+
+---
+
 ## 15. External API Surface
 
 Lenny exposes multiple client-facing APIs through the **`ExternalAdapterRegistry`** — a pluggable adapter system where simultaneously active adapters route by path prefix. All adapters implement a common interface:
@@ -5527,14 +5688,49 @@ type OutboundSubscription struct {
 type OutboundChannel interface {
     // Send delivers a SessionEvent to the subscriber. Implementations must be
     // non-blocking; if the subscriber is slow, events may be buffered or dropped
-    // according to the adapter's back-pressure policy. Send returns an error if
-    // the channel is permanently unavailable (e.g., webhook URL consistently
-    // unreachable); the gateway will close the channel on non-nil error.
+    // according to the normative back-pressure policy below. Send returns an
+    // error if the channel is permanently unavailable (e.g., webhook URL
+    // consistently unreachable); the gateway will close the channel on non-nil error.
     Send(ctx context.Context, event SessionEvent) error
 
     // Close releases resources. Called exactly once by the gateway.
     Close() error
 }
+
+// Normative back-pressure policy for OutboundChannel implementations.
+//
+// Each OutboundChannel MUST implement one of the following two policies:
+//
+//   1. Buffered-drop policy (REQUIRED for webhook-based adapters):
+//      The channel maintains an in-memory event buffer with a maximum depth of
+//      MaxOutboundBufferDepth (default: 256 events; configurable per adapter via
+//      the `adapter.outboundBufferDepth` Helm value, range: 16–4096). When Send
+//      is called and the buffer is full, the oldest event in the buffer is evicted
+//      (head-drop) and the new event is enqueued. The eviction increments the
+//      `lenny_outbound_channel_buffer_drop_total` counter (labeled by `adapter`,
+//      `session_id`). Send MUST return nil even on eviction — buffer overflow is
+//      a degradation signal, not a fatal error, so the gateway does not close the
+//      channel on drop.
+//
+//   2. Bounded-error policy (REQUIRED for connection-coupled adapters — SSE, long-poll):
+//      The channel attempts a non-blocking write to the underlying transport.
+//      If the write would block (subscriber's read loop is behind), the channel
+//      MUST return a non-nil error from Send within 100 ms. The gateway closes
+//      the channel on non-nil error and removes it from the session's dispatch
+//      map. The subscriber must reconnect. This ensures a single slow subscriber
+//      cannot block the gateway's event dispatch loop.
+//
+// Both policies share these invariants:
+//   - Send MUST NOT block the caller for more than MaxOutboundSendTimeoutMs
+//     (default: 100 ms; configured globally via `adapter.outboundSendTimeoutMs`).
+//   - Send MUST be safe to call concurrently from multiple goroutines.
+//   - The buffer depth limit applies per OutboundChannel instance (per session),
+//     not globally across all channels — a slow subscriber for one session cannot
+//     starve delivery to other sessions.
+//
+// Adapters that embed BaseAdapter inherit the buffered-drop policy with
+// MaxOutboundBufferDepth = 256. Adapters that override Send must document
+// which policy they implement.
 ```
 
 The gateway provides a **`BaseAdapter`** struct with no-op implementations of all optional methods. Adapters that embed `BaseAdapter` satisfy the full interface and only override lifecycle hooks they need — existing adapters (MCP, OpenAI Completions, Open Responses) require no changes. `BaseAdapter.OutboundCapabilities()` returns a zero-value `OutboundCapabilitySet` (all false). `BaseAdapter.OpenOutboundChannel()` returns a no-op channel that discards all events.
@@ -5595,7 +5791,7 @@ The REST API covers all non-interactive operations. It is the primary integratio
 | `POST /v1/sessions/{id}/terminate` | `running`, `suspended`, `resume_pending`, `awaiting_client_action` | `completed`                                                                            | Valid in any non-terminal, non-setup state. Graceful shutdown.                                                                  |
 | `POST /v1/sessions/{id}/resume`    | `awaiting_client_action`                                           | `resume_pending` → `resuming` → `running`                                              | Only valid after automatic retries are exhausted. Not valid in `suspended` (use message delivery or `resume_session` for that). |
 | `POST /v1/sessions/{id}/messages`  | `running`, `suspended`                                             | `running` (if `suspended` with `delivery: immediate`, atomically resumes and delivers) | See Section 7.2 for delivery semantics.                                                                                         |
-| `POST /v1/sessions/{id}/derive`    | `completed`, `failed`, `cancelled`, `expired`                      | Creates a new session (original unchanged)                                             | Only valid on terminal sessions with a workspace snapshot.                                                                      |
+| `POST /v1/sessions/{id}/derive`    | `completed`, `failed`, `cancelled`, `expired` (default); `running`, `suspended`, `resume_pending`, `resuming`, `awaiting_client_action` (requires `allowStale: true` in request body) | Creates a new session (original unchanged) | Terminal sessions use the sealed or last-checkpoint snapshot. Non-terminal sessions require `allowStale: true`; derive uses the most recent successful checkpoint snapshot. Response includes `workspaceSnapshotSource` and `workspaceSnapshotTimestamp`. See Section 7.1 derive semantics. |
 | `DELETE /v1/sessions/{id}`         | Any non-terminal state                                             | `cancelled`                                                                            | Force-terminates and cleans up. Equivalent to terminate + cleanup in one call.                                                  |
 
 **Externally visible vs. internal-only states.** The REST API (`GET /v1/sessions/{id}`) returns session states from the **session/task state model** (Section 7.2, 8.8), not the pod state model (Section 6.2). Pod states are internal implementation details not exposed to API callers.
@@ -5632,6 +5828,12 @@ Internal-only states (from the pod state machine in Section 6.2) such as `warmin
 | `POST` | `/v1/sessions/{id}/extend-retention` | Extend artifact retention TTL. Body: `{"ttlSeconds": <n>}`. See Section 7.1.                                                        |
 | `GET`  | `/v1/sessions/{id}/webhook-events`   | List undelivered webhook events after retry exhaustion. See Section 14 (`callbackUrl` field).                                        |
 
+**Blob resolution:**
+
+| Method | Endpoint              | Description                                                                                                                                                                                                                                                                                                                                                                        |
+| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/blobs/{ref}`     | Resolve and download a `lenny-blob://` reference (see Section 15.4.1, `LennyBlobURI` scheme). `{ref}` is the full `lenny-blob://` URI, URL-encoded. The gateway verifies that the caller's identity has read access to the tenant and session embedded in the URI (`tenant_id`, `session_id` components) before retrieving the blob from the artifact store and streaming it back. Returns the blob bytes with the `Content-Type` header set to the blob's `mimeType`. Returns `404` if the blob has expired (`ttl` elapsed) or was never written; returns `403` if the caller lacks access to the owning session. REST adapter clients use this endpoint to dereference `ref` fields in `OutputPart` responses — external protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields internally and MUST NOT pass `lenny-blob://` URIs to external callers. |
+
 **Async job support:**
 
 | Method | Endpoint                     | Description                                                                                                                                     |
@@ -5663,7 +5865,36 @@ Internal-only states (from the pod state machine in Section 6.2) such as `warmin
 | Method | Endpoint                   | Description                                                                                                                     |
 | ------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `POST` | `/v1/sessions/{id}/eval`   | Accept scored evaluator results (LLM-as-judge scores, custom heuristics, ground-truth comparisons). Stored as session metadata. |
-| `POST` | `/v1/sessions/{id}/replay` | Re-run a session against a different runtime version using the same workspace and prompt history.                               |
+| `POST` | `/v1/sessions/{id}/replay` | Re-run a session against a different runtime version using the same workspace and prompt history. See **Session Replay Semantics** below. |
+
+#### Session Replay Semantics
+
+`POST /v1/sessions/{id}/replay` creates a new independent session that replays the source session's prompt history against a different runtime version. This is the primary mechanism for regression testing and A/B evaluation of runtime upgrades.
+
+**Request body:**
+
+```json
+{
+  "targetRuntime": "<runtime-name>",
+  "targetPool": "<pool-name (optional)>",
+  "replayMode": "prompt_history | workspace_derive",
+  "evalRef": "<eval-id (optional)>"
+}
+```
+
+**Semantics:**
+
+- **`replayMode: prompt_history`** (default): The source session's prompt history (from `GET /v1/sessions/{id}/transcript`) is replayed verbatim as the initial message sequence to the new session. The workspace is populated with the source session's sealed final workspace snapshot (or last checkpoint if the source session did not seal cleanly). The replayed session starts fresh — it has no knowledge of prior tool call results and will re-execute tool calls using the new runtime.
+- **`replayMode: workspace_derive`**: Equivalent to `POST /v1/sessions/{id}/derive` with `targetRuntime` substituted. The new session starts with the source workspace but receives no pre-loaded prompt history. Use this mode when testing the new runtime's behavior from a clean start with an identical filesystem state.
+- **`targetRuntime`** (required): The runtime name to replay against. Must be a registered runtime with the same `executionMode` as the source session. A different `executionMode` returns `400 INCOMPATIBLE_RUNTIME`.
+- **`targetPool`** (optional): If omitted, the gateway selects the default pool for `targetRuntime`. Must be a pool backed by `targetRuntime`.
+- **`evalRef`** (optional): If provided, links the replayed session to an experiment or eval set. The `evalRef` is recorded in the new session's metadata and can be used to filter `GET /v1/sessions` by eval context.
+
+**Preconditions:** Source session must be in a terminal state (`completed`, `failed`, `cancelled`, `expired`) with a resolvable workspace snapshot. Non-terminal source sessions return `409 REPLAY_ON_LIVE_SESSION`.
+
+**Response:** Returns the new session's `session_id`, `uploadToken`, and `sessionIsolationLevel` — identical to `POST /v1/sessions`. The new session proceeds through the standard lifecycle (upload → finalize → start → run).
+
+**Credential handling:** The replayed session goes through standard `CredentialPolicy` evaluation (Section 7.1, step 6) independently — credentials are never inherited from the source session.
 
 **Comprehensive Admin API:**
 
@@ -5700,9 +5931,10 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `GET`    | `/v1/admin/pools/{name}`                                        | Get a specific pool configuration                                                                                                                                                                                                                                                                                          |
 | `PUT`    | `/v1/admin/pools/{name}`                                        | Update a pool configuration (requires `If-Match`)                                                                                                                                                                                                                                                                          |
 | `DELETE` | `/v1/admin/pools/{name}`                                        | Delete a pool configuration                                                                                                                                                                                                                                                                                                |
-| `POST`   | `/v1/admin/pools/{name}/drain`                                  | Drain a pool                                                                                                                                                                                                                                                                                                               |
+| `POST`   | `/v1/admin/pools/{name}/drain`                                  | Drain a pool — transitions the pool to `draining` state, stops assigning warm pods to new sessions, and waits for in-flight sessions to complete or timeout before pod cleanup. **Backpressure for in-flight sessions:** while the pool is in `draining` state, any new `POST /v1/sessions` (or `create_session` MCP call) that would have selected this pool returns `503 POOL_DRAINING` with a `Retry-After: <seconds>` response header. The `Retry-After` value is computed as `ceil(estimated_drain_completion_seconds)` based on the longest active session age in the pool (capped at `maxSessionAgeSeconds`). Clients MUST respect `Retry-After` before retrying; the gateway rate-limits retry-after violations per client IP. The drain API response body includes `{"status": "draining", "activeSessions": <n>, "estimatedDrainSeconds": <n>}`. A `GET /v1/admin/pools/{name}` query returns `"phase": "draining"` and `"activeSessions": <n>` while drain is in progress. Metric: `lenny_pool_draining_sessions_total` (gauge, labeled by `pool`) tracks in-flight sessions during drain. |
 | `GET`    | `/v1/admin/pools/{name}/sync-status`                            | Report CRD reconciliation state: `postgresGeneration`, `crdGeneration`, `lastReconciledAt`, `lagSeconds`, `inSync`                                                                                                                                                                                                         |
 | `PUT`    | `/v1/admin/pools/{name}/warm-count`                             | Adjust minWarm/maxWarm at runtime                                                                                                                                                                                                                                                                                          |
+| `PUT`    | `/v1/admin/pools/{name}/circuit-breaker`                        | Override the SDK-warm circuit-breaker state for a pool. Body: `{"sdkWarm": {"circuitBreakerOverride": "enabled" \| "disabled" \| "auto"}}`. Values: `enabled` — forces SDK-warm on regardless of demotion rate (use only after narrowing `sdkWarmBlockingPaths`); `disabled` — forces SDK-warm off regardless of demotion rate; `auto` — clears any override and restores automatic circuit-breaker control. Returns `409 INVALID_STATE_TRANSITION` if the pool's `sdkWarm.enabled` is `false` (circuit-breaker override has no effect on non-SDK-warm pools). Emits `pool.sdk_warm_circuit_breaker_override` audit event recording operator identity, previous state, and new value. Requires `platform-admin` or `tenant-admin` role. See Section 6.1 (SDK-warm circuit-breaker).                                             |
 | `POST`   | `/v1/admin/credential-pools`                                    | Create a credential pool (tenant-scoped; `tenant-admin` sees own tenant's pools, `platform-admin` sees all with optional `?tenant_id=` filter)                                                                                                                                                                             |
 | `GET`    | `/v1/admin/credential-pools`                                    | List credential pools (tenant-scoped)                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/credential-pools/{name}`                             | Get a specific credential pool                                                                                                                                                                                                                                                                                             |
@@ -5718,7 +5950,7 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `PUT`    | `/v1/admin/tenants/{id}/rbac-config`                            | Set tenant RBAC configuration                                                                                                                                                                                                                                                                                              |
 | `GET`    | `/v1/admin/tenants/{id}/rbac-config`                            | Get tenant RBAC configuration                                                                                                                                                                                                                                                                                              |
 | `GET`    | `/v1/admin/tenants/{id}/access-report`                          | Cross-environment access matrix                                                                                                                                                                                                                                                                                            |
-| `POST`   | `/v1/admin/tenants/{id}/rotate-erasure-salt`                    | Rotate the tenant's billing pseudonymization salt. Old salt retained in `previous_erasure_salts` for referential integrity. See Section 12.8.                                                                                                                                                                              |
+| `POST`   | `/v1/admin/tenants/{id}/rotate-erasure-salt`                    | Rotate the tenant's billing pseudonymization salt. The old salt is **deleted immediately** upon rotation (not retained); a one-time re-hash migration job re-pseudonymizes historical billing records under the new salt before deletion. See Section 12.8.                                                                    |
 | `POST`   | `/v1/admin/environments`                                        | Create an environment                                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/environments`                                        | List all environments                                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/environments/{name}`                                 | Get a specific environment                                                                                                                                                                                                                                                                                                 |
@@ -5731,9 +5963,9 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `GET`    | `/v1/admin/experiments`                                         | List all experiments                                                                                                                                                                                                                                                                                                       |
 | `GET`    | `/v1/admin/experiments/{name}`                                  | Get a specific experiment                                                                                                                                                                                                                                                                                                  |
 | `PUT`    | `/v1/admin/experiments/{name}`                                  | Update an experiment (requires `If-Match`)                                                                                                                                                                                                                                                                                 |
-| `PATCH`  | `/v1/admin/experiments/{id}`                                    | Partial update of an experiment — canonical endpoint for status transitions (`active`, `paused`, `concluded`). Uses JSON Merge Patch. Requires `If-Match`. See Section 10.7.                                                                                                                                               |
+| `PATCH`  | `/v1/admin/experiments/{name}`                                  | Partial update of an experiment — canonical endpoint for status transitions (`active`, `paused`, `concluded`). Uses JSON Merge Patch. Requires `If-Match`. See Section 10.7.                                                                                                                                               |
 | `DELETE` | `/v1/admin/experiments/{name}`                                  | Delete an experiment                                                                                                                                                                                                                                                                                                       |
-| `GET`    | `/v1/experiments/{name}/results`                                | Experiment results by variant                                                                                                                                                                                                                                                                                              |
+| `GET`    | `/v1/admin/experiments/{name}/results`                          | Experiment results by variant. Returns per-variant session counts, token usage, and any custom metric aggregates collected via `POST /v1/sessions/{id}/eval`. Requires `platform-admin` or `tenant-admin` role. See Section 10.7.                                                                                           |
 | `POST`   | `/v1/admin/external-adapters`                                   | Register an external protocol adapter                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/external-adapters`                                   | List all external protocol adapters                                                                                                                                                                                                                                                                                        |
 | `GET`    | `/v1/admin/external-adapters/{name}`                            | Get a specific external adapter                                                                                                                                                                                                                                                                                            |
@@ -6022,6 +6254,12 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 
 **Compatibility policy:** Lenny supports the two most recent stable MCP spec versions simultaneously. When a new MCP spec version is adopted, the oldest supported version enters a 6-month deprecation window. The gateway emits a `mcp_version_deprecated` warning header on connections using the deprecated version.
 
+**Session-lifetime exception for deprecated versions.** When a version exits the deprecation window (i.e., the gateway drops support for it on the 6-month boundary), connections that are already established and mid-session at that instant MUST NOT be forcibly terminated. The gateway enforces the following rule: version support removal applies only to **new** connection negotiations — any `MCPAdapter` connection that completed `initialize` handshake before the deprecation deadline is permitted to continue for the duration of its session (up to `maxSessionAgeSeconds`, Section 11.3). Concretely:
+- The gateway maintains a per-connection `negotiatedVersion` field set at `initialize` time.
+- Version enforcement checks at message dispatch time use `negotiatedVersion` — not the current supported-version set — to route to the correct serialization logic.
+- When the deprecated version's handler is scheduled for removal (deployment of the gateway binary that drops the old version), the `lenny-preflight` Job emits a warning if any sessions older than 1 hour are active on the deprecated version (`lenny_mcp_deprecated_version_active_sessions` gauge). Operators must drain these sessions (via graceful terminate + resume on the new version) before the deployment to avoid a mid-session protocol mismatch.
+- If a session on the deprecated version is still active after the deployment (i.e., the operator did not drain), the gateway falls back to the nonce-handshake-only serialization path with a `schema_version_ahead` degradation annotation rather than terminating the session abruptly.
+
 **MCP features used:**
 
 - Tasks (for long-running session lifecycle and delegation)
@@ -6140,7 +6378,7 @@ The `message` type carries an `input` field containing an `OutputPart[]` array (
 - **`schemaVersion` is an integer identifying the OutputPart schema revision (default `1`).** Present on every persisted `OutputPart`. The forward-compatibility contract has obligations on both sides:
   - **Producer obligation:** Producers MUST set `schemaVersion` to the highest version required by the fields they emit. When a schema version introduces semantically important fields (e.g., `citations` in v2), the producer MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
   - **Consumer obligation — streaming/live delivery:** Consumers MUST NOT reject an `OutputPart` solely because its `schemaVersion` is higher than the consumer understands. When a consumer encounters a `schemaVersion` it does not recognize, it processes the fields it does understand and MUST surface a **degradation signal**: a `schema_version_ahead` annotation on the parent `MessageEnvelope` (with `"knownVersion"` and `"encounteredVersion"` fields) so the end user or upstream caller is informed that the response may be incomplete. Consumers MUST NOT silently discard unknown fields without this signal. This ensures data loss from schema mismatch is always visible rather than hidden.
-  - **Consumer obligation — durable storage (TaskRecord):** When `OutputPart` arrays are persisted as part of a `TaskRecord` (Section 8.7), the rejection-at-read rule from Section 15.5 item 7 applies: if a reader encounters an `OutputPart` with a `schemaVersion` it does not recognize, it MUST reject the read with a structured error rather than silently dropping fields. Billing and audit records retained for 13 months will span multiple schema revisions; silent field loss in these records is unacceptable. This is a stricter rule than the live-delivery contract because durable records are authoritative and cannot be re-fetched from the producer.
+  - **Consumer obligation — durable storage (TaskRecord):** When `OutputPart` arrays are persisted as part of a `TaskRecord` (Section 8.7), the forward-read rule from Section 15.5 item 7 applies: if a reader encounters an `OutputPart` with a `schemaVersion` it does not recognize, it MUST **forward-read** — process all fields it understands and preserve all unknown fields verbatim (pass-through) — rather than rejecting the record. Billing and audit records retained for 13 months will span multiple schema revisions; silent data loss or outright rejection in these records is unacceptable. If a durable consumer cannot safely pass through unknown fields (e.g., it writes to a schema-strict sink), it MUST emit a `durable_schema_version_ahead` structured error to an operator alert channel and queue the record for manual review rather than dropping it. This rule is consistent with the general durable-consumer rule in Section 15.5 item 7 and extends it explicitly to `OutputPart` arrays embedded within persisted `TaskRecord` objects.
 - **`type` is an open string — not a closed enum — with a versioned canonical type registry.** The registry defines platform-defined types and their guaranteed translation behavior per adapter. Any type not in the current registry version is treated as a custom type and falls back to `text` with the original type preserved in `annotations.originalType`. Types may be added to the registry in minor releases; removing a type or changing its translation behavior is a breaking change requiring a major version bump. This retains open-string extensibility while making translation deterministic across adapter implementations.
 
   **Canonical Type Registry (v1):**
@@ -6703,7 +6941,17 @@ Community contributors and integrators need clear guarantees about which APIs ar
 
 3. **Runtime adapter protocol:** Versioned independently (see Section 15.4). The adapter advertises a protocol version at INIT; the gateway selects a compatible version. Major version changes are breaking.
 
-4. **CRDs:** Versioned via Kubernetes API versioning conventions (`v1alpha1` → `v1beta1` → `v1`). Conversion webhooks handle multi-version coexistence during upgrades.
+4. **CRDs:** All Lenny CRDs (`SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, `SandboxClaim`) ship initially at **`v1alpha1`** and follow the graduation path `v1alpha1` → `v1beta1` → `v1`. Graduation criteria: `v1alpha1` → `v1beta1` requires Phase 2 benchmark completion and no breaking field changes for 60 days; `v1beta1` → `v1` requires GA load-test sign-off (Phase 14.5) and no breaking changes for 6 months.
+
+   **Conversion webhook deployment.** Multi-version coexistence during upgrades depends on a running conversion webhook. The conversion webhook (`lenny-crd-conversion`) must be deployed **before** adding a new served version to any CRD — the API server begins routing conversion requests to the webhook as soon as `spec.conversion.strategy: Webhook` is set, and a missing webhook causes all CRD operations to fail. The deployment procedure for each version graduation is:
+   1. Deploy the `lenny-crd-conversion` Deployment (from `charts/lenny/templates/conversion-webhook.yaml`) and wait for its pods to reach `Ready` state.
+   2. Verify the webhook Service and `spec.conversion.webhook.clientConfig` in each CRD are correctly referencing the `lenny-crd-conversion` Service before applying the updated CRD. Run `kubectl get svc -n lenny-system lenny-crd-conversion` to confirm the Service exists.
+   3. Apply the updated CRD manifests (`kubectl apply -f charts/lenny/crds/`). The `lenny-preflight` Job validates conversion webhook availability as a preflight check and will fail the upgrade if the webhook Service is absent or not ready.
+   4. Confirm `kubectl get crd <name> -o jsonpath='{.spec.versions[*].name}'` lists both the old and new version as served.
+   5. Migrate stored objects to the new storage version using `kubectl get <resource> -A --output=yaml | kubectl apply -f -` (re-apply triggers conversion and storage migration). Monitor `apiserver_crd_webhook_conversion_duration_seconds` for conversion latency.
+   6. Once all stored objects are migrated, remove the old version from the `served: true` list and update `storage: true` to the new version in the CRD spec.
+
+   Conversion webhooks are deployed with `replicas: 2` and `PodDisruptionBudget minAvailable: 1`. The `lenny-preflight` Job checks webhook availability as part of every upgrade. See Section 10.5 for the full CRD upgrade procedure.
 
 5. **Definition of "breaking change":** Removing a field, changing a field's type, changing the default behavior of an existing feature, removing an endpoint/tool, or changing error codes for existing operations.
 
@@ -6727,7 +6975,7 @@ Community contributors and integrators need clear guarantees about which APIs ar
    - Durable consumers MUST NOT silently discard records based solely on an unrecognized `schemaVersion`.
    - **Migration window SLA:** When a new `schemaVersion` is introduced, all durable consumers MUST be upgraded to understand the new version within **90 days** of the version's release. After 90 days, the previous schema version may be retired from active write paths, but persisted records at the old version remain readable for the full retention period of each record type.
 
-   **Reader code** uses `schemaVersion` to select the correct deserialization path, enabling rolling schema migrations without downtime. **This durable-consumer rule extends to `OutputPart` arrays nested within `TaskRecord`:** if any `OutputPart` in a persisted `TaskRecord` carries a `schemaVersion` a durable consumer does not recognize, the consumer MUST forward-read (preserving unknown fields) rather than rejecting — silent data loss in billing or audit records is unacceptable (see Section 15.4.1, `schemaVersion` consumer obligation).
+   **Reader code** uses `schemaVersion` to select the correct deserialization path, enabling rolling schema migrations without downtime. **This durable-consumer forward-read rule extends to `OutputPart` arrays nested within `TaskRecord`:** if any `OutputPart` in a persisted `TaskRecord` carries a `schemaVersion` a durable consumer does not recognize, the consumer MUST forward-read (preserving unknown fields verbatim) rather than rejecting the record or silently dropping unrecognized fields — silent data loss in billing or audit records is unacceptable (see Section 15.4.1, "Consumer obligation — durable storage (TaskRecord)").
 
 ### 15.6 Client SDKs
 
@@ -6804,11 +7052,16 @@ Client SDKs follow the same versioning scheme as the API surfaces they wrap (Sec
 | Per-subsystem queue depth (`lenny_gateway_{subsystem}_queue_depth`)                                                                                                                                                    | Gauge           |
 | Per-subsystem circuit breaker state (`lenny_gateway_{subsystem}_circuit_state`, 0=closed, 1=half-open, 2=open)                                                                                                         | Gauge           |
 | LLM Proxy active connections (`lenny_gateway_llm_proxy_active_connections`)                                                                                                                                            | Gauge           |
+| GC pause P99 per replica (`lenny_gateway_gc_pause_p99_ms`, labeled by `replica_id`) — process-level GC pause; sustained >50 ms signals shared-process boundary pressure (see §4.1 Shared-process GC pressure signal) | Gauge           |
+| Fleet-wide GC pressure indicator (`lenny_gateway_gc_pause_fleet_p99_ms`) — the 99th-percentile GC pause aggregated across all active gateway replicas (computed as `max(lenny_gateway_gc_pause_p99_ms)` over all replica instances); used as the Tier 3 aggregate health indicator for the extraction decision and the `Tier3GCPressureHigh` alert below | Gauge           |
 | **Warm Pool Replenishment**                                                                                                                                                                                            |                 |
 | Pod startup duration (`lenny_warmpool_pod_startup_duration_seconds`, by pool, by isolation profile — time from pod creation to `idle` state)                                                                           | Histogram       |
 | Replenishment rate (`lenny_warmpool_replenishment_rate`, pods/min entering `idle` state, by pool)                                                                                                                      | Gauge           |
 | Cold-start sessions served (`lenny_warmpool_cold_start_total`, by pool — increments when a session is served from a cold pod in a `minWarm: 0` pool or when the warm pool is exhausted and a pod is created on demand) | Counter         |
 | Cold-start pool fill duration (`lenny_warmpool_fill_duration_seconds`, by pool — time from pool creation to reaching `minWarm` ready pods; see Section 4.6.1)                                                          | Histogram       |
+| Warm pod claims (`lenny_warmpool_claims_total`, labeled by `pool`, `runtime_class` — increments each time a warm pod transitions from `idle` to `claimed`; used to compute the SDK-warm demotion rate when divided by `lenny_warmpool_sdk_demotions_total`) | Counter         |
+| SDK-warm demotions (`lenny_warmpool_sdk_demotions_total`, labeled by `pool`, `runtime_class` — increments each time an SDK-warm pod is demoted to pod-warm state before session assignment, typically because the session uploads files matching `sdkWarmBlockingPaths`; see Section 6.1) | Counter         |
+| Task-mode pod reuse count (`lenny_task_reuse_count`, labeled by `pool`, `pod_name` — number of tasks executed on a single pod in task mode; used to track recycling efficiency and enforce `maxTasksPerPod` retirement) | Gauge           |
 | **Pool Config Reconciliation**                                                                                                                                                                                         |                 |
 | Pool config reconciliation lag (`lenny_pool_config_reconciliation_lag_seconds`, by pool — time since last successful CRD reconciliation from Postgres; see Section 4.6.2)                                              | Gauge           |
 | **Experiment Targeting**                                                                                                                                                                                               |                 |
@@ -6927,6 +7180,7 @@ Helm configuration: `audit.retentionPreset: soc2` or `audit.retentionDays: 2190`
 | `CredentialPoolLow`              | Available credentials < 20% of pool size                                                                                                                                                                                                     | Warning  |
 | `GatewayActiveStreamsHigh`       | Active streams per replica > 80% of configured max                                                                                                                                                                                           | Warning  |
 | `GatewaySessionBudgetNearExhaustion` | `lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` > 90% on any replica for > 60s; HPA scale-out is lagging behind session arrival rate — new sessions may be queued or rejected if scale-out does not complete in time. See Section 4.1 for `maxSessionsPerReplica` calibration. | Warning  |
+| `Tier3GCPressureHigh`               | `lenny_gateway_gc_pause_fleet_p99_ms` (fleet-wide P99 GC pause, see §16.1) exceeds 50 ms for > 5 min at Tier 3 scale (≥ 5,000 active sessions). Indicates that the combined gateway binary is experiencing shared-process GC pressure across the fleet — either the LLM Proxy subsystem should be extracted (see §4.1 extraction thresholds) or `maxSessionsPerReplica` must be reduced until extraction is complete. Suppress at Tier 1/2 scale (< 5,000 active sessions). | Warning  |
 | `ArtifactGCBacklog`              | Expired artifacts pending cleanup exceeds tier-dependent threshold (Section 17.8)                                                                                                                                                            | Warning  |
 | `CheckpointStale`                | Any active session has `lenny_session_last_checkpoint_age_seconds` > `periodicCheckpointIntervalSeconds` (default: 600s); session is at elevated risk of workspace loss on eviction                                                          | Warning  |
 | `RateLimitDegraded`              | Rate limiting in fail-open mode                                                                                                                                                                                                              | Warning  |
@@ -6969,7 +7223,7 @@ The following tiers define the scale points at which SLOs and alerting rules mus
 | Delegation fan-out (concurrent)   | 10               | 100             | 500            |
 | Active tenants                    | 5                | 50              | 500            |
 | LLM proxy concurrent streams      | 50               | 500             | 5,000          |
-| Per-replica session capacity budget (`maxSessionsPerReplica`) | 50 (provisional) | 200 (provisional) | 200 (provisional) |
+| Per-replica session capacity budget (`maxSessionsPerReplica`) | 50 (provisional) | 200 (provisional) | 400 (provisional — requires LLM Proxy extraction; see §4.1) |
 
 **Design-time scale target:** All architectural decisions (queue depths, connection pool sizes, controller reconciliation intervals, warm pool sizing) must be validated against **Tier 2** as the minimum. Tier 3 must be achievable with horizontal scaling only (no architectural changes). Tier 1 exists for single-node development and CI environments.
 
@@ -7366,7 +7620,7 @@ Each runbook stub below uses a common three-part structure:
 - **Redis failure and recovery** (`docs/runbooks/redis-failure.md`)
   - *Trigger:* `RedisUnavailable` alert fires; quota enforcement logs switch to fail-open mode; `lenny_quota_redis_fallback_total` counter increments.
   - *Diagnosis:* `redis-cli -h <host> -a <password> --tls PING` — verify Redis reachability. Check Sentinel or Cluster status: `redis-cli CLUSTER INFO` or `redis-cli -p 26379 SENTINEL masters`. Check gateway logs for the fail-open window: `kubectl logs -l app=lenny-gateway --since=5m | grep "redis_unavailable"`.
-  - *Remediation:* (1) While Redis is unavailable, the platform operates in fail-open mode with `replica_count = 1` assumption — overage exposure is bounded by `lenny_quota_redis_fallback_window` (default 60s). Do not rely on fail-open for more than 5 minutes. (2) If Redis is recoverable, restart the primary or promote a replica. (3) After Redis is restored, trigger quota reconciliation: `lenny-ctl admin quota reconcile --all-tenants` — this re-aggregates in-flight session usage from Postgres into Redis counters, closing any gap from the fail-open window. (4) Review `lenny_quota_redis_fallback_total` counter to quantify overage exposure. Issue billing corrections if any tenant was materially overcharged or undercharged (Section 11.2.1).
+  - *Remediation:* (1) While Redis is unavailable, the platform operates in fail-open mode with `cached_replica_count` assumption (the gateway uses the last successfully cached gateway replica count, not a hard-coded `1`) — overage exposure is bounded by `lenny_quota_redis_fallback_window` (default 60s). Do not rely on fail-open for more than 5 minutes. (2) If Redis is recoverable, restart the primary or promote a replica. (3) After Redis is restored, trigger quota reconciliation: `lenny-ctl admin quota reconcile --all-tenants` — this re-aggregates in-flight session usage from Postgres into Redis counters, closing any gap from the fail-open window. (4) Review `lenny_quota_redis_fallback_total` counter to quantify overage exposure. Issue billing corrections if any tenant was materially overcharged or undercharged (Section 11.2.1).
 
 - **Credential pool exhaustion** (`docs/runbooks/credential-pool-exhaustion.md`)
   - *Trigger:* `CredentialPoolExhausted` alert fires; session creation returns `CREDENTIAL_POOL_EXHAUSTED`; `lenny_credential_pool_available` gauge reaches 0.
@@ -7747,6 +8001,7 @@ These were open questions from the initial design, now resolved:
 | 11  | Billing/showback                 | Track per-session, per-token, and per-minute usage. Expose via REST API (`GET /v1/usage`). Filterable by tenant, user, runtime, and time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | 12  | Session forking                  | Not supported. The `fork_session` concept is dropped. Clients can derive a new session from a previous one by: (1) downloading the previous session's workspace snapshot via `GET /v1/sessions/{id}/workspace`, (2) creating a new session, (3) uploading the snapshot as an `uploadArchive` source in the new session's WorkspacePlan. The gateway also provides a convenience endpoint `POST /v1/sessions/{id}/derive` that performs steps 1-3 atomically — it creates a new session pre-populated with the previous session's workspace snapshot.                                                                                                                               |
 | 13  | Lease extension                  | Supported via adapter↔gateway gRPC lifecycle (not an MCP tool — runtime is unaware). Triggered by the adapter when the LLM proxy rejects for budget exhaustion. `elicitation` mode (default): serialized per tree, one elicitation at a time, concurrent requests batched, cool-off window after approval, rejection triggers a cool-off period (`rejectionCoolOffSeconds`, default 300s) for the denied subtree — after the cool-off expires the subtree may request extensions again. `auto` mode: each request handled independently, no elicitation. Extensions can never exceed deployer caps or the parent's own lease. Extension responses include granted amounts and explicit status: `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED` (zero grant — adapter must not retry), or `REJECTED`. See Section 8.6. |
+| 14  | Open-source license and OSS governance (CPS-008) | **Resolved by Phase 0 (ADR-008).** License selection is a hard Phase 0 gating item — evaluated against competitive positioning (E2B uses AGPL + commercial, Temporal and LangChain use MIT), enterprise legal requirements, runtime author copyleft clarity, and `kubernetes-sigs/agent-sandbox` upstream compatibility. Candidate licenses: MIT, Apache 2.0, AGPL + commercial exception, BSL. Decision recorded as ADR-008 in `docs/adr/` and the selected license committed to the repository root before Phase 1 begins. CLA/DCO policy and `CONTRIBUTING.md` ship in Phase 2 as part of the community onboarding milestone. `GOVERNANCE.md` ships in Phase 17a. See Section 23.2 for governance model (BDfN → steering committee). CPS-008 is **resolved** — this is no longer an open question. |
 
 Each decision above is a summary; full Architecture Decision Records (ADRs) with context, alternatives considered, and consequences will be maintained in `docs/adr/` as separate documents following the MADR format, with this table serving as an index.
 
