@@ -59,6 +59,7 @@ Read the relevant section(s) of the spec file. Determine whether the finding is 
 - If the finding is **already resolved** (by a prior fix or because the description doesn't match reality): mark the finding **"Already Fixed"** in `$1` with a one-sentence explanation and **stop processing this finding**.
 - If the finding is **partially resolved**: note what remains and proceed to Step 2 for the remaining issue only.
 - If the finding is **still valid**: proceed to Step 2.
+- If the finding was previously reported in previous finding reports and skipped or deferred, mark the finding as **"Skipped"** in `$1` with a one sentence explanation and **stop processing this finding**.
 
 ### Step 2 — Decompose
 
@@ -163,3 +164,4 @@ Use exactly these strings: `Fixed` | `Skipped` | `Deferred - Input Required` | `
 - **Never skip the regression check.** Even a small edit can break cross-references or introduce contradictions.
 - **Do not modify the spec file for Skipped or Deferred findings.** Only `Fixed` (and regression-fix) statuses result in spec edits.
 - **Bias toward minimal fixes.** The tech spec is mature. Challenge findings and recommendations — prefer doing nothing over over-engineering.
+- **Remember to update the finding status and details of the implemented solution, if applicable, in the findings file.**
