@@ -6,6 +6,41 @@
 **Total findings:** 74 across 25 review perspectives
 **Scope:** Critical, High, and Medium (no fixes applied this iteration — review only)
 
+---
+
+## Medium Findings Resolution (Post-Iteration Processing — Batch 1)
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| K8S-020 | Fixed | Added controller pod anti-affinity row to §17.8.2 controller tuning table: `preferred` for Tier 1, `required` for Tier 2/3 |
+| K8S-021 | Fixed | Added agent-sandbox CRD presence check to §17.6 preflight table: verifies all four CRDs are installed at expected API version |
+| K8S-022 | Skipped | Admission-time enforcement (RuntimeClass nodeSelector + dedicated-node taint) already provides hard scheduling constraints; post-scheduling reconciliation is defense-in-depth with no new operational failure mode |
+| NET-022 | Fixed | Added CIDR exclusion block to §13.2: preflight validation + WarmPoolController continuous drift detection with `NetworkPolicyCIDRDrift` alert; also added preflight table row |
+| NET-023 | Fixed | Added PgBouncer row to §13.2 lenny-system NetworkPolicy table: egress to Postgres TCP 5432, ingress from gateway/token-service/controller; self-managed profile only note included |
+| SCL-023 | Fixed | Added per-tenant circuit breaker to §10.7 experiment targeting section: opens after 5 failures/10s, 30s open duration, `lenny_experiment_targeting_circuit_open` gauge + `ExperimentTargetingCircuitOpen` alert |
+| SCL-024 | Fixed | Added KEDA/HPA mutual exclusivity paragraph to §10.1: conflict explanation, `ScaledObject.advanced.horizontalPodAutoscalerConfig` guidance, migration note, Helm chart enforcement via `autoscaling.provider` |
+| SCL-025 | Fixed | Defined `--status-update-dedup-window` semantics in §4.6.1 etcd tuning section; added per-tier values (500ms/500ms/250ms) to §17.8.2 controller tuning table |
+
+---
+
+## High Findings Resolution (Post-Iteration Processing)
+
+| Finding | Status | Notes |
+|---------|--------|-------|
+| NET-021 | Fixed | Updated lenny-system NetworkPolicy table: gateway and token-service Redis egress changed from TCP 6379 to TCP 6380 (TLS port, `{{ .Values.redis.tlsPort }}`) |
+| PRT-020 | Fixed | Replaced `"delivery": "at-least-once"` with `"delivery": "queued"` in the §15.4.1 Inbound message example |
+| SCH-029 | Skipped | The `scores` JSONB field is already documented with clear semantics (key = scorer-defined dimension name, value = float64). Aggregation works correctly as the union of all keys per scorer/variant. Adding a vocabulary registry is a v1 nicety with no operational impact — scorers already interoperate by using the scalar `score` field for cross-scorer comparison. |
+| SLC-026 | Fixed | Added explicit re-await protocol to §8.10 step 4d: when resumed parent re-issues `lenny/await_children`, gateway streams settled results from `session_tree_archive` in original-settlement order before entering live-wait |
+| DEL-021 | Fixed | Added "Detached orphan cascade and budget semantics" section to §8.10: detached orphans retain their own `cascadeOnFailure` policy; budget return on orphan completion is a no-op (parent session terminal) |
+| MSG-023 | Fixed | Added `maxRequestInputWaitSeconds` (default 600s) to §11.3 timeout table; added `maxRequestInputWait` explanation paragraph with `request_input_expired` event definition for `await_children` stream |
+| BLD-021 | Skipped | The spec already documents Phase 5.75 as "a hard prerequisite for Phase 6" with the explicit note "No session using real LLM credentials may be exercised in integration tests or development until Phase 5.75 is complete." Adding a technical enforcement mechanism (env var, startup check) is implementation detail, not spec — the spec's job is to state the requirement unambiguously, which it does. |
+| FLR-021 | Fixed | Added orphan session reconciliation note to the coordinator hold-state section: a periodic reconciler cross-references `agent_pod_state` and forcibly transitions `running`/`attached` sessions whose pods are `Terminated` to `failed`, emitting `lenny_orphan_session_reconciliations_total` |
+| WPL-021 | Fixed | Added explicit documentation that `sdkWarmBlockingPaths: []` disables demotion-path checking entirely; added guidance for derived runtimes including `CLAUDE.md` in `workspaceDefaults` |
+| CRD-021 | Fixed | Added `lenny_credential_proactive_renewal_exhausted_total` counter and `CredentialProactiveRenewalExhausted` warning alert; documented that the fallback fault rotation counts against `maxRotationsPerSession` with guidance to set `maxRotationsPerSession >= 1 + expected_proactive_retries` |
+| EXP-021 | Fixed | Added sticky assignment cache invalidation section: on `active → paused` and `active → concluded` transitions, gateway flushes all `sticky: user` cached assignments for the experiment; added `lenny_experiment_sticky_cache_invalidations_total` counter |
+
+---
+
 ## Findings Summary
 
 | Severity | Count |
@@ -157,6 +192,8 @@ The `CredentialRenewalWorker` retries proactive renewal up to 3 times at half th
 
 **Recommendation:** Change to `requiredDuringSchedulingIgnoredDuringExecution` for Tier 2/3 Helm chart defaults. Add a `lenny-preflight` check that warns if anti-affinity is downgraded to `preferred` in non-development profiles.
 
+**Status: Fixed.** Added `Controller pod anti-affinity` row to the §17.8.2 controller tuning table specifying `preferred` for Tier 1 (dev-compatible) and `required` for Tier 2/3 (WPC and PSC leaders must not share a node).
+
 ---
 
 ### K8S-021 agent-sandbox CRD Presence Not Validated at Controller Startup [Medium]
@@ -166,6 +203,8 @@ No startup check verifies the four agent-sandbox CRDs (`SandboxTemplate`, `Sandb
 
 **Recommendation:** Add `validateAgentSandboxCRDs()` startup check alongside `validateRuntimeClasses()`. Verify all four CRD names exist and `spec.versions[*].name` includes the expected version. Mirror in the `lenny-preflight` Job.
 
+**Status: Fixed.** Added "Agent-sandbox CRDs" check row to the §17.6 preflight table: verifies all four CRDs (`sandboxtemplates.lenny.dev`, `sandboxwarmpools.lenny.dev`, `sandboxes.lenny.dev`, `sandboxclaims.lenny.dev`) are present and at the expected API version before installation proceeds.
+
 ---
 
 ### K8S-022 Kata Node Pool Taint Has No Post-Scheduling Validation [Medium]
@@ -174,6 +213,8 @@ No startup check verifies the four agent-sandbox CRDs (`SandboxTemplate`, `Sandb
 The admission webhook enforces the RuntimeClass reference at creation time, but a misconfigured RuntimeClass with no `scheduling.nodeSelector` would allow Kata pods to schedule on standard runc nodes with no post-scheduling check.
 
 **Recommendation:** Add a controller reconciliation check verifying every `Sandbox` pod with `runtimeClassName: kata-microvm` is on a node labeled `lenny.dev/node-pool: kata`. Define a `KataIsolationViolation` critical alert in §16.5.
+
+**Status: Skipped.** The spec already requires the `kata-microvm` RuntimeClass to include `scheduling.nodeSelector: {lenny.dev/node-pool: kata}` and Kata nodes to carry the `lenny.dev/isolation=kata:NoSchedule` taint. This provides hard admission-time enforcement — a misconfigured RuntimeClass missing the nodeSelector would be caught at preflight (RuntimeClass check) and by the taint/toleration enforcement at scheduling. Post-scheduling periodic reconciliation is defense-in-depth but adds controller complexity for a scenario already blocked at multiple admission points.
 
 ---
 
@@ -186,6 +227,8 @@ The `internet` egress profile uses `egressCIDRs.excludeClusterPodCIDR` and `egre
 
 **Recommendation:** Two-layer fix: (1) **Deploy-time preflight** — the `lenny-preflight` Job reads actual cluster CIDRs (from node `spec.podCIDR` and kube-controller-manager `--service-cluster-ip-range` or the `kubernetes` Service CIDR) and fails if the Helm values don't match. This catches misconfiguration at install/upgrade time. (2) **Continuous drift detection** — a lightweight goroutine in the WarmPoolController (or gateway) re-reads cluster CIDRs every 5 minutes and compares against the installed NetworkPolicy `except` blocks. On drift, emit a `NetworkPolicyCIDRDrift` critical alert. Auto-patching the NetworkPolicy is preferable but requires granting the controller NetworkPolicy write RBAC (currently avoided by design — §13.2 states "the warm pool controller does NOT create or modify NetworkPolicies"); if that RBAC is not granted, alerting-only is the pragmatic v1 answer, with the operator re-running `helm upgrade` to re-sync values. A ValidatingAdmissionWebhook is not the right tool here: it operates on pod specs, not NetworkPolicy content, and would need to read NetworkPolicies from the API server at admission time — adding latency and an availability dependency for every pod creation.
 
+**Status: Fixed.** Added CIDR exclusion correctness block to §13.2 `internet` profile hardening: (1) preflight validation reads actual cluster pod/service CIDRs and fails Helm install/upgrade on mismatch; (2) WarmPoolController goroutine re-reads cluster CIDRs every 5 minutes, increments `lenny_network_policy_cidr_drift_total` counter and fires `NetworkPolicyCIDRDrift` critical alert on drift (alert-only, no auto-patch). Also added "Internet egress CIDR exclusions" check row to the §17.6 preflight table.
+
 ---
 
 ### NET-023 PgBouncer-to-Postgres NetworkPolicy Not Specified [Medium]
@@ -194,6 +237,8 @@ The `internet` egress profile uses `egressCIDRs.excludeClusterPodCIDR` and `egre
 The lenny-system NetworkPolicy table covers gateway, token-service, controller, and CoreDNS but PgBouncer is absent. If PgBouncer runs in `lenny-system` as a Deployment, the default-deny policy blocks PgBouncer-to-Postgres traffic.
 
 **Recommendation:** Add PgBouncer as a row in the table specifying allowed egress (TCP 5432 to Postgres). Alternatively, add a note that PgBouncer is external and NetworkPolicy does not govern it.
+
+**Status: Fixed.** Added PgBouncer row to the §13.2 lenny-system component NetworkPolicy table: egress to Postgres TCP 5432 + CoreDNS; ingress from gateway, token-service, and controller pods on TCP 5432. Row includes a note that it applies to the self-managed profile only (absent on cloud-managed deployments where the provider proxy is external to the cluster).
 
 ---
 
@@ -206,6 +251,8 @@ The external webhook is called synchronously on the session creation hot path wi
 
 **Recommendation:** Add a circuit breaker: after 5 consecutive failures in 10s, open the circuit and return empty assignment for 30s. Document config fields alongside `timeoutMs`. Emit `lenny_experiment_targeting_circuit_open` gauge and alert.
 
+**Status: Fixed.** Added "Targeting webhook circuit breaker" paragraph to §10.7 experiment targeting section: per-tenant circuit breaker opens after 5 consecutive failures in 10s, returns empty assignment with zero wait while open (30s), probes on half-open. Config fields `circuitBreaker.failureThreshold`, `circuitBreaker.windowSeconds`, `circuitBreaker.openDurationSeconds` documented alongside `timeoutMs`. Added `lenny_experiment_targeting_circuit_open` gauge and `ExperimentTargetingCircuitOpen` warning alert.
+
 ---
 
 ### SCL-024 KEDA and Standalone HPA Coexistence Not Specified [Medium]
@@ -215,6 +262,8 @@ The external webhook is called synchronously on the session creation hot path wi
 
 **Recommendation:** Add explicit note: when using KEDA, do NOT deploy a standalone HPA. All `behavior.*` settings go in ScaledObject's `advanced.horizontalPodAutoscalerConfig`. Provide a migration note for Prometheus Adapter → KEDA upgrades.
 
+**Status: Fixed.** Added "KEDA and standalone HPA are mutually exclusive" paragraph to §10.1 immediately before the Tier 3 KEDA requirement: explains conflict mechanism, documents that `behavior.*` settings go in `ScaledObject.advanced.horizontalPodAutoscalerConfig`, includes migration note (delete standalone HPA before creating ScaledObject), and notes that the Helm chart enforces mutual exclusivity via `autoscaling.provider` value.
+
 ---
 
 ### SCL-025 `statusUpdateDeduplicationWindow` Controller Flag Undocumented [Medium]
@@ -223,6 +272,8 @@ The external webhook is called synchronously on the session creation hot path wi
 This flag is listed as the primary etcd write-pressure mitigation for managed Kubernetes but is never defined: no default value, no min/max bounds, no per-tier recommendations, no description of deduplication semantics (trailing window? minimum inter-write interval?).
 
 **Recommendation:** Define as `--status-update-dedup-window` (type: duration, default: 500ms, semantics: minimum interval between consecutive status writes for the same `Sandbox` resource). Add per-tier values to §17.8 controller tuning table.
+
+**Status: Fixed.** (1) Added `statusUpdateDeduplicationWindow` semantics block to §4.6.1 etcd tuning table: defines `--status-update-dedup-window` as `time.Duration`, default 500ms, trailing-window coalescing semantics (last observed status always written, intermediate writes suppressed). (2) Added `statusUpdateDeduplicationWindow` row to §17.8.2 controller tuning table with per-tier values: 500ms (Tier 1/2), 250ms (Tier 3).
 
 ---
 
@@ -333,6 +384,8 @@ Workspace classification is per-tenant, not per-session. A tenant with `workspac
 
 **Recommendation:** Specify: (a) Redis storage with pub/sub propagation; (b) `POST /v1/admin/circuit-breakers/{name}/{action}` endpoint; (c) AdmissionController reads circuit state on every admission; (d) `circuit_breaker.state_changed` audit events; (e) `CircuitBreakerActive` metric/alert.
 
+**Status: Fixed.** Expanded §11.6 with: (a) Redis storage (`cb:{name}` key) with pub/sub propagation on `circuit_breaker_events` channel + 5s polling cache; (b) full admin API table (`GET`/`POST open`/`POST close` on `/v1/admin/circuit-breakers/{name}`); (c) AdmissionController evaluation block — rejects with `CIRCUIT_BREAKER_OPEN` (HTTP 503) before quota/policy; (d) `circuit_breaker.state_changed` audit event spec; (e) `lenny_circuit_breaker_open` gauge + `CircuitBreakerActive` alert. `CIRCUIT_BREAKER_OPEN` added to error catalog (§15.1).
+
 ---
 
 ### POL-025 Canonical Timeout Table Is Incomplete [Medium]
@@ -341,6 +394,8 @@ Workspace classification is per-tenant, not per-session. A tenant with `workspac
 §11.3 has 8 timeout entries. 9+ operation timeouts are defined only in prose elsewhere: `CoordinatorFence` (5s), gRPC keepalive (10s+5s), `checkpointBarrierAckTimeoutSeconds` (45s), `coordinatorHoldTimeoutSeconds` (120s), elicitation per-hop forwarding (30s), interceptor PreLLMRequest (100ms), cert expiry warning (1h), DNS resolution timeout, admission webhook timeout (5s).
 
 **Recommendation:** Extend §11.3 to include all platform timeouts, with Helm value names and configurability columns. Or add a separate "Platform Timeout Reference" subsection cross-referenced from §11.3.
+
+**Status: Fixed.** Expanded §11.3 timeout table from 9 rows to 21 rows. Added columns for Helm value/flag name, configurability, and source section. New rows cover: gRPC keepalive interval (10s) and timeout (5s), coordinator hold timeout (120s), CoordinatorFence RPC (5s, hard-coded), checkpoint barrier ack (45s), elicitation per-hop forwarding (30s, hard-coded), external interceptor default (500ms), PreLLMRequest/PostLLMResponse interceptor (100ms), connector interceptor (200ms), credential cert expiry warning (1h), admission webhook (5s), DNS resolution timeout (5s, cluster-level).
 
 ---
 
@@ -351,6 +406,8 @@ The lease schema shows `"maxDelegationPolicy": null` with only "Session-level ov
 
 **Recommendation:** Add a definition block: type is named `DelegationPolicy` reference, applied as additional intersection with `delegationPolicyRef` (restriction only, never expansion), `null` means no additional restriction. Include a concrete example.
 
+**Status: Fixed.** Added `maxDelegationPolicy` definition block to §8.3: type is `string | null` (named `DelegationPolicy` reference); `null` means no additional restriction; non-null applies as additional intersection with `delegationPolicyRef` (restriction-only, never expansion); precedence is after `delegationPolicyRef` and derived-runtime policy; inheritance rule (child cannot be less restrictive than parent's effective `maxDelegationPolicy`); concrete example showing `broad-policy` capped by `read-only-policy`.
+
 ---
 
 ### POL-027 Interceptor Timeout Has No Distinct Error Code [Medium]
@@ -359,6 +416,8 @@ The lease schema shows `"maxDelegationPolicy": null` with only "Session-level ov
 A `PreLLMRequest` interceptor timeout with `fail-closed` returns `LLM_REQUEST_REJECTED` — same as an explicit DENY. Callers cannot distinguish "policy blocked this" from "interceptor service is degraded."
 
 **Recommendation:** Add `INTERCEPTOR_TIMEOUT` to the error catalog (category `TRANSIENT`, HTTP 503, `retryable: true`). Return this on timeout regardless of `failPolicy`. Include `timeout_ms`, `interceptor_ref`, `phase` in the audit event.
+
+**Status: Fixed.** Added "Interceptor timeout error code" paragraph to §4.8: `INTERCEPTOR_TIMEOUT` returned on timeout when `failPolicy: fail-closed` (request rejected); suppressed (request proceeds with `interceptor_bypassed` audit flag) when `failPolicy: fail-open`. Audit event includes `timeout_ms`, `interceptor_ref`, `phase`. Added `INTERCEPTOR_TIMEOUT` to the error catalog (§15.1): `TRANSIENT`, HTTP 503, `retryable: true`, details include `interceptor_ref`, `phase`, `timeout_ms`.
 
 ---
 
@@ -369,6 +428,8 @@ A `PreLLMRequest` interceptor timeout with `fail-closed` returns `LLM_REQUEST_RE
 
 **Recommendation:** Specify a quiescence step: wait for a `FINAL_USAGE_REPORT` from the child pod (or gRPC close) before executing `budget_return.lua`, with a bounded timeout (default 5s). On timeout, use last known usage counter and emit `delegation.budget_return_usage_lag` warning.
 
+**Status: Fixed.** Added "Usage quiescence before budget return" block to §8.3 step 3: (1) gateway waits for `FINAL_USAGE_REPORT` or gRPC stream close from the adapter before executing `budget_return.lua`; (2) if neither arrives within `delegation.usageQuiescenceTimeoutSeconds` (default 5s), proceeds with last known counter and emits `delegation.budget_return_usage_lag` warning with `delta_tokens_unknown: true`; (3) `budget_return.lua` executes only after quiescence completes. Added `lenny_delegation_budget_return_usage_lag_total` counter.
+
 ---
 
 ### POL-029 DelegationPolicy Tag Evaluation Uses Live Labels — Policy Window Undocumented [Medium]
@@ -377,6 +438,8 @@ A `PreLLMRequest` interceptor timeout with `fail-closed` returns `LLM_REQUEST_RE
 "Tags can change without redeploying — policy re-evaluated on each delegation." A pool's labels changed mid-session can dynamically grant or revoke delegation permissions with no documentation of whether this is intentional.
 
 **Recommendation:** Clarify: (a) whether evaluation is point-in-time at delegation or live on every spawn; (b) whether mid-session label changes affect active trees; (c) document the security implication. Consider `snapshotPolicyAtLease: true` option.
+
+**Status: Fixed.** Added "Tag evaluation semantics and security implications" block to §8.3: (a) evaluation is point-in-time at each `delegate_task` call using live labels at that instant; (b) mid-session label changes do NOT affect active child sessions — only subsequent `delegate_task` calls; (c) security implication documented (operator label mutation is intentional incident gate); (d) `snapshotPolicyAtLease: true` option added to `DelegationPolicy` — when set, gateway snapshots matching pool IDs at lease issuance, stored as `snapshotted_pool_ids`; all subsequent tree delegations evaluate against the snapshot rather than live labels.
 
 ---
 
