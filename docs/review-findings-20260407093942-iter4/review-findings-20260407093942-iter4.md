@@ -246,12 +246,16 @@ The spec does not explicitly state that `from` is always set by the gateway from
 
 ---
 
-### SEC-031 Webhook callbackUrl DNS Pinning Has No Re-Validation at Delivery [Medium]
-**Section:** 14
+### SEC-031 Webhook `callbackUrl` DNS Pinning — Stale IP Handling and `dryRun` Behavior [Medium]
+**Section:** 14, 15.1
 
-DNS pinning at registration time has no specified re-validation at delivery time. Over a long session (up to 7200s), the pinned IP could become stale. The `dryRun` interaction with DNS resolution is also ambiguous.
+The `callbackUrl` SSRF protection is well-designed: DNS is resolved at registration, the IP is validated as non-private, and the custom `DialContext` connects directly to the pinned IP at delivery time — completely ignoring subsequent DNS changes. This correctly blocks DNS rebinding (an attacker re-pointing their DNS to an internal IP after registration has no effect, since the gateway never re-resolves).
 
-**Recommendation:** Specify that the pinned IP is validated at every delivery attempt — re-resolve on TCP failure and re-validate the new IP. Clarify `dryRun` DNS resolution behavior.
+The remaining gap is **reliability, not security**: if the legitimate target's IP changes (CDN rotation, infrastructure migration) during a long session (up to 7200s), the pinned IP becomes unreachable. All delivery attempts fail, retries exhaust, and events land in the undelivered queue (`GET /v1/sessions/{id}/webhook-events`). The operator has no signal that the failure is caused by a stale pin vs. an actual target outage, and no mechanism to refresh the pin without creating a new session.
+
+A secondary gap is `dryRun` clarity: §15.1 states "`dryRun` never makes outbound network calls." For `POST /v1/sessions/start` with a `callbackUrl`, it is unspecified whether `dryRun` performs DNS resolution to validate the URL (catching typos and unreachable hostnames) or skips it entirely (consistent with "no outbound calls" but less useful for pre-validation). DNS resolution is arguably not an "outbound network call" in the same category as HTTP requests, but the spec doesn't draw this line.
+
+**Recommendation:** (1) **Stale pin handling:** On TCP connection failure during delivery, the gateway should re-resolve the hostname, re-validate the new IP against the same private/reserved range checks applied at registration, and update the pin if the new IP passes. If the new IP fails validation (resolves to a private range — potential rebinding attack), reject the delivery and emit a `callback.dns_rebinding_blocked` security audit event. This preserves the DNS-rebinding defense while recovering from legitimate IP changes. Add a `lenny_callback_pin_refreshed_total` counter. (2) **`dryRun` clarification:** Add to §15.1 endpoint-specific `dryRun` semantics: "`POST /v1/sessions/start` with `callbackUrl`: URL format and scheme validation is performed; DNS resolution is NOT performed (consistent with 'no outbound network calls'). To pre-validate DNS reachability, the client can resolve the hostname independently before submitting."
 
 ---
 
