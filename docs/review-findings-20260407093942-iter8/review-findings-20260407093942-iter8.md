@@ -7,21 +7,45 @@
 
 ## High Findings
 
-| # | ID | Finding | Section |
-|---|-----|---------|---------|
-| 1 | K8S-025 | WarmPoolController RBAC missing `create`/`delete` Sandbox + SandboxClaim access | 4.6.3 |
-| 2 | STR-028 | Billing stream flusher has no replica coordination — concurrent duplicate billing events | 12.3 |
-| 3 | OBS-037 | Availability SLO burn-rate formula is mathematically inverted | 16.5 |
-| 4 | OBS-038 | Head-based sampling at 10% incompatible with 100%-error-sampling requirement | 16.3 |
-| 5 | API-038 | §15.1 "Comprehensive Admin API" table omits 12 operational endpoints | 15.1 |
+| # | ID | Finding | Section | Status |
+|---|-----|---------|---------|--------|
+| 1 | K8S-025 | WarmPoolController RBAC missing `create`/`delete` Sandbox access | 4.6.3 | **Fixed** (partially — SandboxClaim claim rejected) |
+| 2 | STR-028 | Billing stream flusher has no replica coordination — concurrent duplicate billing events | 12.3 | **Fixed** |
+| 3 | OBS-037 | Availability SLO burn-rate formula is mathematically inverted | 16.5 | **Fixed** |
+| 4 | OBS-038 | Head-based sampling at 10% incompatible with 100%-error-sampling requirement | 16.3 | **Fixed** |
+| 5 | API-038 | §15.1 "Comprehensive Admin API" table omits operational endpoints from §24 | 15.1 | **Fixed** |
 
-## Key Design Flaws Found This Iteration
+### High Finding Dispositions
 
-- **K8S-025**: RBAC table has WPC with only `update` on Sandbox — missing `create`, `delete`, and all SandboxClaim verbs. Implementor gets 403 on every pod creation.
-- **STR-028**: All N gateway replicas concurrently flush the same Redis billing stream entries to Postgres — doubling billing events with distinct sequence numbers.
-- **OBS-037**: Burn-rate formula `(1 - error_rate) / (1 - slo_target)` yields max burn at 0% errors and zero burn at 100% errors — completely inverted.
-- **OBS-038**: Head-based sampling decides discard before errors/latency are known — 100% error sampling is architecturally impossible with head-based decisions.
-- **API-038**: 12 endpoints (6 pool upgrade lifecycle, bootstrap-override, credential pool membership, preflight, quota reconcile, token rotation, billing reasons) are in §24 lenny-ctl but not in the "Comprehensive" §15.1 table.
+**FINDING: K8S-025**
+**CHALLENGE RESULT:** Partially correct. The RBAC text listed only `update` on Sandbox for WPC, but WPC owns `spec.*` and `status.*` on Sandbox and creates/deletes pods — so `create`/`delete` verbs were genuinely missing. However, the finding's claim about missing SandboxClaim access is wrong: §4.6.3 explicitly states SandboxClaim is owned by "Gateway (not a controller)" — WPC does not need SandboxClaim verbs.
+**STATUS:** Fixed
+**RATIONALE:** An implementor writing the WPC RBAC ClusterRole would get 403 on pod creation. Genuine error.
+**CHANGES:** Updated §4.6.3 RBAC text: WPC now has `create`/`update`/`delete` on `Sandbox` (was: `update` only). SandboxClaim verbs NOT added (correctly Gateway-owned).
+
+**FINDING: STR-028**
+**CHALLENGE RESULT:** Factually correct and a genuine problem. The billing stream flusher was described as "a background flusher goroutine per tenant" that polls the Redis stream. With N gateway replicas, N goroutines would each XRANGE the same entries and insert duplicate rows with distinct Postgres sequence numbers. No leader election or consumer group coordination was specified.
+**STATUS:** Fixed
+**RATIONALE:** Would cause N-fold billing event duplication in any multi-replica deployment. Genuine design flaw.
+**CHANGES:** Updated §11.2.1 (billing stream flusher) to specify Redis consumer group coordination: `XGROUP CREATE` with group name `billing-flusher`, per-replica consumer IDs, `XREADGROUP` instead of polling, `XACK`+`XDEL` on successful INSERT, and `XAUTOCLAIM` for pending-entry reclaim from crashed replicas.
+
+**FINDING: OBS-037**
+**CHALLENGE RESULT:** Factually correct. The formula `(1 - error_rate) / (1 - slo_target)` computes the ratio of actual success rate to error budget. At 0% errors this yields 1/(1-target) — a huge burn rate. At 100% errors this yields 0 — zero burn. Completely inverted. The standard Google SRE burn-rate formula is `error_rate / (1 - slo_target)`.
+**STATUS:** Fixed
+**RATIONALE:** Any SRE implementing this formula would get alerts that fire when everything is healthy and stay silent during outages. Unambiguous mathematical error.
+**CHANGES:** Changed formula from `(1 - error_rate) / (1 - slo_target)` to `error_rate / (1 - slo_target)` in §16.5.
+
+**FINDING: OBS-038**
+**CHALLENGE RESULT:** Factually correct. The spec said "Head-based sampling at 10%" but then required "100% sampling for errors." Head-based sampling makes the keep/drop decision at trace creation time, before errors or latency are known — making retroactive 100% error sampling impossible. The spec also said "the collector handles sampling" which contradicted "head-based." The architecture actually needs tail-based sampling in the Collector.
+**STATUS:** Fixed
+**RATIONALE:** An implementor configuring head-based sampling at 10% would lose 90% of error traces. The existing text was internally contradictory.
+**CHANGES:** Rewrote §16.3 sampling paragraph: gateway now emits 100% of traces to the Collector; the Collector applies tail-based sampling (10% probabilistic default, 100% for errors/slow requests). Explicitly states sampling decisions are made after spans complete.
+
+**FINDING: API-038**
+**CHALLENGE RESULT:** Factually correct. The §15.1 heading says "Comprehensive Admin API" and §24 defines REST API mappings for 12+ endpoints (pool upgrade lifecycle, bootstrap-override DELETE, credential pool membership, quota reconcile, user token rotation, preflight, billing correction approval) that were absent from the §15.1 table.
+**STATUS:** Fixed
+**RATIONALE:** An implementor treating §15.1 as the authoritative API surface would miss the entire pool upgrade state machine and several operational endpoints. The "Comprehensive" label makes omission actively misleading.
+**CHANGES:** Added 13 endpoint rows to the §15.1 admin API table covering pool upgrade lifecycle (start/proceed/pause/resume/rollback/status), bootstrap-override DELETE, credential pool membership POST, quota reconcile POST, user token rotation POST, billing correction approval POST, and preflight GET. Added cross-reference note pointing to §24 for CLI wrappers.
 
 _Per-perspective detailed findings are in the subagent outputs and individual files in this directory._
 
@@ -296,3 +320,66 @@ Timer is per-replica or coordinated? Different replicas detect failures at diffe
 **Section:** 5.2, 6.4 — §6.4 covers session-mode only. No canonical layout for the `/workspace/slots/` subtree.
 
 **Recommendation:** Add "Concurrent-workspace slot filesystem layout" subsection to §6.4.
+
+---
+
+## Medium Findings — Disposition Summary
+
+| ID | Finding | Status | Rationale |
+|-----|---------|--------|-----------|
+| SEC-039 | MODIFY enforcement on user_id/tenant_id | **Skipped** | Policy guidance, not a spec error. The prohibition is stated; enforcement details are implementation. |
+| SEC-040 | JWT KMS key rotation early-close | **Skipped** | Feature request. No internal contradiction. |
+| SEC-041 | Experiment targeting webhook SSRF | **Skipped** | Security hardening suggestion. Not a spec error. |
+| NET-029 | delivery-mode label immutability | **Skipped** | Security hardening suggestion. The assertion of coverage exists; webhook implementation details are operational. |
+| NET-030 | egress-profile label immutability | **Skipped** | Same as NET-029. Security hardening suggestion. |
+| NET-031 | `lenny.io/tenant-id` domain inconsistency | **Fixed** | Factual error. Changed all occurrences of `lenny.io/tenant-id` to `lenny.dev/tenant-id`. |
+| SCL-029 | Quota drift table formula basis | **Skipped** | The table values are correct for the fail-open interpretation. Confusing but not wrong — an implementor would not build the wrong thing. |
+| DXP-028 | credentials.json single-provider contradiction | **Fixed** | Internal contradiction. §4.7 said "only the single assigned credential provider is present" but §4.9 says sessions hold multiple leases. Updated §4.7 to reference `providers` array. |
+| DXP-029 | adapter-local tools undefined | **Skipped** | "Spec doesn't say X" — not a flaw. |
+| DXP-030 | type:mcp path unspecified | **Skipped** | "Spec doesn't say X" — not a flaw. |
+| DXP-031 | delegation-echo test runtime unspecified | **Skipped** | "Spec doesn't say X" — test fixture detail. |
+| OPS-033 | Bootstrap list duplicate numbering | **Fixed** | Factual error. Removed misplaced item 7 (belongs in §24.10), renumbered "Build sequence integration" as item 7. |
+| OPS-034 | Undefined username `lenny-bootstrap-admin` | **Fixed** | Factual error. Changed to `lenny-admin` and explicitly defined the username in bootstrap item 6. |
+| TNT-025 | `lenny.io/tenant-id` wrong domain | **Fixed** | Duplicate of NET-031. Fixed together. |
+| TNT-026 | Undefined `billing-read` OAuth scope | **Fixed** | Factual error. Replaced undefined scope with role-based access: `billing-viewer`, `tenant-admin`, or `platform-admin`. |
+| STR-029 | Billing sequence "no gaps allowed" false | **Fixed** | Factually incorrect. Postgres sequences produce gaps on rollback. Changed to "gaps indicate lost events and should trigger replay." |
+| STR-030 | erasure_salt rotation contradiction | **Fixed** | Internal contradiction. "Deleted immediately" conflicted with "before deletion." Replaced with explicit ordered procedure: generate new salt, run re-hash migration, delete old salt after completion. |
+| STR-031 | DeleteByUser doesn't decrement quota counter | **Skipped** | Valid observation but the spec describes GC as the decrement path and the Redis counter is rehydrated from Postgres on restart. The gap is bounded and self-healing. Not a contradiction. |
+| DEL-029 | await_children terminal states incomplete | **Fixed** | Internal contradiction. `all` mode said "complete or fail" but `settled` said "completed, failed, cancelled, or expired." Aligned `all` and `any` to trigger on any terminal state. |
+| DEL-030 | Cycle detection mechanism undefined | **Skipped** | The finding is correct that new pods get new IDs, but this means cycle detection is trivially satisfied (no cycle possible). Not a design flaw. |
+| SLC-031 | `finalizing` classified as TARGET_TERMINAL | **Fixed** | Factual error. `finalizing` is a pre-running state, not terminal. Moved to Pre-running row, removed the incorrect `finalizing` row. |
+| SLC-032 | Timer table references internal `attached` state | **Fixed** | Layer confusion. Replaced `attached` with `starting` in the `maxSessionAge` timer table with explicit timer semantics. |
+| SLC-033 | ready/starting no bounded lifetime | **Skipped** | Design suggestion. `maxSessionAge` provides an outer bound. Tighter per-state timeouts are optimization. |
+| OBS-039 | HPA step 4 contradicts metric role table | **Fixed** | Internal contradiction. Step 4 used session capacity ratio as HPA trigger; canonical table explicitly prohibits this. Corrected step 4 to use `request_queue_depth`. |
+| OBS-040 | Fleet GC metric cross-replica aggregation | **Skipped** | The metric description explicitly says "computed as max() over all replica instances" — clearly a recording rule expression. Not wrong, just a different kind of metric. |
+| OBS-041 | CheckpointDurationHigh threshold misaligned | **Fixed** | Factual error. Alert at 10s is unreachable (max ~5.1s at 512MB limit) and 5x above the 2s SLO. Changed threshold to 2.5s (25% headroom above SLO). |
+| CMP-032 | legal-hold POST missing note field | **Fixed** | Internal contradiction. GET returns `note` but POST had no way to set it. Added `note` field to POST body. |
+| CMP-033 | Eviction MinIO objects not in erasure scope | **Skipped** | The eviction fallback writes to Postgres `session_eviction_state`, not MinIO (the MinIO path is for full checkpoints, which are already in erasure scope). The 2KB context goes to Postgres. |
+| CMP-034 | "stricter" region undefined | **Fixed** | Undefined term. Replaced "stricter" with explicit rule: environment must use same region as tenant or inherit it. |
+| CMP-035 | retention preset no minimum enforcement | **Skipped** | Feature request for validation logic. Not a spec error. |
+| PRT-028 | Adapter routing algorithm unspecified | **Skipped** | Underspecified but not wrong. The prefix uniqueness constraint and natural longest-prefix behavior are sufficient for implementation. |
+| PRT-029 | lennyNonce MCP deviation | **Skipped** | The spec already acknowledges the compatibility risk ("MCP client libraries that do not support clientInfo.extensions"). Not wrong. |
+| PRT-030 | Wrong tool name `discover_sessions` | **Fixed** | Factual error. Changed to `discover_agents` (the correct name used everywhere else). |
+| CPS-024 | E2B self-hosting claim contradicts §23 table | **Fixed** | Internal contradiction. §23 correctly said E2B has self-hosting; §23.1 said E2B requires hosted infrastructure. Fixed §23.1. |
+| WPL-025 | Timezone K8s version check wrong | **Fixed** | Factual error. The timezone is handled by Go cron library, not K8s CronJob. Removed the incorrect K8s ≥1.27 requirement. |
+| CRD-025 | azure_openai materializedConfig missing | **Fixed** | Design flaw. Five other providers had complete schemas; `azure_openai` had none. Added full materializedConfig table for both API-key and Azure AD token credential types. |
+| SCH-036 | delegation.completed status enum incomplete | **Fixed** | Factual error. Status only listed `completed|failed` but children can also be `terminated`, `cancelled`, or `expired`. Added all terminal states. |
+| BLD-026 | Credential elicitation contradiction | **Fixed** | Internal contradiction. Phase 11/11.5 referenced "credential elicitation flow" which §4.9 explicitly prohibits. Changed to "pre-authorized registration" language. |
+| BLD-027 | Phase 16 underspecified | **Skipped** | Phase 16 is light but not wrong. Under-specification is not a design flaw. |
+| FLR-027 | checkpointBarrierAckTimeoutSeconds missing from §17.8.1 | **Fixed** | Missing cross-reference. Added parameter to §17.8.1 quick-reference table. |
+| FLR-028 | Partial checkpoint no timeout | **Skipped** | "Spec doesn't say X" — the watchdog timer already bounds this path. |
+| FLR-029 | dualStoreUnavailableMaxSeconds timer semantics | **Skipped** | "Spec doesn't say X" — implementation detail. |
+| DOC-132 | §17.8.1 missing checkpointBarrierAckTimeoutSeconds | **Fixed** | Duplicate of FLR-027. Fixed together. |
+| DOC-133 | lenny.io/tenant-id inconsistency | **Fixed** | Duplicate of NET-031. Fixed together. |
+| DOC-134 | Diagram ref ExternalAdapterRegistry | **Skipped** | Low priority. Forward references are normal in a spec. |
+| DOC-135 | Section 4.x placeholder | **Fixed** | Factual error. Replaced placeholder with correct section reference (§9.3). |
+| DOC-136 | §17.8.1 missing maxTreeRecoverySeconds | **Fixed** | Missing parameter. Added to §17.8.1 quick-reference table. |
+| MSG-032 | deadlock_detected event schema | **Skipped** | Finding is incorrect. The schema exists at §8.8 with `type`, `deadlockedSubtreeRoot`, `blockedRequests`, `detectedAt`, `willTimeoutAt`. |
+| MSG-033 | PLATFORM_DEGRADED SSE event schema | **Skipped** | "Spec doesn't say X" — the event is referenced contextually, not as a formal API. |
+| POL-035 | INTERCEPTOR_TIMEOUT not in catalog | **Skipped** | Finding is incorrect. `INTERCEPTOR_TIMEOUT` IS in the error catalog at §15.1 (line 6349). |
+| POL-036 | 4 interceptor codes not in catalog | **Skipped** | Finding is incorrect. All four codes (`CONNECTOR_REQUEST_REJECTED`, `CONNECTOR_RESPONSE_REJECTED`, `LLM_REQUEST_REJECTED`, `LLM_RESPONSE_REJECTED`) ARE in the catalog at §15.1 (lines 6350-6353). |
+| POL-037 | CIRCUIT_BREAKER_OPEN retryable:false | **Skipped** | Not wrong. These are operator-managed circuit breakers, deliberately opened. `retryable: false` is correct — clients should not auto-retry against an operator's deliberate shutdown. |
+| EXM-028 | Task-mode scrub missing credentials.json | **Fixed** | Design flaw. Previous task's credential lease persists to next task. Added step 3b to scrub procedure. |
+| EXM-029 | Slot filesystem layout unspecified | **Skipped** | "Spec doesn't say X" — not a flaw. |
+
+**Summary: 24 Fixed, 29 Skipped (including 3 incorrect findings: MSG-032, POL-035, POL-036).**
