@@ -110,40 +110,47 @@ In direct delivery mode, the gateway has no independent token count — a malici
 **Recommendation:** In proxy mode, extract token counts from proxied responses as authoritative. In direct mode, document as residual risk with anomaly detection metric.
 **Resolution:** Section 4.9 proxy mode step 4 updated to state that the gateway extracts `input_tokens`/`output_tokens` from upstream provider responses as the authoritative record, and that `ReportUsage` is ignored for proxy-mode sessions. Section 11.2 "Quota Update Timing" split into proxy-mode and direct-mode bullet points: proxy mode is documented as gateway-authoritative; direct mode documented as accepted residual risk (restricted to single-tenant/dev deployments) with `lenny_gateway_token_usage_anomaly_total` anomaly detection metric.
 
-### SEC-039. `uploadToken` has no documented TTL, scope binding, or cryptographic protection [Medium]
+### SEC-039. `uploadToken` has no documented TTL, scope binding, or cryptographic protection [Medium] — ✅ Fixed
 **Section:** 7.1, 7.4, 15.1
 Format, TTL, session binding, and replay protection are all unspecified.
 **Recommendation:** Specify as a short-lived signed token (HMAC-SHA256) with explicit TTL, invalidated after `FinalizeWorkspace`.
+**Status:** Fixed — Specified uploadToken as HMAC-SHA256 signed token structured as `<session_id>.<expiry_unix_seconds>.<hmac_hex>` with single-use invalidation upon successful `FinalizeWorkspace`.
 
-### SEC-040. `respond_to_elicitation` does not specify session-scoped authorization check [Medium]
+### SEC-040. `respond_to_elicitation` does not specify session-scoped authorization check [Medium] — ✅ Fixed
 **Section:** 9.2
 No validation that `elicitation_id` belongs to the calling session — a foreign client could inject responses.
 **Recommendation:** Validate `(session_id, user_id, elicitation_id)` triple; return 404 for foreign IDs.
+**Status:** Fixed — Added `(session_id, user_id, elicitation_id)` triple validation for `respond_to_elicitation`.
 
-### SEC-041. `allowSymlinks: true` archive symlinks re-resolved at promotion time against new root [Medium]
+### SEC-041. `allowSymlinks: true` archive symlinks re-resolved at promotion time against new root [Medium] — ✅ Fixed
 **Section:** 7.4
 Symlinks validated against `/workspace/staging` may escape `/workspace/current` after promotion.
 **Recommendation:** Re-validate all symlinks after staging→current promotion.
+**Status:** Fixed — Added explicit re-validation of every symlink in the promoted tree after staging→current promotion.
 
-### SEC-042. OAuth connector flow lacks PKCE and `state` parameter anti-CSRF protection [Medium]
+### SEC-042. OAuth connector flow lacks PKCE and `state` parameter anti-CSRF protection [Medium] — ✅ Fixed
 **Section:** 9.3, 9.4
 No `state` parameter or PKCE in the OAuth flow, enabling CSRF and token injection attacks.
 **Recommendation:** Generate per-request `state` bound to session; require PKCE (S256) for public clients.
+**Status:** Fixed — Added cryptographic random `state` parameter (anti-CSRF) and PKCE (S256) for public clients to the OAuth connector flow.
 
-### SEC-043. gVisor `SO_PEERCRED` semantics remain unvalidated — nonce-only fallback weakens adapter-agent boundary [Medium]
+### SEC-043. gVisor `SO_PEERCRED` semantics remain unvalidated — nonce-only fallback weakens adapter-agent boundary [Medium] — ✅ Fixed
 **Section:** 4.7, 13.1
 If gVisor diverges, the nonce-only mode is activated indefinitely with no escalation path.
 **Recommendation:** Add a Phase 3.5 hard gate; supplement nonce with per-connection challenge-response if SO_PEERCRED fails.
+**Status:** Fixed — Added Phase 3.5 `SO_PEERCRED` integration test gate and challenge-response fallback mechanism.
 
-### SEC-044. Pre-upload storage quota check trusts client-supplied `Content-Length` [Medium]
+### SEC-044. Pre-upload storage quota check trusts client-supplied `Content-Length` [Medium] — ✅ Fixed
 **Section:** 11.2, 7.4
 A client can declare a small Content-Length but stream more data, bypassing the pre-check.
 **Recommendation:** Enforce `io.LimitedReader` hard cap on inbound body based on remaining quota.
+**Status:** Fixed — Gateway now wraps every upload request body in `io.LimitedReader` bounded by `remaining_quota_bytes`.
 
-### SEC-045. Task-mode scrub does not address `shmget`-allocated POSIX shared memory segments [Medium]
+### SEC-045. Task-mode scrub does not address `shmget`-allocated POSIX shared memory segments [Medium] — ✅ Fixed
 **Section:** 5.2, 13.1
 POSIX shared memory segments persist across task boundaries — documented residual risk with no mitigation.
 **Recommendation:** Add `ipcrm -m` step to scrub procedure; verify gVisor IPC namespace scoping for gVisor pods.
+**Status:** Fixed — Added `ipcrm --all=shm` step to purge `shmget`-allocated IPC shared memory segments in the scrub procedure.
 
 ### SEC-046. Delegation chain `contentPolicy.interceptorRef` does not apply to elicitation content flowing upward [Low]
 **Section:** 13.5, 9.2
@@ -159,15 +166,17 @@ In direct mode, over-run window multiplies with delegation depth. Only guidance,
 
 ## 3. Network Security (NET)
 
-### NET-037. `lenny-drain-readiness` webhook NetworkPolicy blocks its required gateway callback [Medium]
+### NET-037. `lenny-drain-readiness` webhook NetworkPolicy blocks its required gateway callback [Medium] — ✅ Fixed
 **Section:** 13.2, 12.5
 No egress rule for the webhook to reach the gateway's `/internal/drain-readiness`. Under default-deny, all pod evictions are permanently blocked.
 **Recommendation:** Add egress from admission-webhook pods to gateway internal port; add corresponding gateway ingress rule.
+**Status:** Fixed — Added egress rule from admission-webhook pods to the gateway's `/internal/drain-readiness` endpoint and corresponding gateway ingress rule.
 
-### NET-038. Gateway ingress from Ingress controller namespace has no specified selector [Medium]
+### NET-038. Gateway ingress from Ingress controller namespace has no specified selector [Medium] — ✅ Fixed
 **Section:** 13.2
 No Helm value or YAML for the ingress namespace selector. If wrong, gateway is unreachable from the internet.
 **Recommendation:** Add `{{ .Values.ingressControllerNamespace }}` Helm value; include gateway ingress NetworkPolicy YAML.
+**Status:** Fixed — Added `{{ .Values.ingressControllerNamespace }}` Helm value (default: `ingress-nginx`) with `kubernetes.io/metadata.name` namespace selector in NetworkPolicy.
 
 ### NET-039. Gateway `lenny-system` NetworkPolicy has no egress rule for in-cluster external interceptor gRPC calls [Medium]
 **Section:** 13.2, 4.8
