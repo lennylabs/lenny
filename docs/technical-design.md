@@ -5557,6 +5557,24 @@ spec:
 
 **DNS exfiltration mitigation:** A dedicated **CoreDNS instance** runs in `lenny-system` (labeled `lenny.dev/component: coredns`) and serves as the DNS resolver for all agent namespaces by default. The `allow-pod-egress-base` NetworkPolicy above routes DNS traffic exclusively to this instance — agent pods cannot reach `kube-system` DNS directly.
 
+**Agent pod DNS configuration (K8S-033).** The NetworkPolicy alone is insufficient — Kubernetes defaults `dnsPolicy` to `ClusterFirst`, which configures the pod's `/etc/resolv.conf` to point at the `kube-dns` Service ClusterIP in `kube-system`. Since the NetworkPolicy blocks that path, DNS resolution would fail silently. The WarmPoolController therefore sets the following on every agent pod spec:
+
+```yaml
+dnsPolicy: None
+dnsConfig:
+  nameservers:
+    - "{{ .Values.coredns.clusterIP }}"   # ClusterIP of the lenny-agent-dns Service in lenny-system
+  searches:
+    - "{{ .Release.Namespace }}.svc.cluster.local"
+    - "svc.cluster.local"
+    - "cluster.local"
+  options:
+    - name: ndots
+      value: "5"
+```
+
+The `coredns.clusterIP` Helm value is the ClusterIP assigned to the `lenny-agent-dns` Service (rendered in `templates/coredns-service.yaml`). The Helm chart validates that this value is non-empty when any agent namespace is configured. The `searches` and `ndots` entries mirror the standard `ClusterFirst` search domain behavior so that in-cluster Service names resolve correctly through the dedicated CoreDNS instance. When `dnsPolicy: cluster-default` is set on a pool (the opt-out path described below), the WarmPoolController omits `dnsPolicy: None` and `dnsConfig` entirely, reverting to the Kubernetes default `ClusterFirst` behavior — pods in that pool resolve through `kube-system` CoreDNS and the `allow-pod-egress-base` NetworkPolicy must be supplemented with a DNS egress rule to `kube-system` (rendered by the Helm chart when `dnsPolicy: cluster-default` pools exist).
+
 The dedicated CoreDNS instance provides:
 
 - **Query logging** — all DNS queries from agent pods are recorded for audit.

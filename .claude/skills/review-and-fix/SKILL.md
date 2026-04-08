@@ -17,10 +17,10 @@ You are given a technical specification and a review guidelines file. Your job i
 
 ## Output files
 
-Each iteration produces a findings file:
+Each iteration produces a findings summary file:
 
-- Iteration 1: `{spec-dir}/review-findings-{datetime}-iter1/review-findings-{datetime}-iter1.md`
-- Iteration 2: `{spec-dir}/review-findings-{datetime}-iter2/review-findings-{datetime}-iter2.md`
+- Iteration 1: `review-findings/{datetime}/iter1/summary.md`
+- Iteration 2: `review-findings/{datetime}/iter2/summary.md`
 - etc.
 
 where `{spec-dir}` is the directory containing the spec file and `{datetime}` is today's date and time in `YYYYMMDDHHMMSS` format. All iteration files in this run must use the same date and time (the date and time as of the time the run was initiated).
@@ -53,7 +53,7 @@ Give each subagent this prompt:
 
 ---
 
-**Your task**: Review a technical specification from one specific perspective and produce findings.
+**Your task**: Review a technical specification from one specific perspective and produce findings. Report all your findings to your parent agent.
 
 **Spec file**: `{SPEC_FILE}`
 **Perspective number**: `{N}`
@@ -172,7 +172,7 @@ Assign unique identifiers to every finding using the format `{CAT}-{NNN}`:
 - `{CAT}` is a 3-letter category code derived from the perspective (use the same codes as any prior iteration if they exist; otherwise derive sensible 3-letter abbreviations)
 - `{NNN}` is a zero-padded sequential number starting at 001 within each category
 
-Write this file to `{spec-dir}/review-findings-{date}-iter{iteration}/review-findings-{date}-iter{iteration}.md`.
+Write this file to `review-findings/{datetime}/iter{iteration}/summary.md`.
 
 Report to the user:
 
@@ -194,8 +194,8 @@ git add -A && git commit -m "Review iteration {iteration}: {total} findings ({cr
 
 Evaluate whether to proceed with fixes:
 
-- **Focus on Critical an High findings only**.
-- If there are **0 Critical/High findings**: the spec is clean. Go to Step 4.
+- **Focus on Critical, High, and Medium findings only**.
+- If there are **0 Critical/High/Medium findings**: the spec is clean. Go to Step 4.
 - Otherwise: proceed to Step 3.
 
 If this is the **last iteration** (iteration == max_iterations), report remaining findings without fixing and go to Step 4.
@@ -207,7 +207,7 @@ If this is the **last iteration** (iteration == max_iterations), report remainin
 Invoke the `/fix-findings` skill:
 
 ```
-/fix-findings {SPEC_FILE} {FINDINGS_FILE} {which findings to fix ("Critical and high only")}
+/fix-findings {SPEC_FILE} {FINDINGS_FILE} "Critical, high, and medium only. Challenge each finding very critically. Fix only genuine errors and inconsistencies"
 ```
 
 This will process each finding sequentially with verification, fixing, and regression checking.
