@@ -2528,7 +2528,8 @@ Once a session is attached, the client interacts via a **Lenny session** with bi
 running → suspended        (interrupt_request + interrupt_acknowledged)
 running → input_required   (runtime calls lenny/request_input — sub-state of running)
 running → completed        (agent finishes)
-running → failed           (runtime crash, unrecoverable error)
+running → resume_pending   (pod crash / gRPC error, retryCount < maxRetries)
+running → failed           (runtime crash, unrecoverable error, or retries exhausted)
 running → cancelled        (client/parent cancels)
 running → expired          (lease/budget/deadline exhausted)
 input_required → running   (input provided via inReplyTo or request expires/cancelled)
@@ -2620,7 +2621,7 @@ When `messaging.durableInbox: true` is set, the session inbox is backed by a Red
 
 The inbox guarantee in default mode is: **the gateway does not drop undelivered messages while the coordinating replica remains alive**. In durable mode: **the gateway does not drop undelivered messages as long as Redis remains available**. Neither mode is an end-to-end durability guarantee against simultaneous Redis + coordinator crashes. Deployers requiring stronger guarantees for the most critical messages should use the DLQ path (path 6) by treating the target session as temporarily unavailable.
 
-**Inbox-to-DLQ migration on `resume_pending` transition:** Messages that are in the session inbox at the moment the session transitions to `resume_pending` (due to pod failure or eviction) are at risk of loss, because the inbox is in-memory and the coordinating replica may crash before recovery completes. To close this gap, the gateway performs an **atomic inbox drain** when it writes the `resume_pending` state transition:
+**Inbox-to-DLQ migration on `resume_pending` transition (`durableInbox: false` only):** Messages that are in the session inbox at the moment the session transitions to `resume_pending` (due to pod failure or eviction) are at risk of loss, because the inbox is in-memory and the coordinating replica may crash before recovery completes. To close this gap, the gateway performs an **atomic inbox drain** when it writes the `resume_pending` state transition. **When `durableInbox: true`:** The inbox is already persisted in Redis and survives coordinator crashes, so the drain-to-DLQ step is unnecessary. Instead, the gateway leaves messages in the Redis-backed inbox; they are recovered by the new coordinator during lease acquisition (see durable inbox crash recovery above). The DLQ TTL (`maxResumeWindowSeconds`) is applied to the inbox key itself via `EXPIRE` to ensure stale messages are cleaned up if the session never resumes.
 
 1. The gateway reads all messages currently in the session inbox (in FIFO order).
 2. It writes each message to the session's DLQ in Redis (the same `t:{tenant_id}:session:{session_id}:dlq` sorted set used for externally queued messages), using the current time plus the session's `maxResumeWindowSeconds` TTL as the score.
@@ -2649,7 +2650,7 @@ The gateway checks target session state before routing. Behavior depends on the 
 | Terminal (`completed`, `failed`, `cancelled`, `expired`) | Gateway returns an error to the sender immediately: `{ "code": "TARGET_TERMINAL", "message": "Target task {id} is in terminal state {state}", "targetState": "{state}" }`. The message is not enqueued.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Recovering (`resume_pending`, `awaiting_client_action`)  | Message is enqueued in a **dead-letter queue** (DLQ) stored in Redis (sorted set keyed by `t:{tenant_id}:session:{session_id}:dlq`, scored by expiry timestamp) with a configurable TTL (default: `maxResumeWindowSeconds` of the target session, or 900s if unset). The canonical DLQ key format is `t:{tenant_id}:session:{session_id}:dlq` — this follows the platform-wide tenant key prefix convention (§12.4) and ensures a DLQ processor iterating across keys cannot read messages belonging to a different tenant. The DLQ has a `maxDLQSize` cap (default: 500 messages); on overflow, the oldest DLQ entry is dropped and the sender receives a `message_dropped` delivery receipt. If the target resumes before TTL expiry, queued messages are delivered in FIFO order. On TTL expiry, undelivered messages are discarded and the sender receives a `message_expired` notification via the `delivery_receipt` mechanism (see below). |
 
-**Delivery receipts:** All `lenny/send_message` calls return a `deliveryReceipt`. The canonical schema is defined in Section 15.4 (`delivery_receipt` acknowledgement schema). The `status` values are: `delivered` (runtime consumed), `queued` (buffered in inbox or DLQ), `dropped` (inbox/DLQ overflow), `expired` (DLQ TTL elapsed), `rate_limited` (inbound rate cap exceeded).
+**Delivery receipts:** All `lenny/send_message` calls return a `deliveryReceipt`. The canonical schema is defined in Section 15.4 (`delivery_receipt` acknowledgement schema). The `status` values are: `delivered` (runtime consumed), `queued` (buffered in inbox or DLQ), `dropped` (inbox/DLQ overflow), `expired` (DLQ TTL elapsed), `rate_limited` (inbound rate cap exceeded), `error` (infrastructure or policy failure).
 
 For queued messages that later expire, the gateway emits a `message_expired` event to the sender's event stream: `{ "type": "message_expired", "messageId": "msg_abc123", "reason": "target_ttl_exceeded" }`.
 
@@ -3341,7 +3342,7 @@ Returned by `lenny/await_children`:
   "status": "completed",
   "output": {
     "parts": ["OutputPart[]"],
-    "artifactRefs": ["artifact://session_xyz/workspace.tar.gz"]
+    "artifactRefs": ["lenny-blob://session_xyz/workspace.tar.gz"]
   },
   "usage": {
     "inputTokens": 15000,
@@ -4513,11 +4514,11 @@ Both `score` and `scores` are optional individually, but at least one must be pr
       }
     }
   ],
-  "cursor": "eyJsYXN0X2lkIjoiYWJjMTIzIn0="
+  "cursor": "AES256:v1:dGhpcyBpcyBhbiBvcGFxdWUgZW5jcnlwdGVkIGN1cnNvcg..."
 }
 ```
 
-Aggregation is computed on read (no pre-materialized rollups). The `dimensions` object is present only when at least one `EvalResult` for that scorer has a non-null `scores` field; dimension keys are the union of all keys found across results for that scorer/variant. For experiments with high eval volume, deployers can configure a Postgres materialized view refresh interval via Helm (`evalAggregationRefreshSeconds`, default: 60).
+Aggregation is computed on read by default. The `dimensions` object is present only when at least one `EvalResult` for that scorer has a non-null `scores` field; dimension keys are the union of all keys found across results for that scorer/variant. For experiments with high eval volume, deployers can opt into a Postgres materialized view by setting the Helm parameter `evalAggregationRefreshSeconds` (default: `0`, meaning disabled — aggregation computed on read). When set to a positive value (e.g., `60`), the gateway creates a materialized view and refreshes it at the configured interval, trading freshness for query performance at scale.
 
 **Results API cursor format.** Cursors in the Results API MUST use the platform-standard opaque cursor encoding (Section 15.1) — a deterministically encrypted form that does not expose primary key values or submission ordering. Implementations MUST NOT use plain base64-encoded JSON (e.g., `{"last_id":"abc123"}`) as the cursor format, as clients who decode the cursor would observe submission order and relative variant volumes, which can reveal blinding information during an active experiment.
 
@@ -4671,7 +4672,7 @@ Events are published to a deployer-configurable sink. Supported sink types:
 
 - Billing events are **always written to Postgres synchronously** via the `EventStore`, regardless of Redis availability. The Redis fail-open behavior (Section 12.4) applies only to rate-limit counters — billing events are never deferred, batched, or dropped. **During Postgres failover:** If the synchronous write fails due to Postgres unavailability, the billing event is routed through a **Redis stream intermediate buffer** (`t:{tenant_id}:billing:stream`, an XADD-based Redis stream with `MAXLEN ~billingRedisStreamMaxLen` per tenant, default: 50,000 entries) before falling back to the in-memory write-ahead buffer. The two-tier failover path is:
 
-  1. **Tier 1 (Redis stream):** On Postgres write failure, the gateway publishes the billing event to the Redis stream via `XADD` using the tenant-scoped key. Redis stream entries carry the full billing event payload plus a `stream_seq` (the event's `sequence_number`). Multiple gateway replicas write to the same tenant stream concurrently; the stream provides durable ordering across replicas. A background flusher goroutine per tenant consumes the Redis stream via a **consumer group** (`billing-flusher`, created with `XGROUP CREATE ... MKSTREAM`). Each gateway replica joins the group as a distinct consumer (consumer name = replica pod ID). The consumer group ensures each stream entry is delivered to exactly one replica — no duplicate billing inserts across replicas. The flusher calls `XREADGROUP` and re-attempts Postgres INSERTs in `stream_seq` order using the existing `billingFlushIntervalMs` schedule. On successful INSERT, the flusher `XACK`s and `XDEL`s the entry from the stream. A periodic pending-entry reclaim (`XAUTOCLAIM`, interval: 30s, min-idle: 60s) recovers entries assigned to crashed replicas. The stream TTL is set to `billingStreamTTLSeconds` (default: 3600s) — events not flushed to Postgres within this window are permanently lost (this scenario requires Redis uptime > 1 hour while Postgres is simultaneously down, which is treated as a catastrophic dual-outage; the `BillingStreamBackpressure` alert fires at 80% of `billingRedisStreamMaxLen`).
+  1. **Tier 1 (Redis stream):** On Postgres write failure, the gateway publishes the billing event to the Redis stream via `XADD` using the tenant-scoped key. Redis stream entries carry the full billing event payload plus a `stream_seq` (the event's `sequence_number`). Multiple gateway replicas write to the same tenant stream concurrently; the stream provides durable ordering across replicas. A background flusher goroutine per tenant consumes the Redis stream via a **consumer group** (`billing-flusher`, created with `XGROUP CREATE ... MKSTREAM`). Each gateway replica joins the group as a distinct consumer (consumer name = replica pod ID). The consumer group ensures each stream entry is delivered to exactly one replica — no duplicate billing inserts across replicas. The flusher calls `XREADGROUP` and re-attempts Postgres INSERTs in `stream_seq` order using the existing `billingFlushIntervalMs` schedule. On successful INSERT, the flusher `XACK`s and `XDEL`s the entry from the stream. A periodic pending-entry reclaim (`XAUTOCLAIM`, interval: 30s, min-idle: 60s) recovers entries assigned to crashed replicas. **Deduplication on reclaimed entries:** Because `XAUTOCLAIM` may redeliver an entry that the original consumer already flushed to Postgres but failed to `XACK` before crashing, the flusher uses `INSERT ... ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING` on the billing events table. The `stream_entry_id` column stores the Redis stream entry ID (e.g., `1680000000000-0`) and carries a unique constraint per tenant. This prevents duplicate billing records from reclaimed entries — the second INSERT is a no-op, and the reclaiming consumer proceeds to `XACK` and `XDEL`. The stream TTL is set to `billingStreamTTLSeconds` (default: 3600s) — events not flushed to Postgres within this window are permanently lost (this scenario requires Redis uptime > 1 hour while Postgres is simultaneously down, which is treated as a catastrophic dual-outage; the `BillingStreamBackpressure` alert fires at 80% of `billingRedisStreamMaxLen`).
 
   2. **Tier 2 (in-memory write-ahead buffer):** If the Redis stream write also fails (Redis unavailable), the billing event falls back to the **bounded in-memory write-ahead buffer** on the gateway replica (max `billingWriteAheadBufferSize`, default: 10,000 events per replica). Queued events are flushed to Postgres in sequence-number order once connectivity is restored, preserving the monotonic ordering guarantee. If the buffer fills before either store recovers, the gateway rejects new session-progressing requests (returning `503`) to maintain the invariant that no billable work occurs without a corresponding billing record. The in-memory buffer is not persisted to disk — if a gateway replica crashes with buffered events and both Redis and Postgres remain unavailable, those events are reconstructed from pod-reported token usage during session recovery (Section 7.3).
 
@@ -4996,7 +4997,7 @@ At Tier 3, total sustained write IOPS (~1,300/s) with burst headroom (~3,900/s) 
 
 | Tier   | Recommended primary instance | Estimated write ceiling (sustained) | 80% alert threshold | Burst ceiling (~3× sustained) |
 | ------ | ---------------------------- | ------------------------------------ | ------------------- | ------------------------------ |
-| Tier 1 | 2 vCPU / 8 GB (e.g., `db.t3.medium`) | ~200 IOPS | ~160 IOPS | ~600 IOPS |
+| Tier 1 | 2 vCPU / 4 GB (e.g., `db.t3.medium`) | ~200 IOPS | ~160 IOPS | ~600 IOPS |
 | Tier 2 | 4 vCPU / 16 GB (e.g., `db.r6g.xlarge`) | ~600 IOPS | ~480 IOPS | ~1,800 IOPS |
 | Tier 3 | 8 vCPU / 32 GB (e.g., `db.r6g.2xlarge`) | ~1,600 IOPS | ~1,280 IOPS | ~4,800 IOPS |
 
@@ -5246,7 +5247,7 @@ GenericStore.put(key, value)
   5. The in-memory copy of the salt used for verification is zeroed immediately after the verification step completes (via `runtime.SetFinalizer` or explicit `crypto/subtle`-style zero, depending on language runtime).
   - **Impact on other users:** Because the salt is per-tenant (not per-user), deleting the salt on a per-user erasure request affects the pseudonymization keying for all subsequent erasure requests in that tenant. After deletion, the next erasure request generates a fresh 256-bit salt for that tenant. Previously pseudonymized records from earlier erasures used the prior salt — they remain pseudonymized under the old key, but that key no longer exists anywhere in the system. This is the desired outcome: old pseudonymized records become effectively anonymous because the key needed to re-identify them has been destroyed.
   - **`billingErasurePolicy: exempt` tenants:** For tenants configured as exempt from billing erasure, no pseudonymization occurs and no salt is used or deleted. The erasure receipt records the `exempt` disposition.
-- **Rotation:** Salt rotation is supported but optional. On rotation: (1) generate and store the new salt; (2) run a one-time re-hash migration job that re-pseudonymizes all billing events from the old-salt hash to the new-salt hash; (3) delete the old salt only after migration completes and is verified. The old salt is retained in KMS-encrypted form during the migration window.
+- **Rotation:** Salt rotation is supported but optional. On rotation: (1) generate and store the new salt; (2) run a one-time re-hash migration job that re-pseudonymizes all billing events from the old-salt hash to the new-salt hash; (3) delete the old salt only after migration completes and is verified. The old salt is retained in KMS-encrypted form during the migration window. **Erasure during rotation:** If a user-level erasure job is triggered while a salt rotation migration is in progress, the erasure job must wait for the migration to complete before proceeding. The rotation migration holds an advisory lock (`erasure_salt_migration:{tenant_id}`) that the erasure job respects — this prevents the erasure from deleting a salt that the migration is actively using. Once the migration completes and the old salt is deleted, the erasure job proceeds using the new salt, then deletes it per the immediate-deletion rule above.
 - **Compromise response:** If a salt is compromised, the tenant admin rotates the salt via the admin API (`POST /v1/admin/tenants/{id}/rotate-erasure-salt`). The compromised salt is deleted immediately (not archived) and a security audit event is emitted.
 
 **GDPR compliance note on pseudonymization.** Under GDPR Recital 26, pseudonymized data remains personal data — it is a risk-reduction technique, not anonymization — as long as the pseudonymization key exists somewhere accessible. The platform addresses this directly: the `erasure_salt` is deleted immediately after pseudonymization completes (see Immediate deletion above), which destroys the only key capable of re-identifying the pseudonymized billing records. Once the salt is deleted and the verification step confirms it is unrecoverable from persistent storage, the pseudonymized billing events become effectively anonymous under GDPR Recital 26. Prior to salt deletion (during the pseudonymization transaction window), deployers must treat the billing events as T3 — Confidential personal data. Tenants with `billingErasurePolicy: exempt` retain original `user_id` values under GDPR Article 17(3)(b) and must document this retention in their Records of Processing Activities.
@@ -5525,6 +5526,7 @@ spec:
 | **Token/Connector Service** (`lenny.dev/component: token-service`)                   | PgBouncer (TCP 5432); Redis (TCP 6380, TLS — `{{ .Values.redis.tlsPort }}`); KMS endpoint (HTTPS 443, CIDR from `{{ .Values.kms.endpointCIDR }}`); `kube-system` CoreDNS (UDP/TCP 53).                                                                           | Gateway pods only (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, mTLS).                                               |
 | **Warm Pool Controller / PoolScalingController** (`lenny.dev/component: controller`) | kube-apiserver (TCP 443); PgBouncer (TCP 5432); `kube-system` CoreDNS (UDP/TCP 53).                                                                                                                                                                               | None (controllers initiate all connections).                                                                                        |
 | **PgBouncer** (`lenny.dev/component: pgbouncer`) — self-managed profile only; absent on cloud-managed deployments where the provider proxy is external to the cluster | Postgres (TCP 5432, CIDR from `{{ .Values.postgres.host }}`); `kube-system` CoreDNS (UDP/TCP 53). | Gateway pods (TCP 5432); Token/Connector Service pods (TCP 5432); Warm Pool Controller / PoolScalingController pods (TCP 5432). |
+| **Admission Webhooks** (`lenny.dev/component: admission-webhook`) — `lenny-label-immutability`, `lenny-pool-config`, and CRD validation webhooks | `kube-system` CoreDNS (UDP/TCP 53). | kube-apiserver (TCP 443, CIDR `{{ .Values.kubeApiServerCIDR }}`). The kube-apiserver must reach these pods to invoke ValidatingAdmissionWebhook callbacks. Without this ingress rule, the `lenny-system` default-deny policy blocks all webhook callbacks, causing fail-closed webhooks to reject all pod admissions silently. |
 | **Dedicated CoreDNS** (`lenny.dev/component: coredns`)                               | `kube-system` CoreDNS (UDP/TCP 53, for upstream forwarding); external DNS resolvers if configured.                                                                                                                                                                | Agent namespace pods (UDP/TCP 53, per `allow-pod-egress-base` in agent namespaces).                                                 |
 
 > **Note:** `lenny-system` components use `kube-system` CoreDNS for their own DNS resolution (not the dedicated agent CoreDNS instance). The dedicated CoreDNS in `lenny-system` serves agent namespaces only. Cloud metadata endpoint blocking is achieved through two complementary mechanisms depending on policy type: (a) the base `allow-pod-egress-base` policy is an **allowlist-only** policy (gateway gRPC + DNS only) — it contains no broad CIDR rules and therefore **implicitly** blocks IMDS because those addresses are not in the allowlist; (b) supplemental policies that include broad CIDR rules (such as the `internet` profile's `0.0.0.0/0` rule) carry **explicit `except` clauses** for IMDS addresses to prevent IMDS access even when broad egress is granted. The blocked IMDS addresses are: `169.254.169.254/32` (AWS/GCP/Azure IPv4 IMDS), `fd00:ec2::254/128` (AWS IPv6 IMDS), and `100.100.100.200/32` (Alibaba Cloud IMDS). See NET-002 hardening note below for the supplemental policy `except` clause details.
@@ -6385,7 +6387,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `INVALID_INTERCEPTOR_PRIORITY` | `PERMANENT` | 422      | External interceptor registration specifies `priority ≤ 100`, which is reserved for built-in security-critical interceptors. Set `priority > 100`. See Section 4.8.                                                                                     |
 | `INVALID_INTERCEPTOR_PHASE` | `PERMANENT` | 422         | External interceptor registration includes the `PreAuth` phase, which is exclusively reserved for built-in interceptors. Remove `PreAuth` from the phase set. See Section 4.8.                                                                          |
 | `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 403       | Delegation rejected because the target pool's isolation profile is less restrictive than the calling session's `minIsolationProfile`. `details.parentIsolation` and `details.targetIsolation` identify the conflicting profiles. See Section 8.3.       |
-| `DEADLOCK_TIMEOUT`          | `TRANSIENT` | 408         | A delegated subtree deadlock was not resolved within `maxDeadlockWaitSeconds`. The deepest blocked tasks have been failed. The root task may retry after breaking the deadlock. See Section 8.8.                                                         |
+| `DEADLOCK_TIMEOUT`          | `TRANSIENT` | 504         | A delegated subtree deadlock was not resolved within `maxDeadlockWaitSeconds`. The deepest blocked tasks have been failed. The root task may retry after breaking the deadlock. See Section 8.8.                                                         |
 | `SESSION_NOT_EVAL_ELIGIBLE` | `PERMANENT` | 422         | Eval submission rejected because the target session is in a terminal state (`cancelled` or `expired`) that is not eligible for eval storage. See Section 13 (Eval API).                                                                                 |
 | `EVAL_QUOTA_EXCEEDED`       | `POLICY`    | 429         | The per-session `EvalResult` storage cap has been reached (`maxEvalsPerSession`, default 10,000). `details.sessionId` and `details.limit` are included. See Section 13 (Eval API).                                                                      |
 | `STORAGE_QUOTA_EXCEEDED`    | `POLICY`    | 429         | Tenant artifact storage quota would be exceeded by the upload or checkpoint write. `details.currentBytes` and `details.limitBytes` are included. See Section 11.2.                                                                                      |
@@ -6548,12 +6550,6 @@ ETag interaction: when `dryRun=true` is combined with `If-Match`, the gateway va
   - **Experiment:** blocked if `status: active` and sessions are assigned to variants. Deactivate the experiment first.
   - **External Adapter:** blocked if `status: active`. Set to `inactive` first.
 - **Implementation.** The Postgres `UPDATE ... WHERE id = $1 AND version = $2` pattern ensures atomicity without application-level locking. If zero rows are affected, the gateway re-reads the current version and returns `412`.
-
-The `ETAG_REQUIRED` error code (HTTP 428) is added to the error catalog:
-
-| Code            | Category    | HTTP Status | Description                                               |
-| --------------- | ----------- | ----------- | --------------------------------------------------------- |
-| `ETAG_REQUIRED` | `PERMANENT` | 428         | `If-Match` header is required on PUT but was not provided |
 
 Rate limits are applied per tenant and per user. Admin API endpoints have separate (higher) rate-limit windows from client-facing endpoints.
 
@@ -6759,7 +6755,7 @@ The `message` type carries an `input` field containing an `OutputPart[]` array (
   "type": "text",
   "mimeType": "text/plain",
   "inline": "content here",
-  "ref": "artifact://...",
+  "ref": "lenny-blob://...",
   "annotations": { "role": "primary", "final": true },
   "parts": [],
   "status": "streaming | complete | failed"
@@ -6862,7 +6858,7 @@ The `message` type carries an `input` field containing an `OutputPart[]` array (
 | `ImageContent` (url)   | `image`             | —                                           | from `url.mimeType` if present | `url.url`                 | URL set as `ref`; inline not populated                            |
 | `ImageContent` (base64)| `image`             | base64 data string                          | `url.mimeType`                 | —                         | Stored inline                                                     |
 | `EmbeddedResource` (text blob) | `file`    | resource text content                       | `text/plain` or resource MIME  | —                         | Stored inline when small; large blobs staged to artifact store    |
-| `EmbeddedResource` (blob)      | `file`    | —                                           | resource MIME type             | artifact URI              | Staged to artifact store; `ref` set to `artifact://` URI          |
+| `EmbeddedResource` (blob)      | `file`    | —                                           | resource MIME type             | artifact URI              | Staged to artifact store; `ref` set to `lenny-blob://` URI        |
 | `EmbeddedResource` (uri)       | `file`    | —                                           | resource MIME type             | resource URI              | `ref` set directly from resource URI                              |
 | MCP `isError: true` annotation | `error`   | inherited from enclosing block              | —                              | —                         | `type` overridden to `error`; `annotations.errorCode` populated if present |
 
@@ -6939,10 +6935,11 @@ Adapters ignore hint keys they do not recognize. Runtimes that do not set `proto
 
 #### `MessageEnvelope` — Unified Message Format
 
-All inbound content messages use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs.
+All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see Protocol Reference below.
 
 ```json
 {
+  "type": "message",
   "id": "msg_xyz789",
   "from": {
     "kind": "client | agent | system | external",
@@ -6987,14 +6984,14 @@ No other values are valid. The gateway rejects unknown `delivery` values with `4
 ```json
 {
   "messageId":   "msg_xyz789",
-  "status":      "delivered | queued | dropped | expired | rate_limited",
+  "status":      "delivered | queued | dropped | expired | rate_limited | error",
   "reason":      "<string — populated when status is dropped, expired, or rate_limited>",
   "deliveredAt": "<RFC 3339 timestamp — populated when status is delivered>",
   "queueDepth":  "<integer — inbox depth after enqueue; populated when status is queued>"
 }
 ```
 
-`status` values: `delivered` (runtime consumed); `queued` (buffered in inbox); `dropped` (inbox overflow — oldest entry evicted); `expired` (DLQ TTL elapsed before delivery); `rate_limited` (inbound rate cap exceeded, Section 7.2).
+`status` values: `delivered` (runtime consumed); `queued` (buffered in inbox); `dropped` (inbox overflow — oldest entry evicted); `expired` (DLQ TTL elapsed before delivery); `rate_limited` (inbound rate cap exceeded, Section 7.2); `error` (delivery failed due to infrastructure error, e.g., `reason: "inbox_unavailable"` when Redis is unreachable for durable inbox, or `reason: "scope_denied"` when messaging scope denies the target).
 
 **`id`** — every message has a stable ID enabling threading, reply tracking, and non-linear context retrieval. IDs are gateway-assigned ULIDs (`msg_` prefix) when the sender omits them; sender-supplied IDs MUST be globally unique within the tenant or are rejected with `400 DUPLICATE_MESSAGE_ID`. **Deduplication window:** seen IDs are stored in a Redis sorted set (`t:{tenant_id}:session:{session_id}:msg_dedup`, scored by receipt timestamp) and retained for `deduplicationWindowSeconds` (default: 3600s, configurable per deployment via `messaging.deduplicationWindowSeconds` in Helm values). The set is trimmed on each write to remove entries older than the window.
 
@@ -7014,7 +7011,7 @@ No other values are valid. The gateway rejects unknown `delivery` values with `4
 
 #### Protocol Reference — Message Schemas
 
-All messages on stdin use the full `MessageEnvelope` format (Section 15.4.1). Runtimes MUST ignore unrecognized fields. Minimum-tier runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`) can be safely ignored.
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format (Section 15.4.1). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Minimum-tier runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`) can be safely ignored.
 
 ##### Inbound: `message`
 
@@ -8495,7 +8492,7 @@ All open questions have been resolved. See Section 19 for decisions.
 
 The following items are documented now so data models accommodate them. Implementation is deferred.
 
-**21.1 A2A Full Support.** `ExternalProtocolAdapter` is the mechanism. A2A is implementation two. Inbound: gateway serves `POST /a2a/{runtimeName}/tasks` via `A2AAdapter`. The adapter creates a Lenny session, maps A2A task fields to `TaskSpec`, and translates A2A state queries to Lenny's canonical task state machine (see Section 8.8 protocol mapping table). Outbound: external A2A agents registered as connectors, callable via `lenny/delegate_task`. A2A `input-required` state maps directly to Lenny's `input_required` task state. A2A `canceled` maps to Lenny's `cancelled`. A2A `unknown` is not a Lenny state — it surfaces as a 404 from the adapter. A2A artifacts map to Lenny artifact refs (`artifact://`). `agentInterface` auto-generates A2A agent cards. Per-agent A2A endpoints (not aggregated) at `/a2a/runtimes/{name}`. `allowedExternalEndpoints` slot on delegation lease schema exists from v1.
+**21.1 A2A Full Support.** `ExternalProtocolAdapter` is the mechanism. A2A is implementation two. Inbound: gateway serves `POST /a2a/{runtimeName}/tasks` via `A2AAdapter`. The adapter creates a Lenny session, maps A2A task fields to `TaskSpec`, and translates A2A state queries to Lenny's canonical task state machine (see Section 8.8 protocol mapping table). Outbound: external A2A agents registered as connectors, callable via `lenny/delegate_task`. A2A `input-required` state maps directly to Lenny's `input_required` task state. A2A `canceled` maps to Lenny's `cancelled`. A2A `unknown` is not a Lenny state — it surfaces as a 404 from the adapter. A2A artifacts map to Lenny artifact refs (`lenny-blob://`). `agentInterface` auto-generates A2A agent cards. Per-agent A2A endpoints (not aggregated) at `/a2a/runtimes/{name}`. `allowedExternalEndpoints` slot on delegation lease schema exists from v1.
 
 **Elicitation chains under A2A (design constraint).** The MCP elicitation chain (Section 9.2) is structurally hop-by-hop, requiring each level to relay elicitations upward to its direct client. A2A has no equivalent hop-by-hop elicitation primitive. When a Lenny session is reached via `A2AAdapter`, any elicitation originating inside that session tree cannot be surfaced to the A2A caller using the standard MCP chain. The `A2AAdapter` therefore imposes the following behavior for v1 A2A support:
 

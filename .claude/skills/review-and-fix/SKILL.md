@@ -207,7 +207,7 @@ If this is the **last iteration** (iteration == max_iterations), report remainin
 Invoke the `/fix-findings` skill:
 
 ```
-/fix-findings {SPEC_FILE} {FINDINGS_FILE} "Critical, high, and medium only. Challenge each finding very critically. Fix only genuine errors and inconsistencies"
+/fix-findings {SPEC_FILE} {FINDINGS_FILE} "Critical, high, and medium only. Challenge each finding very critically. Fix only genuine errors and inconsistencies. Skip findings that are not genuine errors or inconsistencies. If the same finding was previously skipped, skip it again."
 ```
 
 This will process each finding sequentially with verification, fixing, and regression checking.
