@@ -803,12 +803,14 @@ Formalized interceptor interface at gateway phases: `PreAuth`, `PostAuth`, `PreR
 
 **Built-in interceptors** (with default priorities):
 
-| Interceptor             | Default Priority | Notes                                                                                                                          |
-| ----------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `AuthEvaluator`         | 100              | Always active                                                                                                                  |
-| `QuotaEvaluator`        | 200              | Always active                                                                                                                  |
-| `ExperimentRouter`      | 300              | Active when experiments are defined (see Section 10.7)                                                                         |
-| `GuardrailsInterceptor` | 400              | Disabled by default; deployers wire in external classifiers (AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, etc.) |
+| Interceptor                   | Default Priority | Notes                                                                                                                          |
+| ----------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `AuthEvaluator`               | 100              | Always active                                                                                                                  |
+| `QuotaEvaluator`              | 200              | Always active                                                                                                                  |
+| `DelegationPolicyEvaluator`   | 250              | Always active; fires at `PreDelegation` only (see Section 8.3)                                                                 |
+| `ExperimentRouter`            | 300              | Active when experiments are defined (see Section 10.7)                                                                         |
+| `GuardrailsInterceptor`       | 400              | Disabled by default; deployers wire in external classifiers (AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, etc.) |
+| `RetryPolicyEvaluator`        | 600              | Always active; fires at `PostRoute` only (see Section 7.3)                                                                     |
 
 **Short-circuit behavior:** If any interceptor returns `REJECT`, the chain short-circuits immediately — no subsequent interceptors are invoked. The rejection reason is logged and returned to the caller. `MODIFY` results are applied to the payload before passing it to the next interceptor in the chain; `ALLOW` passes the payload through unchanged.
 
@@ -4437,7 +4439,7 @@ Aggregation is computed on read (no pre-materialized rollups). The `dimensions` 
 
 PoolScalingController manages variant pool lifecycle automatically — variant warm count derived from base pool demand signals × variant weight × safety factor. When a variant pool is created or activated, the controller simultaneously reduces the base pool's `minWarm` to prevent over-provisioning — see "Variant pool sizing and base pool adjustment" in Section 4.6.2 for the recomputation formula.
 
-**Experiment status transitions.** Experiment status (`active`, `paused`, `concluded`) is managed exclusively via the admin API. There is no automatic health-based rollback or promotion — an administrator must explicitly transition an experiment between states using `PATCH /v1/admin/experiments/{id}` with `{ "status": "<new_status>" }`. Valid transitions: `active → paused`, `paused → active`, `active → concluded`, `paused → concluded`. Concluded experiments are immutable. The gateway emits an audit event (`experiment.status_changed`) on each transition, including the acting admin identity and the previous/new status.
+**Experiment status transitions.** Experiment status (`active`, `paused`, `concluded`) is managed exclusively via the admin API. There is no automatic health-based rollback or promotion — an administrator must explicitly transition an experiment between states using `PATCH /v1/admin/experiments/{name}` with `{ "status": "<new_status>" }`. Valid transitions: `active → paused`, `paused → active`, `active → concluded`, `paused → concluded`. Concluded experiments are immutable. The gateway emits an audit event (`experiment.status_changed`) on each transition, including the acting admin identity and the previous/new status.
 
 **Sticky assignment cache invalidation.** `sticky: user` caches variant assignments in Redis keyed by `(user_id, experiment_id)` to avoid re-evaluating assignment on every session creation. When an experiment transitions to `paused` or `concluded`, the gateway flushes all cached `sticky: user` assignments for that experiment (Redis `DEL` on all keys matching `t:{tenant_id}:exp:{experiment_id}:sticky:*`). This prevents stale assignments from routing sessions to a non-existent or paused variant pool after the transition. On `paused → active` re-activation, no flush is required — the existing cached assignment remains valid. The `lenny_experiment_sticky_cache_invalidations_total` counter (labeled by `experiment_id`, `transition`) is incremented on each flush.
 
@@ -4463,13 +4465,13 @@ type ExperimentHealthEvaluator interface {
 
 Until this interface is implemented, all experiment lifecycle decisions are manual.
 
-**Manual Rollback Triggers.** Because rollback is always operator-initiated, deployers should define monitoring thresholds that trigger a human review and, if warranted, a `PATCH /v1/admin/experiments/{id}` with `{ "status": "paused" }`. The following platform-native signals and example thresholds are recommended starting points — adjust to the experiment's sensitivity and baseline:
+**Manual Rollback Triggers.** Because rollback is always operator-initiated, deployers should define monitoring thresholds that trigger a human review and, if warranted, a `PATCH /v1/admin/experiments/{name}` with `{ "status": "paused" }`. The following platform-native signals and example thresholds are recommended starting points — adjust to the experiment's sensitivity and baseline:
 
 | Signal | Metric / Source | Example Threshold | Action |
 | ------ | --------------- | ----------------- | ------ |
 | Elevated variant error rate | `lenny_session_error_total{variant_id="treatment"}` / `lenny_session_total{variant_id="treatment"}` | > 5% over a 5-minute window, sustained for 2 consecutive windows | Pause experiment |
 | Variant p95 session latency spike | `lenny_session_duration_seconds{quantile="0.95", variant_id="treatment"}` | > 2× the control group's p95 for 10 consecutive minutes | Pause experiment |
-| Mean eval score degradation | `GET /v1/experiments/{id}/results` — `variants[treatment].scorers[*].mean` | Treatment mean drops > 0.10 below control mean with ≥ 50 samples per group | Pause experiment |
+| Mean eval score degradation | `GET /v1/admin/experiments/{name}/results` — `variants[treatment].scorers[*].mean` | Treatment mean drops > 0.10 below control mean with ≥ 50 samples per group | Pause experiment |
 | Warm pool exhaustion on variant | `lenny_warmpool_ready_pods{pool="<variant_pool>"}` | Reaches 0 and `lenny_pod_claim_queue_depth` > 0 for > 60s | Pause experiment and investigate pool sizing |
 | Safety score regression | `lenny_eval_score{scorer="safety", variant_id="treatment"}` | Mean safety score drops below 0.95 for the variant, regardless of other metrics | Pause experiment immediately |
 
@@ -6222,7 +6224,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `PERMISSION_DENIED`         | `POLICY`    | 403         | The authenticated identity lacks the required permission for this specific resource or operation. Distinguished from `FORBIDDEN` (role-level rejection) in that `PERMISSION_DENIED` is policy-evaluated at the resource level (e.g., delegation scope, policy rule). |
 | `CREDENTIAL_REVOKED`        | `POLICY`    | 403         | The credential backing the active session lease has been explicitly revoked (placed on the deny list). Active sessions using this credential are terminated immediately; no further requests can be made with the revoked credential. See Section 4.9.   |
 | `INVALID_POOL_CONFIGURATION` | `PERMANENT` | 422        | Pool creation or update rejected due to an invalid configuration constraint (e.g., `cleanupTimeoutSeconds / maxConcurrent < 5`, or `terminationGracePeriodSeconds` too small for the tiered checkpoint cap). `details.message` describes the violated constraint. See Section 4.6.1. |
-| `CIRCUIT_BREAKER_OPEN`      | `TRANSIENT` | 503         | Session creation or delegation rejected because an operator-declared circuit breaker is active. `details.circuit_name`, `details.reason`, and `details.opened_at` are included. Not `retryable` — the client should wait for the circuit breaker to be closed by an operator before retrying. See Section 11.6. |
+| `CIRCUIT_BREAKER_OPEN`      | `POLICY`    | 503         | Session creation or delegation rejected because an operator-declared circuit breaker is active. `details.circuit_name`, `details.reason`, and `details.opened_at` are included. Not `retryable` — the client should wait for the circuit breaker to be closed by an operator before retrying. See Section 11.6. |
 | `POOL_DRAINING`             | `TRANSIENT` | 503         | Session creation rejected because the target pool is in `draining` state and is no longer accepting new sessions. `Retry-After` header indicates estimated drain completion. `details.pool` and `details.estimatedDrainSeconds` are included. See Section 15.1 (pool drain). |
 | `DELEGATION_CYCLE_DETECTED` | `PERMANENT` | 400         | Delegation rejected because the target session's `session_id` appears in the caller's delegation lineage, which would create a circular wait. `details.cycleSessionId` identifies the offending node. Not retryable — the caller must choose a different target. See Section 8.2. |
 | `OUTPUTPART_TOO_LARGE`      | `PERMANENT` | 413         | An `OutputPart` payload exceeds the per-part size limit (50 MB). The part was rejected at ingress. `details.partIndex`, `details.sizeBytes`, and `details.limitBytes` are included. See Section 15.4.1. |
@@ -6235,6 +6237,14 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `INCOMPATIBLE_RUNTIME`      | `PERMANENT` | 400         | `POST /v1/sessions/{id}/replay` rejected because `targetRuntime` has a different `executionMode` than the source session. Replay requires matching execution mode. `details.sourceExecutionMode` and `details.targetExecutionMode` are included. See Section 15.1 (session replay). |
 | `DOMAIN_NOT_ALLOWLISTED`    | `POLICY`    | 403         | An agent-initiated URL-mode elicitation was dropped because the URL's effective host does not match any entry in the pool's `urlModeElicitation.domainAllowlist`. `details.host` and `details.allowlist` are included. See Section 7.2 (elicitation). |
 | `COMPLIANCE_PGAUDIT_REQUIRED` | `PERMANENT` | 422       | Tenant creation or update rejected because the tenant's `complianceProfile` requires `audit.pgaudit.enabled: true` with a configured `sinkEndpoint`, but these are not set. Configure pgaudit before creating a regulated tenant. See Section 11.7. |
+| `DERIVE_ON_LIVE_SESSION`      | `PERMANENT` | 409         | `POST /v1/sessions/{id}/derive` rejected because the source session is not in a terminal state and `allowStale: true` was not set in the request body. See Section 15.1 (derive semantics). |
+| `DERIVE_LOCK_CONTENTION`      | `POLICY`    | 429         | `POST /v1/sessions/{id}/derive` rejected because too many concurrent derive operations are in progress for this session. Retry with exponential backoff. See Section 15.1 (derive semantics). |
+| `REGION_CONSTRAINT_VIOLATED`  | `POLICY`    | 403         | Request rejected because the resolved storage region does not satisfy the session's `dataResidencyRegion` constraint. `details.requiredRegion` and `details.resolvedRegion` are included. See Section 12.8. |
+| `REGION_CONSTRAINT_UNRESOLVABLE` | `PERMANENT` | 422      | Session creation rejected because no storage or pool configuration can satisfy the requested `dataResidencyRegion`. `details.region` identifies the unresolvable constraint. See Section 12.8. |
+| `REGION_UNAVAILABLE`          | `TRANSIENT` | 503         | The storage region required by the session's data residency constraint is temporarily unavailable. Retry when the region recovers. `details.region` identifies the affected region. See Section 12.8. |
+| `KMS_REGION_UNRESOLVABLE`     | `PERMANENT` | 422         | Session or credential operation rejected because no KMS key is configured for the required region. `details.region` and `details.provider` are included. See Section 4.9. |
+| `LEASE_SPIFFE_MISMATCH`       | `POLICY`    | 403         | A pod presented a SPIFFE identity that does not match the credential lease's expected identity (`details.expectedSpiffeId`, `details.actualSpiffeId`). The lease is invalidated. See Section 4.9. |
+| `ENV_VAR_BLOCKLISTED`         | `PERMANENT` | 400         | Session creation or runtime registration rejected because one or more requested environment variables are on the platform blocklist. `details.blocklisted` lists the offending variable names. See Section 10.6. |
 
 **Validation error format.** When `code` is `VALIDATION_ERROR`, the `details` field contains a `fields` array describing each validation failure:
 
@@ -6367,7 +6377,7 @@ The `ETAG_REQUIRED` error code (HTTP 428) is added to the error catalog:
 
 Rate limits are applied per tenant and per user. Admin API endpoints have separate (higher) rate-limit windows from client-facing endpoints.
 
-**Cursor-based pagination.** All list endpoints return paginated results using a cursor-based envelope. This applies to: `GET /v1/sessions`, `GET /v1/runtimes`, `GET /v1/pools`, `GET /v1/usage`, `GET /v1/metering/events`, `GET /v1/sessions/{id}/artifacts`, `GET /v1/sessions/{id}/transcript`, `GET /v1/sessions/{id}/logs`, `GET /v1/experiments/{id}/results`, and all admin `GET` collection endpoints (e.g., `/v1/admin/runtimes`, `/v1/admin/pools`).
+**Cursor-based pagination.** All list endpoints return paginated results using a cursor-based envelope. This applies to: `GET /v1/sessions`, `GET /v1/runtimes`, `GET /v1/pools`, `GET /v1/usage`, `GET /v1/metering/events`, `GET /v1/sessions/{id}/artifacts`, `GET /v1/sessions/{id}/transcript`, `GET /v1/sessions/{id}/logs`, `GET /v1/admin/experiments/{name}/results`, and all admin `GET` collection endpoints (e.g., `/v1/admin/runtimes`, `/v1/admin/pools`).
 
 Query parameters:
 
@@ -7274,6 +7284,9 @@ Client SDKs follow the same versioning scheme as the API surfaces they wrap (Sec
 | **Experiment Targeting**                                                                                                                                                                                               |                 |
 | Experiment targeting webhook latency (`lenny_experiment_targeting_webhook_duration_seconds`, by `provider`)                                                                                                             | Histogram       |
 | Experiment targeting webhook failures (`lenny_experiment_targeting_webhook_error_total`, by `provider`, `error_type`)                                                                                                   | Counter         |
+| **Billing**                                                                                                                                                                                                            |                 |
+| Billing write-ahead buffer utilization (`billing_write_ahead_buffer_utilization`, labeled by `tenant_id`) — ratio of in-memory billing event buffer currently in use to `billingFlushMaxPending` (default: 500). Value 0.0–1.0. Alert before reaching 0.80 (`BillingWriteAheadBufferHigh`). Used as back-pressure signal: when buffer is exhausted, new billable work is rejected. See Section 12.3. | Gauge           |
+| Billing Redis stream depth (`lenny_billing_redis_stream_depth`, labeled by `tenant_id`) — number of billing events currently staged in the per-tenant Redis stream (`t:{tenant_id}:billing:stream`) awaiting Postgres flush. Normal value is near zero; elevated values indicate sustained Postgres write failures. See Section 11.2.1. | Gauge           |
 
 These four templated metrics fulfill the "per-subsystem metrics" contract from Section 4.1. The subsystem-specific extraction-threshold metrics defined in Section 4.1's extraction readiness table (`lenny_stream_proxy_queue_depth`, `lenny_upload_handler_active_uploads`, `lenny_mcp_fabric_active_delegations`, `lenny_llm_proxy_active_connections`, etc.) are also canonical and must be instrumented; they provide finer-grained signals for the extraction decision described in Section 4.1.
 
@@ -7411,6 +7424,9 @@ Helm configuration: `audit.retentionPreset: soc2` or `audit.retentionDays: 2190`
 | `TenantDeletionOverdue`          | A tenant has been in `disabling` or `deleting` state longer than 80% of its tier SLA (T3: 72h, T4: 4h) without reaching `deleted`. Indicates a stalled deletion phase — operator investigation required. Tracked via `lenny_tenant_deletion_duration_seconds`. See Section 12.8. | Warning  |
 | `DataResidencyViolationAttempt`  | A `StorageRouter` write or pod pool delegation was rejected because the resolved region did not match the session's `dataResidencyRegion`. Indicates a misconfiguration or code-path bypass. See Section 12.8.                               | Warning  |
 | `BillingCorrectionRateHigh`      | Billing correction events exceed deployer-configurable percentage (default: 5%) of total billing events in a rolling 24h window. May indicate compromised credentials, operational error, or systematic metering bug. See Section 11.2.1.    | Warning  |
+| `BillingStreamBackpressure`      | Per-tenant billing Redis stream depth (`lenny_billing_redis_stream_depth`) has reached 80% of `billingRedisStreamMaxLen` (default: 50,000 entries) for more than 60 seconds. Indicates sustained Postgres write failure — billing events are accumulating in the Redis fallback tier and are at risk of being permanently lost if the stream TTL (`billingStreamTTLSeconds`, default: 3600s) expires before Postgres recovers. See Section 11.2.1 (billing durability). | Warning  |
+| `BillingCorrectionApprovalBacklog` | The pending billing correction approval queue (`lenny_billing_correction_pending_total{state="pending"}`) exceeds the deployer-configurable threshold (default: 10) for more than `billing.approvalBacklogAlertMinutes` (default: 60) minutes. Corrections awaiting approval may block dispute resolution workflows. See Section 11.2.1. | Warning  |
+| `BillingWriteAheadBufferHigh`    | The in-memory billing write-ahead buffer utilization (`billing_write_ahead_buffer_utilization`) exceeds 0.80 for any tenant for more than 30 seconds. When the buffer reaches capacity (`billingFlushMaxPending`, default: 500), the gateway begins rejecting new billable work. See Section 12.3 (write-ahead buffer back-pressure). | Warning  |
 | `AuditRetentionLow`              | `LENNY_ENV=production` and `audit.retentionDays` is below 365 days without a configured SIEM (`audit.siem.endpoint`). Fires at startup. Suppressed when SIEM is configured (SIEM provides long-term regulatory retention). See Section 16.4. | Warning  |
 | `PostgresWriteSaturation`        | Sustained Postgres write IOPS exceed 80% of the estimated instance ceiling (see Section 12.3 write classification table) for > 5 minutes. Indicates the primary instance is approaching its write capacity — operators should activate the billing/audit instance separation or scale up the instance class before the ceiling is breached. | Warning  |
 | `PgBouncerPoolSaturated`         | PgBouncer `cl_waiting_time` exceeds 1s for > 60s (self-managed profile only). Indicates client requests are queuing behind connection limits — pool size or max_client_conn must be increased. See Section 12.3. Cross-reference: §17.7 runbook `docs/runbooks/pgbouncer-saturation.md`. | Warning  |
@@ -8404,8 +8420,10 @@ Lenny occupies a distinct point in the agent infrastructure design space. The di
 | `lenny-ctl admin pools upgrade proceed --pool <name>` | Advance to next upgrade phase | `POST /v1/admin/pools/{name}/upgrade/proceed` | `platform-admin` |
 | `lenny-ctl admin pools upgrade pause --pool <name>` | Pause upgrade state machine | `POST /v1/admin/pools/{name}/upgrade/pause` | `platform-admin` |
 | `lenny-ctl admin pools upgrade resume --pool <name>` | Resume paused upgrade | `POST /v1/admin/pools/{name}/upgrade/resume` | `platform-admin` |
-| `lenny-ctl admin pools upgrade rollback --pool <name>` | Rollback in-progress upgrade to previous image | `POST /v1/admin/pools/{name}/upgrade/rollback` | `platform-admin` |
+| `lenny-ctl admin pools upgrade rollback --pool <name>` | Rollback in-progress upgrade to previous image (from `Expanding` state — restores full routing to old pool and transitions to `Paused`) | `POST /v1/admin/pools/{name}/upgrade/rollback` | `platform-admin` |
+| `lenny-ctl admin pools upgrade rollback --pool <name> --restore-old-pool` | Rollback from `Draining` or `Contracting` state — recreates the old pool configuration from `RuntimeUpgrade.previousPoolSpec` and restores routing. Only valid while the old `SandboxTemplate` CRD still exists. See Section 10.5. | `POST /v1/admin/pools/{name}/upgrade/rollback` (body: `{"restoreOldPool": true}`) | `platform-admin` |
 | `lenny-ctl admin pools upgrade status --pool <name>` | Show upgrade state and progress | `GET /v1/admin/pools/{name}/upgrade-status` | `platform-admin` |
+| `lenny-ctl admin pools drain --pool <name>` | Drain a pool — stops new session assignments and waits for in-flight sessions to complete. Returns estimated drain completion time. New session requests targeting this pool receive `503 POOL_DRAINING` with a `Retry-After` header. See Section 15.1. | `POST /v1/admin/pools/{name}/drain` | `platform-admin` |
 
 **Orphan session reconciliation** is automatic — the gateway runs a periodic reconciler every 60 seconds (§10.1). There is no manual trigger command; operators can observe reconciliation activity via the `lenny_orphan_session_reconciliations_total` counter. To investigate individual stuck sessions, use `lenny-ctl admin sessions` (if available in a future release) or query `GET /v1/admin/sessions/{id}` directly.
 
@@ -8441,5 +8459,11 @@ Lenny occupies a distinct point in the agent infrastructure design space. The di
 |---------|-------------|-------------|----------|
 | `lenny-ctl admin tenants list` | List all tenants and their state | `GET /v1/admin/tenants` | `platform-admin` |
 | `lenny-ctl admin tenants get <id>` | Show tenant configuration and deletion state | `GET /v1/admin/tenants/{id}` | `platform-admin` |
+
+### 24.9 Policy Management
+
+| Command | Description | API Mapping | Min Role |
+|---------|-------------|-------------|----------|
+| `lenny-ctl policy audit-isolation` | Report all `DelegationPolicy` rule × pool combinations where a delegation would be rejected at runtime due to an isolation monotonicity violation. For each combination, lists the policy rule, the matching source pool, the matching target pool, and their respective isolation profiles. Read-only — does not modify any resources. Run after registering new pools or runtimes. See Section 8.3. | `GET /v1/admin/delegation-policies` + `GET /v1/admin/pools` (client-side join) | `platform-admin` |
 
 All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages. Global flags: `--api-url`, `--token`, `--timeout`, `--insecure-skip-verify` (dev only). Cross-reference: §17.7 runbooks use specific subcommands from each group above.
