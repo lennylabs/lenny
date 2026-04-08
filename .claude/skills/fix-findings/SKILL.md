@@ -76,7 +76,7 @@ Propose distinct solutions. For each, briefly note tradeoffs (complexity, risk, 
 
 ### Step 4 — Select Best Solution
 
-Choose the simplest solution that addresses only the real problems identified in Step 2. The tech spec is already mature — think critically before acting. Challenge the finding itself and the original recommendation. Bias strongly toward minimal, targeted fixes over refactoring or enhancement.
+Choose the simplest solution that addresses only the real problems identified in Step 2. The tech spec is already mature — think critically before acting. Challenge the finding itself and the original recommendation. Bias strongly toward minimal, targeted fixes over refactoring or enhancement. **Fix genuine errors and inconsistencies only**.
 
 - If the best solution is **"do nothing"** (e.g., the concern is a nice-to-have or the risk is acceptable): mark the finding **"Skipped"** in `$1`, update the finding's recommendation field with your rationale, and **stop processing this finding**. Do NOT modify the spec file.
 
@@ -163,5 +163,5 @@ Use exactly these strings: `Fixed` | `Skipped` | `Deferred - Input Required` | `
 - **Never skip validation.** A finding that was valid when the review was written may already be resolved by an earlier fix in this run. Each sub-agent operates independently — re-read source files fresh at Step 1.
 - **Never skip the regression check.** Even a small edit can break cross-references or introduce contradictions.
 - **Do not modify the spec file for Skipped or Deferred findings.** Only `Fixed` (and regression-fix) statuses result in spec edits.
-- **Bias toward minimal fixes.** The tech spec is mature. Challenge findings and recommendations — prefer doing nothing over over-engineering.
+- **Bias toward minimal fixes.** The tech spec is mature. Challenge findings and recommendations — prefer doing nothing over over-engineering. **Fix genuine errors and inconsistencies only**.
 - **Remember to update the finding status and details of the implemented solution, if applicable, in the findings file.**

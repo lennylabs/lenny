@@ -109,6 +109,8 @@ Rules:
 
 Return all findings as a single markdown block, ordered by severity (Critical first).
 
+Place output files (if any) in `review-findings/{datetime}/iter{iteration}`.
+
 ---
 
 After all subagents complete, consolidate their results into a single findings file.
