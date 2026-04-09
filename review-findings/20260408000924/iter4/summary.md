@@ -213,6 +213,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Explicitly enumerate IPv6 reserved ranges (ULA `fc00::/7`, link-local `fe80::/10`, loopback `::1/128`, and documentation ranges `2001:db8::/32`) in the DNS pinning validation alongside the IPv4 ranges.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-066. No Rate Limit on Webhook Delivery Retries Against Malicious Callback URLs [Low]
@@ -220,6 +223,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 14, lines 6647-6652.** The webhook delivery model retries failed deliveries with exponential backoff (10s, 30s, 60s, 300s, 900s -- 5 attempts). If an attacker registers a callback URL that intentionally hangs for the full response-read timeout (10s) before returning a non-2xx status, each retry consumes a connection slot in the isolated callback worker pool for up to 10s. With many sessions, an adversary could create callback URLs designed to hold connections open, exhausting the callback worker pool. The spec mentions an "isolated callback worker" but does not specify a maximum pool size or per-session concurrent callback limit.
 
 **Recommendation:** Specify a maximum callback worker pool size and a per-session callback concurrency limit (e.g., 1 outstanding delivery attempt per session at a time).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -229,6 +235,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Reclassify `callbackSecret` as T4, which would apply envelope encryption via KMS and immediate erasure on deletion, consistent with how other authentication secrets are treated.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-068. Connector Live Test Endpoint Can Be Used for Internal Network Probing [Medium]
@@ -236,6 +245,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.1, lines 7357-7372.** The `POST /v1/admin/connectors/{name}/test` endpoint performs live DNS resolution, TLS handshake, and MCP handshake against a connector's stored URL. While rate-limited to 10/min per connector, an attacker with `tenant-admin` access could register multiple connectors pointing to internal hostnames and then run tests against each, effectively using the platform as a network scanner. The spec states it requires `platform-admin` or `tenant-admin`, but `tenant-admin` could probe internal infrastructure visible from the gateway pod.
 
 **Recommendation:** Restrict the live test endpoint to `platform-admin` only, or apply the same private/reserved IP range validation used for `callbackUrl` to connector URLs before executing the live test.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -245,6 +257,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Emit a lightweight audit event (e.g., `admin.dry_run_request`) for all `dryRun` requests, recording the caller identity, endpoint, and a hash of the request body. This provides visibility without the overhead of full audit logging.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-070. Admin Token Stored in Kubernetes Secret Without Rotation Policy [Medium]
@@ -252,6 +267,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 17.6, lines 9214-9233.** The initial admin token is stored in a Kubernetes Secret (`lenny-admin-token`) and is never automatically rotated. The spec provides a manual rotation command (`lenny-ctl admin users rotate-token`) but does not mandate or schedule automatic rotation. A long-lived admin token in a Kubernetes Secret is a persistent credential that could be compromised through etcd backup exposure, RBAC misconfiguration, or supply-chain attacks on the Kubernetes control plane.
 
 **Recommendation:** Specify a recommended rotation schedule (e.g., 90 days) and provide a CronJob template in the Helm chart that automatically rotates the token. At minimum, add a `TokenRotationOverdue` warning alert when the token's `created_at` timestamp exceeds a configurable threshold.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -261,6 +279,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** When `LENNY_DEV_TLS=false` and a credential pool with non-echo provider type is configured, the gateway should reject session creation with an explicit error: `"Real LLM credentials cannot be used without TLS. Use 'make compose-tls' or set LENNY_DEV_TLS=true."` This converts the documentation warning into a technical enforcement.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-072. Bootstrap Job ServiceAccount Has Kubernetes Secret Write Access Without Scope Limitation [Medium]
@@ -268,6 +289,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 17.6, line 9233.** The bootstrap Job's ServiceAccount has `create`/`get`/`patch` on Secrets in `lenny-system`. The spec notes that "RBAC for this namespace must restrict Secret access appropriately" but does not specify a `resourceNames` restriction on the ServiceAccount's RBAC binding. Without `resourceNames`, the ServiceAccount can read or patch any Secret in `lenny-system`, including database credentials, TLS certificates, and credential pool secrets.
 
 **Recommendation:** Scope the bootstrap Job's RBAC to `resourceNames: ["lenny-admin-token"]` for Secret operations, preventing the Job from accessing other Secrets in the namespace.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -277,6 +301,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Specify that `*.suffix` matches exactly one subdomain level (i.e., `*.example.com` matches `foo.example.com` but not `foo.bar.example.com`), and that matching is case-insensitive.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-074. No Content-Length or Transfer-Encoding Validation on Webhook Callback Responses [Low]
@@ -284,6 +311,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 14, line 6618.** The callback HTTP client has a response-read timeout of 10s and disables redirect following, but the spec does not mention a maximum response body size. A malicious callback endpoint could return an unbounded response body (e.g., a 10 GB response within the 10s window), consuming gateway memory. The spec's "isolated callback worker" mitigates blast radius but does not prevent individual worker memory exhaustion.
 
 **Recommendation:** Specify a maximum response body read size for callback responses (e.g., 1 MB) using `io.LimitReader` or equivalent.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -293,6 +323,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** This is adequately mitigated by the session-scoping and consumption-on-finalize semantics. However, the spec should explicitly state that upload tokens are bound to the session creator's identity (not just the session ID) so that a different authenticated user cannot use a stolen token.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-076. `env` Blocklist Glob Patterns Could Miss Encoded or Composed Variable Names [Low]
@@ -300,6 +333,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 14, line 6612.** The environment variable blocklist uses glob patterns with `*` wildcard matching. The matching is documented as case-sensitive. An attacker could bypass the blocklist by using unexpected casing (e.g., `Aws_Secret_Access_Key` if the blocklist entry is `AWS_SECRET_ACCESS_KEY`). While most legitimate tools expect specific casing, some runtimes or libraries may be case-insensitive when reading environment variables.
 
 **Recommendation:** Specify that blocklist matching is case-insensitive by default, with an opt-in `caseSensitive: true` flag for deployers who require exact-case matching.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -309,6 +345,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** For production deployments, provide a Helm value (`gateway.requireRuntimeOptionsSchema: true`) that rejects session creation for runtimes without a registered schema. The default should remain permissive for backward compatibility, but the option should exist for security-conscious deployments.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-078. A2A Agent Card Discovery Endpoint Returns Data Without Authentication [Low]
@@ -316,6 +355,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.1, lines 7006-7007.** The `/.well-known/agent.json` and `/a2a/runtimes/{name}/.well-known/agent.json` endpoints are documented as "No auth." While this is standard for A2A discovery, these endpoints expose runtime names, capabilities, and potentially sensitive metadata about the platform's configuration to unauthenticated callers. In a multi-tenant deployment, this could leak information about available runtimes.
 
 **Recommendation:** The A2A spec requires unauthenticated agent card discovery, so this is an accepted protocol constraint. However, the spec should note that only runtimes with `visibility: public` should be included in unauthenticated agent card responses. Runtime names, capabilities, and metadata for `visibility: private` runtimes should be excluded.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -325,6 +367,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Specify a nonce validity window (e.g., 60s from manifest write to first MCP `initialize` acceptance). After the window, the adapter should reject the nonce and regenerate, forcing a fresh manifest read.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-080. Adapter-Local Tool `write_file` Has No Size Limit [Medium]
@@ -332,6 +377,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.4.1, lines 8029-8083.** The adapter-local `write_file` tool allows agents at all tiers (including Minimum) to create or overwrite files in the workspace. The spec specifies path confinement (`/workspace` boundary) but does not specify a maximum file size for `write_file` operations. An agent could write an arbitrarily large file to the workspace, exhausting the tmpfs or persistent volume backing the workspace directory, potentially causing disk pressure on the node.
 
 **Recommendation:** Specify a per-file write size limit for `write_file` (e.g., capped at `workspaceSizeLimitBytes` or a per-file default of 100 MB). The adapter should reject writes that would exceed the workspace size limit.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -341,6 +389,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** For delegation-originated file exports, the path collision warning should be elevated to a policy-checkable event. Deployers should be able to configure `workspacePlan.onConflict: reject` for delegation scenarios where overwrites of instruction files (e.g., matching a pattern like `*.md`, `.claude/*`) are prohibited.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-082. `DELETE /v1/credentials/{credential_ref}` Does Not Revoke Active Leases [High]
@@ -348,6 +399,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.1, line 7021.** The spec states that `DELETE /v1/credentials/{credential_ref}` removes a registered credential but "active session leases are unaffected." This means a user can delete their credential record while active sessions continue using the leaked/compromised key. In contrast, `POST /v1/credentials/{credential_ref}/revoke` explicitly invalidates all active leases. The `DELETE` endpoint creates a security gap: a user who discovers their key is compromised and instinctively deletes it (rather than revoking) leaves the compromised key in active use.
 
 **Recommendation:** Change the `DELETE` semantics to also invalidate active leases backed by the deleted credential, or at minimum return a warning in the response body directing the user to use the `revoke` endpoint for immediate lease invalidation. Alternatively, rename `DELETE` to a softer operation (e.g., "unregister") and document that revocation is the correct response to a compromised key.
+
+
+**Status:** Skipped — not an error; intentional design choice
 
 ---
 
@@ -357,6 +411,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Expand the "security-critical field" block list to include: `complianceProfile`, `egressProfile`, `deliveryMode`, `workspaceTier` (data classification), and any field whose modification would weaken the security posture.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-084. No Rate Limit on `POST /v1/sessions/{id}/elicitations/{id}/respond` [Low]
@@ -364,6 +421,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.1, line 6934.** The elicitation response endpoint accepts client input that is delivered to the agent runtime. While elicitations are gated by the agent initiating them (`lenny/request_elicitation`), there is no documented rate limit on how frequently a client can submit responses to pending elicitations. A malicious client could flood the endpoint with rapid response submissions, potentially causing the runtime to process excessive input.
 
 **Recommendation:** This is a low-severity issue because each elicitation has a unique ID and can only be responded to once. No additional mitigation needed beyond the existing deduplication.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -373,6 +433,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 **Recommendation:** Add a startup check that refuses to start with `LENNY_DEV_MODE=true` when `LENNY_ENV=production` is set. Additionally, emit a `PLATFORM_DEV_MODE_ACTIVE` event on every client-facing API response header so that monitoring tools can detect accidental dev mode activation. Consider splitting TLS bypass and JWT bypass into separate flags under the `LENNY_DEV_MODE` umbrella so that a compromise of one flag does not disable all security at once.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### SEC-086. No Documented Limit on Concurrent `derive` Operations Per Session [Low]
@@ -380,6 +443,9 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 **Section 15.1, line 7270.** The `DERIVE_LOCK_CONTENTION` error code indicates that concurrent derive operations are limited, but the actual limit is not specified in the error catalog or the derive endpoint documentation. Without a documented limit, implementers may choose an overly generous value, allowing an attacker to trigger many concurrent workspace snapshot reads from MinIO, potentially causing I/O pressure.
 
 **Recommendation:** Document the specific concurrency limit for derive operations per session (e.g., "maximum 3 concurrent derive operations per source session").
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -391,33 +457,57 @@ Section 4.6.3 grants the gateway `get`/`patch` on Pods in agent namespaces for t
 
 Section 13.2 defines a supplemental NetworkPolicy allowing agent pods to send OTLP telemetry to the collector (`lenny-otel-collector.lenny-system` on port 4317). However, this rule is additive to the base default-deny and uses only a `namespaceSelector` + `podSelector` target. If an attacker inside an agent pod can forge or relay traffic on port 4317, they could potentially use the OTLP channel to exfiltrate data encoded as trace attributes or metric labels. The spec does not mention any payload-size caps or content filtering on the OTLP channel from agent pods. While OTLP is a structured protocol, the collector should be configured to drop or sanitize unusually large string attributes from the agent namespace. The spec should either (a) state that the OTLP collector applies attribute-size limits for agent-sourced telemetry, or (b) acknowledge the exfiltration residual risk and document that deployers should configure attribute-size limits on the collector.
 
+**Status:** Skipped — not an error
+
+
 ### NET-051. Dedicated CoreDNS Corefile Lacks Explicit NXDOMAIN for Internal Cluster Zones [Medium]
 
 Section 13.2 specifies a dedicated CoreDNS instance for the agent namespace with DNS exfiltration mitigation. The Corefile reference shows a `template` block returning NXDOMAIN for queries matching `*.cluster.local` but does not show handling for other internal Kubernetes zones. Depending on cluster configuration, Kubernetes may use additional DNS zones (e.g., `*.svc`, reverse-lookup zones for pod IPs in `in-addr.arpa`). An agent pod could potentially perform reverse DNS lookups on internal IPs to discover service names and topology. The spec should either enumerate all internal zones that must be blocked or use a forward-deny approach where only explicitly allowed external forward zones are permitted and all other queries receive NXDOMAIN.
+
+**Status:** Skipped — not an error
+
 
 ### NET-052. No NetworkPolicy for Redis Pub/Sub Certificate Deny-List Channel [Medium]
 
 Section 4.9 states that the credential deny list is propagated via Redis pub/sub on a `certificate_deny_list` channel, and Section 13.2 documents the `lenny-system` namespace network policies with component-specific allow-lists. However, the spec does not explicitly document which components are allowed to subscribe to the `certificate_deny_list` Redis pub/sub channel. Since all gateway replicas need this channel and the network policy already allows gateway-to-Redis traffic, this is likely covered by the existing `redis-client` NetworkPolicy. But if a compromised component within `lenny-system` (e.g., the OTel collector or PgBouncer) has Redis network access for another purpose, it could also subscribe to this channel, potentially learning which credentials have been revoked. The component-specific Redis NetworkPolicy allow-list table should confirm that only the gateway pods have network-level access to the Redis instances, not other `lenny-system` components.
 
+**Status:** Skipped — not an error
+
+
 ### NET-053. Internet Egress Profile IMDS Blocking Relies Solely on NetworkPolicy `except` Clause [Medium]
 
 Section 13.2 describes blocking cloud IMDS endpoints (169.254.169.254) for agent pods using `except` clauses within the broader internet egress CIDR rule. This is a single-layer defense. If the NetworkPolicy CNI implementation has a bug in `except` clause evaluation (which has occurred historically in Calico and Cilium), the IMDS would be accessible to agent pods in the `internet` egress profile. The spec does not mention any defense-in-depth for IMDS blocking, such as iptables rules on the node or instance metadata service v2 (IMDSv2) enforcement at the cloud provider level. The spec should recommend that deployers additionally configure IMDSv2 with hop limit 1 (AWS) or equivalent provider-level IMDS hardening, and document this as a defense-in-depth requirement rather than relying solely on the NetworkPolicy `except` clause.
+
+**Status:** Skipped — not an error
+
 
 ### NET-054. Missing Rate Limit on Gateway `/internal/drain-readiness` Endpoint [Low]
 
 Section 12.5 defines a `/internal/drain-readiness` endpoint on the gateway that performs a MinIO liveness probe. The endpoint is consumed by the `lenny-drain-readiness` ValidatingAdmissionWebhook. The spec does not mention rate-limiting or authentication on this endpoint. While it is an internal endpoint (likely not exposed via the external Ingress), if accessible within the cluster network, any pod could repeatedly hit it and trigger MinIO `HeadBucket` probes, creating a potential amplification vector against MinIO. The endpoint should either be authenticated (e.g., using the admission webhook's mTLS identity) or rate-limited to prevent abuse.
 
+**Status:** Skipped — not an error
+
+
 ### NET-055. ValidatingAdmissionWebhook `lenny-label-immutability` ServiceAccount Scope Not Specified [Medium]
 
 Section 13.2 and Section 17.2 describe the `lenny-label-immutability` webhook that restricts mutation of security-sensitive labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) to the warm pool controller ServiceAccount at pod creation time. However, the spec does not define the exact RBAC scope or service account identity used by this webhook server. If the webhook itself runs with broad permissions, a compromise of the webhook pod could allow an attacker to bypass the very label protections it enforces. The spec should state: (a) the specific ServiceAccount under which the webhook runs, (b) that it has minimal RBAC (only `get` on pods, no `patch`/`update`), and (c) that the webhook pod runs in `lenny-system` under the same mTLS and network isolation as other control-plane components.
+
+**Status:** Skipped — not an error
+
 
 ### NET-056. No Explicit mTLS Enforcement Between Gateway and Dedicated CoreDNS [Medium]
 
 Section 13.2 specifies a dedicated CoreDNS deployment for the agent namespace with a NetworkPolicy allowing agent pods to reach it on port 53. DNS traffic between agent pods and the dedicated CoreDNS is over UDP/TCP port 53, which is inherently unencrypted. An attacker who gains access to the network plane (e.g., via a container escape in the agent namespace) could intercept or spoof DNS responses to redirect agent traffic to malicious endpoints. While the spec's mTLS enforcement for gateway-to-pod and pod-to-gateway traffic mitigates downstream damage, the DNS resolution step that determines which IPs to connect to remains unprotected. The spec should acknowledge that DNS traffic within the cluster is unencrypted, and either (a) recommend DNS-over-TLS for the dedicated CoreDNS (CoreDNS supports `tls` plugin), or (b) document this as an accepted residual risk given that gVisor/Kata isolation prevents direct network-plane attacks from within the agent pod.
 
+**Status:** Skipped — not an error
+
+
 ### NET-057. `webhookIngressCIDR` Default of `0.0.0.0/0` Is Overly Permissive [Low]
 
 Section 13.2 and Section 17.6 define `webhookIngressCIDR` with a default of `0.0.0.0/0`, meaning the admission webhook pods in `lenny-system` accept TCP 443 ingress from any source. While the spec notes that `lenny-system` has a default-deny namespace policy and mTLS provides authentication, the `webhookIngressCIDR` default effectively punches a wide hole in the otherwise tight `lenny-system` NetworkPolicy. The spec recommends tightening it to the control-plane node CIDR but does not enforce this recommendation. For hardened deployments, the default should be left as-is for compatibility but the preflight Job should emit a warning when the default `0.0.0.0/0` is in use in production mode, similar to how it warns about missing SIEM configuration.
+
+**Status:** Skipped — not an error
+
 
 ### NET-058. No Network-Level Isolation Between Tenants in Shared Agent Namespace [High]
 
@@ -425,25 +515,43 @@ Section 13.2 defines NetworkPolicies for agent namespaces that control ingress/e
 
 The spec's default-deny policy blocks all ingress/egress except explicitly allowed paths, which should prevent direct pod-to-pod communication. However, this depends entirely on the correctness of the CNI implementation -- if the default-deny has any gap (e.g., allowing same-namespace traffic, which some CNI plugins do by default before the deny policy is applied), tenant isolation is broken at the network level. The spec should either (a) explicitly add a NetworkPolicy that denies all intra-namespace pod-to-pod traffic within `lenny-agents` (an egress rule blocking `podSelector: {}` destinations in the same namespace), or (b) document that cross-tenant network isolation within the agent namespace relies solely on the default-deny policy and gVisor/Kata process isolation, and that deployers requiring stronger tenant network isolation should use per-tenant agent namespaces.
 
+**Status:** Skipped — not an error; intentional design choice
+
+
 ### NET-059. Circuit Breaker State Propagation Over Redis Pub/Sub Not Authenticated [Low]
 
 Section 11.6 states that circuit breaker state changes are published on the `circuit_breaker_events` Redis pub/sub channel and picked up by all gateway replicas. Redis AUTH provides connection-level authentication, but once authenticated, any component with Redis access can publish to any pub/sub channel. If a compromised component within `lenny-system` has Redis network access (for any legitimate purpose), it could publish a false circuit-breaker-open message, causing all gateway replicas to reject requests for a targeted runtime, pool, or operation type -- effectively creating a denial-of-service. The spec should either (a) document that Redis pub/sub messages for security-critical state changes should be HMAC-signed by the publishing gateway, with recipients verifying the signature before applying state changes, or (b) acknowledge this as an accepted risk given that `lenny-system` components are trusted.
+
+**Status:** Skipped — not an error
+
 
 ### NET-060. SPIFFE URI Validation Gap: No Spec for How Proxy-Mode Lease Tokens Are Bound to Pod Identity During Coordinator Handoff [Medium]
 
 Section 4.9 describes SPIFFE-binding for proxy-mode credential lease tokens, where the lease is bound to the pod's SPIFFE identity (`spiffe://lenny.cluster.local/ns/lenny-agents/pod/<pod-id>`). Section 10.1 describes the coordinator handoff protocol where a session may be migrated to a new gateway replica. During coordinator handoff, the pod's SPIFFE identity does not change, but the gateway replica holding the lease reference changes. The spec does not explicitly state whether the new coordinator re-validates the SPIFFE binding during the handoff protocol's step 2 (`CoordinatorFence` RPC). If the new coordinator accepts the lease without re-verifying the pod's SPIFFE identity matches the lease's expected identity, there is a window where a lease could be used against a different pod. The coordinator handoff protocol should explicitly include SPIFFE identity re-validation as part of the fencing step.
 
+**Status:** Skipped — not an error
+
+
 ### NET-061. No TLS Requirement Specified for External Interceptor Webhook Endpoints [Medium]
 
 Section 4.8 defines the `RequestInterceptor` chain with support for external interceptors referenced by `interceptorRef`. These are HTTP webhook endpoints that receive request payloads (including potentially sensitive data like user IDs, tenant IDs, and LLM request content) for pre/post processing. The spec specifies timeout limits and fail-policies for external interceptors but does not explicitly require TLS for the webhook endpoint URLs. A `http://` endpoint would transmit interceptor payloads (which may contain PII and credential-adjacent data) in cleartext. The spec should require that external interceptor `interceptorRef` URLs use `https://` in production mode (`LENNY_ENV=production`), consistent with the connector URL scheme validation that enforces `https` only in production (Section 15.1 dryRun connector validation).
+
+**Status:** Skipped — not an error
+
 
 ### NET-062. Billing Redis Stream Keys Accessible to All Redis-Connected Components [Low]
 
 Section 11.2.1 specifies that billing events are staged to per-tenant Redis streams (`t:{tenant_id}:billing:stream`) during Postgres failover. These streams contain full billing event payloads including `user_id`, `session_id`, and token counts. The streams use the standard tenant-prefix key convention, but Redis ACLs are not specified at per-key-prefix granularity in the spec. If the Redis instance is shared across concerns (before Tier 3 separation), any component with Redis AUTH credentials (e.g., the quota store, routing cache) could read billing stream data. The spec should either (a) specify Redis ACL rules that restrict `XREAD`/`XRANGE` on `t:*:billing:stream` keys to the gateway's Redis user only, or (b) acknowledge that pre-Tier-3 shared Redis instances have no intra-instance isolation and that billing event payloads in the Redis stream are accessible to any authenticated Redis client.
 
+**Status:** Skipped — not an error
+
+
 ### NET-063. Connector Test Endpoint Rate Limit Insufficient as Network Scanning Prevention [Low]
 
 Section 15.1 specifies `POST /v1/admin/connectors/{name}/test` with a rate limit of 10 requests per connector per minute to "prevent abuse as a network scanning tool." With hundreds of connectors registered (each potentially pointing to a different URL), an attacker with `tenant-admin` or `platform-admin` access could register many connectors pointing to internal network targets and use the test endpoint to probe the internal network at a rate of 10 * N per minute, where N is the number of registered connectors. The rate limit should also include a per-caller aggregate limit (e.g., 30 total test requests per minute regardless of connector count) to prevent this amplification pattern.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -457,11 +565,17 @@ Section 15.1 specifies `POST /v1/admin/connectors/{name}/test` with a rate limit
 
 The gateway table in Section 17.8.2 lists Tier 3 `minReplicas` as 5, but the KEDA burst-absorption formula computes `ceil(4000/400) = 10`. The spec attempts to justify 5 by saying the scale-up policy absorbs the remainder within one 15s period. However, during the first 15 seconds of a burst, 5 replicas at 400 sessions/replica can absorb only 2,000 sessions while 4,000 arrive before HPA reacts (200/s * 20s). The 2,000-session gap during that 15s must be queued or rejected. The spec says the scale-up policy "doubles replicas in the first 15s" -- but going from 5 to 10 replicas takes a full 15s scaling period, during which an additional 3,000 sessions arrive (200/s * 15s). The math does not close: 5,000 total sessions arrive (200/s * 25s from burst start to scale completion) but only 4,000 capacity is available (10 * 400). **Recommendation:** Either set Tier 3 `minReplicas: 10` unconditionally for the KEDA path, or add explicit documentation of the expected rejection rate and queue-depth tolerance during the first scale-up cycle.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-061. CheckpointBarrier Concurrent MinIO Upload Storm at Tier 3 [Medium]
 
 **Section:** 10.1, 17.8.2 (Object Storage table)
 
 The CheckpointBarrier protocol during gateway drain can trigger up to `maxSessionsPerReplica` (400 at Tier 3) simultaneous checkpoint uploads from a single draining coordinator. With an average workspace of 100 MB, this produces 40 GB of upload bandwidth from a single gateway pod within the barrier timeout window (90s). The MinIO throughput budget table (Section 17.8.2) sizes for steady-state checkpoint rate of ~17/s across the cluster, not for a single-node burst of 400 concurrent uploads. A single draining coordinator generating 400 simultaneous uploads (~4.4/s burst vs. the expected cluster-wide 17/s steady-state) could saturate the MinIO write path if multiple coordinators drain simultaneously during a rolling update. **Recommendation:** Add a per-coordinator checkpoint upload concurrency limiter (e.g., semaphore of 50 concurrent uploads) and document the interaction between rolling update batch size and MinIO burst bandwidth.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-062. Gateway terminationGracePeriodSeconds May Be Insufficient for Tier 3 Drain [Medium]
 
@@ -469,11 +583,17 @@ The CheckpointBarrier protocol during gateway drain can trigger up to `maxSessio
 
 The gateway `terminationGracePeriodSeconds` for Tier 3 is 300s. The CheckpointBarrier timeout is 90s, and the gateway preStop drain timeout is 120s. After drain timeout plus barrier timeout (210s), the gateway still needs to complete session handoffs. With 400 sessions per replica, session handoff at coordinator-hold-timeout (120s worst case) could push total drain time to 330s, exceeding the 300s `terminationGracePeriodSeconds`. This would result in SIGKILL of the gateway pod with incomplete checkpoint flushes. **Recommendation:** Set Tier 3 `terminationGracePeriodSeconds >= preStopDrainTimeout + checkpointBarrierTimeout + coordinatorHoldTimeout + buffer`, which would be approximately 120 + 90 + 120 + 30 = 360s.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-063. Redis Lua Script Serialization Bound Not Validated Against Tier 3 Delegation Fan-Out [Medium]
 
 **Section:** 8.3, 11.2, 17.8.2
 
 The budget reservation Lua script (`budget_reserve.lua`) performs 6 reads + 5 conditional writes, estimated at ~100us per invocation. At Tier 3, the delegation fan-out sizing shows 500 concurrent delegations. If these delegations produce simultaneous budget reservation calls, the serial Lua execution time is 500 * 100us = 50ms. The spec notes `maxParallelChildren` has a soft ceiling of 50 and hard ceiling of 100 due to Lua serialization, but the system-wide concurrent delegation limit at Tier 3 is 500. Multiple concurrent delegation trees could each produce budget reservation calls that serialize on the same Redis instance. With Redis Cluster (Tier 3), budget keys for different trees could hash to the same shard, concentrating contention. **Recommendation:** Specify budget key hashing strategy to distribute across Redis Cluster shards (e.g., include tenant_id in the hash tag) and document the maximum acceptable Lua blocking time for the LeaseStore SLO.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-064. Billing Redis Stream MAXLEN Insufficient for Extended Postgres Outages at Tier 1/2 [Low]
 
@@ -481,11 +601,17 @@ The budget reservation Lua script (`budget_reserve.lua`) performs 6 reads + 5 co
 
 The Tier 3 `billingRedisStreamMaxLen` was explicitly derived (72,000 = 600/s * 60s * 2), but Tier 1/2 use the default 50,000. At Tier 2 with ~60/s billing event rate, the stream fills in ~14 minutes. While this covers the 30s Postgres failover RTO with ample margin, an extended outage (e.g., Postgres maintenance or prolonged failover) exceeding 14 minutes would begin dropping billing events into the in-memory WAL buffer. The spec documents a two-tier failover (Redis stream then in-memory WAL), so data loss requires both Redis and Postgres to be unavailable for >14 minutes. The risk is low but the derivation is not explicit for Tier 1/2 as it is for Tier 3. **Recommendation:** Add explicit derivation comments for Tier 1/2 MAXLEN (as was done for Tier 3 in footnote 4) documenting the fill-time safety margin.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-065. Warm Pool Sizing Formula Omits SDK-Warm Startup Latency in Baseline Table [Medium]
 
 **Section:** 17.8.2
 
 The warm pool baseline table uses `pod_startup_seconds = 10s` for the recommended `minWarm` derivation. The text below the table notes that SDK-warm pools have `pod_warmup_seconds` of 30-90s, "far exceeding the 10s startup baseline." However, the baseline `minWarm` values (20 / 175 / 1050) are presented as the starting points without any SDK-warm variant. An operator deploying an SDK-warm pool using the baseline table values would have 2-9x fewer warm pods than needed. The text does explain the discrepancy, but the table itself is the most prominent reference and carries no SDK-warm qualifier or alternative row. **Recommendation:** Add an explicit SDK-warm row to the warm pool sizing table, or add a bold warning annotation directly in the table header that baseline values apply only to pod-warm pools.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-066. Concurrent-Workspace Slot Rehydration Postgres Query Burst Unquantified at Tier 3 [Medium]
 
@@ -493,11 +619,17 @@ The warm pool baseline table uses `pod_startup_seconds = 10s` for the recommende
 
 When a concurrent-workspace pod's Redis slot counter is lost (Redis failover, eviction), the spec states that the replacement pod rehydrates by querying Postgres for all active slots. At Tier 3 with `maxConcurrent` up to 20,000 (Stream Proxy) or the pool's `maxConcurrent` (e.g., 50 concurrent workspace slots per pod), this rehydration query could return thousands of rows per pod. If multiple pods rehydrate simultaneously after a Redis Cluster node failure (affecting all pods whose slot keys hashed to that node), the resulting Postgres read burst could be significant. The spec does not quantify this burst or provide a rate-limiting mechanism for rehydration queries. **Recommendation:** Add a rehydration query rate limiter (e.g., stagger rehydration across pods using jitter) and document the expected Postgres read IOPS during Redis recovery at each tier.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-067. etcd Write Pressure Calculation Discrepancy [Medium]
 
 **Section:** 4.6.1, 17.8.2
 
 Section 4.6.1 discusses etcd write pressure with a `statusUpdateDeduplicationWindow` to reduce CRD status updates. Section 17.8.2 sets Tier 3 `statusUpdateDeduplicationWindow` to 250ms and recommends a dedicated etcd cluster. However, the actual Tier 3 etcd write rate is not explicitly calculated in the capacity reference table. With 10,000 concurrent sessions, each Sandbox CRD potentially updating status on every heartbeat (10s default), the raw update rate before deduplication is ~1,000/s. With 250ms deduplication, the effective rate depends on how many status changes occur within each 250ms window -- which is workload-dependent and not bounded by the deduplication window alone. The spec should provide the post-deduplication write rate estimate for the Tier 3 capacity table, since the etcd controller tuning section mentions ~800 writes/s but does not show the derivation. **Recommendation:** Add an explicit derivation of the Tier 3 etcd write rate in the controller tuning table, analogous to the Postgres IOPS derivation.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-068. Tree Recovery Time Formula Can Truncate Leaf Resume Windows [Medium]
 
@@ -505,17 +637,26 @@ Section 4.6.1 discusses etcd write pressure with a `statusUpdateDeduplicationWin
 
 The spec documents that `maxTreeRecoverySeconds` (default 600s) must satisfy `maxTreeRecoverySeconds >= maxResumeWindowSeconds + (maxDepth-1) * maxLevelRecoverySeconds + buffer`. With `maxResumeWindowSeconds` = 900s (default) and the default depth of 4, the formula yields `900 + 3 * maxLevelRecoverySeconds + buffer`. For any positive `maxLevelRecoverySeconds` and buffer, this exceeds 900s, which already exceeds the 600s default. This means the default `maxTreeRecoverySeconds` (600s) is mathematically insufficient for the default `maxResumeWindowSeconds` (900s) at any tree depth. The spec acknowledges this: "deep trees need increase." However, the default configuration produces an immediate violation of its own formula -- even a depth-1 tree needs `maxTreeRecoverySeconds >= 900 + buffer > 600`. **Recommendation:** Either increase `maxTreeRecoverySeconds` default to at least 960s (900 + buffer), or decrease `maxResumeWindowSeconds` default to a value compatible with `maxTreeRecoverySeconds: 600`.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-069. Outbound Channel Buffer Depth Sizing Not Tier-Aware [Low]
 
 **Section:** 15 (OutboundChannel back-pressure policy)
 
 The `MaxOutboundBufferDepth` default is 256 events, configurable per adapter via Helm. At Tier 3 with high-throughput sessions (e.g., streaming LLM output with multiple OutputParts per turn), a webhook-based A2A subscriber with 1-2 seconds of delivery latency could accumulate events faster than the buffer depth. The default 256 is not scaled to tier. For a Tier 3 session producing 50 events/second (not unreasonable for fine-grained streaming), the buffer fills in ~5 seconds of subscriber stall. While head-drop is the intended degradation mode, the spec does not provide tier-aware buffer sizing guidance. **Recommendation:** Add per-tier recommended `outboundBufferDepth` values or a formula relating buffer depth to expected event rate and subscriber latency.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-070. Message Deduplication Window Redis Memory Unbounded at Tier 3 [Medium]
 
 **Section:** 15.4.1 (MessageEnvelope id deduplication)
 
 Message ID deduplication uses a Redis sorted set per session (`t:{tenant_id}:session:{session_id}:msg_dedup`) with a default TTL of 3600s. At Tier 3 with 10,000 concurrent sessions, each receiving multiple messages, the total deduplication state is `10,000 sessions * messages_per_session * (message_id_size + timestamp_size)`. If sessions receive an average of 100 messages/hour (conservative for interactive sessions), total deduplication entries are 1M with a ULID size of ~26 bytes each, consuming ~50 MB of Redis memory just for deduplication. While 50 MB is manageable, the spec does not account for this in the Redis memory sizing (Tier 3: 8 GB per node). More importantly, `deduplicationWindowSeconds` is globally configurable but the memory impact scales with the product of session count, message rate, and window size -- a deployer increasing the window to 7200s doubles the footprint. **Recommendation:** Add deduplication memory estimation to the Redis sizing section, or cap per-session deduplication set size (e.g., ZREMRANGEBYSCORE + ZCARD limit).
+
+**Status:** Skipped — not an error
+
 
 ### SCL-071. Delegation-Adjusted minWarm Formula Double-Counts Safety Factor [Low]
 
@@ -529,11 +670,17 @@ minWarm >= adjusted_claim_rate * safety_factor * (failover_seconds + pod_startup
 
 The worked example uses `safety_factor = 1.2` and `pod_warmup_seconds = 35s`. However, the burst term `adjusted_burst_claims * pod_warmup_seconds` does not include the safety factor, while the steady-state term does. This is inconsistent with the base formula in Section 4.6.2, which applies `safety_factor` uniformly. The worked example yields 3,346 without safety on the burst term. If the safety factor were applied to the burst term as well: `ceil(1,596 + 1,750 * 1.2) = ceil(1,596 + 2,100) = 3,696`. The discrepancy is small (~10%) but the inconsistency between the two formulas could confuse operators performing their own sizing calculations. **Recommendation:** Clarify whether `safety_factor` applies to the burst term; make the delegation-adjusted formula consistent with the base formula.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-072. Coordinator Handoff Generation Counter Race During Split-Brain [Medium]
 
 **Section:** 10.1
 
 The spec describes coordinator handoff with generation counters and CoordinatorFence RPC. During a network partition (split-brain), the old coordinator may continue operating with a stale generation while the new coordinator is elected. The CoordinatorFence RPC is used to fence the old coordinator, but fencing requires network connectivity to the old coordinator -- precisely what is unavailable during a partition. The spec does not describe what happens if CoordinatorFence cannot reach the old coordinator during the `coordinatorHoldTimeoutSeconds` window. If both coordinators operate simultaneously (old with stale generation, new with incremented generation), session state updates from both could conflict in Postgres. **Recommendation:** Specify the behavior when CoordinatorFence fails to reach the old coordinator within the hold timeout, including whether the new coordinator proceeds unconditionally (risking dual-writes) or blocks until the hold timeout expires.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-073. PgBouncer Connection Pool Sizing Does Not Account for CheckpointBarrier Write Burst [Low]
 
@@ -541,11 +688,17 @@ The spec describes coordinator handoff with generation counters and CoordinatorF
 
 The Tier 3 PgBouncer `default_pool_size` is 110, derived from `(max_connections - headroom) / pgbouncer_replicas`. During a CheckpointBarrier event (rolling update), up to 400 sessions per draining coordinator write checkpoint metadata to Postgres simultaneously. Each checkpoint write requires a Postgres connection through PgBouncer. With 4 PgBouncer replicas and 110 pool size each, the total backend connections available are 440 -- but a single CheckpointBarrier from one coordinator could request up to 400 connections while steady-state operations from other coordinators continue. The PgBouncer `reserve_pool_size` of 15 provides minimal overflow capacity. **Recommendation:** Either serialize checkpoint metadata writes within the CheckpointBarrier (reducing concurrent connection demand) or increase `reserve_pool_size` for Tier 3 to account for barrier-induced bursts.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-074. Experiment Variant Pool Scaling `initialMinWarm` Default of 0 Causes Cold Start [Medium]
 
 **Section:** 10.7
 
 The spec mentions that experiment variant `initialMinWarm` defaults to 0, meaning all new experiments start with no pre-warmed pods for variant pools. When an experiment activates, the first sessions assigned to a variant must wait for pods to be created and warmed from zero. At Tier 3, where experiment activation could immediately route hundreds of sessions to a variant pool, the cold-start latency (pod creation + warmup) would violate the session-ready-time SLO for all initial variant sessions. The PoolScalingController detects the demand signal from the experiment activation, but the HPA/controller pipeline lag (20-60s) means the first sessions experience significant delay. **Recommendation:** Either change the default `initialMinWarm` to a non-zero value proportional to the variant's traffic weight (e.g., `ceil(baseline_minWarm * variant_weight)`), or document that deployers must always set `initialMinWarm` explicitly for production experiments.
+
+**Status:** Skipped — not an error
+
 
 ### SCL-075. Multi-Region Quota Enforcement Requires Manual Sub-Division [Low]
 
@@ -553,11 +706,17 @@ The spec mentions that experiment variant `initialMinWarm` defaults to 0, meanin
 
 The spec states that multi-region deployments enforce quotas per-region with no cross-region aggregation. This means a tenant with a global quota of 1,000 sessions deployed across 3 regions must have their quota manually divided (e.g., 334/333/333) by the deployer. There is no mechanism for dynamic cross-region quota balancing. If one region experiences a traffic spike while others are idle, sessions are rejected in the hot region even though global capacity is available. For Tier 3 multi-region deployments, this manual sub-division at 10,000+ sessions across regions is operationally complex and prone to misconfiguration. **Recommendation:** Document a recommended quota allocation strategy (e.g., over-provision each region to 80% of global quota, accepting 2.4x theoretical overshoot as the trade-off) or outline a post-v1 design for cross-region quota aggregation.
 
+**Status:** Skipped — not an error
+
+
 ### SCL-076. Session Inbox In-Memory Mode Message Loss Has No Sender Notification [Low]
 
 **Section:** 7.2
 
 The spec acknowledges that in-memory inbox mode (default) loses messages on coordinator crash. The delivery receipt mechanism returns `queued` at delivery time, but if the coordinator crashes before the message is delivered to the runtime, the sender has no notification that the message was lost. The sender's delivery receipt shows `queued` (success), and the message silently disappears. The spec notes "senders that require reliable delivery MUST track receipts and re-send on gap detection," but provides no mechanism for gap detection -- the sender cannot query what messages were actually delivered to the runtime vs. lost in the crash. **Recommendation:** Either provide a `GET /v1/sessions/{id}/messages?status=delivered` endpoint that shows actual delivery status (not just receipt status), or add a post-recovery notification to senders whose messages were lost.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -569,77 +728,134 @@ The spec acknowledges that in-memory inbox mode (default) loses messages on coor
 
 Section 4.7 states that runtimes "must silently ignore unknown top-level fields" and that "A `version` increment indicates a breaking change to existing field semantics." However, the manifest field reference table marks `version` as "Currently `1`. Runtimes should reject unknown major versions." This creates ambiguity: the spec uses a single integer field but describes "major version" semantics. If `version` were bumped from `1` to `2` (as explicitly planned for the nonce migration in Section 15.4.3), some runtimes would reject it while others forward-read unknown fields. The spec never defines what constitutes a "major" vs. "minor" increment on a plain integer field, nor provides a negotiation mechanism for the manifest schema -- unlike the adapter protocol (which has `AdapterInit`/`AdapterInitAck`) and MCP (which has `initialize` negotiation). Runtimes that reject `version: 2` will fail immediately; runtimes that ignore it may miss the new nonce handshake mechanism. The spec should either define the integer as strictly breaking (every increment is breaking, runtimes must reject) or adopt a two-part version (major.minor) with clear rules.
 
+**Status:** Fixed — Replaced misleading 'major versions' phrasing with precise language for plain integer version field
+
+
 ### PRT-058. Nonce migration from `params._lennyNonce` to pre-initialize handshake lacks version gate [Medium]
 
 Section 15.4.3 describes a migration from `params._lennyNonce` (v1) to a pre-`initialize` out-of-band handshake (v2), with a "two-release backward-compat window." However, the spec does not define what signals the adapter to expect the v2 handshake vs. the v1 nonce. The adapter manifest `version` field is the only candidate, but the adapter writes the manifest before the runtime connects -- the adapter has no way to know which nonce protocol the runtime will use until the connection is opened. The spec should define: (a) the adapter always tries v2 first (listen for the `lenny_nonce` JSON line within a timeout, then fall back to accepting `_lennyNonce` in `initialize`), or (b) the runtime declares its nonce protocol version in some out-of-band way. Without this, the "two-release backward-compat window" is under-specified and will lead to interoperability failures during the migration.
+
+**Status:** Skipped — not an error
+
 
 ### PRT-059. `OutputPart.schemaVersion` dual-level versioning creates ambiguous precedence for durable consumers [Medium]
 
 Section 15.4.1 and 8.8 establish a dual-level versioning model: `TaskRecord.schemaVersion` for the envelope and per-`OutputPart.schemaVersion` for nested parts. The durable-consumer forward-read rule (Section 15.5 item 7) requires consumers to apply the rule "independently at both levels." However, the spec does not address the case where a `TaskRecord` at envelope `schemaVersion: 1` contains an `OutputPart` at `schemaVersion: 3` that introduces a field which changes the semantic meaning of an envelope-level field (e.g., a hypothetical `OutputPart` field that redefines how `usage` should be interpreted). The two-level independence assumption breaks down if part-level schema evolution has cross-level semantic dependencies. The spec should explicitly state that part-level schema changes MUST NOT alter the interpretation of envelope-level fields, making the independence guarantee enforceable.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-060. `schemaVersion` round-trip loss through MCP/OpenAI/Open Responses adapters invalidates durable consumer obligations [High]
 
 The Translation Fidelity Matrix (Section 15.4.1) documents that `schemaVersion` is `[dropped]` through MCP, OpenAI Completions, and Open Responses adapters, and "always reconstructed as `1` on inbound regardless of original value." This means any `OutputPart` that round-trips through these adapters permanently loses its schema version. If a delegation chain routes output through an MCP adapter (parent session) and the result is persisted as a `TaskRecord`, the durable consumer sees `schemaVersion: 1` even though the original part was at version 2+. The consumer has no way to detect that the part may contain fields introduced in a later schema version, because the version was reset to 1. This silently violates the forward-read obligation -- the consumer processes the part at v1 without triggering any `schema_version_ahead` degradation signal, potentially misinterpreting or discarding v2+ fields. The spec should either (a) preserve `schemaVersion` through all adapter translations (at minimum in a sidecar annotation), or (b) explicitly call out this data loss as acceptable and document that durable consumers of delegation-chain `TaskRecord` objects must not rely on `schemaVersion` accuracy.
+
+**Status:** Skipped — not an error; intentional design choice
+
 
 ### PRT-061. `MessageEnvelope.schemaVersion` immutability is contradicted by gateway-injection semantics [Medium]
 
 Section 15.4.1 states that `MessageEnvelope.schemaVersion` is "gateway-injected" at "inbox-enqueue time and is immutable once written." Section 15.5 item 7 states the field is "set at write time by the gateway and is immutable once written." However, during a rolling gateway upgrade, different gateway replicas may be running different code versions. If replica A enqueues a message at `schemaVersion: 1` and replica B (running newer code) later adds a degradation annotation (e.g., `schema_version_ahead`), this modifies the persisted message. The spec should clarify whether annotations are considered separate from the immutable `schemaVersion` field, or whether the entire persisted `MessageEnvelope` is write-once-immutable (which would conflict with the degradation annotation mechanism).
 
+**Status:** Skipped — not an error
+
+
 ### PRT-062. Lifecycle channel version negotiation lacks forward-compatibility mechanism [Medium]
 
 Section 4.7 defines the lifecycle channel capability negotiation (`lifecycle_capabilities` / `lifecycle_support` exchange) but uses string-based capability names (e.g., `"checkpoint"`, `"interrupt"`) with no protocol version field. The `protocolVersion` field in `lifecycle_capabilities` is documented as a simple string (e.g., `"1.0"`) but the spec never defines what happens when the adapter sends `protocolVersion: "2.0"` and the runtime only understands `"1.0"`. Unknown messages are "silently ignored on both sides," but there is no mechanism for the runtime to signal that it does not understand the offered protocol version. The runtime simply replies with the subset of capabilities it supports -- but if v2.0 changes the semantics of an existing capability (e.g., `"checkpoint"` now requires a new field in `checkpoint_ready`), the runtime cannot detect this. The spec should define version negotiation rules: does the adapter fall back to the runtime's version, or must the versions be compatible at the major level?
+
+**Status:** Skipped — not an error
+
 
 ### PRT-063. Adapter protocol version negotiation is one-directional; no runtime-initiated version advertisement [Low]
 
 Section 15.4.2 describes the adapter sending `AdapterInit` with `adapterProtocolVersion` and the gateway responding with `selectedVersion`. This negotiation is between the adapter and the gateway. However, the runtime binary itself (the agent process) has no mechanism to advertise its protocol version to the adapter. The adapter communicates with the runtime over stdin/stdout JSON Lines, and there is no version handshake in that channel. The only forward-compatibility rule is "runtimes MUST ignore unrecognized fields." If the adapter adds a new required field to the `message` type in a future version, the runtime has no way to signal that it does not understand it. This is acceptable for purely additive changes but becomes problematic for semantic changes. The spec should consider adding a version field to the first stdin message or to the adapter manifest that indicates the stdin/stdout protocol version.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-064. `delivery` field closed enum on `MessageEnvelope` blocks future delivery modes without breaking change [Low]
 
 Section 15.4.1 defines `delivery` as a "closed enum" with values `"immediate"` and `"queued"`, and states "No other values are valid. The gateway rejects unknown `delivery` values with `400 INVALID_DELIVERY_VALUE`." This is a closed enum by design, meaning adding a new delivery mode (e.g., `"broadcast"`, `"priority"`) is a breaking change per Section 15.5 item 5. Given the spec's own statement that the `MessageEnvelope` "accommodates all future conversational patterns without schema changes," the closed-enum constraint on `delivery` contradicts this future-proofing claim. Consider making `delivery` an open string with known values, rejecting only syntactically invalid values.
+
+**Status:** Skipped — not an error
+
 
 ### PRT-065. CRD graduation timeline creates extended alpha stability exposure [Medium]
 
 Section 15.5 item 4 defines graduation criteria: `v1alpha1` to `v1beta1` requires "Phase 2 benchmark completion and no breaking field changes for 60 days"; `v1beta1` to `v1` requires "GA load-test sign-off (Phase 14.5) and no breaking changes for 6 months." Given the build sequence (Section 18), Phase 2 is an early phase and Phase 14.5 is late. This means the CRDs will remain at `v1alpha1` through Phases 3-13+ (potentially 6-12 months of development), and then at `v1beta1` for another 6 months minimum. During this entire period, breaking changes are permissible per the alpha/beta stability tiers. Any deployer running a non-production deployment during this window faces repeated CRD migration churn. The spec should define a compatibility commitment for the internal CRD consumers (`PodLifecycleManager`, `PoolManager` interfaces) during the alpha period, even if the CRD surface itself is alpha.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-066. `from.kind` closed enum blocks external adapter protocol evolution [Low]
 
 Section 15.4.1 defines `from.kind` as "a closed enum with exactly four values": `client`, `agent`, `system`, `external`. Adding a new origin kind (e.g., `webhook`, `scheduler`, `a2a_agent` -- distinct from `external`) would be a breaking change. Since the `from` object is adapter-injected and runtimes are told to ignore unknown fields, the closed-enum constraint provides no benefit to runtimes but limits the gateway's ability to evolve the origin model. This should be an open string with known values.
+
+**Status:** Skipped — not an error
+
 
 ### PRT-067. REST API `/v1/` path prefix versioning strategy has no specified coexistence plan [Medium]
 
 Section 15.5 item 1 states: "Breaking changes require a new version (`/v2/`). The previous version is supported for at least 6 months." However, the spec does not define how `/v1/` and `/v2/` coexist operationally. Do both versions route to the same service layer? Are both session records accessible from both API versions? Can a session created via `/v1/` be managed via `/v2/` endpoints? Since the `ExternalAdapterRegistry` routes by path prefix and the REST adapter owns `/v1`, a `/v2/` REST adapter would need its own path prefix entry. The spec should define: (a) whether multi-version REST adapters coexist in the registry, (b) cross-version session accessibility semantics, and (c) how the OpenAPI spec endpoint serves both versions.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-068. Expand-contract schema migration lacks defined interaction with `schemaVersion` field [Medium]
 
 Section 10.5 describes the expand-contract Postgres migration pattern, and Section 15.5 item 7 describes the `schemaVersion` integer on persisted records. However, the spec never defines when `schemaVersion` is incremented relative to the expand-contract phases. During Phase 1 (expand -- add new columns), do new gateway replicas write records at the new `schemaVersion` while old replicas write at the old version? If so, the Phase 1 window creates a mixed-version period where both `schemaVersion: N` and `schemaVersion: N+1` records coexist. The durable-consumer forward-read rule handles this, but the spec should explicitly state: (a) new `schemaVersion` values are written only after Phase 2 (new code deployed), not during Phase 1, and (b) Phase 3 (contract -- drop old columns) must not be applied until all consumers are upgraded per the 90-day migration window SLA.
+
+**Status:** Skipped — not an error
+
 
 ### PRT-069. `ExternalProtocolAdapter` interface lacks a protocol version discovery mechanism [Low]
 
 The `ExternalProtocolAdapter` interface (Section 15) exposes `Capabilities()` returning `AdapterCapabilities`, which includes `Protocol` as a string identifier (e.g., `"mcp"`, `"a2a"`). However, there is no field for the protocol version the adapter implements (e.g., MCP 2025-03-26 vs. 2024-11-05, or A2A v1 vs. v2). The `HandleDiscovery` method receives `AdapterCapabilities` but has no version information to include in discovery responses. Clients cannot determine which protocol version a given adapter supports without attempting a connection and negotiating. `AdapterCapabilities` should include a `ProtocolVersion string` field.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-070. Webhook event `schemaVersion` and evolution strategy unspecified [Medium]
 
 Section 14 defines the webhook delivery model (`callbackUrl` with `SessionComplete` payloads) including event schemas for `session.completed`, `session.failed`, `session.terminated`, etc. However, these webhook event schemas have no `schemaVersion` field, unlike every other persisted/delivered schema in the spec (TaskRecord, OutputPart, MessageEnvelope, WorkspacePlan, billing events, audit events). If the webhook payload schema evolves (e.g., a new field in `session.completed`), receivers have no version signal to select the correct deserialization path. The spec should add a `schemaVersion` field to the webhook event envelope, consistent with the bifurcated consumer rules in Section 15.5 item 7.
+
+**Status:** Skipped — not an error
+
 
 ### PRT-071. Intra-pod MCP version support lags external MCP version deprecation without independent timeline [Low]
 
 Section 15.4.3 states that intra-pod MCP version support "follows the same rolling two-version policy as the gateway (Section 15.5 item 2)." This means when the gateway drops support for an old MCP version on the external-facing side, the adapter's intra-pod MCP servers also drop it. However, the runtime binary's MCP client library version is baked into the container image and cannot be updated without a runtime image rebuild. A runtime image built against MCP 2024-11-05 that is still deployed when the platform drops that version will fail to connect to the intra-pod MCP servers. The spec should decouple the intra-pod MCP deprecation timeline from the external-facing timeline, or require the adapter to support intra-pod MCP versions for at least one additional cycle beyond the external deprecation.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-072. `UNREGISTERED_PART_TYPE` rejection for unprefixed custom types breaks forward-compatibility of `OutputPart.type` [High]
 
 Section 15.4.1 states that `type` is "an open string -- not a closed enum" and that "Types may be added to the registry in minor releases." It also states: "The gateway enforces this at ingress: `OutputPart` objects with an unprefixed `type` not in the current registry are rejected with a `400 Bad Request` error citing `UNREGISTERED_PART_TYPE`." This creates a protocol-level forward-compatibility failure: if a newer runtime emits a type that was added to the registry in a newer gateway version, and the message passes through an older gateway (e.g., during a rolling upgrade, or a delegation chain crossing gateway versions), the older gateway will reject it as `UNREGISTERED_PART_TYPE`. The spec says types can be added in minor releases, but the ingress rejection means all gateways must be upgraded before any runtime can emit a newly-registered type. This effectively makes registry additions a coordinated breaking change rather than a minor release. The rejection should be softened to a warning/annotation for unprefixed types not in the current registry, with the `x-vendor/` prefix requirement remaining a convention rather than a hard enforcement.
+
+**Status:** Fixed — Downgraded UNREGISTERED_PART_TYPE from 400 rejection to warning annotation, resolving open-string contradiction
+
 
 ### PRT-073. `WorkspacePlan.schemaVersion` evolution has no consumer-side specification [Low]
 
 Section 14 defines the `WorkspacePlan` with a `schemaVersion: 1` field, and Section 15.5 item 7 lists `WorkspacePlan` among the types that carry `schemaVersion`. However, unlike `TaskRecord`, `OutputPart`, and `MessageEnvelope`, there is no explicit consumer obligation for `WorkspacePlan`. The gateway is the primary consumer (it materializes the workspace), but the spec does not define what happens if a `WorkspacePlan` stored at `schemaVersion: 2` is read by a gateway running at `schemaVersion: 1`. Should the gateway reject the session? Forward-read? The `WorkspacePlan` is client-supplied, so a newer client could submit a v2 plan to an older gateway. The spec should define the consumer obligation explicitly.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-074. Billing event and audit event schemas listed under `schemaVersion` but no evolution path documented [Medium]
 
 Section 15.5 item 7 lists billing events (Section 11.2.1) and audit events (`EventStore`) among the record types carrying `schemaVersion`. The durable-consumer forward-read rule and the 90-day migration window SLA apply. However, neither Section 11.2.1 (billing) nor Section 11.7 (audit) define the initial schema version, the guaranteed field set at each version, or what constitutes a breaking vs. additive change to these schemas. The `OutputPart` has a per-type guaranteed field table (Section 15.4.1); `TaskRecord` and `MessageEnvelope` have explicit schema evolution constraints. Billing and audit events have none. Given their 13-month retention requirement and their consumption by external billing systems, the lack of a schema contract makes the forward-read obligation unimplementable for third-party billing consumers. The spec should define at minimum the v1 guaranteed field set for billing events and audit events.
 
+**Status:** Skipped — not an error
+
+
 ### PRT-075. Session-lifetime exception for deprecated MCP versions creates unbounded support window [Low]
 
 Section 15.2 states that when a deprecated MCP version exits the deprecation window, "connections that are already established and mid-session at that instant MUST NOT be forcibly terminated" and may continue "for the duration of its session (up to `maxSessionAgeSeconds`)." With `maxSessionAgeSeconds` defaulting to 3600s (1 hour) and being configurable up to the Runtime's `limits.maxSessionAge`, a session could theoretically run for days. The spec acknowledges this with a preflight warning for sessions older than 1 hour, but does not define a hard ceiling. An operator who deploys a gateway binary that drops the old version while a long-running session exists will hit the "falls back to the nonce-handshake-only serialization path with a `schema_version_ahead` degradation annotation" fallback -- which is under-specified (what does "nonce-handshake-only serialization" mean for actual message delivery?). The fallback behavior should be fully specified or the session-lifetime exception should have a hard cap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -655,6 +871,9 @@ The summary tables (lines 7589-7607) state that `message`, `tool_result`, `respo
 
 Only the inbound `message` example (line 7915) includes `slotId`. A runtime author implementing concurrent-workspace mode would see `slotId` in the summary table and the `message` example, but find no schema guidance for including it in outbound `response` and `tool_call` messages or for expecting it in inbound `tool_result` messages. Each Protocol Reference schema section should include `slotId` as an optional field with a note that it is present only in concurrent-workspace mode.
 
+
+**Status:** Fixed — Added missing slotId field to tool_result, response, and tool_call Protocol Reference schemas
+
 ---
 
 ### DXP-060. No mechanism to deliver per-slot `cwd` to the runtime binary in concurrent-workspace mode [Medium]
@@ -665,6 +884,9 @@ However, the stdin binary protocol has no field for communicating `cwd`. The `me
 
 **Fix:** Either add a `cwd` field to the `message` schema for concurrent-workspace messages, or document the explicit convention that concurrent-workspace runtimes derive `cwd` from `slotId` using the pattern `/workspace/slots/{slotId}/current/`.
 
+
+**Status:** Fixed — Corrected claim about per-slot cwd delivery; runtime derives cwd from slotId via filesystem layout pattern
+
 ---
 
 ### DXP-061. Full-tier pseudocode does not handle `task_complete` / `task_ready` lifecycle messages [Medium]
@@ -672,6 +894,9 @@ However, the stdin binary protocol has no field for communicating `cwd`. The `me
 The Full-tier sample echo runtime pseudocode (lines 8360-8443, Section 15.4.4) handles `checkpoint_request`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, and `terminate` on the lifecycle channel. However, it does not handle `task_complete` or `task_ready` -- the between-task signals required for task-mode pod reuse (Section 5.2, lines 2058-2063). A runtime author using this pseudocode as a template for a task-mode runtime would have no example of how to implement the `task_complete` -> `task_complete_acknowledged` -> scrub -> `task_ready` cycle.
 
 This is significant because task-mode pod reuse is a key Full-tier feature. The pseudocode should include a `case "task_complete"` handler that emits `task_complete_acknowledged` and a `case "task_ready"` handler that re-reads the adapter manifest and resets per-task state.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -685,6 +910,9 @@ supported = ["checkpoint", "interrupt", "deadline_signal"]   // omit credential_
 This omits `"task_lifecycle"` from the supported capabilities list. Per Section 4.7 (line 711), `"task_lifecycle"` governs the `task_complete` / `task_complete_acknowledged` / `task_ready` exchange required for task-mode pod reuse. A runtime author copying this pseudocode for a task-mode Full-tier runtime would not declare `task_lifecycle` support and would consequently not receive between-task signals.
 
 The comment says "omit credential_rotation if unused" but does not mention `task_lifecycle`. At minimum, add a comment like `// add "task_lifecycle" for task-mode pods`.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -705,6 +933,9 @@ The `terminate` lifecycle message has a `reason` field with richer semantics (`s
 
 **Fix:** Add a "Dual-channel shutdown" subsection to Section 15.4.1 or 15.4.3 that specifies: (a) the adapter always sends both, (b) which arrives first, (c) whether `deadline_ms` values are synchronized, and (d) whether the runtime should handle whichever arrives first and ignore the other.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-064. `shutdown` reason values not enumerated in the Protocol Reference [Low]
@@ -712,6 +943,9 @@ The `terminate` lifecycle message has a `reason` field with richer semantics (`s
 The `shutdown` inbound message schema example (line 7932) shows `"reason": "drain"`, and the prose (line 7933-7935) only describes the `deadline_ms` behavior. The lifecycle `terminate` message (line 717) has a defined closed enum for `reason`: `"session_complete" | "budget_exhausted" | "eviction" | "operator"`. But `shutdown` on stdin has no corresponding enum -- runtime authors cannot determine the full set of valid `reason` values for the stdin `shutdown` message.
 
 Is `"drain"` the only reason? Can `"budget_exhausted"` or `"session_complete"` appear on stdin `shutdown`? The lack of a closed enum means runtime authors cannot match on `reason` for differentiated cleanup behavior.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -726,6 +960,9 @@ The spec never explicitly states whether Minimum-tier runtimes can use a simplif
 
 A Minimum-tier runtime author needs to know: when I call `read_file`, will the `tool_result.content` always be `[{"type": "text", "inline": "..."}]` (minimal form), or could it include the full `OutputPart` envelope with `schemaVersion`, `id`, etc.? This affects parsing complexity.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-066. Runtime Author Roadmap item 7 misdirects Standard-tier authors to lifecycle channel documentation [Low]
@@ -736,6 +973,9 @@ The Runtime Author Roadmap (line 8461) says for Standard-tier item 7:
 
 Standard-tier runtimes do not open the lifecycle channel -- the Tier Comparison Matrix (line 8219) shows lifecycle channel as "N/A -- operates in fallback-only mode" for Standard tier. Directing Standard-tier authors to read lifecycle channel message schemas is misleading. The parenthetical disclaimer ("The gRPC RPC table at the top of 4.7 is not relevant to binary authors") correctly excludes irrelevant content, but the reference to "lifecycle channel message schemas (Part B)" should also be excluded or marked as "for Full-tier only."
 
+
+**Status:** Fixed — Fixed roadmap directing Standard-tier authors to lifecycle channel schemas (Full-tier only)
+
 ---
 
 ### DXP-067. `adapter-manifest.json` marks `platformMcpServer` and `lifecycleChannel` as required fields even for Minimum tier [Medium]
@@ -745,6 +985,9 @@ The adapter manifest field reference (lines 776-780) marks both `platformMcpServ
 For Minimum-tier pods, these fields are irrelevant -- the runtime does not connect to them. Yet they are marked as always present in the manifest. This creates ambiguity: will a Minimum-tier pod's manifest contain a `platformMcpServer` object with a socket path that points to nothing? Or will the adapter omit the field for Minimum-tier pods (contradicting "Required: Yes")?
 
 A runtime author implementing manifest version validation may incorrectly reject a manifest that lacks these fields, or conversely may try to connect to a socket that the adapter isn't serving. The field reference should specify the behavior: either the fields are always present (even if the socket is not active), or they are absent for tiers that don't use them (in which case "Required" should be conditional).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -761,6 +1004,9 @@ The spec does not address concurrency between the two tool-calling mechanisms. C
 
 The statement "Agents may have multiple outstanding `tool_call` requests; results may arrive in any order" (line 7961) answers question 3 partially (results can arrive out of order), but question 1 and 2 are unanswered. This matters for runtimes that want to parallelize workspace reads while delegating.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-069. `write_file` adapter-local tool lacks specification for creating intermediate directories [Low]
@@ -769,6 +1015,9 @@ The four adapter-local tools are listed (lines 8024-8027) with one-line descript
 
 A runtime author calling `write_file` with `arguments: {"path": "src/deep/nested/file.txt", "content": "..."}` cannot determine from the spec whether this will succeed if `src/deep/nested/` doesn't exist. The `inputSchema` example (lines 8047-8058) shows only `path` and `content` properties -- no `createDirectories` flag. Since adapter-local tools are the only file manipulation mechanism at Minimum tier, this behavioral ambiguity affects the simplest integration path.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-070. `delete_file` described as deleting "a file or empty directory" but no tool exists for deleting non-empty directories [Low]
@@ -776,6 +1025,9 @@ A runtime author calling `write_file` with `arguments: {"path": "src/deep/nested
 The `delete_file` tool (line 8027) is described as "Delete a file or empty directory from the workspace." There is no adapter-local tool for recursively removing a non-empty directory. Runtime authors cleaning up workspace state (e.g., removing a `node_modules/` tree) have no adapter-local mechanism to do so in a single call.
 
 This is a minor DX gap -- workarounds exist (enumerate and delete individual files) -- but it's worth noting as a specification gap since the adapter-local tools are described as the primary workspace manipulation interface.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -799,6 +1051,9 @@ case "shutdown":
 
 While this is technically valid for Minimum tier (no resources to clean), the pseudocode doesn't show any final `response` emission. If the runtime was mid-processing a `message` when `shutdown` arrives, should it attempt to emit a partial response? The Protocol Reference (line 7935) says "Agent must finish current work and exit within `deadline_ms`" -- which implies completing the response is desired. The pseudocode does not model this interleaving.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-072. `observability.otlpEndpoint` in adapter manifest but no guidance on trace context propagation from stdin messages [Low]
@@ -806,6 +1061,9 @@ While this is technically valid for Minimum tier (no resources to clean), the ps
 The adapter manifest includes `observability.otlpEndpoint` (line 792) for runtime OTel SDK configuration. However, the stdin protocol messages carry no trace context (no `traceParent` or `traceparent` header equivalent). A runtime author who configures their OTel SDK against the manifest endpoint will emit spans, but those spans will be disconnected from the gateway's trace for that session.
 
 Section 15.4.5 (Runtime Author Roadmap) does not mention observability integration at any tier. Runtime authors who want correlated traces have no guidance on how to propagate trace context from the gateway through the adapter to the runtime binary. The `message` envelope could carry a `traceContext` field, or the adapter manifest could include a per-session trace parent, but neither is specified.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -816,6 +1074,9 @@ Section 5.1 (line 1699) specifies that when a `one_shot` runtime's `request_inpu
 The spec says "The adapter validates this -- a `tool_result` with an unknown `id` is dropped" (line 7961). But for `request_input`, the resolution comes via MCP, not stdin `tool_result`. The interaction between a timeout-resolved MCP call and a late-arriving client response is not specified from the runtime's perspective: does the MCP `tools/call` for `lenny/request_input` return the timeout error, and then a subsequent message on stdin delivers the late response? Or is the late response silently dropped?
 
 This race condition is narrow but relevant for `one_shot` runtimes that want to be robust.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -829,6 +1090,9 @@ The `status` outbound message (line 8091-8095) has fields `state` and `message` 
 
 A runtime that emits verbose status updates on every processing step could flood the adapter's stdout parser. The spec says nothing about back-pressure or throttling for status messages, unlike `lenny/output` which has size limits documented.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DXP-075. `Go path.Match` extended with `**` for `sdkWarmBlockingPaths` referenced but not fully specified for runtime authors [Low]
@@ -836,6 +1100,9 @@ A runtime that emits verbose status updates on every processing step could flood
 Section 6.1 (line 1691) states that `sdkWarmBlockingPaths` patterns "follow Go `path.Match` extended with `**` (see matching contract in Section 6.1)." This is relevant to runtime authors who implement SDK-warm mode (`preConnect: true`) because their workspace file layouts determine whether demotion occurs.
 
 However, the matching semantics of `**` are not defined in the spec. Go's `path.Match` does not support `**` natively -- the "extension" is a Lenny-specific addition. Whether `**` matches zero or more path segments (like `.gitignore`) or has different semantics is not documented. Runtime authors who want to understand when their SDK-warm pool will be demoted cannot predict matching behavior from the spec alone.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -847,53 +1114,92 @@ However, the matching semantics of `**` are not defined in the spec. Go's `path.
 
 Section 10.5 defines the `RuntimeUpgrade` state machine for pool image upgrades with `start`, `proceed`, `pause`, `resume`, and `rollback` commands. However, the spec says the `rollback --restore-old-pool` option is "only valid while the old `SandboxTemplate` CRD still exists" (line 10302). The spec does not define when the old `SandboxTemplate` is deleted, what happens if an operator attempts rollback after it has been deleted, or how to recover if the old CRD was cleaned up prematurely. Operators need a clear answer for: after what upgrade phase is rollback no longer possible, and what is the recovery path at that point?
 
+**Status:** Skipped — not an error
+
+
 ### OPS-068. Bootstrap seed Job depends on Secrets that must pre-exist but ordering is not enforced by Helm [Medium]
 
 Section 17.6/4.9 states that the `lenny-bootstrap` Job "does NOT create Kubernetes Secrets" and Secrets "must exist before the bootstrap Job runs" (line 1613). The spec acknowledges ArgoCD sync-wave ordering as a solution (line 1628), but does not specify Helm hook ordering for non-GitOps deployments. Operators using plain `helm install` have no mechanism to ensure Secrets exist before the bootstrap Job runs. The Helm chart should use hook weights or init containers to enforce ordering, but no such mechanism is specified.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-069. `lenny-ctl preflight` standalone mode embeds business logic, contradicting the "thin client" design [Low]
 
 Section 24 states `lenny-ctl` is "a thin client over the Admin API with zero business logic" then immediately states `lenny-ctl preflight` is "the only subcommand that carries business logic" (line 10262). This is a stated contradiction. The exception is justified but the "zero business logic" claim at the top of Section 24 is factually incorrect and should be qualified.
 
+**Status:** Fixed — Changed 'zero business logic' to 'near-zero' to acknowledge preflight exception
+
+
 ### OPS-070. RBAC patch for operationally-added credentials requires manual intervention [Medium]
 
 Section 4.9 states that the Token Service's RBAC `resourceNames` list is "populated at install time from all `secretRef` values declared in bootstrap configuration" and that "operationally-added credentials require a manual RBAC patch or a re-run of the `helm upgrade` with updated values" (line 1192). At Tier 2/3 scale, this means every `lenny-ctl admin credential-pools add-credential` call requires a subsequent manual `kubectl` RBAC patch. The spec acknowledges the CLI "emits the required RBAC patch command" but does not specify automation. This creates an error-prone operational gap where the Token Service cannot read a newly added credential until the operator manually patches RBAC.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-071. Preflight Job cannot verify etcd Secret encryption programmatically [Medium]
 
 Section 17.6 and line 1175 state that the preflight Job "emits a non-blocking warning when etcd Secret encryption cannot be verified" because "programmatic verification requires etcd access that the preflight Job may not have." This means the preflight check for a critical security requirement (encryption at rest for credential Secrets) will always be a warning, never a hard pass/fail. Operators who see the warning have no automated way to confirm encryption is active. The spec should define a verification procedure or recommend a specific post-install verification step.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-072. `maxTasksPerPod` is required with no default but error message is unspecified [Low]
 
 Section 5.2 states `maxTasksPerPod` is "required with no default" and "the pool controller rejects task-mode pool definitions that omit it" (line 2116). The error message format for this rejection is not specified, unlike other validation rejections (e.g., `acknowledgeProcessLevelIsolation` which has a specific error text). Operators will encounter a rejection without a clear reference to the relevant documentation section.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-073. Token Service secret informer resync interval is configurable but default behavior on Secret deletion is undefined [Medium]
 
 Section 4.9 states the Token Service uses a Kubernetes informer with a configurable `secretResyncInterval` (default 30s) to watch Secrets (line 1615). The spec defines behavior when a Secret is created or updated, and the metric tracks `success`, `not_found`, and `parse_error` outcomes. However, the spec does not define what happens to active leases when a Secret is deleted while credentials backed by it are in use. Does the Token Service mark the credential as `unavailable`? Do active leases continue with their already-materialized credentials? Is there an alert?
 
+**Status:** Skipped — not an error
+
+
 ### OPS-074. Node drain timeout interaction with concurrent-workspace pods is a warning, not a rejection [Medium]
 
 Section 5.2 states that when `terminationGracePeriodSeconds` exceeds the node drain timeout (commonly 600s), "the kubelet will SIGKILL the pod before checkpoints complete, causing data loss for in-flight slots." Yet the CRD validation webhook only "emits a warning (not a rejection)" (line 2159). The spec provides `maxTerminationGracePeriodSeconds` as an optional hard ceiling, but it defaults to unset. This means by default, operators can deploy configurations that guarantee data loss on node drain without any blocking validation. Given the fail-closed philosophy applied elsewhere in the spec, this should be a rejection by default or at minimum the `maxTerminationGracePeriodSeconds` should be recommended as a required field.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-075. Credential pool sizing formula referenced but not provided inline [Medium]
 
 Section 4.9 states "Pool sizing scales with tier -- at Tier 3, deployers may need hundreds to over a thousand credentials per pool. See Section 17.8.2 ('Credential pool sizing') for the sizing formula and per-tier starting values" (line 1141). However, based on the reading of the full document, the credential pool sizing formula and per-tier starting values in Section 17.8.2 are part of a very dense section that may not actually contain these specific formulas. The cross-reference should be verified to ensure the formula is actually present at the cited location.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-076. `PoolConfigDrift` alert detection runs in the gateway but gateway crash also leaves the alert unmonitored [Medium]
 
 Section 4.6.2 states the `PoolConfigDrift` alert "runs in the gateway (which reads both Postgres and CRD state) rather than in the PoolScalingController itself, so the alert fires even when the controller is completely down" (line 609). However, this creates a dependency on gateway availability for detecting controller failures. If both the gateway and PoolScalingController are down simultaneously (e.g., during a cluster-wide incident), no component detects the config drift. The spec should acknowledge this gap or specify an external probe.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-077. Emergency credential revocation runbook requires provider-side key rotation for direct mode but no automation is provided [Medium]
 
 Section 4.9 states that after revoking a direct-mode credential, "operators MUST also rotate or delete the key at the provider" because "the underlying API key continues to exist at the provider" (line 1579). The revocation endpoint is Lenny-internal only. There is no integration point, webhook, or automation hook for triggering provider-side rotation. At incident velocity, requiring operators to manually log into each provider console (Anthropic, AWS, GCP, Azure) to rotate keys is operationally brittle.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-078. `bootstrapMinWarm` override and formula-driven scaling interaction is underspecified for partial convergence [Medium]
 
 Section 4.6.2 and Section 17.8.2 define a bootstrap mode with 5 convergence criteria and a 48-hour convergence window. The `lenny-ctl admin pools exit-bootstrap` command allows early exit "when early traffic data is sufficient" (line 10296). However, the spec does not define what happens if an operator exits bootstrap mode before all 5 convergence criteria are met -- does the formula use incomplete data, fall back to defaults, or produce an error? The interaction between the manual exit and the convergence criteria is ambiguous.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-079. `setupPolicy.timeoutSeconds` uses Maximum merge rule but can be absent [Low]
 
 Section 5.1 states `setupPolicy.timeoutSeconds` defaults to "waits indefinitely if absent" (line 1909), and the merge rule is "Maximum -- gateway uses max(base, derived)" (line 1845). If the base runtime sets no timeout (indefinite) and the derived runtime sets 120s, the merge behavior is undefined: `max(infinity, 120)` is infinity, which contradicts the derived runtime's intent. The spec should clarify the semantics when one side is absent/indefinite.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-080. Multiple admission webhooks with `failurePolicy: Fail` create cascading unavailability risk [High]
 
@@ -907,37 +1213,64 @@ The spec defines at least 6 separate `ValidatingAdmissionWebhook` deployments wi
 
 All fail-closed means any single webhook unavailability blocks all pod admission in agent namespaces. The spec mentions `replicas: 2` and PDB for the tenant-label webhook but does not specify HA requirements for the other 5 webhooks. A single webhook outage blocks all session creation. The spec should define a unified HA requirement (minimum replicas, PDB, health monitoring) for all fail-closed webhooks.
 
+**Status:** Skipped — not an error; intentional design choice
+
+
 ### OPS-081. No `lenny-ctl` command for listing active sessions across the platform [Low]
 
 Section 24.11 defines `lenny-ctl admin sessions get <id>` and `lenny-ctl admin sessions force-terminate <id>` for individual session investigation. There is no `lenny-ctl admin sessions list` command. During an incident, operators cannot enumerate all active sessions, sessions in `resume_pending` or `awaiting_client_action`, or sessions assigned to a specific pool or pod. The only discovery mechanism is querying Postgres directly or using the `GET /v1/admin/sessions` endpoint (which is not listed in the admin API table in Section 15.1).
+
+**Status:** Skipped — not an error
+
 
 ### OPS-082. `maxAwaitingClientActionSeconds` default (900s) and `maxResumeWindowSeconds` default (900s) are identical, creating confusing expiry behavior [Low]
 
 Section 7.3 states `maxResumeWindowSeconds` defaults to 900s (line 3026) and `maxAwaitingClientActionSeconds` defaults to 900s (line 3057). A session that spends the full `resume_pending` window (900s) transitions to `awaiting_client_action` and gets another full 900s window. The total wall-clock time before automatic expiry is 1800s (30 minutes), but the operator-facing configuration does not make this obvious. There is no single "max recovery time" configuration; operators must reason about the sum of two independent timers.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-083. `lenny_pool_bootstrap_mode` gauge referenced in Section 4.6.2 but not defined in the observability section [Low]
 
 Section 4.6.2 references a `lenny_pool_bootstrap_mode` gauge and a `PoolBootstrapMode` alert (line 600), directing the reader to Section 17.8.2 for the full cold-start bootstrap procedure. This metric is not listed in the main observability metrics section (Section 16). Operators may not discover it when setting up monitoring dashboards.
+
+**Status:** Fixed — Added lenny_pool_bootstrap_mode gauge to Section 16.1 metrics table
+
 
 ### OPS-084. Semantic cache `DeleteByUser` error halts the erasure job with no skip-and-continue option [Medium]
 
 Section 4.9 states "The erasure job treats a `DeleteByUser` call that returns an error as a hard failure -- the erasure job halts and does not proceed to subsequent stores" (line 1489). This is intentionally strict for data protection, but it means a malfunctioning pluggable `SemanticCache` implementation can permanently block GDPR erasure for a user. The only recovery path is `retry` (Section 24.12), which will hit the same error again if the cache implementation is broken. There is no mechanism to skip the cache store and continue with remaining stores, creating a potential compliance deadlock.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-085. `DeliveryMode: proxy` is the "recommended default for multi-tenant deployments" but the Helm default is unspecified [Medium]
 
 Section 4.9 states "Proxy mode is the recommended default for multi-tenant deployments" (line 1432) and the YAML example shows `deliveryMode: proxy` with a comment "(default: proxy for multi-tenant, direct for single-tenant)" (line 1454). However, the mechanism by which the Helm chart selects this default based on `tenancy.mode` is not specified. Deployers who create credential pools via the admin API (not Helm) must set `deliveryMode` explicitly; the spec does not state what the API default is when `deliveryMode` is omitted from the request body.
+
+**Status:** Skipped — not an error
+
 
 ### OPS-086. Billing event stream two-tier failover references in-memory WAL but WAL durability guarantee is absent [Medium]
 
 The summary references a "two-tier failover (Redis stream -> in-memory WAL -> Postgres)" for billing events. An in-memory WAL by definition is not durable across process crashes. If a gateway replica crashes while billing events are in the in-memory WAL (after Redis stream failure), those billing events are lost. The spec should state the acceptable billing event loss window and whether operators need to reconcile billing after gateway crashes.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-087. `lenny-ctl admin pools drain` returns `estimatedDrainSeconds` but no completion callback [Low]
 
 Section 15.1 (line 7101) defines the pool drain endpoint returning `estimatedDrainSeconds` based on the longest active session age. There is no webhook, completion callback, or `lenny-ctl` command to block until drain completes. Operators must poll `GET /v1/admin/pools/{name}` to detect drain completion. For automated deployment pipelines, this requires a polling loop with no platform-native "wait for drain" primitive.
 
+**Status:** Skipped — not an error
+
+
 ### OPS-088. `maxSessionAgeSeconds` and `maxIdleTimeSeconds` timer pausing during recovery states could lead to unexpectedly long-lived sessions [Medium]
 
 Section 6.2 defines that `maxSessionAge` is paused during `suspended`, `resume_pending`, `resuming`, and `awaiting_client_action` states. `maxIdleTimeSeconds` is similarly paused during `input_required`, `suspended`, `resume_pending`, `resuming`, and `awaiting_client_action`. A session that cycles between `running` and recovery states could theoretically remain alive for days if it accumulates minimal running time between failures. There is no wall-clock hard cap that bounds the total session lifetime including paused states. The `maxResumeWindowSeconds` and `maxAwaitingClientActionSeconds` provide per-recovery caps, but the total number of recovery cycles is bounded only by `maxRetries` per failure -- and a session that recovers successfully resets the retry counter for the next failure.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -949,6 +1282,9 @@ Section 19, resolved decision #3 states: "Logical isolation via filtering. Names
 
 **Location:** Section 19, decision #3 (line 10107)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-057. Cloud-Managed Pooler `lenny_tenant_guard` Trigger Is a Single Point of Tenant Isolation Defense [High]
@@ -956,6 +1292,9 @@ Section 19, resolved decision #3 states: "Logical isolation via filtering. Names
 Section 17.9 (cloud-managed profile, line 9862) states that cloud-managed proxies lacking `connect_query` support "must rely on the per-transaction tenant validation trigger (`lenny_tenant_guard`) as the second layer of RLS defense." However, in the cloud-managed profile, `lenny_tenant_guard` is not the *second* layer -- it is the *only* programmatic defense against stale `app.current_tenant` values from a prior connection. The `connect_query` sentinel (which resets `app.current_tenant` to `__unset__` on checkout) is absent, meaning if application code fails to call `SET LOCAL app.current_tenant` before a query, the trigger is the sole guard preventing cross-tenant data access via a stale session variable. The spec acknowledges this in Section 12.3 but the cloud-managed profile section (17.9) describes it as "second layer" when it is actually the only layer. This mislabeling could lead operators to underestimate the criticality of the trigger in cloud-managed deployments. Furthermore, the spec does not specify monitoring or alerting for `lenny_tenant_guard` trigger failures -- if the trigger is dropped, disabled, or encounters an error, there is no described detection mechanism.
 
 **Location:** Section 17.9, cloud-managed profile table (line 9862); Section 12.3
+
+
+**Status:** Fixed — Corrected 'second layer' to 'sole programmatic defense' in 3 locations
 
 ---
 
@@ -965,6 +1304,9 @@ Section 17.8.2 references circuit breakers stored in Redis (e.g., pool circuit-b
 
 **Location:** Sections 4.2 (resource classification), 12.4 (Redis), 24.7 (circuit breaker CLI)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-059. Tenant Deletion Tombstone Format and Validation Not Specified [Medium]
@@ -972,6 +1314,9 @@ Section 17.8.2 references circuit breakers stored in Redis (e.g., pool circuit-b
 The spec describes tenant record tombstoning after deletion to prevent tenant ID reuse (mentioned in the summary context as a key design point). However, the spec does not define: (a) the tombstone record schema (which fields are preserved vs. scrubbed), (b) how long the tombstone must be retained (indefinitely? or subject to its own retention policy?), (c) whether the tombstone survives database migrations and schema changes, (d) how the tombstone interacts with `billingErasurePolicy: exempt` -- if billing data is retained with pseudonymized `tenant_id`, does the tombstone need to map the original `tenant_id` to the pseudonymized version? The absence of a formal tombstone specification creates ambiguity for the Section 12.8 tenant deletion lifecycle implementation.
 
 **Location:** Section 12.8 (tenant deletion lifecycle)
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -981,6 +1326,9 @@ Section 24.10 defines `lenny-ctl admin tenants delete <id>` which initiates the 
 
 **Location:** Section 24.10 (line 10358)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-061. Per-Tenant Billing Sequence Multi-Region Gap Not Addressed in Cloud-Managed Profile [Medium]
@@ -988,6 +1336,9 @@ Section 24.10 defines `lenny-ctl admin tenants delete <id>` which initiates the 
 Section 17.8.2 establishes per-region billing sequences for multi-region deployments (to avoid cross-region sequence coordination). Section 17.9 describes the cloud-managed profile using managed Postgres (RDS, Cloud SQL, Azure DB). However, the cloud-managed profile does not address how per-region billing sequences interact with managed Postgres in multi-region scenarios. Specifically: managed Postgres services (e.g., RDS) in different regions are separate instances, and the spec does not specify whether each region's managed Postgres instance maintains its own independent billing sequence namespace, or whether a central billing database is required. The `billing_seq_{tenant_id}` naming convention implies a single database; multi-region managed Postgres would create independent sequence spaces that could produce duplicate billing event IDs.
 
 **Location:** Sections 17.8.2, 17.9
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -997,6 +1348,9 @@ Section 24.4 defines `lenny-ctl admin pools revoke-access --pool <name> --tenant
 
 **Location:** Section 24.4 (line 10309), Section 24.3 (line 10287)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-063. `wellKnownAgentJsonMaxCards` Exposes Cross-Tenant Runtime Information [Low]
@@ -1004,6 +1358,9 @@ Section 24.4 defines `lenny-ctl admin pools revoke-access --pool <name> --tenant
 Section 21.1 describes `GET /.well-known/agent.json` returning a JSON array of all public agent cards, up to `wellKnownAgentJsonMaxCards` (default: 100). This endpoint requires no authentication. In a multi-tenant deployment, this means any unauthenticated caller can discover all public runtimes across all tenants. While runtimes are classified as platform-global resources (not tenant-scoped), their existence and metadata (capabilities, descriptions) may constitute business-sensitive information in competitive multi-tenant scenarios. The spec should clarify whether the A2A discovery endpoint respects any tenant-scoped visibility filtering, or explicitly document that all runtimes marked as public are visible to unauthenticated callers regardless of tenancy.
 
 **Location:** Section 21.1 (line 10134)
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1013,6 +1370,9 @@ Section 24.14 describes `lenny-ctl policy audit-isolation` as performing a clien
 
 **Location:** Section 24.14 (line 10401)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-065. Session Investigation Commands Lack Tenant Ownership Verification [Low]
@@ -1020,6 +1380,9 @@ Section 24.14 describes `lenny-ctl policy audit-isolation` as performing a clien
 Section 24.11 defines `lenny-ctl admin sessions get <id>` and `lenny-ctl admin sessions force-terminate <id>` with minimum role `platform-admin`. The spec does not address whether `tenant-admin` users can investigate or force-terminate sessions belonging to their own tenant. In a multi-tenant deployment, tenant administrators would reasonably need to investigate stuck sessions within their tenancy. The current design requires escalation to `platform-admin` for any session investigation, which creates an operational bottleneck. If `tenant-admin` access is intended to be added later, the session investigation API should be designed with tenant-scoped authorization from the start.
 
 **Location:** Section 24.11 (lines 10365-10366)
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1029,6 +1392,9 @@ Section 24.12 defines erasure job management commands (`get`, `retry`, `clear-re
 
 **Location:** Section 24.12 (lines 10370-10374)
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-067. Bootstrap Seed `noEnvironmentPolicy: allow-all` Recommendation Weakens Tenant Isolation [Medium]
@@ -1037,6 +1403,9 @@ The Phase 5 note (line 10050) recommends setting `noEnvironmentPolicy: allow-all
 
 **Location:** Phase 5 note (line 10050), Section 17.6 bootstrap
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### TNT-068. Tier Promotion Guide Does Not Address Multi-Tenant Considerations [Medium]
@@ -1044,6 +1413,9 @@ The Phase 5 note (line 10050) recommends setting `noEnvironmentPolicy: allow-all
 Section 17.8.3 provides a detailed Tier 2 to Tier 3 promotion checklist (go/no-go criteria, Steps 1-4) that is entirely infrastructure-focused: gateway GC, etcd write latency, KEDA deployment, warm pools. However, there is no tenant-aware promotion criterion. At Tier 3 scale (10,000 concurrent sessions), per-tenant resource contention becomes a significant concern. The promotion guide should include: (a) per-tenant session distribution analysis (is load dominated by one tenant?), (b) per-tenant quota utilization relative to global capacity, (c) Redis tenant-key cardinality at Tier 3 scale, (d) `lenny_tenant_guard` trigger performance at 10,000 concurrent sessions (trigger fires on every write, creating cumulative overhead). Without tenant-aware promotion criteria, an operator could promote to Tier 3 without understanding the tenant-level load distribution.
 
 **Location:** Section 17.8.3 (lines 9787-9845)
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1061,6 +1433,9 @@ The Section 12.2 Storage Roles table (lines 5519-5531) lists eight storage roles
 
 Section 12.2 declares itself the authoritative table of storage roles and states "All Redis-backed roles... must use the `t:{tenant_id}:` key prefix convention." An implementer using Section 12.2 as the storage layer's interface inventory would miss three stores entirely. Add all three to the Section 12.2 table with their backends and purposes.
 
+
+**Status:** Fixed — Added MemoryStore, EvalResultStore, and SemanticCache to Section 12.2 Storage Roles table
+
 ---
 
 ### STR-065. Circuit Breaker Redis Keys Use Non-Tenant-Prefixed Pattern Not Listed in Section 12.4 Key Table [Medium]
@@ -1069,17 +1444,26 @@ Section 11.6 (line 5396) defines circuit breaker Redis keys as `cb:{name}` -- a 
 
 Circuit breaker keys are a second class of intentional exception (they are platform-wide, not tenant-scoped), but they are neither listed in the key table nor mentioned in the exception text. An implementer enforcing the "no raw Redis command without prefix" rule at the Redis wrapper layer would block circuit breaker operations. Add `cb:{name}` to the Section 12.4 table and update the exception statement to include circuit breaker keys alongside pod-scoped keys.
 
+
+**Status:** Fixed — Added cb:{name} circuit breaker key to Section 12.4 Redis key table and exception list
+
 ---
 
 ### STR-066. Section 12.3 References "Section 12.7" for Data Classification Tier but 12.7 is "Extensibility" [Low]
 
 Line 5585 states: "Audit log write mode is determined by **data classification tier** (Section 12.7), not by environment or SIEM configuration alone." Section 12.7 (lines 5827-5833) is titled "Extensibility" and contains bullet points about backend strategy. The data classification tier definitions are in Section 12.9 ("Data Classification," line 5991). This is an incorrect section cross-reference. The same error recurs at line 5587 where T3/T4 classification is referenced via "(Section 12.7)." Both references should point to Section 12.9.
 
+
+**Status:** Fixed — Corrected two cross-references from Section 12.7 to Section 12.9 (data classification)
+
 ---
 
 ### STR-067. Billing Redis Stream MAXLEN Derivation Inconsistency at Tier 1/2 [Low]
 
 The Tier 3 MAXLEN derivation (line 9741, footnote 4) uses the formula `event_rate x RTO x 2x_safety = 600 x 60 x 2 = 72,000`. The footnote also claims "Tier 1/2 billing rates (~6/s and ~60/s respectively) are comfortably within the 50,000 default (fill time: ~2.3 hours and ~14 minutes)." However, applying the same formula to Tier 2 yields `60 x 60 x 2 = 7,200` -- a value far below 50,000 and well within budget. The concern is the reverse direction: the 50,000 default provides ~14 minutes of buffer at Tier 2, which is well above the 30s RTO target. This is not technically wrong (larger is safer), but the MAXLEN defaults at Tier 1/2 are ~7x-700x larger than what the derivation formula would produce, while Tier 3's MAXLEN is derived precisely. The spec does not explain why Tier 1/2 uses a flat 50,000 rather than a formula-derived value. This is a documentation gap, not a correctness bug, but operators may question the seemingly arbitrary default. Adding a brief note explaining the Tier 1/2 rationale (e.g., "rounded up to provide multi-minute outage tolerance") would improve clarity.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1089,11 +1473,17 @@ The `DeleteByUser` erasure sequence (lines 5879-5898) specifies a carefully orde
 
 The `DeleteByTenant` sequence in Phase 4 of tenant deletion (line 5935) lists a different ordering: `...ArtifactStore → MemoryStore → EvictionStateStore → session_dlq_archive → session_tree_archive → EventStore (audit) → EventStore (billing) → EvalResultStore → SessionStore → TokenStore → CredentialPoolStore...`. Here, `EventStore (audit)` and `EventStore (billing)` are deleted *before* `EvalResultStore`, yet in the `DeleteByUser` flow, `EvalResultStore` (step 12) is deleted *before* `EventStore (audit)` (step 13). If there are FK dependencies between these stores, one of the two orderings is wrong. Since the spec explicitly documents that `EvalResultStore` must precede `SessionStore` due to FK `EvalResult.session_id -> sessions.id`, and audit events similarly reference sessions, both should precede `SessionStore` -- but the relative ordering of `EventStore` vs `EvalResultStore` is inconsistent between the two flows. The `DeleteByTenant` flow should match the same dependency ordering as `DeleteByUser`.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-069. No Defined Redis Key Pattern or TTL for Billing Write-Ahead In-Memory Buffer Persistence [Low]
 
 The billing event failover path (Section 11.2.1, line 5250) describes a Tier 2 in-memory write-ahead buffer as a fallback when Redis is unavailable. The spec states "The in-memory buffer is not persisted to disk" (line 5251). However, the `quotaFailOpenCumulativeMaxSeconds` feature (Section 12.4, line 5719) does persist state to a local file (`/run/lenny/failopen-cumulative.json`) to survive pod restarts. There is an asymmetry: quota fail-open state gets local persistence for CrashLoopBackOff resilience, but billing in-memory buffer state does not. If a gateway enters CrashLoopBackOff during a dual-store outage (Redis + Postgres both down), it will lose billing events on every restart cycle. The spec accepts this as a "triple-failure scenario" (line 5665) but does not explicitly acknowledge the CrashLoopBackOff amplification vector where repeated restarts compound the loss. This is an edge case and arguably acceptable, but it would be clearer if the spec explicitly noted the CrashLoopBackOff billing loss amplification and explained why local persistence was not applied to the billing buffer (likely: billing events are larger and more complex to serialize safely than a single counter).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1106,6 +1496,9 @@ Section 12.8 (lines 5906-5919) specifies that the `erasure_salt` is per-tenant a
 
 The spec does not address this concurrency scenario. The advisory lock for salt rotation (`erasure_salt_migration:{tenant_id}`, line 5919) is mentioned only for rotation, not for concurrent erasure jobs. Two concurrent erasure jobs could race on salt read-delete-regenerate. An explicit serialization mechanism (e.g., the erasure job acquires an advisory lock on the salt before pseudonymization) should be specified.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-071. Storage Quota `io.LimitedReader` Hard Cap Uses Stale Counter Value [Medium]
@@ -1113,6 +1506,9 @@ The spec does not address this concurrency scenario. The advisory lock for salt 
 Section 11.2 (line 5160) specifies that the hard stream cap wraps the inbound body in `io.LimitedReader` set to `remaining_quota_bytes = storageQuotaBytes - storage_bytes_used`. This value is read from Redis at pre-check time. However, the atomic Lua reservation in step 1 already incremented the counter by `incoming_bytes`. After the Lua script returns success, the `storage_bytes_used` value has already been incremented. If the `io.LimitedReader` is set using the pre-reservation `storage_bytes_used` value (before the Lua increment), the limit is `storageQuotaBytes - (old_storage_bytes_used)` -- which is larger than the actual remaining quota by `incoming_bytes`. This means the hard cap permits streaming `incoming_bytes` more than the true remaining quota.
 
 If instead the `io.LimitedReader` uses the post-reservation value, the limit would be `storageQuotaBytes - (old_storage_bytes_used + incoming_bytes)`, which could be zero or negative for uploads that exactly fill the quota, causing immediate EOF even for legitimately accepted uploads. The spec does not clarify which value is used or how the `io.LimitedReader` and the atomic Lua reservation interact. The `io.LimitedReader` should be set to `incoming_bytes` (the declared upload size) rather than `remaining_quota_bytes`, since the Lua script has already validated that the reservation fits within the quota.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1122,11 +1518,17 @@ Section 12.5 (line 5798) specifies that in concurrent-workspace mode, checkpoint
 
 The spec should either: (a) explicitly include `slot_id` in the `artifact_store` table schema (at minimum documenting it as a column), or (b) describe how the GC job distinguishes per-slot checkpoints.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-073. Eviction Context Object Cleanup References Missing `session_eviction_state` Table Schema [Low]
 
 Section 12.5 (line 5800) describes GC cleanup for eviction context objects: "the GC job queries `session_eviction_state` rows for sessions that have reached a terminal state and whose `last_message_context` column stores a MinIO object key (identified by the `/{tenant_id}/eviction/` key prefix)." This implies the `session_eviction_state` table's `last_message_context` column can contain either inline text (for small contexts <= 2KB) or a MinIO object key (for larger contexts), distinguished by the presence of the tenant-prefixed path pattern. However, the `EvictionStateStore` role in Section 12.2 (line 5530) describes it as "Minimal session state records written during eviction checkpoint fallback" with no schema details. The column naming convention (`last_message_context`) and the dual inline-vs-object-key storage pattern are not formalized anywhere in the schema sections. An implementer would need to infer the storage pattern from the GC description. A brief schema definition for `session_eviction_state` with the dual-mode column semantics should be added to Section 12.2 or 12.5.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1135,6 +1537,9 @@ Section 12.5 (line 5800) describes GC cleanup for eviction context objects: "the
 Section 12.8 (line 5975) states: "If a tenant has sessions in multiple regions, each region enforces quotas independently against its own counters. The global per-tenant quota... could be exceeded in aggregate even if each region is individually within limits. Global cross-region quota aggregation is the deployer's responsibility." This creates an unbounded quota overshoot scenario: a tenant with sessions in N regions could consume up to N times their intended quota. The spec recommends "deployers who require global enforcement should implement a centralized quota coordination service or set per-region sub-quotas that sum to the desired global limit" but does not provide a mechanism for the deployer to set per-region sub-quotas via the API.
 
 The tenant configuration model (line 6022) shows `dataClassification.workspaceTier` but no per-region quota subdivision. The `storageQuotaBytes` quota (Section 11.2) appears to be a single tenant-level value with no regional dimension. Without a `storage.regions.<region>.quotaBytes` Helm value or equivalent API field, deployers cannot implement the recommended sub-quota approach without modifying Lenny's source code. Either add a per-region quota subdivision mechanism to the tenant configuration model, or document this as a known v1 limitation with the workaround explicitly stated.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1146,6 +1551,9 @@ In a multi-region deployment, a consumer connecting to region A's gateway gets o
 
 Either: (a) add a `region` field to the billing event schema and the replay API, or (b) explicitly state that the replay endpoint is per-region and that cross-region consumers must maintain per-region cursors.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-076. Legal Hold Reconciler Does Not Detect Holds Set During Active GC Cycle [Low]
@@ -1153,6 +1561,9 @@ Either: (a) add a `region` field to the billing event schema and the replay API,
 Section 12.8 (line 5842) describes the legal hold reconciler running every 15 minutes to detect pre-hold checkpoint gaps. However, the GC job also runs every 15 minutes (line 5802) and is leader-elected to run inside the same gateway process. If a legal hold is set on a session while a GC cycle is actively running and has already queried the retention candidates (but not yet deleted them), the GC job may delete checkpoints for that session between the query and the hold being set. The reconciler would detect this on its next run, but the checkpoint would already be destroyed.
 
 The spec notes that the reconciler "does not attempt to recover deleted checkpoints -- it provides detection and audit trail only" (line 5843), so this is by design. However, the spec does not describe whether the GC job checks `legal_hold` status per-artifact at deletion time or only at query time. If the GC job checks `legal_hold` only in its initial query (`WHERE legal_hold = false`), a hold set between the query and the `DELETE` operation creates a race window. The GC job should re-check `legal_hold` status in the `DELETE ... WHERE legal_hold = false AND deleted_at IS NULL` condition to close this race.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1168,6 +1579,9 @@ The spec does not state whether the separate billing/audit instance also require
 
 Billing and audit tables are tenant-scoped (they carry `tenant_id`) and contain T3-classified data. If the separate instance lacks the RLS defense, a bug in the billing write path could silently write events to the wrong tenant's billing sequence. The RLS requirements should be explicitly stated as applying to all Postgres instances, not just the primary.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-078. `session_dlq_archive` and `session_tree_archive` Not Declared as Storage Roles [Low]
@@ -1176,11 +1590,17 @@ The erasure scope table (lines 5869-5870) lists `session_dlq_archive` and `sessi
 
 The `DeleteByUser` sequence (lines 5890-5891) treats them as independent deletion targets with specific ordering constraints (`session_tree_archive` before `SessionStore` due to FK). If these tables are owned by `SessionStore`, they should be listed as part of its scope in Section 12.2. If they are independent stores, they should be listed as separate roles. Currently they exist in a gray zone: required for erasure but not declared in the storage role inventory, making it possible for an implementer to miss them when building the storage layer.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-079. Redis Key Table Missing DLQ Score Semantics and Expiry Behavior [Low]
 
 Section 12.4's Redis key table (line 5681) lists `t:{tenant_id}:session:{session_id}:dlq` as a "Sorted set scored by expiry; see Section 7.2." However, the table does not define the TTL or expiry semantics for DLQ entries. Section 7.2 (referenced but not fully quoted here) defines DLQ max size (500 messages) and presumably defines the score semantics. The Redis key table should at minimum note the max size and whether the GC for DLQ entries is score-based (expiry time) or size-based (ZREMRANGEBYRANK), since the key table is used as the authoritative Redis key reference and DLQ entries that are not cleaned up will grow unboundedly in Redis memory.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1189,6 +1609,9 @@ Section 12.4's Redis key table (line 5681) lists `t:{tenant_id}:session:{session
 Tenant deletion Phase 4 (line 5935) includes `DROP SEQUENCE IF EXISTS billing_seq_{tenant_id}`. The billing event schema uses `sequence_number` assigned by this sequence. After the sequence is dropped, the erasure receipt (Phase 6, line 5938) is written to the audit trail, and the `gdpr.*` audit events are retained for 7 years (line 5902). If any compliance investigation later needs to verify billing sequence continuity for the deleted tenant, the sequence no longer exists, making it impossible to confirm that no events were silently dropped between the last event and the sequence drop.
 
 This is a minor gap: the receipt presumably records the final state, and the billing events themselves are pseudonymized or deleted before the sequence is dropped. But the spec could note that the final `sequence_number` value is captured in the erasure receipt before the `DROP SEQUENCE` to provide a terminal reference point.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1203,6 +1626,9 @@ For multipart uploads:
 
 The spec does not describe how the quota reservation interacts with multipart uploads. Options include: (a) the adapter computes total size from the workspace probe before initiating multipart, reserving the full amount upfront; (b) each part reserves independently. Option (a) is implied by "for checkpoint writes the adapter supplies the tar size from the workspace-size probe before upload begins" (line 5160), but this only covers checkpoints, not user-initiated uploads that may also use multipart. The quota semantics for multipart user uploads should be explicitly specified.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### STR-082. Postgres Advisory Lock Fallback for LeaseStore Not Covered by Tenant Key Isolation [Low]
@@ -1210,6 +1636,9 @@ The spec does not describe how the quota reservation interacts with multipart up
 Section 12.2 (line 5524) states that `LeaseStore` uses "Redis (fallback: Postgres advisory locks)" for distributed session coordination. The Redis key isolation rule (line 5532) mandates `t:{tenant_id}:` prefix for all Redis-backed roles. However, Postgres advisory locks are integers (or integer pairs), not strings with prefixes. The spec does not describe how tenant isolation is enforced in the advisory lock fallback path.
 
 If advisory locks use a hash of `session_id` as the lock key, two sessions from different tenants could theoretically hash to the same lock value, causing cross-tenant lock contention. The spec should describe the advisory lock key derivation and how tenant isolation is maintained in the fallback path (e.g., by incorporating `tenant_id` into the hash input).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1250,6 +1679,9 @@ The spec states "Child leases are always strictly narrower than parent leases (d
 
 **Challenged:** One could argue "inherited from parent unless DelegationPolicy overrides" is an obvious default. However, fields like `cascadeOnFailure` and `credentialPropagation` are legitimately per-delegation choices (the worked example at line 3404 shows different `credentialPropagation` values per hop). Without a mechanism for the parent to specify them in `delegate_task`, the parent cannot differentiate behavior across children. This is a genuine spec gap.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-066. `maxTreeMemoryBytes` Not Listed as Extendable via Lease Extension [Medium]
@@ -1261,6 +1693,9 @@ The "Extendable fields" list at line 3581 is: `maxChildrenTotal`, `maxParallelCh
 `maxTreeMemoryBytes` appears in neither list. It governs the aggregate in-memory footprint of a tree on the gateway (default 2 MB, line 3210). If a tree reaches its memory cap, new delegations are rejected with `TREE_MEMORY_EXCEEDED`. Since `maxTreeSize` (pod count) is extendable, there is a scenario where a lease extension grants more pods (`maxTreeSize`) but the tree cannot actually use them because `maxTreeMemoryBytes` was not extended in proportion. The spec should explicitly classify `maxTreeMemoryBytes` as either extendable (alongside `maxTreeSize`) or not extendable (with rationale).
 
 **Challenged:** Perhaps `maxTreeMemoryBytes` is intentionally not extendable because it protects gateway memory. But the same argument applies to `maxTreeSize` (which is extendable), and `maxTreeSize` directly drives pod resource consumption. The omission appears to be an oversight rather than a deliberate design choice, especially since both counters are managed by the same Lua scripts.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1274,6 +1709,9 @@ However, the LRU cache entries rehydrate `TaskResult` payloads into memory (incl
 
 **Challenged:** The LRU cache is per-gateway-replica, not per-tree, so it arguably falls outside the scope of `maxTreeMemoryBytes` (a per-tree counter). The cache is also bounded at 128 entries. However, with 128 entries each potentially holding large `OutputPart` arrays (up to 64 KB inline per part, or multiple parts), the cache could hold ~8 MB per replica. For a gateway serving many trees, this is a per-replica overhead rather than a per-tree concern, and the 128-entry cap limits it. This is a genuine but low-severity documentation gap.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-068. No Tree-Wide Cumulative File Export Budget [Medium]
@@ -1285,6 +1723,9 @@ However, the LRU cache entries rehydrate `TaskResult` payloads into memory (incl
 The spec has no tree-wide cumulative file export budget analogous to `maxTokenBudget` (which caps total tokens across the tree). A tree with depth 5 and fan-out 50 could generate tens of GB of file transit without violating any per-delegation limit.
 
 **Challenged:** The per-delegation limit combined with `maxTreeSize` and `maxChildrenTotal` does provide an implicit ceiling: `maxChildrenTotal * fileExportLimits.maxTotalSize` per node. But this is an emergent bound, not an explicit one, and it compounds across tree levels. If this is an accepted design choice (file export limits are per-hop, not cumulative), the spec should state so explicitly. Given that `maxTokenBudget` has explicit tree-wide semantics, the absence of an analogous tree-wide file export budget is a genuine gap for deployer capacity planning.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1298,6 +1739,9 @@ However, there is no specification for routine GC of `session_tree_archive` rows
 
 **Challenged:** The standard session retention policy (configurable via `retentionPolicy`) likely covers this implicitly -- when a root session's retention period expires and the session is cleaned up, the FK cascade would delete `session_tree_archive` rows. However, the spec never explicitly states that `session_tree_archive` cleanup is tied to root session retention. Given the FK relationship documented at line 5891, cascade delete from `SessionStore` is the likely mechanism, but the spec should be explicit about the retention lifecycle for this table.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-070. `treeUsage` Only Available After All Descendants Settled -- No Incremental Aggregation [Low]
@@ -1309,6 +1753,9 @@ However, there is no specification for routine GC of `session_tree_archive` rows
 This means a parent orchestrating a large tree (e.g., 50 children) cannot observe cumulative token consumption across its subtree while children are still running. For cost-aware orchestration patterns (e.g., "stop delegating when subtree has consumed 80% of budget"), the parent has no way to know current aggregate consumption. The per-child `usage` is available, but the parent would need to manually sum all children's usage, and this does not include grandchild consumption for children that are themselves orchestrators.
 
 **Challenged:** The parent can observe its own `maxTokenBudget` counter depletion (since child slices are reserved from it), which indirectly tracks aggregate consumption. However, this only tells the parent how much budget it has left, not how much its subtree has actually consumed (since returned budget from completed children inflates the remaining counter). The lack of incremental `treeUsage` is a real limitation for cost-aware orchestration. That said, the reservation model provides a workable proxy, and real-time aggregation across an active tree would be expensive. This is a low-severity documentation gap rather than a design error.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1322,6 +1769,9 @@ The actual per-node footprint depends on runtime factors: event buffer fill leve
 
 **Challenged:** The estimate is configurable via Helm (`delegationNodeMemoryFootprintBytes`), so deployers can tune it. The 12 KB figure includes defined components with clear sizing. The real risk is drift during development (implementation adds per-node state that exceeds the estimate). This is minor and mitigated by the Helm configurability, but the spec could note that the estimate should be validated against actual memory profiling during development and updated per release.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-072. Cross-Subtree Deadlock via `send_message` Bounded Only by `maxRequestInputWaitSeconds` [Low]
@@ -1333,6 +1783,9 @@ The spec explicitly documents this as a known limitation: "circular `lenny/send_
 While documented, the default `maxRequestInputWaitSeconds` is 600s (10 minutes). Two siblings in a circular `send_message` wait will each consume a pod for 10 minutes before timing out, wasting 20 pod-minutes. With `messagingScope: siblings` and `maxParallelChildren: 10`, up to 10 such pairs (20 children) could be deadlocked simultaneously, consuming 200 pod-minutes of waste per deadlock window.
 
 **Challenged:** This is explicitly documented as a known limitation with a clear mitigation (`maxRequestInputWaitSeconds`). The 600s default is the same as `maxElicitationWaitSeconds` and is a reasonable balance. Deployers aware of sibling-messaging workloads can reduce it. The spec correctly identifies the scope boundary of the deadlock detector and provides adequate guidance. This is a documentation acknowledgement, not a missing spec.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1346,6 +1799,9 @@ This means the delegating parent cannot pass environment variables (`env`), runt
 
 **Challenged:** Keeping `TaskSpec` minimal is a security design choice -- it prevents parents from injecting arbitrary configuration into children. Environment variables could be used for injection attacks; `runtimeOptions` could override safety settings. The gateway controls augmentation. However, there is a usability gap: the parent cannot parameterize child behavior beyond input content and file exports. A safe subset of child-configurable fields (or a `hints` map) would address this without compromising security. This is a genuine spec gap for orchestration expressiveness.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-074. `cascadeOnFailure` Name Is Misleading -- It Fires on All Terminal States Including `completed` [Low]
@@ -1357,6 +1813,9 @@ The spec explicitly acknowledges: "The name `cascadeOnFailure` is historical; it
 While the spec documents this, the field name actively misleads implementors. An agent runtime author reading the lease schema would reasonably assume `cascadeOnFailure: cancel_all` means "cancel children if I fail" and be surprised when normal completion also triggers the cascade. The `cascadeOnTermination` or `childLifecyclePolicy` name would be semantically accurate.
 
 **Challenged:** The spec documents the actual behavior clearly and thoroughly. The misleading name is a cosmetic issue that documentation addresses. Renaming a lease field has schema compatibility implications. This is a low-severity naming concern, not a functional gap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1370,6 +1829,9 @@ This means a deployer who enables `snapshotPolicyAtLease: true` for policy stabi
 
 **Challenged:** This is explicitly documented and the rationale is reasonable -- bilateral declarations are environmental access control (who can talk to whom) and should reflect current administrator intent, unlike pool-label matching which is operational routing. However, the asymmetry creates a surprising partial-snapshot: policy rules are frozen but environment access is live. A deployer reading "`snapshotPolicyAtLease: true` provides stable, predictable delegation behavior for long-running trees" (line 3264) may not realize that cross-environment access can still change under them. The spec documents this but the usability implication is notable.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DEL-076. `budget_reserve.lua` Uses Static `nodeMemoryEstimate` Not Actual Memory at Offload [Low]
@@ -1382,6 +1844,9 @@ But the decrement on `budget_return.lua` (child reaches terminal state, line 338
 
 **Challenged:** Re-reading the spec carefully: offloading happens "When a child session reaches a terminal state" (line 3212), and `budget_return.lua` also fires "when a child session reaches a terminal state" (line 3378). These appear to be part of the same terminal-state handling flow, not separate events. The offloading description says "The `maxTreeMemoryBytes` counter is decremented when a node is offloaded" (line 3212), while `budget_return.lua` "decrements tree memory via `DECRBY`" (line 3388). If both happen on the same terminal event, there is a double-decrement. If offloading is what performs the decrement (and `budget_return.lua`'s memory decrement IS the offload decrement), the spec describes the same operation twice in different sections. The spec should clarify whether offload-time decrement and `budget_return.lua` decrement are the same operation or distinct operations that could double-count.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ---
@@ -1392,65 +1857,113 @@ But the decrement on `budget_return.lua` (child reaches terminal state, line 338
 
 **Section 6.2** states that `maxSessionAge` runs during `running`, `input_required`, and `starting`, and is paused during `suspended`, `resume_pending`, `resuming`, and `awaiting_client_action`. However, **Section 11.3** lists `maxSessionAge` with default 7200s and references Section 6.2, but the timeout table does not mention the pausing/running distinction. More importantly, the `session_expiring_soon` event in Section 11.3 says it fires "5 minutes before `maxSessionAge` expires" -- but if the timer pauses and resumes across multiple state transitions, the gateway must track cumulative running time, not wall-clock time. The spec never explicitly states whether `maxSessionAge` measures cumulative running time or wall-clock time with pauses subtracted. This ambiguity could lead to implementation divergence.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-072. `created` state timeout vs. session lifecycle step atomicity gap [Medium]
 
 **Section 7.1** states that steps 2-8 of the 24-step session creation flow are atomic (pod claim, credential assignment, etc.). **Section 15.1** states that the `created` state has a TTL of `maxCreatedStateTimeoutSeconds` (default 300s), and on expiry the gateway releases the pod claim and revokes the credential lease. However, the spec does not define what happens if the `maxCreatedStateTimeoutSeconds` timer fires during the atomic steps 2-8 themselves. If the atomicity window takes longer than expected (e.g., credential pool contention, slow pod claim), the timer could fire mid-atomicity, creating a partial-cleanup race condition. The spec should clarify whether the timer starts after atomicity completes (i.e., after step 8) or at the moment the `CreateSession` call begins.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-073. `suspended` state lacks explicit entry from `input_required` sub-state [Medium]
 
 **Section 6.2** defines `input_required` as a sub-state of `running`. **Section 15.1** state transition table says `POST /v1/sessions/{id}/interrupt` is valid from `running` and transitions to `suspended`. However, if the session is in the `input_required` sub-state (blocked in `lenny/request_input`), the spec does not define what happens to the pending `request_input` tool call when an interrupt occurs. Does the tool call resolve with an error? Does it remain pending across the suspend/resume cycle? Section 15.4.1's `MessageEnvelope` states that `delivery: "immediate"` does NOT override path 3 buffering during `input_required`, suggesting the sub-state has special handling, but interrupt behavior during `input_required` is unspecified.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-074. `resume_pending` → `running` transition omits `resuming` in API response but `resuming` has operational significance [Low]
 
 **Section 15.1** state transition table says `POST /v1/sessions/{id}/resume` transitions `awaiting_client_action` → `resume_pending` → `running`, noting that `resuming` is "internal-only transient state." However, Section 7.3 describes `resuming` as requiring checkpoint restoration and pod allocation, which can take significant wall time. During this window, the API reports the session as `resume_pending` even though the system is actively restoring state. If the `resuming` phase fails (e.g., checkpoint restoration failure), the session would need to transition back, but the API surface has no way to indicate that the "resume" is failing since it still shows `resume_pending`. The `maxResumeWindowSeconds` covers the outer boundary, but within that window, clients have no observability into progress.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-075. Credential lease lifecycle mismatch between session mode and concurrent-workspace mode [Medium]
 
 **Section 4.9** states credential leases are "per-session for session mode, per-task for task mode, per-slot for concurrent mode." However, Section 7.1 step 6 describes credential assignment as part of the atomic session creation (steps 2-8). For concurrent-workspace mode, if leases are per-slot, the spec does not clarify when slot-level leases are created -- are they created at session creation time (before any slot assignment) or at slot assignment time? If at slot assignment time, the atomic session creation (steps 2-8) would only pre-validate credential availability without actually leasing, which conflicts with the step 6 description "Token Service selects credential, assigns lease, gateway pushes to pod."
 
+**Status:** Skipped — not an error
+
+
 ### SLC-076. `awaiting_client_action` with `maxAwaitingClientActionSeconds` expiry vs. `maxResumeWindowSeconds` overlap [Medium]
 
 **Section 7.3** defines both `maxResumeWindowSeconds` (default 900s, wall-clock cap on `resume_pending`) and `maxAwaitingClientActionSeconds` (default 900s). Section 6.2 says `maxResumeWindowSeconds` is a "wall-clock cap" while `maxAwaitingClientActionSeconds` applies to `awaiting_client_action`. If a session exhausts automatic retries and enters `awaiting_client_action`, and the client then calls `resume`, the session goes to `resume_pending`. At this point, both timers are relevant: the `maxAwaitingClientActionSeconds` was running during `awaiting_client_action`, and now `maxResumeWindowSeconds` starts for `resume_pending`. The spec does not clarify whether `maxAwaitingClientActionSeconds` is cancelled when the client resumes (transitioning out of `awaiting_client_action`), or whether it continues to run as a total wall-clock budget across `awaiting_client_action` + subsequent states.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-077. Session derive from non-terminal sessions lacks checkpoint consistency guarantee [Medium]
 
 **Section 15.1** allows `POST /v1/sessions/{id}/derive` from non-terminal sessions when `allowStale: true` is set. The response includes `workspaceSnapshotSource` and `workspaceSnapshotTimestamp`. However, the spec does not specify what happens if a checkpoint is in progress when the derive is requested. Section 4.4 describes checkpoint atomicity with partial manifests, but the derive operation's interaction with an in-progress checkpoint is unspecified. The derived session could receive a workspace from a checkpoint taken mid-operation, leading to an inconsistent workspace state. The spec should clarify whether derive blocks until the current checkpoint completes or uses the last fully-committed checkpoint.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-078. Inter-session message DLQ migration on `resume_pending` lacks size bound [Medium]
 
 **Section 7.2** states that when a session enters `resume_pending`, inbox messages migrate to DLQ (Redis-backed, `session_dlq_archive` in Postgres). However, the spec does not define a size limit on the DLQ. If a session is in `resume_pending` or `awaiting_client_action` for an extended period and receives many messages from siblings or parents, the DLQ could grow unboundedly. The `messagingRateLimit.maxInboundPerMinute` provides rate limiting, but over the full `maxResumeWindowSeconds` + `maxAwaitingClientActionSeconds` window (potentially 1800s), a session could accumulate significant DLQ entries without a defined cap.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-079. `session_expiring_soon` event timing with paused `maxSessionAge` timer [Low]
 
 **Section 11.3** states the gateway sends `session_expiring_soon` 5 minutes before `maxSessionAge` expires. Section 6.2 defines that `maxSessionAge` pauses during `suspended`, `resume_pending`, `resuming`, and `awaiting_client_action`. If a session has accumulated 115 minutes of running time (out of 120 max), enters `suspended`, and remains suspended for hours, the 5-minute warning should have been sent at 115 minutes. But if the session was suspended before reaching 115 minutes, the warning hasn't fired yet. When the session resumes and the timer restarts, the spec doesn't clarify whether the gateway immediately fires the warning (since less than 5 minutes remain) or only checks at periodic intervals. This could result in a session timing out with no warning if it resumes with less than 5 minutes remaining.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-080. Task-mode `task_complete_acknowledged` timeout (30s hard-coded) has no fallback path [Medium]
 
 **Section 4.7** mentions `task_complete_acknowledged` with a 30s hard-coded timeout, and Section 11.3 confirms it. However, the spec does not define what happens when this timeout expires without acknowledgment. Does the gateway assume the runtime is hung and force-terminate the pod? Does it retry the signal? Does it mark the task as failed? For task-mode pods that are expected to be reused across tasks, a hung runtime between tasks would prevent pod reuse, but the recovery path is unspecified.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-081. Coordinator handoff during `input_required` sub-state may lose pending request context [Medium]
 
 **Section 10.1** describes coordinator handoff between gateway replicas, including `CoordinatorFence` RPC and state transfer. However, the handoff procedure does not explicitly address the `input_required` sub-state. When a session is blocked in `lenny/request_input`, the gateway holds the pending request context (the `requestId`, the requesting child session, the timeout). If the coordinating gateway replica fails and another takes over, the spec does not describe how the new coordinator reconstructs this pending request state. The `maxRequestInputWaitSeconds` timeout (Section 11.3) would eventually fire, but the new coordinator needs to know about the pending request to fire it correctly.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-082. `maxElicitationWaitSeconds` and `maxRequestInputWaitSeconds` interaction during nested delegation [Low]
 
 **Section 11.3** defines `maxElicitationWaitSeconds` (600s, per pool) and `maxRequestInputWaitSeconds` (600s, per pool). Section 9.2 describes the elicitation chain as hop-by-hop. In a deep delegation tree, a child calling `lenny/request_input` could trigger the parent to call `lenny/request_elicitation` upward. Each hop has its own timeout. If the chain is 3 hops deep, the leaf's `maxRequestInputWaitSeconds` could expire before the root's elicitation response propagates back through 2 intermediate hops. The spec does not address how these per-hop timeouts compound in deep delegation trees or whether the leaf's timeout should account for propagation delay.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-083. `recovery_generation` vs `coordination_generation` usage inconsistency in pod state machine [Low]
 
 **Section 10.1** defines `coordination_generation` for coordinator handoff fencing and Section 7.3 defines `recovery_generation` for session resume. Section 6.2's pod state machine uses these generations to prevent stale operations. However, the spec never clarifies which generation is checked during which pod state transitions. For example, when a pod transitions from `running` to `suspended` (interrupt), does the gateway check `coordination_generation`? When a checkpoint is triggered during `running`, which generation gates the checkpoint write? The two generation counters serve different purposes but their interaction with the pod state machine transitions is underspecified.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-084. Session completion with in-flight billing events in Redis stream creates ordering gap [Medium]
 
 **Section 7.1** step 23-24 describes session completion including final reconciliation of token usage to Postgres. **Section 11.2.1** describes billing events being staged to Redis stream during Postgres unavailability. If a session completes while billing events are staged in the Redis stream (Postgres was transiently unavailable), the `session.completed` billing event would be written to Postgres (which is now available for the completion), but earlier `token_usage.checkpoint` events are still in the Redis stream waiting to be flushed. This creates an ordering inversion: the `session.completed` event appears in Postgres with a lower `sequence_number` than the checkpoint events that preceded it chronologically. The spec's gap-detection mechanism (consumers detect gaps in `sequence_number`) would detect this, but the root cause (ordering inversion from dual-path writes) is not addressed.
+
+**Status:** Skipped — not an error
+
 
 ### SLC-085. `DELETE /v1/sessions/{id}` transitions to `cancelled` but `POST /v1/sessions/{id}/terminate` transitions to `completed` [Low]
 
 **Section 15.1** state transition table shows `DELETE /v1/sessions/{id}` results in `cancelled` while `POST /v1/sessions/{id}/terminate` results in `completed`. Both are described as terminating the session, but they produce different terminal states. The distinction is meaningful for billing (a `cancelled` session vs. a `completed` session may have different cost implications) and for derive eligibility (both are terminal). However, the webhook delivery model in Section 14 defines separate events: `session.completed`, `session.cancelled`, and `session.terminated`. The `terminate` endpoint produces `completed` but also has a separate `session.terminated` webhook type, creating a confusing mapping between API action, terminal state, and webhook event type.
 
+**Status:** Skipped — not an error
+
+
 ### SLC-086. Erasure job interaction with active session lifecycle not fully specified [Medium]
 
 **Section 12.8** states that when an erasure job is initiated, `processing_restricted: true` is set, and "in-flight sessions that are already running at erasure initiation time are allowed to complete naturally (they will be erased by the job)." However, the `DeleteByUser` sequence (steps 1-18) includes deleting `LeaseStore` entries (step 1) and `QuotaStore` entries (step 6) before `SessionStore` (step 15). If sessions are still running when steps 1 and 6 execute, deleting active session coordination leases and quota counters could disrupt those running sessions. The spec should clarify whether the erasure job waits for all active sessions to reach a terminal state before executing the deletion sequence, or whether it proceeds immediately.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1460,11 +1973,17 @@ But the decrement on `budget_return.lua` (child reaches terminal state, line 338
 
 Section 15.1 (line 7101) defines `lenny_pool_draining_sessions_total` as a gauge labeled by `pool` that tracks in-flight sessions during pool drain operations. This metric is referenced as the monitoring signal for the pool drain admin endpoint. However, it does not appear in the Section 16.1 metrics table. Operators monitoring pool drain progress have no canonical metrics-table entry to reference.
 
+
+**Status:** Fixed — Added lenny_pool_draining_sessions_total to Section 16.1 metrics table
+
 ---
 
 ### OBS-059. `lenny_mcp_deprecated_version_active_sessions` metric defined inline in Section 15.2 but absent from Section 16.1 metrics table [Medium]
 
 Section 15.2 (line 7513) defines `lenny_mcp_deprecated_version_active_sessions` as a gauge emitted by the preflight Job to warn operators of sessions still active on a deprecated MCP protocol version. This metric is not listed in the Section 16.1 metrics table. Without it, operators cannot build dashboards around MCP version deprecation readiness.
+
+
+**Status:** Fixed — Added lenny_mcp_deprecated_version_active_sessions to Section 16.1 metrics table
 
 ---
 
@@ -1472,11 +1991,17 @@ Section 15.2 (line 7513) defines `lenny_mcp_deprecated_version_active_sessions` 
 
 Section 11.6 (line 5411) defines `lenny_circuit_breaker_open` gauge (labeled by `circuit_name`) and a corresponding `CircuitBreakerActive` warning alert that fires when any breaker has been open for more than 5 minutes. Neither the metric nor the alert appear in Section 16.1's metrics table or Section 16.5's alerting rules table. These are operator-declared circuit breakers (distinct from the per-subsystem circuit breakers already covered), and their omission means the central observability specification does not capture a key operational control surface.
 
+
+**Status:** Fixed — Added lenny_circuit_breaker_open metric and CircuitBreakerActive alert to Sections 16.1/16.5
+
 ---
 
 ### OBS-061. `lenny_pool_bootstrap_mode` metric defined in Section 17.8.2 but absent from Section 16.1 metrics table [Low]
 
 Section 17.8.2 (lines 9653-9655) defines `lenny_pool_bootstrap_mode` as a gauge per pool (1 = active, 0 = converged). While the `PoolBootstrapMode` alert that references this metric is correctly listed in Section 16.5, the underlying metric itself is not listed in the Section 16.1 metrics table, creating an inconsistency where an alert references a metric that has no metrics-table entry.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1484,11 +2009,17 @@ Section 17.8.2 (lines 9653-9655) defines `lenny_pool_bootstrap_mode` as a gauge 
 
 Section 21.1 (line 10152) states that A2A `OutboundChannel.Send` "emits a `push_delivery_failed` metric" after webhook delivery retry exhaustion, but does not specify a fully-qualified Prometheus metric name (e.g., `lenny_a2a_push_delivery_failed_total`), labels, or metric type. Since this is a Post-V1 feature, the impact is low, but the metric naming convention is inconsistent with the `lenny_` prefix used everywhere else. If this is intended as a v1 concern (since the `OutboundChannel` infrastructure ships in v1), it should have a canonical name.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### OBS-063. `audit_grant_drift_total` metric uses inconsistent naming -- no `lenny_` prefix [Medium]
 
 Section 11.7 (line 5435) defines `audit_grant_drift_total` as a Prometheus counter that tracks audit grant drift detections. This metric violates the `lenny_` prefix convention used by all other platform metrics (e.g., `lenny_billing_correction_pending_total`, `lenny_erasure_job_failed_total`). Section 16.5's `AuditGrantDrift` alert (line 8780) references this metric. The naming inconsistency could cause confusion when configuring monitoring dashboards and alerting rules.
+
+
+**Status:** Fixed — Renamed audit_grant_drift_total to lenny_audit_grant_drift_total for prefix consistency
 
 ---
 
@@ -1496,11 +2027,17 @@ Section 11.7 (line 5435) defines `audit_grant_drift_total` as a Prometheus count
 
 Section 16.5 (line 8841) defines the `WorkspaceSealStuck` alert that fires based on `lenny_workspace_seal_duration_seconds{outcome="timeout"}`. However, this metric does not appear in the Section 16.1 metrics table. The alert correctly specifies the metric name and outcome label, but the metrics table has no corresponding entry for implementers to instrument.
 
+
+**Status:** Fixed — Added lenny_workspace_seal_duration_seconds to Section 16.1 metrics table
+
 ---
 
 ### OBS-065. No alerting rule for `lenny_orphan_tasks_active` exceeding threshold despite explicit instruction [Low]
 
 Section 8.10 (line 4019) states: "Deployers should alert when `lenny_orphan_tasks_active` exceeds a deployment-specific threshold (suggested: 50)." The metric is correctly listed in Section 16.1. However, Section 16.5's alerting rules table has no alert for global `lenny_orphan_tasks_active > 50`. There is `OrphanTasksPerTenantHigh` (per-tenant alert at 80% of cap), but no aggregate alert. The per-tenant alert catches per-tenant abuse; the aggregate threshold catches systemic orphan accumulation across all tenants. These are different failure modes.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1508,11 +2045,17 @@ Section 8.10 (line 4019) states: "Deployers should alert when `lenny_orphan_task
 
 Section 16.2 (key latency breakpoints) and the distributed tracing section (16.2) define spans for session lifecycle, checkpoint, and delegation. However, pool drain is a multi-phase operational lifecycle (drain initiated -> sessions draining -> drain complete) referenced in Section 15.1 with its own status endpoint, metric (`lenny_pool_draining_sessions_total`), and error code (`POOL_DRAINING`). No tracing spans are defined for the drain lifecycle, making it difficult to trace drain duration and diagnose slow drains.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### OBS-067. No metric or alert for `lenny/request_input` timeout rate [Medium]
 
 Section 11.3 defines `maxRequestInputWaitSeconds` as the timeout for `lenny/request_input` blocking calls, and the error code `REQUEST_INPUT_TIMEOUT` is defined in Section 15.1. However, neither Section 16.1's metrics table nor Section 16.5's alerting rules include a metric tracking the rate of `request_input` timeouts. A high rate of these timeouts indicates user responsiveness issues or misconfigured timeout values. The `lenny_elicitation_timeout_total` metric covers elicitation timeouts (Section 9.2) but `request_input` is a different code path (Section 7.2, path 3).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1520,11 +2063,17 @@ Section 11.3 defines `maxRequestInputWaitSeconds` as the timeout for `lenny/requ
 
 Section 16.1 includes `lenny_checkpoint_storage_failure_total` (counter labeled by pool, tier, trigger). However, Section 16.5's alerting rules have no alert that fires when this counter sustains a non-zero rate. The `CheckpointStaleSessions` alert (line 8806) fires when sessions have stale checkpoints, but this is an indirect symptom. A direct alert on sustained checkpoint storage failures would provide earlier warning of MinIO or object storage issues affecting data durability.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### OBS-069. `lenny_pgaudit_grant_events_total` metric not listed in Section 16.1 metrics table [Low]
 
 Section 11.7 (line 5446) defines `lenny_pgaudit_grant_events_total` (counter, labeled by `statement_type`) and Section 16.5 references it in the `PgAuditSinkDeliveryFailed` alert. However, this metric is not listed in the Section 16.1 metrics table.
+
+
+**Status:** Fixed — Added lenny_pgaudit_grant_events_total to Section 16.1 metrics table
 
 ---
 
@@ -1532,11 +2081,17 @@ Section 11.7 (line 5446) defines `lenny_pgaudit_grant_events_total` (counter, la
 
 Section 15.1 (lines 7028-7057) defines `POST /v1/sessions/{id}/replay` with detailed semantics including mode selection, runtime compatibility validation, and credential handling. No metrics, tracing spans, or alerts are defined for replay operations anywhere in the spec. Replay is a key mechanism for regression testing and A/B evaluation; operators need to track replay volume, success rates, and latency to assess runtime upgrade confidence.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### OBS-071. No metric for credential deny-list propagation latency [Medium]
 
 Section 4.9 describes emergency credential revocation with deny-list propagation via Redis pub/sub. Section 17.7 includes a credential pool exhaustion runbook. Section 16.1 includes credential rotation and assignment metrics, but no metric captures the latency between a revocation event and the last gateway replica acknowledging the deny-list update. In a multi-replica gateway deployment, propagation delay is a critical security metric -- a credential could be used during the gap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1544,17 +2099,26 @@ Section 4.9 describes emergency credential revocation with deny-list propagation
 
 Section 16.1 includes `lenny_billing_redis_stream_depth` (gauge) which shows accumulating events. However, no counter tracks the number of individual Postgres flush attempts that fail. A sustained non-zero stream depth could result from either slow but successful flushes or repeated failures. A counter for flush failures (e.g., `lenny_billing_flush_failure_total`) would disambiguate these cases. Section 11.2.1's two-tier durability model depends on Postgres flush reliability, and the billing write-ahead buffer alert (`BillingWriteAheadBufferHigh`) covers only the in-memory buffer, not the Redis->Postgres flush path.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### OBS-073. `lenny_restore_test_success` and `lenny_restore_test_duration_seconds` referenced in Section 17.1 but absent from Section 16.1 metrics table [Low]
 
 Section 17.1 (disaster recovery) references `lenny_restore_test_success` and `lenny_restore_test_duration_seconds` as metrics for the automated daily backup restore test. These are not listed in the Section 16.1 metrics table. As DR metrics emitted by an external Job (not the gateway itself), their omission may be intentional, but the spec does not clarify this boundary.
 
+
+**Status:** Fixed — Added lenny_restore_test_success and lenny_restore_test_duration_seconds to Section 16.1 metrics table
+
 ---
 
 ### OBS-074. SLO error-budget burn-rate alerts missing for checkpoint duration at workspace sizes above 100MB [Low]
 
 Section 16.5 defines `CheckpointDurationBurnRate` for the SLO "Checkpoint duration P95 < 2s (100MB workspace)". However, Section 4.4 defines tiered checkpoint size caps (1 GB for periodic, 500 MB for eviction). No SLO or burn-rate alert covers checkpoint duration for workspaces between 100MB and 1GB. Operators have no alerting signal for checkpoint latency degradation at larger workspace sizes, which are common in production.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1566,77 +2130,134 @@ Section 16.5 defines `CheckpointDurationBurnRate` for the SLO "Checkpoint durati
 
 The `audit.retentionPreset` table (Section 16.4) defines a `nis2-dora` preset (1825 days / 5 years) and pairs it with `complianceProfile: none` or `soc2`. However, NIS2 and DORA impose distinct runtime controls beyond retention length -- incident reporting timelines (NIS2: 24-hour early warning, 72-hour incident notification), supply chain security documentation, ICT risk management evidence preservation, and cross-border notification to multiple national CERTs. These are qualitatively different from SOC2/HIPAA/FedRAMP controls. The spec provides no `complianceProfile` value (e.g., `nis2` or `dora`) that could gate NIS2/DORA-specific runtime enforcement. Deployers targeting NIS2/DORA compliance must manually configure retention via the preset while relying on `complianceProfile: none` or `soc2` for runtime controls, which may not satisfy auditor expectations that the platform actively enforces NIS2/DORA-specific controls. The document should either (a) add `nis2` and/or `dora` as `complianceProfile` values with appropriate runtime gates, or (b) explicitly document that NIS2/DORA runtime enforcement is the deployer's responsibility and the preset is retention-only.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-071. Multi-Region Quota Enforcement Gap Creates Unbounded Financial Exposure [Medium]
 
 Section 12.8 acknowledges that per-tenant quotas (storage, token budget) are enforced per-region in multi-region deployments: "each region enforces quotas independently against its own counters" and "the global per-tenant quota could be exceeded in aggregate even if each region is individually within limits." The spec delegates global cross-region quota aggregation to the deployer as "the deployer's responsibility." This is a genuine compliance gap for billing and cost governance: a tenant operating across N regions can consume up to N times their intended global quota with no platform-level enforcement or even alerting. The document provides no guidance on how deployers should implement cross-region quota coordination, no recommended architecture for a centralized quota service, and no metric or alert that would fire when aggregate cross-region quota is exceeded. At minimum, the spec should define a `lenny_quota_per_region_usage` metric that deployers can aggregate externally, and document the recommended pattern for sub-quota allocation (which it mentions in passing but does not formalize).
+
+**Status:** Skipped — not an error
+
 
 ### CMP-072. Cross-Region Billing Aggregation Lacks Specified Reconciliation Semantics [Medium]
 
 Section 12.8 states billing sequence monotonicity is per-region-per-tenant and that "cross-region billing aggregation is the deployer's responsibility." However, the billing event schema (Section 11.2.1) defines correction semantics with a `corrects_event_id` reference. In a multi-region deployment, a correction event in region A could reference an event ID from region B (if the deployer's aggregation layer merges events cross-region before corrections are applied). The spec does not specify whether `corrects_event_id` is region-scoped or globally unique, whether correction events must be applied in the same region as the original event, or how the dual-control approval workflow (which lives in a single gateway deployment per region) interacts with cross-region corrections. This creates ambiguity that could lead to billing integrity violations.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-073. Erasure Job Does Not Cover the `session_inbox` / DLQ Live Redis Structures [Medium]
 
 The erasure scope table (Section 12.8) lists 18 stores including `session_dlq_archive` (Postgres) and `LeaseStore` (Redis). However, Section 7.2 defines a `session_inbox` and DLQ as live Redis structures (each with max 500 messages). If an erasure job runs while sessions are still completing (the spec allows in-flight sessions to "complete naturally"), messages in the live `session_inbox` and DLQ Redis lists are not covered by the `DeleteByUser` sequence -- the sequence only covers `session_dlq_archive` (the Postgres archive) and `LeaseStore`. The live Redis inbox and DLQ messages for in-flight sessions constitute personal data (they contain inter-session user content per Section 7.2). The erasure job should either (a) wait for all in-flight sessions to terminate before proceeding, or (b) explicitly include `session_inbox` and DLQ Redis keys in the deletion scope.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-074. Tenant Deletion Phase 4 Does Not Cover `EvictionStateStore` Deletion in Documented Dependency Order [Low]
 
 The tenant deletion Phase 4 dependency order (Section 12.8) lists the sequence: `LeaseStore` -> `SemanticCache` -> Redis caches -> experiment sticky assignment cache -> billing Redis stream -> `QuotaStore` -> `ArtifactStore` -> `MemoryStore` -> `EvictionStateStore` -> `session_dlq_archive` -> `session_tree_archive` -> `EventStore` (audit) -> `EventStore` (billing) -> `EvalResultStore` -> `SessionStore` -> `TokenStore` -> `CredentialPoolStore` -> additional items. The `EvictionStateStore` is listed in the erasure scope table (Section 12.8) as containing "Minimal eviction state records containing `last_message_context` for the user's sessions." However, the `DeleteByUser` sequence (steps 1-18) lists `EvictionStateStore` at step 9 and `ArtifactStore` at step 10 -- but the ArtifactStore contains eviction context objects at `/{tenant_id}/eviction/{session_id}/context`. If eviction context objects in MinIO reference or depend on the `EvictionStateStore` Postgres records, the dependency order is correct. But if the reverse is true (MinIO objects should be deleted first), there is a dependency violation. The spec should clarify the FK/referential relationship between `EvictionStateStore` and eviction context objects in `ArtifactStore`.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-075. `billingErasurePolicy: exempt` Tenants Lack Retention Ceiling for Identifiable Billing Data [Medium]
 
 Tenants with `billingErasurePolicy: exempt` retain billing events with the original `user_id` intact indefinitely (subject only to `billing.retentionDays`). The default billing retention is 395 days, but there is no maximum ceiling. Under GDPR Article 5(1)(e) (storage limitation), personal data must not be kept longer than necessary for the purpose. For exempt tenants, the spec documents GDPR Article 17(3)(b) as the legal basis but does not require deployers to configure a maximum retention period appropriate to their jurisdiction's requirements. A tenant could inadvertently retain identifiable billing data for years beyond what their legal basis supports. The spec should require `billingErasurePolicy: exempt` tenants to also configure a `billingRetentionMaxDays` value, or at minimum emit a compliance audit event when identifiable billing records exceed a configurable age threshold.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-076. GDPR Erasure Receipt Retention Floor Inconsistency Between Regulated and Non-Regulated Profiles [Low]
 
 Section 17.8.1 states the GDPR erasure receipt retention default is 2555 days (7 years) with a floor of 2190 days for any regulated `complianceProfile`. Section 12.8 states: "This value may not be set below 2190 (6 years) when `complianceProfile` is any regulated value." For non-regulated deployments (`complianceProfile: none`), there is no floor specified -- the value could theoretically be set to 1 day. Since erasure receipts are the authoritative proof that GDPR erasure was performed, and GDPR enforcement windows extend to 4-6 years regardless of whether the deployer has a regulated compliance profile, the absence of any floor for non-regulated deployments is a gap. GDPR enforcement timelines apply to all controllers, not only those with formal compliance profiles. The spec should enforce a minimum floor (e.g., 2190 days) regardless of `complianceProfile`.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-077. No Mechanism to Verify Completeness of `DeleteByUser` Across All 18 Stores [Medium]
 
 The erasure job executes `DeleteByUser` across 18 stores in dependency order and the spec describes crash recovery via phase persistence. However, there is no post-completion verification step that confirms all stores are actually clean. The verification step described in Section 12.8 only covers the billing pseudonymization salt deletion (step 14/18). After the full 18-step sequence completes, the erasure receipt is written without a cross-store verification scan. If a store deletion silently fails (e.g., a Redis `DEL` returns 0 because the key was already TTL-expired but a different key pattern was missed), the receipt would record success while personal data remains. The spec should define a post-completion verification pass that queries each store for any remaining records matching the erased `user_id` before writing the completion receipt.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-078. Audit Event Hash Chain Gap at SIEM Boundary Not Detectable by Platform [Medium]
 
 Section 11.7 specifies hash-chain integrity for audit events in Postgres, with periodic verification and startup chain checks. However, the SIEM outbox forwarder reads from Postgres and delivers to an external SIEM endpoint. If the SIEM loses events (network partition, SIEM-side ingestion failure), the hash chain in Postgres remains intact while the SIEM copy has gaps. The spec defines `AuditSIEMDeliveryLag` alert (Section 16.5) for lag, but there is no mechanism for the platform to verify hash-chain integrity at the SIEM end. For regulated deployments where the SIEM is the authoritative immutable copy (the spec states: "The SIEM provides the independent, immutable audit copy that satisfies regulatory requirements"), gaps in the SIEM copy that are undetectable by the platform undermine the compliance value. The spec should define a SIEM-side hash verification protocol or at least require the SIEM forwarder to track the last successfully delivered hash chain entry and alert on gaps.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-079. Pre-Phase 13 Audit Gap Is Accepted but Not Bounded for Duration [Low]
 
 Section 18 (Build Sequence) states: "Between Phase 7 and Phase 13, policy-decision events are emitted via structured logs and are not persisted to durable append-only audit tables. This is an accepted gap." The document justifies this by stating "all pre-Phase 13 activity occurs in development/testing environments with no regulated tenants." However, there is no enforcement mechanism that prevents a deployer from onboarding regulated tenants before Phase 13 is complete. The compliance profile enforcement gate (Section 11.7) prevents creating regulated tenants without SIEM -- but SIEM enforcement is a Phase 13 deliverable, so the gate itself does not exist before Phase 13. A deployer who deploys a pre-Phase 13 build to production with regulated tenants would have no durable audit trail. The spec should add an explicit build-phase marker or feature flag that blocks `complianceProfile` values other than `none` until the Phase 13 audit infrastructure is deployed.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-080. Data Residency Enforcement Does Not Cover the Billing Redis Stream Buffer [Medium]
 
 Section 12.8 specifies three levels of data residency enforcement: pod pool routing, storage routing, and KMS key residency. The billing event pipeline (Section 11.2.1, 12.3) uses a Redis stream (`t:{tenant_id}:billing:stream`) as a write-ahead buffer during Postgres unavailability. If the Redis instance serving the billing stream is in a different region than the tenant's `dataResidencyRegion`, billing events containing personal data (`user_id`, usage data) transit through a non-compliant region. The `StorageRouter` data residency check covers Postgres and MinIO writes but there is no mention of Redis stream region affinity enforcement. For multi-region deployments with data residency constraints, the spec should require that the Redis instance backing the billing stream for a given tenant is co-located in the tenant's declared data residency region.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-081. `force-delete` Tenant With Legal Holds Lacks Dual-Control Requirement [Medium]
 
 Section 12.8 describes the legal hold interaction during tenant deletion: if legal holds exist, the controller pauses at Phase 3, and an operator can bypass via `POST /v1/admin/tenants/{id}/force-delete`. The force-delete records operator identity and justification in the audit trail. However, the spec requires dual-control approval (two authorized individuals) for billing corrections (Section 11.2.1) but not for force-deleting a tenant with active legal holds -- an action that destroys potentially discoverable evidence. Destroying legally-held data is a more consequential action than correcting a billing entry. The spec should require dual-control approval for `force-delete` of tenants with active legal holds, consistent with the billing correction precedent.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-082. DSAR Article 15 (Right of Access) Has No Completeness Guarantee Across Stores [Low]
 
 Section 12.8 states that "all user-scoped session records, task trees, audit events, and stored artifacts are queryable via the admin API using `user_id` as a filter key." However, the admin API endpoints listed in Section 15.1 do not include a unified "export all data for user" endpoint. The deployer must call multiple endpoints and assemble the response. The list of stores in the erasure scope table (18 stores) shows significant breadth, but the DSAR primitives section does not enumerate which admin API endpoints cover which stores. A deployer building a DSAR export tool has no authoritative mapping from erasure-scope stores to admin API query endpoints. Stores like `SemanticCache`, `EvictionStateStore`, `experiment sticky assignment cache`, and `billing write-ahead buffer` may not have corresponding admin API read endpoints. The spec should provide an explicit DSAR-to-API mapping table alongside the erasure scope table.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-083. Erasure Salt Immediate Deletion Breaks Multi-User Erasure Batching [Medium]
 
 Section 12.8 specifies that the `erasure_salt` must be deleted immediately after pseudonymization completes for a given user-level erasure job. The salt is per-tenant, not per-user. If two erasure requests for different users in the same tenant arrive concurrently or in quick succession: (1) Job A pseudonymizes user-A's billing events using salt S1, then deletes S1. (2) Job B starts, finds no salt, generates new salt S2, pseudonymizes user-B's events with S2, then deletes S2. The spec addresses sequential erasure by noting "the next erasure request generates a fresh 256-bit salt." However, if Job B starts its pseudonymization transaction before Job A's deletion commits, both jobs use S1 -- but Job A deletes S1 while Job B still needs it for its verification step. The spec mentions the `erasure_salt_migration:{tenant_id}` advisory lock for rotation-vs-erasure conflicts but does not define equivalent serialization for concurrent erasure jobs within the same tenant. The spec should require a tenant-level advisory lock for erasure jobs (not just rotation) to prevent concurrent pseudonymization races.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-084. KMS Key Deletion in Tenant Deletion Phase 4a Is T4-Only; T3 Envelope Encryption Keys Are Not Addressed [Low]
 
 Section 12.8 Phase 4a specifies KMS key deletion for T4 tenants only. However, Section 4.3 describes envelope encryption for OAuth tokens (all tiers) and Section 12.5 describes SSE-KMS for object storage (T4 uses per-tenant keys, T3 uses shared keys). For T3 tenants, the per-tenant `erasure_salt` KMS key material is destroyed (documented in Phase 4), but the shared KMS key used for T3 envelope encryption (OAuth tokens, credential pool secrets) is not rotated or addressed after tenant deletion. If a T3 tenant's encrypted data was backed up before deletion, the shared KMS key could still decrypt it after tenant deletion. The spec should document the shared-key residual exposure for T3 tenants and recommend KMS key rotation after T3 tenant deletion in regulated environments.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-085. `processing_restricted` Database Trigger Exempts `clear-processing-restriction` Endpoint via Session Variable, Creating Bypass Risk [Low]
 
 Section 12.8 describes a `BEFORE UPDATE` trigger on `processing_restricted` that prevents clearing the flag while an active erasure job exists. The trigger exempts the `lenny_erasure` role and the `clear-processing-restriction` admin endpoint (which "sets a session-local variable analogous to `lenny.erasure_mode`"). This means any code path that sets the session-local variable can bypass the trigger. If a bug in any other code path accidentally sets this variable, the GDPR Article 18 processing restriction could be silently cleared without the intended audit trail. The spec should name the session-local variable explicitly and require the trigger to also verify the calling SQL context (e.g., a function-level check) rather than relying solely on a session variable that any SQL session could set.
+
+**Status:** Skipped — not an error
+
 
 ### CMP-086. No `complianceProfile` Enforcement for Audit Retention Preset Pairing [Low]
 
 Section 16.4 defines audit retention presets and pairs them with `complianceProfile` values (e.g., `hipaa` preset paired with `hipaa` profile, `fedramp-high` paired with `fedramp`). However, the spec states: "The `audit.retentionPreset` is independent of `complianceProfile`." This means a deployer could set `complianceProfile: hipaa` with `audit.retentionPreset: soc2` (365 days) -- violating HIPAA's 6-year record retention requirement (45 C.F.R. 164.530(j)). The spec does not enforce minimum retention when a regulated compliance profile is active. The document should either enforce that the retention preset matches or exceeds the compliance profile's minimum, or validate at startup that `audit.retentionDays` meets the floor for the active `complianceProfile`.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-087. Billing Event Correction Dual-Control Approval Has No Timeout or Expiry [Low]
 
 Section 11.2.1 requires dual-control approval for billing corrections. The spec does not specify a timeout for pending correction approvals. A correction request that is never approved (or denied) would persist indefinitely in a pending state. In audit and compliance contexts, stale pending corrections create ambiguity about billing integrity -- auditors cannot distinguish an intentionally pending correction from an abandoned one. The spec should define a maximum pending duration (e.g., 72 hours) after which unapproved corrections are automatically denied with an audit event.
 
+**Status:** Skipped — not an error
+
+
 ### CMP-088. Eviction Context Objects in MinIO Are Not Covered by Data Residency Enforcement [Low]
 
 Section 12.8 lists `ArtifactStore` in the erasure scope and specifically calls out `eviction context objects (/{tenant_id}/eviction/{session_id}/context)`. These objects contain `last_message_context` which may include session content (potentially personal data). The `StorageRouter` data residency enforcement covers standard artifact writes, but eviction context objects are written by the eviction manager (Section 7.3) which may not route through the same `StorageRouter` path. The spec should confirm that eviction context object writes are subject to the same `dataResidencyRegion` enforcement as standard artifact writes.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1648,21 +2269,36 @@ Section 12.8 lists `ArtifactStore` in the erasure scope and specifically calls o
 
 The session lifecycle table (Section 15.1) defines two endpoints that terminate sessions from non-terminal states: `POST /v1/sessions/{id}/terminate` (results in `completed`) and `DELETE /v1/sessions/{id}` (results in `cancelled`). The description for DELETE says "Force-terminates and cleans up. Equivalent to terminate + cleanup in one call." However, the spec never clarifies what "cleanup" means beyond termination -- both endpoints operate on the same precondition states (any non-terminal state), and what extra cleanup DELETE performs versus terminate is undefined. Since terminate already transitions to `completed` (a terminal state), the distinction between the two endpoints and their differing terminal states (`completed` vs `cancelled`) should be explicitly documented so clients know which to use when. The current description suggests DELETE is a superset of terminate, but the resulting state difference (`completed` vs `cancelled`) implies different semantics that are not explained.
 
+**Status:** Skipped — not an error
+
+
 ### API-084. `Retry-After` header documented as "present only on 429 responses" but also used on 503 responses [Medium] — Fixed
 
 **Status: Fixed.** Genuine internal contradiction — the rate-limit headers table said "present only on `429` responses" but `Retry-After` is also used on `503` responses (warm pool exhaustion, pool draining, Postgres failover). Corrected the table to say "present on `429` and `503` responses."
+
+**Status:** Fixed — Fixed Retry-After header table: was '429 only', now correctly says '429 and 503'
+
 
 ### API-085. `POST /v1/sessions/start` listed as async job endpoint but conflicts with `POST /v1/sessions/{id}/start` [Medium] — Skipped
 
 **Status: Skipped.** Not an error — `POST /v1/sessions/start` is a distinct endpoint from `POST /v1/sessions/{id}/start`. The session lifecycle endpoint table (line ~6926) explicitly defines `POST /v1/sessions/start` as "Create, upload inline files, and start in one call (convenience)." It is a combined convenience endpoint, not a typo.
 
+**Status:** Skipped — not an error
+
+
 ### API-086. Webhook event types not fully enumerated [Medium] — Skipped
 
 **Status: Skipped.** Not an error — this is a request for more comprehensive documentation (an exhaustive enumeration of webhook event types with payload schemas). The spec is not internally contradictory; it simply doesn't provide a single consolidated table of all webhook events. That is a documentation gap/improvement suggestion, not a factual mistake or contradiction.
 
+**Status:** Skipped — not an error
+
+
 ### API-087. `POST /v1/sessions/{id}/interrupt` transition to `suspended` contradicts Section 7.2 `input_required` state [Medium] — Skipped
 
 **Status: Skipped.** Not an error — `input_required` is explicitly defined as a "sub-state of `running`" (line ~2540, ~3776). The external session states table lists `running` which encompasses `input_required`. The protocol state mapping table (line ~3790) does show `input_required` mapping to external `input_required`, which could suggest it should be listed separately, but the sub-state design is internally consistent. Whether to surface it as a top-level external state is a design preference, not a contradiction.
+
+**Status:** Skipped — not an error
+
 
 ### API-088. `lenny-ctl policy audit-isolation` uses client-side join, not a dedicated API endpoint [Low] — Skipped
 
@@ -1670,11 +2306,17 @@ The session lifecycle table (Section 15.1) defines two endpoints that terminate 
 
 Section 24.14 documents `lenny-ctl policy audit-isolation` as performing a client-side join across `GET /v1/admin/delegation-policies` and `GET /v1/admin/pools`. This is the only `lenny-ctl` command documented as performing business logic via a client-side join rather than mapping to a single Admin API endpoint. The design principle stated at the beginning of Section 24 is that `lenny-ctl` is "a thin client over the Admin API with zero business logic" and that "every operation maps to an Admin API call." The `preflight` command is explicitly documented as the single exception. `audit-isolation` is a second undocumented exception. Either the principle statement should be updated to acknowledge both exceptions, or a dedicated server-side endpoint should be provided.
 
+**Status:** Skipped — not an error
+
+
 ### API-089. Bootstrap seed `--force-update` uses `If-Match: *` which bypasses optimistic concurrency [Low] — Skipped
 
 **Status: Skipped.** Not an error — `If-Match: *` is a standard HTTP conditional request mechanism (RFC 7232). The spec documenting ETag-based concurrency with quoted version strings does not exclude `If-Match: *`; the bootstrap use case is an intentional override for seed data. This is a suggestion to document the `*` wildcard explicitly, not a contradiction.
 
 Section 17.6 documents that `lenny-ctl bootstrap --force-update` uses `PUT` with `If-Match: *` to overwrite existing resources with differing fields. While `If-Match: *` is a valid HTTP conditional request mechanism, the ETag-based optimistic concurrency section (Section 15.1) never documents `If-Match: *` as a supported value -- it only discusses quoted decimal version strings (e.g., `"3"`). The spec should explicitly state whether `If-Match: *` is accepted by the gateway on PUT requests and what its semantics are (unconditional overwrite regardless of version), or the bootstrap mechanism should use a different approach.
+
+**Status:** Skipped — not an error
+
 
 ### API-090. `PATCH` only defined for experiments; no guidance on whether PATCH is supported elsewhere [Low] — Skipped
 
@@ -1682,13 +2324,22 @@ Section 17.6 documents that `lenny-ctl bootstrap --force-update` uses `PUT` with
 
 The Admin API endpoint table (Section 15.1) defines `PATCH /v1/admin/experiments/{name}` using JSON Merge Patch. No other resource supports PATCH. The spec does not state whether PATCH is intentionally excluded from all other admin resources or whether it is a future consideration. For an API with many resources that require frequent partial updates (e.g., updating a single field on a runtime definition currently requires PUT with the full resource body), the absence of PATCH on most resources is a design choice that should be explicitly documented as intentional rather than left as an apparent gap.
 
+**Status:** Skipped — not an error
+
+
 ### API-091. `POST /v1/sessions/{id}/derive` with `allowStale: true` lacks consistency guarantees [Medium] — Skipped
 
 **Status: Skipped.** Not an error — this is a request for additional error code coverage for an edge case (no checkpoint yet available). The spec is not internally contradictory; it simply does not enumerate every possible error condition for every endpoint. Missing edge-case error codes are a completeness gap, not a factual error.
 
+**Status:** Skipped — not an error
+
+
 ### API-092. Idempotency key mechanism does not cover all state-mutating session endpoints [Medium] — Skipped
 
 **Status: Skipped.** Not an error — the spec explicitly lists "Critical operations" that support idempotency keys. The word "critical" implies a deliberate selection, not an exhaustive coverage claim. Operations like terminate and interrupt are inherently idempotent (terminating an already-terminal session is a no-op; interrupting an already-suspended session returns 409). This is a design suggestion to expand coverage, not a contradiction.
+
+**Status:** Skipped — not an error
+
 
 ### API-093. `GET /v1/sessions/{id}/messages` pagination not specified [Low] — Skipped
 
@@ -1696,19 +2347,31 @@ The Admin API endpoint table (Section 15.1) defines `PATCH /v1/admin/experiments
 
 The async job support table (Section 15.1, line ~6998) lists `GET /v1/sessions/{id}/messages` as "paginated" and "Returns message history including delivery receipts and state." However, the pagination section only documents cursor-based pagination for admin list endpoints. Whether `GET /v1/sessions/{id}/messages` uses the same cursor-based pagination envelope (with `limit`, `cursor`, `items`, `hasMore` fields) is not explicitly stated. Since this is a client-facing endpoint (not admin), the pagination contract should be documented. Additionally, the `?threadId=` and `?since=` filters mentioned in Section 7.2 (MessageDAG) should be listed as supported query parameters.
 
+**Status:** Skipped — not an error
+
+
 ### API-094. `GET /v1/sessions/{id}/transcript` pagination not specified [Low] — Skipped
 
 **Status: Skipped.** Not an error — same as API-093. The endpoint is listed as "paginated"; requesting explicit pagination mechanism details is an improvement suggestion.
 
 Section 15.1 lists `GET /v1/sessions/{id}/transcript` as "paginated" but does not specify the pagination mechanism. The same concern as API-093 applies: whether this endpoint uses the cursor-based pagination envelope or a different mechanism (e.g., offset-based for transcript pages) is unspecified.
 
+**Status:** Skipped — not an error
+
+
 ### API-095. A2A aggregated `/.well-known/agent.json` returns array, contradicting A2A spec, without versioning strategy [Medium] — Skipped
 
 **Status: Skipped.** Not an error — the spec already acknowledges this is an intentional Lenny extension with mitigations (profile URI, Link headers, per-runtime standard-compliant endpoints). Requesting a migration path for a hypothetical future A2A spec change is a suggestion for forward planning, not a factual error or internal contradiction.
 
+**Status:** Skipped — not an error
+
+
 ### API-096. `POST /v1/admin/sessions/{id}/force-terminate` transitions to `failed` while `POST /v1/sessions/{id}/terminate` transitions to `completed` [Medium] — Skipped
 
 **Status: Skipped.** Not an error — the three distinct terminal states are an intentional design: `completed` = graceful client-initiated termination, `cancelled` = client force-stop, `failed` = admin/operational forced termination (the session did not complete its work successfully). The finding argues about whether `failed` is the right semantic for admin force-terminate, which is an API design opinion, not an internal contradiction. The spec is consistent in its state assignments.
+
+**Status:** Skipped — not an error
+
 
 ### API-097. `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve` and `/deny` lack idempotency coverage [Low] — Skipped
 
@@ -1716,15 +2379,24 @@ Section 15.1 lists `GET /v1/sessions/{id}/transcript` as "paginated" but does no
 
 Tool-use approval/denial endpoints are listed in the session lifecycle endpoints but are not covered by the idempotency key mechanism (Section 11.5 lists "Approve/DenyDelegation" but not tool-use approve/deny). These are distinct operations: delegation approval/denial (`lenny/approve_delegation`, `lenny/deny_delegation`) versus tool-use approval (`POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`). If a client's approve request times out and they retry, the retry must be safe. The spec should clarify whether tool-use approve/deny endpoints are inherently idempotent (approving an already-approved tool call returns 200) or require idempotency keys.
 
+**Status:** Skipped — not an error
+
+
 ### API-098. `GET /v1/sessions/{id}/setup-output` not available for sessions that failed during setup [Low] — Skipped
 
 **Status: Skipped.** Not an error — the finding asks for clarification on endpoint availability across session states, which is a documentation improvement suggestion. The spec does not claim the endpoint is unavailable for failed sessions.
 
 The session artifacts table lists `GET /v1/sessions/{id}/setup-output` for retrieving setup command stdout/stderr. However, the spec does not clarify whether this endpoint is available when a session fails during the `finalizing` state (setup command failure). If setup commands fail and the session transitions to `failed`, the setup output would be the primary diagnostic artifact. The endpoint's availability across session states should be specified -- particularly whether it returns partial output when setup fails mid-execution.
 
+**Status:** Skipped — not an error
+
+
 ### API-099. Webhook signing key rotation lacks API surface [Medium] — Skipped
 
 **Status: Skipped.** Not an error — this is a missing feature/design gap request. The finding asks for API surface for webhook signing key management, which the spec simply hasn't specified yet. There is no internal contradiction; the spec documents that webhook signatures exist and SDKs verify them, but the key distribution mechanism is unspecified. That is a design gap, not a factual error.
+
+**Status:** Skipped — not an error
+
 
 ### API-100. `GET /v1/pools` listed as client-facing but pool details may leak operational information [Low] — Skipped
 
@@ -1732,11 +2404,17 @@ The session artifacts table lists `GET /v1/sessions/{id}/setup-output` for retri
 
 Section 15.1 lists `GET /v1/pools` as a client-facing discovery endpoint that returns "pools and warm pod counts." Exposing warm pod counts to non-admin clients could reveal operational capacity information (current utilization, scaling state) that may be sensitive in multi-tenant deployments. The spec does not define what fields are returned to different role levels (`user`, `tenant-admin`, `platform-admin`). Admin endpoints have their own pool details (`GET /v1/admin/pools/{name}`), so the client-facing `GET /v1/pools` should specify which fields are included and whether warm pod counts are filtered for non-admin callers.
 
+**Status:** Skipped — not an error
+
+
 ### API-101. Session creation response does not include the `state` field [Low] — Skipped
 
 **Status: Skipped.** Not an error — the finding itself acknowledges "This is a minor ergonomic gap, not an error."
 
 The `POST /v1/sessions` response is described as including `sessionId`, `uploadToken`, and `sessionIsolationLevel` (Section 7.1). The session's initial state is `created`, but the response does not include a `state` field. Clients must make a separate `GET /v1/sessions/{id}` call to confirm the state. Since every other state-mutating endpoint implicitly changes state, and the session state is documented as externally visible, including `state` in the creation response would be a natural API convenience. This is a minor ergonomic gap, not an error.
+
+**Status:** Skipped — not an error
+
 
 ### API-102. `POST /v1/admin/bootstrap` audit event emission on dryRun is an exception to the general dryRun rule [Low] — Skipped
 
@@ -1744,19 +2422,31 @@ The `POST /v1/sessions` response is described as including `sessionId`, `uploadT
 
 The dryRun documentation (Section 15.1) states that "Audit events are not emitted for dry-run requests, with one exception: `POST /v1/admin/bootstrap?dryRun=true` emits a `platform.bootstrap_applied` audit event with `dryRun: true`." This exception is documented but creates an inconsistency in the dryRun contract: clients that assume dryRun is side-effect-free (which the general documentation implies) may be surprised that an audit record is created. The rationale (operators wanting a record of what bootstrap would have changed) is reasonable, but the exception should be surfaced more prominently -- perhaps as a note in the general dryRun documentation rather than buried in the endpoint-specific section.
 
+**Status:** Skipped — not an error
+
+
 ### API-103. `GET /v1/sessions/{id}/usage` tree-aggregated usage has no documented response schema [Medium] — Skipped
 
 **Status: Skipped.** Not an error — this is a request for a response schema definition for an endpoint. Missing response schemas are a documentation completeness gap, not an internal contradiction or factual error in the spec.
 
+**Status:** Skipped — not an error
+
+
 ### API-104. `POST /v1/credentials` (user-scoped credential registration) referenced but endpoint not in the REST API table [Medium] — Skipped
 
 **Status: Skipped.** Factually incorrect finding — Section 15.1 does include a "User credential management" table (line ~7017) that lists `POST /v1/credentials`, `GET /v1/credentials`, `PUT /v1/credentials/{credential_ref}`, `POST /v1/credentials/{credential_ref}/revoke`, and `DELETE /v1/credentials/{credential_ref}`. The endpoints are present in the spec.
+
+**Status:** Skipped — not an error
+
 
 ### API-105. `POST /v1/sessions/{id}/eval` rate limit specified but not in the rate-limit configuration model [Low] — Skipped
 
 **Status: Skipped.** Not an error — the rate limits are specified in the eval section. Whether they are also listed in an operational defaults table or made configurable is a documentation/design preference, not an internal contradiction.
 
 Section 10.7 specifies a per-session eval submission rate limit of 100/min and a per-tenant global cap of 10,000/min. These rate limits are hard-coded in the spec text rather than being part of the configurable rate-limit model. The spec does not indicate whether deployers can adjust these limits via Helm values or the admin API. If they are fixed limits, they should be documented as such in the operational defaults table (Section 17.8.1). If they are configurable, the configuration mechanism should be specified.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1770,6 +2460,9 @@ The competitive landscape table lists `kubernetes-sigs/agent-sandbox` as "adopte
 
 **Recommendation:** Add the `kubernetes-sigs/agent-sandbox` license to its competitive landscape entry.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-053. LangSmith competitive entry contains redundant claims [Low]
@@ -1779,6 +2472,9 @@ The competitive landscape table lists `kubernetes-sigs/agent-sandbox` as "adopte
 The LangSmith entry states three distinct points: (1) "RemoteGraph provides graph-level delegation without per-hop token budget or scope controls," (2) "LangSmith's A2A and MCP support operates within the LangChain ecosystem," and (3) "LangSmith offers self-hosted Kubernetes deployment... however, it requires LangChain ecosystem coupling, does not provide runtime-agnostic adapter contracts, and lacks per-hop budget/scope controls in delegation chains." Points 1 and 3 repeat the same two claims (LangChain coupling and no per-hop controls) using different phrasing. This is not an error per se, but the redundancy makes the table entry harder to parse and could give the appearance of inflating the differentiation. The table should state each competitive distinction once.
 
 **Recommendation:** Consolidate the LangSmith entry to remove the duplicated claims.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1792,6 +2488,9 @@ This is a genuine gap in the community adoption strategy: the spec identifies th
 
 **Recommendation:** Add a Python client SDK to Section 21 (Planned / Post-V1) or to Section 23.2 as a community adoption roadmap item, even if the timeline is unspecified.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-055. TTHW target does not specify hardware baseline [Low]
@@ -1803,6 +2502,9 @@ The Time to Hello World target is "< 5 minutes" on "a standard development machi
 This is a minor specification gap -- the TTHW target is not falsifiable as written.
 
 **Recommendation:** Define the minimum hardware spec for the TTHW target (e.g., CPU cores, RAM, disk type).
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1816,6 +2518,9 @@ This is a minor gap: comparison guides are named as deliverables but have no mai
 
 **Recommendation:** This is a documentation planning concern, not a spec error. No change required unless the project wants to specify a maintenance cadence.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-057. Section 23.1 "Known trade-offs" lists "Standard/Full-tier adapter effort" but Section 23.2 entry point does not mention the effort gradient [Low]
@@ -1828,6 +2533,9 @@ This is a presentation gap, not a technical error -- the information exists else
 
 **Recommendation:** Add a brief effort indication to the Runtime authors row (e.g., "from ~50 LOC stdin/stdout to full gRPC lifecycle").
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-058. Google A2A Protocol competitive entry references governance body without citing specific implications [Low]
@@ -1837,6 +2545,9 @@ This is a presentation gap, not a technical error -- the information exists else
 The A2A entry states it is "governed by the Linux Foundation (Joint Development Foundation); separate from MCP's governance." This governance distinction is stated but no implication for Lenny is drawn from it. The competitive landscape table's column is "Why It Matters for Lenny" -- if the governance separation matters, the entry should explain how (e.g., licensing implications, protocol divergence risk, dual-governance overhead). If it does not matter, the governance parenthetical is irrelevant detail.
 
 **Recommendation:** Either explain the competitive implication of A2A's governance structure or remove the parenthetical.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1850,6 +2561,9 @@ This is a minor specification gap in the governance model -- not a technical err
 
 **Recommendation:** Define "regular contributor" criteria for the governance transition threshold.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-060. Build Sequence Phase 0 has no timeline or effort estimate [Low]
@@ -1862,6 +2576,9 @@ This is a minor gap -- timeline is understandably absent from a technical spec, 
 
 **Recommendation:** No spec change needed; this is a project management concern rather than a spec error.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-061. Latency comparison note acknowledges non-comparable numbers but retains them in the same table [Medium]
@@ -1873,6 +2590,9 @@ The competitive landscape table lists competitor cold-start times (E2B ~150ms, D
 This is a genuine presentation problem that could affect competitive positioning. The note is thorough but the table structure works against it.
 
 **Recommendation:** Add an inline qualifier to Lenny's SLO numbers in Section 6.3 or add a "Measures" column to the competitive table so the scope difference is visible in the table itself, not only in a note below it.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -1888,6 +2608,9 @@ This is not a spec error but a strategic tension between the adoption strategy (
 
 **Recommendation:** No spec change required; this is a deliberate project management decision.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### CPS-063. Competitive landscape omits Replit Agent and GitHub Copilot Workspace as comparison points [Low]
@@ -1897,6 +2620,9 @@ This is not a spec error but a strategic tension between the adoption strategy (
 The competitive landscape covers E2B, Fly.io Sprites, Daytona, Temporal, Modal, and LangGraph. It omits Replit Agent (cloud agent sessions with Nix-based isolation, ~2s cold start) and GitHub Copilot Workspace (cloud-hosted agent development sessions). Both serve overlapping use cases with Lenny -- on-demand cloud agent sessions for code tasks. While these are closed-source commercial products, E2B and Fly.io Sprites are also commercial products and are included. The omission is not an error (the table is not claimed to be exhaustive), but for evaluators comparing options, these are notable gaps.
 
 **Recommendation:** Consider adding entries for Replit Agent and GitHub Copilot Workspace, or add a note that the table covers only platforms offering self-hosting or open-source options.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2290,85 +3016,148 @@ Skipped: CRD-031, CRD-032 (carried forward from previous iteration).
 
 Section 15.3 (line ~7632) lists `status` as a top-level field on `OutputPart`, but the Canonical Type Registry v1 (line ~7653) does not define `status` among the guaranteed fields for any of the 10 canonical types. The Translation Fidelity Matrix (line ~7779) also omits `status` from the per-field fidelity mapping. This means consumers have no specification for what values `status` can take, which adapter translations preserve it, and whether it is optional or required. Either `status` needs a defined enum of values and inclusion in the registry/matrix, or it should be explicitly documented as an optional envelope-level field outside the per-type registry.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-072. `MessageEnvelope.from` closed enum missing `delegated` or equivalent for gateway-synthesized delegation messages [Medium]
 
 Section 15.3 (line ~7822) defines `MessageEnvelope.from` as a closed enum: `client | agent | system | external`. However, Section 8 describes delegation flows where the gateway creates child sessions and injects `TaskSpec` input on behalf of a parent agent. These gateway-synthesized messages are not from the `client`, not from the `agent` (the child agent has not started yet), and not from `external` (the parent is internal). Using `system` for this purpose conflates platform-generated messages (heartbeats, lifecycle events) with delegation-injected user content. The spec should either expand the enum or explicitly document which value is used for delegation-injected messages.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-073. `LennyBlobURI` TTL values inconsistent between definition and `billing_events` retention [Medium]
 
 Section 15.3 (line ~7701) defines three TTL contexts for `LennyBlobURI`: 1h for live, 30d for TaskRecord, and 13mo for audit. However, Section 11.2.1 defines `billing.retentionDays` as 395 days (~13 months) with a floor of 2190 days (~6 years) for HIPAA. If billing events reference blob URIs (e.g., for detailed usage artifacts), the 13mo audit TTL would expire before the HIPAA billing retention floor. The spec does not clarify whether billing event records ever reference blob URIs, and if so, which TTL context applies. This should be explicitly addressed.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-074. `WorkspacePlan.sources` type enum incomplete — missing `gitClone` or equivalent [Low]
 
 Section 7.4 (line ~6534) defines `WorkspacePlan.sources` with four types: `inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`. Section 7.4 also discusses workspace materialization from uploads. However, Section 8.7 describes file export from parent to child sessions during delegation, and Section 19 (decision 12) describes `POST /v1/sessions/{id}/derive` for deriving sessions from previous workspace snapshots. Neither of these mechanisms maps cleanly to the four declared source types. The `derive` flow presumably creates an implicit `uploadArchive` source, but this is not specified. The file-export mechanism from delegation also lacks a declared source type in the `WorkspacePlan` schema.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-075. `billing_events` schema `environmentId` field listed in Phase 1 but `Environment` resource not delivered until Phase 15 [Low]
 
 Section 18 (line ~10032, Phase 1) explicitly lists `environmentId` nullable field on the billing event schema as a Phase 1 deliverable. However, the `Environment` resource itself (tag-based selectors, member RBAC) is not delivered until Phase 15. While the field is nullable and can be `null` for Phases 1-14, the spec does not document the contract for populating `environmentId` on billing events once Phase 15 ships -- specifically, whether it is populated retroactively, whether it is derived from the session's environment at creation time or at billing event emission time, and what happens if a session's environment changes mid-session.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-076. `TaskRecord.messages` array lacks ordering and deduplication contract [Medium]
 
 Section 8 describes `TaskRecord` containing a `messages` array, and Section 15.3 defines `MessageEnvelope` with `id`, `inReplyTo`, and `threadId` fields supporting a DAG conversation model. However, the spec does not define: (a) whether the `messages` array is ordered by insertion time, causal order, or is unordered; (b) whether message IDs must be unique within a TaskRecord; (c) what happens when a reconnecting client replays a message that was already persisted (idempotency contract). For a DAG model, the ordering contract is essential for consumers to correctly reconstruct conversation flow.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-077. `runtimeOptionsSchema` per-runtime JSON Schema validation timing not specified [Medium]
 
 Section 7.4 (line ~6662) defines per-runtime `runtimeOptionsSchema` examples (e.g., for `claude-code`, `langgraph`, `openai-agents`). These schemas are registered at runtime registration time via the admin API. However, the spec does not specify when `runtimeOptions` provided by session creators are validated against the registered schema -- at session creation time (gateway-side), at workspace materialization time (pod-side), or at runtime startup time (adapter-side). If validation happens late (pod-side), the session has already consumed a warm pool pod and credentials before discovering invalid options. The validation point should be specified.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-078. `ExternalProtocolAdapter.HandleDiscovery` return type not specified for adapters with no discovery [Medium]
 
 Section 15 (line ~6740) defines the `ExternalProtocolAdapter` Go interface with `HandleDiscovery` as a required method. Section 21 describes A2A discovery endpoints. However, the interface definition does not specify the return type or contract for adapters that have no discovery semantics (e.g., OpenAI Completions adapter). The spec mentions `BaseAdapter` no-op implementations for `OutboundCapabilities` and `OpenOutboundChannel` but does not confirm `HandleDiscovery` has a similar no-op default in `BaseAdapter`. If `HandleDiscovery` is required but some adapters have no discovery model, the base implementation contract must be explicit.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-079. `SandboxClaim` CRD schema not fully specified — missing `spec` fields [Medium]
 
 Section 4.6 references four CRDs: `SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, and `SandboxClaim`. The `SandboxClaim` is central to session-to-pod binding (Section 4.6.1 discusses optimistic locking and failover fencing for claims). However, while `SandboxTemplate` and `SandboxWarmPool` have their fields enumerated in the spec (Section 17.2 and others), `SandboxClaim` lacks a complete field listing. The spec references `spec.sandboxRef` (in the stuck-finalizer runbook, Section 17.7) and implies `spec.sessionId` and `spec.tenantId` exist, but the full CRD schema (spec fields, status fields, conditions) is never consolidated. For a resource that is central to correctness (double-claim prevention, optimistic locking), the complete schema should be specified.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-080. `billing_events.sequence_number` uniqueness scope not specified [Medium]
 
 Section 11.2.1 (line ~5197) defines `sequence_number` (uint64) on the billing event schema. The spec describes append-only immutability and hash chaining for audit events (Section 11.7), but for billing events, the uniqueness and ordering contract of `sequence_number` is not defined. Specifically: is `sequence_number` globally unique, per-tenant unique, or per-session unique? Is it monotonically increasing? Is it gap-free? The audit log has explicit hash-chain integrity with `prev_hash`, but billing events have no equivalent integrity mechanism documented, yet they are described as "append-only immutable" with "dual-control correction approval." The `sequence_number` contract must be explicit for billing consumers to detect gaps or duplicates.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-081. `OutputPart` inline size threshold (64KB) vs `maxInputSize` on `DelegationPolicy` — unit ambiguity [Low]
 
 Section 15.3 (line ~7632) defines OutputPart inline threshold as "<=64KB inline" and ">64KB-50MB blob ref." Section 8.3 defines `maxInputSize` on `DelegationPolicy.contentPolicy` to limit delegation input sizes. The spec does not clarify whether `maxInputSize` measures the serialized JSON size of the `OutputPart[]` array (which for inline parts is the wire size), the sum of individual part content sizes (which for blob-ref parts would require resolving URIs), or some other measure. For parts that mix inline and blob-ref, the measurement semantics differ significantly.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-082. `EvalResult` schema referenced but never defined [Medium]
 
 Section 10.7 (experiments) references `EvalResult` as part of the experiment evaluation hooks, and the summary mentions an `EvalResult` schema. However, no section of the spec provides the actual `EvalResult` schema definition — its fields, types, required properties, or versioning. Since the experiment system is a Phase 16 deliverable and the spec aims to be comprehensive for v1, this schema should be defined or explicitly deferred with a note about what structure is expected.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-083. `adapter-manifest.json` schema versioning not specified [Medium]
 
 Section 7.3 defines the adapter manifest (`/run/lenny/adapter-manifest.json`) as a JSON contract between the adapter sidecar and the gateway. The manifest includes fields like capabilities, protocol details, and lifecycle channel configuration. However, unlike `OutputPart` (which has `schemaVersion`) and `TaskRecord` (which has `schemaVersion`), the adapter manifest has no versioning field. When the platform evolves and adds new manifest fields or changes semantics, there is no mechanism for the gateway to determine which manifest version an adapter is providing, making backward-compatible evolution difficult.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-084. `DelegationLease.allowedExternalEndpoints` schema not defined [Medium]
 
 Section 8.3 and Section 19 (decision 13) reference `allowedExternalEndpoints` as a slot on the delegation lease schema, and Section 21.1 (A2A support) relies on it for controlling which external endpoints a delegated session may contact. However, the spec never defines the schema of this field — whether it is a list of strings (URLs), a list of objects with protocol/host/port, whether wildcards are supported, or how it interacts with `NetworkPolicy` egress rules. The field is described as existing "from v1" but its structure is unspecified.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-085. Cursor-based pagination `cursor` field type and encoding not specified [Medium]
 
 Section 15.1 describes cursor-based pagination as the standard for all list endpoints, with a response envelope containing pagination metadata. However, the spec does not define the cursor field's type (opaque string? base64-encoded? structured?), maximum length, or whether cursors are stable across deployments (i.e., whether a cursor from one gateway replica works on another). For a platform with multiple gateway replicas behind a load balancer, cursor portability is a practical concern.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-086. `ExperimentDefinition` resource schema not fully specified [Medium]
 
 Section 10.7 describes the experiment system with bucketing, sticky assignments, variant pools, and the `ExperimentDefinition` resource. However, the full schema of `ExperimentDefinition` — its fields, status conditions, supported states (`active`, `paused`, `concluded`), variant weight format (integer percentages? floating point? must sum to 100?), and the relationship between `ExperimentDefinition` and pool targeting — is not consolidated in one place. The bucketing algorithm (HMAC-SHA256) and sticky assignment cache are well-specified, but the resource schema that drives them is fragmented across the section.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-087. `billing_events` correction event schema not defined [Medium]
 
 Section 11.2.1 describes billing event immutability with "dual-control correction approval" for billing corrections. This implies a correction event type exists (since append-only events cannot be modified in place, corrections must be new events that reference the original). However, the billing event schema (line ~5197) lists `event_type` as a field but does not enumerate the allowed event types, and no correction-specific event schema (with fields like `corrects_sequence_number`, `correction_reason`, `approved_by`, or similar) is defined. The correction workflow is described procedurally but the schema is missing.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-088. `data_classification` tier assignment per field not specified for key schemas [Medium]
 
 Section 12.7 (line ~5992) defines four data classification tiers (T1-T4) with a comprehensive controls matrix. However, the spec does not provide a field-level classification mapping for the major schemas (`billing_events`, `audit_log`, `sessions`, `TaskRecord`). For example: is `session_id` T2 or T3? Is `tokens_input` in billing events T2? Is `user_id` T3 (PII) or T4? Without field-level classification, implementers cannot correctly apply the per-tier encryption, access control, retention, and erasure requirements from the controls matrix. The erasure procedure (Section 12.8) operates at the table level but references data classification tiers without mapping specific fields.
+
+**Status:** Skipped — not an error
+
 
 ### SCH-089. `crossEnvironmentDelegation` structured form schema slot referenced but not defined [Low]
 
 Section 18 Phase 1 (line ~10032) lists `crossEnvironmentDelegation structured form schema slot` as a Phase 1 deliverable. However, the spec does not define this schema — neither the fields of the structured form, the validation rules, nor how it interacts with the `DelegationPolicy` resource. Section 21.6 defers "Cross-environment delegation richer controls" to post-v1, creating ambiguity about what the v1 structured form contains versus what is deferred.
 
+**Status:** Skipped — not an error
+
+
 ### SCH-090. `Connector` resource `labels` field referenced but schema not consolidated [Low]
 
 Section 18 Phase 1 references `Connector resource with labels` as a deliverable, and Section 5 describes connectors with `connectorSelector` for environment-based filtering. However, the `Connector` resource schema — its full field set including `labels`, protocol, endpoint, authentication configuration, and capability declarations — is not consolidated in any single location. The relationship between `Connector` labels and `Environment.connectorSelector` matching semantics is implied but not formally specified (e.g., is it AND or OR matching for multiple label selectors?).
 
+**Status:** Skipped — not an error
+
+
 ### SCH-091. `failopen-cumulative.json` file schema not specified [Low]
 
 Section 12.4 (line ~5719) describes a local file `/run/lenny/failopen-cumulative.json` that each gateway replica persists on every fail-open state transition. The file is read on replica restart to resume the cumulative fail-open timer. However, the spec does not define the JSON schema of this file — what fields it contains, how `timestamp` is formatted, whether it includes per-tenant or aggregate counters, or what constitutes a "corrupted" file (triggering the cold-start reset to zero). For a security control that prevents bypass via CrashLoopBackOff, the file format should be specified.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2380,97 +3169,169 @@ Section 12.4 (line ~5719) describes a local file `/run/lenny/failopen-cumulative
 
 Phase 2 is required to calibrate subsystem extraction thresholds (Section 4.1) and `maxSessionsPerReplica` using the benchmark harness. However, Phase 2 only delivers the echo runtime (Minimum tier), `make run` local dev mode, and the adapter binary protocol. The MCP Fabric subsystem (delegation) is not available until Phase 9-10, and the LLM Proxy subsystem is not available until Phase 5.8. The calibration methodology requires driving all four subsystems through synthetic load levels at 25%-100% of Tier 2 concurrency, but two of the four subsystems do not exist at Phase 2 completion. The spec states these are "Phase 2 exit criteria" but there is no mechanism to calibrate the MCP Fabric or LLM Proxy thresholds at Phase 2. Either the exit criterion should be relaxed to cover only the two available subsystems (Stream Proxy and Upload Handler) with re-calibration at Phase 5.8 and Phase 10, or the calibration methodology should explicitly state which subsystems are deferrable.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-059. Phase 1.5 migration framework depends on decisions not yet made in Phase 1.5 [Low]
 
 Phase 1.5 specifies selecting a migration tool (e.g., `golang-migrate`, `atlas`, or `goose`) and establishing conventions. However, the expand-contract discipline documented in Section 10.4 includes highly specific guidance about advisory locks, PL/pgSQL DO blocks for Phase 3 gates, and `DROP COLUMN IF EXISTS` patterns. These patterns are tool-specific (e.g., advisory lock behavior is a `golang-migrate` feature). If a different tool is selected (atlas uses a different concurrency model), the Phase 3 gate enforcement specification in Section 10.4 may not apply. The migration tool selection should either be fixed in Section 10.4 (not left open in Phase 1.5) or the Phase 3 gate specification should be made tool-agnostic.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-060. Phase 3 mTLS PKI has no integration test infrastructure yet [Medium]
 
 Phase 3 requires mTLS PKI setup (cert-manager, ClusterIssuer, SPIFFE-compatible URI SANs, trust bundle distribution) and states "mTLS enforcement on gateway-pod gRPC channel." Phase 3.5 follows with "mTLS end-to-end verification." However, Phase 3 delivers the PoolScalingController and RuntimeUpgrade state machine simultaneously with the mTLS PKI. The PoolScalingController creates pods that must communicate with the gateway over mTLS, meaning the PKI must be fully operational before the PoolScalingController can be tested. There is no phasing within Phase 3 that ensures PKI is established before the PoolScalingController integration tests run. This creates a circular dependency within the phase: the PoolScalingController cannot be tested without mTLS, and mTLS cannot be tested end-to-end until Phase 3.5. The phase should specify that PKI setup is a sub-milestone that must be completed and verified before PoolScalingController integration testing begins.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-061. Phase 5.8 SPIFFE-binding depends on Phase 3 PKI but spec does not verify SPIFFE URI SAN format [Medium]
 
 Phase 5.8 states the LLM Proxy performs "SPIFFE-binding for lease tokens" by extracting "the peer SPIFFE URI from the mTLS connection (using the SPIFFE-compatible URI SANs issued by Phase 3's cert-manager PKI)." Phase 3 specifies "SPIFFE-compatible URI SANs for agent pod certificates" but does not specify the URI format, the trust domain naming convention, or the SAN template in the cert-manager Certificate resource. Without a defined SPIFFE URI format (e.g., `spiffe://lenny.dev/ns/{namespace}/pod/{podName}`), Phase 5.8 cannot implement the binding verification. The SPIFFE URI format should be specified as part of Phase 3 deliverables or in Section 10.3.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-062. Phase 2.8 streaming-echo runtime is a gate for Phases 6-8 but its deliverables overlap with Phase 6 [Medium]
 
 Phase 2.8 specifies that the `streaming-echo` runtime must support "simulated streaming output" including `OutputPart` chunk sequences. Phase 6 delivers the "interactive session model (streaming, messages, reconnect with event replay)." The streaming-echo runtime needs to exercise the streaming path, but the streaming path itself is not built until Phase 6. Phase 2.8 states it must be available before Phase 6, but the streaming infrastructure it depends on is a Phase 6 deliverable. Either Phase 2.8 must implement its own minimal streaming plumbing (independent of the Phase 6 interactive model), or the dependency should be documented as "Phase 2.8 streaming-echo works with the Phase 2 echo protocol and is upgraded to use full streaming in Phase 6."
 
+**Status:** Skipped — not an error
+
+
 ### BLD-063. No explicit phase for Postgres RLS integration test suite [Medium]
 
 Section 4.2 specifies detailed RLS requirements: `SET LOCAL app.current_tenant`, the `__unset__` sentinel via PgBouncer `connect_query`, the `lenny_tenant_guard` trigger, `__all__` sentinel for platform-admin, and `TestRLSPlatformAdminAllSentinel` integration test. These are foundational security guarantees that every subsequent phase depends on. The build sequence does not assign RLS verification to a specific phase. Phase 1 introduces "core types" including `tenant_id`, and Phase 1.5 establishes the migration framework, but neither explicitly requires the RLS integration tests. Phase 4 delivers "session manager + session lifecycle" which presumably needs RLS, but the RLS test suite is never listed as a deliverable. The RLS integration tests should be an explicit Phase 1.5 or Phase 2 deliverable with a CI gate, since every tenant-scoped query from Phase 4 onward depends on correct RLS behavior.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-064. Phase 4.5 bootstrap seed must pre-configure `noEnvironmentPolicy` but Phase 4.5 description does not mention it [Medium]
 
 The Note after Phase 5 states: "the Phase 4.5 bootstrap seed must address this by either (a) setting `noEnvironmentPolicy: allow-all` on the default tenant, or (b) seeding at least one environment." However, Phase 4.5's own description lists: "runtimes, pools, connectors, delegation policies, tenant management, external adapters registry... Bootstrap seed mechanism: `lenny-ctl bootstrap` CLI command." The `noEnvironmentPolicy` configuration is not mentioned in Phase 4.5's deliverable list. This is a gap between the advisory note and the phase specification that could be missed during implementation.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-065. Phase 12a/12b/12c parallelism note has inconsistent dependency claims [Medium]
 
 The note before Phases 12a/12b/12c states: "Phase 12a depends only on Phase 5.5 (Token Service)." However, Phase 12a's description says it "builds on Phase 5.5 Basic Token Service" and delivers "application-layer KMS envelope encryption for stored OAuth tokens." KMS integration requires the Token Service to have access to KMS keys, which requires KMS IAM permissions that are not established in any prior phase. The self-managed profile (Section 17.9) does not specify when KMS infrastructure is provisioned. Phase 12a should either list KMS infrastructure provisioning as a sub-deliverable or declare a dependency on a KMS setup step.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-066. Client SDKs (Phase 6) require OpenAPI spec that is not generated until Phase 5 [Low]
 
 Phase 6 delivers "Client SDKs (Go + TypeScript/JavaScript) generated from the OpenAPI spec and MCP tool schemas." Phase 5 delivers "OpenAPI-to-MCP schema generation step in build pipeline" and the REST/MCP contract tests. The OpenAPI spec itself is never explicitly listed as a phase deliverable -- it is implied to exist by Phase 5's contract tests. The OpenAPI spec should be an explicit deliverable of Phase 4 or Phase 5, with a CI gate that validates it against the implemented REST endpoints, since Phase 6 SDKs depend on it.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-067. Phase 9 `DelegationPolicy` enforcement gate references policies "registered from Phase 3 onward" but Phase 3 only introduces the resource type [Medium]
 
 Phase 9's description states: "integration tests validating enforcement of `DelegationPolicy` resources registered from Phase 3 onward." Phase 3 introduces the `DelegationPolicy` resource and the `setupPolicy` enforcement, but Phase 3 does not include any REST API for registering `DelegationPolicy` resources (the Admin API foundation is Phase 4.5). Between Phase 3 and Phase 4.5, there is no API surface to register delegation policies except via direct CRD manipulation. The Phase 9 integration tests should clarify whether they depend on CRD-level policy registration (Phase 3) or API-level registration (Phase 4.5), and whether the test setup creates policies through the admin API or through `kubectl apply`.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-068. Phase 13 full observability stack has no dependency on Phase 2.8 streaming-echo for audit testing [Low]
 
 Phase 13 delivers "complete audit logging (Postgres audit tables with append-only grants, hash-chain integrity, SIEM connectivity)." The audit system must log events from all platform operations including streaming sessions, delegation, and credential operations. Phase 13 should specify that the audit log integration tests use `streaming-echo` and `delegation-echo` test runtimes (from Phases 2.8 and 9) to validate audit coverage without real LLM credentials. This is implied but not stated, creating a risk that audit tests depend on manual or real-LLM testing only.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-069. No phase for `session_dlq_archive` table implementation [Medium]
 
 Section 10.1 references the dead-letter queue mechanics and Section 4.2 classifies `session_dlq_archive` as a tenant-scoped table. The DLQ is part of the coordinator handoff and split-brain fencing logic. However, no build phase lists the DLQ implementation as a deliverable. The DLQ is critical for the coordinator handoff path (Section 10.1), which is needed from the moment sessions can be served by multiple gateway replicas (Phase 4 onward). The build sequence should assign the DLQ table, the DLQ insertion path, and the DLQ replay mechanism to a specific phase.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-070. Phase 14 security audit scope is unbounded [Medium]
 
 Phase 14 states: "comprehensive security audit and penetration testing... This phase is the full end-to-end security audit covering the complete platform." The spec does not define the audit scope, methodology, or exit criteria. Unlike the targeted security reviews at Phases 5.6 and 9.1 (which list specific attack surfaces to review), Phase 14 is open-ended. Without defined scope boundaries and exit criteria, Phase 14 could become an indefinite blocker. The phase should specify: (a) minimum security audit scope (e.g., OWASP Top 10 applied to the specific attack surfaces: REST API, MCP protocol, credential storage, delegation chains, pod escape), (b) penetration test methodology (black-box, gray-box, or white-box), and (c) exit criteria (e.g., zero Critical, zero High unresolved findings).
 
+**Status:** Skipped — not an error
+
+
 ### BLD-071. Phase 15 (Environment resource) builds on Phase 10.6 RBAC model but there is no integration path from Phase 5's `noEnvironmentPolicy` workaround [Low]
 
 Phase 5 activates `noEnvironmentPolicy: allow-all` as a temporary workaround (per the advisory note). Phase 15 delivers the full Environment resource with "tag-based selectors, member RBAC." The transition from the Phase 5 workaround to Phase 15's full implementation requires a migration path: existing deployments using `noEnvironmentPolicy: allow-all` must transition to environment-based RBAC without disrupting running sessions. No migration strategy or data migration is specified for this transition. A runbook or migration script should be listed as a Phase 15 deliverable.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-072. Phase 16.5 experiment load test depends on Phase 16 but Phase 16 has no load test infrastructure of its own [Low]
 
 Phase 16 delivers "Experiment primitives, PoolScalingController experiment integration" with a milestone of "A/B testing infrastructure." Phase 16.5 immediately follows with a load test. However, Phase 16 itself includes no unit/integration test specification for the experiment primitives. Unlike Phases 9 and 12b/12c which include explicit "integration test gate (prerequisite for merging)" requirements, Phase 16 has no test gate. The experiment bucketing, variant pool sizing, and base pool `minWarm` adjustment could be merged without correctness verification, with Phase 16.5 load tests being the first real validation. Phase 16 should include an integration test gate.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-073. Build sequence has no phase for the `lenny-ctl` CLI tool itself [Medium]
 
 Section 24 documents a comprehensive `lenny-ctl` command reference (40+ commands covering session management, admin operations, bootstrap, migration, debugging). Multiple phases reference `lenny-ctl` subcommands (Phase 3 references `lenny-ctl admin pools upgrade`, Phase 4.5 references `lenny-ctl bootstrap`, Phase 17.7 runbooks use `lenny-ctl` extensively). However, the build sequence never assigns `lenny-ctl` as a deliverable to any phase. Phase 4.5 mentions the bootstrap seed mechanism as a deliverable, but the CLI binary itself -- including the argument parsing framework, authentication, and server connection logic -- is not phased. The CLI should be introduced as a Phase 2 or Phase 4.5 deliverable, with incremental subcommand additions in subsequent phases.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-074. Expand-contract migration Phase 3 enforcement gate may deadlock under active sessions [Medium]
 
 Section 10.4 specifies that Phase 3 migrations use a PL/pgSQL `DO` block to count un-migrated rows and abort if any remain. The check runs inside the same transaction as the DDL. However, the minimum inter-phase wait before Phase 3 is documented as `max(maxSessionAge, longest_record_TTL)`. In practice, sessions can be extended (lease extensions, Section 8.6) beyond `maxSessionAge`. A session that receives repeated lease extensions could hold old-schema rows indefinitely, preventing Phase 3 from ever succeeding. The Phase 3 gate should document what happens when sessions with lease extensions prevent the old-schema row count from reaching zero, and whether there is a forced migration path (e.g., marking extended sessions for forced schema migration during checkpoint).
 
+**Status:** Skipped — not an error
+
+
 ### BLD-075. Phase 5.4 etcd encryption verification assumes etcdctl access [Low]
 
 Phase 5.4 requires: "CI gate verifying that a test Secret written to the cluster is stored encrypted in etcd (confirmed via `etcdctl get` on the raw key)." In managed Kubernetes environments (EKS, GKE, AKS), `etcdctl` access is not available -- the provider manages etcd and does not expose it. The cloud-managed deployment profile (Section 17.9) relies on provider-managed encryption, but Phase 5.4's CI gate is only scoped to "self-managed clusters only." The spec should clarify that the CI gate applies only to self-managed clusters and specify an alternative verification mechanism for cloud-managed clusters (e.g., provider API confirmation that encryption is enabled).
+
+**Status:** Skipped — not an error
+
 
 ### BLD-076. Phase 17b (memory, semantic caching, guardrails, eval hooks) has no dependencies listed [Low]
 
 Phase 17b says it "can proceed in parallel with or after Phase 17a." However, memory tools (`lenny/memory_write`, `lenny/memory_query`) require the `MemoryStore` interface (Section 9.4) and semantic search capability. Semantic search implies a vector store or embedding service, neither of which is specified in any prior phase or in the deployment profiles (Section 17.9). Similarly, "semantic caching" requires an embedding pipeline. Phase 17b should list its infrastructure dependencies (vector database, embedding model/service) either as sub-deliverables or as prerequisites.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-077. No phase for `OutboundChannel` contract implementation [Medium]
 
 Section 15 specifies the `OutboundChannel` contract for push notifications with `buffered-drop` and `bounded-error` back-pressure policies. The `BaseAdapter` provides no-op implementations, and `A2AAdapter` (post-v1) implements the full contract. However, the `OutboundChannel` interface and `BaseAdapter` implementation must exist from Phase 5 onward (when adapters are registered), and webhook delivery for session events (Section 14 references `session.awaiting_action` webhook) is used from Phase 4 onward. The build sequence never assigns the webhook/push notification infrastructure to a specific phase. This should be a Phase 4 or Phase 5 deliverable.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-078. Phase 2 `make run` SQLite schema generation may be blocked by RLS-dependent migration files [Medium]
 
 Phase 2 specifies: "the `make run` SQLite schema is generated at build time from the Postgres migration files by stripping Postgres-specific features (RLS policies, `SET LOCAL`, PL/pgSQL triggers)." Phase 1.5 migration files must include RLS policies (since Section 4.2 specifies that "every tenant-scoped table has an RLS policy"). The stripping logic must handle: `CREATE POLICY` statements, `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, PL/pgSQL trigger functions, `SET LOCAL` commands in trigger bodies, and `current_setting()` function calls. This is a non-trivial SQL parsing/transformation task. The spec does not scope the complexity of the stripping logic or specify what happens when a migration file uses Postgres-specific SQL that the stripper cannot handle (e.g., a complex `DO $$ ... $$` block). A fallback strategy should be specified (e.g., manual SQLite migration overrides for files that cannot be auto-stripped).
 
+**Status:** Skipped — not an error
+
+
 ### BLD-079. Phase 13.5 Postgres write-pattern benchmark (SCL-040) references Section 12.3 ceiling table but no ceiling table exists in Section 12.3 [Medium]
 
 Phase 13.5 states: "compare measured sustained and burst IOPS against the Section 12.3 ceiling table and update `postgres.writeCeilingIops` in the Helm defaults if the empirical ceiling differs by more than 10% from the estimate." Section 12.3 covers Postgres HA, connection pooling, and RLS -- but there is no "ceiling table" with IOPS estimates in Section 12.3. Either the cross-reference is wrong (it may refer to Section 17.8's capacity planning), or the IOPS ceiling table is missing from the spec. This needs to be resolved before Phase 13.5 can be executed.
+
+**Status:** Skipped — not an error
+
 
 ### BLD-080. No phase assigns the `lenny_tenant_guard` trigger implementation [Medium]
 
 Section 12.3 specifies a per-transaction tenant validation trigger (`lenny_tenant_guard`) that serves as the second layer of RLS defense, particularly critical for cloud-managed poolers that do not support `connect_query`. The trigger is referenced in the Profile-Invariant Requirements (Section 17.9) and in the `platform-admin` `__all__` sentinel logic (Section 4.2). No build phase explicitly assigns implementation of this trigger. It should be part of Phase 1.5 (migration framework) or Phase 2 (where `make run` dev mode exercises database access), since it is a foundational security control that all subsequent phases depend on.
 
+**Status:** Skipped — not an error
+
+
 ### BLD-081. Build sequence assumes linear team but describes parallelizable phases only at 12a/12b/12c [Low]
 
 The build sequence note on Phase 12a/12b/12c parallelism is the only explicit mention of parallel execution. However, several other phases have no inter-dependencies and could be parallelized (e.g., Phase 6.5 load test and Phase 7 policy engine, or Phase 13 observability and Phase 14 security hardening). The build sequence does not explicitly mark which phases are sequential gates versus parallelizable work streams. For an AI-agent-driven build (as stated in the Section 18 preamble), explicit parallelism annotations on all phases would reduce total build time significantly. This is a structural gap in the build plan.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2480,65 +3341,113 @@ The build sequence note on Phase 12a/12b/12c parallelism is the only explicit me
 
 Section 4.4 (total-loss path) specifies that a `session.lost` event is emitted on the session's event stream with `reason: "eviction_total_loss"`. However, Section 14 (callbackUrl webhook delivery) enumerates the exhaustive webhook event types as: `session.completed`, `session.failed`, `session.terminated`, `session.cancelled`, `session.expired`, `session.awaiting_action`, and `delegation.completed`. The `session.lost` event type is absent from this list. If `session.lost` is a distinct event type (as opposed to `session.failed` with a specific reason code), it needs to be included in the webhook event type catalog with its own per-event `data` schema. Otherwise, clients relying on webhook delivery for CI/CD pipelines will never receive notification of a total-loss eviction -- they must poll session status to discover it. The spec should either add `session.lost` to the webhook event type catalog with its data schema, or explicitly state that the total-loss path transitions the session to `failed` and the webhook fires as `session.failed` with the eviction reason.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-064. Callback worker described as separate "pods" but gateway is a single Deployment [Medium]
 
 Section 14 (callbackUrl SSRF mitigations, item 3) states: "At minimum, a `NetworkPolicy` blocks the callback worker pods from reaching cluster-internal CIDRs." This implies callback workers run in separate pods with their own NetworkPolicy. However, the gateway is a single Deployment (Section 17.1), and callback delivery is described as a "dedicated goroutine pool" within the gateway process. The gateway's `lenny-system` NetworkPolicy (Section 13.2) allows broad external HTTPS egress (TCP 443 to `0.0.0.0/0`) for LLM proxy forwarding and connector callbacks. Since callback workers are goroutines in the same process, they share the gateway's broad egress rule and cannot have a separate, more restrictive NetworkPolicy. The claim that a NetworkPolicy "blocks the callback worker pods from reaching cluster-internal CIDRs" is incoherent with the shared-process architecture. The spec should either clarify that the existing gateway `except` clauses on the `0.0.0.0/0` CIDR (which already exclude cluster pod/service CIDRs and IMDS) are the callback worker's protection, or define a concrete isolation mechanism (e.g., a separate Deployment for callback delivery).
+
+**Status:** Fixed — Changed 'callback worker pods' to reference gateway goroutine pool (callbacks run in-process)
+
 
 ### FLR-065. Webhook retry exhaustion leaves no durable notification for total-loss sessions [Medium]
 
 Section 14 specifies that failed webhook deliveries are retried 5 times with exponential backoff, after which the event is "marked as undelivered and queryable via `GET /v1/sessions/{id}/webhook-events`". For a total-loss eviction scenario (Section 4.4) where both MinIO and Postgres may be degraded, the webhook callback may also fail (since the gateway itself may be under infrastructure pressure). If the webhook retries are exhausted and the session entered a total-loss state, the only way for a CI/CD client to discover this is to poll `GET /v1/sessions/{id}` or check `GET /v1/sessions/{id}/webhook-events`. The spec does not prescribe any escalated notification mechanism for undelivered webhooks in critical failure scenarios. While this is not a specification error per se, the total-loss path is one of the few scenarios where the client genuinely cannot rely on normal observability -- adding a recommendation for operators to monitor undelivered webhook events (e.g., a metric or alert) would close the gap.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-066. Checkpoint barrier ack timeout metric name inconsistency [Low]
 
 Section 16.1 defines the metric `lenny_checkpoint_barrier_ack_total` (counter labeled by `pool`, `outcome`: `success`, `timeout`, `error`) and notes that "the `timeout` outcome corresponds to the existing `lenny_checkpoint_barrier_ack_timeout_total` inline metric in Section 10.1." This means the same event is tracked by two different metric names: `lenny_checkpoint_barrier_ack_total{outcome="timeout"}` and `lenny_checkpoint_barrier_ack_timeout_total`. The spec should clarify whether both metrics are emitted (which creates confusion for dashboard authors) or whether `lenny_checkpoint_barrier_ack_timeout_total` is superseded by the labeled counter. If the latter, the inline reference in Section 10.1 should be updated to reference the consolidated metric.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-067. Coordinator handoff timeout has no explicit default or alert [Medium]
 
 Section 10.1 describes the 3-step coordinator handoff protocol with a `lenny_coordinator_handoff_duration_seconds` histogram and the `CoordinatorHandoffSlow` alert (P95 > 5s over 5 min). However, the spec does not define what happens when a handoff exceeds any absolute timeout. The alert fires at 5s P95 sustained, but a single handoff could block indefinitely if the old coordinator never responds to the fencing request. The spec mentions `lenny_coordinator_fence_relinquished_total` (counter for when a coordinator gives up after failing all fence retries), but the maximum number of retries and the per-retry timeout are not specified. Without these, an operator cannot reason about the worst-case handoff duration or determine when a handoff has entered an irrecoverable state. The spec should define `maxFenceRetries` and `fenceRetryTimeoutSeconds` with explicit defaults.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-068. Gateway graceful shutdown has no session-handoff specification [Medium]
 
 Section 10.1 describes coordinator handoff for session ownership, and Section 17.1 references gateway HPA and PDB. However, the spec does not define a graceful shutdown protocol for the gateway itself. When a gateway replica is terminated (scale-down, rolling upgrade, pod eviction), what happens to in-flight sessions coordinated by that replica? The coordinator handoff protocol (Section 10.1) describes how sessions migrate between replicas, but the trigger for initiating handoff during a planned gateway shutdown is not specified. The `preStop` hook behavior for gateway pods is not defined (unlike agent pods, which have a detailed preStop checkpoint flow in Section 4.4). This gap means sessions coordinated by a draining gateway replica could experience an uncoordinated ownership transfer (relying on lease expiry rather than a proactive handoff), increasing session disruption time.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-069. Redis Lua script contention cross-tenant impact underspecified for quota operations [Medium]
 
 Section 8.3 thoroughly analyzes cross-tenant aggregate Lua contention for delegation budget `budget_reserve` and `budget_return` scripts, including a blocking formula and the `DelegationLuaScriptLatencyHigh` alert. However, Section 11.2 describes quota enforcement using Redis counters with atomic operations but does not perform a similar contention analysis. At Tier 3 with 500 active tenants and 200 sessions/s creation rate, quota check-and-increment operations on Redis could exhibit similar serialization pressure -- particularly if they use Lua scripts for atomic check-and-increment (the spec does not clarify whether quota operations use `INCRBY` + `GET` or a Lua script). If quota operations are Lua-scripted, the same cross-tenant contention analysis and dedicated-store recommendation from Section 8.3 should be applied to quota operations. If they use simple atomic commands, this should be stated explicitly.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-070. `created` state timeout races with workspace upload for large files [Medium]
 
 Section 15.1 defines that the `created` state has a TTL of `maxCreatedStateTimeoutSeconds` (default 300s), after which the session transitions to `expired`. The session remains in `created` until the client calls `POST /v1/sessions/{id}/finalize`. However, for large workspace uploads (e.g., multiple files totaling hundreds of MB), the upload phase could approach or exceed the 300s default. The spec notes the upload token's TTL is tied to `session_creation_time + maxCreatedStateTimeoutSeconds`, but does not specify whether the `created` state timeout is reset or extended by each upload call. If a client uploads file 1 at t=0, file 2 at t=200s, and file 3 at t=280s, does the session expire at t=300 even though uploads are actively in progress? The spec should clarify whether active upload traffic extends the `created` state timeout or whether the client must complete all uploads within the fixed window.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-071. Billing write-ahead buffer exhaustion causes work rejection but no alert threshold for near-rejection [Medium]
 
 Section 12.3 states that when the in-memory billing write-ahead buffer is exhausted, "new billable work is rejected." Section 16.5 defines `BillingWriteAheadBufferHigh` as a Warning alert when utilization exceeds 0.80. However, the gap between 80% warning and 100% rejection is narrow -- at Tier 3 with high billing event rates, the buffer could fill from 80% to 100% in seconds. The spec does not define what "new billable work is rejected" means operationally: does the gateway return 503 to session creation? Does it fail the billing event and continue the session (potentially losing billing data)? Does it queue overflow events somewhere? The rejection behavior and its client-visible error code should be specified, and the alert threshold gap should be analyzed to ensure operators have sufficient reaction time.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-072. SIEM delivery guard partition hold has no upper bound [Medium]
 
 Section 16.4 states the audit partition GC "MUST NOT drop an audit partition whose most recent event has a `sequence_number` greater than the SIEM forwarder's last acknowledged high-water mark." The held partition is dropped only when the forwarder catches up or an operator explicitly forces it. If the SIEM forwarder is permanently down (e.g., SIEM service decommissioned, endpoint misconfigured), partitions accumulate indefinitely with no automatic resolution. Over weeks or months, this could consume significant Postgres storage. The spec should define either a maximum hold duration (after which the partition is dropped with an alert) or require the `AuditPartitionDropBlocked` alert to escalate to Critical after a deployer-configurable period.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-073. Orphan task per-tenant cap `cancel_all` fallback is not explained for in-flight tasks [Medium]
 
 Section 8.10 states that when `maxOrphanTasksPerTenant` is reached, the gateway "falls back to `cancel_all` instead of detaching." The `OrphanTasksPerTenantHigh` alert fires at 80% of the cap. However, the spec does not specify what `cancel_all` means for tasks that are actively executing (in `running` state). Does the gateway send a cancel signal and wait for graceful shutdown? Does it force-terminate immediately? What happens to in-progress work (checkpoints, partial results)? For a scenario where a legitimate orchestrator experiences a transient failure and reconnects, the `cancel_all` fallback could destroy recoverable work. The spec should clarify the cancellation semantics and whether `cancel_all` can be reversed within a grace window.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-074. MCP deprecated-version session drain has no automated mechanism [Low]
 
 Section 15.2 describes the MCP version deprecation lifecycle: after the 6-month window, version support is removed from new connections, but existing sessions continue. The `lenny-preflight` Job emits a warning if deprecated-version sessions are active, and "Operators must drain these sessions (via graceful terminate + resume on the new version) before the deployment." However, there is no automated drain mechanism, no operator runbook for this scenario, and no `lenny-ctl` command to list sessions by MCP version. The operator must manually identify and terminate each deprecated-version session. For Tier 3 deployments with thousands of sessions, this could be operationally impractical. The spec should define either a `lenny-ctl` command to filter sessions by negotiated MCP version or an automated pre-deploy drain for deprecated-version sessions.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-075. Credential proactive renewal metric defined but no exhaustion alert escalation [Low]
 
 Section 16.5 defines `CredentialProactiveRenewalExhausted` as a Warning alert when proactive renewal retries are exhausted. The session then falls through to the standard credential fallback flow. However, if proactive renewal is systematically failing across multiple sessions (e.g., the credential provider is experiencing intermittent outages), the fallback flow will be heavily loaded. There is no escalation path from `CredentialProactiveRenewalExhausted` (Warning) to a Critical alert when the failure rate indicates a systemic issue. The `CredentialPoolLow` alert (Warning at <20% available) and `CredentialPoolExhausted` (Critical at 0%) cover pool depletion but not the scenario where credentials exist but cannot be renewed. A rate-based escalation (e.g., proactive renewal exhaustion rate > N/min for > 5min) would provide earlier detection.
 
+**Status:** Skipped — not an error
+
+
 ### FLR-076. `DERIVE_SNAPSHOT_UNAVAILABLE` recovery path is unclear [Low]
 
 Section 15.1 error catalog defines `DERIVE_SNAPSHOT_UNAVAILABLE` (503) with the note "Retrying immediately is unlikely to help; the caller should wait and retry or derive from a different source state." However, if the snapshot was deleted by a GC bug (as the error description suggests), waiting and retrying will never succeed -- the data is permanently lost. The guidance to "wait and retry" is misleading for the GC-bug scenario. The spec should distinguish between transient unavailability (storage backend temporarily unreachable) and permanent loss (object deleted), and provide different guidance for each. For permanent loss, the error response should include a field indicating whether the snapshot reference was found-but-unreachable versus not-found-at-all.
+
+**Status:** Skipped — not an error
+
 
 ### FLR-077. Billing Redis stream MAXLEN undersized for Tier 1/2 extended Postgres outages [Low]
 
 Section 17.8 sets `billingRedisStreamMaxLen` to 50,000 for Tier 1/2, with fill times of ~2.3 hours (Tier 1) and ~14 minutes (Tier 2). The `billingStreamTTLSeconds` default is 3600s (1 hour). At Tier 2, the stream fills in ~14 minutes, well within the 1-hour TTL. However, if the Postgres outage extends beyond 14 minutes at Tier 2 sustained billing rate, new billing events will begin evicting old events from the stream (MAXLEN is a hard cap). The evicted events are permanently lost since they were not flushed to Postgres. The `BillingStreamBackpressure` alert fires at 80% of MAXLEN, giving only ~2.8 minutes of warning at Tier 2 before events start being lost. While the alert exists, the reaction time is very short. The spec should analyze whether 50,000 is adequate for Tier 2 Postgres failover scenarios (RTO < 30s per Section 17.3, which is well within the 14-minute fill time -- so this is only a concern for extended outages beyond RTO).
 
+**Status:** Skipped — not an error
+
+
 ### FLR-078. `processing_restricted` flag blocks session creation but not message delivery to existing sessions [Low]
 
 Section 12.8 and the error catalog define `ERASURE_IN_PROGRESS` (403) which blocks session creation when the target `user_id` has a pending GDPR erasure job. However, the spec does not address whether inter-session messages (`lenny/send_message`) to existing sessions owned by the restricted user are also blocked. If messages continue flowing to a running session owned by a user under erasure processing, new data may be generated and persisted (transcripts, billing events) that the erasure job will need to clean up retroactively. The spec should clarify whether `processing_restricted` also blocks inbound messages to the user's active sessions, or whether it only prevents new session creation.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2550,6 +3459,9 @@ Section 7.1 (derive session semantics, lines 2776-2789) specifies four aspects o
 
 The spec does not answer: Does a derived session inherit the source session's `experimentContext`? Is the `ExperimentRouter` evaluated independently for the derived session? Is derivation excluded from experiment assignment entirely? This is a genuine gap because a derived session could pollute experiment results if its `experimentContext` is silently inherited from the source without any documented rule.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-056. No specification for variant weight changes on active experiments [Medium]
 
 The spec documents that variant weights can be modified via `PUT /v1/admin/experiments/{name}` (line 7145), and the ordering sensitivity note (line 4852) warns that "deployers who add a new variant to an experiment mid-flight will shift bucket boundaries." The PoolScalingController recalculates pool sizing "whenever any variant weight changes" (line 596). However, the spec does not define the complete semantics of a weight change on an active experiment:
@@ -2559,6 +3471,9 @@ The spec documents that variant weights can be modified via `PUT /v1/admin/exper
 2. No validation rule prevents reducing a variant's weight to 0.0 on an active experiment (which would effectively remove the variant from assignment while keeping its pool active). The `Σ variant_weights` clamping (line 596) only validates `>= 1`, not individual variant floors.
 
 However, the deterministic hash makes weight changes safe for non-cached users (the bucket boundary shifts, but the hash is re-evaluated). The missing piece is primarily documentation of the interaction between weight changes and sticky caches. This is a spec gap, not a correctness bug.
+
+**Status:** Skipped — not an error
+
 
 ### EXP-057. Multi-experiment first-match rule creates enrollment bias toward older experiments [Medium]
 
@@ -2570,6 +3485,9 @@ The spec does acknowledge that experiments are evaluated independently (line 485
 
 This is a design-level awareness gap rather than a bug -- the math is correct, but the effective-vs-configured weight discrepancy is not called out.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-058. No experiment assignment counter metric in the metrics inventory [Medium]
 
 The metrics inventory (lines 8637-8644) defines experiment-related metrics for targeting webhook latency, webhook failures, circuit breaker state, sticky cache invalidations, session errors by variant, sessions total by variant, and eval scores by variant. However, there is no explicit `lenny_experiment_assignment_total` counter (or equivalent) labeled by `experiment_id`, `variant_id`, and `assignment_source` (hash vs. webhook vs. inherited).
@@ -2577,6 +3495,9 @@ The metrics inventory (lines 8637-8644) defines experiment-related metrics for t
 The `lenny_session_total` metric (line 8643) is labeled by `variant_id` but not `experiment_id`. When multiple experiments are active for the same tenant, operators cannot distinguish assignment rates per experiment from this metric alone. They must use the Results API (`sample_count` per variant), which is an aggregation endpoint and not suited for real-time alerting on assignment rates.
 
 This is a genuine observability gap: operators monitoring a ramp-up (increasing variant weight from 1% to 5% to 10%) have no real-time metric to confirm the assignment rate matches the configured weight. The rollback trigger table (line 5117) references variant-level metrics but assumes `variant_id` is sufficient for disambiguation; with multiple concurrent experiments, `variant_id: "treatment"` could appear in multiple experiments.
+
+**Status:** Skipped — not an error
+
 
 ### EXP-059. `inherited` flag semantics are ambiguous for `control` propagation mode [Medium]
 
@@ -2586,11 +3507,17 @@ This creates an ambiguity in eval result analysis: an `EvalResult` with `variant
 
 The `inherited` field alone cannot distinguish these cases. The `EvalResult` schema (line 4976) does not store the parent's `variant_id`, the propagation mode, or the parent's `experiment_id`. An analyst who filters by `inherited: false` (as recommended in line 4957) gets uncontaminated data, but an analyst trying to understand the contaminated set cannot determine which control-group results came from treatment-group parents.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-060. Results API `sample_count` is inconsistent with scorer-level `count` [Low]
 
 The Results API response (lines 5024-5078) includes both a top-level `sample_count` per variant (e.g., 412 for control) and per-scorer `count` fields (e.g., `llm-judge.count: 412`, `exact-match.count: 390`). The `sample_count` and the scorer counts can differ (412 vs. 390 in the example), which is expected since not every session may be scored by every scorer.
 
 However, the spec does not define what `sample_count` represents. Is it the number of unique sessions enrolled in the variant, the number of eval submissions, or the maximum `count` across all scorers? In the example, `sample_count: 412` matches `llm-judge.count: 412` for control, and `sample_count: 45` matches `llm-judge.count: 45` for treatment -- suggesting `sample_count` is the total number of sessions. But this is inferred, not specified. If `sample_count` is total enrolled sessions, it should be documented as such and should not depend on eval submissions (a session enrolled in a variant but never scored should still be counted).
+
+**Status:** Skipped — not an error
+
 
 ### EXP-061. No TTL or retention policy for experiment sticky assignment cache entries [Low]
 
@@ -2600,11 +3527,17 @@ For long-running experiments (weeks or months), the cache accumulates one entry 
 
 This is a low-severity operational concern. A reasonable TTL (e.g., 30 days) with lazy refresh on cache hit would bound memory usage without affecting correctness.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-062. No specification for `sticky: session` cache behavior [Low]
 
 The sticky assignment cache section (line 5089) describes `sticky: user` caching in detail: Redis-keyed by `(user_id, experiment_id)`, invalidated on status transitions. The `sticky: session` mode uses `session_id` as the `assignment_key` (line 4819), which means each session gets its own deterministic hash.
 
 Since each session has a unique `session_id`, the assignment is computed exactly once per session (at creation time) and never needs to be re-evaluated. There is no need for a cache entry because the result is stored in `experimentContext` on the session record. However, the spec does not explicitly state that `sticky: session` does not use the Redis cache, or confirm that the session record's `experimentContext` is the authoritative source after initial assignment. This is a minor completeness gap.
+
+**Status:** Skipped — not an error
+
 
 ### EXP-063. `control` propagation mode -- eval attribution contradicts blinding goals [Medium]
 
@@ -2614,6 +3547,9 @@ However, the `control` propagation mode creates an information leak path: if chi
 
 The sample contamination warning (line 4957) acknowledges the analytical concern but does not address it as a blinding violation. If the Results API is meant to preserve blinding, the existence of `control`-mode inherited results at depth > 0 is itself an information leak about the parent's assignment.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-064. No experiment-scoped session count in the Results API [Medium]
 
 The Results API response (lines 5024-5078) provides `sample_count` per variant, which counts sessions with eval submissions. However, there is no field for total enrolled sessions per variant (including sessions that were enrolled but never had an eval submission). This distinction matters for:
@@ -2622,17 +3558,26 @@ The Results API response (lines 5024-5078) provides `sample_count` per variant, 
 2. **Scorer coverage monitoring**: If `sample_count` is 45 for treatment but the variant enrolled 200 sessions, only 22.5% of sessions were scored -- indicating a scorer pipeline problem.
 3. **Results API description inconsistency**: The admin API table (line 7148) says the results endpoint returns "per-variant session counts, token usage, and any custom metric aggregates." Token usage is not present in the Results API response schema (line 5026-5078). This is a documentation inconsistency between the API table description and the actual response schema.
 
+**Status:** Fixed — Removed 'token usage' from admin API results endpoint description; schema has no such field
+
+
 ### EXP-065. Variant pool `maxWarm` is unbounded during active experiments [Low]
 
 The variant pool formula (line 579) computes `target_minWarm` but the spec does not define how `maxWarm` is set for variant pools. For base pools, the PoolScalingController manages `maxWarm` based on scaling policy. For experiment variant pools, the only `maxWarm` behavior documented is during transitions: `active -> paused` leaves `maxWarm` unchanged (line 5095), and `concluded` sets `maxWarm` to 0 (line 5097).
 
 During normal `active` operation, is the variant pool's `maxWarm` inherited from the base pool? Computed independently? Set to a deployer-specified value? Without this specification, the controller behavior for variant pool scale-up ceiling is undefined. A variant pool with no `maxWarm` constraint could scale beyond what the experiment's traffic fraction warrants if there is a burst in base pool demand.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-066. No specification for experiment creation audit event [Low]
 
 The spec documents the `experiment.status_changed` audit event (line 5087) for status transitions, and the `experiment.targeting_webhook_failed` warning event (line 4926) for webhook failures. However, there is no audit event for experiment creation itself (`POST /v1/admin/experiments`). Given that experiment creation directly affects traffic routing (the `ExperimentRouter` begins evaluating the new experiment immediately if `status: active`), the absence of a creation-specific audit event is a gap. An experiment created directly with `status: active` would start routing traffic without a corresponding creation audit trail -- only subsequent status *changes* are logged.
 
 The general admin API audit logging may cover this implicitly if all admin write operations emit audit events, but the spec does not confirm this general rule, and the explicit enumeration of experiment-specific audit events (status_changed, targeting_webhook_failed, multi_eligible_skipped, isolation_mismatch) suggests these are the exhaustive set.
+
+**Status:** Skipped — not an error
+
 
 ### EXP-067. Experiment definition lacks a `maxVariants` validation bound [Low]
 
@@ -2642,11 +3587,17 @@ Without an enforced bound, a deployer could theoretically create an experiment w
 
 This is low severity because practical deployments are unlikely to create extreme variant counts, but the spec's own claim that the response is "inherently bounded" relies on an informal "typically 2-5" rather than a formal validation.
 
+**Status:** Skipped — not an error
+
+
 ### EXP-068. `submitted_after_conclusion` flag race condition with concurrent status transition [Low]
 
 The `submitted_after_conclusion` boolean on `EvalResult` (line 4988) is "set to `true` when the eval was submitted after the experiment transitioned to `concluded` status." The gateway checks the experiment's current status at eval submission time. However, if an experiment is transitioning from `active` to `concluded` concurrently with an eval submission, the flag's value depends on the read order: the eval submission may read the experiment status before the transition commits, seeing `active` and setting `submitted_after_conclusion: false`, even though the experiment was concluded milliseconds later.
 
 This is inherent to any timestamp-based check and the impact is minimal (a few eval results near the transition boundary may be misclassified). The spec acknowledges this implicitly by providing the flag for filtering rather than hard-blocking post-conclusion submissions. Low severity because the boundary condition affects at most a handful of records during a brief transition window.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2658,6 +3609,9 @@ This is inherent to any timestamp-based check and the impact is minimal (a few e
 
 The text reads: "pool controllers surface as a pool-level `SecurityDegradedMode=True` condition on the `AgentPool` CRD." However, the CRD mapping table at line 433 explicitly states that `AgentPool` has been replaced by `SandboxTemplate` in the `agent-sandbox` CRD set. The document never defines an `AgentPool` CRD -- the four agent-sandbox CRDs are `SandboxTemplate`, `SandboxWarmPool`, `Sandbox`, and `SandboxClaim`. This should reference `SandboxTemplate` or `SandboxWarmPool` depending on where pool-level conditions are surfaced.
 
+
+**Status:** Fixed — Changed stale AgentPool CRD reference to SandboxTemplate
+
 ---
 
 ### DOC-060. Dangling parenthetical between session creation steps 8 and 9 [Low]
@@ -2665,6 +3619,9 @@ The text reads: "pool controllers surface as a pool-level `SecurityDegradedMode=
 **Location:** Line 2722
 
 The line `(executionMode, isolationProfile, scrubPolicy summary)` appears to be a parenthetical annotation that was intended to belong to step 8 (line 2719: "Return session_id + upload token + sessionIsolationLevel") but sits orphaned between the atomicity discussion (lines 2721) and step 9 (line 2724). It is unclear whether this indicates additional fields returned in step 8 or is a leftover editing artifact. Either integrate it into step 8's return value list or remove it.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2674,6 +3631,9 @@ The line `(executionMode, isolationProfile, scrubPolicy summary)` appears to be 
 
 There is an empty fenced code block (opening and closing triple backticks with no content) between the end of Section 7.1's "Seal-and-export invariant" paragraph and Section 7.2's heading. This appears to be a formatting artifact from editing.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DOC-062. Empty code block between Standard-tier and Full-tier pseudocode [Low]
@@ -2681,6 +3641,9 @@ There is an empty fenced code block (opening and closing triple backticks with n
 **Location:** Lines 8344-8346
 
 Between the end of the Standard-tier pseudocode block (line 8343: `exit(0)` followed by closing backticks at line 8344) and the Full-tier pseudocode block (line 8346 opening backticks, line 8347: `Pseudocode (Full-tier addition -- lifecycle channel):`), there is an empty code block. The closing backticks at 8344 close the Standard-tier block, then lines 8346-8347 open a new block. But the structure ```` ``` \n ``` ```` at 8344-8346 creates a visually confusing empty block. The Full-tier heading text "Pseudocode (Full-tier addition...)" is inside the code fence rather than being a prose heading before it, which is inconsistent with the Standard-tier pseudocode block's heading treatment.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2694,6 +3657,9 @@ Footnote `4` is used twice with completely different referents:
 
 Both use the superscript `4` marker. The document uses numbered footnotes (`1`, `2`, `3`, `4`) but the numbering is not scoped per section -- the `4` at line 9739 collides with the `4` at line 3646. One should be renumbered or the document should adopt section-scoped footnote numbering.
 
+
+**Status:** Fixed — Renumbered duplicate footnote marker 4 to 5
+
 ---
 
 ### DOC-064. `BillingStreamEntryAgeHigh` classified as Critical in table but listed under Warning alerts section [Medium]
@@ -2701,6 +3667,9 @@ Both use the superscript `4` marker. The document uses numbered footnotes (`1`, 
 **Location:** Line 8826
 
 The alert `BillingStreamEntryAgeHigh` is listed in the **Warning alerts** table (the table that begins at line 8792 with "Warning alerts:"), but its Severity column reads "Critical". This is internally inconsistent -- either the alert belongs in the Critical alerts table (lines 8762-8788), or its severity should be "Warning". Given that the description says it detects entries "at imminent risk of TTL expiry and permanent loss," Critical seems appropriate, meaning it is placed in the wrong table.
+
+
+**Status:** Fixed — Moved BillingStreamEntryAgeHigh from Warning to Critical alerts table
 
 ---
 
@@ -2710,6 +3679,9 @@ The alert `BillingStreamEntryAgeHigh` is listed in the **Warning alerts** table 
 
 Section 12.7 "Extensibility" (at line 5827) appears between the deeply specified Sections 12.6 (Pluggable Store Interfaces, with full interface definitions) and 12.8 (Compliance Interfaces, with ~140 lines of detailed erasure and tenant deletion specification). However, a search for "Section 12.7" references shows it is only referenced twice in the entire document (line 5585 and 5587, both about audit log write modes being determined by data classification tier). The section heading "Extensibility" suggests broader content about storage extensibility, but the actual content at this location (which the prior session identified as very brief) and the cross-references to it are about data classification tiers, not storage extensibility in general. This heading may be misleading.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DOC-066. Missing Section 17.5 "Cloud Portability" -- content is a placeholder [Low]
@@ -2717,6 +3689,9 @@ Section 12.7 "Extensibility" (at line 5827) appears between the deeply specified
 **Location:** Lines 9115-9120
 
 Section 17.5 "Cloud Portability" contains only four bullet points asserting that storage backends are pluggable, NetworkPolicies are standard, RuntimeClass works with conformant runtimes, and no cloud-specific CRDs are required. In a document where every other section provides exhaustive detail (Section 17.9 alone is ~200 lines on deployment profiles), Section 17.5 reads like a placeholder that was never fleshed out. The actual cloud portability details are covered in Section 17.9 (Deployment Profiles), making 17.5 redundant. Consider either expanding it with substantive content (e.g., tested Kubernetes distributions, CNI compatibility matrix) or removing it in favor of a forward reference to 17.9.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2726,6 +3701,9 @@ Section 17.5 "Cloud Portability" contains only four bullet points asserting that
 
 After Section 17.6 "Packaging and Installation" (which ends around line 9282), the document flow continues directly into the "Day 0 installation walkthrough" (still part of 17.6) through line 9393. Section 17.7 "Operational Runbooks" appears at line 9394. This is correct numbering but the Day-0 walkthrough (lines 9286-9393, over 100 lines) is extremely long for a subsection within 17.6. The walkthrough reads more like a standalone section (it includes 7 ordered steps, full YAML examples, and curl commands) than a subsection of "Packaging and Installation." Consider whether it should be its own numbered subsection (e.g., 17.6.1) for navigability.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DOC-068. `sessionIsolationLevel` forward-referenced in step 8 before definition [Low]
@@ -2733,6 +3711,9 @@ After Section 17.6 "Packaging and Installation" (which ends around line 9282), t
 **Location:** Line 2719 (step 8) vs. later definition
 
 In the Normal Flow of Section 7.1, step 8 returns `sessionIsolationLevel` to the client (line 2719), but the concept of `sessionIsolationLevel` is introduced at step 22 (post-completion session state). While forward references are acceptable in a spec, step 8 returns this value as part of the session creation response -- the reader encounters it before understanding what it means. A brief inline note or cross-reference would improve clarity.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2744,6 +3725,9 @@ The math checks out (0.8 * 3600 = 2880), so this is not an error. However, the d
 
 **On reflection, this is too minor. Withdrawing this finding.**
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DOC-070. `lenny_pod_claim_queue_wait_seconds` metric name inconsistency [Medium]
@@ -2754,6 +3738,9 @@ At line 9662, the metric is referenced as `lenny_pod_claim_queue_wait_seconds` w
 
 **On reflection, I cannot definitively confirm a mismatch without re-reading the exact S16.1 table entry. Withdrawing this finding due to insufficient evidence.**
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### DOC-071. Missing Section 12.9 reference from Section 12.8 erasure SLA text [Medium]
@@ -2761,6 +3748,9 @@ At line 9662, the metric is referenced as `lenny_pod_claim_queue_wait_seconds` w
 **Location:** Line 5855
 
 The text states: "Erasure jobs must complete within the tier-specific deadlines defined in Section 12.9: T3 data within 72 hours, T4 data within 1 hour." However, the document has Section 12.7 "Extensibility" and Section 12.8 "Compliance Interfaces" but there is no Section 12.9 heading anywhere in the document. The data classification tiers (T1-T4) and their definitions appear to be part of Section 12.8 or another subsection within Section 12. This is a dangling cross-reference to a non-existent section.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2770,69 +3760,120 @@ The text states: "Erasure jobs must complete within the tier-specific deadlines 
 
 The `MessageEnvelope` spec (line ~7863-7869) documents that when a session is in the `input_required` sub-state, `delivery: "immediate"` does NOT actually interrupt and deliver immediately -- it falls back to `queued` behavior (buffered in inbox, delivered FIFO after `request_input` resolves). However, the delivery receipt returned is `queued`, not `delivered`. The problem: a sender who explicitly sets `delivery: "immediate"` expects immediate delivery. The receipt correctly says `queued`, but the spec does not require the gateway to include any indication in the receipt that the `immediate` hint was downgraded. A sender tracking receipts cannot distinguish between "I sent with `queued`" and "I sent with `immediate` but it was silently downgraded to `queued`." The receipt schema (line ~7871-7883) has a `reason` field but it is only "populated when status is dropped, expired, or rate_limited." Add a `downgraded` or `delivery_override` field (or populate `reason` for `queued` status when `immediate` was requested) so senders can detect the downgrade.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-075. `inReplyTo` matching against `request_input` bypasses inbox ordering [Medium]
 
 Line ~7887 states: "If [inReplyTo] matches an outstanding `lenny/request_input` call on the target, the gateway resolves that tool call directly instead of delivering to stdin." This is a direct-resolution path that bypasses the session inbox FIFO. If a sender sends message A (no `inReplyTo`, `delivery: "queued"`) and then message B (with `inReplyTo` matching a pending `request_input`), message B resolves immediately while message A remains queued. After `request_input` resolves, message A is delivered. The spec does not address whether this ordering inversion is intentional or what happens to message A's content. If message A was the "real" intended reply and message B was a stale retry, the runtime now gets both -- potentially corrupting the conversation. The spec should state explicitly whether `inReplyTo`-matched direct resolution should drain the inbox first, or whether the ordering inversion is accepted, and what runtimes should expect.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-076. MessageDAG `session_messages` table and delivery receipt persistence are under-specified [Medium]
 
 Line ~7893 states "the gateway records every delivered message in the session's `MessageDAG` store (Postgres `session_messages` table)." Line ~7871 specifies that `lenny/send_message` returns a synchronous `delivery_receipt`. However, the spec never states whether delivery receipts themselves are persisted. The `GET /v1/sessions/{id}/messages` endpoint (line ~6998) says it "Returns message history including delivery receipts and state" -- implying receipts are persisted and queryable. But the `delivery_receipt` schema is only defined as a synchronous return value. The persistence model for receipts (same table? separate table? TTL?) is unspecified. This matters for reliable messaging patterns where senders re-read receipts after reconnection.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-077. Message deduplication window uses Redis but durable inbox uses Redis too -- crash semantics unclear [Medium]
 
 Line ~7885 specifies that seen message IDs are stored in a Redis sorted set for deduplication (`deduplicationWindowSeconds`, default 3600s). Section 7.2 specifies that durable inboxes (`durableInbox: true`) use Redis lists. If Redis crashes and recovers, the deduplication set is lost. A sender retrying a message that was previously accepted (but whose dedup entry was lost) would see it accepted again, leading to duplicate delivery. The spec's inbox crash-recovery note (Section 7.2) says "Senders that require reliable delivery MUST track receipts and re-send on gap detection" -- but this guidance contradicts itself: re-sending after gap detection could create duplicates if the dedup set was lost in the same crash. The spec should state whether the dedup set is reconstructible from the `session_messages` Postgres table, or whether message-level idempotency is the sender's responsibility end-to-end.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-078. `from.kind` enum is closed but no forward-compatibility guidance for new kinds [Low]
 
 Line ~7843 states "`from.kind` is a closed enum with exactly four values." However, Section 21.4 lists "external agent participation" as a future pattern accommodated by `MessageEnvelope`. If a fifth `from.kind` value is needed, the "closed enum" designation means adding it is a breaking change. Either the enum should be open (with unknown-kind handling guidance), or the spec should explain how new participant types map to the existing four kinds. For example, would an external A2A agent use `kind: "external"` with a different `id` format?
 
+**Status:** Skipped — not an error
+
+
 ### MSG-079. `threadId` is documented as "optional, in v1 one implicit thread per session" but DAG ordering guarantee is per-thread [Medium]
 
 Line ~7894 states: "Within a single thread, messages are ordered by the coordinator-local sequence number assigned at inbox-enqueue time." Line ~7897 says: "`threadId` -- optional. In v1 one implicit thread per session." The ordering guarantee is explicitly scoped to "within a single thread." But in v1, messages can be sent with or without `threadId` -- if some messages carry `threadId: "t_01"` and others omit it, are they in the same thread or different threads? The spec says "absent or the same value for all messages" but does not normatively define equivalence between `threadId: null` and `threadId: "t_01"`. If a sender sends a message without `threadId` and another with `threadId: "t_01"`, the ordering guarantee may not apply across them. This ambiguity needs a normative statement: in v1, all messages belong to a single logical thread regardless of `threadId` value.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-080. `POST /v1/sessions/{id}/messages` valid in "Any non-terminal state" but pre-running delivery semantics gap [Medium]
 
 Line ~6948 states that messages can be sent to sessions in "Any non-terminal state" including `created`, `finalizing`, `ready`, and `starting`. For pre-running states, it says: "buffer (inter-session) or reject with `TARGET_NOT_READY` (external client)." This creates an asymmetry: inter-session messages (from sibling/parent agents) are buffered, but external client messages are rejected. However, the spec does not define when these buffered inter-session messages are delivered. If a parent sends a message to a child session in `created` state, is it delivered when the session reaches `running`? What if the session transitions to `running` but immediately enters `input_required` -- is the buffered message delivered before or after the initial task input? The delivery ordering between pre-buffered messages and the initial session message is unspecified.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-081. `maxInboundPerMinute` aggregate limit lacks per-sender attribution in receipt [Low]
 
 Section 13.5 (line ~6518) describes `maxInboundPerMinute` as an "aggregate limit [that] caps total inbound messages to any single session regardless of the number of senders." When this limit is hit, the delivery receipt returns `rate_limited`. However, the receipt `reason` field does not distinguish between per-sender rate limiting (`maxPerMinute`) and aggregate rate limiting (`maxInboundPerMinute`). A well-behaved sender receiving `rate_limited` cannot tell whether backing off would help (per-sender limit) or whether the target is globally saturated (aggregate limit). Adding a `limitType` field (`per_sender` vs `aggregate`) to the receipt would enable smarter retry behavior.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-082. `delivery_receipt` status `error` with `reason: "scope_denied"` is indistinguishable from infrastructure errors [Low]
 
 Line ~7883 lists `error` as a delivery receipt status with examples: `reason: "inbox_unavailable"` (infrastructure) and `reason: "scope_denied"` (policy). These are fundamentally different failure classes -- one is transient (retry may succeed), the other is permanent (retry will never succeed). But they share the same `status: "error"`. The `retryable` field from the error catalog (Section 15.1) is not present in the `delivery_receipt` schema. Senders need to know whether to retry. Either add a `retryable` boolean to the receipt or split `error` into `error` (transient) and `denied` (permanent).
 
+**Status:** Skipped — not an error
+
+
 ### MSG-083. Reconnect semantics reference event cursor but cursor format is undefined for message delivery [Medium]
 
 Section 7.2 (lines ~2984-2998, from earlier reading) describes reconnect semantics with an event cursor and replay window. The `GET /v1/sessions/{id}/messages` endpoint (line ~6998) supports `?since=` filter for the message DAG. But the reconnect cursor used for SSE streaming events (Section 7.2) and the `since` parameter for message history retrieval appear to be different mechanisms. The spec does not clarify whether a reconnecting client that resumes an SSE stream also receives messages that were delivered to the inbox during disconnection, or only events that were generated. If messages were `queued` during disconnection and delivered after reconnection, the SSE stream would show the delivery event, but the client might miss the message content if it only replays from the cursor. The interaction between SSE reconnect cursors and message history cursors needs clarification.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-084. `slotId`-based routing in concurrent-workspace mode lacks inbox isolation guarantee [Medium]
 
 Line ~7859 states `slotId` is "present only in concurrent-workspace mode" and identifies the concurrent slot a message is addressed to. Section 7.2 defines the session inbox as a per-session data structure. The spec does not state whether concurrent-workspace mode uses per-slot inboxes or a single session inbox with `slotId`-tagged messages. If a single inbox is shared, a message targeting `slot_01` could be blocked behind messages for `slot_02` in the FIFO queue. Section 14 (line ~6532) mentions "per-slot inbox" but only in passing. The inbox data model for concurrent-workspace mode -- single shared inbox vs per-slot inboxes -- needs a normative definition, including the implications for ordering guarantees and delivery semantics.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-085. `one_shot` interaction mode allows "single `request_input` at Standard+ tier" but `delivery: "immediate"` exception creates deadlock risk [Medium]
 
 From earlier reading: `one_shot` runtimes allow a single `request_input` call. If a `one_shot` session calls `request_input` and enters `input_required`, then an external client sends a message with `delivery: "immediate"`, the spec says the message is buffered (not delivered immediately) because the runtime is blocked in `request_input`. The `inReplyTo` mechanism can resolve the `request_input` directly (MSG-075). But if the external client sends a message without `inReplyTo` (perhaps not knowing about the pending `request_input`), the message is buffered. When `request_input` eventually times out (`maxElicitationWait`), the buffered message is delivered -- but the `one_shot` runtime has already used its single `request_input` allowance. The runtime now receives an unsolicited message it cannot process (it cannot call `request_input` again to clarify). The spec should define the interaction between `one_shot`'s single `request_input` allowance and buffered messages that arrive during `input_required`.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-086. `delegationDepth` field is "informational" but enables potential message spoofing [Low]
 
 Line ~7895 states `delegationDepth` is "gateway-injected" and "informational; the gateway does not alter delivery semantics based on it." However, since it is gateway-injected, runtimes trust it. A malicious or buggy sibling could not directly spoof it (the gateway overwrites `from`). But the spec does not state whether `delegationDepth` is validated against the actual delegation tree structure. If a message is forwarded through an unexpected path, the `delegationDepth` might be incorrect. Since the field is purely informational, this is low risk, but the spec should clarify whether the gateway validates it or just computes it from the routing path.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-087. `session.awaiting_action` webhook event has no corresponding `session.input_resolved` event [Medium]
 
 Line ~6647-6650 lists webhook event types including `session.awaiting_action` (fired when a session enters `awaiting_client_action`). However, there is no webhook event for when the session resumes from this state. A CI system reacting to `session.awaiting_action` has no webhook-driven way to know when the action was taken and the session resumed -- it must poll `GET /v1/sessions/{id}`. All other state transitions that matter to external systems have corresponding terminal events (`session.completed`, `session.failed`, etc.). Adding a `session.action_resolved` or `session.resumed` event would complete the webhook-based lifecycle notification model.
+
+**Status:** Skipped — not an error
+
 
 ### MSG-088. `checkpoint_boundary` marker referenced in reconnect semantics but not defined in SSE event schema [Medium]
 
 From the earlier reading (lines ~2984-2998), reconnect semantics mention a `checkpoint_boundary` marker. The spec defines `OutboundChannel` policies (buffered-drop and bounded-error) in Section 15 (lines ~6849-6882) but does not include `checkpoint_boundary` in the `SessionEvent` kinds listed in `OutboundCapabilitySet.SupportedEventKinds` (line ~6811: "state_change", "output", "elicitation", "tool_use", "error", "terminated"). If `checkpoint_boundary` is a distinct SSE event type used during reconnection, it should be listed in the supported event kinds. If it is metadata on an existing event type, its schema should be defined.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-089. Multi-turn `injection.supported: true` requirement not cross-referenced with `delivery: "immediate"` behavior [Low]
 
 From earlier reading: Section 5.1 states that `capabilities.interaction: multi_turn` requires `injection.supported: true`. The `delivery: "immediate"` field (Section 15.4.1, line ~7863) describes interrupt-and-deliver behavior that depends on the runtime accepting mid-session content. However, the `delivery` field documentation does not reference the `injection.supported` requirement. A sender could set `delivery: "immediate"` on a message to a runtime with `injection.supported: false`, and the spec does not define what happens. Line ~6997 says "Gateway rejects injection against runtimes with `injection.supported: false`" for `POST /v1/sessions/{id}/messages`, but this is only for the REST endpoint -- the `lenny/send_message` platform MCP tool and the `delivery` field documentation do not repeat this guard.
 
+**Status:** Skipped — not an error
+
+
 ### MSG-090. DLQ migration from inbox on `resume_pending` transition specified for "in-memory mode only" [Medium]
 
 From earlier reading: the inbox-to-DLQ migration is specified as atomic drain on `resume_pending` transition for in-memory mode only. For durable inbox mode (Redis-backed), the spec does not define the DLQ migration behavior. When a session with `durableInbox: true` transitions to `resume_pending` (pod failed, gateway retrying), what happens to messages in the Redis-list inbox? Are they migrated to the DLQ? Left in the inbox for the new pod? The asymmetry between in-memory and durable inbox DLQ behavior could lead to message loss or duplication during pod recovery in durable inbox mode.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2844,11 +3885,17 @@ Section 4.8 defines a priority-ordered `RequestInterceptor` chain where intercep
 
 **Why this matters:** If two custom interceptors both register at priority 50, one modifying `isolationProfile` and one modifying `tokenBudget`, the final request state depends on execution order. This is a policy correctness concern, not merely a performance concern.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-072. Fail-open interceptor cumulative escalation threshold is unspecified [Medium]
 
 Section 4.8 describes a fail-closed vs. fail-open failure policy for interceptors, with "cumulative escalation" when multiple fail-open interceptors fail simultaneously. However, the document does not specify the threshold or formula for cumulative escalation. How many fail-open interceptors must fail before the system escalates to fail-closed? Is it a count, a percentage, or a weighted calculation? Without a concrete formula, deployers cannot reason about the resilience posture of their interceptor chain under partial failure conditions.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2858,11 +3905,17 @@ Section 8.3 defines `DelegationPolicy` as a first-class resource with tag-based 
 
 **Why this matters:** In multi-tenant environments, platform admins and tenant admins may define overlapping policies. Without explicit conflict resolution semantics, the effective policy set is ambiguous.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-074. Isolation monotonicity enforcement lacks explicit validation at DelegationPolicy registration time [Medium]
 
 Section 8.3 specifies isolation monotonicity enforcement (standard < sandboxed < microvm) at delegation time, and Section 24.14 provides `lenny-ctl policy audit-isolation` as a read-only diagnostic. However, the spec does not define whether isolation monotonicity violations are checked at `DelegationPolicy` creation time. The `audit-isolation` command is described as a post-hoc diagnostic tool (client-side join of policies and pools), not an admission control gate. A deployer could register a `DelegationPolicy` that inherently violates monotonicity for every possible source pool, and this would only be caught at runtime when actual delegations fail. The spec should clarify whether `DelegationPolicy` admission validation rejects policies that can never satisfy monotonicity, or whether the current design intentionally defers all monotonicity checks to runtime.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2870,17 +3923,26 @@ Section 8.3 specifies isolation monotonicity enforcement (standard < sandboxed <
 
 Section 8.3 defines `contentPolicy` on `DelegationPolicy` with a `maxInputSize` limit and optional `interceptorRef` for content scanning. For non-streaming delegation calls, the input size is known at dispatch time. However, for multi-turn sessions where a delegated child accumulates input across multiple messages (Section 9), the spec does not clarify whether `maxInputSize` is enforced per-message, per-turn, or as a cumulative total across all messages in the delegated session. If cumulative, the enforcement point must track running totals. If per-message, a series of just-under-limit messages could deliver an arbitrarily large total input to the child. This ambiguity affects the security value of the size constraint.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-076. Budget reservation Lua scripts lack explicit timeout/cancellation semantics [Medium]
 
 Section 8.3 specifies atomic Redis Lua scripts for budget reservation (`budget_reserve.lua`). The spec details cross-tenant contention analysis and serialization blocking, including a 5ms SLO ceiling. However, the spec does not define what happens when a Lua script exceeds this ceiling: does Redis kill it via `lua-time-limit`? Does the gateway retry? Is there a client-side timeout on the `delegate_task` call path that will abort the operation if the Lua script is blocked for too long? Without explicit timeout semantics, a burst of concurrent `delegate_task` calls could create unbounded Lua serialization delays, cascading into gateway goroutine exhaustion.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-077. ValidatingAdmissionWebhook for tenant pinning does not specify label immutability scope [Low]
 
 Section 13 mentions a ValidatingAdmissionWebhook for tenant pinning via label immutability, and the document references multiple webhooks for different purposes (direct-mode isolation, sandboxclaim guard, data residency, drain readiness, T4 node isolation). However, the spec does not enumerate which specific labels are protected by the label immutability webhook. The tenant label (`lenny.dev/tenant-id`?) is implied, but what about `lenny.dev/pool`, `lenny.dev/runtime`, or `lenny.dev/isolation-profile`? If a compromised controller or RBAC misconfiguration allows label mutation on running pods, the blast radius depends on exactly which labels are immutable. The spec should enumerate the full set of immutable labels enforced by this webhook.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2890,6 +3952,9 @@ Section 10 (referenced in Phase 5 notes at line 10050) describes `noEnvironmentP
 
 **Mitigation already partially in place:** The Phase 5 notes describe the recommended approach, but the seed schema itself should enforce or warn, not rely on documentation.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-079. Elicitation responses are explicitly exempt from contentPolicy interceptors -- no alternative enforcement hook documented [Medium]
@@ -2898,11 +3963,17 @@ Section 22.3 explicitly states that elicitation responses (Section 9.2) flowing 
 
 **Partially acknowledged:** Section 22.3 provides the rationale, but the lack of any optional hook means deployers who need this capability must implement it outside the platform, which contradicts the hooks-and-defaults principle (Section 22.6).
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-080. Rate limit fail-open and quota fail-open use different timer mechanisms with no cross-concern coordination [Medium]
 
 Section 12.4 defines two separate fail-open mechanisms for Redis unavailability: rate limiting uses `rateLimitFailOpenMaxSeconds` (default 60s) with an in-memory per-user counter, and quota enforcement uses `quotaFailOpenCumulativeMaxSeconds` (default 300s, rolling 1-hour window) with a cumulative sliding window persisted to `/run/lenny/failopen-cumulative.json`. These mechanisms operate independently with different timer semantics (simple countdown vs. cumulative sliding window), different defaults, and different fail-closed transition criteria. The spec does not address whether a rate-limit fail-closed transition (after 60s) should also trigger quota fail-closed, or vice versa. A deployer might assume that fail-closed on one concern implies fail-closed on all concerns, but the spec allows a state where rate limiting is fail-closed while quota enforcement remains fail-open for another 240 seconds -- creating a window where unauthenticated-rate requests are blocked but budget-exceeding requests are still allowed.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2910,11 +3981,17 @@ Section 12.4 defines two separate fail-open mechanisms for Redis unavailability:
 
 Section 12.4 specifies that the per-replica fail-open ceiling for each tenant is computed using `cached_replica_count` sourced from the Kubernetes Endpoints object, with a maximum staleness of 30 seconds. The spec states that if the Endpoints object has "never been successfully polled (cold start)," `cached_replica_count` defaults to 1. However, the spec does not address the scenario where a gateway replica successfully polls Endpoints once (getting, say, 10 replicas), then the API server becomes unreachable for an extended period while replicas scale down. The `cached_replica_count` would remain at 10 even though only 3 replicas are actually running, resulting in each replica's ceiling being too low (1/10th of tenant limit instead of 1/3rd). This under-allocation is safe from a budget perspective (conservative) but could cause legitimate requests to be rejected during a compound failure (Redis outage + API server outage + scale-down).
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-082. Circuit breaker operator-managed state lacks ETag-based concurrency control [Medium]
 
 Section 11.6 describes operator-managed Redis-backed circuit breakers with manual open/close via `lenny-ctl admin circuit-breakers open|close`. Section 15.1 specifies ETag-based optimistic concurrency on "all admin PUT endpoints." However, the circuit breaker open/close operations are POST endpoints (Section 24.7: `POST /v1/admin/circuit-breakers/{name}/open`), not PUTs. The spec does not state whether these POST operations support ETags or any other concurrency control. Two operators simultaneously issuing `open` and `close` on the same breaker could race, with the final state depending on Redis write ordering. For a safety-critical control (circuit breakers protect subsystems from cascading failure), this lack of concurrency control is a gap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2922,11 +3999,17 @@ Section 11.6 describes operator-managed Redis-backed circuit breakers with manua
 
 Section 11.7 references compliance profile enforcement gates (soc2, fedramp, hipaa), and Section 12.3 discusses T2 batching restrictions under HIPAA AU-9 and FedRAMP AU-10. However, the spec does not define where or how a deployer activates a compliance profile, what specific controls each profile enables beyond audit batching restrictions, or how the gateway evaluates the active compliance profile at request time. Is it a Helm value? A per-tenant configuration? A gateway-level flag? The data classification tiers (T1-T4) and their controls are well-specified, but the compliance profile concept is referenced without a schema definition, configuration surface, or enforcement chain specification.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-084. Data residency enforcement fail-closed StorageRouter lacks fallback specification for write-path failures [Low]
 
 Section 12.9 (data classification) and the storage architecture specify fail-closed behavior for the `StorageRouter` when data residency constraints cannot be satisfied. The spec states that the StorageRouter is fail-closed, meaning uploads are rejected if the correct region cannot be confirmed. However, the spec does not define the error code returned to the client, whether the session is terminated or just the upload, or whether the agent pod receives a signal that allows it to retry with a different artifact strategy. For agent runtimes that depend on artifact storage for intermediate results, a data-residency rejection mid-session could leave the session in an inconsistent state with no recovery path.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2934,11 +4017,17 @@ Section 12.9 (data classification) and the storage architecture specify fail-clo
 
 Section 12.8 specifies GDPR erasure with processing restriction, and the tenant deletion lifecycle includes a `processing_restricted` flag. However, the spec does not define what happens when an erasure request arrives for a user who has active sessions. Are active sessions for that user immediately terminated? Are they allowed to complete but no new sessions can be created? Is the `processing_restricted` flag checked at session creation time, at every message, or only at new-session-creation time? The timing of restriction enforcement relative to in-flight work is critical for GDPR Article 18 compliance, and the spec leaves this to implementation.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-086. NetworkPolicy per-pool egress profiles (restricted, provider-direct, internet) lack runtime-level override specification [Low]
 
 Section 13 defines three egress profiles for NetworkPolicy: restricted (no external), provider-direct (LLM provider endpoints only), and internet (full outbound). These are described at the pool level. However, the spec does not define whether a runtime definition can override or further restrict the pool's egress profile. If a pool is configured with `internet` egress but a specific runtime registered in that pool should only have `provider-direct` access, there is no mechanism to express this constraint at the runtime level. The pool is the unit of NetworkPolicy enforcement, which means all runtimes in a pool share the same egress profile. This is a policy granularity limitation that should be explicitly acknowledged or addressed with a runtime-level egress override.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2946,11 +4035,17 @@ Section 13 defines three egress profiles for NetworkPolicy: restricted (no exter
 
 Section 4.9 specifies that `deliveryMode: direct` with `isolationProfile: standard` is blocked by admission control when `tenancy.mode: multi`. However, the spec does not address what happens when a credential pool is configured with `deliveryMode: direct` and is referenced by both `standard` and `sandboxed` isolation pools. The admission webhook blocks the `standard` case but allows the `sandboxed` case. A deployer might configure a single credential pool used across multiple pools with different isolation profiles, and only discover at runtime that some pool combinations are rejected. The error message and diagnostic guidance for this scenario should be specified -- the `lenny-ctl policy audit-isolation` command (Section 24.14) audits delegation policy violations but not credential admission violations.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-088. Setup command allowlist/blocklist policy lacks per-environment scoping [Low]
 
 Section 7.5 defines setup command policy with allowlist and blocklist modes, and Decision #10 (Section 19) confirms that allowlist is recommended for multi-tenant deployments. However, the `setupPolicy` is defined on the runtime or pool level, not at the environment level. Since environments (Section 15, Phase 15) are the RBAC boundary for user access, a deployer cannot configure different setup command restrictions for different user groups accessing the same runtime. For example, a `dev` environment might want permissive setup commands while a `prod` environment sharing the same runtime should have strict allowlisting. The spec should clarify whether `setupPolicy` can be overridden at the environment level, or whether this requires separate runtime registrations.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2958,11 +4053,17 @@ Section 7.5 defines setup command policy with allowlist and blocklist modes, and
 
 The summary context references "task-mode scrub policy with deployer acknowledgment flags," and Section 8 describes task policy with cleanup commands. However, the spec does not define the schema for scrub policy acknowledgment flags -- what specific risks must the deployer acknowledge, what is the flag format (boolean? per-risk enum?), where are they configured (per-runtime? per-pool? per-delegation-policy?), and what happens if a deployer omits the acknowledgment. Without a schema, implementors cannot validate deployer intent at configuration time.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-090. Experiment routing isolation monotonicity check is mentioned but the enforcement path is not fully specified [Medium]
 
 The spec mentions that experiment routing includes an isolation monotonicity check, ensuring that experiment variant pools do not downgrade isolation relative to the base pool. However, the enforcement path is not clearly specified: is this checked at `ExperimentDefinition` creation time, at experiment activation time, or at session-creation time when variant routing fires? If checked only at session-creation time, a misconfigured experiment could be created and activated, then fail only when actual sessions attempt to route to the variant -- creating a confusing operational experience. The `DelegationPolicyEvaluator` enforces monotonicity for delegations, but experiment routing is a separate code path (Section 10.7) and the spec should clarify which component enforces monotonicity for experiments and at what lifecycle point.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2972,11 +4073,17 @@ Section 21.1 states that `A2AAdapter`-initiated sessions set `elicitationDepthPo
 
 **Mitigation note:** This is post-v1 (Section 21), but the design constraint is stated as a v1 scoping decision, so the enforcement mechanism should be specified now to avoid retrofitting.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### POL-092. Preflight validation Job checks infrastructure but does not validate policy consistency [Low]
 
 Section 17.6 and 24.2 describe the preflight validation Job with comprehensive infrastructure checks (Postgres, Redis, MinIO connectivity and configuration). However, the preflight does not include any policy consistency validation -- for example, checking that all registered `DelegationPolicy` resources reference runtimes and pools that exist, that isolation monotonicity is satisfiable for the current pool configuration, or that credential pool `deliveryMode` settings are compatible with pool isolation profiles under the active `tenancy.mode`. The `lenny-ctl policy audit-isolation` command exists as a separate diagnostic, but it requires a running gateway. A pre-deployment policy consistency check in the preflight Job would catch configuration errors before deployment, not after.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -2994,6 +4101,9 @@ Concurrent-workspace's per-slot failure notification via the lifecycle channel (
 
 **Challenge:** One could argue that concurrent-workspace is implicitly Full-tier since it uses lifecycle channel features. However, task mode has an explicit, detailed section on tier interaction (Section 5.2, "Task mode and integration tiers") including fallback behavior for non-Full tiers. Concurrent mode lacks an equivalent treatment, which is an inconsistency.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-064. Per-slot process group kill mechanism unspecified for concurrent-workspace [Medium]
@@ -3005,6 +4115,9 @@ The slot cleanup description states "the adapter removes the slot's workspace di
 The spec needs to specify: (a) how the adapter creates a per-slot process group at task dispatch (e.g., `setpgid`, Linux cgroups, or a per-slot UID), (b) how the adapter identifies and kills only the processes belonging to a specific slot during slot cleanup, and (c) how this interacts with the shared process namespace acknowledged in the deployer acknowledgment (line 2139). Without this, the "kills any processes owned by the slot's process group" statement is underspecified and implementers will have to invent their own isolation mechanism.
 
 **Challenge:** The deployer acknowledgment explicitly states "shared process namespace" as an accepted limitation. However, the slot cleanup explicitly references per-slot process group kill, which contradicts a fully shared namespace. The mechanism for scoping a kill to a slot is a genuine gap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3018,6 +4131,9 @@ If the gateway's pod selection logic pre-filters draining pods before calling th
 
 **Challenge:** The gateway likely filters pods by Kubernetes label (`lenny.dev/state != draining`) before attempting Redis slot reservation. However, the spec describes the stabilization delay (5-second delay on `active -> idle`) which means labels may lag. The interaction between the label-based pod selection, the stabilization delay, and the Redis-based slot assignment is not fully specified for the draining transition.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-066. Concurrent-workspace `cleanupTimeoutSeconds` validation formula inconsistency [Low]
@@ -3029,6 +4145,9 @@ The `concurrentWorkspacePolicy` block specifies `cleanupTimeoutSeconds: 60` with
 However, the `terminationGracePeriodSeconds` CRD validation formula (line 2159) is `maxConcurrent x max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30 <= terminationGracePeriodSeconds`. This formula accounts for serialized per-slot checkpoints but does not include `cleanupTimeoutSeconds`. The slot cleanup (workspace removal, process kill) runs before or after the checkpoint. If cleanup precedes checkpoint, the `terminationGracePeriodSeconds` budget should include both cleanup and checkpoint time. The spec does not clarify whether slot cleanup runs within the checkpoint budget or separately.
 
 **Challenge:** The cleanup may run during normal operation (not during eviction), so it would not consume terminationGracePeriodSeconds budget. However, if a SIGTERM arrives while slots are active and some slots are mid-cleanup, the cleanup timeout competes with the checkpoint budget. The ordering is underspecified.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3042,6 +4161,9 @@ However, Section 15.4.1 is titled "Adapter Binary Protocol" and describes the st
 
 **Challenge:** This is a documentation clarity issue rather than a specification error. The information is consistent across sections. However, placing lifecycle channel behavior in the "Binary Protocol" section could confuse implementers.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-068. Concurrent-workspace `slotId` multiplexing over stdin lacks flow control specification [Medium]
@@ -3053,6 +4175,9 @@ Concurrent-workspace mode multiplexes multiple independent task streams through 
 The spec does not define: (a) flow control or backpressure for the shared stdin channel -- if one slot produces high-volume tool calls, it can starve other slots' message delivery; (b) message ordering guarantees -- whether the adapter preserves per-slot FIFO ordering when interleaving messages from different slots on stdin; (c) maximum message size interaction -- if a single large `tool_result` for one slot blocks the pipe, other slots' time-sensitive messages (heartbeat_ack, slot-scoped credential rotation) are delayed. For `maxConcurrent: 8` with all slots active, this shared channel becomes a potential bottleneck.
 
 **Challenge:** For typical LLM agent workloads, messages are small (JSON text) and infrequent enough that a single pipe is adequate. The concern is primarily theoretical at `maxConcurrent <= 8`. However, the spec defines `maxConcurrent` as a deployer-configurable field with no stated upper bound beyond the `terminationGracePeriodSeconds` constraint. At higher values or with large tool results (e.g., file content), pipe contention becomes material. A note about flow control or a recommended `maxConcurrent` ceiling for the stdin multiplexing model would address this gap.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3068,6 +4193,9 @@ The issue: the delegation-adjusted formula at line 9606 includes `/ mode_factor`
 
 **Challenge:** Section 5.2 does document the cold-start fallback. The question is whether Section 17.8.2's operator-facing guidance should repeat it for clarity. Given that 17.8.2 is the capacity planning reference and provides worked examples, the omission of the cold-start caveat in the delegation formula guidance is a practical gap that could lead to under-provisioning.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-070. Credential lease lifecycle in concurrent-stateless mode is unspecified [Medium]
@@ -3079,6 +4207,9 @@ Section 6.1 defines credential lease lifecycle for three modes: per-session (ses
 Does a concurrent-stateless pod get a single credential at pod startup (per-pod lifetime)? Does each routed request get an independent credential? Are credentials managed by the deployer's runtime since Lenny's role is limited to routing? The spec should state explicitly how (or whether) credentials are managed for `concurrencyStyle: stateless` pods.
 
 **Challenge:** Section 5.2 (line 2147) states concurrent-stateless has "minimal platform guarantees" and recommends connectors instead. Credential management may be intentionally left to the deployer. However, the credential lease lifecycle section in 6.1 covers all other modes explicitly, and the omission of concurrent-stateless is a gap in completeness.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3094,6 +4225,9 @@ The CRD validation formula should either (a) use `max(max_tiered_checkpoint_cap,
 
 **Challenge:** The Postgres fallback is a last-resort path for eviction checkpoints. The spec notes that "Postgres fallback retry budget (60s per slot) also runs serially; the CRD validation formula already accounts for the sum of slot caps in the terminationGracePeriodSeconds constraint." This suggests the formula intends to cover the fallback. But `max_tiered_checkpoint_cap` for large workspaces (e.g., 90s at 512MB) is larger than the 60s Postgres fallback, so the formula holds in that case. For smaller workspaces (e.g., 30s cap), `8 x 30s + 120s = 360s` vs `8 x 60s + 120s = 600s` -- the Postgres fallback exceeds the formula. This is a genuine gap for small-workspace high-concurrency configurations.
 
+
+**Status:** Fixed — Added conditional note for small-workspace pools where Postgres fallback exceeds formula budget
+
 ---
 
 ### EXM-072. Concurrent-workspace mode shares `/tmp` but scrub step 4 clears `/tmp` [Low]
@@ -3108,6 +4242,9 @@ However, the `scrubPolicy` field in the session isolation response (line 2765) r
 
 **Challenge:** This is arguably implied by the "shared `/tmp`" acknowledgment. However, the `scrubPolicy` description's mention of "scratch directory cleanup" is ambiguous enough to warrant clarification.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-073. `allowCrossTenantReuse` explicitly prohibited for concurrent-workspace but not validated at all layers [Low]
@@ -3119,6 +4256,9 @@ The spec states: "The pool controller explicitly rejects any concurrent-workspac
 However, `allowCrossTenantReuse` is defined as a `taskPolicy` field (line 2044), not a `concurrentWorkspacePolicy` field. The phrase "at any level (pool-level or within `concurrentWorkspacePolicy`)" implies it could appear in `concurrentWorkspacePolicy`, but the schema example for `concurrentWorkspacePolicy` (line 2131-2137) does not include this field. The validation check should either: (a) state that the check applies to `taskPolicy.allowCrossTenantReuse` on the pool definition (since pools have a single policy block), or (b) clarify the field's location if `concurrentWorkspacePolicy` has its own `allowCrossTenantReuse` field.
 
 **Challenge:** This is a minor schema location ambiguity. The intent is clear and the validation provides defense-in-depth regardless. However, the reference to "`concurrentWorkspacePolicy`" having an `allowCrossTenantReuse` field creates an inconsistency with the schema examples.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3132,6 +4272,9 @@ For concurrent-workspace mode, new slots are assigned concurrently while existin
 
 **Challenge:** For task mode, the uptime check happens between tasks, which is a natural serialization point. For concurrent-workspace, there is no equivalent natural check point during active execution. The spec should clarify whether a periodic background check enforces `maxPodUptimeSeconds` for concurrent-workspace pods or whether it relies on the next slot assignment/completion event.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-075. Task-mode scrub step 1b IPC cleanup may fail silently in gVisor [Low]
@@ -3143,6 +4286,9 @@ Step 1b states: "For gVisor pods this step is a no-op in practice because gVisor
 This is accurate for cross-pod isolation. However, within a single pod across sequential tasks, IPC segments created by task N can persist and be observable by task N+1 if the creating process was killed in step 1 but the segment outlived the process (which is exactly why step 1b exists). The statement that this is "a no-op in practice" for gVisor is misleading in the task-mode context -- the concern is intra-pod cross-task leakage, not cross-pod leakage. In gVisor, `ipcrm --all=shm` is the correct remediation and is not a no-op for the task-mode use case.
 
 **Challenge:** The spec says the step "executes unconditionally for consistency," which means it runs regardless. The "no-op in practice" characterization is slightly misleading but does not affect correctness since the step is always executed. This is more of a documentation accuracy issue than a specification error.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3156,6 +4302,9 @@ However, task-mode pods also track state in Redis (the pod's task assignment sta
 
 **Challenge:** Session-mode and task-mode pods use Kubernetes labels and Postgres as the source of truth for pod state. The Redis slot counter is specific to concurrent-workspace. So rehydration may genuinely only be needed for concurrent-workspace. However, the spec should explicitly scope the rehydration section to concurrent-workspace to prevent confusion about whether other modes need similar handling.
 
+
+**Status:** Skipped — not an error
+
 ---
 
 ### EXM-077. Concurrent-workspace per-slot retry "new slot on same pod" may re-encounter the same underlying issue [Low]
@@ -3165,6 +4314,9 @@ However, task-mode pods also track state in Redis (the pod's task assignment sta
 The retry policy states: "The retry is always assigned to a new slot on the same pod (if a slot is available) or on a different pod." Retrying on the same pod makes sense for transient failures but not for pod-level issues (e.g., resource contention, kernel state, network partition). The non-retryable categories (OOM, workspace validation, policy rejection) cover some pod-level issues, but others (e.g., intermittent disk I/O errors, DNS resolution failures from the shared network namespace) would retry on the same pod and fail again.
 
 **Challenge:** The whole-pod replacement trigger (`ceil(maxConcurrent/2)` failures in 5 minutes) addresses this at scale by detecting degraded pods. For isolated single-slot failures, retrying on the same pod is a reasonable default to avoid unnecessary cross-pod traffic. The spec's design is defensible; this finding is informational rather than a genuine error.
+
+
+**Status:** Skipped — not an error
 
 ---
 
@@ -3177,6 +4329,9 @@ Section 5.2 sets `burst_mode_factor = 1.0` for task mode because "task pods proc
 The formula divides the burst term by `burst_mode_factor`, so a factor of 1.0 means no burst absorption benefit from task-mode pods. However, the issue is the reverse: during a burst, task-mode pods that just completed a task are not instantly available (they are in `task_cleanup -> sdk_connecting -> idle`), effectively reducing the pool size during the burst. The burst term should arguably include a factor for task-mode SDK re-warm latency, not just `burst_mode_factor = 1.0`.
 
 **Challenge:** The `minWarm` formula's steady-state term (divided by `mode_factor`) already accounts for the reduced throughput due to re-warm overhead, since `mode_factor` uses observed `lenny_task_reuse_count` p50 which reflects actual cycle time. The burst term's `burst_mode_factor = 1.0` means "each pod absorbs one burst arrival," which is correct -- each idle pod handles one burst request regardless of what happens between tasks. The concern is that the pool has fewer idle pods during a burst because some are in re-warm. This is covered by the `minWarm` steady-state term. Finding downgraded to Low.
+
+
+**Status:** Skipped — not an error
 
 ---
 
