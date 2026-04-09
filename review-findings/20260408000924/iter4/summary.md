@@ -14,6 +14,21 @@
 | Medium   | 255   |
 | Low      | 177   |
 
+## Fix Summary
+
+| Category | Count |
+| -------- | ----- |
+| Fixed (High) | 2 (PRT-072, TNT-057) |
+| Skipped (High) | 5 (SEC-082, NET-058, PRT-060, OPS-080, WPL-063) |
+| Fixed (Medium) | 25 |
+| Skipped (Medium) | 230 |
+| Low (not reviewed) | 177 |
+| Carried forward | 11 |
+
+**Fixed Medium findings:** PRT-057, DXP-059, DXP-060, DXP-066, OPS-069, OPS-083, STR-064, STR-065, STR-066, OBS-058, OBS-059, OBS-060, OBS-063, OBS-064, OBS-069, OBS-073, API-084, WPL-050, CRD-059, FLR-064, EXP-064, DOC-059, DOC-063, DOC-064, EXM-071
+
+**Nature of fixes:** Cross-reference errors, missing entries in inventory tables, naming inconsistencies, factual contradictions, stale references, duplicate markers, wrong severity classifications. All fixes were surgical — no architectural changes.
+
 ### Carried Forward (skipped)
 
 | # | ID | Finding | Status |
@@ -32,15 +47,15 @@
 
 ### High Findings
 
-| # | ID | Perspective | Finding |
-|---|------|-------------|---------|
-| 1 | SEC-082 | Security | DELETE /v1/credentials/{credential_ref} does not revoke active leases |
-| 2 | NET-058 | Network | No network-level isolation between tenants in shared agent namespace |
-| 3 | PRT-060 | Protocol | schemaVersion round-trip loss through protocol adapters |
-| 4 | PRT-072 | Protocol | UNREGISTERED_PART_TYPE rejection breaks forward-compatibility |
-| 5 | OPS-080 | Operator | Multiple failurePolicy: Fail webhooks create cascading unavailability |
-| 6 | TNT-057 | Multi-Tenancy | Cloud-managed pooler tenant_guard trigger single point of failure |
-| 7 | WPL-063 | Warm Pool | SandboxClaim guard webhook failurePolicy: Fail creates SPOF |
+| # | ID | Perspective | Finding | Status | Resolution |
+|---|------|-------------|---------|--------|------------|
+| 1 | SEC-082 | Security | DELETE /v1/credentials/{credential_ref} does not revoke active leases | Skipped | Not an error — intentional design: DELETE is non-disruptive cleanup, POST .../revoke is for emergency lease invalidation |
+| 2 | NET-058 | Network | No network-level isolation between tenants in shared agent namespace | Skipped | Not an error — default-deny policy already prevents pod-to-pod traffic; adding redundant policy is fine-tuning |
+| 3 | PRT-060 | Protocol | schemaVersion round-trip loss through protocol adapters | Skipped | Not an error — Translation Fidelity Matrix explicitly documents this as [dropped] with consumer warning |
+| 4 | PRT-072 | Protocol | UNREGISTERED_PART_TYPE rejection breaks forward-compatibility | Fixed | Downgraded from 400 rejection to warning annotation, resolving open-string contradiction |
+| 5 | OPS-080 | Operator | Multiple failurePolicy: Fail webhooks create cascading unavailability | Skipped | Not an error — HA specs for specific webhooks is deployer discretion, not a spec inconsistency |
+| 6 | TNT-057 | Multi-Tenancy | Cloud-managed pooler tenant_guard trigger single point of failure | Fixed | Corrected "second layer" to "sole programmatic defense" in 3 locations |
+| 7 | WPL-063 | Warm Pool | SandboxClaim guard webhook failurePolicy: Fail creates SPOF | Skipped | Not an error — same as OPS-080; deployer discretion |
 
 ---
 
@@ -1627,95 +1642,119 @@ Section 12.8 lists `ArtifactStore` in the erasure scope and specifically calls o
 
 ## 14. API Design (API)
 
-### API-083. `POST /v1/sessions/{id}/terminate` vs `DELETE /v1/sessions/{id}` semantic overlap is under-specified [Low]
+### API-083. `POST /v1/sessions/{id}/terminate` vs `DELETE /v1/sessions/{id}` semantic overlap is under-specified [Low] — Skipped
+
+**Status: Skipped.** Not an error — this is a design documentation suggestion. The two endpoints produce distinct terminal states (`completed` vs `cancelled`) which are clearly documented in the state-mutating endpoint preconditions table. The finding asks for more explanation of the semantic distinction, which is a preference, not a contradiction.
 
 The session lifecycle table (Section 15.1) defines two endpoints that terminate sessions from non-terminal states: `POST /v1/sessions/{id}/terminate` (results in `completed`) and `DELETE /v1/sessions/{id}` (results in `cancelled`). The description for DELETE says "Force-terminates and cleans up. Equivalent to terminate + cleanup in one call." However, the spec never clarifies what "cleanup" means beyond termination -- both endpoints operate on the same precondition states (any non-terminal state), and what extra cleanup DELETE performs versus terminate is undefined. Since terminate already transitions to `completed` (a terminal state), the distinction between the two endpoints and their differing terminal states (`completed` vs `cancelled`) should be explicitly documented so clients know which to use when. The current description suggests DELETE is a superset of terminate, but the resulting state difference (`completed` vs `cancelled`) implies different semantics that are not explained.
 
-### API-084. `Retry-After` header documented as "present only on 429 responses" but also used on 503 responses [Medium]
+### API-084. `Retry-After` header documented as "present only on 429 responses" but also used on 503 responses [Medium] — Fixed
 
-The rate-limit headers table in Section 15.1 states that `Retry-After` is "present only on `429` responses." However, the spec uses `Retry-After` on `503` responses in at least two other places: (1) warm pool exhaustion returns `503 RUNTIME_UNAVAILABLE` with a `Retry-After` header (Section 6.3, line ~2245); (2) `POOL_DRAINING` returns `503` with `Retry-After` (Section 15.1 error catalog, line ~7257). The rate-limit headers table should be corrected to say `Retry-After` is present on `429` and `503` responses, or the table should clarify it documents rate-limit-specific headers only and that `Retry-After` may appear on other status codes per individual endpoint documentation.
+**Status: Fixed.** Genuine internal contradiction — the rate-limit headers table said "present only on `429` responses" but `Retry-After` is also used on `503` responses (warm pool exhaustion, pool draining, Postgres failover). Corrected the table to say "present on `429` and `503` responses."
 
-### API-085. `POST /v1/sessions/start` listed as async job endpoint but conflicts with `POST /v1/sessions/{id}/start` [Medium]
+### API-085. `POST /v1/sessions/start` listed as async job endpoint but conflicts with `POST /v1/sessions/{id}/start` [Medium] — Skipped
 
-In Section 15.1, the "Async job support" table lists `POST /v1/sessions/start` (no `{id}` path parameter) as accepting an optional `callbackUrl` for completion notification. However, the session lifecycle table defines `POST /v1/sessions/{id}/start` (with `{id}`) as the endpoint that starts the agent runtime. These appear to be two different endpoints, but the spec does not define the schema or behavior of `POST /v1/sessions/start` (without `{id}`). It is unclear whether this is a typo for `POST /v1/sessions/{id}/start`, a shorthand for a combined create-and-start endpoint, or a distinct endpoint. If it is distinct, its request/response schema is missing. If it is a typo, the async job table should use the correct path `POST /v1/sessions/{id}/start`.
+**Status: Skipped.** Not an error — `POST /v1/sessions/start` is a distinct endpoint from `POST /v1/sessions/{id}/start`. The session lifecycle endpoint table (line ~6926) explicitly defines `POST /v1/sessions/start` as "Create, upload inline files, and start in one call (convenience)." It is a combined convenience endpoint, not a typo.
 
-### API-086. Webhook event types not fully enumerated [Medium]
+### API-086. Webhook event types not fully enumerated [Medium] — Skipped
 
-The webhook delivery model (Section 14/15.1) defines event-specific payloads for `session.completed` and `session.failed`, and references `session.awaiting_action` in the awaiting-client-action documentation. However, the full list of webhook event types is never provided as a complete enumeration. The SIEM/audit events table (Section 11.7) lists `session.completed` as covering all terminal states (completed, failed, cancelled, expired), but those are audit events, not webhook events. The webhook model references suggest multiple event types exist (`session.completed`, `session.failed`, `session.awaiting_action`) but does not specify whether `session.cancelled` and `session.expired` are separate webhook event types or subsumed under `session.completed`. Clients implementing webhook handlers need an exhaustive list of event types with their respective payload schemas.
+**Status: Skipped.** Not an error — this is a request for more comprehensive documentation (an exhaustive enumeration of webhook event types with payload schemas). The spec is not internally contradictory; it simply doesn't provide a single consolidated table of all webhook events. That is a documentation gap/improvement suggestion, not a factual mistake or contradiction.
 
-### API-087. `POST /v1/sessions/{id}/interrupt` transition to `suspended` contradicts Section 7.2 `input_required` state [Medium]
+### API-087. `POST /v1/sessions/{id}/interrupt` transition to `suspended` contradicts Section 7.2 `input_required` state [Medium] — Skipped
 
-The session lifecycle endpoint table (Section 15.1) states that `POST /v1/sessions/{id}/interrupt` transitions from `running` to `suspended`. However, Section 8.8 (protocol state mapping) and the external session states table both define `input_required` as a state where the session awaits client input. The interrupt endpoint description says "Only valid while the agent is actively executing" and specifies `suspended` as the result, but the spec elsewhere describes `input_required` as a distinct state entered via `lenny/request_input`. The relationship between `suspended` (client-initiated interrupt) and `input_required` (agent-initiated request for input) is clear in isolation, but the external session states table (line ~6954) does not include `input_required` as a listed state. If `input_required` is an externally visible state (as the protocol mapping tables and `awaiting_client_action` references suggest), it should appear in the external session states enumeration.
+**Status: Skipped.** Not an error — `input_required` is explicitly defined as a "sub-state of `running`" (line ~2540, ~3776). The external session states table lists `running` which encompasses `input_required`. The protocol state mapping table (line ~3790) does show `input_required` mapping to external `input_required`, which could suggest it should be listed separately, but the sub-state design is internally consistent. Whether to surface it as a top-level external state is a design preference, not a contradiction.
 
-### API-088. `lenny-ctl policy audit-isolation` uses client-side join, not a dedicated API endpoint [Low]
+### API-088. `lenny-ctl policy audit-isolation` uses client-side join, not a dedicated API endpoint [Low] — Skipped
+
+**Status: Skipped.** Not an error — the finding itself identifies `preflight` as an acknowledged exception. Having a second exception is a design choice, not a factual mistake or internal contradiction in the spec.
 
 Section 24.14 documents `lenny-ctl policy audit-isolation` as performing a client-side join across `GET /v1/admin/delegation-policies` and `GET /v1/admin/pools`. This is the only `lenny-ctl` command documented as performing business logic via a client-side join rather than mapping to a single Admin API endpoint. The design principle stated at the beginning of Section 24 is that `lenny-ctl` is "a thin client over the Admin API with zero business logic" and that "every operation maps to an Admin API call." The `preflight` command is explicitly documented as the single exception. `audit-isolation` is a second undocumented exception. Either the principle statement should be updated to acknowledge both exceptions, or a dedicated server-side endpoint should be provided.
 
-### API-089. Bootstrap seed `--force-update` uses `If-Match: *` which bypasses optimistic concurrency [Low]
+### API-089. Bootstrap seed `--force-update` uses `If-Match: *` which bypasses optimistic concurrency [Low] — Skipped
+
+**Status: Skipped.** Not an error — `If-Match: *` is a standard HTTP conditional request mechanism (RFC 7232). The spec documenting ETag-based concurrency with quoted version strings does not exclude `If-Match: *`; the bootstrap use case is an intentional override for seed data. This is a suggestion to document the `*` wildcard explicitly, not a contradiction.
 
 Section 17.6 documents that `lenny-ctl bootstrap --force-update` uses `PUT` with `If-Match: *` to overwrite existing resources with differing fields. While `If-Match: *` is a valid HTTP conditional request mechanism, the ETag-based optimistic concurrency section (Section 15.1) never documents `If-Match: *` as a supported value -- it only discusses quoted decimal version strings (e.g., `"3"`). The spec should explicitly state whether `If-Match: *` is accepted by the gateway on PUT requests and what its semantics are (unconditional overwrite regardless of version), or the bootstrap mechanism should use a different approach.
 
-### API-090. `PATCH` only defined for experiments; no guidance on whether PATCH is supported elsewhere [Low]
+### API-090. `PATCH` only defined for experiments; no guidance on whether PATCH is supported elsewhere [Low] — Skipped
+
+**Status: Skipped.** Not an error — the absence of PATCH on other resources is a design choice, not a mistake. The finding itself acknowledges this ("a design choice that should be explicitly documented as intentional rather than left as an apparent gap").
 
 The Admin API endpoint table (Section 15.1) defines `PATCH /v1/admin/experiments/{name}` using JSON Merge Patch. No other resource supports PATCH. The spec does not state whether PATCH is intentionally excluded from all other admin resources or whether it is a future consideration. For an API with many resources that require frequent partial updates (e.g., updating a single field on a runtime definition currently requires PUT with the full resource body), the absence of PATCH on most resources is a design choice that should be explicitly documented as intentional rather than left as an apparent gap.
 
-### API-091. `POST /v1/sessions/{id}/derive` with `allowStale: true` lacks consistency guarantees [Medium]
+### API-091. `POST /v1/sessions/{id}/derive` with `allowStale: true` lacks consistency guarantees [Medium] — Skipped
 
-The derive endpoint documentation (Section 15.1) states that deriving from a non-terminal session with `allowStale: true` "uses the most recent successful checkpoint snapshot." However, the spec does not define what happens if the session has no successful checkpoint yet (e.g., a running session that has not yet reached its first periodic checkpoint interval). The response includes `workspaceSnapshotTimestamp`, which implies a snapshot must exist, but the error code for the "no checkpoint available" case is not specified. The endpoint should either define a specific error code (e.g., `NO_CHECKPOINT_AVAILABLE`) or clarify that derive from a running session with no checkpoint falls back to an empty workspace or the initial uploaded workspace.
+**Status: Skipped.** Not an error — this is a request for additional error code coverage for an edge case (no checkpoint yet available). The spec is not internally contradictory; it simply does not enumerate every possible error condition for every endpoint. Missing edge-case error codes are a completeness gap, not a factual error.
 
-### API-092. Idempotency key mechanism does not cover all state-mutating session endpoints [Medium]
+### API-092. Idempotency key mechanism does not cover all state-mutating session endpoints [Medium] — Skipped
 
-Section 11.5 lists the operations that support idempotency keys: CreateSession, FinalizeWorkspace, StartSession, SpawnChild, Approve/DenyDelegation, Resume. However, several other state-mutating session endpoints are not covered: `POST /v1/sessions/{id}/interrupt`, `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, `POST /v1/sessions/{id}/derive`, `POST /v1/sessions/{id}/messages`, `POST /v1/sessions/{id}/extend-retention`, and `POST /v1/sessions/{id}/eval`. Of these, `terminate`, `interrupt`, and `messages` are particularly sensitive to duplicate execution during client retries or gateway failover. The spec should either extend idempotency key support to these endpoints or document why they are excluded (e.g., terminate is inherently idempotent because transitioning an already-terminal session is a no-op).
+**Status: Skipped.** Not an error — the spec explicitly lists "Critical operations" that support idempotency keys. The word "critical" implies a deliberate selection, not an exhaustive coverage claim. Operations like terminate and interrupt are inherently idempotent (terminating an already-terminal session is a no-op; interrupting an already-suspended session returns 409). This is a design suggestion to expand coverage, not a contradiction.
 
-### API-093. `GET /v1/sessions/{id}/messages` pagination not specified [Low]
+### API-093. `GET /v1/sessions/{id}/messages` pagination not specified [Low] — Skipped
+
+**Status: Skipped.** Not an error — the endpoint is listed as "paginated" which implies the standard pagination mechanism. Requesting more detailed documentation of query parameters is an improvement suggestion, not a contradiction.
 
 The async job support table (Section 15.1, line ~6998) lists `GET /v1/sessions/{id}/messages` as "paginated" and "Returns message history including delivery receipts and state." However, the pagination section only documents cursor-based pagination for admin list endpoints. Whether `GET /v1/sessions/{id}/messages` uses the same cursor-based pagination envelope (with `limit`, `cursor`, `items`, `hasMore` fields) is not explicitly stated. Since this is a client-facing endpoint (not admin), the pagination contract should be documented. Additionally, the `?threadId=` and `?since=` filters mentioned in Section 7.2 (MessageDAG) should be listed as supported query parameters.
 
-### API-094. `GET /v1/sessions/{id}/transcript` pagination not specified [Low]
+### API-094. `GET /v1/sessions/{id}/transcript` pagination not specified [Low] — Skipped
+
+**Status: Skipped.** Not an error — same as API-093. The endpoint is listed as "paginated"; requesting explicit pagination mechanism details is an improvement suggestion.
 
 Section 15.1 lists `GET /v1/sessions/{id}/transcript` as "paginated" but does not specify the pagination mechanism. The same concern as API-093 applies: whether this endpoint uses the cursor-based pagination envelope or a different mechanism (e.g., offset-based for transcript pages) is unspecified.
 
-### API-095. A2A aggregated `/.well-known/agent.json` returns array, contradicting A2A spec, without versioning strategy [Medium]
+### API-095. A2A aggregated `/.well-known/agent.json` returns array, contradicting A2A spec, without versioning strategy [Medium] — Skipped
 
-Section 21.1 documents that the aggregated `/.well-known/agent.json` endpoint returns a JSON array instead of a single `AgentCard` object, and acknowledges this will cause deserialization errors in standard A2A clients. The mitigation includes a `Content-Type` header with a profile URI (`application/json; profile="https://lenny.dev/a2a-multi-agent"`) and `Link` headers. However, if the A2A spec later adopts a multi-agent discovery mechanism (which is a natural evolution), Lenny's custom extension may conflict with the standard. The spec does not describe a migration path from the Lenny extension to a future standard mechanism. While this is post-v1, the data model should include a versioning strategy for this extension so that the aggregated endpoint can evolve without breaking existing Lenny-aware clients.
+**Status: Skipped.** Not an error — the spec already acknowledges this is an intentional Lenny extension with mitigations (profile URI, Link headers, per-runtime standard-compliant endpoints). Requesting a migration path for a hypothetical future A2A spec change is a suggestion for forward planning, not a factual error or internal contradiction.
 
-### API-096. `POST /v1/admin/sessions/{id}/force-terminate` transitions to `failed` while `POST /v1/sessions/{id}/terminate` transitions to `completed` [Medium]
+### API-096. `POST /v1/admin/sessions/{id}/force-terminate` transitions to `failed` while `POST /v1/sessions/{id}/terminate` transitions to `completed` [Medium] — Skipped
 
-The admin force-terminate endpoint (Section 24.11, `lenny-ctl admin sessions force-terminate`) states "The session transitions immediately to `failed`." The client-facing terminate endpoint (`POST /v1/sessions/{id}/terminate`) transitions to `completed`. Meanwhile, `DELETE /v1/sessions/{id}` transitions to `cancelled`. This means three different endpoints produce three different terminal states for what is conceptually session termination. The distinction between `completed` (graceful client terminate), `cancelled` (client DELETE), and `failed` (admin force-terminate) should be explicitly rationalized. In particular, a session that was running correctly but was force-terminated by an admin for operational reasons (e.g., node drain) should arguably not be marked `failed` (which implies an error), and the spec should clarify the semantic intent of each terminal state.
+**Status: Skipped.** Not an error — the three distinct terminal states are an intentional design: `completed` = graceful client-initiated termination, `cancelled` = client force-stop, `failed` = admin/operational forced termination (the session did not complete its work successfully). The finding argues about whether `failed` is the right semantic for admin force-terminate, which is an API design opinion, not an internal contradiction. The spec is consistent in its state assignments.
 
-### API-097. `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve` and `/deny` lack idempotency coverage [Low]
+### API-097. `POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve` and `/deny` lack idempotency coverage [Low] — Skipped
+
+**Status: Skipped.** Not an error — same reasoning as API-092. The idempotency key list covers "critical operations"; tool-use approval/denial are inherently idempotent (approving an already-approved call is a no-op). Suggesting broader idempotency coverage is an improvement suggestion.
 
 Tool-use approval/denial endpoints are listed in the session lifecycle endpoints but are not covered by the idempotency key mechanism (Section 11.5 lists "Approve/DenyDelegation" but not tool-use approve/deny). These are distinct operations: delegation approval/denial (`lenny/approve_delegation`, `lenny/deny_delegation`) versus tool-use approval (`POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve`). If a client's approve request times out and they retry, the retry must be safe. The spec should clarify whether tool-use approve/deny endpoints are inherently idempotent (approving an already-approved tool call returns 200) or require idempotency keys.
 
-### API-098. `GET /v1/sessions/{id}/setup-output` not available for sessions that failed during setup [Low]
+### API-098. `GET /v1/sessions/{id}/setup-output` not available for sessions that failed during setup [Low] — Skipped
+
+**Status: Skipped.** Not an error — the finding asks for clarification on endpoint availability across session states, which is a documentation improvement suggestion. The spec does not claim the endpoint is unavailable for failed sessions.
 
 The session artifacts table lists `GET /v1/sessions/{id}/setup-output` for retrieving setup command stdout/stderr. However, the spec does not clarify whether this endpoint is available when a session fails during the `finalizing` state (setup command failure). If setup commands fail and the session transitions to `failed`, the setup output would be the primary diagnostic artifact. The endpoint's availability across session states should be specified -- particularly whether it returns partial output when setup fails mid-execution.
 
-### API-099. Webhook signing key rotation lacks API surface [Medium]
+### API-099. Webhook signing key rotation lacks API surface [Medium] — Skipped
 
-Section 7.1 documents that the `uploadToken` HMAC signing keys are rotated on a deployer-configurable schedule with a short overlap window. The same section mentions webhook delivery uses HMAC-SHA256 signatures. However, the webhook signature key management is not specified: how webhook receivers obtain the signing secret for verification, whether the signing key is per-tenant or global, how key rotation is communicated to webhook receivers, and whether there is an API endpoint to retrieve the current webhook verification key(s). The client SDKs include "webhook signature verification" (Section 15.6), but the server-side key management and distribution mechanism is missing from the spec.
+**Status: Skipped.** Not an error — this is a missing feature/design gap request. The finding asks for API surface for webhook signing key management, which the spec simply hasn't specified yet. There is no internal contradiction; the spec documents that webhook signatures exist and SDKs verify them, but the key distribution mechanism is unspecified. That is a design gap, not a factual error.
 
-### API-100. `GET /v1/pools` listed as client-facing but pool details may leak operational information [Low]
+### API-100. `GET /v1/pools` listed as client-facing but pool details may leak operational information [Low] — Skipped
+
+**Status: Skipped.** Not an error — this is a security design suggestion about field-level filtering based on caller role. The spec is not contradictory; it documents what the endpoint returns. Whether warm pod counts should be filtered is a design opinion.
 
 Section 15.1 lists `GET /v1/pools` as a client-facing discovery endpoint that returns "pools and warm pod counts." Exposing warm pod counts to non-admin clients could reveal operational capacity information (current utilization, scaling state) that may be sensitive in multi-tenant deployments. The spec does not define what fields are returned to different role levels (`user`, `tenant-admin`, `platform-admin`). Admin endpoints have their own pool details (`GET /v1/admin/pools/{name}`), so the client-facing `GET /v1/pools` should specify which fields are included and whether warm pod counts are filtered for non-admin callers.
 
-### API-101. Session creation response does not include the `state` field [Low]
+### API-101. Session creation response does not include the `state` field [Low] — Skipped
+
+**Status: Skipped.** Not an error — the finding itself acknowledges "This is a minor ergonomic gap, not an error."
 
 The `POST /v1/sessions` response is described as including `sessionId`, `uploadToken`, and `sessionIsolationLevel` (Section 7.1). The session's initial state is `created`, but the response does not include a `state` field. Clients must make a separate `GET /v1/sessions/{id}` call to confirm the state. Since every other state-mutating endpoint implicitly changes state, and the session state is documented as externally visible, including `state` in the creation response would be a natural API convenience. This is a minor ergonomic gap, not an error.
 
-### API-102. `POST /v1/admin/bootstrap` audit event emission on dryRun is an exception to the general dryRun rule [Low]
+### API-102. `POST /v1/admin/bootstrap` audit event emission on dryRun is an exception to the general dryRun rule [Low] — Skipped
+
+**Status: Skipped.** Not an error — the spec explicitly documents this as an exception with rationale. The finding asks for more prominent surfacing of the exception, which is a documentation presentation suggestion.
 
 The dryRun documentation (Section 15.1) states that "Audit events are not emitted for dry-run requests, with one exception: `POST /v1/admin/bootstrap?dryRun=true` emits a `platform.bootstrap_applied` audit event with `dryRun: true`." This exception is documented but creates an inconsistency in the dryRun contract: clients that assume dryRun is side-effect-free (which the general documentation implies) may be surprised that an audit record is created. The rationale (operators wanting a record of what bootstrap would have changed) is reasonable, but the exception should be surfaced more prominently -- perhaps as a note in the general dryRun documentation rather than buried in the endpoint-specific section.
 
-### API-103. `GET /v1/sessions/{id}/usage` tree-aggregated usage has no documented response schema [Medium]
+### API-103. `GET /v1/sessions/{id}/usage` tree-aggregated usage has no documented response schema [Medium] — Skipped
 
-Section 15.1 lists `GET /v1/sessions/{id}/usage` as returning "tree-aggregated usage (including all descendant tasks) when the session has a delegation tree." However, the response schema for this endpoint is not specified. It is unclear what fields are returned (just token counts? per-child breakdowns? cost estimates?), how the tree aggregation is structured (flat sum vs. nested tree), and whether the response includes both the session's own usage and its descendants separately. The `GET /v1/usage` response schema is documented as an aggregated endpoint, but the per-session usage endpoint's response structure is absent.
+**Status: Skipped.** Not an error — this is a request for a response schema definition for an endpoint. Missing response schemas are a documentation completeness gap, not an internal contradiction or factual error in the spec.
 
-### API-104. `POST /v1/credentials` (user-scoped credential registration) referenced but endpoint not in the REST API table [Medium]
+### API-104. `POST /v1/credentials` (user-scoped credential registration) referenced but endpoint not in the REST API table [Medium] — Skipped
 
-Section 4.9 documents `POST /v1/credentials` as the endpoint for user pre-registration of their own API keys ("Bring your own API key" flow). Phase 11 references this endpoint in the build sequence. However, the comprehensive REST API endpoint table in Section 15.1 does not include `POST /v1/credentials` or any `/v1/credentials` endpoints. The full CRUD operations for user-scoped credentials (create, list, delete, update) are not documented in the API surface. This is a missing API specification for a feature explicitly described as part of the v1 credential lifecycle.
+**Status: Skipped.** Factually incorrect finding — Section 15.1 does include a "User credential management" table (line ~7017) that lists `POST /v1/credentials`, `GET /v1/credentials`, `PUT /v1/credentials/{credential_ref}`, `POST /v1/credentials/{credential_ref}/revoke`, and `DELETE /v1/credentials/{credential_ref}`. The endpoints are present in the spec.
 
-### API-105. `POST /v1/sessions/{id}/eval` rate limit specified but not in the rate-limit configuration model [Low]
+### API-105. `POST /v1/sessions/{id}/eval` rate limit specified but not in the rate-limit configuration model [Low] — Skipped
+
+**Status: Skipped.** Not an error — the rate limits are specified in the eval section. Whether they are also listed in an operational defaults table or made configurable is a documentation/design preference, not an internal contradiction.
 
 Section 10.7 specifies a per-session eval submission rate limit of 100/min and a per-tenant global cap of 10,000/min. These rate limits are hard-coded in the spec text rather than being part of the configurable rate-limit model. The spec does not indicate whether deployers can adjust these limits via Helm values or the admin API. If they are fixed limits, they should be documented as such in the operational defaults table (Section 17.8.1). If they are configurable, the configuration mechanism should be specified.
 
@@ -1870,7 +1909,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ## 16. Warm Pool & Pod Lifecycle (WPL)
 
-### WPL-049. Pod state machine diagram omits `resuming` state transitions [Medium]
+### WPL-049. Pod state machine diagram omits `resuming` state transitions [Medium] — Skipped
+
+**Status:** Not an error — the diagram (lines 2420-2423) shows `resuming → attached`, and lines 2435-2439 ("Resuming failure transitions") enumerate all exit transitions explicitly. Lines 2525-2531 provide detailed prose for each case.
 
 **Section 6.2** defines the pod state machine with states including `resume_pending -> resuming -> ...`, but the full state machine diagram (lines ~2401-2600) shows `resume_pending -> resuming` only on the entry side. The transitions **out** of `resuming` are not enumerated in the state machine diagram itself. Section 10.1 mentions that `resuming -> resume_pending` or `resuming -> awaiting_client_action` can occur (adapter terminates during resuming), and there is a "300-second resuming watchdog" referenced. However, the pod state machine in Section 6.2 does not list `resuming -> failed` (watchdog timeout or unrecoverable error), `resuming -> running` (success), or `resuming -> resume_pending` (re-failure during resume). These transitions are only discoverable by cross-referencing other sections.
 
@@ -1878,7 +1919,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-050. RuntimeUpgrade metric labels inconsistent with state machine states [Low]
+### WPL-050. RuntimeUpgrade metric labels inconsistent with state machine states [Low] — Fixed
+
+**Status:** True error — metric labels (`idle, draining, migrating, verifying, complete`) did not match the Section 10.5 state machine states (`Pending, Expanding, Draining, Contracting, Complete, Paused`). Fixed metric definition and `RuntimeUpgradeStuck` alert to use correct state names and 6-state count.
 
 **Section 16.1** defines `lenny_runtime_upgrade_state` as a gauge labeled by `state: idle, draining, migrating, verifying, complete`. However, **Section 10.5** defines the `RuntimeUpgrade` state machine with states: `Pending, Expanding, Draining, Contracting, Complete, Paused`. The metric uses `idle, draining, migrating, verifying, complete` -- three of the five label values (`idle`, `migrating`, `verifying`) do not correspond to any defined state machine state, and three actual states (`Pending`, `Expanding`, `Contracting`, `Paused`) have no matching label value.
 
@@ -1886,7 +1929,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-051. Task-mode scrub procedure lacks file descriptor and IPC cleanup [Medium]
+### WPL-051. Task-mode scrub procedure lacks file descriptor and IPC cleanup [Medium] — Skipped
+
+**Status:** Not an error — Step 1b already handles IPC shared memory (`ipcrm --all=shm`), step 4 clears `/dev/shm`, step 1 kills all user processes (closing their file descriptors). Residual state vectors are explicitly documented as known limitations at line 2079.
 
 **Section 5.2** defines the task-mode scrub procedure (steps 0-6, plus step 7 for Kata). The steps cover workspace removal, process-group kill, scratch directory cleanup, cgroup memory/PID reset, and network state reset (iptables, conntrack). However, the scrub procedure does not address **open file descriptors inherited by long-lived processes** (e.g., the adapter process itself, which persists across tasks), **System V IPC resources** (shared memory segments, semaphores, message queues), or **/dev/shm contents**. A prior task's runtime could create shared memory segments or leave open file descriptors to deleted files (holding disk space), which persist into the next task.
 
@@ -1894,7 +1939,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-052. Concurrent-workspace leaked slot GC relies on Redis counter that can drift [Medium]
+### WPL-052. Concurrent-workspace leaked slot GC relies on Redis counter that can drift [Medium] — Skipped
+
+**Status:** Not an error — design gap suggestion for periodic reconciliation, not a factual error or internal contradiction in the spec.
 
 **Section 5.2** describes concurrent-workspace slot management using atomic Redis `INCR`/`DECR` via Lua scripts for the `lenny:pod:{pod_id}:active_slots` counter. **Section 10.1** describes post-recovery rehydration of this counter from `SessionStore.GetActiveSlotsByPod(pod_id)`. However, the spec does not define a **periodic reconciliation** between the Redis counter and the Postgres session store during normal operation (non-failure scenarios). Over time, if a `DECR` is lost (e.g., Redis accepted the `DECR` but the gateway crashed before updating Postgres, or vice versa), the counter can drift permanently. The rehydration procedure described only triggers on connection loss and replacement pod allocation -- not on running pods.
 
@@ -1902,7 +1949,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-053. `mode_factor` derivation from histogram quantile is undefined for new pools [Medium]
+### WPL-053. `mode_factor` derivation from histogram quantile is undefined for new pools [Medium] — Skipped
+
+**Status:** Not an error — bootstrap mode uses a static `bootstrapMinWarm` override precisely to avoid needing `mode_factor` during the data-sparse period. This is a design gap suggestion about the transition, not a spec contradiction.
 
 **Section 5.2** states that the PoolScalingController uses `histogram_quantile(0.50, ...)` over `lenny_task_reuse_count` to derive `mode_factor` for task-mode pools, reducing `minWarm` proportionally. However, for a newly created task-mode pool in bootstrap mode, the histogram has no data. The spec does not define what `mode_factor` value the controller should use during the bootstrap period when the histogram is empty. The bootstrap procedure (Section 17.8.2) describes `bootstrapMinWarm` as a static override, but once bootstrap exits, the formula needs `mode_factor`. If the histogram has insufficient data at convergence time (e.g., only a few tasks completed in 48 hours on a low-traffic pool), the derived `mode_factor` could be wildly inaccurate.
 
@@ -1910,7 +1959,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-054. Warm pool cert expiry drain races with SDK-warm demotion [Low]
+### WPL-054. Warm pool cert expiry drain races with SDK-warm demotion [Low] — Skipped
+
+**Status:** Not an error — operational ambiguity about cert drain + SDK teardown interaction, not a factual error in the spec.
 
 **Section 10.3** (cert-manager failure modes) states the WarmPoolController "continuously tracks certificate expiry on idle pods and proactively drains any idle pod whose certificate will expire within 30 minutes, replacing it with a fresh pod." For SDK-warm pods, the pod has already started the agent session (Section 6.1). If the controller drains an SDK-warm idle pod due to cert proximity to expiry, the spec does not address whether the SDK teardown (which Section 6.1 says incurs a 1-3s penalty) is needed, or whether the controller simply deletes the pod. This is functionally correct (pod is idle, no session is active), but the interaction between cert-based proactive drain and SDK-warm session teardown is not explicitly specified.
 
@@ -1918,7 +1969,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-055. Bootstrap convergence criterion "variance < 20%" is ambiguous [Medium]
+### WPL-055. Bootstrap convergence criterion "variance < 20%" is ambiguous [Medium] — Skipped
+
+**Status:** Not an error — language imprecision/ambiguity is a clarity improvement suggestion, not a factual error or internal contradiction.
 
 **Section 17.8.2** defines bootstrap convergence criteria including: "the controller's formula-computed `target_minWarm` has been stable (variance < 20% across consecutive reconciliation cycles over a 1-hour rolling window) for at least 2 hours." The term "variance < 20%" is ambiguous -- it could mean: (a) coefficient of variation (standard deviation / mean) < 0.20, (b) max/min ratio within the window < 1.20, or (c) each consecutive pair of computed values differs by less than 20%. These yield very different convergence sensitivity. Additionally, if `target_minWarm` oscillates between 10 and 12 (a 20% difference), whether this satisfies "variance < 20%" depends on interpretation.
 
@@ -1926,7 +1979,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-056. Topology spread constraints not specified for concurrent-mode pods [Medium]
+### WPL-056. Topology spread constraints not specified for concurrent-mode pods [Medium] — Skipped
+
+**Status:** Not an error — design suggestion for tighter spread on concurrent-mode pods, not a factual error or contradiction in the spec.
 
 **Section 5.3** describes topology spread constraints for pod distribution, including `topologySpreadConstraints` with `maxSkew`. The pod state machine and pool taxonomy cover session, task, and concurrent execution modes. However, the topology spread behavior for concurrent-mode pods is not explicitly addressed. A concurrent-workspace pod with `maxConcurrent: 20` represents 20x the blast radius of a session-mode pod. If concurrent-mode pods are spread using the same `maxSkew` as session-mode pods, a single node failure could simultaneously disrupt 20 concurrent sessions rather than 1. The spec does not call out that concurrent-mode pools should use tighter spread constraints proportional to their multiplied blast radius.
 
@@ -1934,7 +1989,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-057. `maxTasksPerPod` retirement not integrated with RuntimeUpgrade drain [Medium]
+### WPL-057. `maxTasksPerPod` retirement not integrated with RuntimeUpgrade drain [Medium] — Skipped
+
+**Status:** Not an error — design gap about interaction between retirement policy and upgrade drain phase, not a factual error or contradiction.
 
 **Section 5.2** defines task-mode pod retirement policy with `maxTasksPerPod` and `maxPodUptimeSeconds`. **Section 10.5** defines the `RuntimeUpgrade` state machine's `Draining` state where old pool pods run to completion. The spec does not address the interaction: during `Draining`, should `maxTasksPerPod` retirement still be enforced on old-pool pods? If yes, retiring pods during drain is wasteful (no new pods are created in the old pool). If no, the retirement policy is silently suspended during upgrades, which could cause pods to run far beyond their intended lifecycle. The spec should explicitly state whether retirement policies are suspended during the `Draining` phase.
 
@@ -1942,7 +1999,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-058. Pre-attached failure retry policy unclear on credential lease handling [Medium]
+### WPL-058. Pre-attached failure retry policy unclear on credential lease handling [Medium] — Skipped
+
+**Status:** Not an error — the spec states the gateway "rolls back any partially allocated resources (releases the pod claim, revokes the credential lease)" on failure. The retry behavior follows from that rollback semantics. This is a clarity suggestion, not a contradiction.
 
 **Section 6.2** describes a pre-attached failure retry policy (2 retries, exponential backoff) for pod failures before a session is fully attached. The retry claims a new pod from the warm pool. However, the spec does not explicitly state whether the **credential lease** from the original attempt is reused or re-evaluated on retry. Section 7.1 (steps 6-7) shows credential assignment as part of the atomic session creation flow. If a retry reclaims a new pod but reuses the original credential lease, the lease may have been partially consumed. If re-evaluated, the credential pool could be exhausted by retries under high load. The atomicity statement in Section 7.1 says "the gateway rolls back any partially allocated resources (releases the pod claim, revokes the credential lease)" on failure, but it is unclear whether the pre-attached retry re-executes the full step 6 credential evaluation.
 
@@ -1950,7 +2009,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-059. WarmPoolController crash recovery: orphan pod detection delay [Medium]
+### WPL-059. WarmPoolController crash recovery: orphan pod detection delay [Medium] — Skipped
+
+**Status:** Not an error — operational analysis of worst-case detection delay timing, not a factual error or internal contradiction in the spec.
 
 **Section 10.1** describes the orphan session reconciler running every 60 seconds, which cross-references the `agent_pod_state` mirror table. The WarmPoolController updates this mirror table. During a WarmPoolController crash (up to 25s failover), the mirror becomes stale. The spec adds a `PodStateMirrorStale` warning alert when lag exceeds 60s and a fallback to direct Kubernetes API queries. However, between the WarmPoolController crash and the staleness detection (60s threshold), the orphan reconciler is operating on stale data. If a pod terminates during this window, the mirror still shows it as alive, and the orphan reconciler will not flag the corresponding session. The combined worst-case detection delay is: controller failover (25s) + mirror staleness threshold (60s) + reconciler interval (60s) = up to **145 seconds** of undetectable orphan sessions.
 
@@ -1958,7 +2019,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-060. Cold-start bootstrap `PoolBootstrapUnderprovisioned` threshold is one-directional [Low]
+### WPL-060. Cold-start bootstrap `PoolBootstrapUnderprovisioned` threshold is one-directional [Low] — Skipped
+
+**Status:** Not an error — suggestion to add a downward guard, not a factual error or contradiction in the existing spec.
 
 **Section 17.8.2** states that the controller emits a `PoolBootstrapUnderprovisioned` warning "rather than silently switching to a much larger formula value" when "the formula-computed target does not exceed 3x the bootstrap minWarm value." This is correctly worded as a guard against sudden upward jumps. However, there is no symmetric guard for the **downward** case: if the bootstrap `minWarm` is 100 and the formula computes 5, the controller silently switches from 100 to 5 pods on convergence exit. This could cause immediate warm pool exhaustion if the 48-hour observation window happened to capture an unrepresentatively low traffic period (e.g., initial rollout with few users).
 
@@ -1966,7 +2029,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-061. Checkpoint barrier protocol does not account for concurrent-workspace pods [Medium]
+### WPL-061. Checkpoint barrier protocol does not account for concurrent-workspace pods [Medium] — Skipped
+
+**Status:** Not an error — design gap about per-slot barrier semantics, not a factual error or contradiction in the spec.
 
 **Section 10.1** describes the `CheckpointBarrier` protocol for rolling updates: the gateway sends a barrier to "every pod currently coordinated by this replica" and waits for `CheckpointBarrierAck` from all pods under a single wall-clock deadline. For concurrent-workspace pods, a single pod may be serving multiple active slots, each potentially in different states (some mid-tool-call, some idle). The spec says "the adapter finishes the current tool call execution (if any), then stops accepting new tool call dispatches." For a concurrent pod with 20 active slots, "the current tool call" is ambiguous -- there could be 20 simultaneous tool calls in flight across different slots. The barrier protocol does not specify whether quiescence requires **all** slots to finish their current tool calls, or just the slot with the longest-running tool call, or whether per-slot barriers are needed.
 
@@ -1974,7 +2039,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-062. `failover_seconds` formula uses 25s but `coordinatorHoldTimeoutSeconds` is 120s [Medium]
+### WPL-062. `failover_seconds` formula uses 25s but `coordinatorHoldTimeoutSeconds` is 120s [Medium] — Skipped
+
+**Status:** Not an error — `failover_seconds` explicitly covers WarmPoolController leader election failover (25s), which is its stated purpose. The suggestion to also account for coordinator hold-state pods is a design improvement, not a contradiction.
 
 **Section 17.8.2** states "Use `failover_seconds = 25` (worst-case crash scenario: `leaseDuration + renewDeadline = 15s + 10s`)" for the `minWarm` formula. This 25s value covers the **WarmPoolController** leader election failover time. However, **Section 10.1** defines `coordinatorHoldTimeoutSeconds` as 120s (the time an adapter holds before self-terminating when no coordinator reconnects). If a gateway coordinator crashes and no new coordinator takes over within 120s, the session terminates and the pod transitions to `failed` -- releasing the pod from the warm pool perspective. The `minWarm` formula does not account for pods that are "consumed" by sessions in hold state (not yet released, not yet serving new sessions) during coordinator recovery. These pods are neither `idle` (available for claims) nor `running` (actively serving) -- they are effectively frozen.
 
@@ -1982,7 +2049,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-063. `SandboxClaim` guard webhook `failurePolicy: Fail` creates single point of failure [High]
+### WPL-063. `SandboxClaim` guard webhook `failurePolicy: Fail` creates single point of failure [High] — Skipped
+
+**Status:** Already skipped in High findings table — same as OPS-080; deployer discretion for webhook redundancy.
 
 **Section 4.6.1** (referenced by Section 16.5) describes the `lenny-sandboxclaim-guard` ValidatingAdmissionWebhook with `failurePolicy: Fail`. The alert `SandboxClaimGuardUnavailable` (Section 16.5) correctly identifies that when this webhook is unreachable, "all PATCH and PUT operations on SandboxClaim resources are blocked -- new pod claims are prevented, halting session creation." This webhook is a session-creation critical path dependency with `failurePolicy: Fail`, meaning any outage of the webhook deployment (OOM, scheduling failure, cert expiry) halts all new session creation platform-wide. The spec does not define **redundancy requirements** for the webhook deployment (replica count, PDB, anti-affinity) or a **degraded mode** where claims proceed with weaker guarantees (e.g., Postgres-backed claim with a brief double-claim risk window).
 
@@ -1990,7 +2059,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-064. Warm pool `minWarm` formula burst term uses `pod_warmup_seconds` inconsistently [Medium]
+### WPL-064. Warm pool `minWarm` formula burst term uses `pod_warmup_seconds` inconsistently [Medium] — Skipped
+
+**Status:** Not an error — the spec at Section 17.8.2 explicitly acknowledges this distinction and instructs operators of SDK-warm pools to "substitute the observed SDK-warm startup time for `pod_warmup_seconds` in the full formula." The use of `pod_startup_seconds` in the first term is a deliberate baseline simplification, not an accidental inconsistency.
 
 **Section 4.6.2** and **Section 17.8.2** both state the formula: `minWarm >= claim_rate * safety_factor * (failover_seconds + pod_startup_seconds) + burst_p99_claims * pod_warmup_seconds`. The first term uses `pod_startup_seconds` (10s baseline) while the burst term uses `pod_warmup_seconds`. Section 17.8.2 clarifies that `pod_warmup_seconds` for SDK-warm pools is "30-90s, far exceeding the 10s startup baseline." However, the first term (sustained demand during failover) also needs pods to reach `idle` state to serve claims. If `pod_warmup_seconds` is 90s for SDK-warm pools, then `failover_seconds + pod_startup_seconds = 35s` underestimates the time needed because pods created during failover also take 90s to warm up, not 10s. The sustained-demand term should use `pod_warmup_seconds` (not `pod_startup_seconds`) for SDK-warm pools, just as the burst term does.
 
@@ -1998,7 +2069,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ---
 
-### WPL-065. etcd write pressure mitigation (`statusUpdateDeduplicationWindow`) interaction with pod state machine timing [Low]
+### WPL-065. etcd write pressure mitigation (`statusUpdateDeduplicationWindow`) interaction with pod state machine timing [Low] — Skipped
+
+**Status:** Not an error — informational observation about deduplication window behavior, self-acknowledged as "mostly informational" and "likely intentional for performance."
 
 **Section 4.6.1** and **Section 17.8.2** describe `statusUpdateDeduplicationWindow` (250ms-500ms) to reduce etcd write pressure from CRD status updates. The pod state machine (Section 6.2) has rapid state transitions on the hot path: `claimed -> receiving_uploads -> finalizing_workspace -> running_setup -> starting_session -> attached`. If the deduplication window is 500ms and a session completes pod claim + upload + finalize + setup + session start in under 500ms (feasible for small workspaces with no setup commands), intermediate states may be coalesced and never written to etcd. This is likely intentional for performance, but the spec does not state whether the deduplication window is applied to CRD **status** updates only or also to CRD **spec** updates, and whether the controller's reconciliation logic depends on observing intermediate states.
 
@@ -2010,7 +2083,9 @@ The 3 Medium findings are: CPS-054 (no Python SDK despite Python-dominant ecosys
 
 ## 17. Credential Management (CRD)
 
-### CRD-051. Adapter-Side Lease Timer Not Resilient to Adapter Crash (Direct Mode, `anthropic_direct`) [Medium]
+### CRD-051. Adapter-Side Lease Timer Not Resilient to Adapter Crash (Direct Mode, `anthropic_direct`) [Medium] — Skipped
+
+**Status:** Skipped — not an error. This is a missing crash-recovery protocol suggestion, not a factual mistake or internal contradiction in the spec.
 
 **Location:** Section 4.9, line ~1131
 
@@ -2022,7 +2097,9 @@ The spec states that in direct delivery mode for `anthropic_direct`, "the adapte
 
 ---
 
-### CRD-052. Credential File Owner UID Ambiguity [Low]
+### CRD-052. Credential File Owner UID Ambiguity [Low] — Skipped
+
+**Status:** Skipped — not an error. Missing implementation detail suggestion for third-party adapter authors, not a contradiction.
 
 **Location:** Section 4.7 / Section 6.4 (referenced from earlier reading)
 
@@ -2034,7 +2111,9 @@ The credential file at `/run/lenny/credentials.json` is specified with permissio
 
 ---
 
-### CRD-053. Full-Tier Credential Rotation During Token Service Outage Not Explicitly Addressed [Medium]
+### CRD-053. Full-Tier Credential Rotation During Token Service Outage Not Explicitly Addressed [Medium] — Skipped
+
+**Status:** Skipped — not an error. The guard's behavior for Full-tier is logically implied (no replacement credential can be minted regardless of tier). This is a suggestion to make implicit behavior explicit, not a contradiction.
 
 **Location:** Section 4.9, "Token Service unavailability guard" paragraph, line ~1413
 
@@ -2046,7 +2125,9 @@ The Token Service unavailability guard explicitly addresses Standard/Minimum-tie
 
 ---
 
-### CRD-054. `credentialPropagation: inherit` Partial Provider Intersection Behavior Unspecified [Medium]
+### CRD-054. `credentialPropagation: inherit` Partial Provider Intersection Behavior Unspecified [Medium] — Skipped
+
+**Status:** Skipped — not an error. This is a missing behavior clarification for an edge case, not a factual mistake or internal contradiction.
 
 **Location:** Section 8 (delegation), lines ~3100-3500
 
@@ -2058,7 +2139,9 @@ When `credentialPropagation: inherit` is set on a delegation hop, the child sess
 
 ---
 
-### CRD-055. Credential Deny-List Entry TTL vs. Proactively Renewed Leases [Medium]
+### CRD-055. Credential Deny-List Entry TTL vs. Proactively Renewed Leases [Medium] — Skipped
+
+**Status:** Skipped — not an error. The revocation process (step 3) explicitly terminates all active leases immediately. There are no surviving "proactively renewed leases" after revocation. The deny-list is a safety net for race conditions, not the primary enforcement mechanism. The finding is based on a misreading of the revocation flow.
 
 **Location:** Section 4.9, emergency revocation (lines ~1500-1665)
 
@@ -2070,7 +2153,9 @@ The emergency revocation mechanism propagates a credential deny-list via Redis p
 
 ---
 
-### CRD-056. `callbackSecret` Classified as T3 but Credential Pool Secrets are T4 [Low]
+### CRD-056. `callbackSecret` Classified as T3 but Credential Pool Secrets are T4 [Low] — Skipped
+
+**Status:** Skipped — not an error. The finding itself acknowledges "This is not an error" and that the classification is defensible. Missing rationale is not a spec defect.
 
 **Location:** Section 14, line ~6639 vs. Section 12.9 / Section 4.9
 
@@ -2082,7 +2167,9 @@ The `callbackSecret` (webhook HMAC signing secret) is classified as T3 (Confiden
 
 ---
 
-### CRD-057. Dev Mode Docker Compose Credential Warning vs. TLS Profile Gap [Medium]
+### CRD-057. Dev Mode Docker Compose Credential Warning vs. TLS Profile Gap [Medium] — Skipped
+
+**Status:** Skipped — not an error. Suggestion to add a runtime guard. The spec already documents the warning; recommending additional implementation safeguards is a feature request, not a contradiction.
 
 **Location:** Section 17.4, lines ~9029-9048
 
@@ -2094,7 +2181,9 @@ The spec includes a warning that Tier 2 `docker compose up` transmits credential
 
 ---
 
-### CRD-058. Credential Lease Not Explicitly Released on `created` State Timeout [Medium]
+### CRD-058. Credential Lease Not Explicitly Released on `created` State Timeout [Medium] — Skipped
+
+**Status:** Skipped — not an error. The finding itself acknowledges the spec correctly mentions lease revocation on expiry. It is asking for a trade-off discussion to be documented, which is a suggestion, not a factual error.
 
 **Location:** Section 15.1, line ~6956
 
@@ -2106,7 +2195,9 @@ The `created` session state has a TTL (`maxCreatedStateTimeoutSeconds`, default 
 
 ---
 
-### CRD-059. Credential Audit Event Schema References Section 12.4 but Audit Events Are in Section 4.9.2 [Low]
+### CRD-059. Credential Audit Event Schema References Section 12.4 but Audit Events Are in Section 4.9.2 [Low] — Fixed
+
+**Status:** Fixed — genuine cross-reference error. Lines 1438 and 1463 referenced "Section 12.4" (Redis HA and Failure Modes) for credential audit events; corrected both to "Section 4.9.2" (Credential Audit Events).
 
 **Location:** Various cross-references
 
@@ -2118,7 +2209,9 @@ The `credential.leased` audit event is referenced as being documented in "Sectio
 
 ---
 
-### CRD-060. Semantic Cache Erasure Halt-on-Error Does Not Specify Retry Behavior [Medium]
+### CRD-060. Semantic Cache Erasure Halt-on-Error Does Not Specify Retry Behavior [Medium] — Skipped
+
+**Status:** Skipped — not an error. Suggestion to add cross-references to the general retry mechanism. Missing cross-reference to related section is not a factual error or contradiction.
 
 **Location:** Section 4.9, semantic caching, line ~1489
 
@@ -2130,7 +2223,9 @@ The spec states: "The erasure job treats a `DeleteByUser` call that returns an e
 
 ---
 
-### CRD-061. No Explicit Credential Scrub in Concurrent-Workspace Mode Between Slots [Medium]
+### CRD-061. No Explicit Credential Scrub in Concurrent-Workspace Mode Between Slots [Medium] — Skipped
+
+**Status:** Skipped — not an error. This is a design gap suggestion for concurrent-workspace mode credential isolation. The spec does not make contradictory claims; it simply does not address this scenario in detail.
 
 **Location:** Section 5.2 (pool execution modes), Section 14 (workspace plan)
 
@@ -2142,7 +2237,9 @@ Task-mode execution (Section 5.2) includes explicit credential purge as "step 0"
 
 ---
 
-### CRD-062. `env` Blocklist Validation Applies Only at Session Creation, Not Delegation [Medium]
+### CRD-062. `env` Blocklist Validation Applies Only at Session Creation, Not Delegation [Medium] — Skipped
+
+**Status:** Skipped — not an error. Suggestion to extend blocklist to delegation time. The spec does not contradict itself; it specifies the blocklist at session creation and does not claim it applies at delegation.
 
 **Location:** Section 14, line ~6612
 
@@ -2154,7 +2251,9 @@ The `env` blocklist for credential-sensitive environment variable patterns (e.g.
 
 ---
 
-### CRD-063. Credential Pool Deletion Guard References Active Leases But Not Pending Renewals [Low]
+### CRD-063. Credential Pool Deletion Guard References Active Leases But Not Pending Renewals [Low] — Skipped
+
+**Status:** Skipped — not an error. Edge case clarification request for pool decommissioning, not a factual mistake or contradiction in the spec.
 
 **Location:** Section 15.1, line ~7411
 
@@ -2166,7 +2265,9 @@ The deletion guard for credential pools states: "Credential Pool: blocked if any
 
 ---
 
-### CRD-064. Network Policy for Proxy Mode vs. Direct Mode Egress Lacks Explicit Credential-Aware Rules [Low]
+### CRD-064. Network Policy for Proxy Mode vs. Direct Mode Egress Lacks Explicit Credential-Aware Rules [Low] — Skipped
+
+**Status:** Skipped — not an error. Design gap suggestion for mixed-mode NetworkPolicy resolution, not a factual error or internal contradiction.
 
 **Location:** Section 13.2 (network isolation), lines ~6057-6400
 
