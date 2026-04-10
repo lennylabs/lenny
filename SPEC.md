@@ -1,8 +1,6 @@
 # Lenny Technical Design
 
 **Status:** Draft
-**Date:** 2026-04-02
-**Source:** Synthesized from design conversation (chatgpt-conversation.md), updated with design review decisions (design-updates-20260402.md)
 
 ---
 
