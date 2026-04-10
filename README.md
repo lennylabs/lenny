@@ -12,6 +12,8 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 - **Pre-warmed pods** — agent containers are already running when a request arrives, eliminating cold-start latency. Pod claim is in the millisecond range; workspace setup is the only hot-path work.
 - **Runtime-agnostic** — any process that implements the [adapter contract](#runtime-adapter-contract) can run as a Lenny agent. Claude Code, LangChain, CrewAI, custom scripts — no SDK lock-in.
+- **Two runtime types** — `type: agent` runtimes participate in the full task lifecycle (sessions, delegation, elicitation, multi-turn dialog). `type: mcp` runtimes host MCP servers with Lenny-managed pods (isolation, credentials, lifecycle) but no task lifecycle — the runtime binary is oblivious to Lenny.
+- **Three execution modes** — `session` (one session per pod, default), `task` (pod reuses across sequential tasks with workspace scrub), and `concurrent` (multiple simultaneous tasks via slot multiplexing). Each mode has distinct scaling, isolation, and lifecycle characteristics.
 - **Isolated workspaces** — each session gets its own sandboxed filesystem with deployer-selectable isolation (runc, gVisor, Kata microVM).
 - **Interactive sessions** — full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation — not just request/response.
 - **Recursive delegation** — agents spawn child agents through the gateway with enforced token budgets, scope narrowing, and lineage tracking at every hop.
@@ -90,6 +92,23 @@ Lenny is not tied to any specific agent runtime. It defines a tiered adapter con
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
 
 ## Key Features
+
+### Runtime Types and Execution Modes
+
+Lenny supports two runtime types:
+
+- **`type: agent`** — full task lifecycle. Receives tasks via stdin, supports sessions, workspaces, delegation, elicitation, and multi-turn dialog. Callable via `lenny/delegate_task`. Integration depth is tiered (Minimum → Standard → Full).
+- **`type: mcp`** — hosts an MCP server behind Lenny-managed infrastructure (isolation, credentials, pool scaling, audit). No task lifecycle — the runtime binary is oblivious to Lenny. Each `type: mcp` runtime gets a dedicated endpoint at `/mcp/runtimes/{runtime-name}`.
+
+Agent runtimes run in one of three execution modes:
+
+| Mode | Pod usage | Use case |
+|------|-----------|----------|
+| **`session`** (default) | One session per pod. Pod terminated after session ends. | Most workloads. Strongest isolation — no cross-session data leakage. |
+| **`task`** | Pod reused across sequential tasks with workspace scrub between tasks. Tenant-pinned. | High-throughput batch workloads where pod startup cost matters. Requires Full-tier adapter for between-task lifecycle signaling. |
+| **`concurrent`** | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed). | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
+
+Execution mode is declared on the `Runtime` definition and determines pool scaling formulas, checkpoint behavior, and pod retirement policies.
 
 ### Session Lifecycle
 
@@ -238,14 +257,15 @@ curl -s -X POST http://localhost:8080/v1/sessions/{id}/terminate | jq .
 Lenny occupies a distinct point in the agent infrastructure design space:
 
 1. **Runtime-agnostic adapter contract** — any process, any framework, tiered integration (Section 15.4)
-2. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement (Section 8)
-3. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives (Section 17)
-4. **Multi-protocol gateway** — MCP + OpenAI + Open Responses via ExternalAdapterRegistry (Section 15)
-5. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance (Section 11)
-6. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces (Section 22.6)
-7. **Built-in experimentation** — A/B testing with variant pools, deterministic bucketing, eval attribution (Section 10.7)
-8. **Pull-based evaluation hooks** — multi-dimensional scoring, session replay, experiment-aware results API (Section 10.7)
-9. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity (Section 12.8)
+2. **Flexible runtime types and execution modes** — `agent` and `mcp` runtime types; `session`, `task`, and `concurrent` execution modes with mode-aware pool scaling (Section 5.2)
+3. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement (Section 8)
+4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives (Section 17)
+5. **Multi-protocol gateway** — MCP + OpenAI + Open Responses via ExternalAdapterRegistry (Section 15)
+6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance (Section 11)
+7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces (Section 22.6)
+8. **Built-in experimentation** — A/B testing with variant pools, deterministic bucketing, eval attribution (Section 10.7)
+9. **Pull-based evaluation hooks** — multi-dimensional scoring, session replay, experiment-aware results API (Section 10.7)
+10. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity (Section 12.8)
 
 For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
 

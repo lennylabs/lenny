@@ -54,6 +54,31 @@ The adapter contract is tiered by integration depth:
 
 The key distinction from competitors: the adapter contract separates **platform integration** (adapter) from **agent logic** (runtime). Agent code remains framework-independent even when the adapter layer carries Lenny-specific integration effort. E2B and Daytona provide sandbox environments but assume the operator brings their own orchestration. Temporal and LangGraph require agent logic itself to use their respective SDKs.
 
+### Runtime types and execution modes
+
+Lenny supports two fundamentally different runtime types, and three execution modes for agent runtimes. This flexibility allows a single platform to serve diverse workload patterns — from long-running interactive sessions to high-throughput batch processing — without forcing operators into a one-size-fits-all model.
+
+**Runtime types:**
+
+- **`type: agent`** — participates in Lenny's full task lifecycle. Receives tasks via stdin `{type: "message"}`, supports sessions, workspaces, delegation, elicitation, and multi-turn dialog. Callable by other agents via `lenny/delegate_task`. Integration depth is tiered (Minimum / Standard / Full), so teams can start with ~50 lines of stdin/stdout JSON Lines and add capabilities incrementally.
+- **`type: mcp`** — hosts an MCP server behind Lenny-managed infrastructure (pod isolation, credential leasing, pool scaling, egress control, audit logging). No task lifecycle — the MCP server binary is completely oblivious to Lenny. Each `type: mcp` runtime gets a dedicated MCP endpoint at `/mcp/runtimes/{runtime-name}` with standard MCP capability negotiation. Useful for exposing existing MCP-compatible tools through Lenny's security and management layer without any code changes.
+
+**Execution modes** (agent runtimes only):
+
+| Mode | Pod usage | Isolation | Scaling factor |
+| :--- | :--- | :--- | :--- |
+| **`session`** (default) | One session per pod. Pod terminated after session ends. | Strongest — no cross-session data leakage through workspace, DNS cache, or runtime memory. | `mode_factor = 1.0` |
+| **`task`** | Pod reused across sequential tasks with workspace scrub between tasks. Tenant-pinned for entire pod lifetime. | Best-effort scrub (kill processes, remove workspace, clear `/tmp`, purge credentials). Residual state vectors documented (TCP TIME_WAIT, page cache, DNS cache). | `mode_factor = avg_tasks_per_pod_lifetime` |
+| **`concurrent`** | Multiple simultaneous tasks on one pod via slot multiplexing (`slotId`). Two sub-variants: `workspace` (per-slot directories at `/workspace/slots/{slotId}/`) and `stateless` (no workspace, Kubernetes Service routing). | Process-level isolation between slots. Shared process namespace, `/tmp`, cgroup memory, and network stack. | `mode_factor = maxConcurrent` |
+
+**Task mode** requires Full-tier adapter integration for between-task lifecycle signaling (`task_complete` → scrub → `task_ready`). Standard/Minimum-tier runtimes in task mode effectively get `podReuse: false` — the pod is terminated after each task. Deployers must explicitly acknowledge the best-effort scrub via `acknowledgeBestEffortScrub: true` and set a mandatory `maxTasksPerPod` limit.
+
+**Concurrent-workspace mode** requires explicit `acknowledgeProcessLevelIsolation: true` because concurrent slots share the pod's process namespace and network stack. Each slot gets independent credential leases and checkpoint lifecycle. Per-slot failure isolation ensures one failing slot does not affect others.
+
+**Concurrent-stateless** is recommended primarily for existing Lenny-managed pods with minimal statefulness. New stateless workloads should prefer the **external connector** model (Section 9.3) for simpler integration.
+
+Execution mode is declared on the `Runtime` definition and propagated to pool configuration. The PoolScalingController applies mode-specific `mode_factor` and `burst_mode_factor` adjustments to the scaling formula, so operators do not need to manually account for pod reuse or slot multiplexing when sizing pools.
+
 ### 2. Recursive delegation as a platform primitive
 
 Any agent pod can spawn child sessions through the gateway with enforced scope, token budget, and lineage tracking. This is not a library-level feature bolted on -- it is a first-class gateway operation with policy enforcement at every hop.
