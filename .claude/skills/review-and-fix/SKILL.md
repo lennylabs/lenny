@@ -19,8 +19,8 @@ You are given a technical specification and a review guidelines file. Your job i
 
 Each iteration produces a findings summary file:
 
-- Iteration 1: `review-findings/{datetime}/iter1/summary.md`
-- Iteration 2: `review-findings/{datetime}/iter2/summary.md`
+- Iteration 1: `spec-reviews/review-findings/{datetime}/iter1/summary.md`
+- Iteration 2: `spec-reviews/review-findings/{datetime}/iter2/summary.md`
 - etc.
 
 where `{spec-dir}` is the directory containing the spec file and `{datetime}` is today's date and time in `YYYYMMDDHHMMSS` format. All iteration files in this run must use the same date and time (the date and time as of the time the run was initiated).
@@ -109,7 +109,7 @@ Rules:
 
 Return all findings as a single markdown block, ordered by severity (Critical first).
 
-Place output files (if any) in `review-findings/{datetime}/iter{iteration}`.
+Place output files (if any) in `spec-reviews/review-findings/{datetime}/iter{iteration}`.
 
 ---
 
@@ -174,7 +174,7 @@ Assign unique identifiers to every finding using the format `{CAT}-{NNN}`:
 - `{CAT}` is a 3-letter category code derived from the perspective (use the same codes as any prior iteration if they exist; otherwise derive sensible 3-letter abbreviations)
 - `{NNN}` is a zero-padded sequential number starting at 001 within each category
 
-Write this file to `review-findings/{datetime}/iter{iteration}/summary.md`.
+Write this file to `spec-reviews/review-findings/{datetime}/iter{iteration}/summary.md`.
 
 Report to the user:
 
