@@ -17,7 +17,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 - **Isolated workspaces** — each session gets its own sandboxed filesystem with deployer-selectable isolation (runc, gVisor, Kata microVM).
 - **Interactive sessions** — full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation — not just request/response.
 - **Recursive delegation** — agents spawn child agents through the gateway with enforced token budgets, scope narrowing, and lineage tracking at every hop.
-- **Multi-protocol gateway** — MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
+- **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
 - **Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically on rate limiting. Pods never see raw API keys.
 - **A/B experimentation** — built-in experiment primitives for runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation hooks** — pull-based, multi-dimensional scoring that integrates with any external eval pipeline. Session replay for regression testing across runtime versions.
@@ -32,7 +32,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 ┌─────────────────────────────────────────────────────────────┐
 │                    Client / MCP Host                         │
 └────────────────────────────┬────────────────────────────────┘
-                             │ MCP / OpenAI / Open Responses
+                             │ REST / MCP / OpenAI / Open Responses
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Gateway Edge Replicas                      │
@@ -67,7 +67,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
     └─────────┘    └───────────┘    └───────────┘
 ```
 
-**Gateway** — the only externally-facing component. Handles authentication (OIDC/OAuth 2.1), protocol adaptation (MCP, OpenAI, Open Responses), session routing, file uploads, credential leasing via LLM Proxy, delegation mediation, experiment routing, and policy enforcement. Internally partitioned into four subsystems (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) with independent concurrency limits and circuit breakers. Scales horizontally with externalized state.
+**Gateway** — the only externally-facing component. Handles authentication (OIDC/OAuth 2.1), protocol adaptation (REST, MCP, OpenAI, Open Responses), session routing, file uploads, credential leasing via LLM Proxy, delegation mediation, experiment routing, and policy enforcement. Internally partitioned into four subsystems (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) with independent concurrency limits and circuit breakers. Scales horizontally with externalized state.
 
 **Warm Pool Controller** — a Kubernetes controller that manages `kubernetes-sigs/agent-sandbox` CRDs. Keeps pods pre-warmed and handles claim/release/drain lifecycle.
 
@@ -260,7 +260,7 @@ Lenny occupies a distinct point in the agent infrastructure design space:
 2. **Flexible runtime types and execution modes** — `agent` and `mcp` runtime types; `session`, `task`, and `concurrent` execution modes with mode-aware pool scaling (Section 5.2)
 3. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement (Section 8)
 4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives (Section 17)
-5. **Multi-protocol gateway** — MCP + OpenAI + Open Responses via ExternalAdapterRegistry (Section 15)
+5. **Multi-protocol gateway** — REST + MCP + OpenAI + Open Responses via ExternalAdapterRegistry (Section 15)
 6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance (Section 11)
 7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces (Section 22.6)
 8. **Built-in experimentation** — A/B testing with variant pools, deterministic bucketing, eval attribution (Section 10.7)

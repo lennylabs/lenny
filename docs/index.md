@@ -25,7 +25,7 @@ through the protocols your clients already speak.
 | **Runtime-agnostic adapter contract** | Integrate any agent framework -- LangChain, CrewAI, Autogen, a plain shell script -- through a thin gRPC adapter. The platform handles lifecycle, networking, and state so your runtime does not have to. |
 | **Recursive delegation** | Agents can spawn child sessions with scoped budgets and permissions. The platform enforces the hierarchy; runtimes stay simple. |
 | **Self-hosted, K8s-native** | CRDs, controllers, and Helm charts. No SaaS dependency. Runs wherever Kubernetes runs. |
-| **Multi-protocol gateway** | A single gateway speaks **MCP** (including Tasks and Elicitation), **OpenAI Chat Completions**, and **Open Responses**. Clients connect with the SDK they already have. |
+| **Multi-protocol gateway** | A single gateway speaks **REST**, **MCP** (including Tasks and Elicitation), **OpenAI Chat Completions**, and **Open Responses**. Clients connect with the SDK they already have. |
 | **Enterprise controls** | Multi-tenancy with row-level security, RBAC, audit logging, budget enforcement, and deployer-selectable isolation tiers (runc, gVisor, Kata). |
 | **Ecosystem-composable** | Expose every session as an MCP server. Chain Lenny instances, connect to external tool servers, or nest sessions inside larger pipelines. |
 

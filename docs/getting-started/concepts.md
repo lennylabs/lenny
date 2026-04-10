@@ -232,7 +232,7 @@ The gateway-centric design provides several critical guarantees:
 - **Security boundary:** Clients never see pod addresses, internal endpoints, or raw credentials. The gateway authenticates, authorizes, and mediates every interaction.
 - **Session portability:** Because session state is externalized (Postgres, Redis, MinIO), a client can land on any gateway replica. Pod failure triggers a transparent resume on a different pod with no client-side routing changes.
 - **Policy enforcement:** Rate limiting, token budgets, concurrency controls, content filtering, and audit logging all run in the gateway, not in the (untrusted) agent pod.
-- **Protocol translation:** The gateway translates between external protocols (MCP, OpenAI Completions, Open Responses) and Lenny's internal adapter protocol. Runtimes do not need to implement any external protocol.
+- **Protocol translation:** The gateway translates between external protocols (REST, MCP, OpenAI Completions, Open Responses) and Lenny's internal adapter protocol. Runtimes do not need to implement any external protocol.
 
 ### Stateless replicas
 

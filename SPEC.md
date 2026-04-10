@@ -62,7 +62,7 @@ Lenny is designed as an open-source project. The community strategy — includin
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Client / MCP Host                        │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ MCP / OpenAI / Open Responses
+                               │ REST / MCP / OpenAI / Open Responses
                                │ (via ExternalAdapterRegistry)
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -112,7 +112,7 @@ Lenny is designed as an open-source project. The community strategy — includin
 **Responsibilities:**
 
 - Authenticate clients (OIDC/OAuth 2.1)
-- Expose multiple external interfaces via `ExternalAdapterRegistry` (MCP, OpenAI Completions, Open Responses — see Section 15)
+- Expose multiple external interfaces: REST API and protocol adapters via `ExternalAdapterRegistry` (MCP, OpenAI Completions, Open Responses — see Section 15)
 - Route sessions to the correct runtime pod
 - Proxy long-lived interactive streams (WebSocket / gRPC bidi / Streamable HTTP)
 - Run the Policy Engine and `RequestInterceptor` chain on every request
@@ -10655,7 +10655,7 @@ Adapters with no outbound behavior (MCP, OpenAI Completions, Open Responses) emb
 | **Runtime types**          | `agent` (task lifecycle) + `mcp` (MCP server hosting) (§5.1) | Single type   | Single type               | Single type                 | Worker type              | Single type                 | Graph-based                     |
 | **Execution modes**        | session / task / concurrent (workspace + stateless) (§5.2) | N/A            | N/A                       | N/A                         | N/A (workflow-based)     | N/A                         | N/A (graph-based)               |
 | **Recursive delegation**   | Yes (platform primitive, §8)               | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
-| **Multi-protocol gateway** | MCP + OpenAI + Open Responses (§15)        | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
+| **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses (§15) | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, §11)       | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
 | **Experimentation**        | Built-in A/B, variant pools, eval hooks (§10.7) | No                  | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
 | **Eval hooks**             | Pull-based, multi-dimensional, experiment-attributed (§10.7) | No       | No                        | No                          | No                       | No                          | Built-in eval framework          |
@@ -10683,7 +10683,7 @@ Lenny occupies a distinct point in the agent infrastructure design space. The di
 
 4. **Self-hosted, Kubernetes-native.** Lenny runs on the operator's own cluster using standard Kubernetes primitives — CRDs, RuntimeClasses, namespaces (Section 17). There is no dependency on a vendor-hosted control plane. E2B offers an open-source self-hosted option but requires operators to manage Firecracker/microVM infrastructure separately from their Kubernetes clusters; Fly.io Sprites and Modal require their hosted infrastructure; self-hosted Temporal adds significant operational burden. Lenny's local development mode (Section 17.4) runs with zero cloud dependency.
 
-5. **Multi-protocol gateway.** A single gateway edge serves MCP, OpenAI, and Open Responses clients via the `ExternalAdapterRegistry` (Section 15, Section 3). Operators do not need separate infrastructure per client protocol. Lenny implements MCP Tasks at the gateway's external MCP interface (Section 9); internal delegation between gateway and agent pods uses a custom gRPC protocol with equivalent semantics (see §4.7 and §9).
+5. **Multi-protocol gateway.** A single gateway edge serves REST, MCP, OpenAI, and Open Responses clients (Section 15, Section 3). Operators do not need separate infrastructure per client protocol. Lenny implements MCP Tasks at the gateway's external MCP interface (Section 9); internal delegation between gateway and agent pods uses a custom gRPC protocol with equivalent semantics (see §4.7 and §9).
 
 6. **Enterprise controls at the platform layer.** Rate limiting, token budgets, concurrency controls, deployer-selectable isolation profiles (runc/gVisor/Kata), audit logging, and least-privilege pod security are built into the gateway and controller layers (Sections 5.3, 8, 11, 13). These are not add-ons — they are enforced by default.
 

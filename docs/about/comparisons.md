@@ -29,7 +29,7 @@ Side-by-side analysis of Lenny versus other platforms in the agent infrastructur
 | **Runtime types**          | `agent` (task lifecycle) + `mcp` (MCP server hosting) | Single type   | Single type               | Single type                 | Worker type              | Single type                 | Graph-based                     |
 | **Execution modes**        | session / task / concurrent (workspace + stateless) | N/A            | N/A                       | N/A                         | N/A (workflow-based)     | N/A                         | N/A (graph-based)               |
 | **Recursive delegation**   | Yes (platform primitive)                   | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
-| **Multi-protocol gateway** | MCP + OpenAI + Open Responses              | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
+| **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses       | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, isolation) | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
 | **Experimentation**        | Built-in A/B, variant pools, eval hooks    | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
 | **Eval hooks**             | Pull-based, multi-dimensional, experiment-attributed | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
@@ -70,7 +70,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | **Delegation**          | First-class platform primitive with per-hop budget, scope, and policy enforcement.                                                              | Not available. Multi-agent coordination must be built at the application layer.                                                |
 | **Self-hosting**        | Standard Kubernetes deployment. Runs wherever K8s runs.                                                                                         | Self-hosting requires managing Firecracker/microVM infrastructure separately from Kubernetes clusters.                         |
 | **Isolation**           | Deployer-selectable: runc (fast), gVisor (medium), Kata (strong).                                                                               | Firecracker microVM only (strong isolation).                                                                                   |
-| **Protocol support**    | MCP, OpenAI, Open Responses via ExternalAdapterRegistry.                                                                                        | REST API.                                                                                                                      |
+| **Protocol support**    | REST, MCP, OpenAI, Open Responses.                                                                                                              | REST API.                                                                                                                      |
 | **Enterprise controls** | Built-in multi-tenancy, RBAC, token budgets, audit logging, content policy interceptors.                                                        | Basic API key authentication. Enterprise features via commercial offering.                                                     |
 
 ### Where E2B has advantages
@@ -93,7 +93,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | :------------------- | :---------------------------------------------------------- | :---------------------------------------------------------- |
 | **Runtime contract** | Formal adapter contract with tiered integration.            | Environment provisioning without an orchestration contract. |
 | **Delegation**       | Platform primitive with budget/scope enforcement.           | Not available.                                              |
-| **Protocol support** | Multi-protocol gateway (MCP, OpenAI, Open Responses).       | REST API.                                                   |
+| **Protocol support** | Multi-protocol gateway (REST, MCP, OpenAI, Open Responses). | REST API.                                                   |
 | **Focus**            | Agent session lifecycle management, delegation, and policy. | Fast development environment provisioning.                  |
 
 ### Where Daytona has advantages
@@ -181,7 +181,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | :---------------------- | :-------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------- |
 | **Runtime coupling**    | Runtime-agnostic. LangGraph agents are one possible runtime behind the adapter contract.      | Tightly coupled to LangChain ecosystem. Agent logic uses LangGraph primitives.                                       |
 | **Delegation controls** | Per-hop token budget, scope narrowing, isolation monotonicity, content policy inheritance.    | RemoteGraph provides graph-level delegation without per-hop budget or scope controls enforced at the platform layer. |
-| **Protocol support**    | MCP, OpenAI, Open Responses via ExternalAdapterRegistry.                                      | LangServe, LangGraph Cloud API.                                                                                      |
+| **Protocol support**    | REST, MCP, OpenAI, Open Responses.                                                            | LangServe, LangGraph Cloud API.                                                                                      |
 | **Self-hosting**        | Standard Kubernetes deployment.                                                               | LangSmith offers self-hosted Kubernetes deployment (available since 2024). Requires LangChain ecosystem coupling.    |
 | **Ecosystem stance**    | Platform layer only. All AI capabilities (memory, eval, guardrails) are pluggable interfaces. | Bundles evaluators, tracing, memory, and observability. Rich but coupled.                                            |
 | **A2A + MCP support**   | MCP Tasks at the gateway; A2A via ExternalAdapterRegistry.                                    | LangSmith now has A2A + MCP + RemoteGraph support, closing the protocol gap.                                         |
@@ -206,7 +206,7 @@ Lenny is a strong fit when your requirements include several of these:
 - **MCP server hosting** -- you want to deploy existing MCP servers behind managed infrastructure (isolation, credentials, scaling, audit) without modifying the server code (`type: mcp` runtimes).
 - **Recursive delegation** -- orchestrator agents that spawn child agents with enforced budgets and scope.
 - **Enterprise controls** -- multi-tenancy, RBAC, audit logging, token budgets, content policy enforcement.
-- **Multi-protocol clients** -- MCP, OpenAI, and Open Responses clients connecting to the same infrastructure.
+- **Multi-protocol clients** -- REST, MCP, OpenAI, and Open Responses clients connecting to the same infrastructure.
 - **Interactive sessions** -- streaming, elicitation, interrupts, and tool approvals as first-class operations.
 - **A/B experimentation** -- runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation pipelines** -- session replay for regression testing, multi-dimensional eval scoring, and experiment results aggregation.

@@ -110,10 +110,11 @@ Lenny runs on the operator's own cluster using standard Kubernetes primitives --
 
 ### 4. Multi-protocol gateway
 
-A single gateway edge serves MCP, OpenAI Completions, and Open Responses clients via the `ExternalAdapterRegistry`. Operators do not need separate infrastructure per client protocol.
+A single gateway edge serves REST, MCP, OpenAI Completions, and Open Responses clients. Operators do not need separate infrastructure per client protocol.
 
 **Supported external protocols:**
 
+- **REST API** -- `/v1/sessions`, `/v1/admin` -- the native session and admin API
 - **MCP (Model Context Protocol)** -- Tasks, Elicitation, streaming, tool-use
 - **OpenAI Chat Completions** -- `/v1/chat/completions` compatible
 - **Open Responses** -- `/v1/responses` compatible

@@ -66,7 +66,7 @@ graph TB
         end
     end
 
-    C1 & C2 & C3 -->|"MCP / OpenAI / REST"| GW
+    C1 & C2 & C3 -->|"REST / MCP / OpenAI / Open Responses"| GW
     GW --> SP & UH & MF & LP
     GW <-->|"Postgres + Redis"| SM
     GW <-->|"mTLS"| TS
@@ -96,13 +96,14 @@ The gateway is the only externally-facing component. All client interaction ente
 
 **Authentication and authorization.** The gateway authenticates clients via OIDC/OAuth 2.1. In multi-tenant deployments, the tenant identity is extracted from a configurable OIDC claim (`auth.tenantIdClaim`, default: `tenant_id`). Authorization decisions (which runtimes, pools, and connectors a user can access) are evaluated against the tenant's role mappings and the `RequestInterceptor` policy chain.
 
-**External protocol adapters.** The gateway exposes multiple external interfaces through an `ExternalAdapterRegistry`:
+**External interfaces.** The gateway serves a native REST API (`/v1/sessions`, `/v1/admin`) and exposes additional protocol adapters through an `ExternalAdapterRegistry`:
 
+- **REST API:** The native session and admin API for direct HTTP clients.
 - **MCP (Streamable HTTP):** The primary client protocol. Sessions appear as MCP Tasks.
 - **OpenAI Completions:** Compatibility adapter for OpenAI SDK clients.
 - **Open Responses:** Compatibility adapter for the Open Responses protocol.
 
-All adapters share the same internal session manager. Adding a new external protocol means implementing a new adapter, not modifying the core.
+All interfaces share the same internal session manager. Adding a new external protocol means implementing a new adapter, not modifying the core.
 
 **Session routing.** The gateway maintains a hot routing cache (Redis-backed) that maps `session_id` to the pod currently serving that session. On each request, the gateway looks up the session's pod assignment and proxies the request to the correct pod. Because this is a cache (not the source of truth), any gateway replica can serve any session by falling back to Postgres if the cache is empty.
 
