@@ -1,0 +1,115 @@
+# --------------------------------------------------------------------------
+# Lenny Documentation — Jekyll Configuration
+# Theme: just-the-docs  https://just-the-docs.com
+# --------------------------------------------------------------------------
+
+title: Lenny Documentation
+description: >-
+  Kubernetes-native, runtime-agnostic agent session platform
+baseurl: "/lenny"
+url: ""
+
+# --------------------------------------------------------------------------
+# Theme
+# --------------------------------------------------------------------------
+theme: just-the-docs
+
+color_scheme: nil               # start with light; toggle available below
+
+# Enable the built-in light/dark switcher
+color_scheme_toggle:
+  - light
+  - dark
+
+# --------------------------------------------------------------------------
+# Search
+# --------------------------------------------------------------------------
+search_enabled: true
+search.heading_level: 3
+search.previews: 3
+search.preview_words_before: 5
+search.preview_words_after: 10
+search.tokenizer_separator: /[\s/]+/
+search.rel_url: true
+search.button: true
+
+# --------------------------------------------------------------------------
+# Mermaid Diagrams
+# --------------------------------------------------------------------------
+mermaid:
+  version: "11"
+
+# --------------------------------------------------------------------------
+# Navigation
+# --------------------------------------------------------------------------
+nav_external_links: []
+
+# Top-level sections are defined via front-matter `nav_order` in each page.
+# The ordering below is the canonical sequence:
+#
+#   0  Home
+#   1  Getting Started
+#   2  Tutorials
+#   3  Operator Guide
+#   4  Runtime Author Guide
+#   5  Client Guide
+#   6  API Reference
+#   7  Reference
+#   8  About
+
+# --------------------------------------------------------------------------
+# Aux Links (top-right corner)
+# --------------------------------------------------------------------------
+aux_links:
+  "Lenny on GitHub":
+    - "https://github.com/your-org/lenny"    # TODO: replace with real URL
+
+aux_links_new_tab: true
+
+# --------------------------------------------------------------------------
+# Footer
+# --------------------------------------------------------------------------
+footer_content: >-
+  Lenny is open-source software released under the Apache 2.0 license.
+  Built with <a href="https://just-the-docs.com">just-the-docs</a>.
+
+last_edit_timestamp: true
+last_edit_time_format: "%b %e %Y at %I:%M %p"
+
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/your-org/lenny"   # TODO: replace
+gh_edit_source: docs
+gh_edit_branch: main
+gh_edit_view_mode: "edit"
+
+# --------------------------------------------------------------------------
+# Back to Top
+# --------------------------------------------------------------------------
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# --------------------------------------------------------------------------
+# Plugins
+# --------------------------------------------------------------------------
+plugins:
+  - jekyll-seo-tag
+
+# --------------------------------------------------------------------------
+# Build settings
+# --------------------------------------------------------------------------
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: false
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .bundle
+  - README.md

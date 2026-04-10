@@ -1,0 +1,225 @@
+---
+# This is the Swagger UI page for the Lenny REST API Reference.
+# It loads Swagger UI from unpkg CDN and points it at the gateway's OpenAPI spec.
+# The spec URL can be overridden via the ?url= query parameter.
+# Layout: standalone HTML (no Jekyll layout) with custom styling.
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lenny REST API Reference</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f7f8fa;
+      --text-primary: #1a1a2e;
+      --text-secondary: #4a4a6a;
+      --border-color: #e1e4e8;
+      --accent: #3b82f6;
+      --accent-dark: #2563eb;
+      --header-bg: #1a1a2e;
+      --header-text: #ffffff;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --text-primary: #e6edf3;
+        --text-secondary: #8b949e;
+        --border-color: #30363d;
+        --header-bg: #010409;
+        --header-text: #e6edf3;
+      }
+
+      /* Swagger UI dark mode overrides */
+      .swagger-ui { color: var(--text-primary); }
+      .swagger-ui .info .title,
+      .swagger-ui .info h1, .swagger-ui .info h2, .swagger-ui .info h3,
+      .swagger-ui .opblock-tag { color: var(--text-primary) !important; }
+      .swagger-ui .info p, .swagger-ui .info li,
+      .swagger-ui .opblock-description-wrapper p,
+      .swagger-ui .opblock-external-docs-wrapper p,
+      .swagger-ui table thead tr th,
+      .swagger-ui table thead tr td,
+      .swagger-ui .parameter__name,
+      .swagger-ui .parameter__type,
+      .swagger-ui .parameter__in,
+      .swagger-ui .response-col_status,
+      .swagger-ui .response-col_description,
+      .swagger-ui label,
+      .swagger-ui .model-title,
+      .swagger-ui .model { color: var(--text-secondary) !important; }
+      .swagger-ui .opblock .opblock-summary-description { color: var(--text-secondary); }
+      .swagger-ui .scheme-container,
+      .swagger-ui .opblock .opblock-section-header { background: var(--bg-secondary); }
+      .swagger-ui section.models { border-color: var(--border-color); }
+      .swagger-ui .model-box { background: var(--bg-secondary); }
+      .swagger-ui input[type=text],
+      .swagger-ui textarea,
+      .swagger-ui select { background: var(--bg-secondary); color: var(--text-primary); border-color: var(--border-color); }
+      .swagger-ui .topbar { background: var(--header-bg); }
+      .swagger-ui .btn { color: var(--text-primary); border-color: var(--border-color); }
+      .swagger-ui .btn.execute { background-color: var(--accent); border-color: var(--accent); color: #fff; }
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    .lenny-header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1.5rem 2rem;
+      border-bottom: 3px solid var(--accent);
+    }
+    .lenny-header h1 {
+      margin: 0 0 0.25rem 0;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .lenny-header p {
+      margin: 0;
+      font-size: 0.9rem;
+      opacity: 0.8;
+      line-height: 1.5;
+    }
+    .lenny-header a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .lenny-header a:hover {
+      text-decoration: underline;
+    }
+
+    /* ── Instructions bar ─────────────────────────────────────── */
+    .lenny-instructions {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1rem 2rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+    .lenny-instructions code {
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 3px;
+      padding: 0.15em 0.4em;
+      font-size: 0.85em;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .lenny-instructions ol {
+      margin: 0.5rem 0 0 1.2rem;
+      padding: 0;
+    }
+    .lenny-instructions li {
+      margin-bottom: 0.25rem;
+    }
+
+    /* ── Swagger UI container ─────────────────────────────────── */
+    #swagger-ui {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 1rem;
+    }
+
+    /* Hide the default Swagger UI topbar (we use our own header) */
+    .swagger-ui .topbar { display: none; }
+
+    /* Clean up Swagger UI spacing */
+    .swagger-ui .wrapper { padding: 0; }
+    .swagger-ui .info { margin: 1.5rem 0; }
+
+    /* ── Responsive ───────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .lenny-header { padding: 1rem; }
+      .lenny-header h1 { font-size: 1.25rem; }
+      .lenny-instructions { padding: 0.75rem 1rem; }
+      #swagger-ui { padding: 0 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="lenny-header">
+    <h1>Lenny REST API Reference</h1>
+    <p>
+      Interactive API explorer powered by Swagger UI.
+      This page loads the OpenAPI specification from the running Lenny gateway.
+      <a href="../index.html">&larr; Back to API Reference</a>
+    </p>
+  </div>
+
+  <div class="lenny-instructions">
+    <strong>How to use this page:</strong>
+    <ol>
+      <li>Click <strong>Authorize</strong> (lock icon) and enter your Bearer token to authenticate API requests.</li>
+      <li>Expand any endpoint to view its parameters, request body schema, and response format.</li>
+      <li>Click <strong>Try it out</strong> on any endpoint to send a live request to your Lenny gateway.</li>
+      <li>Use the <strong>Models</strong> section at the bottom to browse all schema definitions.</li>
+    </ol>
+    <p style="margin-top: 0.5rem;">
+      <strong>Tip:</strong> Override the spec URL with the <code>?url=</code> query parameter.
+      For example: <code>?url=https://lenny.example.com/openapi.yaml</code>.
+      Default: <code>/openapi.yaml</code>.
+    </p>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    // Parse ?url= query parameter, fall back to /openapi.yaml
+    function getSpecUrl() {
+      var params = new URLSearchParams(window.location.search);
+      return params.get('url') || '/openapi.yaml';
+    }
+
+    window.onload = function() {
+      SwaggerUIBundle({
+        url: getSpecUrl(),
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        persistAuthorization: true,
+        tryItOutEnabled: true,
+        filter: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: 'StandaloneLayout',
+        validatorUrl: null,
+        requestInterceptor: function(req) {
+          // Ensure CORS headers are handled gracefully
+          return req;
+        },
+        onComplete: function() {
+          // Swagger UI is fully loaded
+          console.log('Lenny API Reference loaded. Spec URL:', getSpecUrl());
+        }
+      });
+    };
+  </script>
+
+</body>
+</html>
