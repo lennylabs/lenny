@@ -18,6 +18,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 - **Interactive sessions** — full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation — not just request/response.
 - **Recursive delegation** — agents spawn child agents through the gateway with enforced token budgets, scope narrowing, and lineage tracking at every hop.
 - **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
+- **External connectors** — agents call external MCP servers (GitHub, Jira, Slack) through the gateway. The gateway manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see raw connector tokens.
 - **Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically on rate limiting. Pods never see raw API keys.
 - **A/B experimentation** — built-in experiment primitives for runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation hooks** — pull-based, multi-dimensional scoring that integrates with any external eval pipeline. Session replay for regression testing across runtime versions.
@@ -44,11 +45,16 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 │  └────────┘ └──────────┘ └─────────┘ └─────────────────┘   │
 └────────┬─────────┬──────────┬──────────┬───────────────────┘
          │         │          │          │
-    ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐
-    │Session │ │Token/ │ │Event/  │ │Artifact │
-    │Manager │ │Connec-│ │Checkpt │ │Store    │
-    │(PG+Red)│ │tor Svc│ │Store   │ │         │
-    └────────┘ └───────┘ └────────┘ └─────────┘
+    ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐   ┌─────────────┐
+    │Session │ │Token/ │ │Event/  │ │Artifact │   │ External MCP│
+    │Manager │ │Connec-│ │Checkpt │ │Store    │   │ Connectors  │
+    │(PG+Red)│ │tor Svc│ │Store   │ │         │   │ (GitHub,    │
+    └────────┘ └───┬───┘ └────────┘ └─────────┘   │  Jira, ...) │
+                   │                               └──────▲──────┘
+                   │    OAuth tokens (encrypted,          │
+                   └────  cached in Redis) ───────────────┘
+                        Gateway proxies all connector
+                        calls — pods never see tokens
 
         Gateway ←── mTLS ──→ Pods (gRPC control protocol)
 
@@ -102,13 +108,15 @@ Lenny supports two runtime types:
 
 Agent runtimes run in one of three execution modes:
 
-| Mode | Pod usage | Use case |
-|------|-----------|----------|
-| **`session`** (default) | One session per pod. Pod terminated after session ends. | Most workloads. Strongest isolation — no cross-session data leakage. |
-| **`task`** | Pod reused across sequential tasks with workspace scrub between tasks. Tenant-pinned. | High-throughput batch workloads where pod startup cost matters. Requires Full-tier adapter for between-task lifecycle signaling. |
-| **`concurrent`** | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed). | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
+| Mode                    | Pod usage                                                                                                                                                                    | Use case                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **`session`** (default) | One session per pod. Pod terminated after session ends.                                                                                                                      | Workloads that require the strongest isolation.                                                      |
+| **`task`**              | Pod reused across sequential tasks with workspace scrub between tasks.                                                                                                       | Workloads with slightly lower security isolation requirements where pod startup cost matters.        |
+| **`concurrent`**        | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed). | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
 
 Execution mode is declared on the `Runtime` definition and determines pool scaling formulas, checkpoint behavior, and pod retirement policies.
+
+In all execution modes, pods are never reused across tenants. The only case where a runtime deployer can bypass this rule is in `task` mode if the runtime isolation profile is set to `microvm` (see below for more information on isolation profiles).
 
 ### Session Lifecycle
 
@@ -118,9 +126,15 @@ Sessions support derive (fork from a completed session's workspace) and replay (
 
 ### Credential Leasing and LLM Proxy
 
-The platform manages LLM provider credentials (Anthropic API keys, AWS Bedrock roles, Vertex AI service accounts) in admin-configured pools. Sessions receive short-lived credential leases — never raw API keys. The LLM Proxy gateway subsystem injects real credentials into upstream LLM requests on behalf of pods, with automatic rotation on rate limiting and SPIFFE-bound lease tokens in multi-tenant deployments.
+The platform manages LLM provider credentials (Anthropic API keys, AWS Bedrock roles, Vertex AI service accounts, etc.) in admin-configured pools. Sessions receive short-lived credential leases — never raw API keys. The LLM Proxy gateway subsystem injects real credentials into upstream LLM requests on behalf of pods, with automatic rotation on rate limiting and SPIFFE-bound lease tokens in multi-tenant deployments.
 
 A pluggable `CredentialRouter` interface supports cost-aware, latency-based, or intent-based routing across providers.
+
+### External Connectors
+
+Agents call external MCP servers (GitHub, Jira, Slack, etc.) through the gateway — pods never contact external services directly. Connectors are first-class admin API resources with per-tenant scoping (Postgres RLS).
+
+The gateway manages the full OAuth2 lifecycle: authorization code flow with PKCE, token exchange, and refresh. Refresh tokens are stored encrypted at rest in Postgres (envelope encryption via KMS). Access tokens are short-lived and cached in Redis, encrypted with AES-256-GCM using a key derived from the Token Service's envelope key. On KMS key rotation, cached tokens are transparently invalidated — the Token Service re-derives them from Postgres on next access. Tokens are scoped by user, connector, tenant, and environment, and never transit through pods.
 
 ### Recursive Delegation
 
