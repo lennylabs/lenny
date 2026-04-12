@@ -223,3 +223,22 @@ Credential rotation (when an LLM provider rate-limits or revokes a credential) b
 | Minimum | Same as Standard. If checkpoint is not supported, in-flight context is lost. | Pause; potential context loss. |
 
 The gateway selects the rotation strategy automatically based on the tier reported in the adapter's `lifecycle_support` handshake (Full) or the absence of a lifecycle channel (Standard/Minimum).
+
+---
+
+## `type: mcp` Runtimes
+
+Integration tiers apply only to `type: agent` runtimes. Lenny also supports `type: mcp` runtimes, which have a fundamentally different model.
+
+A `type: mcp` runtime hosts an MCP server behind Lenny-managed infrastructure. Lenny provides the same operational benefits as for agent runtimes --- pod isolation, credential management, pool scaling, egress control, and audit --- but the runtime binary itself is oblivious to Lenny. There is no task lifecycle, no adapter contract, no stdin/stdout protocol, and no integration tiers.
+
+Your runtime just needs to be a standard MCP server. No adapter contract knowledge is required. The runtime binary does not receive `message`, `heartbeat`, or `shutdown` signals --- Lenny manages the pod lifecycle externally.
+
+Each `type: mcp` runtime gets a dedicated gateway endpoint at `/mcp/runtimes/{runtime-name}`. Clients connect directly to this endpoint using standard MCP capability negotiation. An implicit session record is created per connection for audit and billing.
+
+Key differences from `type: agent` runtimes:
+
+- **No task lifecycle.** The runtime does not participate in sessions, delegation, checkpointing, or interrupt handling.
+- **No integration tiers.** The Minimum/Standard/Full tier model does not apply.
+- **Not delegatable.** `type: mcp` runtimes do not appear in `lenny/discover_agents` results and cannot be targeted by `lenny/delegate_task` (returns `target_not_an_agent` error).
+- **No `capabilities` field.** The runtime registration omits the `capabilities` block entirely.

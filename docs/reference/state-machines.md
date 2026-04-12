@@ -34,7 +34,7 @@ stateDiagram-v2
     starting --> running : Agent session started
 
     running --> suspended : interrupt_request + acknowledged
-    running --> input_required : lenny/request_input
+    running --> input_required : lenny/request_input (sub-state)
     running --> completed : Agent finishes
     running --> failed : Unrecoverable error / retries exhausted / BUDGET_KEYS_EXPIRED
     running --> cancelled : Client or parent cancels
@@ -57,12 +57,16 @@ stateDiagram-v2
     suspended --> expired : perChildMaxAge wall-clock expiry
     suspended --> failed : BUDGET_KEYS_EXPIRED
 
-    resume_pending --> resuming : Pod allocated within maxResumeWindowSeconds
+    resume_pending --> running : Pod allocated, resume successful
     resume_pending --> awaiting_client_action : Timeout (no pod available)
 
-    resuming --> running : Resume successful
-    resuming --> resume_pending : Pod crash during resume (retries remain)
-    resuming --> awaiting_client_action : Pod crash during resume (retries exhausted)
+    note right of resume_pending
+        resuming is an internal-only
+        transient state between
+        resume_pending and running.
+        External clients see
+        resume_pending to running directly.
+    end note
 
     awaiting_client_action --> running : Client resumes explicitly
     awaiting_client_action --> expired : maxAwaitingClientActionSeconds elapsed
@@ -82,10 +86,10 @@ stateDiagram-v2
 | `ready` | Workspace materialized. Pod ready to start the agent session. |
 | `starting` | `StartSession` called. Agent binary launching. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |
-| `input_required` | Sub-state of `running`. Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. |
+| `input_required` | Sub-state of `running` (not a peer state). Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. The session remains logically `running` while in this sub-state. |
 | `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxIdleTimeSeconds` timer paused. `perChildMaxAge` continues ticking. |
 | `resume_pending` | Pod lost or released. Gateway is attempting to allocate a new pod. `maxResumeWindowSeconds` timer running. |
-| `resuming` | New pod allocated. Workspace checkpoint replaying. Session file restoring. |
+| `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
 | `completed` | Terminal. Agent finished normally. Workspace sealed and exported. |
 | `failed` | Terminal. Unrecoverable error, retries exhausted, or `BUDGET_KEYS_EXPIRED`. |
@@ -118,9 +122,8 @@ stateDiagram-v2
 | `suspended` | `cancelled` | Cancel | `POST /v1/sessions/{id}/cancel` |
 | `suspended` | `expired` | `perChildMaxAge` wall-clock expiry | Internal timer |
 | `suspended` | `failed` | `BUDGET_KEYS_EXPIRED` | Internal |
-| `resume_pending` | `resuming` | Pod allocated | Internal |
+| `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |
 | `resume_pending` | `awaiting_client_action` | `maxResumeWindowSeconds` elapsed | Internal timer |
-| `resuming` | `running` | Resume successful | Internal |
 | `awaiting_client_action` | `running` | Client resumes explicitly | `POST /v1/sessions/{id}/resume` |
 | `awaiting_client_action` | `expired` | `maxAwaitingClientActionSeconds` elapsed | Internal timer |
 

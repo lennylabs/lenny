@@ -195,6 +195,48 @@ lenny-ctl preflight --config values.yaml \
 | Command | Description | Min Role |
 |---|---|---|
 | `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token and patch K8s Secret | `platform-admin` |
+| `lenny-ctl admin users invalidate --user <name>` | Invalidate all active sessions for a user | `platform-admin` |
+
+---
+
+## Connector Management
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl admin connectors list` | List all registered connectors | `platform-admin` |
+| `lenny-ctl admin connectors create --from-file <file>` | Register a new connector from YAML definition | `platform-admin` |
+| `lenny-ctl admin connectors update --name <name> --from-file <file>` | Update an existing connector | `platform-admin` |
+| `lenny-ctl admin connectors delete --name <name>` | Delete a connector | `platform-admin` |
+
+---
+
+## Experiment Management
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl admin experiments list` | List all experiments and their state | `platform-admin` |
+| `lenny-ctl admin experiments create --from-file <file>` | Create a new experiment from YAML definition | `platform-admin` |
+| `lenny-ctl admin experiments pause --name <name>` | Pause an active experiment (variant pools scale to zero) | `platform-admin` |
+| `lenny-ctl admin experiments conclude --name <name>` | Conclude an experiment (variant pools torn down) | `platform-admin` |
+| `lenny-ctl admin experiments results --name <name>` | Show per-variant aggregation with mean, p50, p95, and per-dimension breakdowns | `platform-admin` |
+
+---
+
+## Legal Hold Management
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl admin legal-holds set --resource-type <type> --resource-id <id> --note <text>` | Set a legal hold on a session or artifact | `platform-admin` / `tenant-admin` |
+| `lenny-ctl admin legal-holds clear --resource-type <type> --resource-id <id>` | Clear a legal hold | `platform-admin` / `tenant-admin` |
+| `lenny-ctl admin legal-holds list` | List active legal holds (filterable by `--tenant-id`, `--resource-type`) | `platform-admin` / `tenant-admin` |
+
+---
+
+## Audit Partition Management
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl admin audit drop-partition --force` | Drop an audit partition that is past retention TTL but blocked by SIEM forwarder backlog | `platform-admin` |
 
 ---
 

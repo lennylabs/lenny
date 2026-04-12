@@ -63,7 +63,7 @@ stateDiagram-v2
 | `finalizing` | Workspace materialization and setup commands in progress. | No |
 | `ready` | Setup complete, awaiting `start`. | No |
 | `starting` | Agent runtime is launching. | No |
-| `running` | Agent is actively executing. May also be in `input_required` sub-state. | No |
+| `running` | Agent is actively executing. May also be in the `input_required` sub-state (see below). | No |
 | `suspended` | Agent paused via `interrupt`; pod held, workspace preserved. | No |
 | `resume_pending` | Pod failed; gateway is retrying on a new pod. | No |
 | `awaiting_client_action` | Retries exhausted or resume window elapsed; client must explicitly resume or terminate. | No |
@@ -71,6 +71,12 @@ stateDiagram-v2
 | `failed` | Unrecoverable error. | Yes |
 | `cancelled` | Cancelled by client or parent. | Yes |
 | `expired` | Lease, budget, or deadline exhausted. | Yes |
+
+### The `input_required` Sub-State
+
+`input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required` -- the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
+
+While in `input_required`, all session timers (including `maxSessionAge`) continue running -- the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on pod crash with retries remaining), or `failed` (on pod crash with retries exhausted).
 
 ---
 

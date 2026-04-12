@@ -157,6 +157,10 @@ Standard tier plus the lifecycle channel:
 - **Mid-session credential rotation without restart:** The adapter sends `credentials_rotated` on the lifecycle channel, the runtime rebinds its LLM provider in-place, and replies `credentials_acknowledged`. No session interruption.
 - Graceful shutdown coordination via `DRAINING` state.
 
+### Runtime capabilities
+
+Runtimes declare capabilities that affect platform behavior. `capabilities.interaction` specifies either `one_shot` (the runtime processes a single message and exits) or `multi_turn` (the runtime supports ongoing dialog), which determines how `lenny/request_input` works -- one-shot runtimes cannot call it. Runtimes can also declare `capabilities.preConnect: true` to enable SDK-warm mode, where the agent process is pre-started in warm pods before any session is assigned (see SDK-warm pools under Pools).
+
 ### Execution modes
 
 Each runtime is configured with an **execution mode** that determines how pods are used:
@@ -442,9 +446,9 @@ When a runtime needs to call an LLM (Anthropic, AWS Bedrock, Vertex AI, Azure Op
 4. Leases have a TTL (provider-dependent, e.g., 1 hour for `anthropic_direct`, 15 minutes for `aws_bedrock`). The gateway handles automatic renewal.
 5. When a credential is rate-limited, the gateway can fail over to a different credential in the pool, or rotate the credential mid-session (Full-tier runtimes support this without restart).
 
-### MCP tool tokens
+### Connector credentials
 
-When agents access external tools (GitHub, Jira, Slack, etc.) via MCP connectors, the OAuth tokens are managed by the **Connector/Token Service** -- a separate process with its own KMS access. Pods never hold downstream OAuth tokens:
+When agents access external tools and agents (GitHub, Jira, Slack, etc.) via registered connectors, the OAuth tokens are managed by the **Token Service** -- a separate process with its own KMS access. Pods never hold downstream OAuth tokens:
 
 - Refresh tokens are stored encrypted at rest (envelope encryption via KMS).
 - Access tokens are short-lived and cached in Redis (encrypted, not plaintext).
@@ -484,3 +488,81 @@ The credential pool supports multiple assignment strategies:
 - **`sticky-until-failure`**: Reuses the same credential for a user until it is rate-limited or fails.
 
 Each credential has a `maxConcurrentSessions` limit and a configurable `cooldownOnRateLimit` duration. When a credential hits a rate limit, it enters a cooldown period during which it is not assigned to new sessions.
+
+### Credential routing
+
+The pluggable `CredentialRouter` interface supports cost-aware, latency-based, or intent-based routing across LLM providers. Deployers pass custom `hints` (model, cost_tier, region) without modifying the core interface, allowing flexible credential selection strategies that adapt to workload requirements.
+
+---
+
+## Connectors
+
+A **connector** is an external tool or agent registered as a first-class admin API resource. Connectors are the mechanism by which agents running on Lenny access external services — both tool servers (GitHub, Jira, Slack) and external agents hosted outside the platform.
+
+In v1, connectors use MCP (Streamable HTTP) as the transport protocol. Post-v1, connectors will also support A2A (Agent-to-Agent) and Agent Protocol transports, allowing Lenny agents to delegate to external agents over their native protocols without requiring those agents to run on Lenny.
+
+The gateway manages the full OAuth2 lifecycle for connectors: it handles authorization flows, stores refresh tokens encrypted via KMS (envelope encryption), and caches short-lived access tokens in Redis. Pods never see raw connector tokens — the gateway proxies all calls on behalf of the agent.
+
+Connectors are scoped per tenant using Postgres RLS, and per delegation level via `DelegationPolicy`, which controls which connectors a child session is permitted to use. This ensures that delegated agents inherit only the external tool access their parent explicitly grants. See SPEC Section 9.3 for details.
+
+---
+
+## Environments
+
+An **environment** is a named, RBAC-governed project context that groups runtimes and connectors for a team. Environments are tenant-scoped and provide transparent filtering -- clients see only the runtimes and connectors available in their environment.
+
+Environments support member roles for access control, runtime/connector selectors (label-based filtering) to control which platform resources are visible, and cross-environment delegation policies that govern whether sessions in one environment can delegate to runtimes in another.
+
+This allows platform operators to partition a tenant's resources into logical project boundaries without duplicating runtime or connector definitions. See SPEC Section 10.6.
+
+---
+
+## Experimentation
+
+Lenny includes built-in A/B experiment primitives for runtime version rollouts and agent evaluation. `ExperimentDefinition` is a first-class admin API resource with three lifecycle states: `active`, `paused`, and `concluded`.
+
+The `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. External targeting integration supports LaunchDarkly, Statsig, Unleash, and generic webhooks for deployers who prefer external feature-flag systems.
+
+Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All experiment lifecycle transitions are operator-initiated -- Lenny does not build automatic winner declaration or statistical significance testing. See SPEC Section 10.7.
+
+---
+
+## Evaluation Hooks
+
+Lenny provides a pull-based evaluation framework. External scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). Scores are automatically attributed to experiments -- the gateway auto-populates `experiment_id` and `variant_id` from the session's experiment context.
+
+The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) enables regression testing across runtime versions by re-running a completed session's prompt history against a different runtime.
+
+Lenny does not build statistical significance testing, auto-winner declaration, or LLM-as-judge integration -- eval computation is the deployer's responsibility. See SPEC Section 10.7.
+
+---
+
+## Memory Store
+
+The pluggable `MemoryStore` interface provides persistent memory scoped by tenant, user, agent type, and session. The default implementation uses Postgres + pgvector with full RLS tenant isolation. Deployers can replace it with Mem0, Zep, or any vector database by implementing the interface.
+
+Runtimes access the memory store via `lenny/memory_write` and `lenny/memory_query` platform MCP tools on the adapter's platform MCP server. Memories persist across sessions for the same user, enabling agents to recall prior context without the client re-supplying it.
+
+A `ValidateMemoryStoreIsolation` contract test verifies tenant isolation for custom implementations, and configurable retention controls (`maxMemoriesPerUser`, optional `retentionDays` TTL) keep storage bounded. See SPEC Section 9.4.
+
+---
+
+## Interceptors
+
+The gateway's `RequestInterceptor` chain provides a 12-phase request hook system for custom logic at every stage of request processing, from pre-authentication through post-agent-output.
+
+Built-in interceptors include `AuthEvaluator`, `QuotaEvaluator`, `DelegationPolicyEvaluator`, `ExperimentRouter`, `GuardrailsInterceptor` (disabled by default), and `RetryPolicyEvaluator`. External interceptors are invoked via gRPC (similar to Kubernetes admission webhooks) and can return `ALLOW`, `DENY`, or `MODIFY` decisions on content at any phase.
+
+The `GuardrailsInterceptor` is compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom classifiers. Deployers wire in their preferred content safety tools without modifying the gateway. See SPEC Section 4.8.
+
+---
+
+## Isolation Profiles
+
+Each pool is assigned an **isolation profile** via Kubernetes `RuntimeClass`, determining the container runtime used for agent pods. Three profiles are available:
+
+- **`sandboxed`** (gVisor) -- The default for all workloads. Provides userspace syscall interception, significantly reducing the kernel attack surface.
+- **`microvm`** (Kata Containers) -- For higher-risk or multi-tenant workloads requiring stronger isolation. Runs each pod inside a lightweight virtual machine.
+- **`standard`** (runc) -- Standard OCI container runtime. Intended for development and testing only, and requires explicit opt-in. Not recommended for production multi-tenant deployments.
+
+gVisor is the default -- runc requires explicit opt-in. Delegation enforces isolation monotonicity: child sessions must use an isolation profile at least as strong as their parent. See SPEC Section 5.3.

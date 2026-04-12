@@ -115,6 +115,12 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `DualStoreUnavailable` | Both Postgres and Redis unreachable | Follow dual-store recovery procedure |
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Immediate investigation required |
 | `SandboxClaimGuardUnavailable` | Admission webhook unreachable > 30s | Check webhook deployment |
+| `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Treat as cluster-wide incident |
+| `CosignWebhookUnavailable` | Cosign image verification webhook returning errors > 60s | Pod admission blocked; check webhook deployment |
+| `DataResidencyWebhookUnavailable` | `lenny-data-residency-validator` webhook unreachable > 30s | Tenant-scoped CRD operations denied; check webhook |
+| `DataResidencyViolationAttempt` | Storage write or delegation rejected for region mismatch | Investigate misconfiguration or code-path bypass |
+| `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
+| `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
 
 ### Warning Alerts
 
@@ -130,6 +136,15 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `WarmPoolReplenishmentFailing` | Warmup failures > 1/min for > 5 min | Check image pulls, setup commands |
 | `CircuitBreakerActive` | Any breaker open > 5 min | Review affected subsystem |
 | `StorageQuotaHigh` | Tenant storage > 80% of quota | Cleanup or increase quota |
+| `CredentialProactiveRenewalExhausted` | All proactive renewal retries exhausted before expiry | Session falls through to standard fallback flow |
+| `GatewayActiveStreamsHigh` | Active streams per replica > 80% of configured max | Approaching stream proxy capacity; review scaling |
+| `ErasureJobFailed` | User-level erasure job failed | User's `processing_restricted` flag remains set; retry job |
+| `ErasureJobOverdue` | Erasure job exceeded tier-specific deadline (72h T3, 1h T4) | Requires operator investigation |
+| `MemoryStoreGrowthHigh` | User memory count > 80% of `memory.maxMemoriesPerUser` | Review retention policy or increase limit |
+| `EtcdQuotaNearLimit` | etcd database size > 80% of `--quota-backend-bytes` | Defragment or increase quota before alarm state |
+| `EtcdWriteLatencyHigh` | P99 etcd WAL fsync latency > 25 ms for > 2 min | Leading indicator of etcd saturation; consider dedicated cluster |
+| `ControllerWorkQueueDepthHigh` | Work queue depth > 50% of configured max for > 2 min | Controller reconciliation backlog; check CPU throttling |
+| `RuntimeUpgradeStuck` | Upgrade state machine in non-terminal state > `phaseTimeoutSeconds` | Pool image upgrade not progressing; investigate |
 
 ---
 

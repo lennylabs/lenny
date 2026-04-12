@@ -49,8 +49,8 @@ The adapter contract is tiered by integration depth:
 | Tier         | Interface               | Effort                    | Capabilities                                                       |
 | :----------- | :---------------------- | :------------------------ | :----------------------------------------------------------------- |
 | **Minimum**  | stdin/stdout JSON Lines | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                  |
-| **Standard** | gRPC adapter            | Moderate                  | Lifecycle management, credential flows, workspace notifications    |
-| **Full**     | gRPC adapter            | Significant               | Checkpointing, credential rotation, delegation, interrupt handling |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access    |
+| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 The key distinction from competitors: the adapter contract separates **platform integration** (adapter) from **agent logic** (runtime). Agent code remains framework-independent even when the adapter layer carries Lenny-specific integration effort. E2B and Daytona provide sandbox environments but assume the operator brings their own orchestration. Temporal and LangGraph require agent logic itself to use their respective SDKs.
 
@@ -332,3 +332,6 @@ The differentiators above involve deliberate trade-offs that evaluators should w
 - **No shared storage mounts** means workspace materialization can add latency to every session start.
 - **Least privilege by default** means more complex credential management (credential pools, lease rotation, per-session scoping) than competitors that simply mount API keys.
 - **Integration with adapter effort** means runtime authors meaning to take full advantage of Lenny's capabilities need to integrate with Lenny's adapter.
+- **No built-in eval scoring or memory extraction** -- deployers must bring their own evaluation pipelines, scoring tools, and memory extraction logic. Lenny provides the hooks and interfaces but not the implementations.
+- **No automatic experiment lifecycle management** -- all experiment transitions (active, paused, concluded) are operator-initiated. Lenny does not build auto-winner declaration, statistical significance testing, or multi-armed bandits.
+- **Pre-warmed pods consume resources when idle** -- maintaining warm pod pools trades memory and CPU for low startup latency. Scale-to-zero schedules mitigate this for off-peak hours, but during active periods the resource cost is real.

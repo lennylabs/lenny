@@ -29,7 +29,7 @@ Side-by-side analysis of Lenny versus other platforms in the agent infrastructur
 | **Runtime types**          | `agent` (task lifecycle) + `mcp` (MCP server hosting) | Single type   | Single type               | Single type                 | Worker type              | Single type                 | Graph-based                     |
 | **Execution modes**        | session / task / concurrent (workspace + stateless) | N/A            | N/A                       | N/A                         | N/A (workflow-based)     | N/A                         | N/A (graph-based)               |
 | **Recursive delegation**   | Yes (platform primitive)                   | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
-| **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses       | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
+| **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses + A2A (post-v1 adapter) | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, isolation) | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
 | **Experimentation**        | Built-in A/B, variant pools, eval hooks    | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
 | **Eval hooks**             | Pull-based, multi-dimensional, experiment-attributed | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
@@ -41,6 +41,7 @@ Side-by-side analysis of Lenny versus other platforms in the agent infrastructur
 | **Cold-start**             | P95 <2s runc, <5s gVisor (session-ready)   | ~150ms (container boot) | Sub-90ms (container boot) | ~300ms (checkpoint/restore) | N/A (persistent workers) | Sub-second (container boot) | N/A (persistent)                |
 | **GPU support**            | Not in v1                                  | Limited                 | Limited                   | No                          | No                       | Yes (primary use case)      | No                              |
 | **Isolation profiles**     | runc / gVisor / Kata                       | Firecracker microVM     | Container                 | Firecracker microVM         | Process-level            | Container                   | Process-level                   |
+| **Semantic cache**         | Pluggable interface on credential pools (Section 4.9) | No                      | No                        | No                          | No                       | No                          | No                              |
 
 ---
 

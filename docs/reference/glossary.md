@@ -38,6 +38,9 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 
 ## C
 
+**Compliance Profile**
+: A regulatory compliance configuration applied to a tenant (`soc2`, `fedramp`, `hipaa`) that affects audit retention periods, encryption requirements, grant-check intervals, and pgaudit/SIEM enforcement. See [Configuration Reference](configuration).
+
 **Checkpoint**
 : A periodic snapshot of a session's workspace state written to durable storage (MinIO). Checkpoints enable session recovery after pod failures by restoring the workspace to its last known-good state. Governed by `periodicCheckpointIntervalSeconds` (default: 600s) and bounded by `workspaceSizeLimitBytes` (default: 512 Mi). See [Configuration Reference](configuration).
 
@@ -51,7 +54,7 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : The process by which the gateway acquires an idle warm pod for a new session. Claims use a `SandboxClaim` CRD with optimistic locking. A `lenny-sandboxclaim-guard` admission webhook prevents double-claims. See [State Machines](state-machines).
 
 **Connector**
-: An external MCP server that Lenny proxies to agent sessions (e.g., GitHub MCP, Jira MCP). Connectors are registered via the Admin API with OAuth configuration and are subject to content policy interceptors. See [API Reference](../api/).
+: An external MCP server (e.g., GitHub, Jira) registered as a first-class admin API resource, with gateway-managed OAuth and encrypted token storage. Connectors are proxied to agent sessions and are subject to content policy interceptors. See [API Reference](../api/).
 
 **Credential Lease**
 : A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. Leases are per-session in session mode, per-task in task mode, and per-slot in concurrent mode. See [Configuration Reference](configuration).
@@ -64,11 +67,26 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 
 ## D
 
+**Data Residency**
+: A per-tenant regional constraint controlling where session data, artifacts, and checkpoints are stored. Specified via `dataResidencyRegion` at session creation. Enforced at storage and pool selection time; violations return `REGION_CONSTRAINT_VIOLATED` or `REGION_CONSTRAINT_UNRESOLVABLE`. See [Error Catalog](error-catalog).
+
 **Delegation**
 : The platform primitive by which an agent pod spawns a child session through the gateway. Delegations are mediated by the gateway, which enforces policy, budget, scope, depth limits, and isolation monotonicity at every hop. The parent interacts with the child through a virtual MCP child interface. See [State Machines](state-machines).
 
+**Derived Session**
+: A session created via `POST /v1/sessions/{id}/derive`, forking from a completed session's workspace snapshot. The derived session starts with the source session's workspace but its own independent lifecycle, credential lease, and event stream. See [REST API Reference](../api/rest).
+
 **Delegation Policy**
 : A named, first-class API resource defining which runtimes, connectors, and pools a session can delegate to. Uses tag-based matching with `include`/`exclude` rules. Effective policy is the intersection of runtime-level and derived-runtime policies. See [API Reference](../api/).
+
+**Environment**
+: A named, RBAC-governed project context that groups runtimes and connectors for a team. Environments provide scoping for session creation, runtime discovery, and delegation policy evaluation. Managed via the Admin API.
+
+**Eval Result**
+: A scored evaluation record submitted via `POST /v1/sessions/{id}/eval`, with multi-dimensional scores (e.g., accuracy, helpfulness) and automatic experiment attribution. Used for runtime comparison and regression testing. Subject to `maxEvalsPerSession` quota. See [Configuration Reference](configuration).
+
+**Experiment**
+: An A/B testing configuration for runtime version rollouts, with variant pools, deterministic bucketing, and sticky assignment. Experiments control which runtime variant a session is assigned to and link eval results for statistical comparison. Managed via the Admin API.
 
 **Elicitation**
 : A mechanism by which an agent or tool requests interactive input from the human user. Elicitations flow through the delegation chain -- child sessions can trigger elicitations that bubble up to the root session's client. Subject to `maxElicitationsPerSession`, `maxElicitationWait`, and `elicitationDepthPolicy` controls. See [Configuration Reference](configuration).
@@ -95,6 +113,9 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 
 ## I
 
+**Interceptor**
+: A content policy evaluation hook in the gateway's 12-phase request processing chain. Interceptors can inspect and modify (or reject) traffic at specific phases. Built-in interceptors handle security-critical phases (priority <= 100); external interceptors are registered via gRPC and run at configurable phases with priority > 100. See [Error Catalog](error-catalog).
+
 **Integration Tier**
 : The level of Lenny platform integration a runtime adapter implements. Three tiers: Minimum (stdin/stdout JSON Lines, ~50 lines of code), Standard (gRPC adapter with lifecycle), and Full (gRPC with checkpointing, credential rotation, delegation support). See [Runtime Author Guide](../runtime-author-guide/).
 
@@ -118,6 +139,9 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : A gateway subsystem that acts as a credential-injecting reverse proxy for LLM provider traffic. Validates lease tokens, injects real API keys, and forwards streaming requests to upstream providers. The LLM Proxy prevents credentials from being exposed to agent pods. See [Metrics Reference](metrics).
 
 ## M
+
+**Memory Store**
+: Pluggable persistence layer for agent memories, scoped by tenant/user/agent/session. Runtimes write memories via `lenny/memory_write` and query them via `lenny/memory_query`. Default implementation uses Postgres with pgvector for semantic search. Governed by `memory.maxMemoriesPerUser` and `memory.retentionDays`. See [Configuration Reference](configuration).
 
 **MCP (Model Context Protocol)**
 : The primary client-facing protocol for Lenny sessions. MCP defines Tasks, Elicitation, streaming, and tool-use semantics. Lenny implements MCP Tasks at the gateway's external interface; internal delegation uses a custom gRPC protocol. See [API Reference](../api/).
@@ -171,6 +195,9 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : A Kubernetes resource that specifies which container runtime handler (runc, gVisor, Kata) should be used for pods. Lenny uses RuntimeClasses to implement deployer-selectable isolation profiles.
 
 ## S
+
+**Session Replay**
+: Re-running a completed session's prompt history against a different runtime version for regression testing. Initiated via `POST /v1/sessions/{id}/replay`. The replayed session creates a new independent session with the source's workspace and prompt history but executes against the target runtime. See [REST API Reference](../api/rest).
 
 **Sandbox CRD**
 : The `kubernetes-sigs/agent-sandbox` Custom Resource Definition used by Lenny as its pod lifecycle primitive. `Sandbox` resources represent individual agent pods; `SandboxTemplate` resources define pool templates. Adopted as Lenny's infrastructure layer.

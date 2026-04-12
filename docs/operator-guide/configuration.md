@@ -497,11 +497,126 @@ The following table summarizes key configuration differences across deployment t
 
 | Setting | Tier 1 | Tier 2 | Tier 3 |
 |---|---|---|---|
-| `gateway.replicas` | 2-3 | 5-10 | 25-50 |
+| `gateway.replicas` (min / max) | 2 / 4 | 3 / 10 | 5 / 30 |
 | `gateway.maxSessionsPerReplica` | 50 | 200 | 400 |
-| `gateway.hpa.maxReplicas` | 5 | 15 | 60 |
+| `gateway.hpa.queueDepthTarget` | 15 | 10 | 5 |
 | `postgres.writeCeilingIops` | 200 | 600 | 1600 |
 | `billing.flushIntervalMs` | 500 | 500 | 500 |
 | `billing.redisStreamMaxLen` | 50000 | 50000 | 72000 |
 | `quotaSyncIntervalSeconds` | 30 | 30 | 10-30 |
 | `agentNamespaces[].resourceQuota.pods` | 50 | 200 | 1000 |
+
+---
+
+## Connector Registration
+
+Connectors are registered via `lenny-ctl admin connectors create` or the admin API before they can be used -- unregistered external MCP servers cannot be called from inside a pod.
+
+Each connector requires:
+
+```yaml
+connectors:
+  - id: github
+    displayName: GitHub
+    mcpServerUrl: https://mcp.github.com
+    transport: streamable_http
+    auth:
+      type: oauth2
+      authorizationEndpoint: https://github.com/login/oauth/authorize
+      tokenEndpoint: https://github.com/login/oauth/access_token
+      clientId: "..."
+      clientSecretRef: lenny-system/github-client-secret
+      scopes: [repo, read:org]
+    visibility: tenant                   # tenant | global
+    labels:
+      team: platform
+```
+
+| Field | Description |
+|---|---|
+| `mcpServerUrl` | The external MCP server endpoint |
+| `transport` | Transport protocol (`streamable_http`, `stdio`) |
+| `auth` | OAuth2 configuration with `clientId`, `clientSecretRef`, and `scopes` |
+| `visibility` | `tenant` (visible to owning tenant) or `global` (visible to all tenants) |
+
+**OAuth security:** Connector OAuth `state` parameters use 128-bit cryptographic entropy (base64url-encoded), stored in Redis with a 10-minute TTL bound to the initiating session and connector ID. PKCE (S256) is enforced for public clients.
+
+---
+
+## Experiment Configuration
+
+Experiments are managed via the admin API or `lenny-ctl admin experiments`. They enable A/B testing of runtime versions, configurations, or delegation policies.
+
+### Experiment Lifecycle
+
+```
+active → paused → concluded
+```
+
+- **`active`:** Experiment is running; sessions are assigned to variants based on weights
+- **`paused`:** Variant pools scale to zero warm pods; new sessions use the control group
+- **`concluded`:** Variant pools are torn down; experiment enters terminal state
+
+### Pool Sizing
+
+Variant pools are automatically sized by the PoolScalingController based on `variant_weight`. When experiments create variant pools on a base pool, the base pool's `minWarm` is recomputed to reflect the traffic fraction diverted to variants.
+
+### External Targeting
+
+External experiment assignment webhooks support integration with:
+
+- **LaunchDarkly** -- via feature flag evaluation
+- **Statsig** -- via gate evaluation
+- **Unleash** -- via toggle evaluation
+
+Configure per-tenant via `experimentTargeting` in the tenant configuration.
+
+---
+
+## Memory Store Configuration
+
+The `MemoryStore` manages user-scoped persistent memories across sessions.
+
+```yaml
+memory:
+  maxMemoriesPerUser: 10000            # Default: 10,000
+  retentionDays:                       # Optional; unset = no TTL-based expiry
+```
+
+- **`memory.maxMemoriesPerUser`** (default: 10,000): When a write would push a user's memory count above this limit, the oldest memories are evicted.
+- **`memory.retentionDays`** (optional): When set, the GC sweep deletes memory rows whose `created_at` exceeds the configured TTL.
+- The `MemoryStoreGrowthHigh` alert fires when any user's memory count exceeds 80% of `memory.maxMemoriesPerUser`.
+
+---
+
+## Metering and Billing
+
+Lenny provides a structured billing event stream for integration with external billing systems.
+
+### Event Stream Properties
+
+- **Append-only semantics:** Billing events are immutable once written
+- **Sequence number monotonicity:** Per-tenant monotonic sequence numbers enable gap detection by downstream consumers
+- **Redis stream backed:** Events are first written to a per-tenant Redis stream (`t:{tenant_id}:billing:stream`) with configurable max length (`billing.redisStreamMaxLen`), then flushed to Postgres
+
+### Configuration
+
+```yaml
+billing:
+  retentionDays: 395                   # Default: 395 days (~13 months)
+  redisStreamMaxLen: 50000             # Per-tier: 50,000 (T1/T2), 72,000 (T3)
+  dualControlThreshold: 0             # Default: 0 (all corrections require dual-control)
+  flushIntervalMs: 500
+```
+
+### Retention
+
+| Profile | Retention |
+|---|---|
+| Default | 395 days (~13 months) |
+| SOC2 / FedRAMP | 365 days (floor) |
+| HIPAA | 2,190 days (6 years) |
+
+### Billing Corrections
+
+Billing corrections require **dual-control approval** (four-eyes principle). Corrections whose absolute adjustment value exceeds `billing.dualControlThreshold` (default: `0`, meaning all corrections) must be approved by a second `platform-admin` before they are committed to the immutable billing stream.

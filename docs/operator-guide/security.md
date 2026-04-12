@@ -29,6 +29,18 @@ Each gateway replica has a **distinct mTLS identity**:
 - Certificates are scoped to the replica's ServiceAccount
 - The Token Service validates per-replica identity on every credential request
 
+### SPIFFE Trust Domain
+
+Deployers **MUST** override `global.spiffeTrustDomain` (default: `lenny.local`) for shared-cluster deployments to prevent cross-deployment pod impersonation. Each Lenny deployment sharing a cluster must use a unique trust domain. Additionally, set `global.saTokenAudience` to a deployment-specific value.
+
+```yaml
+global:
+  spiffeTrustDomain: "prod.lenny.example.com"
+  saTokenAudience: "lenny-prod"
+```
+
+Failure to override these values in a shared cluster allows pods from one Lenny deployment to present valid SPIFFE URIs for another deployment's trust domain, enabling credential lease theft.
+
 ### Alert
 
 The `CertExpiryImminent` warning alert fires when any mTLS cert expiry is less than 1 hour away, indicating a cert-manager failure.
@@ -79,7 +91,7 @@ The Token/Connector Service runs as a **separate process** with its own ServiceA
 
 ### What It Manages
 
-1. **MCP tool tokens** -- OAuth tokens for external tools (GitHub, Jira, etc.)
+1. **Connector credentials** -- OAuth tokens for external tools and agents (GitHub, Jira, etc.) accessed via registered connectors
 2. **LLM provider credentials** -- API keys, cloud IAM roles for backing LLMs
 
 ### Token Storage
@@ -269,6 +281,27 @@ spec:
 | `allow-pod-egress-otlp` | Egress | OTLP collector (when configured) | 4317 |
 | `allow-pod-egress-internet` | Egress | External (internet-egress pools) | Configurable |
 
+### Provider-Direct Egress Profile
+
+Pools with `egressProfile: provider-direct` receive a supplemental policy that allows outbound traffic to LLM provider endpoints only (Anthropic, OpenAI, AWS Bedrock, GCP Vertex). CIDR ranges are maintained in the Helm values (`egressCIDRs.providers`) and must be updated by deployers when provider endpoints change.
+
+**Mutual exclusivity with proxy delivery:** A pool **cannot** use `deliveryMode: proxy` with `egressProfile: provider-direct`. The proxy mode routes all LLM traffic through the gateway to prevent API keys from reaching pods, but `provider-direct` gives pods a direct network path to providers -- combining them creates an incoherent security posture. The correct pairings are:
+
+- `deliveryMode: proxy` with `egressProfile: restricted` (traffic goes only to the gateway proxy)
+- `deliveryMode: direct` with `egressProfile: provider-direct` (pod contacts provider directly with a short-lived lease)
+
+Pool registration validation rejects configurations that violate this constraint with an `InvalidPoolEgressDeliveryCombo` error.
+
+### IMDS Blocking
+
+Network policies block cloud metadata service (IMDS) addresses via `except` clauses on supplemental policies that include broad CIDR rules. The blocked addresses are:
+
+- `169.254.169.254/32` (AWS/GCP/Azure IPv4 IMDS)
+- `fd00:ec2::254/128` (AWS IPv6 IMDS)
+- `100.100.100.200/32` (Alibaba Cloud IMDS)
+
+These are configurable via the `egressCIDRs.excludeIMDS` Helm value. Deployers can extend the list for additional cloud providers. The base `allow-pod-egress-base` policy implicitly blocks IMDS because it is an allowlist-only policy (gateway gRPC + DNS only). Supplemental policies (`provider-direct`, `internet`) carry explicit `except` blocks.
+
 ### Internet Egress Profile
 
 Pools with `egressProfile: internet` receive a supplemental policy that allows external traffic while excluding cluster-internal CIDRs:
@@ -354,6 +387,25 @@ Audit events use a hash chain for tamper detection:
 | `hipaa` | SIEM required; 6-year audit retention; 6-year billing retention |
 | `none` | No additional requirements (default) |
 
+### pgaudit Requirement
+
+For regulated compliance profiles (`soc2`, `fedramp`, `hipaa`), `audit.pgaudit.enabled` **must** be set to `true` to provide tamper-evident database audit logging. When enabled, the gateway's startup preflight check validates that the `pgaudit` extension is installed and that `pgaudit.log` includes `DDL` and `ROLE` classes. If validation fails in production mode with a regulated `complianceProfile`, the gateway refuses to start.
+
+```yaml
+audit:
+  pgaudit:
+    enabled: true
+    sinkEndpoint: "https://audit-sink.example.com"
+```
+
+pgaudit captures any `GRANT`, `REVOKE`, or DDL statement on audit tables -- including those by superusers -- and streams them to an external append-only sink. This closes the residual tamper window that remains between periodic grant checks.
+
+### Cosign Image Verification
+
+Container image signing is verified via a cosign `ValidatingAdmissionWebhook` configured as **fail-closed** (`failurePolicy: Fail`). If the webhook is unavailable, pod admission is blocked for agent namespaces -- no new pods can be scheduled, halting warm pool replenishment.
+
+The `CosignWebhookUnavailable` critical alert fires when the cosign webhook endpoint returns errors for > 60 seconds. See the admission webhook outage runbook for recovery steps.
+
 Set the compliance profile per tenant or globally:
 
 ```yaml
@@ -361,3 +413,80 @@ tenants:
   - name: healthcare-tenant
     complianceProfile: hipaa
 ```
+
+---
+
+## Data Classification
+
+Lenny uses a 4-tier data classification model configured per-tenant via the `workspaceTier` field:
+
+| Tier | Label | Description |
+|---|---|---|
+| T1 | Public | No sensitivity constraints |
+| T2 | Internal | Standard encryption, configurable retention |
+| T3 | Confidential | Encryption at rest, audit logging, data residency enforcement |
+| T4 | Restricted | Dedicated node pools, per-tenant KMS key isolation, cross-region transfer prohibited |
+
+Each tier sets escalating requirements for encryption, retention, access control, and audit:
+
+```yaml
+tenants:
+  - name: sensitive-tenant
+    workspaceTier: "T4"
+```
+
+When a tenant sets `workspaceTier: T4`, the platform applies Restricted-tier controls to all workspace files, snapshots, and session transcripts. T4 requires dedicated node pools for per-tenant key isolation. The setting is inherited by all environments under the tenant unless explicitly overridden to a **stricter** (never looser) tier.
+
+---
+
+## GDPR Erasure
+
+Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layers in dependency order, ensuring complete data removal across Postgres, Redis, MinIO, and KMS.
+
+### Erasure Process
+
+- **Processing restriction (Article 18):** Before full deletion, a `processing_restricted` flag can be set on a user, blocking all new session creation while the erasure job runs.
+- **Erasure SLA:** 72 hours for T3 data, 1 hour for T4 data.
+- **Billing pseudonymization:** Configurable per-tenant via `billingErasurePolicy`:
+  - `default` -- billing events are pseudonymized using a per-tenant `erasure_salt` (salt is deleted immediately after pseudonymization for GDPR Recital 26 compliance)
+  - `exempt` -- billing events retained as-is for financial reconciliation (no pseudonymization occurs)
+- **Cryptographic receipt:** An erasure receipt is stored in the audit trail recording each phase's completion timestamp, errors, and final state.
+
+### Initiating Erasure
+
+```bash
+# Initiate user-level erasure
+lenny-ctl admin erasure run --user-id <user-id>
+
+# Check erasure job status
+lenny-ctl admin erasure-jobs get <job-id>
+
+# Retry a failed job
+lenny-ctl admin erasure-jobs retry <job-id>
+```
+
+The `ErasureJobFailed` and `ErasureJobOverdue` alerts fire if the erasure job fails or exceeds its tier-specific deadline.
+
+---
+
+## Content Policy / Request Interceptors
+
+The `RequestInterceptor` chain provides 12 hook phases spanning the full request lifecycle (`PreAuth`, `PostAuth`, `PreRoute`, `PreDelegation`, `PreMessageDelivery`, `PostRoute`, `PreToolResult`, `PostAgentOutput`, `PreLLMRequest`, `PostLLMResponse`, `PreConnectorRequest`, `PostConnectorResponse`).
+
+### Configuration
+
+Interceptors are configured via the `interceptors` Helm values. External interceptors are invoked via gRPC (like Kubernetes admission webhooks) and can `ALLOW`, `DENY`, or `MODIFY` content at any phase:
+
+```yaml
+interceptors:
+  - name: content-filter
+    endpoint: "dns:///content-filter.lenny-system:50053"
+    phases: [PreDelegation, PreLLMRequest]
+    timeoutMs: 500
+    failPolicy: fail-closed        # fail-closed | fail-open
+```
+
+- **`fail-closed`:** Timeout or error is treated as REJECT (recommended for security-critical interceptors)
+- **`fail-open`:** Timeout or error is treated as ALLOW
+
+Content policy interceptors can be attached to delegation chains via `contentPolicy.interceptorRef` on `DelegationPolicy` definitions.

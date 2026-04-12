@@ -140,6 +140,23 @@ Authorization: Bearer <token>
 
 ---
 
+## Elicitation Limitation
+
+Webhook-only clients cannot respond to elicitations. Elicitations require an active SSE or MCP streaming connection because the gateway delivers `elicitation_request` events on the session's event stream and expects a synchronous response. If your workflow uses webhook-only delivery, choose runtimes that do not require elicitation (human-in-the-loop prompts), or pair webhooks with an SSE streaming connection on the same session to handle elicitations when they arise.
+
+---
+
+## Webhook Secret Configuration
+
+The webhook signature (`X-Lenny-Webhook-Signature`) is computed using a shared secret. There are two ways to configure this secret:
+
+- **Per-session** -- pass a `callbackSecret` field alongside `callbackUrl` when creating the session. This secret is used exclusively for that session's webhook deliveries.
+- **Tenant-level** -- configure a default webhook secret via the admin API at the tenant level. Sessions that specify a `callbackUrl` without a `callbackSecret` use the tenant-level secret.
+
+Always verify the `X-Lenny-Webhook-Signature` header using HMAC-SHA256 with the applicable secret before processing any webhook event.
+
+---
+
 ## Async Job Pattern
 
 Webhooks enable a fire-and-forget pattern for CI/CD pipelines and batch processing:

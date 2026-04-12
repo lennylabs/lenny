@@ -300,15 +300,25 @@ An integration test verifies tenant isolation at startup by confirming:
 
 ### Tenant Deletion
 
-Tenant deletion follows a multi-phase lifecycle:
+Tenant deletion follows a 6-phase lifecycle managed by a background controller:
 
 ```
 active → disabling → deleting → deleted
 ```
 
-1. **Disabling:** All new sessions rejected; existing sessions allowed to drain
-2. **Deleting:** All data erasure (Postgres rows, MinIO objects, Redis keys, KMS keys)
-3. **Deleted:** Terminal state; tenant record retained for audit
+| Phase | State | Actions |
+|---|---|---|
+| 1. Soft-disable | `disabling` | New session creation blocked; existing sessions continue |
+| 2. Drain active sessions | `disabling` | Send graceful-shutdown signals; wait for in-flight sessions to complete or hit configurable timeout (default: 5 min), then force-terminate remaining pods |
+| 3. Credential revocation | `deleting` | Revoke all active credential leases via `CredentialPoolStore.RevokeByTenant`; delete stored OAuth/refresh tokens via `TokenStore.DeleteByTenant`; flush tenant-scoped Redis cache entries |
+| 4. Data deletion | `deleting` | Execute `DeleteByTenant` on every store in dependency order: sessions, artifacts, checkpoints, memories, audit logs, billing events (respecting `billingErasurePolicy` and legal holds) |
+| 4a. KMS key scheduling | `deleting` | **T4 tenants only.** Schedule tenant-specific KMS keys for deletion after provider-minimum retention period (AWS: 7 days, GCP: 24h, Vault: immediate). Key is disabled first to block new encrypt/decrypt calls. |
+| 5. CRD cleanup | `deleting` | Remove tenant-specific Kubernetes resources: `SandboxClaim` instances, pool annotations, NetworkPolicy labels |
+| 6. Produce deletion receipt | `deleted` | Write cryptographic erasure receipt to the audit trail recording each phase's completion timestamp, any errors, which sinks were notified, and the final `deleted` state |
+
+> **Legal holds block Phase 4.** Before entering Phase 4, the controller checks for active legal holds on any session or artifact belonging to the tenant. If holds exist, the controller pauses at Phase 3 and emits an `admin.tenant.deletion_blocked` audit event. An operator must explicitly clear the holds or exempt the deletion via `force-delete` before the controller proceeds.
+
+The tenant record itself is retained after Phase 6 with `state = 'deleted'` and all mutable fields nulled. This tombstone prevents tenant ID reuse and allows `GET /v1/admin/tenants/{id}` to return a `410 Gone` response.
 
 ```bash
 # Initiate tenant deletion
@@ -325,5 +335,82 @@ lenny-ctl admin tenants force-delete acme --justification "Legal hold expired"
 
 | Alert | Condition |
 |---|---|
-| `TenantDeletionOverdue` | Tenant in `disabling`/`deleting` longer than 80% of tier SLA |
+| `TenantDeletionOverdue` | Tenant in `disabling`/`deleting` longer than 80% of tier SLA (T3: 72h, T4: 4h) |
 | `KmsKeyDeletionFailed` | Phase 4a KMS key deletion failed |
+
+---
+
+## Data Residency
+
+Tenants and environments support an optional `dataResidencyRegion` field (e.g., `eu-west-1`, `us-east-1`) set via the admin API. When set, the platform enforces region constraints at three levels:
+
+1. **Pod pool routing.** The gateway restricts pod allocation (including delegation targets) to pools whose `region` label matches. Delegations to non-matching regions are rejected with `REGION_CONSTRAINT_VIOLATED`. Every node in a delegation tree inherits the root session's region constraint.
+
+2. **Storage routing.** The `StorageRouter` directs writes (Postgres, MinIO, Redis) to the region-local backend. Configure per-region endpoints in Helm values:
+
+   ```yaml
+   storage:
+     regions:
+       eu-west-1:
+         postgresEndpoint: "postgres://pg-eu:5432/lenny"
+         minioEndpoint: "https://minio-eu.example.com"
+         redisEndpoint: "rediss://:pw@redis-eu:6380"
+       us-east-1:
+         postgresEndpoint: "postgres://pg-us:5432/lenny"
+         minioEndpoint: "https://minio-us.example.com"
+         redisEndpoint: "rediss://:pw@redis-us:6380"
+   ```
+
+   When `dataResidencyRegion` is set but the region is not present in `storage.regions`, the `StorageRouter` **fails closed** with `REGION_CONSTRAINT_UNRESOLVABLE`.
+
+3. **Validation at session creation.** The gateway validates that at least one pool and one storage backend are available for the requested region before accepting a session.
+
+### Data Residency Admission Webhook
+
+The `lenny-data-residency-validator` `ValidatingAdmissionWebhook` (configured `failurePolicy: Fail`) enforces region integrity at the Kubernetes resource layer. It intercepts `CREATE` and `UPDATE` operations on tenant-scoped CRD resources with a `dataResidencyRegion` field and rejects resources specifying a region not declared in `storage.regions`. If the webhook is unavailable, admission is denied (fail-closed). The `DataResidencyWebhookUnavailable` alert fires when the webhook has been unreachable for more than 30 seconds.
+
+### Per-Region KMS
+
+Each region entry can declare its own KMS endpoint for envelope encryption, ensuring encryption keys remain within the data residency boundary.
+
+### Inheritance
+
+Sessions inherit `dataResidencyRegion` from their environment, which inherits from its tenant unless explicitly overridden. An environment must use the same `dataResidencyRegion` as its tenant or inherit the tenant's value; specifying a different region is rejected with `REGION_CONSTRAINT_VIOLATED`.
+
+---
+
+## Legal Holds
+
+Sessions and artifacts support a `legal_hold` boolean flag. When set:
+
+- Artifact retention policy is suspended -- artifacts are not deleted by the GC job regardless of TTL
+- Checkpoint rotation is suspended for held sessions
+- The legal hold reconciler prevents deletion of held resources during tenant deletion (Phase 4 is blocked)
+
+### Managing Legal Holds
+
+```bash
+# Set a legal hold on a session
+lenny-ctl admin legal-holds set --resource-type session --resource-id <session-id> --note "Investigation ref #1234"
+
+# Clear a legal hold
+lenny-ctl admin legal-holds clear --resource-type session --resource-id <session-id>
+
+# List active legal holds
+lenny-ctl admin legal-holds list --tenant-id <tenant-id>
+```
+
+Both `platform-admin` and `tenant-admin` roles can manage legal holds. `tenant-admin` callers are automatically scoped to their own tenant. All compliance operations (hold set/cleared, erasure requested/completed) are logged in the audit trail with the requesting admin's identity.
+
+---
+
+## Environments
+
+Environments are optional project contexts within a tenant that provide RBAC scoping and resource selection. Configure via the admin API with:
+
+- **Runtime selectors:** Label-based selectors that restrict which runtimes are available within the environment
+- **Connector selectors:** Label-based selectors that restrict which connectors are available
+- **Member roles:** Per-environment RBAC controlling which users can create sessions within the environment
+- **Data residency inheritance:** Environments inherit `dataResidencyRegion` from their tenant unless explicitly overridden to the same or stricter region
+
+Environments are not required for basic operation -- single-tenant and simple multi-tenant deployments can operate without them.

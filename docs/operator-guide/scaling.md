@@ -37,9 +37,9 @@ Lenny defines four deployment tiers that determine infrastructure sizing, SLO ta
 
 | Tier | Min Replicas | Max Replicas | `maxSessionsPerReplica` |
 |---|---|---|---|
-| Tier 1 | 2 | 5 | 50 (provisional) |
-| Tier 2 | 5 | 15 | 200 (provisional) |
-| Tier 3 | 25 | 60 | 400 (provisional) |
+| Tier 1 | 2 | 4 | 50 (provisional) |
+| Tier 2 | 3 | 10 | 200 (provisional) |
+| Tier 3 | 5 | 30 | 400 (provisional) |
 
 ### Postgres
 
@@ -99,6 +99,8 @@ gateway:
 
 ### KEDA Integration
 
+> **KEDA is mandatory for Tier 3 deployments.** At Tier 3, the Prometheus Adapter path requires `minReplicas: 30` (which equals `maxReplicas`), providing no headroom for further scale-out. Tier 1 and Tier 2 can use standard HPA with the Prometheus Adapter, though KEDA is recommended for faster reaction times.
+
 For more responsive autoscaling that bypasses the Prometheus Adapter cache, use KEDA with a `ScaledObject`:
 
 ```yaml
@@ -126,6 +128,34 @@ spec:
         query: avg(lenny_gateway_active_streams)
         threshold: "200"
 ```
+
+### Per-Tier HPA Queue Depth Targets
+
+The `lenny_gateway_request_queue_depth` HPA target `averageValue` varies by tier to provide tighter back-pressure control at higher scale:
+
+| Tier | `request_queue_depth` Target |
+|---|---|
+| Tier 1 | 15 |
+| Tier 2 | 10 |
+| Tier 3 | 5 |
+
+### Per-Tier Recommended Starting `minWarm` Values
+
+The following baseline values assume `safety_factor = 1.0` (no safety margin), a 25-second failover window, and 10-second pod startup. **For production deployments**, apply the per-tier safety factor to get the production `minWarm`.
+
+| Tier | Baseline `minWarm` (per hot pool) | Safety Factor (agent-type) | Safety Factor (mcp-type) |
+|---|---|---|---|
+| Tier 1 | 20 | 1.5 | 2.0 |
+| Tier 2 | 175 | 1.5 | 2.0 |
+| Tier 3 | 1,050 | 1.2 | 1.5 |
+
+With safety factors applied: Tier 1 = `ceil(0.5 * 1.5 * 35) = 27`, Tier 2 = `ceil(5 * 1.5 * 35) = 263`, Tier 3 = `ceil(30 * 1.2 * 35) = 1,260`.
+
+### Delegation Fan-Out Impact on `minWarm`
+
+Delegation fan-out can significantly increase required `minWarm`. At Tier 3, the baseline of 1,050 covers session-creation demand only. Deployments where a significant fraction of sessions use the `orchestrator` preset (or other high-fan-out leases) should increase `minWarm` using the delegation-adjusted formula -- a value of approximately **3,400+** (with burst term, zero historical burst data) is appropriate for Tier 3 when orchestrator-preset sessions represent a large share of load. If orchestrator-preset sessions are rare (< 10% of sessions), the baseline 1,050 remains adequate.
+
+Reference SPEC Section 17.8.2 "Delegation fan-out sizing (SCL-041)" for the full formula and worked examples.
 
 ---
 
@@ -255,7 +285,7 @@ gateway:
 
 ### Tier 1 to Tier 2
 
-- Increase gateway replicas from 2-3 to 5-10
+- Increase gateway replicas from 2-4 to 3-10
 - Scale Postgres to 4 vCPU / 16 GB
 - Scale Redis to 8 GB with Sentinel HA
 - Move to erasure-coded MinIO (4 nodes)
@@ -267,7 +297,7 @@ gateway:
 - **Prerequisites:**
   1. Phase 13.5 load tests confirm LLM Proxy extraction has occurred OR `llm_proxy_active_connections / active_sessions` is sustainably below 0.3:1
   2. `gc_pause_p99_ms` remains below 50 ms at Tier 2 peak load
-- Increase gateway replicas to 25-50
+- Increase gateway replicas to 5-30
 - Scale Postgres to 8 vCPU / 32 GB
 - Consider separate billing/audit Postgres instance
 - Scale Redis to 16 GB

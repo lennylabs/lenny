@@ -361,6 +361,21 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | Standard | `platformMcpServer.socket`, `connectorServers`, `mcpNonce` --- to connect to and authenticate with local MCP servers. |
 | Full | Standard fields plus `lifecycleChannel.socket`. |
 
+**Manifest field reference:**
+
+| Field | Description |
+|-------|-------------|
+| `version` | Manifest schema version. A version increment indicates a breaking change. |
+| `platformMcpServer.socket` | Abstract Unix socket path for the platform MCP server. |
+| `lifecycleChannel.socket` | Abstract Unix socket path for the lifecycle channel (Full tier). |
+| `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
+| `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
+| `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
+| `sessionId` | The session identifier for this pod. |
+| `taskId` | The current task identifier. Regenerated per task in task mode. |
+| `mcpNonce` | Hex nonce for authenticating MCP connections. |
+| `observability.otlpEndpoint` | OTLP collector endpoint for runtime-emitted OpenTelemetry spans. |
+
 **Forward compatibility:** Your runtime must silently ignore unknown top-level fields. The adapter may add new fields in future versions without incrementing `version`. A `version` increment indicates a breaking change to existing field semantics.
 
 ---

@@ -188,7 +188,7 @@ Send a message and see the echo output:
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/messages" \
   -H "Content-Type: application/json" \
   -d '{
-    "parts": [
+    "input": [
       {
         "type": "text",
         "text": "Hello, Lenny!"

@@ -265,7 +265,7 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 
 ### `lenny/request_input`
 
-Block until the parent or client provides a response. This replaces the stdout `input_required` message type.
+Block until the parent or client provides a response. This is the mechanism for blocking until client input arrives (Standard tier or higher).
 
 **Parameters:**
 
@@ -283,7 +283,9 @@ Block until the parent or client provides a response. This replaces the stdout `
 4. The tool call resolves with the response content.
 5. The session transitions back to `running`.
 
-**Timeout:** `maxRequestInputWaitSeconds` (configurable, Section 11.3) governs how long the tool call blocks. On timeout, the tool returns a `REQUEST_INPUT_TIMEOUT` error. Your runtime can handle this by producing a partial result or failing.
+**Timeout:** `maxRequestInputWaitSeconds` (configurable, default 600 seconds) governs how long the tool call blocks. On timeout, the tool returns a `REQUEST_INPUT_TIMEOUT` error. Your runtime can handle this by producing a partial result or failing.
+
+**`one_shot` constraint:** Runtimes with `capabilities.interaction: one_shot` may call this tool at most once per session. A second call returns a gateway error. The runtime must then produce a best-effort response without the requested clarification or fail with a structured error (`{ "code": "INSUFFICIENT_INPUT" }`).
 
 ---
 
@@ -309,6 +311,8 @@ Send a message to any task by ID, subject to messaging scope restrictions.
 |-------|----------------|
 | `direct` (default) | Direct parent and direct children |
 | `siblings` | Direct parent, direct children, and sibling tasks |
+
+**`treeVisibility` constraint:** `messagingScope: siblings` requires `treeVisibility: full` on the delegation lease. The gateway rejects `siblings` scope when visibility is restricted (`self-only` or `parent-and-self`) at delegation time with `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE`.
 
 **Cross-tenant validation:** Messages targeting a session belonging to a different tenant are rejected with `CROSS_TENANT_MESSAGE_DENIED`.
 

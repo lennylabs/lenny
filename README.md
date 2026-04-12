@@ -10,7 +10,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 ## What Lenny Does
 
-- **Pre-warmed pods** — agent containers are already running when a request arrives, eliminating cold-start latency. Pod claim is in the millisecond range; workspace setup is the only hot-path work.
+- **Pre-warmed pods** — agent containers are already running when a request arrives, eliminating cold-start latency. Pod claim is in the millisecond range; workspace setup is the only hot-path work. Optionally, SDK-warm mode (`preConnect`) pre-connects the agent process during the warm phase for even faster startup.
 - **Runtime-agnostic** — any process that implements the [adapter contract](#runtime-adapter-contract) can run as a Lenny agent. Claude Code, LangChain, CrewAI, custom scripts — no SDK lock-in.
 - **Two runtime types** — `type: agent` runtimes participate in the full task lifecycle (sessions, delegation, elicitation, multi-turn dialog). `type: mcp` runtimes host MCP servers with Lenny-managed pods (isolation, credentials, lifecycle) but no task lifecycle — the runtime binary is oblivious to Lenny.
 - **Three execution modes** — `session` (one session per pod, default), `task` (pod reuses across sequential tasks with workspace scrub), and `concurrent` (multiple simultaneous tasks via slot multiplexing). Each mode has distinct scaling, isolation, and lifecycle characteristics.
@@ -18,7 +18,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 - **Interactive sessions** — full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation — not just request/response.
 - **Recursive delegation** — agents spawn child agents through the gateway with enforced token budgets, scope narrowing, and lineage tracking at every hop.
 - **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
-- **External connectors** — agents call external MCP servers (GitHub, Jira, Slack) through the gateway. The gateway manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see raw connector tokens.
+- **External connectors** — agents call external tools and agents (GitHub, Jira, Slack, or any registered endpoint) through the gateway. V1 uses MCP transport; post-v1 adds A2A and Agent Protocol. The gateway manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see raw connector tokens.
 - **Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically on rate limiting. Pods never see raw API keys.
 - **A/B experimentation** — built-in experiment primitives for runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation hooks** — pull-based, multi-dimensional scoring that integrates with any external eval pipeline. Session replay for regression testing across runtime versions.
@@ -46,7 +46,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 └────────┬─────────┬──────────┬──────────┬───────────────────┘
          │         │          │          │
     ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐   ┌─────────────┐
-    │Session │ │Token/ │ │Event/  │ │Artifact │   │ External MCP│
+    │Session │ │Token/ │ │Event/  │ │Artifact │   │ External    │
     │Manager │ │Connec-│ │Checkpt │ │Store    │   │ Connectors  │
     │(PG+Red)│ │tor Svc│ │Store   │ │         │   │ (GitHub,    │
     └────────┘ └───┬───┘ └────────┘ └─────────┘   │  Jira, ...) │
@@ -89,11 +89,11 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
 
-| Tier         | Interface               | Effort            | Capabilities                                                           |
-| ------------ | ----------------------- | ----------------- | ---------------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines | ~50 lines, no SDK | Basic session lifecycle, text I/O                                      |
-| **Standard** | gRPC adapter            | Moderate          | Health checks, tool reporting, credential flows                        |
-| **Full**     | gRPC adapter            | Significant       | Cooperative checkpointing, delegation, elicitation, interrupt handling |
+| Tier         | Interface               | Effort            | Capabilities                                                                                               |
+| ------------ | ----------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Minimum**  | stdin/stdout JSON Lines | ~50 lines, no SDK | Session lifecycle, text I/O, adapter-local file tools                                                      |
+| **Standard** | gRPC adapter            | Moderate          | Minimum + platform MCP tools (delegation, elicitation, discovery), connector access                        |
+| **Full**     | gRPC adapter            | Significant       | Standard + lifecycle channel (checkpoint/restore, interrupt handling, credential rotation, graceful drain) |
 
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
 
@@ -108,11 +108,11 @@ Lenny supports two runtime types:
 
 Agent runtimes run in one of three execution modes:
 
-| Mode                    | Pod usage                                                                                                                                                                    | Use case                                                                                             |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **`session`** (default) | One session per pod. Pod terminated after session ends.                                                                                                                      | Workloads that require the strongest isolation.                                                      |
-| **`task`**              | Pod reused across sequential tasks with workspace scrub between tasks.                                                                                                       | Workloads with slightly lower security isolation requirements where pod startup cost matters.        |
-| **`concurrent`**        | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed). | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
+| Mode                    | Pod usage                                                                                                                                                                        | Use case                                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **`session`** (default) | One session per pod. Pod terminated after session ends.                                                                                                                          | Workloads that require the strongest isolation.                                                      |
+| **`task`**              | Pod reused across sequential tasks with workspace scrub between tasks. Requires Full-tier adapter integration for actual pod reuse; Standard/Minimum tiers get one task per pod. | Workloads with slightly lower security isolation requirements where pod startup cost matters.        |
+| **`concurrent`**        | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed).     | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
 
 Execution mode is declared on the `Runtime` definition and determines pool scaling formulas, checkpoint behavior, and pod retirement policies.
 
@@ -132,7 +132,7 @@ A pluggable `CredentialRouter` interface supports cost-aware, latency-based, or 
 
 ### External Connectors
 
-Agents call external MCP servers (GitHub, Jira, Slack, etc.) through the gateway — pods never contact external services directly. Connectors are first-class admin API resources with per-tenant scoping (Postgres RLS).
+Agents call external tools and agents (GitHub, Jira, Slack, or any registered endpoint) through the gateway — pods never contact external services directly. Connectors are first-class admin API resources with per-tenant scoping (Postgres RLS). V1 uses MCP as the connector transport; post-v1 adds A2A and Agent Protocol, allowing Lenny agents to delegate to external agents over their native protocols.
 
 The gateway manages the full OAuth2 lifecycle: authorization code flow with PKCE, token exchange, and refresh. Refresh tokens are stored encrypted at rest in Postgres (envelope encryption via KMS). Access tokens are short-lived and cached in Redis, encrypted with AES-256-GCM using a key derived from the Token Service's envelope key. On KMS key rotation, cached tokens are transparently invalidated — the Token Service re-derives them from Postgres on next access. Tokens are scoped by user, connector, tenant, and environment, and never transit through pods.
 
@@ -196,8 +196,8 @@ Choose per-pool isolation via Kubernetes `RuntimeClass`:
 | Protocol                | Path                        | Status  |
 | ----------------------- | --------------------------- | ------- |
 | MCP (Streamable HTTP)   | `/mcp`                      | v1      |
-| OpenAI Chat Completions | `/v1`                       | v1      |
-| Open Responses          | `/responses`                | v1      |
+| OpenAI Chat Completions | `/v1/chat/completions`      | v1      |
+| Open Responses          | `/v1/responses`             | v1      |
 | REST API                | `/v1/sessions`, `/v1/admin` | v1      |
 | A2A (Agent-to-Agent)    | `/a2a`                      | Post-v1 |
 
@@ -206,7 +206,7 @@ Third-party adapters can be built and validated via the `RegisterAdapterUnderTes
 ### Enterprise Controls
 
 - **Multi-tenancy** — Postgres row-level security with `SET LOCAL`, per-tenant quotas, RBAC
-- **Audit logging** — hash-chained integrity, configurable retention (SOC2, HIPAA, FedRAMP, NIS2/DORA), SIEM forwarding
+- **Audit logging** — hash-chained integrity, configurable retention (SOC2, HIPAA, FedRAMP), SIEM forwarding
 - **GDPR erasure** — 19-step `DeleteByUser` with billing pseudonymization, processing restriction (Article 18), erasure receipts
 - **Legal holds** — suspend artifact retention for compliance investigations
 - **Data residency** — per-tenant/per-environment region constraints with fail-closed storage routing
@@ -258,7 +258,7 @@ curl -s -X POST http://localhost:8080/v1/sessions/{id}/start | jq .
 # Send a message
 curl -s -X POST http://localhost:8080/v1/sessions/{id}/messages \
   -H "Content-Type: application/json" \
-  -d '{"content": "Hello, Lenny!"}' | jq .
+  -d '{"input": [{"type": "text", "text": "Hello, Lenny!"}]}' | jq .
 
 # Terminate
 curl -s -X POST http://localhost:8080/v1/sessions/{id}/terminate | jq .

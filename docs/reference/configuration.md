@@ -266,6 +266,34 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 
 ---
 
+## Memory Store configuration
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `memory.maxMemoriesPerUser` | int | 10000 | Maximum number of memories stored per user. When the limit is reached, oldest memories are evicted on new writes. | Must be > 0. |
+| `memory.retentionDays` | int | -- | Auto-delete memories older than this many days. When unset, memories are retained indefinitely (subject to `maxMemoriesPerUser`). | Must be > 0 when set. |
+
+---
+
+## Delegation configuration
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `delegation.maxDepth` | int | 10 | Maximum delegation tree depth. Delegations that would exceed this depth are rejected with `BUDGET_EXHAUSTED`. | Must be > 0. |
+| `delegation.maxChildrenTotal` | int | 100 | Maximum total children across the entire delegation tree. | Must be > 0. |
+| `delegation.maxParallelChildren` | int | 10 | Maximum concurrent children per parent session. | Must be > 0. |
+| `delegation.maxTreeMemoryBytes` | int | 104857600 | Memory limit (bytes) for delegation tree metadata tracked in Redis. Prevents runaway trees from consuming excessive coordinator memory. Default: 100 MiB. | Must be > 0. |
+
+---
+
+## Evaluation configuration
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `eval.maxEvalsPerSession` | int | 50 | Maximum `EvalResult` submissions per session. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. |
+
+---
+
 ## Capacity tiers
 
 | Parameter | Tier 1 (Starter) | Tier 2 (Growth) | Tier 3 (Scale) | Tier 4 (Platform) |

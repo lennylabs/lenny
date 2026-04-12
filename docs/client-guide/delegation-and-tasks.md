@@ -268,6 +268,44 @@ The originating agent receives a dismissal response and must handle it gracefull
 
 ---
 
+## Delegation Enforcement
+
+The gateway enforces several constraints at every delegation hop. Understanding these helps you design delegation trees that succeed on the first attempt.
+
+### Token Budgets
+
+When a parent session delegates work, it allocates a `maxTokenBudget` to the child. This budget is reserved atomically using Redis Lua scripts -- the parent's available budget is decremented at delegation time, not when tokens are actually consumed. If a child finishes under budget, unused tokens are credited back to the parent. Children cannot exceed their allocated budget; the gateway rejects LLM requests once the budget is exhausted with `BUDGET_EXHAUSTED`.
+
+### Scope Narrowing
+
+Child leases are always strictly equal to or narrower than their parent's lease. A child session cannot have connectors, runtimes, or capabilities that the parent lacks. Depth is decremented, budgets are reduced, and any restriction the parent carries is inherited by the child. The gateway validates this before approving any delegation.
+
+### Content Policy Inheritance
+
+Content policies (`contentPolicy.interceptorRef`) can only be made stricter at each delegation hop, never relaxed. A child may retain the parent's interceptor or add one where the parent had none, but it cannot remove a content check (`CONTENT_POLICY_WEAKENING`) or substitute a different interceptor (`CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`). This ensures content scanning cannot be bypassed by delegation depth.
+
+### Isolation Monotonicity
+
+Children must use an isolation profile at least as strong as their parent. The enforcement order is: `standard` (runc) < `sandboxed` (gVisor) < `microvm` (Kata). A `sandboxed` parent cannot delegate to a `standard` child -- the gateway rejects such delegations with `ISOLATION_MONOTONICITY_VIOLATED`.
+
+### Cycle Detection
+
+The gateway prevents runtime delegation loops (e.g., A delegates to B, B delegates back to A). It checks each delegation request against the caller's delegation lineage. If the target's resolved `(runtime_name, pool_name)` identity already appears in the lineage, the request is rejected with `DELEGATION_CYCLE_DETECTED`. This check uses Postgres-backed session records and remains enforced even during Redis outages.
+
+### Credential Propagation
+
+The `credentialPropagation` field in the delegation lease controls how child sessions get LLM credentials. Three modes are available:
+
+| Mode | Behavior |
+|---|---|
+| `inherit` | Child uses the same credential pool/source as its parent. The gateway assigns from the same pool. |
+| `independent` | Child gets its own credential lease based on the tenant's credential policy and the child runtime's `supportedProviders`. |
+| `deny` | Child receives no LLM credentials. Use this for runtimes that do not need LLM access (e.g., pure file-processing tools). |
+
+Each parent controls its direct children's credential mode. In a multi-level tree, different hops can use different modes.
+
+---
+
 ## Approving or Denying Tool Calls
 
 Some runtimes require client approval for specific tool calls. When the agent requests a tool that needs approval:

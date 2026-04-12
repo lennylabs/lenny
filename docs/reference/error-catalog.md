@@ -106,6 +106,10 @@ Errors that indicate a client-side issue. The request must be corrected before r
 | `COMPLIANCE_SIEM_REQUIRED` | 422 | Tenant creation/update rejected because its `complianceProfile` requires a SIEM endpoint. | Configure `audit.siem.endpoint` before creating the regulated tenant. |
 | `URL_MODE_ELICITATION_DOMAIN_REQUIRED` | 400 | Pool registration/update rejected because `urlModeElicitation.enabled: true` was set without a non-empty `domainAllowlist`. | Provide a non-empty `domainAllowlist` when enabling URL-mode elicitation. |
 | `INPUT_TOO_LARGE` | 413 | Delegation rejected because `TaskSpec.input` exceeds `contentPolicy.maxInputSize`. `details.sizeBytes` and `details.limitBytes` are included. | Reduce the input size below the configured limit. |
+| `LLM_REQUEST_REJECTED` | 403 | LLM request rejected by `PreLLMRequest` interceptor. `details.reason` contains the rejection reason. Proxy mode only. | Review the content against the interceptor's policy. Modify the request to comply. |
+| `LLM_RESPONSE_REJECTED` | 502 | LLM response rejected by `PostLLMResponse` interceptor. `details.reason` contains the rejection reason. Proxy mode only. | The LLM response was filtered by policy. Consider adjusting the prompt or interceptor configuration. |
+| `CONNECTOR_REQUEST_REJECTED` | 403 | Connector tool call rejected by `PreConnectorRequest` interceptor. `details.reason` is included. | Review the connector request against the interceptor's policy. |
+| `CONNECTOR_RESPONSE_REJECTED` | 502 | Connector response rejected by `PostConnectorResponse` interceptor. `details.reason` is included. | Contact the operator if this is unexpected. |
 
 ---
 
@@ -152,10 +156,6 @@ Errors caused by policy enforcement. Typically require configuration changes, qu
 | `EVAL_QUOTA_EXCEEDED` | 429 | The per-session `EvalResult` storage cap has been reached. `details.sessionId` and `details.limit` are included. | Reduce eval submission frequency or request a higher `maxEvalsPerSession` from the operator. |
 | `STORAGE_QUOTA_EXCEEDED` | 429 | Tenant artifact storage quota would be exceeded. `details.currentBytes` and `details.limitBytes` are included. | Clean up old session artifacts or request a storage quota increase. |
 | `ERASURE_IN_PROGRESS` | 403 | Session creation rejected because the target `user_id` has a pending GDPR erasure job. `details.userId` and `details.jobId` are included. | Wait for the erasure job to complete before creating sessions for this user. |
-| `LLM_REQUEST_REJECTED` | 403 | LLM request rejected by `PreLLMRequest` interceptor. `details.reason` contains the rejection reason. Proxy mode only. | Review the content against the interceptor's policy. Modify the request to comply. |
-| `LLM_RESPONSE_REJECTED` | 502 | LLM response rejected by `PostLLMResponse` interceptor. `details.reason` contains the rejection reason. Proxy mode only. | The LLM response was filtered by policy. Consider adjusting the prompt or interceptor configuration. |
-| `CONNECTOR_REQUEST_REJECTED` | 403 | Connector tool call rejected by `PreConnectorRequest` interceptor. `details.reason` is included. | Review the connector request against the interceptor's policy. |
-| `CONNECTOR_RESPONSE_REJECTED` | 502 | Connector response rejected by `PostConnectorResponse` interceptor. `details.reason` is included. | Contact the operator if this is unexpected. |
 | `CONTENT_POLICY_WEAKENING` | 403 | Delegation rejected because the child lease removes a content policy interceptor that the parent had. | Retain the parent's `contentPolicy.interceptorRef` in the child lease. |
 | `CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION` | 403 | Delegation rejected because the child lease names a different `contentPolicy.interceptorRef` than the parent without retaining the parent's reference. | Use the same interceptor reference as the parent, or configure chaining. |
 | `DOMAIN_NOT_ALLOWLISTED` | 403 | URL-mode elicitation dropped because the URL's host does not match the pool's `urlModeElicitation.domainAllowlist`. `details.host` and `details.allowlist` are included. | Add the domain to the pool's allowlist, or use an allowed domain. |

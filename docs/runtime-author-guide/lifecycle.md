@@ -226,12 +226,12 @@ Full-tier runtimes can handle clean interrupts via the lifecycle channel:
 
 ```
 1. Adapter sends interrupt_request:
-   {"type":"interrupt_request","deadlineMs":30000}
+   {"type":"interrupt_request","interruptId":"int_001","deadlineMs":30000}
 
 2. Your runtime reaches a safe stop point (finishes current output, flushes).
 
 3. Your runtime replies:
-   {"type":"interrupt_acknowledged"}
+   {"type":"interrupt_acknowledged","interruptId":"int_001"}
 
 4. Session transitions to "suspended".
 ```
@@ -260,12 +260,12 @@ When an LLM provider rate-limits or revokes a credential, the platform rotates i
 
 ```
 1. Adapter sends on lifecycle channel:
-   {"type":"credentials_rotated","credentialPath":"/run/lenny/credentials.json"}
+   {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/credentials.json","leaseId":"lease_xyz"}
 
 2. Your runtime re-reads the credentials file and rebinds the LLM client.
 
 3. Your runtime replies:
-   {"type":"credentials_acknowledged"}
+   {"type":"credentials_acknowledged","leaseId":"lease_xyz","provider":"anthropic"}
 ```
 
 ---
@@ -281,6 +281,58 @@ Full-tier runtimes receive advance warning before session expiry:
 This gives your runtime time to wrap up long-running work, flush outputs, and produce a partial result before the hard deadline arrives.
 
 At Minimum and Standard tiers, you receive only a `shutdown` message when the deadline is reached.
+
+---
+
+## Terminate Signal (Full Tier)
+
+Full-tier runtimes receive a `terminate` message on the lifecycle channel as the preferred shutdown path, instead of the stdin `shutdown` message. This is distinct from stdin `shutdown` --- `terminate` arrives on the lifecycle channel and is the primary graceful shutdown mechanism for Full-tier runtimes.
+
+```json
+{"type":"terminate","deadlineMs":10000,"reason":"session_complete"}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
+| `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
+
+Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit --- it is never used for between-task signaling (see `task_complete` below).
+
+---
+
+## LLM Request Tracking (Full Tier, Direct Mode)
+
+Runtimes that call LLM provider APIs directly (not through the adapter proxy) should emit `llm_request_started` and `llm_request_completed` messages on the lifecycle channel. These signals allow the adapter to track in-flight LLM requests for credential rotation coordination --- the adapter will not send `credentials_rotated` while LLM requests are in flight.
+
+### `llm_request_started` (runtime to adapter)
+
+Emitted just before the runtime sends an outbound LLM request directly to the provider.
+
+```json
+{"type":"llm_request_started","requestId":"req_001","provider":"anthropic"}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requestId` | string | Opaque, runtime-generated identifier for this request. |
+| `provider` | string | The LLM provider being called (e.g., `"anthropic"`, `"openai"`). |
+
+### `llm_request_completed` (runtime to adapter)
+
+Emitted when the outbound LLM request completes or errors.
+
+```json
+{"type":"llm_request_completed","requestId":"req_001","provider":"anthropic","status":"ok"}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requestId` | string | Matches the corresponding `llm_request_started`. |
+| `provider` | string | The LLM provider that was called. |
+| `status` | string | `"ok"` or `"error"`. |
+
+When the in-flight counter for a provider reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`.
 
 ---
 
@@ -302,6 +354,48 @@ The lifecycle channel drives the handshake:
 6. The next `message` on stdin starts the new task.
 
 After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod drains and is replaced.
+
+---
+
+## Execution Modes
+
+Pools are configured with an execution mode that determines how tasks are mapped to pods. The mode affects your runtime's lifecycle, workspace layout, and required integration tier.
+
+### Session Mode (Default)
+
+One session per pod. Your runtime receives one task, handles it, and the pod terminates after the session ends. No special runtime code is needed beyond the base adapter contract for your tier. The pod is never recycled for a different session --- this prevents cross-session data leakage.
+
+This is the simplest mode and works at all integration tiers.
+
+### Task Mode
+
+The pod is reused across sequential tasks with workspace scrubbing between tasks. This avoids the overhead of pod provisioning for each task.
+
+Task mode requires **Full-tier integration** (lifecycle channel) for actual pod reuse. Standard and Minimum tier runtimes effectively get one task per pod because they cannot participate in the `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle handshake.
+
+The between-task sequence on the lifecycle channel:
+
+1. Adapter sends `task_complete` with the finished `taskId`.
+2. Your runtime releases task-specific resources (open files, temp state) and replies `task_complete_acknowledged`.
+3. The adapter scrubs the workspace (files removed, processes killed).
+4. Adapter sends `task_ready` with the new `taskId`.
+5. Your runtime re-reads the adapter manifest (regenerated per task) and prepares for the next `message` on stdin.
+
+After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod drains and is replaced.
+
+### Concurrent-Workspace Mode
+
+Multiple tasks run simultaneously on a single pod. Your runtime must implement a **dispatch loop keyed on `slotId`** --- all binary protocol messages (inbound and outbound) carry a `slotId` field in this mode. Each slot gets its own workspace under `/workspace/slots/{slotId}/current/`. Your runtime must NOT assume a global `/workspace/current` path.
+
+Cross-slot isolation is process-level and filesystem-level only --- explicitly weaker than session mode. CPU and memory are shared across slots (no per-slot cgroup subdivision in v1).
+
+`preConnect` is incompatible with concurrent-workspace mode. The pool controller rejects pool definitions that combine `executionMode: concurrent`, `concurrencyStyle: workspace`, and `capabilities.preConnect: true`.
+
+### Concurrent-Stateless Mode
+
+No workspace materialization. Requests are routed via Kubernetes Service load balancing. There is no per-slot lifecycle tracking, no checkpoint support, and no per-slot failure isolation. This mode is typically better served by the external connector model.
+
+Your runtime just handles requests as they arrive. The deployer is responsible for retry, idempotency, and error-handling logic. `preConnect` is incompatible with concurrent-stateless mode.
 
 ---
 
@@ -340,8 +434,8 @@ The termination sequence:
 |------|---------|
 | 0 | Clean exit |
 | 1 | Runtime error (captured in diagnostics) |
+| 2 | Protocol error (runtime could not parse adapter messages) |
 | 137 | SIGKILL (OOM or timeout) |
-| 143 | SIGTERM (graceful but forced) |
 
 ---
 

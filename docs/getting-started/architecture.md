@@ -177,7 +177,7 @@ The Session Manager is the source of truth for all session and task metadata. It
 
 A **separate process** (Kubernetes Deployment) that manages two categories of credentials:
 
-1. **MCP tool tokens:** OAuth tokens for external tools (GitHub, Jira, Slack, etc.) used via MCP connectors.
+1. **Connector credentials:** OAuth tokens for external tools and agents (GitHub, Jira, Slack, etc.) accessed via registered connectors.
 2. **LLM provider credentials:** API keys, IAM roles, and service accounts for LLM providers (managed via Credential Pools).
 
 The Token Service is the only component with KMS decrypt permissions. It holds the envelope encryption keys for stored refresh tokens and can mint short-lived access tokens on demand. Gateway replicas communicate with the Token Service over mTLS -- they receive short-lived tokens, never refresh tokens or KMS master keys.

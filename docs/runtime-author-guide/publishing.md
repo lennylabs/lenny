@@ -121,6 +121,8 @@ curl -X POST http://localhost:8080/v1/admin/runtimes \
   }'
 ```
 
+**`preConnect` explained:** When `preConnect: true`, the adapter starts the runtime binary during the warm phase (before a session is assigned). This eliminates cold-start latency from the hot path. The runtime must implement the `DemoteSDK` contract --- the ability to tear down a pre-connected SDK session when an actual session is assigned and the workspace includes files matching `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`). Demotion adds 1--3 seconds but ensures the agent starts with workspace files present. `preConnect` is incompatible with concurrent execution modes (`concurrent-workspace` and `concurrent-stateless`); the pool controller rejects pool definitions that combine `preConnect: true` with concurrent modes.
+
 ### Via Bootstrap Seed File
 
 For deployments using Helm, add your runtime to the bootstrap seed:

@@ -203,6 +203,34 @@ Removes the credential record. Active session leases are unaffected (they contin
 
 ---
 
+## Credential Policy and Delivery
+
+### Credential Policy
+
+Tenants configure a `CredentialPolicy` that controls how credentials are sourced for sessions. The key fields are:
+
+- **`preferredSource`** -- determines the credential resolution order: `pool` (pool-only), `user` (user credentials only), `prefer-user-then-pool` (try user first, fall back to pool), or `prefer-pool-then-user` (try pool first, fall back to user).
+- **`userCredentialsEnabled`** -- when `false`, user-scoped credentials registered via `POST /v1/credentials` are ignored regardless of the `preferredSource` setting. When `true`, the gateway resolves user-scoped credentials from the credential store according to the fallback configuration.
+
+Per-session overrides can be passed at session creation time via the `credentialPolicy` field, but they can only restrict the tenant policy, never expand it.
+
+### Delivery Modes
+
+Credentials reach agent pods in one of two ways:
+
+| Mode | How It Works | Security Implications |
+|---|---|---|
+| **Proxy** | The gateway injects credentials into upstream LLM requests on behalf of the pod. Pods receive a lease token and a proxy URL -- they never see the raw API key. | More secure. Recommended for most deployments. |
+| **Direct** | The credential is written to a file on the pod filesystem. The runtime reads the file and calls LLM APIs directly. | Less secure (credential is present on the pod). Required for runtimes that call LLM APIs directly and cannot use the gateway proxy. |
+
+The delivery mode is configured per credential pool by the deployer. In regulated environments, consider requiring explicit admin approval for pools configured with `deliveryMode: direct`.
+
+### SPIFFE-Bound Lease Tokens
+
+In multi-tenant deployments, proxy-mode lease tokens are bound to the issuing pod's SPIFFE identity. On every LLM proxy request, the gateway verifies that the requesting pod's SPIFFE URI matches the URI recorded at credential assignment time. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH`, preventing cross-pod credential replay. This binding is enforced server-side -- no protocol change is required on the pod side.
+
+---
+
 ## RBAC Roles
 
 Lenny defines five built-in roles:

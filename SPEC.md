@@ -25,6 +25,138 @@ For a concise explanation of where Lenny fits relative to Temporal, Modal, LangG
 
 ---
 
+## Table of Contents
+- [1. Executive Summary](#1-executive-summary)
+  - [Core Design Principles](#core-design-principles)
+- [2. Goals and Non-Goals](#2-goals-and-non-goals)
+  - [Goals](#goals)
+  - [Non-Goals](#non-goals)
+- [3. High-Level Architecture](#3-high-level-architecture)
+- [4. System Components](#4-system-components)
+  - [4.1 Edge Gateway Replicas](#41-edge-gateway-replicas)
+  - [4.2 Session Manager](#42-session-manager)
+  - [4.3 Token Service](#43-token-service)
+  - [4.4 Event / Checkpoint Store](#44-event--checkpoint-store)
+  - [4.5 Artifact Store](#45-artifact-store)
+  - [4.6 Pod Lifecycle Controllers](#46-pod-lifecycle-controllers)
+  - [4.7 Runtime Adapter](#47-runtime-adapter)
+  - [4.8 Gateway Policy Engine](#48-gateway-policy-engine)
+  - [4.9 Credential Leasing Service](#49-credential-leasing-service)
+- [5. Runtime Registry and Pool Model](#5-runtime-registry-and-pool-model)
+  - [5.1 Runtime](#51-runtime)
+  - [5.2 Pool Configuration and Execution Modes](#52-pool-configuration-and-execution-modes)
+  - [5.3 Isolation Profiles](#53-isolation-profiles)
+- [6. Warm Pod Model](#6-warm-pod-model)
+  - [6.1 What a Pre-Warmed Pod Looks Like](#61-what-a-pre-warmed-pod-looks-like)
+  - [6.2 Pod State Machine](#62-pod-state-machine)
+  - [6.3 Startup Latency Analysis](#63-startup-latency-analysis)
+  - [6.4 Pod Filesystem Layout](#64-pod-filesystem-layout)
+- [7. Session Lifecycle](#7-session-lifecycle)
+  - [7.1 Normal Flow](#71-normal-flow)
+  - [7.2 Interactive Session Model](#72-interactive-session-model)
+  - [7.3 Retry and Resume](#73-retry-and-resume)
+  - [7.4 Upload Safety](#74-upload-safety)
+  - [7.5 Setup Commands](#75-setup-commands)
+- [8. Recursive Delegation](#8-recursive-delegation)
+  - [8.1 Design Philosophy](#81-design-philosophy)
+  - [8.2 Delegation Mechanism](#82-delegation-mechanism)
+  - [8.3 Delegation Policy and Lease](#83-delegation-policy-and-lease)
+  - [8.4 Approval Modes](#84-approval-modes)
+  - [8.5 Delegation Tools](#85-delegation-tools)
+  - [8.6 Lease Extension](#86-lease-extension)
+  - [8.7 File Export Model](#87-file-export-model)
+  - [8.8 TaskRecord and TaskResult Schema](#88-taskrecord-and-taskresult-schema)
+  - [8.9 Task Tree](#89-task-tree)
+  - [8.10 Delegation Tree Recovery](#810-delegation-tree-recovery)
+- [9. MCP Integration](#9-mcp-integration)
+  - [9.1 Where MCP Is Used](#91-where-mcp-is-used)
+  - [9.2 Elicitation Chain](#92-elicitation-chain)
+  - [9.3 Connector Definition and OAuth/OIDC](#93-connector-definition-and-oauthoidc)
+  - [9.4 Memory Store](#94-memory-store)
+- [10. Gateway Internals](#10-gateway-internals)
+  - [10.1 Horizontal Scaling](#101-horizontal-scaling)
+  - [10.2 Authentication](#102-authentication)
+  - [10.3 mTLS PKI](#103-mtls-pki)
+  - [10.4 Gateway Reliability](#104-gateway-reliability)
+  - [10.5 Upgrade and Rollback Strategy](#105-upgrade-and-rollback-strategy)
+  - [10.6 Environment Resource and RBAC Model](#106-environment-resource-and-rbac-model)
+  - [10.7 Experiment Primitives](#107-experiment-primitives)
+- [11. Policy and Controls](#11-policy-and-controls)
+  - [11.1 Admission and Fairness](#111-admission-and-fairness)
+  - [11.2 Budgets and Quotas](#112-budgets-and-quotas)
+  - [11.3 Timeouts and Cancellation](#113-timeouts-and-cancellation)
+  - [11.4 User Invalidation](#114-user-invalidation)
+  - [11.5 Idempotency](#115-idempotency)
+  - [11.6 Circuit Breakers](#116-circuit-breakers)
+  - [11.7 Audit Logging](#117-audit-logging)
+  - [11.8 Security Incident Response](#118-security-incident-response)
+- [12. Storage Architecture](#12-storage-architecture)
+  - [12.1 Design Principle](#121-design-principle)
+  - [12.2 Storage Roles](#122-storage-roles)
+  - [12.3 Postgres HA Requirements](#123-postgres-ha-requirements)
+  - [12.4 Redis HA and Failure Modes](#124-redis-ha-and-failure-modes)
+  - [12.5 Artifact Store](#125-artifact-store)
+  - [12.6 Interface Design](#126-interface-design)
+  - [12.7 Extensibility](#127-extensibility)
+  - [12.8 Compliance Interfaces](#128-compliance-interfaces)
+  - [12.9 Data Classification](#129-data-classification)
+- [13. Security Model](#13-security-model)
+  - [13.1 Pod Security](#131-pod-security)
+  - [13.2 Network Isolation](#132-network-isolation)
+  - [13.3 Credential Flow](#133-credential-flow)
+  - [13.4 Upload Security](#134-upload-security)
+  - [13.5 Delegation Chain Content Security](#135-delegation-chain-content-security)
+- [14. Workspace Plan Schema](#14-workspace-plan-schema)
+  - [14.1 WorkspacePlan Schema Versioning](#141-workspaceplan-schema-versioning)
+- [15. External API Surface](#15-external-api-surface)
+  - [15.1 REST API](#151-rest-api)
+  - [15.2 MCP API](#152-mcp-api)
+  - [15.3 Internal Control API (Custom Protocol)](#153-internal-control-api-custom-protocol)
+  - [15.4 Runtime Adapter Specification](#154-runtime-adapter-specification)
+  - [15.5 API Versioning and Stability](#155-api-versioning-and-stability)
+  - [15.6 Client SDKs](#156-client-sdks)
+- [16. Observability](#16-observability)
+  - [16.1 Metrics](#161-metrics)
+  - [16.2 Key Latency Breakpoints](#162-key-latency-breakpoints)
+  - [16.3 Distributed Tracing](#163-distributed-tracing)
+  - [16.4 Logging](#164-logging)
+  - [16.5 Alerting Rules and SLOs](#165-alerting-rules-and-slos)
+- [17. Deployment Topology](#17-deployment-topology)
+  - [17.1 Kubernetes Resources](#171-kubernetes-resources)
+  - [17.2 Namespace Layout](#172-namespace-layout)
+  - [17.3 Disaster Recovery](#173-disaster-recovery)
+  - [17.4 Local Development Mode (`lenny-dev`)](#174-local-development-mode-lenny-dev)
+  - [17.5 Cloud Portability](#175-cloud-portability)
+  - [17.6 Packaging and Installation](#176-packaging-and-installation)
+  - [17.7 Operational Runbooks](#177-operational-runbooks)
+  - [17.8 Capacity Planning and Defaults](#178-capacity-planning-and-defaults)
+  - [17.9 Deployment Profiles](#179-deployment-profiles)
+- [18. Build Sequence](#18-build-sequence)
+- [19. Resolved Decisions](#19-resolved-decisions)
+- [20. Open Questions](#20-open-questions)
+- [21. Planned / Post-V1](#21-planned--post-v1)
+- [22. Explicit Non-Decisions](#22-explicit-non-decisions)
+- [23. Competitive Landscape](#23-competitive-landscape)
+  - [23.1 Why Lenny?](#231-why-lenny)
+  - [23.2 Community Adoption Strategy](#232-community-adoption-strategy)
+- [24. `lenny-ctl` Command Reference](#24-lenny-ctl-command-reference)
+  - [24.1 Bootstrap](#241-bootstrap)
+  - [24.2 Preflight](#242-preflight)
+  - [24.3 Runtime Management](#243-runtime-management)
+  - [24.4 Pool Management](#244-pool-management)
+  - [24.5 Credential Management](#245-credential-management)
+  - [24.6 Quota Operations](#246-quota-operations)
+  - [24.7 Circuit Breakers](#247-circuit-breakers)
+  - [24.8 External Adapter Management](#248-external-adapter-management)
+  - [24.9 User and Token Management](#249-user-and-token-management)
+  - [24.10 Tenant Management](#2410-tenant-management)
+  - [24.11 Session Investigation](#2411-session-investigation)
+  - [24.12 Erasure Job Management](#2412-erasure-job-management)
+  - [24.13 Migration Management](#2413-migration-management)
+  - [24.14 Policy Management](#2414-policy-management)
+
+---
+
 ## 2. Goals and Non-Goals
 
 ### Goals
@@ -63,7 +195,7 @@ Lenny is designed as an open-source project. The community strategy — includin
 │                        Client / MCP Host                        │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ REST / MCP / OpenAI / Open Responses
-                               │ (via ExternalAdapterRegistry)
+                               │ (via ExternalAdapterRegistry — see Section 15)
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Gateway Edge Replicas                        │
@@ -76,11 +208,11 @@ Lenny is designed as an open-source project. The community strategy — includin
 └────────┬──────────┬──────────────┬──────────────┬───────────────┘
          │          │              │              │
     ┌────▼────┐ ┌───▼────┐ ┌──────▼─────┐ ┌─────▼──────┐
-    │Session  │ │Token / │ │  Event /   │ │  Artifact  │   ┌──────────────┐
-    │Manager  │ │Connec- │ │ Checkpoint │ │   Store    │   │ External MCP │
-    │(Postgres│ │tor Svc │ │   Store    │ │            │   │ Connectors   │
-    │+ Redis) │ │        │ │            │ │            │   │ (GitHub,     │
-    └─────────┘ └───┬────┘ └────────────┘ └────────────┘   │  Jira, ...)  │
+    │Session  │ │Token  │ │  Event /   │ │  Artifact  │   ┌──────────────┐
+    │Manager  │ │Service│ │ Checkpoint │ │   Store    │   │  External    │
+    │(Postgres│ │       │ │   Store    │ │            │   │  Connectors  │
+    │+ Redis) │ │       │ │            │ │            │   │ (GitHub,     │
+    └─────────┘ └───┬───┘ └────────────┘ └────────────┘   │  Jira, ...)  │
                     │   OAuth tokens (encrypted,           └──────▲───────┘
                     └──  cached in Redis) ────────────────────────┘
 
@@ -255,11 +387,11 @@ Until those triggers are hit, a single binary with internal boundaries is prefer
 
 **`tenant_id` claim extraction:** The OIDC claim used to extract the tenant identifier is configurable via the `auth.tenantIdClaim` Helm value (default: `tenant_id`). In single-tenant deployments this value is ignored — all requests are assigned the `default` tenant. In multi-tenant deployments the gateway reads the configured claim from the validated OIDC ID token and uses its string value as the `tenant_id`. If the claim is absent from the token or its value is an empty string, the gateway rejects the request with `401 Unauthorized` and error code `TENANT_CLAIM_MISSING`; it does not fall back to the default tenant. If the claim value is present but does not match any registered tenant, the gateway rejects the request with `403 Forbidden` and error code `TENANT_NOT_FOUND`. Both rejection reasons are logged (INFO level, with `user_id` and `jti` for traceability) and emitted as `auth_failure` audit events.
 
-### 4.3 Connector / Token Service
+### 4.3 Token Service
 
 **Role:** Manages two categories of credentials:
 
-1. **MCP tool tokens** — OAuth tokens for external tools (GitHub, Jira, etc.) used via the MCP fabric
+1. **Connector credentials** — OAuth tokens for external tools and agents (GitHub, Jira, external A2A agents, etc.) accessed via registered connectors (see Section 9.3 for the connector definition and OAuth/OIDC flow)
 2. **LLM provider credentials** — API keys, cloud IAM roles, and service accounts that runtimes need to access their backing LLM (see Section 4.9 for the full credential leasing design)
 
 **Deployment:** Runs as a **separate process** (Deployment) with its own ServiceAccount and KMS access. This is the only component with KMS decrypt permissions for downstream OAuth tokens. Gateway replicas call the Token Service over mTLS — they cannot directly decrypt stored tokens.
@@ -276,7 +408,7 @@ Until those triggers are hit, a single binary with internal boundaries is prefer
 
 **High availability and failure handling:**
 
-The Token/Connector Service is deployed as a **multi-replica Deployment (2+ replicas)** with a `PodDisruptionBudget` (`minAvailable: 1`) to survive voluntary disruptions. The service is fully stateless — all persistent state lives in Postgres (encrypted tokens) and KMS, so any replica can handle any request with no affinity requirements.
+The Token Service is deployed as a **multi-replica Deployment (2+ replicas)** with a `PodDisruptionBudget` (`minAvailable: 1`) to survive voluntary disruptions. The service is fully stateless — all persistent state lives in Postgres (encrypted tokens) and KMS, so any replica can handle any request with no affinity requirements.
 
 The gateway wraps all Token Service calls in an **automatic, in-memory circuit breaker** (a per-subsystem breaker, distinct from the operator-managed circuit breakers in Section 11.6). If the Token Service becomes unavailable:
 
@@ -1078,7 +1210,9 @@ The `PreMessageDelivery` phase fires before the gateway delivers an inter-sessio
 
 ### 4.9 Credential Leasing Service
 
-**Role:** Supplies runtime pods with the credentials they need to access their backing LLM provider (Anthropic API, AWS Bedrock, Vertex AI, etc.). This is distinct from the MCP tool token flow in Section 4.3 — this is about the runtime's own LLM access, not downstream tool OAuth.
+This section covers: Credential Providers (pluggable per-LLM-provider interfaces), Credential Pools (admin-managed credential sets), Credential Leases (session-scoped assignments), Credential Policy (tenant-level configuration for source preference and delivery mode), the Fallback Flow (rotation on provider failure), Proactive Lease Renewal, the LLM Reverse Proxy (credential-injecting proxy mode), Semantic Caching, the Credential Router (cost/latency-aware routing), Governance Boundaries, Emergency Revocation, Security Boundaries, KMS Key Rotation, and Credential Audit Events.
+
+**Role:** Supplies runtime pods with the credentials they need to access their backing LLM provider (Anthropic API, AWS Bedrock, Vertex AI, etc.). This is distinct from the connector credential flow in Section 4.3 — this is about the runtime's own LLM access, not downstream tool OAuth.
 
 **Design principle:** Runtimes receive **short-lived credential leases**, never long-lived API keys or root credentials. The Token Service owns all durable credential material.
 
@@ -1321,7 +1455,7 @@ credentialPolicy:
 
 > The `preferredSource` field determines which mode is used. There are effectively three configurations: pool-only (`preferredSource: pool`), user-only (`preferredSource: user`), or fallback chain (`preferredSource: prefer-user-then-pool` or `prefer-pool-then-user`). Per-provider fallback across pools is configured via each provider's `fallback.order` list within `providerPools`.
 
-> **User-scoped credential storage:** User-supplied credentials (registered via `POST /v1/credentials`) are stored in `TokenStore` (Postgres) using the same envelope encryption via KMS as OAuth refresh tokens (Section 4.3). Each credential is encrypted with a per-tenant data encryption key (DEK), itself wrapped by the KMS key encryption key (KEK). User-scoped credentials are subject to the same KMS key rotation procedure (Section 10.5), the same access-control boundaries (tenant-scoped RLS), and the same data classification (T4 Restricted, Section 12.6). The Token Service decrypts user-scoped credentials on demand when materializing a credential lease — the plaintext credential is never persisted outside the Token Service's in-memory processing context.
+> **User-scoped credential storage:** User-supplied credentials (registered via `POST /v1/credentials`) are stored in `TokenStore` (Postgres) using the same envelope encryption via KMS as OAuth refresh tokens (Section 4.3). Each credential is encrypted with a per-tenant data encryption key (DEK), itself wrapped by the KMS key encryption key (KEK). User-scoped credentials are subject to the same KMS key rotation procedure (Section 10.5), the same access-control boundaries (tenant-scoped RLS), and the same data classification (T4 Restricted, Section 12.9). The Token Service decrypts user-scoped credentials on demand when materializing a credential lease — the plaintext credential is never persisted outside the Token Service's in-memory processing context.
 
 #### Pre-Authorized Credential Flow
 
@@ -2008,6 +2142,8 @@ This is the minimum configuration for a single-runtime deployment. All other fie
 
 ### 5.2 Pool Configuration and Execution Modes
 
+This section covers: pool dimensions and configuration fields, three execution modes (`session`, `task`, `concurrent`), tenant pinning and cross-tenant reuse rules, the Lenny scrub procedure for task-mode pods, concurrent-workspace and concurrent-stateless sub-variants, slot assignment atomicity, slot retry policy, execution mode scaling implications (mode-adjusted formulas), pool taxonomy, and bootstrap behavior.
+
 Each pool is a warmable deployment target for one runtime + operational profile.
 
 **Pool dimensions:**
@@ -2186,6 +2322,10 @@ If `acknowledgeProcessLevelIsolation` is absent or `false`, the pool controller 
 #### Execution Mode Scaling Implications
 
 The default PoolScalingController formula (Section 4.6.2) assumes session mode — one session per pod, no reuse. Task and concurrent modes change the relationship between pod count and effective capacity, so the formula must include a per-mode adjustment factor.
+
+**Term definitions:**
+- `mode_factor`: pod reuse multiplier — `1.0` for session mode, configurable for task mode (e.g., `maxTasksPerPod`), and `maxConcurrent` for concurrent mode.
+- `burst_mode_factor`: burst-term equivalent of `mode_factor`, reflecting slot availability during burst periods.
 
 **Mode adjustment factor (`mode_factor`):**
 
@@ -2814,10 +2954,6 @@ Clients MUST treat `uploadToken` as a secret credential: it MUST NOT be logged, 
 
 **Seal-and-export invariant:** The workspace is always exported to durable storage before the pod is released. If export fails, the pod is held in `draining` state and retried with exponential backoff (initial: 5s, factor: 2×, cap: 60s per attempt). The total retry window is bounded by `maxWorkspaceSealDurationSeconds` (pool-level configuration, default: 300s). If the seal does not succeed within this window, the gateway stops retrying, transitions the session to `failed` with reason `workspace_seal_timeout`, emits a `workspaceSealFailed` audit event (recording the last MinIO error), terminates the pod anyway, and fires the `WorkspaceSealStuck` alert (Section 16.5). The `lenny_workspace_seal_duration_seconds` histogram (labeled by `pool` and `outcome`: `success`, `timeout`) tracks seal completion time across all sessions. This ensures session output is never lost due to transient pod cleanup races while preventing a permanent MinIO outage from holding pods in `draining` indefinitely.
 
-```
-
-```
-
 ### 7.2 Interactive Session Model
 
 Once a session is attached, the client interacts via a **Lenny session** with bidirectional streaming over Streamable HTTP (SSE for server→client, POST for client→server). All content delivery uses the `MessageEnvelope` format (see Section 15.4.1). Externally, the session is surfaced as a protocol-native task object by the active `ExternalProtocolAdapter` — an MCP Task for MCP clients, an A2A Task for A2A clients, and so on. Internally the gateway operates against the **Lenny canonical task state machine** (Section 8.8), which is defined independently of any external protocol.
@@ -2860,6 +2996,8 @@ Once a session is attached, the client interacts via a **Lenny session** with bi
 The gateway emits `children_reattached` as a single SSE event immediately after `session.resumed` when the resuming session has one or more active children in the delegation tree. If the parent session has no children (or all children reached terminal states before the parent resumed), the event is not emitted. The event is delivered exactly once per parent resume; subsequent child state changes are delivered through the normal streaming event flow.
 
 **Session state machine:**
+
+> **Note:** This is a summary of session-level state transitions as visible to external clients. For the complete pod and session state machine — including pre-attached states, task-mode cycling, and concurrent-workspace slot multiplexing — see Section 6.2.
 
 ```
 running → suspended        (interrupt_request + interrupt_acknowledged)
@@ -2995,7 +3133,7 @@ This drain is performed as a single Redis pipeline call within the same goroutin
    This applies uniformly to all message sources: external client (`POST /v1/sessions/{id}/messages`) and inter-session via `lenny/send_message`. Messages without `delivery: "immediate"` remain buffered until an explicit `resume_session` or a subsequent `delivery: "immediate"` message triggers the resume, at which point all buffered inbox messages are delivered in FIFO order. **Coordinator routing for `delivery: immediate` resume:** The `suspended → running` (or `suspended → resume_pending`) transition requires Postgres state writes and (when the pod is held) a resume RPC to the pod, both of which must be performed by the session's coordinating gateway replica. When a `delivery: immediate` message lands on a non-coordinator replica, that replica forwards the message to the session's coordinator (identified via the coordination lease in Redis/Postgres). The coordinator executes the atomic resume-and-deliver sequence (or the `resume_pending` transition for podless sessions). If the coordinator is unreachable (e.g., crashed, network partition), the forwarding replica falls back to inbox buffering with a `queued` delivery receipt status — the message is not silently dropped. The coordinator forwarding mechanism reuses the same internal gRPC `ForwardMessage` RPC used for all cross-replica message routing (see Section 10.1 per-session coordination).
 7. **Target session in terminal or recovering state** → see dead-letter handling below.
 
-**Concurrent-workspace mode (`slotId`) routing:** In concurrent-workspace mode, each active slot maintains its own independent inbox on the coordinating gateway replica. The `slotId` field in the `MessageEnvelope` determines which slot's inbox receives the message. Path evaluation (paths 1-7 above) is performed **per-slot**: `ready_for_input`, `input_required`, and `await_children` are tracked per-slot, not per-pod. A message with `slotId: "slot_01"` can be delivered (path 2) to slot 01 while slot 02 is in `input_required` (path 3). Messages without a `slotId` in concurrent-workspace mode are rejected with `SLOT_ID_REQUIRED`. The `delivery: "immediate"` interrupt (path 4) targets the specific slot's tool-call context, not the entire pod. See Section 12c for full concurrent-workspace semantics.
+**Concurrent-workspace mode (`slotId`) routing:** In concurrent-workspace mode, each active slot maintains its own independent inbox on the coordinating gateway replica. The `slotId` field in the `MessageEnvelope` determines which slot's inbox receives the message. Path evaluation (paths 1-7 above) is performed **per-slot**: `ready_for_input`, `input_required`, and `await_children` are tracked per-slot, not per-pod. A message with `slotId: "slot_01"` can be delivered (path 2) to slot 01 while slot 02 is in `input_required` (path 3). Messages without a `slotId` in concurrent-workspace mode are rejected with `SLOT_ID_REQUIRED`. The `delivery: "immediate"` interrupt (path 4) targets the specific slot's tool-call context, not the entire pod. See Section 5.2 for full concurrent-workspace semantics.
 
 **Dead-letter handling for inter-session messages:**
 
@@ -4098,19 +4236,19 @@ Deployers should alert when `lenny_orphan_tasks_active` exceeds a deployment-spe
 
 The platform MCP server (available to `type: agent` runtimes via the adapter manifest) exposes:
 
-| Tool                        | Purpose                                                       |
-| --------------------------- | ------------------------------------------------------------- |
-| `lenny/delegate_task`       | Spawn a child session (target is opaque)                      |
-| `lenny/await_children`      | Wait for children (streaming, unblocks on `input_required`)   |
-| `lenny/cancel_child`        | Cancel a child and its descendants                            |
-| `lenny/discover_agents`     | List available delegation targets (policy-scoped)             |
-| `lenny/output`              | Emit output parts to the parent/client                        |
-| `lenny/request_elicitation` | Request human input via the elicitation chain                 |
-| `lenny/memory_write`        | Write to the memory store (see Section 9.4)                   |
-| `lenny/memory_query`        | Query the memory store                                        |
-| `lenny/request_input`       | Block until answer arrives (replaces stdout `input_required`) |
-| `lenny/send_message`        | Send a message to any task by taskId                          |
-| `lenny/get_task_tree`       | Return task hierarchy with states                             |
+| Tool                        | Purpose                                                       | See     |
+| --------------------------- | ------------------------------------------------------------- | ------- |
+| `lenny/delegate_task`       | Spawn a child session (target is opaque)                      | §8.2    |
+| `lenny/await_children`      | Wait for children (streaming, unblocks on `input_required`)   | §8.5    |
+| `lenny/cancel_child`        | Cancel a child and its descendants                            |         |
+| `lenny/discover_agents`     | List available delegation targets (policy-scoped)             | §8.5    |
+| `lenny/output`              | Emit output parts to the parent/client                        | §15.4.1 |
+| `lenny/request_elicitation` | Request human input via the elicitation chain                 | §9.2    |
+| `lenny/memory_write`        | Write to the memory store (see Section 9.4)                   | §9.4    |
+| `lenny/memory_query`        | Query the memory store                                        | §9.4    |
+| `lenny/request_input`       | Block until answer arrives (replaces stdout `input_required`) | §7.2    |
+| `lenny/send_message`        | Send a message to any task by taskId                          | §7.2    |
+| `lenny/get_task_tree`       | Return task hierarchy with states                             | §8.9    |
 
 #### Runtime Discovery
 
@@ -4203,7 +4341,9 @@ connectors:
 
 Includes `labels` map for environment selector matching. Tool capability metadata derived from MCP `ToolAnnotations` at registration time (see Section 5.1 — Capability Inference).
 
-All connectors must be registered before they can be used — unregistered external MCP servers cannot be called from inside a pod (security: gateway must know about every external endpoint for OAuth flow, audit logging).
+> **Transport extensibility.** V1 connectors use MCP (Streamable HTTP) as the transport protocol (`mcpServerUrl` + `transport: streamable_http`). Post-v1, the `ConnectorDefinition` schema will add support for A2A (`transport: a2a`, `a2aAgentUrl`) and Agent Protocol (`transport: agent_protocol`, `agentProtocolUrl`) transports, enabling delegation to external agents over their native protocols. The `allowedExternalEndpoints` field on delegation leases (Section 8.3) is reserved for this purpose.
+
+All connectors must be registered before they can be used — unregistered external endpoints cannot be called from inside a pod (security: gateway must know about every external endpoint for OAuth flow, audit logging, and protocol mediation).
 
 Each connector in a session's effective delegation policy gets its own independent MCP server in the adapter manifest (see Section 4.7). No aggregated connector proxy.
 
@@ -4494,7 +4634,7 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 | Gateway replicas        | 24h             | DNS: `lenny-gateway.lenny-system.svc`                | cert-manager auto-renewal at 2/3 lifetime               |
 | Agent pods              | 4h              | SPIFFE URI: `spiffe://<trust-domain>/agent/{pool}/{pod-name}` (trust domain from `global.spiffeTrustDomain`) | cert-manager auto-renewal; pod restart if renewal fails |
 | Controller              | 24h             | DNS: `lenny-controller.lenny-system.svc`             | cert-manager auto-renewal                               |
-| Token/Connector Service | 24h             | DNS: `lenny-token-service.lenny-system.svc`          | cert-manager auto-renewal                               |
+| Token Service | 24h             | DNS: `lenny-token-service.lenny-system.svc`          | cert-manager auto-renewal                               |
 
 **Pod identity:** Agent pods use SPIFFE-compatible URIs as SANs, formatted as `spiffe://<trust-domain>/agent/{pool}/{pod-name}`. The trust domain is configurable via Helm value `global.spiffeTrustDomain` (default: `lenny`; deployers **must** override this to a deployment-specific value such as `lenny-<cluster-name>-<namespace>` in any environment where multiple Lenny instances share the same Kubernetes cluster and CA). Two deployments sharing a trust domain and CA would have overlapping SPIFFE URIs, enabling cross-deployment pod impersonation — a `global.spiffeTrustDomain` override eliminates this risk. The `lenny-preflight` Job warns when `global.spiffeTrustDomain` is set to the default value and more than one Lenny Deployment is detected in the cluster, prompting the deployer to set a distinct trust domain. The gateway validates the SPIFFE URI against the expected pool/pod on each connection. Each gateway replica gets a distinct certificate so compromise of one replica can be detected and revoked independently.
 
@@ -4686,7 +4826,7 @@ lenny-ctl admin pools upgrade resume --pool claude-worker-sandboxed-medium
 - **Manual rotation sequence (reference only):** (1) Deploy new pool, (2) verify new pool pods pass health checks, (3) route a canary percentage of new sessions to the new pool, (4) only after validation, set old pool's `minWarm` to 0, (5) only after old pool fully drains, delete old `SandboxTemplate` CRD.
 - **Rollback (manual):** If the new pool version is broken, recreate the old `SandboxTemplate` CRD (same config, old image digest). Since pool rotation is additive (new pool created before old pool is drained), the old pool's config should be retained in version control or Helm values until the new pool is verified.
 
-**Token/Connector Service:** Rolling Deployment update. Stateless — reads from Postgres/Redis, so no special migration needed for the service itself.
+**Token Service:** Rolling Deployment update. Stateless — reads from Postgres/Redis, so no special migration needed for the service itself.
 
 **KMS Key Rotation:** See Section 4.9.1 for the full KMS envelope key rotation procedure (steps, re-encryption job, Redis cache invalidation, frequency, and monitoring).
 
@@ -6609,7 +6749,7 @@ spec:
 
 **`lenny-system` namespace NetworkPolicies (NET-017):**
 
-The `lenny-system` namespace houses the gateway, Token/Connector Service, warm pool controller, scaling controller, and the dedicated CoreDNS instance. These components hold high-value credentials and control-plane authority. The Helm chart applies a default-deny policy and component-specific allow-lists to enforce least-privilege networking within `lenny-system`, mirroring the agent namespace approach.
+The `lenny-system` namespace houses the gateway, Token Service, warm pool controller, scaling controller, and the dedicated CoreDNS instance. These components hold high-value credentials and control-plane authority. The Helm chart applies a default-deny policy and component-specific allow-lists to enforce least-privilege networking within `lenny-system`, mirroring the agent namespace approach.
 
 **Default-deny policy for `lenny-system`:**
 
@@ -6629,14 +6769,14 @@ spec:
 | Component                                                                            | Egress Allowed                                                                                                                                                                                                                                                    | Ingress Allowed                                                                                                                     |
 | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | **Gateway** (`lenny.dev/component: gateway`)                                         | Agent namespaces (TCP 50051, adapter gRPC); Token Service (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, mTLS); PgBouncer (TCP 5432); Redis (TCP 6380, TLS — `{{ .Values.redis.tlsPort }}`); MinIO (TCP 9443, TLS — `{{ .Values.minio.tlsPort }}`); kube-apiserver (TCP 443, CIDR `{{ .Values.kubeApiServerCIDR }}`); `kube-system` CoreDNS (UDP/TCP 53); external HTTPS (TCP 443, `0.0.0.0/0` excluding cluster pod/service CIDRs and IMDS addresses — required for LLM Proxy upstream forwarding to LLM provider APIs, connector callback delivery, and webhook notifications; see Section 4.8 and Section 4.9). IMDS addresses (`169.254.169.254/32`, `fd00:ec2::254/128`, `100.100.100.200/32`) are explicitly excluded via `except` clauses on the external HTTPS CIDR rule. In-cluster external interceptor namespaces: for each namespace declared in `{{ .Values.gateway.interceptorNamespaces }}` (default: `[]`), the Helm chart renders a supplemental egress rule allowing TCP `{{ .Values.gateway.interceptorGRPCPort }}` (default 50053) to that namespace — required for the gateway to reach in-cluster gRPC interceptors (Section 4.8, NET-039). | External ingress (TCP 443 from Ingress controller namespace — `{{ .Values.ingressControllerNamespace }}`, default: `ingress-nginx`); agent namespaces (TCP 50051, gateway gRPC port for pod-to-gateway control traffic; TCP 8443, LLM proxy port for proxy-mode pods); admission-webhook pods (TCP `{{ .Values.gateway.internalPort }}` — default 8080, internal HTTP port for `lenny-drain-readiness` callbacks to `GET /internal/drain-readiness` — NET-037). |
-| **Token/Connector Service** (`lenny.dev/component: token-service`)                   | PgBouncer (TCP 5432); Redis (TCP 6380, TLS — `{{ .Values.redis.tlsPort }}`); KMS endpoint (HTTPS 443, CIDR from `{{ .Values.kms.endpointCIDR }}`); `kube-system` CoreDNS (UDP/TCP 53).                                                                           | Gateway pods only (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, mTLS).                                               |
+| **Token Service** (`lenny.dev/component: token-service`)                   | PgBouncer (TCP 5432); Redis (TCP 6380, TLS — `{{ .Values.redis.tlsPort }}`); KMS endpoint (HTTPS 443, CIDR from `{{ .Values.kms.endpointCIDR }}`); `kube-system` CoreDNS (UDP/TCP 53).                                                                           | Gateway pods only (TCP `{{ .Values.tokenService.grpcPort }}` — default 50052, mTLS).                                               |
 | **Warm Pool Controller / PoolScalingController** (`lenny.dev/component: controller`) | kube-apiserver (TCP 443); PgBouncer (TCP 5432); `kube-system` CoreDNS (UDP/TCP 53).                                                                                                                                                                               | None (controllers initiate all connections).                                                                                        |
-| **PgBouncer** (`lenny.dev/component: pgbouncer`) — self-managed profile only; absent on cloud-managed deployments where the provider proxy is external to the cluster | Postgres (TCP 5432, CIDR from `{{ .Values.postgres.host }}`); `kube-system` CoreDNS (UDP/TCP 53). | Gateway pods (TCP 5432); Token/Connector Service pods (TCP 5432); Warm Pool Controller / PoolScalingController pods (TCP 5432). |
+| **PgBouncer** (`lenny.dev/component: pgbouncer`) — self-managed profile only; absent on cloud-managed deployments where the provider proxy is external to the cluster | Postgres (TCP 5432, CIDR from `{{ .Values.postgres.host }}`); `kube-system` CoreDNS (UDP/TCP 53). | Gateway pods (TCP 5432); Token Service pods (TCP 5432); Warm Pool Controller / PoolScalingController pods (TCP 5432). |
 | **MinIO** (`lenny.dev/component: minio`) — self-managed profile only; absent on cloud-managed deployments where the provider's native object storage (S3, GCS, Azure Blob) is used instead | `kube-system` CoreDNS (UDP/TCP 53). | Gateway pods (TCP 9443, TLS — `{{ .Values.minio.tlsPort }}`). |
 | **Admission Webhooks** (`lenny.dev/component: admission-webhook`) — `lenny-label-immutability`, `lenny-direct-mode-isolation`, `lenny-sandboxclaim-guard`, and CRD validation webhooks | `kube-system` CoreDNS (UDP/TCP 53); Gateway internal HTTP port (TCP `{{ .Values.gateway.internalPort }}` — default 8080) for the `lenny-drain-readiness` webhook to call `GET /internal/drain-readiness` (NET-037). Without this egress rule, the `lenny-system` default-deny policy blocks the drain-readiness callback, causing all pod evictions to be permanently rejected by the fail-closed webhook. | kube-apiserver (TCP 443, CIDR `{{ .Values.webhookIngressCIDR }}` — default `0.0.0.0/0`). The kube-apiserver must reach these pods to invoke ValidatingAdmissionWebhook callbacks. Without this ingress rule, the `lenny-system` default-deny policy blocks all webhook callbacks, causing fail-closed webhooks to reject all pod admissions silently. See the `webhookIngressCIDR` note below for cloud-specific tightening guidance. |
 | **Dedicated CoreDNS** (`lenny.dev/component: coredns`)                               | `kube-system` CoreDNS (UDP/TCP 53, for upstream forwarding); external DNS resolvers if configured.                                                                                                                                                                | Agent namespace pods (UDP/TCP 53, per `allow-pod-egress-base` in agent namespaces); monitoring namespace (TCP 9153, Prometheus metrics scrape). |
 
-> **Prometheus monitoring ingress (NET-045):** The `lenny-system` default-deny policy blocks all unsolicited ingress, including Prometheus scrape requests from the monitoring namespace. Without explicit ingress rules, all `lenny-system` component metrics (including `lenny_gateway_active_sessions`, `lenny_network_policy_cidr_drift_total`, HPA-driving metrics like `lenny_gateway_request_queue_depth`, and CoreDNS `prometheus :9153`) would be unscrapeable, breaking the observability and autoscaling pipeline. The Helm chart renders a supplemental ingress NetworkPolicy for each `lenny-system` component that exposes a metrics endpoint, allowing TCP ingress on the component's metrics port from the namespace specified in `{{ .Values.monitoring.namespace }}` (default: `monitoring`). The affected components and their metrics ports are: Gateway (`{{ .Values.gateway.metricsPort }}`, default 9090), Warm Pool Controller / PoolScalingController (`{{ .Values.controller.metricsPort }}`, default 9090), Token/Connector Service (`{{ .Values.tokenService.metricsPort }}`, default 9090), and Dedicated CoreDNS (TCP 9153). The `lenny-preflight` Job validates that the monitoring namespace exists and contains at least one pod matching `app.kubernetes.io/name: prometheus` (or the label configured in `{{ .Values.monitoring.podLabel }}`), warning (non-blocking) if no Prometheus pods are found.
+> **Prometheus monitoring ingress (NET-045):** The `lenny-system` default-deny policy blocks all unsolicited ingress, including Prometheus scrape requests from the monitoring namespace. Without explicit ingress rules, all `lenny-system` component metrics (including `lenny_gateway_active_sessions`, `lenny_network_policy_cidr_drift_total`, HPA-driving metrics like `lenny_gateway_request_queue_depth`, and CoreDNS `prometheus :9153`) would be unscrapeable, breaking the observability and autoscaling pipeline. The Helm chart renders a supplemental ingress NetworkPolicy for each `lenny-system` component that exposes a metrics endpoint, allowing TCP ingress on the component's metrics port from the namespace specified in `{{ .Values.monitoring.namespace }}` (default: `monitoring`). The affected components and their metrics ports are: Gateway (`{{ .Values.gateway.metricsPort }}`, default 9090), Warm Pool Controller / PoolScalingController (`{{ .Values.controller.metricsPort }}`, default 9090), Token Service (`{{ .Values.tokenService.metricsPort }}`, default 9090), and Dedicated CoreDNS (TCP 9153). The `lenny-preflight` Job validates that the monitoring namespace exists and contains at least one pod matching `app.kubernetes.io/name: prometheus` (or the label configured in `{{ .Values.monitoring.podLabel }}`), warning (non-blocking) if no Prometheus pods are found.
 
 > **`kubeApiServerCIDR` and `webhookIngressCIDR` Helm values (NET-040):** Two separate Helm values govern kube-apiserver connectivity, because the kube-apiserver egress IP for gateway access and its ingress IP for webhook callbacks differ in most environments:
 >
@@ -6846,7 +6986,7 @@ The `coredns-ratelimit` and `coredns-filter` plugins are non-standard CoreDNS pl
 
 ### 13.3 Credential Flow
 
-**MCP tool credentials (OAuth):**
+**Connector credentials (OAuth):**
 
 ```
 Client authenticates → Gateway validates → Gateway mints session context
@@ -6880,7 +7020,9 @@ Gateway evaluates CredentialPolicy → Token Service selects from pool or user s
                                    → On session end: lease invalidated, proxy stops forwarding
 ```
 
-**Key distinction:** MCP tool tokens are used by the gateway on behalf of pods (pods never see them). LLM provider credentials are either delivered directly as short-lived leases (direct mode) or kept entirely out of the pod via the credential-injecting reverse proxy (proxy mode) — see Section 4.9 for details on both modes.
+**Key distinction:** Connector credentials (OAuth tokens for external tools and agents) are used by the gateway on behalf of pods (pods never see them). LLM provider credentials are either delivered directly as short-lived leases (direct mode) or kept entirely out of the pod via the credential-injecting reverse proxy (proxy mode) — see Section 4.9 for details on both modes.
+
+For the complete credential subsystem specification — including threat model considerations, security boundaries, emergency revocation procedures, and governance boundaries — see Section 4.9. Key security-relevant subsections: Security Boundaries (preventing cross-tenant credential leakage), Emergency Credential Revocation (in-memory deny list propagation), and Credential Governance Boundaries (separation of admin vs. deployer vs. runtime access).
 
 ### 13.4 Upload Security
 
@@ -8239,7 +8381,7 @@ The adapter populates `from.kind` and `from.id` from execution context before de
 
 - `requestId` in `lenny/request_input` — generated by the gateway; runtime only supplies `parts`
 
-**`slotId`** — optional string; present only in concurrent-workspace mode. Identifies the concurrent slot this message is addressed to. Session-mode and task-mode messages never carry `slotId`. See Section 12c and the `slotId` multiplexing note in the Protocol Reference.
+**`slotId`** — optional string; present only in concurrent-workspace mode. Identifies the concurrent slot this message is addressed to. Session-mode and task-mode messages never carry `slotId`. See Section 5.2 and the `slotId` multiplexing note in the Protocol Reference.
 
 **`delivery`** — optional closed enum controlling interrupt behaviour. Defined values:
 
@@ -9345,7 +9487,7 @@ Multi-window burn-rate alerting is required for all availability and latency SLO
 | Component               | K8s Resource                              | Notes                                                                                                                                                      |
 | ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway                 | Deployment + Service + Ingress            | HPA, PDB, multi-zone, topology spread                                                                                                                      |
-| Token/Connector Service | Deployment + Service + PDB                | 2+ replicas, stateless; separate SA with KMS access; PDB `minAvailable: 1`                                                                                 |
+| Token Service | Deployment + Service + PDB                | 2+ replicas, stateless; separate SA with KMS access; PDB `minAvailable: 1`                                                                                 |
 | Warm Pool Controller    | Deployment (2+ replicas, leader election) | Manages pod lifecycle via `PoolManager` interface (default implementation: `kubernetes-sigs/agent-sandbox` CRDs)                                           |
 | PoolScalingController   | Deployment (2+ replicas, leader election) | Reconciles pool config from Postgres into CRDs; manages scaling intelligence                                                                               |
 | Agent Pods              | Pods owned by `Sandbox` CRD               | RuntimeClass per pool; preStop checkpoint hook for active pods; optional PDB per pool on warm (idle) pods to enforce `minWarm` during voluntary disruption |
@@ -10498,7 +10640,7 @@ Regardless of deployment profile, the following requirements apply uniformly:
 | Phase | Components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Milestone                                                                                                                                                                                            |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 5.4   | **etcd encryption at rest (mandatory prerequisite for credential storage):** Enable Kubernetes etcd encryption-at-rest (`EncryptionConfiguration`) for all Kubernetes Secret resources and CRD data before any real credentials are written to the cluster. Required providers: `aescbc` (minimum) or `kms` (recommended for production). Helm chart must include an `etcdEncryption.enabled` value defaulting to `true` and fail deployment if set to `false` in a non-development profile. Deliverables (self-managed clusters only; managed K8s uses provider-specific encryption — see Section 4.9 topology table): (1) `EncryptionConfiguration` manifest included in Helm chart; (2) CI gate verifying that a test Secret written to the cluster is stored encrypted in etcd (confirmed via `etcdctl get` on the raw key); (3) runbook for key rotation (`docs/runbooks/etcd-key-rotation.md`). **This phase is a hard prerequisite for Phase 5.5.** Without encryption at rest, credentials written to Kubernetes Secrets are stored in plaintext in etcd. The Phase 5.5 Token Service must not be deployed until this gate is cleared. | etcd encryption verified in CI; credentials will be encrypted at rest from Phase 5.5 onward |
-| 5.5   | **Basic credential leasing** + **Basic Token Service**: `CredentialProvider` interface, `anthropic_direct` provider implementation, single-pool credential assignment (`least-loaded` strategy), `AssignCredentials` RPC to push credentials to the adapter, lease creation and expiry. Admin API endpoint for credential pool registration. **Basic Token Service (single-replica, no KMS envelope encryption)**: a minimal Token/Connector Service deployment that owns `TokenStore` writes/reads and serves `AssignCredentials` / `RevokeCredentials` RPCs to the gateway over mTLS. Credentials are read from Kubernetes Secrets at this stage — no application-layer KMS envelope encryption, no OAuth flows, no credential rotation. Kubernetes Secrets are protected by etcd encryption-at-rest (Phase 5.4 gate). **Token Service multi-replica HA** is introduced here: the Token Service is deployed with `replicas: 2` and a `PodDisruptionBudget` (`minAvailable: 1`) from Phase 5.5 onward — single-replica is not acceptable once real credentials are present. This component is the authoritative owner of `TokenStore` from Phase 5.5 onward; Phase 7's `AuthEvaluator` (backed by `TokenStore` and `UserStateStore`) and Phase 11's advanced credential leasing both depend on it being present. **Limitations at this stage:** K8s Secrets backend only (with etcd encryption), no OAuth token storage, no application-layer KMS, no credential rotation — KMS envelope encryption and OAuth flows are addressed in Phase 12a hardening. **LLM proxy delivery mode (`deliveryMode: proxy`) is not yet available** — all credential delivery in this phase is direct mode only (`deliveryMode: direct`). Proxy mode is introduced in Phase 5.8; until then, multi-tenant deployments must use sandboxed isolation (`isolationProfile: sandboxed`) with direct mode, and direct mode with `isolationProfile: standard` is blocked by admission control in `tenancy.mode: multi` (see Section 4.9). **Prerequisite:** Phase 5.4 (etcd encryption) must be complete and CI-verified before this phase begins. | Credential infrastructure ready; Token Service present as the authoritative credential owner (multi-replica HA, etcd-encrypted Secrets); real LLM provider testing begins after Phase 5.75 policy gate |
+| 5.5   | **Basic credential leasing** + **Basic Token Service**: `CredentialProvider` interface, `anthropic_direct` provider implementation, single-pool credential assignment (`least-loaded` strategy), `AssignCredentials` RPC to push credentials to the adapter, lease creation and expiry. Admin API endpoint for credential pool registration. **Basic Token Service (single-replica, no KMS envelope encryption)**: a minimal Token Service deployment that owns `TokenStore` writes/reads and serves `AssignCredentials` / `RevokeCredentials` RPCs to the gateway over mTLS. Credentials are read from Kubernetes Secrets at this stage — no application-layer KMS envelope encryption, no OAuth flows, no credential rotation. Kubernetes Secrets are protected by etcd encryption-at-rest (Phase 5.4 gate). **Token Service multi-replica HA** is introduced here: the Token Service is deployed with `replicas: 2` and a `PodDisruptionBudget` (`minAvailable: 1`) from Phase 5.5 onward — single-replica is not acceptable once real credentials are present. This component is the authoritative owner of `TokenStore` from Phase 5.5 onward; Phase 7's `AuthEvaluator` (backed by `TokenStore` and `UserStateStore`) and Phase 11's advanced credential leasing both depend on it being present. **Limitations at this stage:** K8s Secrets backend only (with etcd encryption), no OAuth token storage, no application-layer KMS, no credential rotation — KMS envelope encryption and OAuth flows are addressed in Phase 12a hardening. **LLM proxy delivery mode (`deliveryMode: proxy`) is not yet available** — all credential delivery in this phase is direct mode only (`deliveryMode: direct`). Proxy mode is introduced in Phase 5.8; until then, multi-tenant deployments must use sandboxed isolation (`isolationProfile: sandboxed`) with direct mode, and direct mode with `isolationProfile: standard` is blocked by admission control in `tenancy.mode: multi` (see Section 4.9). **Prerequisite:** Phase 5.4 (etcd encryption) must be complete and CI-verified before this phase begins. | Credential infrastructure ready; Token Service present as the authoritative credential owner (multi-replica HA, etcd-encrypted Secrets); real LLM provider testing begins after Phase 5.75 policy gate |
 | 5.6   | **Targeted security design review — credential injection surface**: review credential leasing design (Phase 5.5) for: credential scope leakage between tenants, Token Service RPC authentication, K8s Secrets access controls, and lease expiry enforcement. This is a focused design review, not a pentest. Any architectural findings must be resolved before Phase 6 proceeds. | Credential injection attack surface reviewed; blocking findings resolved |
 
 > **Note — Phase 5.75 policy gate:** Phase 5.75 is a hard prerequisite for Phase 6. No session using real LLM credentials may be exercised in integration tests or development until Phase 5.75 is complete. This gate ensures that real credentials are always protected by authentication and quota enforcement, even in early testing environments.
@@ -10525,7 +10667,7 @@ Regardless of deployment profile, the following requirements apply uniformly:
 
 | Phase | Components | Milestone |
 | ----- | ---------- | --------- |
-| 12a | **Token/Connector Service hardening** (builds on Phase 5.5 Basic Token Service): application-layer KMS envelope encryption for stored OAuth tokens (the multi-replica HA deployment and PodDisruptionBudget were established in Phase 5.5), OAuth flows for external tool connectors (GitHub, Jira, etc.), full credential pool management, per-user OAuth token storage. Phase 5.5's K8s-Secrets-backed service is promoted to the full production-grade deployment described in Section 4.3 with KMS-backed token storage. (`RotateCredentials` RPC is delivered in Phase 11; this phase hardens the underlying Token Service storage and adds OAuth flows.) | Token Service production-hardened: KMS-backed token storage, OAuth connector auth operational |
+| 12a | **Token Service hardening** (builds on Phase 5.5 Basic Token Service): application-layer KMS envelope encryption for stored OAuth tokens (the multi-replica HA deployment and PodDisruptionBudget were established in Phase 5.5), OAuth flows for external tool connectors (GitHub, Jira, etc.), full credential pool management, per-user OAuth token storage. Phase 5.5's K8s-Secrets-backed service is promoted to the full production-grade deployment described in Section 4.3 with KMS-backed token storage. (`RotateCredentials` RPC is delivered in Phase 11; this phase hardens the underlying Token Service storage and adds OAuth flows.) | Token Service production-hardened: KMS-backed token storage, OAuth connector auth operational |
 | 12b | `type: mcp` runtime support. MCP runtime endpoints, lifecycle management, and discovery integration. **Integration test gate (prerequisite for merging):** the Phase 12b implementation must include an end-to-end integration test suite covering: (1) MCP runtime session creation and credential assignment from Phase 5.5 Token Service; (2) `type: mcp` runtime lifecycle (start, idle, claim, release) exercised against the credential-injection path; (3) session initialization against an MCP runtime with valid credentials, confirming no cross-tenant credential leakage. These tests must pass in CI before the Phase 12b branch is merged. | External MCP runtimes operational; credential assignment and session initialization verified by integration tests |
 | 12c | Concurrent execution modes: both `concurrencyStyle: workspace` (with `slotId` multiplexing) and `concurrencyStyle: stateless` (with tenant-affinity Service routing). **Integration test gate (prerequisite for merging):** the Phase 12c implementation must include an end-to-end integration test suite covering: (1) concurrent workspace multiplexing via `slotId` exercised against the credential-assignment path (Phase 5.5 Token Service) and session initialization path (Phase 4); (2) credential isolation between concurrent slots — verify no slot receives another slot's credentials; (3) concurrent-mode session initialization for all runtime types (`agent`, `task`, `mcp`); (4) concurrent-stateless tenant-affinity routing — verify that requests for the same tenant are routed to tenant-pinned pods and that cross-tenant routing is rejected. These tests must pass in CI before the Phase 12c branch is merged. | Both concurrent modes (workspace and stateless) available for all runtime types; credential assignment, session initialization, and tenant-affinity routing verified by integration tests |
 | 13 | **Full observability stack**: **complete audit logging** (Postgres audit tables with append-only grants, hash-chain integrity, SIEM connectivity, compliance profile enforcement — Section 11.7; note: Phase 7 ships basic policy-decision audit events as part of the policy engine, but the durable audit storage, integrity controls, and SIEM pipeline described in Section 11.7 are introduced here), OpenTelemetry metrics and dashboards, distributed tracing visualization, alerting rules, SLO monitoring. Builds on structured logging and trace propagation established in Phase 2.5. **Pre-Phase 13 audit coverage:** Between Phase 7 and Phase 13, policy-decision events (auth denials, quota rejections, rate-limit hits) are emitted via structured logs (Phase 2.5) and are not persisted to durable append-only audit tables. This is an accepted gap: all pre-Phase 13 activity occurs in development/testing environments with no regulated tenants, and the full audit infrastructure (append-only tables, hash chaining, SIEM) is not required before GA readiness begins at Phase 13. | Operational readiness; durable append-only audit trail with integrity controls and optional SIEM pipeline active |
