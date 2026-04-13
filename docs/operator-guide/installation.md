@@ -21,7 +21,7 @@ This page covers end-to-end installation of Lenny on a Kubernetes cluster, from 
 | Helm | 3.12+ | Primary installation and upgrade mechanism |
 | cert-manager | 1.12+ | Automated mTLS certificate provisioning and renewal for gateway-to-pod communication |
 | Container runtime | containerd 1.7+ | Base container runtime; must support RuntimeClass selection |
-| CNI plugin | Calico or Cilium | Must support NetworkPolicy enforcement including egress rules |
+| CNI plugin | Calico, Cilium, or cloud-native CNI + Calico policy-only mode | Must support NetworkPolicy enforcement including egress rules. On managed K8s (EKS, AKS, GKE), the recommended approach is the cloud provider's native CNI augmented with Calico in policy-only mode |
 | PostgreSQL | 14+ | Session state, audit logs, billing events, credential pools, token storage |
 | Redis | 7.0+ | Coordination leases, quota counters, pub/sub, routing cache; TLS + AUTH required |
 | Object storage | MinIO / S3 / GCS / Azure Blob | Workspace snapshots, checkpoints, uploaded artifacts |

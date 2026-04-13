@@ -30,7 +30,7 @@ Before using this guide, ensure you have:
 
 | Prerequisite | Minimum Version | Notes |
 |---|---|---|
-| Kubernetes cluster | 1.28+ | Must support RuntimeClass, NetworkPolicy (Calico or Cilium CNI) |
+| Kubernetes cluster | 1.28+ | Must support RuntimeClass, NetworkPolicy (Calico, Cilium, or cloud-native CNI + Calico policy-only mode) |
 | Helm | 3.12+ | Primary installation mechanism |
 | kubectl | Matching cluster version | For CRD management and debugging |
 | cert-manager | 1.12+ | Required for mTLS certificate lifecycle |

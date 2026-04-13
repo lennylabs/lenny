@@ -17,7 +17,7 @@ This tutorial walks you through deploying Lenny to a Kubernetes cluster. You wil
 - **Helm 3.12+** installed locally
 - **kubectl** configured to access your cluster
 - **cert-manager** installed in the cluster (for mTLS certificates)
-- **A CNI plugin** that supports NetworkPolicy (Calico, Cilium, etc.)
+- **A CNI plugin** that supports NetworkPolicy (Calico, Cilium, or cloud-native CNI with Calico in policy-only mode)
 - **Postgres 14+** accessible from the cluster (managed or self-hosted)
 - **Redis** with TLS and AUTH enabled (managed or self-hosted with Sentinel)
 - **MinIO** or S3-compatible object storage
@@ -334,7 +334,7 @@ All preflight checks passed.
 |-------|---------|-----|
 | PgBouncer pool_mode | `pool_mode is 'session'` | Change PgBouncer to `pool_mode = transaction` |
 | Redis AUTH/TLS | `TLS handshake failed` | Ensure Redis URL uses `rediss://` and TLS is enabled |
-| CNI NetworkPolicy | `does not support NetworkPolicy` | Install Calico or Cilium CNI |
+| CNI NetworkPolicy | `does not support NetworkPolicy` | Install Calico or Cilium, or enable Calico in policy-only mode alongside your cloud CNI |
 | ResourceQuota | `allows 20 pods but configured pools require 25` | Increase `agentNamespaces[].resourceQuota.pods` |
 
 ---
