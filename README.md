@@ -89,11 +89,11 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
 
-| Tier         | Interface               | Effort            | Capabilities                                                                                               |
-| ------------ | ----------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines | ~50 lines, no SDK | Session lifecycle, text I/O, adapter-local file tools                                                      |
-| **Standard** | gRPC adapter            | Moderate          | Minimum + platform MCP tools (delegation, elicitation, discovery), connector access                        |
-| **Full**     | gRPC adapter            | Significant       | Standard + lifecycle channel (checkpoint/restore, interrupt handling, credential rotation, graceful drain) |
+| Tier         | Interface               | Effort                    | Capabilities                                                                                                                        |
+| ------------ | ----------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Minimum**  | stdin/stdout JSON Lines | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                   |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                    |
+| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
 

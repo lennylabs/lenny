@@ -179,9 +179,9 @@ The adapter translates between Lenny's control protocol and your agent binary's 
 
 | Tier         | Interface               | What you implement                                                                          | What the platform provides                                                             |
 | :----------- | :---------------------- | :------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines | Read messages from stdin, write output to stdout. ~50 lines of code.                        | Session lifecycle, workspace delivery, credential injection (environment variables).   |
-| **Standard** | gRPC adapter            | Lifecycle RPCs (Start, Stop, Interrupt), workspace notifications, credential flow handlers. | All of Minimum, plus checkpoint coordination, mid-session uploads.                     |
-| **Full**     | gRPC adapter            | All of Standard, plus DemoteSDK, CheckpointBarrier, RotateCredentials, delegation support.  | Full platform integration including SDK-warm, checkpoint/restore, credential rotation. |
+| **Minimum**  | stdin/stdout JSON Lines          | Read messages from stdin, write output to stdout. ~50 lines of code.                        | Basic session lifecycle, workspace delivery, credential injection (environment variables).   |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access. | All of Minimum, plus platform MCP server on Unix socket, mid-session uploads.                     |
+| **Full**     | stdin/stdout + MCP (Unix socket) | All of Standard, plus lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse).  | Full platform integration including SDK-warm, checkpoint/restore, credential rotation. |
 
 ---
 
