@@ -156,11 +156,11 @@ Beyond the 6 architectural differentiators, Lenny includes a comprehensive set o
 
 ### Experimentation
 
-Lenny includes first-class A/B experimentation primitives for runtime version rollouts and agent evaluation.
+Lenny includes built-in A/B traffic routing primitives for runtime version rollouts. These are intentionally limited to **session routing and variant pool management** -- the platform decides which pool a session lands in, not how to analyze the results. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash) can delegate variant assignment to it via webhook integration instead of using Lenny's built-in bucketing.
 
 - **ExperimentDefinition** as a first-class admin API resource with `active`, `paused`, and `concluded` lifecycle states.
-- **ExperimentRouter** as a built-in `RequestInterceptor` that routes sessions to variant pools based on deterministic bucketing (HMAC-SHA256 cumulative-weight partitioning).
-- **Targeting modes**: `percentage` (deterministic hash-based, no external dependency) and `external` (webhook-based, delegates to LaunchDarkly, Statsig, Unleash, or any generic webhook).
+- **Built-in targeting** (`percentage` mode): `ExperimentRouter` as a built-in `RequestInterceptor` that routes sessions to variant pools based on deterministic bucketing (HMAC-SHA256 cumulative-weight partitioning).
+- **External targeting** (`external` mode): webhook-based mode delegates variant assignment to LaunchDarkly, Statsig, Unleash, or any generic webhook endpoint. This is the recommended approach for teams with an existing experimentation platform.
 - **Sticky assignment**: per-user, per-session, or no stickiness. Cached in Redis with automatic invalidation on experiment pause/conclude.
 - **Variant pool sizing**: PoolScalingController automatically sizes variant pools proportional to traffic weight, and simultaneously adjusts the base pool's `minWarm` to avoid over-provisioning.
 - **Delegation propagation**: configurable per-experiment (`inherit`, `control`, `independent`) -- controls whether child sessions inherit the parent's variant assignment.
@@ -169,21 +169,25 @@ Lenny includes first-class A/B experimentation primitives for runtime version ro
 - **Multi-experiment first-match rule**: a session is enrolled in at most one experiment, keeping attribution unambiguous.
 - **Manual rollback triggers**: recommended Prometheus alert thresholds for error rate, latency, eval score degradation, and safety score regression.
 
+What Lenny explicitly does **not** build: statistical significance testing, automatic winner declaration, multi-armed bandits, or segment analysis. Those belong in dedicated experimentation platforms.
+
 ### Evaluation hooks
+
+Evaluation is a standalone capability, independent of experimentation. Any session can receive scores whether or not it is part of an experiment. When a session *is* enrolled in an experiment, the gateway automatically populates attribution fields (`experiment_id`, `variant_id`) -- but experiments are not a prerequisite for using evals.
 
 Lenny provides a pull-based evaluation framework that integrates with any external scoring pipeline without imposing opinions on eval methodology.
 
 - **Eval submission endpoint**: `POST /v1/sessions/{id}/eval` accepts scores from any authenticated principal (agent runtime, session owner, or external scorer pipeline).
 - **Multi-dimensional scoring**: `score` (aggregate float) and `scores` (per-dimension breakdown, e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`).
-- **Automatic experiment attribution**: the gateway auto-populates `experiment_id` and `variant_id` from the session's experiment context -- no scorer-side wiring needed.
+- **Optional experiment attribution**: when a session is enrolled in an experiment, the gateway auto-populates `experiment_id` and `variant_id` from the session's experiment context -- no scorer-side wiring needed.
 - **Results API**: `GET /v1/admin/experiments/{name}/results` returns aggregated scores per variant with mean, p50, p95, and per-dimension breakdowns.
-- **Session replay**: `POST /v1/sessions/{id}/replay` re-runs a completed session's prompt history against a different runtime version for regression testing and A/B evaluation.
+- **Session replay**: `POST /v1/sessions/{id}/replay` re-runs a completed session's prompt history against a different runtime version for regression testing.
 - **Delegation-aware attribution**: `delegation_depth` and `inherited` fields on each `EvalResult` enable operators to distinguish direct vs. propagated child results and filter for sample contamination.
 - **Idempotent submissions**: optional `idempotency_key` prevents duplicate scoring in pipeline retries.
-- **Rate-limited**: 100 evals per session per minute, 10,000 per tenant per minute.
-- **Pre-computed aggregation**: optional Postgres materialized view (`lenny_eval_aggregates`) for high-volume experiments.
+- **Rate-limited**: configurable per-session and per-tenant rate limits (defaults: 100 evals per session per minute, 10,000 per tenant per minute).
+- **Pre-computed aggregation**: optional Postgres materialized view (`lenny_eval_aggregates`) for high-volume scoring workloads.
 
-What Lenny explicitly does **not** build: statistical significance testing, automatic winner declaration, multi-armed bandits, LLM-as-judge integration, or segment analysis. Those belong in dedicated experimentation platforms.
+What Lenny explicitly does **not** build: LLM-as-judge integration, scoring pipelines, or eval scheduling. Eval computation is entirely the deployer's responsibility.
 
 ### Session replay and derivation
 

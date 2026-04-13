@@ -82,7 +82,7 @@ Both rejection reasons are logged (INFO level, with `user_id` and `jti`) and emi
 
 ### Architecture
 
-The Token/Connector Service runs as a **separate process** with its own ServiceAccount and KMS access:
+The Token Service runs as a **separate process** with its own ServiceAccount and KMS access:
 
 - Only component with KMS decrypt permissions for downstream OAuth tokens
 - Gateway replicas call the Token Service over mTLS

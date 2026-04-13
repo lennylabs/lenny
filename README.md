@@ -79,7 +79,7 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 **PoolScalingController** — manages desired pool configuration, scaling intelligence, and experiment variant pool sizing. Reconciles pool config from Postgres into CRDs.
 
-**Token/Connector Service** — separate process with its own ServiceAccount and KMS access. Manages OAuth tokens for external tools and LLM provider credentials. Gateway replicas call it over mTLS.
+**Token Service** — separate process with its own ServiceAccount and KMS access. Manages OAuth tokens for external tools and LLM provider credentials. Gateway replicas call it over mTLS.
 
 **Runtime Adapter** — a sidecar container in each agent pod that speaks the Lenny gRPC protocol. Bridges between the gateway and the agent binary via stdin/stdout JSON Lines.
 
@@ -149,25 +149,27 @@ Any agent can spawn child agents through gateway-mediated platform tools (`lenny
 
 ### Experimentation
 
-Built-in A/B experiment primitives for runtime version rollouts:
+Lenny provides built-in A/B traffic routing for runtime version rollouts. Deployers who already use a feature-flagging platform (LaunchDarkly, Statsig, Unleash) can delegate targeting decisions to it via webhook integration instead of using Lenny's built-in bucketing.
 
 - `ExperimentDefinition` as a first-class admin API resource (`active` / `paused` / `concluded`)
-- `ExperimentRouter` with deterministic HMAC-SHA256 bucketing and sticky assignment (per-user/per-session/none)
+- **Built-in targeting**: `ExperimentRouter` with deterministic HMAC-SHA256 bucketing and sticky assignment (per-user/per-session/none)
+- **External targeting**: webhook-based mode delegates variant assignment to LaunchDarkly, Statsig, Unleash, or any generic webhook endpoint
 - Automatic variant pool sizing via PoolScalingController (adjusts both variant and base pools)
-- External targeting integration (LaunchDarkly, Statsig, Unleash, generic webhook)
 - Delegation propagation modes: `inherit`, `control`, `independent`
+
+Lenny does not build statistical significance testing, automatic winner declaration, or multi-armed bandits. Those belong in dedicated experimentation platforms.
 
 ### Evaluation Hooks
 
-Pull-based evaluation framework that integrates with any external scoring pipeline:
+Evaluation is a standalone capability: any session can receive scores, whether or not it is part of an experiment. When a session *is* enrolled in an experiment, the gateway automatically populates attribution fields — but experiments are not a prerequisite for using evals.
 
 - `POST /v1/sessions/{id}/eval` — multi-dimensional scoring (`score` + `scores` breakdown)
-- Automatic experiment attribution — gateway populates `experiment_id` and `variant_id`
+- Optional experiment attribution — gateway auto-populates `experiment_id` and `variant_id` when applicable
 - `GET /v1/admin/experiments/{name}/results` — per-variant aggregation (mean, p50, p95, per-dimension)
 - `POST /v1/sessions/{id}/replay` — session replay for regression testing
 - Delegation-aware: `delegation_depth` and `inherited` fields for sample contamination filtering
 
-Lenny does not build statistical significance testing, automatic winner declaration, or LLM-as-judge integration. Eval computation is the deployer's responsibility.
+Lenny does not build LLM-as-judge integration, scoring pipelines, or eval scheduling. Eval computation is the deployer's responsibility.
 
 ### Memory Store
 
@@ -219,7 +221,7 @@ Third-party adapters can be built and validated via the `RegisterAdapterUnderTes
 - No standing credentials in pods — only short-lived leases and projected SA tokens
 - Gateway-mediated file delivery — pods never fetch external data directly
 - mTLS between gateway and pods with per-replica identity
-- Token/Connector Service runs as a separate process with its own KMS access
+- Token Service runs as a separate process with its own KMS access
 - URL-mode elicitation security (domain allowlists, agent vs. connector trust indicators)
 - Admission policies (OPA/Gatekeeper or Kyverno) with `failurePolicy: Fail`
 
@@ -270,16 +272,16 @@ curl -s -X POST http://localhost:8080/v1/sessions/{id}/terminate | jq .
 
 Lenny occupies a distinct point in the agent infrastructure design space:
 
-1. **Runtime-agnostic adapter contract** — any process, any framework, tiered integration (Section 15.4)
-2. **Flexible runtime types and execution modes** — `agent` and `mcp` runtime types; `session`, `task`, and `concurrent` execution modes with mode-aware pool scaling (Section 5.2)
-3. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement (Section 8)
-4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives (Section 17)
-5. **Multi-protocol gateway** — REST + MCP + OpenAI + Open Responses via ExternalAdapterRegistry (Section 15)
-6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance (Section 11)
-7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces (Section 22.6)
-8. **Built-in experimentation** — A/B testing with variant pools, deterministic bucketing, eval attribution (Section 10.7)
-9. **Pull-based evaluation hooks** — multi-dimensional scoring, session replay, experiment-aware results API (Section 10.7)
-10. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity (Section 12.8)
+1. **Runtime-agnostic adapter contract** — any process, any framework, tiered integration
+2. **Flexible runtime types and execution modes** — `agent` and `mcp` runtime types; `session`, `task`, and `concurrent` execution modes with mode-aware pool scaling
+3. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement
+4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
+5. **Multi-protocol gateway** — REST + MCP + OpenAI + Open Responses via ExternalAdapterRegistry
+6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance
+7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces
+8. **Built-in experimentation** — A/B traffic routing with variant pools and deterministic bucketing, or delegate to external platforms (LaunchDarkly, Statsig, Unleash) via webhook targeting
+9. **Pull-based evaluation hooks** — multi-dimensional session scoring with optional experiment attribution; integrates with any external scoring pipeline
+10. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity
 
 For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
 
