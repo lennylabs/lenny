@@ -23,10 +23,11 @@ through the protocols your clients already speak.
 | | |
 |:--|:--|
 | **Runtime-agnostic adapter contract** | Integrate any agent framework -- LangChain, CrewAI, Autogen, a plain shell script -- through a thin gRPC adapter. The platform handles lifecycle, networking, and state so your runtime does not have to. |
-| **Recursive delegation** | Agents can spawn child sessions with scoped budgets and permissions. The platform enforces the hierarchy; runtimes stay simple. |
+| **Security by default** | Pods run non-root, all capabilities dropped, read-only rootfs, default-deny networking. No standing credentials -- only short-lived leases. Gateway-mediated file delivery. Deployer-selectable isolation: gVisor, Kata microVM, or runc. |
+| **Recursive delegation** | Agents spawn child sessions with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection. The platform enforces the hierarchy; runtimes stay simple. |
 | **Self-hosted, K8s-native** | CRDs, controllers, and Helm charts. No SaaS dependency. Runs wherever Kubernetes runs. |
 | **Multi-protocol gateway** | A single gateway speaks **REST**, **MCP** (including Tasks and Elicitation), **OpenAI Chat Completions**, and **Open Responses**. Clients connect with the SDK they already have. |
-| **Enterprise controls** | Multi-tenancy with row-level security, RBAC, audit logging, budget enforcement, and deployer-selectable isolation tiers (runc, gVisor, Kata). |
+| **Enterprise controls** | Multi-tenancy with row-level security, RBAC, audit logging with hash-chain integrity, budget enforcement, GDPR erasure, legal holds, and data residency. |
 | **Ecosystem-composable** | Expose every session as an MCP server. Chain Lenny instances, connect to external tool servers, or nest sessions inside larger pipelines. |
 
 ---
@@ -104,6 +105,12 @@ your own.
 :   Pods boot in advance and sit idle. When a session starts, the gateway
     assigns an already-running pod and materialises the workspace into it.
     Cold-start latency drops to single-digit seconds.
+
+**Secure by default**
+:   Pods run non-root with all capabilities dropped, read-only root filesystem,
+    and default-deny network policies. No standing credentials -- only
+    short-lived leases. Gateway-mediated file delivery ensures pods never
+    fetch external data directly. mTLS between gateway and pods.
 
 **MCP Tasks + Elicitation**
 :   Long-running work is modelled as resumable tasks. When an agent needs

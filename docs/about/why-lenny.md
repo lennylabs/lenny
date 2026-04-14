@@ -79,7 +79,30 @@ Lenny supports two fundamentally different runtime types, and three execution mo
 
 Execution mode is declared on the `Runtime` definition and propagated to pool configuration. The PoolScalingController applies mode-specific `mode_factor` and `burst_mode_factor` adjustments to the scaling formula, so operators do not need to manually account for pod reuse or slot multiplexing when sizing pools.
 
-### 2. Recursive delegation as a platform primitive
+### 2. Security by default
+
+Agent pods are untrusted by design. Lenny enforces strict security at the platform layer so that individual runtimes do not need to implement security themselves.
+
+**Pod-level hardening:**
+
+- Non-root execution with all Linux capabilities dropped
+- Read-only root filesystem
+- Default-deny network policies -- pods can only reach the gateway
+- No standing credentials -- only short-lived leases and projected ServiceAccount tokens
+- Gateway-mediated file delivery -- pods never fetch external data directly
+- mTLS between gateway and pods with per-replica identity
+
+**Deployer-selectable isolation:**
+
+- **runc** -- standard container isolation for trusted first-party code (explicit opt-in)
+- **gVisor** -- userspace syscall interception, the default for most workloads
+- **Kata Containers** -- full microVM boundaries for higher-risk or multi-tenant workloads
+
+**Credential isolation:** The Token Service runs as a separate process with its own ServiceAccount and KMS access. Pods receive short-lived credential leases bound to their session -- never raw API keys. External connector tokens (GitHub, Jira, Slack) are managed entirely by the gateway; pods never see them. Credential rotation happens automatically on rate limiting or revocation.
+
+Competitors provide sandboxed environments (E2B, Daytona) but leave credential management, network policy, and pod hardening to the operator. Lenny enforces these by default.
+
+### 3. Recursive delegation as a platform primitive
 
 Any agent pod can spawn child sessions through the gateway with enforced scope, token budget, and lineage tracking. This is not a library-level feature bolted on -- it is a first-class gateway operation with policy enforcement at every hop.
 
@@ -89,6 +112,7 @@ Any agent pod can spawn child sessions through the gateway with enforced scope, 
 - Fan-out limits (parallel children)
 - Token budget (allocated from parent, tracked via Redis Lua scripts)
 - Tree size and memory caps
+- Scope narrowing (children can only have equal or fewer permissions)
 - Isolation monotonicity (children must be at least as isolated as parents)
 - Content policy inheritance (can only be made stricter, never relaxed)
 - Cycle detection (prevents A -> B -> A runtime identity loops)
@@ -97,7 +121,7 @@ Any agent pod can spawn child sessions through the gateway with enforced scope, 
 
 LangSmith's RemoteGraph offers graph-level delegation but without per-hop budget/scope controls enforced at the platform layer.
 
-### 3. Self-hosted, Kubernetes-native
+### 4. Self-hosted, Kubernetes-native
 
 Lenny runs on the operator's own cluster using standard Kubernetes primitives -- CRDs, RuntimeClasses, namespaces, HPA, PDBs, topology spread constraints. There is no dependency on a vendor-hosted control plane.
 
@@ -108,7 +132,7 @@ Lenny runs on the operator's own cluster using standard Kubernetes primitives --
 - Local development mode (`make run`) works with zero cloud dependency.
 - Deployer-selectable isolation profiles: runc (fast, standard isolation), gVisor (userspace syscall interception), Kata (microVM, strongest isolation).
 
-### 4. Multi-protocol gateway
+### 5. Multi-protocol gateway
 
 A single gateway edge serves REST, MCP, OpenAI Completions, and Open Responses clients. Operators do not need separate infrastructure per client protocol.
 
@@ -123,7 +147,7 @@ A single gateway edge serves REST, MCP, OpenAI Completions, and Open Responses c
 
 Internally, the gateway operates against a canonical session/task state machine; protocol adapters handle translation at the boundary. MCP Tasks are implemented at the gateway's external interface; internal delegation uses a custom gRPC protocol with equivalent semantics. Third-party adapters can be built and validated via the `RegisterAdapterUnderTest` compliance suite.
 
-### 5. Enterprise controls at the platform layer
+### 6. Enterprise controls at the platform layer
 
 Rate limiting, token budgets, concurrency controls, isolation profiles, audit logging, and least-privilege pod security are built into the gateway and controller layers.
 
@@ -138,7 +162,7 @@ Rate limiting, token budgets, concurrency controls, isolation profiles, audit lo
 - **Legal holds** on sessions and artifacts to suspend retention policies for compliance investigations
 - **GDPR data erasure** with phased `DeleteByUser` / `DeleteByTenant`, billing pseudonymization, erasure receipts, and processing restriction during erasure (Article 18)
 
-### 6. Ecosystem-composable via hooks-and-defaults
+### 7. Ecosystem-composable via hooks-and-defaults
 
 Every cross-cutting AI capability -- memory, caching, guardrails, evaluation, routing -- is defined as an interface with a sensible default, disabled unless explicitly enabled, and fully replaceable.
 
@@ -152,7 +176,7 @@ Lenny never implements AI-specific logic (eval scoring, memory extraction, conte
 
 ## Complete feature inventory
 
-Beyond the 6 architectural differentiators, Lenny includes a comprehensive set of platform features organized by category.
+Beyond the 7 architectural differentiators, Lenny includes a comprehensive set of platform features organized by category.
 
 ### Experimentation
 
