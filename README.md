@@ -2,248 +2,28 @@
 
 **Kubernetes-native, runtime-agnostic agent session platform.**
 
-Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a unified gateway. It handles session lifecycle, workspace setup, credential leasing, recursive delegation, experimentation, evaluation, policy enforcement, and recovery — so your team can run AI agents as a shared, on-demand cloud service.
+Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a unified gateway. It handles session lifecycle, workspace setup, credential leasing, recursive delegation, experimentation, evaluation, policy enforcement, and recovery — so your team can run any AI agents as a shared, on-demand cloud service.
 
-[Documentation](docs/) | [Quickstart](#quickstart) | [Why Lenny?](#why-lenny) | [Contributing](#contributing)
+[Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing)
 
 ---
 
-## What Lenny Does
+## Why Lenny?
 
-- **Pre-warmed pods** — agent containers are already running when a request arrives, eliminating cold-start latency. Pod claim is in the millisecond range; workspace setup is the only hot-path work. Optionally, SDK-warm mode (`preConnect`) pre-connects the agent process during the warm phase for even faster startup.
-- **Runtime-agnostic** — any process that implements the [adapter contract](#runtime-adapter-contract) can run as a Lenny agent. Claude Code, LangChain, CrewAI, custom scripts — no SDK lock-in.
-- **Two runtime types** — `type: agent` runtimes participate in the full task lifecycle (sessions, delegation, elicitation, multi-turn dialog). `type: mcp` runtimes host MCP servers with Lenny-managed pods (isolation, credentials, lifecycle) but no task lifecycle — the runtime binary is oblivious to Lenny.
-- **Three execution modes** — `session` (one session per pod, default), `task` (pod reuses across sequential tasks with workspace scrub), and `concurrent` (multiple simultaneous tasks via slot multiplexing). Each mode has distinct scaling, isolation, and lifecycle characteristics.
-- **Isolated workspaces** — each session gets its own sandboxed filesystem with deployer-selectable isolation (runc, gVisor, Kata microVM).
-- **Interactive sessions** — full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation — not just request/response.
-- **Recursive delegation** — agents spawn child agents through the gateway with enforced token budgets, scope narrowing, and lineage tracking at every hop.
-- **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
-- **External connectors** — agents call external tools and agents (GitHub, Jira, Slack, or any registered endpoint) through the gateway. V1 uses MCP transport; post-v1 adds A2A and Agent Protocol. The gateway manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see raw connector tokens.
-- **Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically on rate limiting. Pods never see raw API keys.
-- **A/B experimentation** — built-in experiment primitives with variant pools, deterministic bucketing, and external targeting via LaunchDarkly, Statsig, or Unleash. Experiment context delivered to runtimes in the adapter manifest.
-- **Evaluation hooks** — two-tier model: runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative for deployers without dedicated tooling. Cross-delegation trace stitching via `tracingContext` propagation. Eval is independent of experimentation — any session can be evaluated whether or not it is part of an experiment.
-- **Agent memory** — pluggable `MemoryStore` interface (default: Postgres + pgvector) replaceable with Mem0, Zep, or any vector database.
-- **Request interceptors** — 12-phase hook chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
-- **Enterprise controls** — multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit logging with hash-chained integrity, GDPR erasure, legal holds, and data residency.
-- **Recovery** — if a pod dies, the gateway resumes the session on a new pod from a workspace checkpoint, within configurable retry limits.
+Existing AI agent infrastructure forces a choice: sandboxed environments without orchestration (E2B, Daytona), orchestration frameworks that require SDK lock-in (Temporal, LangGraph), or hosted platforms where you don't control the data. Lenny is self-hosted, runtime-agnostic, and treats multi-agent delegation, experimentation, and enterprise controls as platform primitives — not afterthoughts.
 
-## Architecture Overview
+1. **Runtime-agnostic** — any process, any framework, [tiered adapter contract](#runtime-adapter-contract)
+2. **Security by default** — pods run non-root, all capabilities dropped, read-only root filesystem, default-deny network policies. No standing credentials — only short-lived leases. Gateway-mediated file delivery — pods never fetch external data directly. Deployer-selectable isolation: gVisor, Kata microVM, or runc
+3. **Recursive delegation** — agents spawn child agents with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection at every hop
+4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
+5. **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses via a single infrastructure
+6. **Enterprise controls** — multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit with hash-chain integrity, GDPR erasure, legal holds, data residency
+7. **Experimentation and evaluation** — built-in A/B traffic routing; two-tier eval model with runtime-native platforms as the primary path
+8. **Ecosystem-composable** — memory, caching, guardrails, eval, credential routing are all pluggable interfaces
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Client / MCP Host                         │
-└────────────────────────────┬────────────────────────────────┘
-                             │ REST / MCP / OpenAI / Open Responses
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Gateway Edge Replicas                      │
-│  ┌────────┐ ┌──────────┐ ┌─────────┐ ┌─────────────────┐   │
-│  │ Auth / │ │ Policy   │ │ Session │ │ MCP Fabric      │   │
-│  │ OIDC   │ │ Engine + │ │ Router  │ │ (tasks,         │   │
-│  │        │ │ Intercep-│ │         │ │  elicitation,   │   │
-│  │        │ │ tors     │ │         │ │  delegation)    │   │
-│  └────────┘ └──────────┘ └─────────┘ └─────────────────┘   │
-└────────┬─────────┬──────────┬──────────┬───────────────────┘
-         │         │          │          │
-    ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐   ┌─────────────┐
-    │Session │ │Token/ │ │Event/  │ │Artifact │   │ External    │
-    │Manager │ │Connec-│ │Checkpt │ │Store    │   │ Connectors  │
-    │(PG+Red)│ │tor Svc│ │Store   │ │         │   │ (GitHub,    │
-    └────────┘ └───┬───┘ └────────┘ └─────────┘   │  Jira, ...) │
-                   │                               └──────▲──────┘
-                   │    OAuth tokens (encrypted,          │
-                   └────  cached in Redis) ───────────────┘
-                        Gateway proxies all connector
-                        calls — pods never see tokens
+For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
 
-        Gateway ←── mTLS ──→ Pods (gRPC control protocol)
-
-┌─────────────────────────────────────────────────────────────┐
-│  Warm Pool Controller (pod lifecycle, agent-sandbox CRDs)    │
-│  PoolScalingController (scaling intelligence, experiments)   │
-└────────┬───────────────┬────────────────┬───────────────────┘
-         │               │                │
-    ┌────▼────┐    ┌─────▼─────┐    ┌─────▼─────┐
-    │  Pod A  │    │   Pod B   │    │   Pod C   │
-    │┌───────┐│    │┌─────────┐│    │┌─────────┐│
-    ││Adapter││    ││ Adapter  ││    ││ Adapter  ││
-    │├───────┤│    │├─────────┤│    │├─────────┤│
-    ││Agent  ││    ││  Agent   ││    ││  Agent   ││
-    │└───────┘│    │└─────────┘│    │└─────────┘│
-    └─────────┘    └───────────┘    └───────────┘
-```
-
-**Gateway** — the only externally-facing component. Handles authentication (OIDC/OAuth 2.1), protocol adaptation (REST, MCP, OpenAI, Open Responses), session routing, file uploads, credential leasing via LLM Proxy, delegation mediation, experiment routing, and policy enforcement. Internally partitioned into four subsystems (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) with independent concurrency limits and circuit breakers. Scales horizontally with externalized state.
-
-**Warm Pool Controller** — a Kubernetes controller that manages `kubernetes-sigs/agent-sandbox` CRDs. Keeps pods pre-warmed and handles claim/release/drain lifecycle.
-
-**PoolScalingController** — manages desired pool configuration, scaling intelligence, and experiment variant pool sizing. Reconciles pool config from Postgres into CRDs.
-
-**Token Service** — separate process with its own ServiceAccount and KMS access. Manages OAuth tokens for external tools and LLM provider credentials. Gateway replicas call it over mTLS.
-
-**Runtime Adapter** — a sidecar container in each agent pod that speaks the Lenny gRPC protocol. Bridges between the gateway and the agent binary via stdin/stdout JSON Lines.
-
-**Agent Binary** — your code. Runs inside the pod, does the actual work.
-
-## Runtime Adapter Contract
-
-Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
-
-| Tier         | Interface                        | Effort                    | Capabilities                                                                                                                         |
-| ------------ | -------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Minimum**  | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
-| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
-| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
-
-You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
-
-## Key Features
-
-### Runtime Types and Execution Modes
-
-Lenny supports two runtime types:
-
-- **`type: agent`** — full task lifecycle. Receives tasks via stdin, supports sessions, workspaces, delegation, elicitation, and multi-turn dialog. Callable via `lenny/delegate_task`. Integration depth is tiered (Minimum → Standard → Full).
-- **`type: mcp`** — hosts an MCP server behind Lenny-managed infrastructure (isolation, credentials, pool scaling, audit). No task lifecycle — the runtime binary is oblivious to Lenny. Each `type: mcp` runtime gets a dedicated endpoint at `/mcp/runtimes/{runtime-name}`.
-
-Agent runtimes run in one of three execution modes:
-
-| Mode                    | Pod usage                                                                                                                                                                        | Use case                                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **`session`** (default) | One session per pod. Pod terminated after session ends.                                                                                                                          | Workloads that require the strongest isolation.                                                      |
-| **`task`**              | Pod reused across sequential tasks with workspace scrub between tasks. Requires Full-tier adapter integration for actual pod reuse; Standard/Minimum tiers get one task per pod. | Workloads with slightly lower security isolation requirements where pod startup cost matters.        |
-| **`concurrent`**        | Multiple simultaneous tasks on one pod via slot multiplexing. Two sub-variants: `workspace` (per-slot workspace directories) and `stateless` (no workspace, Service-routed).     | Parallel processing, semi-stateless workloads. Each slot gets independent credentials and lifecycle. |
-
-Execution mode is declared on the `Runtime` definition and determines pool scaling formulas, checkpoint behavior, and pod retirement policies.
-
-In all execution modes, pods are never reused across tenants. The only case where a runtime deployer can bypass this rule is in `task` mode if the runtime isolation profile is set to `microvm` (see below for more information on isolation profiles).
-
-### Session Lifecycle
-
-Create a session, upload workspace files, run setup commands, start the agent, interact via streaming, and retrieve artifacts when done. The gateway manages the full lifecycle including periodic checkpointing and resume after pod failure.
-
-Sessions support derive (fork from a completed session's workspace) and replay (re-run prompt history against a different runtime version for regression testing).
-
-### Credential Leasing and LLM Proxy
-
-The platform manages LLM provider credentials (Anthropic API keys, AWS Bedrock roles, Vertex AI service accounts, etc.) in admin-configured pools. Sessions receive short-lived credential leases — never raw API keys. The LLM Proxy gateway subsystem injects real credentials into upstream LLM requests on behalf of pods, with automatic rotation on rate limiting and SPIFFE-bound lease tokens in multi-tenant deployments.
-
-A pluggable `CredentialRouter` interface supports cost-aware, latency-based, or intent-based routing across providers.
-
-### External Connectors
-
-Agents call external tools and agents (GitHub, Jira, Slack, or any registered endpoint) through the gateway — pods never contact external services directly. Connectors are first-class admin API resources with per-tenant scoping (Postgres RLS). V1 uses MCP as the connector transport; post-v1 adds A2A and Agent Protocol, allowing Lenny agents to delegate to external agents over their native protocols.
-
-The gateway manages the full OAuth2 lifecycle: authorization code flow with PKCE, token exchange, and refresh. Refresh tokens are stored encrypted at rest in Postgres (envelope encryption via KMS). Access tokens are short-lived and cached in Redis, encrypted with AES-256-GCM using a key derived from the Token Service's envelope key. On KMS key rotation, cached tokens are transparently invalidated — the Token Service re-derives them from Postgres on next access. Tokens are scoped by user, connector, tenant, and environment, and never transit through pods.
-
-### Recursive Delegation
-
-Any agent can spawn child agents through gateway-mediated platform tools (`lenny/delegate_task`). The gateway enforces delegation leases at every hop:
-
-- Maximum depth and fan-out limits
-- Token budget (allocated from parent, tracked via Redis Lua scripts)
-- Scope narrowing (children can only have equal or fewer permissions)
-- Isolation monotonicity (children must be at least as isolated as parents)
-- Content policy inheritance (can only be made stricter, never relaxed)
-- Cycle detection (prevents A → B → A runtime loops)
-
-### Experimentation
-
-Lenny provides built-in A/B traffic routing for runtime version rollouts. Deployers who already use a feature-flagging platform (LaunchDarkly, Statsig, Unleash) can delegate targeting decisions to it via webhook integration instead of using Lenny's built-in bucketing.
-
-- `ExperimentDefinition` as a first-class admin API resource (`active` / `paused` / `concluded`)
-- **Built-in targeting**: `ExperimentRouter` with deterministic HMAC-SHA256 bucketing and sticky assignment (per-user/per-session/none)
-- **External targeting**: webhook-based mode delegates variant assignment to LaunchDarkly, Statsig, Unleash, or any generic webhook endpoint
-- **Experiment context delivered to runtimes**: the adapter manifest includes `experimentContext` (`experimentId`, `variantId`, `inherited`) so runtimes can tag traces with variant metadata for filtering and grouping in their eval platform
-- Automatic variant pool sizing via PoolScalingController (adjusts both variant and base pools)
-- Delegation propagation modes: `inherit`, `control`, `independent`
-
-Lenny does not build statistical significance testing, automatic winner declaration, or multi-armed bandits. Those belong in dedicated experimentation platforms.
-
-### Evaluation
-
-Lenny uses a **two-tier evaluation model**:
-
-**Primary: runtime-native evaluation.** Runtimes that integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) use those platforms directly for scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation for cross-runtime trace stitching. When experiments are active, `experimentContext` is also available in the adapter manifest — runtimes can use it to tag traces with variant metadata for filtering and grouping in their eval platform.
-
-**Built-in alternative: `/eval` endpoint.** For deployers without dedicated eval tooling, Lenny provides a basic score ingestion and attribution layer:
-
-- `POST /v1/sessions/{id}/eval` — accepts scores from any authenticated principal (runtime, session owner, or external scorer pipeline)
-- Multi-dimensional scoring — `score` (aggregate) + `scores` (per-dimension breakdown)
-- Optional experiment attribution — when a session is enrolled in an experiment, the gateway auto-populates `experiment_id` and `variant_id`
-- `GET /v1/admin/experiments/{name}/results` — per-variant aggregation (mean, p50, p95, per-dimension)
-- `POST /v1/sessions/{id}/replay` — session replay for regression testing
-- Delegation-aware: `delegation_depth` and `inherited` fields for sample contamination filtering
-- Configurable rate limits: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` in tenant configuration
-
-**Cross-delegation tracing.** Runtimes register tracing identifiers (run IDs, trace IDs) via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL). The gateway automatically propagates these identifiers to child delegation leases, enabling cross-runtime trace stitching in external eval platforms. This is an observability feature — useful for any multi-agent delegation, not just experiments.
-
-Lenny does not build LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms. Eval computation is the runtime's or deployer's responsibility.
-
-### Memory Store
-
-Pluggable `MemoryStore` interface scoped by tenant, user, agent type, and session. Default implementation: Postgres + pgvector with full RLS tenant isolation. Replaceable with Mem0, Zep, or any vector database. Accessed by runtimes via `lenny/memory_write` and `lenny/memory_query` platform MCP tools.
-
-### Gateway Request Interceptors
-
-12-phase hook chain for custom logic at every stage of request processing:
-
-`PreAuth` → `PostAuth` → `PreRoute` → `PreDelegation` → `PreMessageDelivery` → `PostRoute` → `PreToolResult` → `PostAgentOutput` → `PreLLMRequest` → `PostLLMResponse` → `PreConnectorRequest` → `PostConnectorResponse`
-
-Built-in interceptors: `AuthEvaluator`, `QuotaEvaluator`, `DelegationPolicyEvaluator`, `ExperimentRouter`, `GuardrailsInterceptor` (disabled by default), `RetryPolicyEvaluator`. External interceptors are invoked via gRPC and can `ALLOW`, `DENY`, or `MODIFY` content.
-
-### Isolation Profiles
-
-Choose per-pool isolation via Kubernetes `RuntimeClass`:
-
-| Profile               | Runtime         | Use Case                              |
-| --------------------- | --------------- | ------------------------------------- |
-| `sandboxed` (default) | gVisor          | Most workloads                        |
-| `microvm`             | Kata Containers | Higher-risk or multi-tenant workloads |
-| `standard`            | runc            | Development/testing (explicit opt-in) |
-
-### Multi-Protocol Gateway
-
-| Protocol                | Path                        | Status  |
-| ----------------------- | --------------------------- | ------- |
-| MCP (Streamable HTTP)   | `/mcp`                      | v1      |
-| OpenAI Chat Completions | `/v1/chat/completions`      | v1      |
-| Open Responses          | `/v1/responses`             | v1      |
-| REST API                | `/v1/sessions`, `/v1/admin` | v1      |
-| A2A (Agent-to-Agent)    | `/a2a`                      | Post-v1 |
-
-Third-party adapters can be built and validated via the `RegisterAdapterUnderTest` compliance suite.
-
-### Enterprise Controls
-
-- **Multi-tenancy** — Postgres row-level security with `SET LOCAL`, per-tenant quotas, RBAC
-- **Audit logging** — hash-chained integrity, configurable retention (SOC2, HIPAA, FedRAMP), SIEM forwarding
-- **GDPR erasure** — 19-step `DeleteByUser` with billing pseudonymization, processing restriction (Article 18), erasure receipts
-- **Legal holds** — suspend artifact retention for compliance investigations
-- **Data residency** — per-tenant/per-environment region constraints with fail-closed storage routing
-- **Metering** — append-only billing event stream with gap detection for external billing integration
-
-### Security
-
-- Pods run non-root with all capabilities dropped and read-only root filesystem
-- Default-deny network policies — pods can only reach the gateway
-- No standing credentials in pods — only short-lived leases and projected SA tokens
-- Gateway-mediated file delivery — pods never fetch external data directly
-- mTLS between gateway and pods with per-replica identity
-- Token Service runs as a separate process with its own KMS access
-- URL-mode elicitation security (domain allowlists, agent vs. connector trust indicators)
-- Admission policies (OPA/Gatekeeper or Kyverno) with `failurePolicy: Fail`
-
-## Tech Stack
-
-- **Go** — all platform components (gateway, controllers, runtime adapter, CLI)
-- **Kubernetes** — CRDs (`kubernetes-sigs/agent-sandbox`), RuntimeClass, NetworkPolicy, PDB
-- **gRPC** — internal gateway-to-pod protocol, external interceptors
-- **MCP** — client-facing protocol for interactive sessions (Streamable HTTP)
-- **Postgres** — session state, task metadata, audit logs, credential pools, eval results, memories (+ pgvector)
-- **Redis** — distributed leases, routing cache, rate limit counters, token budgets, experiment sticky cache
-- **MinIO** — artifact and checkpoint storage (S3/GCS/Azure Blob compatible)
-- **cert-manager** — mTLS certificate lifecycle
+---
 
 ## Quickstart
 
@@ -277,22 +57,125 @@ curl -s -X POST http://localhost:8080/v1/sessions/{id}/terminate | jq .
 
 **Target: clone to echo session in under 5 minutes.**
 
-## Why Lenny?
+---
 
-Lenny occupies a distinct point in the agent infrastructure design space:
+## How It Works
 
-1. **Runtime-agnostic adapter contract** — any process, any framework, tiered integration
-2. **Flexible runtime types and execution modes** — `agent` and `mcp` runtime types; `session`, `task`, and `concurrent` execution modes with mode-aware pool scaling
-3. **Recursive delegation as a platform primitive** — per-hop budget, scope, and policy enforcement
-4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
-5. **Multi-protocol gateway** — REST + MCP + OpenAI + Open Responses via ExternalAdapterRegistry
-6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance
-7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces
-8. **Built-in experimentation** — A/B traffic routing with variant pools, deterministic bucketing, and experiment context delivery to runtimes. External targeting via LaunchDarkly, Statsig, or Unleash for full-featured statistical analysis
-9. **Two-tier evaluation model** — runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative. Eval is independent of experimentation. Cross-delegation `tracingContext` propagation for observability across delegation chains
-10. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Client / MCP Host                         │
+└────────────────────────────┬────────────────────────────────┘
+                             │ REST / MCP / OpenAI / Open Responses
+                             ▼
+┌────────────────────────────────────────────────────────────┐
+│                   Gateway Edge Replicas                    │
+│  ┌────────┐ ┌──────────┐ ┌─────────┐ ┌─────────────────┐   │
+│  │ Auth / │ │ Policy   │ │ Session │ │ MCP Fabric      │   │
+│  │ OIDC   │ │ Engine + │ │ Router  │ │ (tasks,         │   │
+│  │        │ │ Intercep-│ │         │ │  elicitation,   │   │
+│  │        │ │ tors     │ │         │ │  delegation)    │   │
+│  └────────┘ └──────────┘ └─────────┘ └─────────────────┘   │
+└────────┬─────────┬──────────┬──────────┬───────────────────┘
+         │         │          │          │
+    ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐   ┌─────────────┐
+    │Session │ │Token  │ │Event/  │ │Artifact │   │ External    │
+    │Manager │ │Service│ │Checkpt │ │Store    │   │ Connectors  │
+    │(PG+Red)│ │       │ │Store   │ │         │   │ (GitHub,    │
+    └────────┘ └───┬───┘ └────────┘ └─────────┘   │  Jira, ...) │
+                   │                              └──────▲──────┘
+                   │    OAuth tokens (encrypted,          │
+                   └────  cached in Redis) ───────────────┘
+                        Gateway proxies all connector
+                        calls — pods never see tokens
 
-For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
+        Gateway ←── mTLS ──→ Pods (gRPC control protocol)
+
+┌─────────────────────────────────────────────────────────────┐
+│  Warm Pool Controller (pod lifecycle, agent-sandbox CRDs)   │
+│  PoolScalingController (scaling intelligence, experiments)  │
+└────────┬───────────────┬────────────────┬───────────────────┘
+         │               │                │
+    ┌────▼────┐    ┌─────▼─────┐    ┌─────▼─────┐
+    │  Pod A  │    │   Pod B   │    │   Pod C   │
+    │┌───────┐│    │┌─────────┐│    │┌─────────┐│
+    ││Adapter││    ││ Adapter ││    ││ Adapter ││
+    │├───────┤│    │├─────────┤│    │├─────────┤│
+    ││Agent  ││    ││  Agent  ││    ││  Agent  ││
+    │└───────┘│    │└─────────┘│    │└─────────┘│
+    └─────────┘    └───────────┘    └───────────┘
+```
+
+| Component                 | Role                                                                                                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gateway**               | Only externally-facing component. Auth, protocol adaptation, session routing, credential leasing, delegation, experiment routing, policy enforcement. Scales horizontally. |
+| **Warm Pool Controller**  | Kubernetes controller managing `agent-sandbox` CRDs. Keeps pods pre-warmed, handles claim/release/drain.                                                                   |
+| **PoolScalingController** | Scaling intelligence and experiment variant pool sizing. Reconciles pool config from Postgres into CRDs.                                                                   |
+| **Token Service**         | Separate process with its own KMS access. Manages OAuth tokens for external tools and LLM provider credentials.                                                            |
+| **Runtime Adapter**       | Sidecar in each pod. Bridges between the gateway (gRPC) and the agent binary (stdin/stdout JSON Lines).                                                                    |
+| **Agent Binary**          | Your code. Runs inside the pod, does the actual work.                                                                                                                      |
+
+---
+
+## Runtime Adapter Contract
+
+Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
+
+| Tier         | Interface                        | Effort                    | Capabilities                                                                                                                         |
+| ------------ | -------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Minimum**  | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
+| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
+
+You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
+
+Lenny supports two runtime types: **`type: agent`** (full task lifecycle with sessions, delegation, elicitation) and **`type: mcp`** (hosts MCP servers behind Lenny-managed infrastructure with zero code changes). Agent runtimes run in one of three execution modes: **`session`** (one session per pod), **`task`** (pod reuse with workspace scrub), or **`concurrent`** (slot multiplexing).
+
+See [Core Concepts](docs/getting-started/concepts) for detailed coverage of runtime types and execution modes.
+
+---
+
+## Key Capabilities
+
+### Sessions and workspaces
+
+Pre-warmed pods eliminate cold-start latency — pod claim is in the millisecond range. Each session gets an isolated, sandboxed filesystem with deployer-selectable isolation (runc, gVisor, Kata microVM). Full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation. If a pod dies, the gateway resumes the session from a workspace checkpoint. Sessions support derive (fork) and replay (regression testing).
+
+### Recursive delegation
+
+Agents spawn child agents through the gateway with enforced delegation leases: maximum depth and fan-out, token budgets, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection. Cross-delegation tracing via `tracingContext` propagation enables trace stitching across delegation chains in external observability platforms.
+
+### Credentials and connectors
+
+**Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically. Pods never see raw API keys. **External connectors** — agents call external tools (GitHub, Jira, Slack) through the gateway, which manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see connector tokens.
+
+### Experimentation
+
+Built-in A/B traffic routing for runtime version rollouts with variant pools, deterministic bucketing, and external targeting via LaunchDarkly, Statsig, or Unleash. Experiment context is delivered to runtimes in the adapter manifest. See [Why Lenny — Experimentation](docs/about/why-lenny#experimentation) for full detail.
+
+### Evaluation
+
+Evaluation is independent of experimentation — any session can be scored. Two-tier model: runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative. Cross-delegation `tracingContext` propagation for observability across delegation chains. See [Why Lenny — Evaluation](docs/about/why-lenny#evaluation) for full detail.
+
+### Gateway
+
+Multi-protocol: REST, MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure. 12-phase request interceptor chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
+
+### Enterprise controls and security
+
+Multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit logging with hash-chained integrity, GDPR erasure, legal holds, and data residency. Pods run non-root with all capabilities dropped, read-only root filesystem, and default-deny network policies. mTLS between gateway and pods. Pluggable `MemoryStore` interface (default: Postgres + pgvector) for agent memory.
+
+---
+
+## Tech Stack
+
+- **Go** — all platform components (gateway, controllers, runtime adapter, CLI)
+- **Kubernetes** — CRDs (`kubernetes-sigs/agent-sandbox`), RuntimeClass, NetworkPolicy, PDB
+- **gRPC** — internal gateway-to-pod protocol, external interceptors
+- **MCP** — client-facing protocol for interactive sessions (Streamable HTTP)
+- **Postgres** — session state, task metadata, audit logs, credential pools, eval results, memories (+ pgvector)
+- **Redis** — distributed leases, routing cache, rate limit counters, token budgets, experiment sticky cache
+- **MinIO** — artifact and checkpoint storage (S3/GCS/Azure Blob compatible)
+- **cert-manager** — mTLS certificate lifecycle
 
 ## Project Status
 
