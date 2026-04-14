@@ -46,10 +46,10 @@ Lenny does not bundle or mandate a specific agent framework. Any process that im
 
 The adapter contract is tiered by integration depth:
 
-| Tier         | Interface               | Effort                    | Capabilities                                                       |
-| :----------- | :---------------------- | :------------------------ | :----------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                  |
-| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access    |
+| Tier         | Interface                        | Effort                    | Capabilities                                                                                                                         |
+| :----------- | :------------------------------- | :------------------------ | :----------------------------------------------------------------------------------------------------------------------------------- |
+| **Minimum**  | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
 | **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 The key distinction from competitors: the adapter contract separates **platform integration** (adapter) from **agent logic** (runtime). Agent code remains framework-independent even when the adapter layer carries Lenny-specific integration effort. E2B and Daytona provide sandbox environments but assume the operator brings their own orchestration. Temporal and LangGraph require agent logic itself to use their respective SDKs.
@@ -65,11 +65,11 @@ Lenny supports two fundamentally different runtime types, and three execution mo
 
 **Execution modes** (agent runtimes only):
 
-| Mode | Pod usage | Isolation | Scaling factor |
-| :--- | :--- | :--- | :--- |
-| **`session`** (default) | One session per pod. Pod terminated after session ends. | Strongest — no cross-session data leakage through workspace, DNS cache, or runtime memory. | `mode_factor = 1.0` |
-| **`task`** | Pod reused across sequential tasks with workspace scrub between tasks. Tenant-pinned for entire pod lifetime. | Best-effort scrub (kill processes, remove workspace, clear `/tmp`, purge credentials). Residual state vectors documented (TCP TIME_WAIT, page cache, DNS cache). | `mode_factor = avg_tasks_per_pod_lifetime` |
-| **`concurrent`** | Multiple simultaneous tasks on one pod via slot multiplexing (`slotId`). Two sub-variants: `workspace` (per-slot directories at `/workspace/slots/{slotId}/`) and `stateless` (no workspace, Kubernetes Service routing). | Process-level isolation between slots. Shared process namespace, `/tmp`, cgroup memory, and network stack. | `mode_factor = maxConcurrent` |
+| Mode                    | Pod usage                                                                                                                                                                                                                 | Isolation                                                                                                                                                        | Scaling factor                             |
+| :---------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------- |
+| **`session`** (default) | One session per pod. Pod terminated after session ends.                                                                                                                                                                   | Strongest — no cross-session data leakage through workspace, DNS cache, or runtime memory.                                                                       | `mode_factor = 1.0`                        |
+| **`task`**              | Pod reused across sequential tasks with workspace scrub between tasks. Tenant-pinned for entire pod lifetime.                                                                                                             | Best-effort scrub (kill processes, remove workspace, clear `/tmp`, purge credentials). Residual state vectors documented (TCP TIME_WAIT, page cache, DNS cache). | `mode_factor = avg_tasks_per_pod_lifetime` |
+| **`concurrent`**        | Multiple simultaneous tasks on one pod via slot multiplexing (`slotId`). Two sub-variants: `workspace` (per-slot directories at `/workspace/slots/{slotId}/`) and `stateless` (no workspace, Kubernetes Service routing). | Process-level isolation between slots. Shared process namespace, `/tmp`, cgroup memory, and network stack.                                                       | `mode_factor = maxConcurrent`              |
 
 **Task mode** requires Full-tier adapter integration for between-task lifecycle signaling (`task_complete` → scrub → `task_ready`). Standard/Minimum-tier runtimes in task mode effectively get `podReuse: false` — the pod is terminated after each task. Deployers must explicitly acknowledge the best-effort scrub via `acknowledgeBestEffortScrub: true` and set a mandatory `maxTasksPerPod` limit.
 
@@ -156,26 +156,29 @@ Beyond the 6 architectural differentiators, Lenny includes a comprehensive set o
 
 ### Experimentation
 
-Lenny includes built-in A/B traffic routing primitives for runtime version rollouts. These are intentionally limited to **session routing and variant pool management** -- the platform decides which pool a session lands in, not how to analyze the results. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash) can delegate variant assignment to it via webhook integration instead of using Lenny's built-in bucketing.
+Lenny includes built-in A/B traffic routing primitives for runtime version rollouts. These are intentionally limited to **session routing, variant pool management, and experiment context delivery** -- the platform decides which pool a session lands in, delivers the variant assignment to the runtime, and provides basic score attribution. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash) can delegate variant assignment to it via webhook integration instead of using Lenny's built-in bucketing.
 
 - **ExperimentDefinition** as a first-class admin API resource with `active`, `paused`, and `concluded` lifecycle states.
 - **Built-in targeting** (`percentage` mode): `ExperimentRouter` as a built-in `RequestInterceptor` that routes sessions to variant pools based on deterministic bucketing (HMAC-SHA256 cumulative-weight partitioning).
 - **External targeting** (`external` mode): webhook-based mode delegates variant assignment to LaunchDarkly, Statsig, Unleash, or any generic webhook endpoint. This is the recommended approach for teams with an existing experimentation platform.
+- **Experiment context delivered to runtimes**: the adapter manifest includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`). Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. For full-featured statistical analysis, deployers can also report scores as custom metrics to their experimentation platform (LaunchDarkly, Statsig).
 - **Sticky assignment**: per-user, per-session, or no stickiness. Cached in Redis with automatic invalidation on experiment pause/conclude.
 - **Variant pool sizing**: PoolScalingController automatically sizes variant pools proportional to traffic weight, and simultaneously adjusts the base pool's `minWarm` to avoid over-provisioning.
 - **Delegation propagation**: configurable per-experiment (`inherit`, `control`, `independent`) -- controls whether child sessions inherit the parent's variant assignment.
 - **Isolation monotonicity check**: variant pools must satisfy the session's minimum isolation profile, preventing experiments from silently weakening security.
 - **Anonymous session handling**: null `user_id` sessions always route to control, preventing hash-collision concentration.
 - **Multi-experiment first-match rule**: a session is enrolled in at most one experiment, keeping attribution unambiguous.
-- **Manual rollback triggers**: recommended Prometheus alert thresholds for error rate, latency, eval score degradation, and safety score regression.
+- **Manual rollback triggers**: recommended Prometheus alert thresholds for error rate, latency, warm pool exhaustion, and — when the built-in `/eval` endpoint is in use — eval score degradation and safety score regression. Deployers whose runtimes use runtime-native eval platforms should configure equivalent score-regression alerts in their eval platform.
 
 What Lenny explicitly does **not** build: statistical significance testing, automatic winner declaration, multi-armed bandits, or segment analysis. Those belong in dedicated experimentation platforms.
 
-### Evaluation hooks
+### Evaluation
 
-Evaluation is a standalone capability, independent of experimentation. Any session can receive scores whether or not it is part of an experiment. When a session *is* enrolled in an experiment, the gateway automatically populates attribution fields (`experiment_id`, `variant_id`) -- but experiments are not a prerequisite for using evals.
+Lenny uses a **two-tier evaluation model**:
 
-Lenny provides a pull-based evaluation framework that integrates with any external scoring pipeline without imposing opinions on eval methodology.
+**Primary: runtime-native evaluation.** Most production runtimes integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) for scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation for cross-runtime trace stitching. When experiments are active, `experimentContext` is also available in the adapter manifest -- runtimes can use it to tag traces with variant metadata for filtering and grouping in their eval platform.
+
+**Built-in alternative: `/eval` endpoint.** For deployers without dedicated eval tooling, Lenny provides a basic score ingestion and attribution layer:
 
 - **Eval submission endpoint**: `POST /v1/sessions/{id}/eval` accepts scores from any authenticated principal (agent runtime, session owner, or external scorer pipeline).
 - **Multi-dimensional scoring**: `score` (aggregate float) and `scores` (per-dimension breakdown, e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`).
@@ -184,10 +187,12 @@ Lenny provides a pull-based evaluation framework that integrates with any extern
 - **Session replay**: `POST /v1/sessions/{id}/replay` re-runs a completed session's prompt history against a different runtime version for regression testing.
 - **Delegation-aware attribution**: `delegation_depth` and `inherited` fields on each `EvalResult` enable operators to distinguish direct vs. propagated child results and filter for sample contamination.
 - **Idempotent submissions**: optional `idempotency_key` prevents duplicate scoring in pipeline retries.
-- **Rate-limited**: configurable per-session and per-tenant rate limits (defaults: 100 evals per session per minute, 10,000 per tenant per minute).
+- **Configurable rate limits**: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` in tenant configuration (defaults: 100 per session per minute, 10,000 per tenant per minute).
 - **Pre-computed aggregation**: optional Postgres materialized view (`lenny_eval_aggregates`) for high-volume scoring workloads.
 
-What Lenny explicitly does **not** build: LLM-as-judge integration, scoring pipelines, or eval scheduling. Eval computation is entirely the deployer's responsibility.
+**Cross-delegation tracing.** Runtimes register tracing identifiers (run IDs, trace IDs) via `lenny/set_tracing_context` (MCP tool, Standard+ tier) or `set_tracing_context` (JSONL message, all tiers). The gateway automatically propagates these identifiers to child delegation leases via the `tracingContext` field, enabling cross-runtime trace stitching in external eval platforms. This is an observability feature useful for any multi-agent delegation, not just experiments. The context is an opaque `map<string, string>` of identifiers only -- no URLs or credentials are permitted. Child runtimes can extend the context with their own identifiers but cannot overwrite parent entries.
+
+What Lenny explicitly does **not** build: LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms. Eval computation is the runtime's or deployer's responsibility.
 
 ### Session replay and derivation
 

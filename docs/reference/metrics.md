@@ -368,7 +368,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_experiment_targeting_webhook_error_total` | Counter | `provider`, `error_type` | Targeting webhook failures. |
 | `lenny_experiment_targeting_circuit_open` | Gauge | `tenant_id`, `provider` | 1 when per-tenant circuit breaker is open. |
 | `lenny_experiment_sticky_cache_invalidations_total` | Counter | `experiment_id`, `transition` | Sticky user assignment cache flushes. |
-| `lenny_eval_score` | Histogram | `tenant_id`, `scorer`, `variant_id` | Eval scores per variant. Mean via `rate(sum) / rate(count)`. |
+| `lenny_eval_score` | Histogram | `tenant_id`, `scorer`, `variant_id` | Eval scores per variant (built-in `/eval` endpoint only). Mean via `rate(sum) / rate(count)`. Deployers whose runtimes use runtime-native eval platforms (LangSmith, Braintrust, etc.) will not have data in this metric and should configure equivalent score-regression alerts in their eval platform. |
 
 ---
 

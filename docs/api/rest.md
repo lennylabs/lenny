@@ -139,7 +139,7 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 ### POST /v1/sessions/{id}/replay
 
-Re-run a session against a different runtime version using the same workspace and prompt history. Primary mechanism for regression testing and A/B evaluation.
+Re-run a session against a different runtime version using the same workspace and prompt history. Used for regression testing and controlled A/B comparison. Replayed sessions receive experiment context in their adapter manifest so runtime-native eval platforms can attribute the replay to the correct experiment.
 
 **Request body:**
 
@@ -342,7 +342,9 @@ Remove a registered credential. Active session leases are unaffected (they conti
 
 ---
 
-## Evaluation
+## Evaluation (Built-in Endpoint)
+
+Evaluation is independent of experimentation — any session can be scored whether or not it is part of an experiment. Runtimes with dedicated eval platforms (LangSmith, Braintrust, etc.) use those platforms directly for scoring and observability. The endpoints below are the **built-in alternative** for deployers without dedicated eval tooling. When a session is enrolled in an experiment, the gateway auto-populates experiment attribution on eval results.
 
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
@@ -351,7 +353,7 @@ Remove a registered credential. Active session leases are unaffected (they conti
 
 ### POST /v1/sessions/{id}/eval
 
-Submit scored evaluation results for a session (LLM-as-judge scores, custom heuristics, ground-truth comparisons). Stored as session metadata.
+Submit scored evaluation results for a session. Accepts scores from any authenticated principal (runtime, session owner, or external scorer pipeline). When the session is enrolled in an experiment, the gateway automatically populates `experiment_id` and `variant_id` from the session's experiment context.
 
 **Request body:**
 
@@ -360,8 +362,11 @@ Submit scored evaluation results for a session (LLM-as-judge scores, custom heur
 | `scores` | object | Yes | Dimension-keyed scores (e.g., `{"accuracy": 0.95, "helpfulness": 0.8}`) |
 | `evaluator` | string | No | Evaluator identifier |
 | `metadata` | object | No | Additional eval context |
+| `idempotency_key` | string | No | Prevents duplicate scoring in pipeline retries |
 
-**Key error codes:** `SESSION_NOT_EVAL_ELIGIBLE` (422), `EVAL_QUOTA_EXCEEDED` (429), `RESOURCE_NOT_FOUND` (404).
+**Rate limits:** Configurable via `evalRateLimit.perSessionPerMinute` (default: 100) and `evalRateLimit.perTenantPerMinute` (default: 10,000) in tenant configuration.
+
+**Key error codes:** `SESSION_NOT_EVAL_ELIGIBLE` (422), `EVAL_QUOTA_EXCEEDED` (429), `EVAL_RATE_LIMITED` (429), `RESOURCE_NOT_FOUND` (404).
 
 ### POST /v1/sessions/{id}/extend-retention
 

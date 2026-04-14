@@ -6,6 +6,7 @@ nav_order: 2
 ---
 
 # Core Concepts
+
 {: .no_toc }
 
 This page explains the foundational concepts that underpin Lenny. Each concept is covered in depth -- what it is, how it works, and why it is designed the way it is.
@@ -216,8 +217,8 @@ Pools support `minWarm: 0` via time-of-day schedules:
 ```yaml
 scalePolicy:
   scaleToZero:
-    schedule: "0 22 * * *"     # Scale to zero at 10 PM
-    resumeAt: "0 6 * * *"      # Resume warming at 6 AM
+    schedule: "0 22 * * *" # Scale to zero at 10 PM
+    resumeAt: "0 6 * * *" # Resume warming at 6 AM
     timezone: "America/New_York"
 ```
 
@@ -367,18 +368,18 @@ Lenny uses MCP as the primary protocol for client-facing interaction and agent-t
 
 ### Where MCP is used
 
-| Boundary | Protocol | Why |
-|----------|----------|-----|
-| Client to gateway | MCP (Streamable HTTP) | Tasks, elicitation, auth discovery, tool surface |
-| Adapter to runtime (intra-pod) | MCP (local Unix socket servers) | Platform tools, per-connector tool servers |
-| Parent pod to child (via gateway) | MCP (virtual interface) | Delegation, tasks, elicitation forwarding |
-| Gateway to external MCP tools | MCP | Tool invocation, OAuth flows |
-| Gateway to `type: mcp` runtimes | MCP (dedicated endpoints) | Direct MCP server access |
+| Boundary                          | Protocol                        | Why                                              |
+| --------------------------------- | ------------------------------- | ------------------------------------------------ |
+| Client to gateway                 | MCP (Streamable HTTP)           | Tasks, elicitation, auth discovery, tool surface |
+| Adapter to runtime (intra-pod)    | MCP (local Unix socket servers) | Platform tools, per-connector tool servers       |
+| Parent pod to child (via gateway) | MCP (virtual interface)         | Delegation, tasks, elicitation forwarding        |
+| Gateway to external MCP tools     | MCP                             | Tool invocation, OAuth flows                     |
+| Gateway to `type: mcp` runtimes   | MCP (dedicated endpoints)       | Direct MCP server access                         |
 
 ### Where MCP is not used
 
-| Boundary | Protocol | Why |
-|----------|----------|-----|
+| Boundary                           | Protocol              | Why                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway to pod (lifecycle control) | Custom gRPC/HTTP+mTLS | Lifecycle operations (workspace setup, checkpointing, credential assignment, session start/stop) are infrastructure plumbing that does not map to MCP's task-oriented semantics. Using a custom protocol keeps the adapter contract simple and avoids forcing MCP into roles it was not designed for. |
 
 ### MCP Tasks
@@ -419,10 +420,10 @@ Multi-tenant mode is enabled by configuring OIDC claims that carry tenant identi
 
 Not all resources are tenant-scoped:
 
-| Scoping model | Resources | Isolation mechanism |
-|--------------|-----------|-------------------|
-| **Tenant-scoped** | Sessions, tasks, tokens, memories, quota counters, credential pools, audit events, delegation policies, connectors, environments, experiments | `tenant_id` column + RLS |
-| **Platform-global** | Runtimes, pools, external adapters | No `tenant_id` column. Visibility controlled by access join tables (`runtime_tenant_access`, `pool_tenant_access`) with application-layer filtering. A single runtime or pool can be made available to multiple tenants without data duplication. |
+| Scoping model       | Resources                                                                                                                                     | Isolation mechanism                                                                                                                                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tenant-scoped**   | Sessions, tasks, tokens, memories, quota counters, credential pools, audit events, delegation policies, connectors, environments, experiments | `tenant_id` column + RLS                                                                                                                                                                                                                          |
+| **Platform-global** | Runtimes, pools, external adapters                                                                                                            | No `tenant_id` column. Visibility controlled by access join tables (`runtime_tenant_access`, `pool_tenant_access`) with application-layer filtering. A single runtime or pool can be made available to multiple tenants without data duplication. |
 
 ### Namespace isolation
 
@@ -519,21 +520,27 @@ This allows platform operators to partition a tenant's resources into logical pr
 
 ## Experimentation
 
-Lenny includes built-in A/B experiment primitives for runtime version rollouts and agent evaluation. `ExperimentDefinition` is a first-class admin API resource with three lifecycle states: `active`, `paused`, and `concluded`.
+Lenny includes built-in A/B experiment primitives for runtime version rollouts. `ExperimentDefinition` is a first-class admin API resource with three lifecycle states: `active`, `paused`, and `concluded`.
 
 The `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. External targeting integration supports LaunchDarkly, Statsig, Unleash, and generic webhooks for deployers who prefer external feature-flag systems.
+
+**Experiment context delivery.** When a session is enrolled in an experiment, the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the adapter manifest. Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform.
 
 Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All experiment lifecycle transitions are operator-initiated -- Lenny does not build automatic winner declaration or statistical significance testing. See SPEC Section 10.7.
 
 ---
 
-## Evaluation Hooks
+## Evaluation
 
-Lenny provides a pull-based evaluation framework. External scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). Scores are automatically attributed to experiments -- the gateway auto-populates `experiment_id` and `variant_id` from the session's experiment context.
+Lenny uses a **two-tier evaluation model**:
 
-The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) enables regression testing across runtime versions by re-running a completed session's prompt history against a different runtime.
+**Primary: runtime-native evaluation.** Most production runtimes integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) for scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation for cross-runtime trace stitching. When experiments are active, `experimentContext` is also available in the adapter manifest -- runtimes can use it to tag traces with variant metadata for filtering and grouping.
 
-Lenny does not build statistical significance testing, auto-winner declaration, or LLM-as-judge integration -- eval computation is the deployer's responsibility. See SPEC Section 10.7.
+**Built-in alternative: `/eval` endpoint.** For deployers without dedicated eval tooling, Lenny provides a basic score ingestion and attribution layer. External scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When a session is enrolled in an experiment, the gateway auto-populates `experiment_id` and `variant_id`. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) enables regression testing across runtime versions.
+
+**Cross-delegation tracing.** Runtimes register tracing identifiers (run IDs, trace IDs) via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL). The gateway propagates these identifiers to child delegation leases, enabling cross-runtime trace stitching in external eval platforms. This is an observability feature useful for any multi-agent delegation, not just experiments.
+
+Lenny does not build LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms -- eval computation is the deployer's responsibility. See SPEC Section 10.7.
 
 ---
 

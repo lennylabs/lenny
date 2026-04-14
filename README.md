@@ -20,8 +20,8 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 - **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure via the `ExternalAdapterRegistry`.
 - **External connectors** — agents call external tools and agents (GitHub, Jira, Slack, or any registered endpoint) through the gateway. V1 uses MCP transport; post-v1 adds A2A and Agent Protocol. The gateway manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see raw connector tokens.
 - **Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically on rate limiting. Pods never see raw API keys.
-- **A/B experimentation** — built-in experiment primitives for runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
-- **Evaluation hooks** — pull-based, multi-dimensional scoring that integrates with any external eval pipeline. Session replay for regression testing across runtime versions.
+- **A/B experimentation** — built-in experiment primitives with variant pools, deterministic bucketing, and external targeting via LaunchDarkly, Statsig, or Unleash. Experiment context delivered to runtimes in the adapter manifest.
+- **Evaluation hooks** — two-tier model: runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative for deployers without dedicated tooling. Cross-delegation trace stitching via `tracingContext` propagation. Eval is independent of experimentation — any session can be evaluated whether or not it is part of an experiment.
 - **Agent memory** — pluggable `MemoryStore` interface (default: Postgres + pgvector) replaceable with Mem0, Zep, or any vector database.
 - **Request interceptors** — 12-phase hook chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
 - **Enterprise controls** — multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit logging with hash-chained integrity, GDPR erasure, legal holds, and data residency.
@@ -89,10 +89,10 @@ Lenny manages pools of pre-warmed, isolated agent pods on Kubernetes behind a un
 
 Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
 
-| Tier         | Interface               | Effort                    | Capabilities                                                                                                                        |
-| ------------ | ----------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                   |
-| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                    |
+| Tier         | Interface                        | Effort                    | Capabilities                                                                                                                         |
+| ------------ | -------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Minimum**  | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
 | **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
@@ -154,22 +154,31 @@ Lenny provides built-in A/B traffic routing for runtime version rollouts. Deploy
 - `ExperimentDefinition` as a first-class admin API resource (`active` / `paused` / `concluded`)
 - **Built-in targeting**: `ExperimentRouter` with deterministic HMAC-SHA256 bucketing and sticky assignment (per-user/per-session/none)
 - **External targeting**: webhook-based mode delegates variant assignment to LaunchDarkly, Statsig, Unleash, or any generic webhook endpoint
+- **Experiment context delivered to runtimes**: the adapter manifest includes `experimentContext` (`experimentId`, `variantId`, `inherited`) so runtimes can tag traces with variant metadata for filtering and grouping in their eval platform
 - Automatic variant pool sizing via PoolScalingController (adjusts both variant and base pools)
 - Delegation propagation modes: `inherit`, `control`, `independent`
 
 Lenny does not build statistical significance testing, automatic winner declaration, or multi-armed bandits. Those belong in dedicated experimentation platforms.
 
-### Evaluation Hooks
+### Evaluation
 
-Evaluation is a standalone capability: any session can receive scores, whether or not it is part of an experiment. When a session *is* enrolled in an experiment, the gateway automatically populates attribution fields — but experiments are not a prerequisite for using evals.
+Lenny uses a **two-tier evaluation model**:
 
-- `POST /v1/sessions/{id}/eval` — multi-dimensional scoring (`score` + `scores` breakdown)
-- Optional experiment attribution — gateway auto-populates `experiment_id` and `variant_id` when applicable
+**Primary: runtime-native evaluation.** Runtimes that integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) use those platforms directly for scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation for cross-runtime trace stitching. When experiments are active, `experimentContext` is also available in the adapter manifest — runtimes can use it to tag traces with variant metadata for filtering and grouping in their eval platform.
+
+**Built-in alternative: `/eval` endpoint.** For deployers without dedicated eval tooling, Lenny provides a basic score ingestion and attribution layer:
+
+- `POST /v1/sessions/{id}/eval` — accepts scores from any authenticated principal (runtime, session owner, or external scorer pipeline)
+- Multi-dimensional scoring — `score` (aggregate) + `scores` (per-dimension breakdown)
+- Optional experiment attribution — when a session is enrolled in an experiment, the gateway auto-populates `experiment_id` and `variant_id`
 - `GET /v1/admin/experiments/{name}/results` — per-variant aggregation (mean, p50, p95, per-dimension)
 - `POST /v1/sessions/{id}/replay` — session replay for regression testing
 - Delegation-aware: `delegation_depth` and `inherited` fields for sample contamination filtering
+- Configurable rate limits: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` in tenant configuration
 
-Lenny does not build LLM-as-judge integration, scoring pipelines, or eval scheduling. Eval computation is the deployer's responsibility.
+**Cross-delegation tracing.** Runtimes register tracing identifiers (run IDs, trace IDs) via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL). The gateway automatically propagates these identifiers to child delegation leases, enabling cross-runtime trace stitching in external eval platforms. This is an observability feature — useful for any multi-agent delegation, not just experiments.
+
+Lenny does not build LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms. Eval computation is the runtime's or deployer's responsibility.
 
 ### Memory Store
 
@@ -279,8 +288,8 @@ Lenny occupies a distinct point in the agent infrastructure design space:
 5. **Multi-protocol gateway** — REST + MCP + OpenAI + Open Responses via ExternalAdapterRegistry
 6. **Enterprise controls at the platform layer** — RBAC, budgets, audit, isolation, compliance
 7. **Ecosystem-composable via hooks-and-defaults** — memory, caching, guardrails, eval are all pluggable interfaces
-8. **Built-in experimentation** — A/B traffic routing with variant pools and deterministic bucketing, or delegate to external platforms (LaunchDarkly, Statsig, Unleash) via webhook targeting
-9. **Pull-based evaluation hooks** — multi-dimensional session scoring with optional experiment attribution; integrates with any external scoring pipeline
+8. **Built-in experimentation** — A/B traffic routing with variant pools, deterministic bucketing, and experiment context delivery to runtimes. External targeting via LaunchDarkly, Statsig, or Unleash for full-featured statistical analysis
+9. **Two-tier evaluation model** — runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative. Eval is independent of experimentation. Cross-delegation `tracingContext` propagation for observability across delegation chains
 10. **Compliance and data governance** — GDPR erasure, legal holds, data residency, audit with hash-chain integrity
 
 For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).

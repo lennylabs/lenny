@@ -821,7 +821,7 @@ The adapter communicates with the runtime binary via two mechanisms:
 
 **Part A — Multiple focused local MCP servers** (intra-pod, abstract Unix socket):
 
-- **Platform MCP server** — Lenny-specific tools: `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`. Note: lease extension is handled via the adapter↔gateway gRPC lifecycle, not as an MCP tool (see Section 8.6).
+- **Platform MCP server** — Lenny-specific tools: `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/set_tracing_context`. Note: lease extension is handled via the adapter↔gateway gRPC lifecycle, not as an MCP tool (see Section 8.6).
 - **One MCP server per authorized connector** — each connector in the session's delegation policy gets its own independent MCP server. No aggregated connector proxy — aggregation is not lossless per MCP spec (capability negotiation is per-server, sampling breaks, tool name collisions, resource URI collisions).
 
 **No workspace MCP server.** Workspace is materialized to `/workspace/current` before the runtime starts. The runtime accesses it via the filesystem directly.
@@ -900,6 +900,12 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
   "sessionId": "sess_abc",
   "taskId": "task_root",
   "mcpNonce": "a3f1...c7e2",
+  "experimentContext": {
+    "experimentId": "claude-v2-rollout",
+    "variantId": "treatment",
+    "inherited": false
+  },
+  "tracingContext": null,
   "observability": {
     "otlpEndpoint": "http://otel-collector.lenny-system:4317"
   }
@@ -925,6 +931,8 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 | `taskId`                    | `string`           | Yes      | Current task identifier.                                                                                                                                                                                                                                                                    | All (if reading manifest) |
 | `mcpNonce`                  | `string`           | Yes      | Random 256-bit hex nonce regenerated per task execution. Must be presented as the first message of the MCP `initialize` handshake on every intra-pod MCP connection (platform MCP and all connector MCP servers). The adapter rejects connections that do not present a valid nonce.        | Standard, Full            |
 | `minPlatformVersion`        | `string`           | No       | Minimum Lenny gateway version required by this runtime, in semver format (e.g., `"1.4.0"`). Written by the gateway from the Runtime definition's `minPlatformVersion` field. Runtimes may read this to confirm they are operating against a compatible gateway version; the gateway enforces the constraint at registration time — it rejects runtime definitions whose `minPlatformVersion` exceeds the running gateway version with `422 PLATFORM_VERSION_TOO_LOW`. Omitted if the Runtime definition specifies no minimum. | Informational (all tiers) |
+| `experimentContext`         | `object` or `null` | Yes      | Experiment enrollment context for this session, or `null` if the session is not enrolled in any experiment. Contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via delegation). When present, runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. See Section 10.7. | All (if reading manifest) |
+| `tracingContext`            | `object` or `null` | Yes      | Tracing identifiers propagated from the parent runtime via delegation, or `null` for top-level sessions. An opaque key-value map (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see Section 8.3 for validation rules). See Section 16.3 for the two-tier tracing model. | All (if reading manifest) |
 | `observability`             | `object`           | No       | Observability configuration. Omitted when no OTLP collector is configured for the deployment. | Informational (all tiers) |
 | `observability.otlpEndpoint`| `string`           | No       | URL of the OTLP collector (e.g., `"http://otel-collector.lenny-system:4317"`). Runtimes that emit OpenTelemetry spans (Section 5.2) configure their OTel SDK against this endpoint. Present only when the deployer has configured `observability.otlpEndpoint` in the Helm values. | Informational (all tiers) |
 
@@ -3331,9 +3339,11 @@ The gateway augments the delegation `TaskSpec` with routing metadata (resolved r
 | `maxParallelChildren` | int  | Max concurrent children for the child |
 | `perChildMaxAge`      | int  | Max wall-clock seconds for the child  |
 
-All fields are optional. Defaults are described in Section 8.3.
+All fields are optional. Defaults are derived from the deployer-configured `DelegationPolicy` (Section 8.3). In practice, most runtimes omit `lease_slice` entirely and let the policy defaults apply — no existing agent framework (LangChain/LangGraph, CrewAI, AutoGen) implements LLM-driven budget allocation at delegation time. The `lease_slice` parameter exists for runtimes that want to request tighter constraints than the defaults (the gateway rejects any `lease_slice` that exceeds the parent's remaining budget).
 
 **`lenny/delegate_task` rejects `type: mcp` targets** with `target_not_an_agent`.
+
+**Automatic `tracingContext` injection:** When processing a `lenny/delegate_task` call, the gateway automatically attaches the parent runtime's registered `tracingContext` (set via `lenny/set_tracing_context` MCP tool or `set_tracing_context` JSONL message) to the child's delegation lease. The LLM never sees or touches tracing context — it is infrastructure plumbing managed by the runtime, not a delegation parameter. See Section 8.3 for `tracingContext` validation rules and Section 16.3 for the two-tier tracing model.
 
 **Delegation flow:**
 
@@ -3474,13 +3484,31 @@ Every delegating session carries a **delegation lease** that defines its quantit
   },
   "maxTreeMemoryBytes": 2097152,
   "snapshotPolicyAtLease": false,
-  "experimentContext": null
+  "experimentContext": null,
+  "tracingContext": null
 }
 ```
 
 Child leases are always **strictly narrower** than parent leases (depth decremented, budgets reduced).
 
-**`experimentContext`** — nullable object carrying the session's experiment enrollment, populated by the `ExperimentRouter` at the `PreRoute` phase (Section 10.7). When present, it contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via `inherit` or `control` mode, `false` when independently assigned). The field is `null` when the session is not enrolled in any experiment. Experiment context propagation semantics (how this field is populated on child leases under `inherit`, `control`, and `independent` modes) are defined in Section 10.7.
+**`experimentContext`** — nullable object carrying the session's experiment enrollment, populated by the `ExperimentRouter` at the `PreRoute` phase (Section 10.7). When present, it contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via `inherit` or `control` mode, `false` when independently assigned). The field is `null` when the session is not enrolled in any experiment. Experiment context propagation semantics (how this field is populated on child leases under `inherit`, `control`, and `independent` modes) are defined in Section 10.7. The `experimentContext` is delivered to the runtime in the adapter manifest (Section 15.4) so that runtimes can tag traces with variant metadata for filtering and grouping in their eval platform.
+
+**`tracingContext`** — nullable `map<string, string>` carrying opaque tracing identifiers registered by the runtime via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL). The gateway automatically attaches the parent runtime's registered `tracingContext` to the child's delegation lease when processing a `lenny/delegate_task` call — the LLM never sees or touches tracing context. The child runtime receives it in the adapter manifest (Section 15.4) and uses it to stitch its native traces into the parent's trace tree (e.g., creating a LangSmith child run under the parent's run ID). Child runtimes may extend the inherited `tracingContext` with additional entries via `lenny/set_tracing_context`, subject to the same validation rules. Child entries are merged with parent entries; child entries cannot overwrite or remove parent entries.
+
+**`tracingContext` validation (gateway-enforced):**
+
+| Constraint | Limit | Error code |
+| --- | --- | --- |
+| Max serialized size | 4 KB | `TRACING_CONTEXT_TOO_LARGE` |
+| Max key length | 128 bytes | `TRACING_CONTEXT_TOO_LARGE` |
+| Max value length | 256 bytes | `TRACING_CONTEXT_TOO_LARGE` |
+| Max entries | 32 | `TRACING_CONTEXT_TOO_LARGE` |
+| Key name blocklist (case-insensitive): patterns matching `*secret*`, `*token*`, `*password*`, `*key*`, `*credential*`, `*authorization*` | Rejected | `TRACING_CONTEXT_SENSITIVE_KEY` |
+| Value URL blocklist: values starting with `http://` or `https://` | Rejected | `TRACING_CONTEXT_URL_NOT_ALLOWED` |
+
+Tracing endpoint URLs (where to send traces) are deployer configuration — set via pool-level environment variables or the runtime's own config. Parent runtimes propagate only identifiers (trace IDs, run IDs, span IDs), never endpoint URLs or credentials. This separation ensures a malicious parent cannot redirect a child's tracing to an attacker-controlled endpoint.
+
+**`tracingContext` audit and data lifecycle:** Delegation audit events (`delegation.created`, `delegation.completed`) log `tracingContext` keys only — values are redacted. `tracingContext` values are deleted alongside session data during GDPR erasure (Section 12.8).
 
 **`fileExportLimits` sizing guidance:** The default `maxTotalSize: 100MB` is conservative and appropriate for most delegation workflows. For workflows that produce large build artifacts (e.g., compiled binaries, container images), deployers should increase `maxTotalSize` per delegation preset — up to the workspace size SLO ceiling (500 MB) if needed. Note that file exports transit through the gateway (parent pod → MinIO → child pod), so larger limits increase gateway I/O and MinIO bandwidth proportionally. Deployers should size MinIO I/O capacity accordingly when configuring higher limits.
 
@@ -3664,6 +3692,7 @@ Available on the platform MCP server for every delegation-capable pod:
 | `lenny/memory_write`                              | Write to the memory store (see Section 9.4)                                                                                                                                                                                                                                                                                                |
 | `lenny/memory_query`                              | Query the memory store (see Section 9.4)                                                                                                                                                                                                                                                                                                   |
 | `lenny/send_message(to, message)`                 | Send a message to any task by taskId. Returns `deliveryReceipt` (Section 7.2). Returns error for terminal targets; queues with TTL for recovering targets.                                                                                                                                                                                 |
+| `lenny/set_tracing_context(context)`               | Register tracing identifiers for propagation through delegation. `context` is a `map<string, string>` of non-sensitive identifiers (e.g., `{"langsmith_run_id": "run_abc123"}`). The adapter stores the context and attaches it to all subsequent delegation gRPC requests. Gateway validates on delegation (Section 8.3). Also available via stdout JSONL `set_tracing_context` message for runtimes that prefer the simpler path. See Section 16.3. |
 | `lenny/request_input(parts)`                      | Block until answer arrives (replaces stdout `input_required`)                                                                                                                                                                                                                                                                              |
 | `lenny/get_task_tree()`                           | Return task hierarchy with states. Each node includes `taskId`, `state`, and `runtimeRef`. Visibility is controlled by the `treeVisibility` field on the delegation lease: `full` (default — child sees the entire subtree rooted at the tree root, including siblings and their descendants), `parent-and-self` (child sees only its own node and its direct parent's node), `self-only` (child sees only its own node). The parent controls sibling visibility when issuing the delegation lease. In multi-runtime deployments where child sessions are delegated to runtimes of varying trust levels, `parent-and-self` or `self-only` prevents a low-trust child from observing sibling runtime types, state transitions, or the overall orchestration strategy. When `treeVisibility` is `full`, a child session can discover its siblings by inspecting the tree; combined with `lenny/send_message` under `siblings` messaging scope (Section 7.2), this enables sibling coordination without additional tools. `siblings` messaging scope requires `treeVisibility: full`; the gateway rejects `messagingScope: siblings` when `treeVisibility` is `self-only` or `parent-and-self` at delegation time with `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE`. |
 
@@ -4956,6 +4985,10 @@ Effective cross-environment access requires both sides to permit it. Neither sid
 
 ### 10.7 Experiment Primitives
 
+Lenny provides built-in A/B traffic routing for runtime version rollouts. The platform handles **session routing and variant pool management** — it decides which pool a session lands in, not how to analyze the results. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash) can delegate variant assignment via webhook integration instead of using Lenny's built-in bucketing.
+
+**Experiment context delivery to runtimes.** When a session is enrolled in an experiment, its `experimentContext` (containing `experimentId`, `variantId`, and `inherited` flag) is delivered to the runtime in the adapter manifest (Section 15.4). Runtimes can use this context to tag their traces with variant metadata (e.g., as metadata on LangSmith runs or Braintrust logs) for filtering and grouping in their eval platform. Note that eval platforms do not provide native A/B comparison features — variant comparison works via metadata filtering in those platforms' UIs. For statistical rigor (significance testing, confidence intervals), use a dedicated experimentation platform — see "Full A/B testing with external platforms" below.
+
 `ExperimentDefinition` as first-class admin API resource. `ExperimentRouter` as built-in `RequestInterceptor` (see Section 4.8).
 
 ```yaml
@@ -5164,6 +5197,12 @@ The gateway matches returned `experiment_id` values against registered experimen
 
 The `inherited` field is `true` when the context was propagated from a parent (`inherit` or `control` mode) and `false` when the child was assigned independently.
 
+**Evaluation: two-tier model.** Evaluation is a standalone capability, independent of experimentation. Any session can be evaluated whether or not it is part of an experiment. Lenny supports two complementary approaches:
+
+1. **Runtime-native tracing and scoring (primary).** Most production deployments will use runtime-native eval platforms (LangSmith, Braintrust, Humanloop, etc.) for detailed, trace-level scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation so child runtimes can stitch their traces into the parent's trace tree (see Section 8.3 and 16.3). When experiments are active, `experimentContext` is also delivered in the adapter manifest — runtimes can use it to tag traces with variant metadata for filtering and grouping in their eval platform.
+
+2. **Built-in eval endpoint (basic alternative).** For deployers without dedicated eval tooling, Lenny provides a lightweight score ingestion endpoint (`POST /v1/sessions/{id}/eval`) and a results aggregation API (`GET /v1/admin/experiments/{name}/results`). This is a basic scoring mechanism — it stores scores and provides aggregation. When a session is enrolled in an experiment, the gateway auto-populates experiment attribution on eval results. It does not compete with the depth of runtime-native eval platforms.
+
 **Eval result schema.** Scores submitted via `POST /v1/sessions/{id}/eval` are stored as `EvalResult` records in Postgres:
 
 | Field           | Type     | Description                                                                                                                                                                                                                                    |
@@ -5213,7 +5252,7 @@ Both `score` and `scores` are optional individually, but at least one must be pr
 | **Rate limit** | Configurable per-session and per-tenant rate limits, enforced by the gateway via Redis sliding-window counters. Per-session limit is keyed by `session_id` (default: 100 eval submissions per minute, configurable via tenant config `evalRateLimit.perSessionPerMinute`). Per-tenant limit applies across all sessions (default: 10,000 eval submissions per minute, configurable via tenant config `evalRateLimit.perTenantPerMinute`). Excess requests receive `429 Too Many Requests` with a `Retry-After` header. |
 | **Idempotency** | Callers may supply an optional `idempotency_key` string field in the request body (max 128 bytes). If a submission with the same `idempotency_key` and `session_id` was successfully stored within the last 24 hours, the gateway returns `200 OK` with the original `EvalResult` record without inserting a duplicate. Submissions without an `idempotency_key` are always inserted as new records. The idempotency window is 24 hours (TTL on the Redis dedup key, keyed by `session_id + idempotency_key`). |
 | **Storage bounds** | Maximum 10,000 `EvalResult` records per session. On breach, the gateway returns `429` with error code `EVAL_QUOTA_EXCEEDED`. The per-session cap is configurable via tenant config (`maxEvalsPerSession`, default: 10,000, max: 100,000). There is no global per-experiment storage cap — storage is bounded indirectly by the per-session cap and the number of enrolled sessions. |
-| **Trigger model** | Pull-only. Lenny does not push eval requests to the agent or any external system. The agent or external scorer is responsible for calling `POST /v1/sessions/{id}/eval` at the appropriate time (e.g., after session completion, after each turn, in a batch pipeline). The platform provides no eval scheduling, no webhook fanout to scorers, and no LLM-judge integration — eval computation is entirely the deployer's responsibility. |
+| **Trigger model** | Pull-only. The built-in eval endpoint accepts scores but does not push eval requests to agents or external systems. Callers are responsible for invoking `POST /v1/sessions/{id}/eval` at the appropriate time. For most deployments, runtime-native eval platforms (LangSmith, Braintrust, etc.) handle scoring and tracing directly — see the two-tier evaluation model above. The built-in endpoint is a basic alternative for deployers without dedicated eval tooling. |
 
 **Results API response (`GET /v1/admin/experiments/{name}/results`).** Returns aggregated eval scores for a single experiment, grouped by variant. This endpoint is **not paginated** — the response is a single aggregated object (not a list of items), so the standard cursor-based pagination envelope (Section 15.1) does not apply. The number of variants per experiment is bounded by operator configuration (typically 2–5) and the aggregation is pre-computed, so the response size is inherently bounded.
 
@@ -5310,13 +5349,33 @@ Until this interface is implemented, all experiment lifecycle decisions are manu
 | ------ | --------------- | ----------------- | ------ |
 | Elevated variant error rate | `lenny_session_error_total{variant_id="treatment"}` / `lenny_session_total{variant_id="treatment"}` | > 5% over a 5-minute window, sustained for 2 consecutive windows | Pause experiment |
 | Variant p95 session latency spike | `lenny_session_duration_seconds{quantile="0.95", variant_id="treatment"}` | > 2× the control group's p95 for 10 consecutive minutes | Pause experiment |
-| Mean eval score degradation | `GET /v1/admin/experiments/{name}/results` — `variants[treatment].scorers[*].mean` | Treatment mean drops > 0.10 below control mean with ≥ 50 samples per group | Pause experiment |
+| Mean eval score degradation ① | `GET /v1/admin/experiments/{name}/results` — `variants[treatment].scorers[*].mean` | Treatment mean drops > 0.10 below control mean with ≥ 50 samples per group | Pause experiment |
 | Warm pool exhaustion on variant | `lenny_warmpool_idle_pods{pool="<variant_pool>"}` | Reaches 0 and `lenny_pod_claim_queue_depth` > 0 for > 60s | Pause experiment and investigate pool sizing |
-| Safety score regression | `rate(lenny_eval_score_sum{scorer="safety", variant_id="treatment"}[10m]) / rate(lenny_eval_score_count{scorer="safety", variant_id="treatment"}[10m])` | Mean safety score drops below 0.95 for the variant, regardless of other metrics | Pause experiment immediately |
+| Safety score regression ① | `rate(lenny_eval_score_sum{scorer="safety", variant_id="treatment"}[10m]) / rate(lenny_eval_score_count{scorer="safety", variant_id="treatment"}[10m])` | Mean safety score drops below 0.95 for the variant, regardless of other metrics | Pause experiment immediately |
+
+① **Built-in eval endpoint only.** The eval-based signals (mean eval score degradation, safety score regression) rely on scores submitted via `POST /v1/sessions/{id}/eval`. Deployers whose runtimes use runtime-native eval platforms will not have data in these metrics. Those deployers have two alternatives: (a) configure equivalent score-regression alerts in their eval platform (LangSmith, Braintrust, etc.) and wire them to the `PATCH .../experiments/{name}` pause action, or (b) if using an external experimentation platform (LaunchDarkly, Statsig), report eval scores as custom metrics to that platform and use its guardrail metrics to detect regressions — see "Full A/B testing with external platforms" below.
 
 These thresholds are examples, not platform defaults. Lenny does not enforce them automatically. Deployers should encode them as Prometheus alerting rules (or equivalent) that page on-call and trigger the admin API pause call, either manually or via a runbook-automation script. The `experiment.status_changed` audit event confirms the transition.
 
 **What Lenny explicitly will not build:** Statistical significance testing, automatic experiment lifecycle management (winner declaration, auto-rollback), multi-armed bandits, segment analysis. Those belong in dedicated experimentation platforms.
+
+**Full A/B testing with external experimentation and eval platforms.** Most deployers will use eval platforms (LangSmith, Braintrust, etc.) for session scoring and observability without running A/B experiments. For deployers who want full-featured A/B testing with statistical analysis, Lenny is designed to work as one layer in a three-platform stack:
+
+| Concern | Platform | Mechanism |
+| ------- | -------- | --------- |
+| Traffic splitting and variant assignment | Lenny (built-in bucketing or external targeting via LaunchDarkly, Statsig, Unleash) | `ExperimentRouter` assigns variant; gateway routes to variant pool |
+| Experiment context delivery | Lenny | `experimentContext` in adapter manifest; runtime reads `experimentId` and `variantId` |
+| Trace-level scoring and observability | Runtime-native eval platform (LangSmith, Braintrust, W&B, etc.) | Runtime tags traces with variant metadata from adapter manifest for filtering and grouping |
+| Statistical analysis and guardrail metrics | External experimentation platform (LaunchDarkly, Statsig) | Runtime reports eval scores as custom metrics via the platform's SDK or events API (e.g., `client.track()` for LaunchDarkly, `logEvent()` for Statsig) |
+| Experiment rollback | Operator or automation script → Lenny admin API | `PATCH /v1/admin/experiments/{name}` with `{"status": "paused"}` |
+
+In this pattern, the runtime sends eval scores to **two destinations**: (1) its eval platform for detailed trace analysis, and (2) the experimentation platform as custom numeric metrics for statistical experiment analysis. LaunchDarkly provides Bayesian analysis with credible intervals and probability-to-be-best. Statsig provides frequentist analysis with CUPED variance reduction and sequential testing. Both support guardrail metrics that flag degradation — though as of mid-2025, neither auto-pauses experiments; guardrail breaches surface alerts that an operator or automation script acts on.
+
+Eval platforms (LangSmith, Braintrust, W&B) do not provide native A/B comparison features. When runtimes tag traces with variant metadata, deployers use the eval platform's filtering and grouping capabilities to compare variant results — not a dedicated A/B analysis view. For statistical rigor (significance testing, confidence intervals, winner recommendation), the experimentation platform is the right tool.
+
+The automation gap — no platform in this stack auto-pauses on guardrail breach as of mid-2025 — is bridged by a deployer-operated script or CronJob that either polls the experimentation platform's API for guardrail status or receives a webhook/alert notification and calls Lenny's admin API to pause the experiment.
+
+This three-platform integration is entirely optional. Lenny's built-in experiment primitives and `/eval` endpoint are sufficient for basic A/B comparisons without external platforms. The external integration is for deployers who need statistical rigor, guardrail automation, and the depth of a dedicated experimentation platform.
 
 ---
 
@@ -8121,12 +8180,13 @@ The `message` type carries an `input` field containing an `OutputPart[]` array (
 
 **Outbound messages (agent binary → adapter via stdout):**
 
-| `type` field    | Description                                                                                           |
-| --------------- | ----------------------------------------------------------------------------------------------------- |
-| `response`      | Streamed or complete response carrying `OutputPart[]`. Carries `slotId` in concurrent-workspace mode. |
-| `tool_call`     | Agent requests execution of a tool. Carries `slotId` in concurrent-workspace mode.                    |
-| `heartbeat_ack` | Acknowledges an inbound `heartbeat`. Protocol-level; no content payload.                              |
-| `status`        | Optional status/trace update                                                                          |
+| `type` field             | Description                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `response`               | Streamed or complete response carrying `OutputPart[]`. Carries `slotId` in concurrent-workspace mode. |
+| `tool_call`              | Agent requests execution of a tool. Carries `slotId` in concurrent-workspace mode.                    |
+| `heartbeat_ack`          | Acknowledges an inbound `heartbeat`. Protocol-level; no content payload.                              |
+| `status`                 | Optional status/trace update                                                                          |
+| `set_tracing_context`    | Registers tracing identifiers for propagation through delegation. Payload: `{"type": "set_tracing_context", "context": {"langsmith_run_id": "run_abc123"}}`. The adapter stores the context and automatically attaches it to all subsequent `lenny/delegate_task` gRPC requests. Validation rules (Section 8.3) are enforced by the gateway when the delegation request arrives. Available at all tiers. See Section 16.3 for the two-tier tracing model. |
 
 **`input_required` outbound message type removed.** Replaced by `lenny/request_input` blocking MCP tool call on the platform MCP server.
 
@@ -9175,7 +9235,7 @@ Client SDKs follow the same versioning scheme as the API surfaces they wrap (Sec
 | Experiment sticky cache invalidations (`lenny_experiment_sticky_cache_invalidations_total`, labeled by `experiment_id`, `transition` — incremented on each flush of sticky user assignments; see Section 10.7)         | Counter         |
 | Session errors by variant (`lenny_session_error_total`, labeled by `tenant_id`, `session_type`, `variant_id` — used in manual rollback trigger thresholds; see Section 10.7)                                           | Counter         |
 | Sessions total by variant (`lenny_session_total`, labeled by `tenant_id`, `session_type`, `variant_id` — denominator for variant error rate in rollback triggers; see Section 10.7)                                    | Counter         |
-| Eval score by variant (`lenny_eval_score`, labeled by `tenant_id`, `scorer`, `variant_id` — each eval run records one observation; Histogram enables mean computation via `rate(lenny_eval_score_sum[w]) / rate(lenny_eval_score_count[w])` for rollback trigger conditions; see Section 10.7) | Histogram       |
+| Eval score by variant (`lenny_eval_score`, labeled by `tenant_id`, `scorer`, `variant_id` — each eval run records one observation; Histogram enables mean computation via `rate(lenny_eval_score_sum[w]) / rate(lenny_eval_score_count[w])` for rollback trigger conditions; see Section 10.7. **Built-in `/eval` endpoint only** — deployers whose runtimes use runtime-native eval platforms will not have data in this metric; see Section 10.7 rollback triggers footnote) | Histogram       |
 | **EventBus**                                                                                                                                                                                                           |                 |
 | EventBus publish count (`lenny_event_bus_publish_total`, labeled by `topic` — total publishes per topic; see Section 12.6 EventBus observability contract) | Counter         |
 | EventBus publish duration (`lenny_event_bus_publish_duration_seconds`, labeled by `topic` — time to publish to the underlying transport; see Section 12.6) | Histogram       |
@@ -9242,9 +9302,13 @@ This lets operators identify whether bottlenecks are in pod allocation, file upl
 
 ### 16.3 Distributed Tracing
 
-**Mandatory:** OpenTelemetry trace ID propagation through the entire delegation tree.
+Lenny supports two tiers of distributed tracing, serving different purposes:
 
-**Trace context flows through:**
+**Tier 1: Infrastructure tracing (automatic).** OpenTelemetry trace ID propagation through the entire delegation tree. This covers gateway, controller, and adapter spans — platform-level observability that operators use for debugging latency, errors, and resource usage. Fully automatic; runtimes do not need to participate.
+
+**Tier 2: Runtime-level tracing (runtime-managed).** Opaque `tracingContext` propagation through delegation for runtime-native eval and observability platforms (LangSmith, Braintrust, Humanloop, etc.). Runtimes register tracing identifiers via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL), and the gateway attaches them to child delegation leases automatically. Child runtimes receive the parent's `tracingContext` in the adapter manifest and use it to stitch their native traces into the parent's trace tree. This enables end-to-end eval tracing across delegation boundaries without Lenny needing to understand the tracing platform's wire format. See Section 8.3 for `tracingContext` validation rules.
+
+**Tier 1 trace context flows through:**
 
 - Client → Gateway (HTTP headers)
 - Gateway → Pod (gRPC metadata)
@@ -10090,6 +10154,10 @@ All tunable defaults collected in one place for operator convenience.
 | Delegation budget key TTL         | 259200 s (72 h)                                                          | §8.3, §11.3 |
 | Eval rate limit — per-session     | 100 submissions/min (`evalRateLimit.perSessionPerMinute`)                | §10.7     |
 | Eval rate limit — per-tenant      | 10,000 submissions/min (`evalRateLimit.perTenantPerMinute`)              | §10.7     |
+| Tracing context max size          | 4 KB serialized                                                          | §8.3      |
+| Tracing context max key length    | 128 bytes                                                                | §8.3      |
+| Tracing context max value length  | 256 bytes                                                                | §8.3      |
+| Tracing context max entries       | 32                                                                       | §8.3      |
 
 All values are overridable via Helm values or the corresponding CRD field. See each referenced section for detailed semantics. For per-tier recommended values, see Section 17.8.2.
 

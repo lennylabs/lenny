@@ -605,6 +605,10 @@ Live connectivity test. Rate-limited to 10 requests per connector per minute.
 
 ## Experiments
 
+Experiments enable A/B testing of runtime versions. The gateway assigns sessions to variants, delivers experiment context to runtimes in the adapter manifest (`experimentContext` with `experimentId`, `variantId`, `inherited`), and provides optional built-in score attribution via the `/eval` endpoint.
+
+When experiments are active, runtimes can use the experiment context to tag traces with variant metadata for filtering and grouping in their eval platform.
+
 ### CRUD endpoints
 
 | Endpoint | Method | Role | Description |
@@ -623,7 +627,9 @@ Live connectivity test. Rate-limited to 10 requests per connector per minute.
 platform-admin tenant-admin
 {: .label .label-red .label-blue }
 
-Get experiment results by variant. Returns a single aggregated object (not paginated).
+Get experiment results by variant. Returns aggregated scores from the **built-in `/eval` endpoint** only — scores submitted via runtime-native eval platforms (LangSmith, Braintrust, etc.) are not reflected here and should be queried from those platforms directly.
+
+Returns a single aggregated object (not paginated).
 
 **Response:**
 
