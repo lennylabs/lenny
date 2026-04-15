@@ -13,9 +13,9 @@ Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a
 Lenny is a self-hosted, runtime-agnostic agent platform built around security, isolation, and operational control — from single-team setups to large multi-tenant deployments.
 
 1. **Runtime-agnostic** — any process, any framework, [tiered adapter contract](#runtime-adapter-contract)
-2. **Security by default** — pods run non-root, all capabilities dropped, read-only root filesystem, default-deny network policies. No standing credentials — only short-lived leases. Gateway-mediated file delivery — pods never fetch external data directly. Deployer-selectable isolation: gVisor, Kata microVM, or runc
-3. **Recursive delegation** — agents spawn child agents with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection at every hop
-4. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
+2. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
+3. **Security by default** — pods run non-root, all capabilities dropped, read-only root filesystem, default-deny network policies. No standing credentials — only short-lived leases. Gateway-mediated file delivery — pods never fetch external data directly. Deployer-selectable isolation: gVisor, Kata microVM, or runc
+4. **Recursive delegation** — agents spawn child agents with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection at every hop
 5. **Multi-protocol gateway** — REST, MCP, OpenAI Chat Completions, and Open Responses via a single infrastructure
 6. **Enterprise controls** — multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit with hash-chain integrity, GDPR erasure, legal holds, data residency
 7. **Experimentation and evaluation** — built-in A/B traffic routing; two-tier eval model with runtime-native platforms as the primary path
@@ -140,13 +140,21 @@ See [Core Concepts](docs/getting-started/concepts) for detailed coverage of runt
 
 Pre-warmed pods eliminate cold-start latency — pod claim is in the millisecond range. Each session gets an isolated, sandboxed filesystem with deployer-selectable isolation (runc, gVisor, Kata microVM). Full bidirectional streaming with follow-up prompts, interrupts, tool use, and elicitation. If a pod dies, the gateway resumes the session from a workspace checkpoint. Sessions support derive (fork) and replay (regression testing).
 
+### Credentials and connectors
+
+**Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically. Pods never see raw API keys. **External connectors** — agents call external tools (GitHub, Jira, Slack) through the gateway, which manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see connector tokens.
+
 ### Recursive delegation
 
 Agents spawn child agents through the gateway with enforced delegation leases: maximum depth and fan-out, token budgets, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection. Cross-delegation tracing via `tracingContext` propagation enables trace stitching across delegation chains in external observability platforms.
 
-### Credentials and connectors
+### Gateway
 
-**Credential leasing** — the platform manages LLM provider credentials in pools, assigns short-lived leases to sessions, and rotates automatically. Pods never see raw API keys. **External connectors** — agents call external tools (GitHub, Jira, Slack) through the gateway, which manages OAuth flows, stores tokens encrypted via KMS, and caches access tokens in Redis. Pods never see connector tokens.
+Multi-protocol: REST, MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure. 12-phase request interceptor chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
+
+### Enterprise controls and security
+
+Multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit logging with hash-chained integrity, GDPR erasure, legal holds, and data residency. Pods run non-root with all capabilities dropped, read-only root filesystem, and default-deny network policies. mTLS between gateway and pods. Pluggable `MemoryStore` interface (default: Postgres + pgvector) for agent memory.
 
 ### Experimentation
 
@@ -156,14 +164,6 @@ Built-in A/B traffic routing for runtime version rollouts with variant pools, de
 
 Runtimes can use their own eval platforms (LangSmith, Braintrust, etc.). Lenny propagates `tracingContext` for observability across delegation chains.
 For users that don't have access to external eval tools, Lenny's built-in `/eval` endpoint provides a basic alternative. See [Why Lenny — Evaluation](docs/about/why-lenny#evaluation) for full details.
-
-### Gateway
-
-Multi-protocol: REST, MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure. 12-phase request interceptor chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
-
-### Enterprise controls and security
-
-Multi-tenancy with Postgres RLS, per-tenant quotas, RBAC, audit logging with hash-chained integrity, GDPR erasure, legal holds, and data residency. Pods run non-root with all capabilities dropped, read-only root filesystem, and default-deny network policies. mTLS between gateway and pods. Pluggable `MemoryStore` interface (default: Postgres + pgvector) for agent memory.
 
 ---
 

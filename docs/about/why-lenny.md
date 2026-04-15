@@ -77,7 +77,18 @@ Lenny supports two fundamentally different runtime types, and three execution mo
 
 Execution mode is declared on the `Runtime` definition and propagated to pool configuration. The PoolScalingController applies mode-specific `mode_factor` and `burst_mode_factor` adjustments to the scaling formula, so operators do not need to manually account for pod reuse or slot multiplexing when sizing pools.
 
-### 2. Security by default
+### 2. Self-hosted, Kubernetes-native
+
+Lenny runs on the operator's own cluster using standard Kubernetes primitives -- CRDs, RuntimeClasses, namespaces, HPA, PDBs, topology spread constraints. There is no dependency on a vendor-hosted control plane.
+
+**What this means in practice:**
+
+- Deploy with `helm install` on any conformant Kubernetes cluster.
+- All data stays in your infrastructure (Postgres, Redis, MinIO in your cluster or managed services).
+- Local development mode (`make run`) works with zero cloud dependency.
+- Deployer-selectable isolation profiles: runc (fast, standard isolation), gVisor (userspace syscall interception), Kata (microVM, strongest isolation).
+
+### 3. Security by default
 
 Agent pods are untrusted by design. Lenny enforces strict security at the platform layer so that individual runtimes do not need to implement security themselves.
 
@@ -100,7 +111,7 @@ Agent pods are untrusted by design. Lenny enforces strict security at the platfo
 
 All of these properties are enforced by default — operators do not need to configure them individually.
 
-### 3. Recursive delegation as a platform primitive
+### 4. Recursive delegation as a platform primitive
 
 Any agent pod can spawn child sessions through the gateway with enforced scope, token budget, and lineage tracking. Delegation is a first-class gateway operation with policy enforcement at every hop.
 
@@ -118,17 +129,6 @@ Any agent pod can spawn child sessions through the gateway with enforced scope, 
 **What the parent sees:** A virtual MCP child interface with task status, elicitation forwarding, cancellation, and message delivery. Never pod addresses, internal endpoints, or raw credentials.
 
 The delegation tree is fully platform-managed — runtimes interact with a virtual MCP child interface and never see pod addresses, internal endpoints, or raw credentials.
-
-### 4. Self-hosted, Kubernetes-native
-
-Lenny runs on the operator's own cluster using standard Kubernetes primitives -- CRDs, RuntimeClasses, namespaces, HPA, PDBs, topology spread constraints. There is no dependency on a vendor-hosted control plane.
-
-**What this means in practice:**
-
-- Deploy with `helm install` on any conformant Kubernetes cluster.
-- All data stays in your infrastructure (Postgres, Redis, MinIO in your cluster or managed services).
-- Local development mode (`make run`) works with zero cloud dependency.
-- Deployer-selectable isolation profiles: runc (fast, standard isolation), gVisor (userspace syscall interception), Kata (microVM, strongest isolation).
 
 ### 5. Multi-protocol gateway
 
@@ -171,6 +171,67 @@ Lenny never implements AI-specific logic (eval scoring, memory extraction, conte
 ## Complete feature inventory
 
 Beyond the 7 architectural differentiators, Lenny includes additional platform features organized by category.
+
+### Local development
+
+- **`make run`** (Tier 1): zero-dependency, single binary with embedded SQLite, in-memory caches, and local filesystem for artifacts. Target: clone-to-echo-session in under 5 minutes.
+- **`make dev`** (Tier 2): Docker Compose with real Postgres, Redis, and MinIO for integration testing.
+- **Hot reload**: runtime adapter development with fast iteration.
+- **`lenny-ctl`**: full CLI for operators with commands for bootstrap, pool management, credential management, circuit breakers, experiments, and more.
+
+### Credential management
+
+- **Credential pools**: groups of API keys for a provider, with round-robin or weighted selection, health scoring, and automatic failover.
+- **Credential leasing**: per-session leases with TTL, rotation mid-session, and emergency revocation.
+- **LLM Proxy**: gateway subsystem that injects real API keys into LLM provider requests on behalf of pods. Pods never see raw credentials -- they receive opaque lease tokens.
+- **Pre-authorized flow**: users register credentials once; every session auto-resolves based on authenticated identity.
+- **Credential routing**: pluggable `CredentialRouter` interface for cost-aware, latency-based, or intent-based routing across providers. Deployers pass custom `hints` (model, cost_tier, region) without modifying the core interface.
+- **SPIFFE-bound lease tokens**: in multi-tenant deployments, lease tokens are bound to the issuing pod's SPIFFE identity to prevent cross-pod replay.
+
+### Gateway request interceptors (hooks)
+
+The gateway's `RequestInterceptor` chain provides hook points at every stage of request processing. External interceptors are invoked via gRPC (like Kubernetes admission webhooks).
+
+**Built-in interceptors:**
+
+| Interceptor                 | Purpose                                        | Default state          |
+| :-------------------------- | :--------------------------------------------- | :--------------------- |
+| `AuthEvaluator`             | AuthN/AuthZ, user invalidation                 | Always active          |
+| `QuotaEvaluator`            | Rate limits, token budgets, concurrency limits | Always active          |
+| `DelegationPolicyEvaluator` | Depth, fan-out, policy tag matching            | Always active          |
+| `ExperimentRouter`          | A/B experiment variant assignment              | When experiments exist |
+| `GuardrailsInterceptor`     | Content safety classification                  | Disabled by default    |
+| `RetryPolicyEvaluator`      | Retry eligibility, resume window               | Always active          |
+
+**Interceptor phases** (hook points for custom logic):
+
+- `PreAuth` / `PostAuth` -- before/after authentication
+- `PreRoute` -- before runtime/pool selection (where ExperimentRouter operates)
+- `PreDelegation` -- before processing a `delegate_task` call (content policy enforcement)
+- `PreMessageDelivery` -- before delivering a message to a running session
+- `PostRoute` -- after routing decision
+- `PreToolResult` / `PostAgentOutput` -- around tool execution and agent output
+- `PreLLMRequest` / `PostLLMResponse` -- around LLM provider calls (via LLM Proxy)
+- `PreConnectorRequest` / `PostConnectorResponse` -- around external tool calls
+
+**GuardrailsInterceptor**: disabled by default; deployers wire in external classifiers such as AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC services. The interceptor can `ALLOW`, `DENY`, or `MODIFY` content at any phase.
+
+### Workspace management
+
+- **Workspace Plan schema**: declarative workspace definition with files, setup commands, and configuration -- submitted at session creation.
+- **Setup commands**: executed during workspace finalization with configurable timeouts, allowlists, and failure policies (`fail` or `continue`).
+- **Concurrent workspace mode**: Full-tier runtimes can operate on multiple workspace slots simultaneously, with slot-scoped file delivery and checkpointing.
+- **Workspace size limits**: hard `emptyDir.sizeLimit` enforced by kubelet, plus pre-checkpoint size probes to prevent unbounded agent quiescence.
+- **`.lennyignore`**: deployers can exclude files from checkpoint snapshots to reduce checkpoint duration and storage.
+
+### Observability
+
+- **100+ Prometheus metrics** across gateway subsystems, pools, sessions, checkpoints, delegation, credentials, and experiments.
+- **SLOs**: startup latency (P95 < 2s runc, < 5s gVisor), checkpoint duration (P95 < 2s for workspaces ≤ 100MB), checkpoint freshness (every 10 minutes).
+- **Distributed tracing**: OpenTelemetry integration with trace propagation across gateway → pod → delegation chains.
+- **Structured logging**: per-component, per-session log streams with configurable retention.
+- **Alert rules**: 23+ critical alerts, 30+ warning alerts, and 8 SLO burn-rate alerts defined in the spec.
+- **Grafana dashboards**: pre-built dashboard templates for gateway health, pool status, session lifecycle, and experiment results.
 
 ### Experimentation
 
@@ -218,65 +279,6 @@ What Lenny explicitly does **not** build: LLM-as-judge integration, scoring pipe
 - **Session replay**: `POST /v1/sessions/{id}/replay` replays a completed session's prompt history against a different runtime version. Two modes: `prompt_history` (replays the full transcript) and `workspace_derive` (clean start with identical filesystem).
 - **Eval integration**: replayed sessions can be linked to an eval experiment via `evalRef`, enabling systematic regression testing across runtime versions.
 
-### Memory store
-
-- **`MemoryStore` interface** with `Write`, `Query`, `Delete`, and `List` operations, scoped by tenant, user, agent type, and session.
-- **Default implementation**: Postgres + pgvector with full RLS tenant isolation.
-- **Fully replaceable**: deployers can swap in Mem0, Zep, or any vector database by implementing the interface. A `ValidateMemoryStoreIsolation` contract test verifies tenant isolation for custom implementations.
-- **Platform MCP tools**: `lenny/memory_write` and `lenny/memory_query` available to agent runtimes via the platform MCP server.
-- **Retention controls**: configurable `maxMemoriesPerUser` (default: 10,000) with oldest-first eviction, and optional `retentionDays` TTL.
-- **Instrumentation contract**: all implementations must emit standardized Prometheus metrics (`operation_duration_seconds`, `errors_total`, `record_count`).
-
-### Semantic cache
-
-- **`SemanticCache` interface** on `CredentialPool` for caching LLM responses.
-- **Pluggable**: deployers implement the interface with their preferred caching backend (Redis, dedicated vector store, etc.).
-- **Disabled by default**: opt-in per credential pool, no performance overhead when unused.
-
-### Gateway request interceptors (hooks)
-
-The gateway's `RequestInterceptor` chain provides hook points at every stage of request processing. External interceptors are invoked via gRPC (like Kubernetes admission webhooks).
-
-**Built-in interceptors:**
-
-| Interceptor                 | Purpose                                        | Default state          |
-| :-------------------------- | :--------------------------------------------- | :--------------------- |
-| `AuthEvaluator`             | AuthN/AuthZ, user invalidation                 | Always active          |
-| `QuotaEvaluator`            | Rate limits, token budgets, concurrency limits | Always active          |
-| `DelegationPolicyEvaluator` | Depth, fan-out, policy tag matching            | Always active          |
-| `ExperimentRouter`          | A/B experiment variant assignment              | When experiments exist |
-| `GuardrailsInterceptor`     | Content safety classification                  | Disabled by default    |
-| `RetryPolicyEvaluator`      | Retry eligibility, resume window               | Always active          |
-
-**Interceptor phases** (hook points for custom logic):
-
-- `PreAuth` / `PostAuth` -- before/after authentication
-- `PreRoute` -- before runtime/pool selection (where ExperimentRouter operates)
-- `PreDelegation` -- before processing a `delegate_task` call (content policy enforcement)
-- `PreMessageDelivery` -- before delivering a message to a running session
-- `PostRoute` -- after routing decision
-- `PreToolResult` / `PostAgentOutput` -- around tool execution and agent output
-- `PreLLMRequest` / `PostLLMResponse` -- around LLM provider calls (via LLM Proxy)
-- `PreConnectorRequest` / `PostConnectorResponse` -- around external tool calls
-
-**GuardrailsInterceptor**: disabled by default; deployers wire in external classifiers such as AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC services. The interceptor can `ALLOW`, `DENY`, or `MODIFY` content at any phase.
-
-### Credential management
-
-- **Credential pools**: groups of API keys for a provider, with round-robin or weighted selection, health scoring, and automatic failover.
-- **Credential leasing**: per-session leases with TTL, rotation mid-session, and emergency revocation.
-- **LLM Proxy**: gateway subsystem that injects real API keys into LLM provider requests on behalf of pods. Pods never see raw credentials -- they receive opaque lease tokens.
-- **Pre-authorized flow**: users register credentials once; every session auto-resolves based on authenticated identity.
-- **Credential routing**: pluggable `CredentialRouter` interface for cost-aware, latency-based, or intent-based routing across providers. Deployers pass custom `hints` (model, cost_tier, region) without modifying the core interface.
-- **SPIFFE-bound lease tokens**: in multi-tenant deployments, lease tokens are bound to the issuing pod's SPIFFE identity to prevent cross-pod replay.
-
-### Storage architecture
-
-- **Pluggable storage interfaces**: `SessionStore`, `ArtifactStore`, `EventStore`, `TokenStore`, `MemoryStore`, `CredentialPoolStore`, `QuotaStore`, `EvalResultStore` -- all defined as Go interfaces with default implementations backed by Postgres, Redis, and MinIO.
-- **`StoreRouter`**: routes storage operations based on data residency region, directing writes to region-local backends.
-- **Data classification**: T1 (Public), T2 (Internal), T3 (Confidential/PII), T4 (Restricted/regulated) with per-tier encryption and retention requirements.
-- **Cloud-managed backends**: RDS/Cloud SQL for Postgres, ElastiCache/Memorystore for Redis, S3/GCS/Azure Blob for artifacts.
-
 ### Compliance and data governance
 
 - **Audit logging**: append-only event store with hash-chained integrity, SIEM forwarding, and configurable retention presets for SOC2, HIPAA, and FedRAMP.
@@ -292,29 +294,27 @@ The gateway's `RequestInterceptor` chain provides hook points at every stage of 
 - **Metering events**: `GET /v1/metering/events` provides a paginated billing event stream for integration with external billing systems.
 - **Per-tenant and per-user quota enforcement**: token budgets, concurrent session limits, and rate limits with Redis-backed atomic accounting.
 
-### Workspace management
+### Storage architecture
 
-- **Workspace Plan schema**: declarative workspace definition with files, setup commands, and configuration -- submitted at session creation.
-- **Setup commands**: executed during workspace finalization with configurable timeouts, allowlists, and failure policies (`fail` or `continue`).
-- **Concurrent workspace mode**: Full-tier runtimes can operate on multiple workspace slots simultaneously, with slot-scoped file delivery and checkpointing.
-- **Workspace size limits**: hard `emptyDir.sizeLimit` enforced by kubelet, plus pre-checkpoint size probes to prevent unbounded agent quiescence.
-- **`.lennyignore`**: deployers can exclude files from checkpoint snapshots to reduce checkpoint duration and storage.
+- **Pluggable storage interfaces**: `SessionStore`, `ArtifactStore`, `EventStore`, `TokenStore`, `MemoryStore`, `CredentialPoolStore`, `QuotaStore`, `EvalResultStore` -- all defined as Go interfaces with default implementations backed by Postgres, Redis, and MinIO.
+- **`StoreRouter`**: routes storage operations based on data residency region, directing writes to region-local backends.
+- **Data classification**: T1 (Public), T2 (Internal), T3 (Confidential/PII), T4 (Restricted/regulated) with per-tier encryption and retention requirements.
+- **Cloud-managed backends**: RDS/Cloud SQL for Postgres, ElastiCache/Memorystore for Redis, S3/GCS/Azure Blob for artifacts.
 
-### Observability
+### Memory store
 
-- **100+ Prometheus metrics** across gateway subsystems, pools, sessions, checkpoints, delegation, credentials, and experiments.
-- **SLOs**: startup latency (P95 < 2s runc, < 5s gVisor), checkpoint duration (P95 < 2s for workspaces ≤ 100MB), checkpoint freshness (every 10 minutes).
-- **Distributed tracing**: OpenTelemetry integration with trace propagation across gateway → pod → delegation chains.
-- **Structured logging**: per-component, per-session log streams with configurable retention.
-- **Alert rules**: 23+ critical alerts, 30+ warning alerts, and 8 SLO burn-rate alerts defined in the spec.
-- **Grafana dashboards**: pre-built dashboard templates for gateway health, pool status, session lifecycle, and experiment results.
+- **`MemoryStore` interface** with `Write`, `Query`, `Delete`, and `List` operations, scoped by tenant, user, agent type, and session.
+- **Default implementation**: Postgres + pgvector with full RLS tenant isolation.
+- **Fully replaceable**: deployers can swap in Mem0, Zep, or any vector database by implementing the interface. A `ValidateMemoryStoreIsolation` contract test verifies tenant isolation for custom implementations.
+- **Platform MCP tools**: `lenny/memory_write` and `lenny/memory_query` available to agent runtimes via the platform MCP server.
+- **Retention controls**: configurable `maxMemoriesPerUser` (default: 10,000) with oldest-first eviction, and optional `retentionDays` TTL.
+- **Instrumentation contract**: all implementations must emit standardized Prometheus metrics (`operation_duration_seconds`, `errors_total`, `record_count`).
 
-### Local development
+### Semantic cache
 
-- **`make run`** (Tier 1): zero-dependency, single binary with embedded SQLite, in-memory caches, and local filesystem for artifacts. Target: clone-to-echo-session in under 5 minutes.
-- **`make dev`** (Tier 2): Docker Compose with real Postgres, Redis, and MinIO for integration testing.
-- **Hot reload**: runtime adapter development with fast iteration.
-- **`lenny-ctl`**: full CLI for operators with commands for bootstrap, pool management, credential management, circuit breakers, experiments, and more.
+- **`SemanticCache` interface** on `CredentialPool` for caching LLM responses.
+- **Pluggable**: deployers implement the interface with their preferred caching backend (Redis, dedicated vector store, etc.).
+- **Disabled by default**: opt-in per credential pool, no performance overhead when unused.
 
 ---
 
