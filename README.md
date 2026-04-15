@@ -10,7 +10,7 @@ Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a
 
 ## Why Lenny?
 
-Existing AI agent infrastructure forces a choice: sandboxed environments without orchestration (E2B, Daytona), orchestration frameworks that require SDK lock-in (Temporal, LangGraph), or hosted platforms where you don't control the data. Lenny is self-hosted, runtime-agnostic, and treats multi-agent delegation, experimentation, and enterprise controls as platform primitives — not afterthoughts.
+Lenny is a self-hosted, runtime-agnostic agent platform built around security, isolation, and operational control — from single-team setups to large multi-tenant deployments.
 
 1. **Runtime-agnostic** — any process, any framework, [tiered adapter contract](#runtime-adapter-contract)
 2. **Security by default** — pods run non-root, all capabilities dropped, read-only root filesystem, default-deny network policies. No standing credentials — only short-lived leases. Gateway-mediated file delivery — pods never fetch external data directly. Deployer-selectable isolation: gVisor, Kata microVM, or runc
@@ -21,7 +21,7 @@ Existing AI agent infrastructure forces a choice: sandboxed environments without
 7. **Experimentation and evaluation** — built-in A/B traffic routing; two-tier eval model with runtime-native platforms as the primary path
 8. **Ecosystem-composable** — memory, caching, guardrails, eval, credential routing are all pluggable interfaces
 
-For detailed comparisons against E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
+For comparisons with other projects, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
 
 ---
 

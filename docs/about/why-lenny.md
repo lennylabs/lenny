@@ -30,15 +30,13 @@ Teams building AI agents face a common infrastructure challenge: they need cloud
 - **Support experimentation and evaluation** -- teams need to A/B test runtime versions, score agent output, and replay sessions for regression testing.
 - **Comply with enterprise requirements** -- audit logging, data residency, GDPR erasure, credential rotation, and content policy enforcement.
 
-Existing solutions each solve part of this problem but force significant trade-offs. Sandbox platforms (E2B, Daytona) provide fast isolated environments but lack orchestration contracts and delegation primitives. Workflow engines (Temporal) provide durability but require agent logic to use their SDK. Framework-coupled platforms (LangGraph/LangSmith) provide rich agent primitives but only within their ecosystem.
-
-Lenny occupies a distinct point in this design space: a **Kubernetes-native, runtime-agnostic agent session platform** that provides all of these capabilities behind a unified gateway.
+Lenny is a self-hosted, runtime-agnostic agent platform built around security, isolation, and operational control — from single-team setups to large multi-tenant deployments. It provides all of these capabilities behind a unified gateway.
 
 ---
 
 ## Architectural differentiators
 
-These are architectural commitments reflected throughout the specification, not roadmap aspirations.
+These are architectural commitments reflected in the specification, not roadmap aspirations.
 
 ### 1. Runtime-agnostic adapter contract
 
@@ -52,7 +50,7 @@ The adapter contract is tiered by integration depth:
 | **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
 | **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
-The key distinction from competitors: the adapter contract separates **platform integration** (adapter) from **agent logic** (runtime). Agent code remains framework-independent even when the adapter layer carries Lenny-specific integration effort. E2B and Daytona provide sandbox environments but assume the operator brings their own orchestration. Temporal and LangGraph require agent logic itself to use their respective SDKs.
+The adapter contract separates **platform integration** (adapter) from **agent logic** (runtime). Agent code remains framework-independent even when the adapter layer carries Lenny-specific integration effort.
 
 ### Runtime types and execution modes
 
@@ -100,11 +98,11 @@ Agent pods are untrusted by design. Lenny enforces strict security at the platfo
 
 **Credential isolation:** The Token Service runs as a separate process with its own ServiceAccount and KMS access. Pods receive short-lived credential leases bound to their session -- never raw API keys. External connector tokens (GitHub, Jira, Slack) are managed entirely by the gateway; pods never see them. Credential rotation happens automatically on rate limiting or revocation.
 
-Competitors provide sandboxed environments (E2B, Daytona) but leave credential management, network policy, and pod hardening to the operator. Lenny enforces these by default.
+All of these properties are enforced by default — operators do not need to configure them individually.
 
 ### 3. Recursive delegation as a platform primitive
 
-Any agent pod can spawn child sessions through the gateway with enforced scope, token budget, and lineage tracking. This is not a library-level feature bolted on -- it is a first-class gateway operation with policy enforcement at every hop.
+Any agent pod can spawn child sessions through the gateway with enforced scope, token budget, and lineage tracking. Delegation is a first-class gateway operation with policy enforcement at every hop.
 
 **What the gateway enforces per delegation:**
 
@@ -119,7 +117,7 @@ Any agent pod can spawn child sessions through the gateway with enforced scope, 
 
 **What the parent sees:** A virtual MCP child interface with task status, elicitation forwarding, cancellation, and message delivery. Never pod addresses, internal endpoints, or raw credentials.
 
-LangSmith's RemoteGraph offers graph-level delegation but without per-hop budget/scope controls enforced at the platform layer.
+The delegation tree is fully platform-managed — runtimes interact with a virtual MCP child interface and never see pod addresses, internal endpoints, or raw credentials.
 
 ### 4. Self-hosted, Kubernetes-native
 
@@ -166,17 +164,13 @@ Rate limiting, token budgets, concurrency controls, isolation profiles, audit lo
 
 Every cross-cutting AI capability -- memory, caching, guardrails, evaluation, routing -- is defined as an interface with a sensible default, disabled unless explicitly enabled, and fully replaceable.
 
-Lenny never implements AI-specific logic (eval scoring, memory extraction, content classification). That belongs to specialized tools the deployer already uses. This is a deliberate architectural stance:
-
-- **LangChain/LangSmith** bundles its own evaluators, tracing, and memory, requiring adopters to work within or around that stack.
-- **Modal** provides no agent-specific hooks at all.
-- **Lenny** provides the platform layer and stays out of the ecosystem layer, so deployers compose their preferred tools without fighting the platform.
+Lenny never implements AI-specific logic (eval scoring, memory extraction, content classification). That belongs to specialized tools the deployer already uses. Lenny provides the platform layer and stays out of the ecosystem layer, so deployers compose their preferred tools without fighting the platform.
 
 ---
 
 ## Complete feature inventory
 
-Beyond the 7 architectural differentiators, Lenny includes a comprehensive set of platform features organized by category.
+Beyond the 7 architectural differentiators, Lenny includes additional platform features organized by category.
 
 ### Experimentation
 
@@ -363,7 +357,7 @@ The `make run` local dev mode runs with embedded stores (SQLite for Postgres, in
 The differentiators above involve deliberate trade-offs that evaluators should weigh:
 
 - **No shared storage mounts** means workspace materialization can add latency to every session start.
-- **Least privilege by default** means more complex credential management (credential pools, lease rotation, per-session scoping) than competitors that simply mount API keys.
+- **Least privilege by default** means more complex credential management (credential pools, lease rotation, per-session scoping) compared to simply mounting API keys.
 - **Integration with adapter effort** means runtime authors meaning to take full advantage of Lenny's capabilities need to integrate with Lenny's adapter.
 - **No built-in eval scoring or memory extraction** -- deployers must bring their own evaluation pipelines, scoring tools, and memory extraction logic. Lenny provides the hooks and interfaces but not the implementations.
 - **No automatic experiment lifecycle management** -- all experiment transitions (active, paused, concluded) are operator-initiated. Lenny does not build auto-winner declaration, statistical significance testing, or multi-armed bandits.
