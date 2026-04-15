@@ -154,7 +154,8 @@ Built-in A/B traffic routing for runtime version rollouts with variant pools, de
 
 ### Evaluation
 
-Evaluation is independent of experimentation — any session can be scored. Two-tier model: runtimes use their own eval platforms (LangSmith, Braintrust, etc.) as the primary scoring path; Lenny's built-in `/eval` endpoint provides a basic alternative. Cross-delegation `tracingContext` propagation for observability across delegation chains. See [Why Lenny — Evaluation](docs/about/why-lenny#evaluation) for full detail.
+Runtimes can use their own eval platforms (LangSmith, Braintrust, etc.). Lenny propagates `tracingContext` for observability across delegation chains.
+For users that don't have access to external eval tools, Lenny's built-in `/eval` endpoint provides a basic alternative. See [Why Lenny — Evaluation](docs/about/why-lenny#evaluation) for full details.
 
 ### Gateway
 

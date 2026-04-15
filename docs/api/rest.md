@@ -6,6 +6,7 @@ nav_order: 3
 ---
 
 # REST API Reference
+
 {: .no_toc }
 
 The REST API covers all non-interactive operations. It is the primary integration point for CI/CD pipelines, admin dashboards, CLIs, and clients in any language. For interactive streaming sessions, use the [MCP API](mcp.html) instead.
@@ -35,17 +36,17 @@ In `make run` dev mode, authentication is disabled.
 
 ## Session Lifecycle
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `POST` | `/v1/sessions` | Create a new session |
-| `POST` | `/v1/sessions/{id}/upload` | Upload workspace files |
-| `POST` | `/v1/sessions/{id}/finalize` | Finalize workspace and run setup |
-| `POST` | `/v1/sessions/{id}/start` | Start the agent runtime |
-| `POST` | `/v1/sessions/{id}/terminate` | Graceful session termination |
-| `DELETE` | `/v1/sessions/{id}` | Force cancel and clean up |
-| `GET` | `/v1/sessions/{id}` | Get session status and metadata |
-| `POST` | `/v1/sessions/{id}/derive` | Fork from a completed session's workspace |
-| `POST` | `/v1/sessions/{id}/replay` | Replay session against a different runtime |
+| Method   | Endpoint                      | Description                                |
+| :------- | :---------------------------- | :----------------------------------------- |
+| `POST`   | `/v1/sessions`                | Create a new session                       |
+| `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace files                     |
+| `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup           |
+| `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                    |
+| `POST`   | `/v1/sessions/{id}/terminate` | Graceful session termination               |
+| `DELETE` | `/v1/sessions/{id}`           | Force cancel and clean up                  |
+| `GET`    | `/v1/sessions/{id}`           | Get session status and metadata            |
+| `POST`   | `/v1/sessions/{id}/derive`    | Fork from a completed session's workspace  |
+| `POST`   | `/v1/sessions/{id}/replay`    | Replay session against a different runtime |
 
 ### POST /v1/sessions
 
@@ -53,16 +54,16 @@ Create a new session. Claims a warm pod, assigns credentials, and returns a sess
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `runtime` | string | Yes | Name of a registered runtime |
-| `pool` | string | No | Specific pool (defaults to runtime's default pool) |
-| `workspacePlan` | object | No | Workspace configuration (sources, maxSizeMB, setup commands) |
-| `labels` | object | No | Key-value labels for filtering |
-| `environment` | string | No | Environment name to scope the session |
-| `callbackUrl` | string | No | Webhook URL for completion notification |
-| `idempotencyKey` | string | No | Client-supplied key for idempotent creation |
-| `dataResidencyRegion` | string | No | Required data residency region constraint |
+| Parameter             | Type   | Required | Description                                                  |
+| :-------------------- | :----- | :------- | :----------------------------------------------------------- |
+| `runtime`             | string | Yes      | Name of a registered runtime                                 |
+| `pool`                | string | No       | Specific pool (defaults to runtime's default pool)           |
+| `workspacePlan`       | object | No       | Workspace configuration (sources, maxSizeMB, setup commands) |
+| `labels`              | object | No       | Key-value labels for filtering                               |
+| `environment`         | string | No       | Environment name to scope the session                        |
+| `callbackUrl`         | string | No       | Webhook URL for completion notification                      |
+| `idempotencyKey`      | string | No       | Client-supplied key for idempotent creation                  |
+| `dataResidencyRegion` | string | No       | Required data residency region constraint                    |
 
 **Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403).
 
@@ -87,9 +88,9 @@ Start the agent runtime. The session must be in `ready` state (workspace finaliz
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `message` | string | No | Initial message to send to the agent upon start |
+| Parameter | Type   | Required | Description                                     |
+| :-------- | :----- | :------- | :---------------------------------------------- |
+| `message` | string | No       | Initial message to send to the agent upon start |
 
 **Valid precondition states:** `ready`.
 **Resulting transition:** `starting` then `running`.
@@ -128,10 +129,10 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `targetRuntime` | string | No | Runtime for the derived session (defaults to source runtime) |
-| `allowStale` | bool | No | Allow deriving from non-terminal sessions using the latest checkpoint |
+| Parameter       | Type   | Required | Description                                                           |
+| :-------------- | :----- | :------- | :-------------------------------------------------------------------- |
+| `targetRuntime` | string | No       | Runtime for the derived session (defaults to source runtime)          |
+| `allowStale`    | bool   | No       | Allow deriving from non-terminal sessions using the latest checkpoint |
 
 **Valid precondition states:** terminal states by default; non-terminal with `allowStale: true`.
 
@@ -143,12 +144,12 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `targetRuntime` | string | Yes | Runtime to replay against (must share `executionMode` with source) |
-| `targetPool` | string | No | Specific pool for the replayed session |
-| `replayMode` | string | No | `prompt_history` (default) or `workspace_derive` |
-| `evalRef` | string | No | Link to an experiment or eval set |
+| Parameter       | Type   | Required | Description                                                        |
+| :-------------- | :----- | :------- | :----------------------------------------------------------------- |
+| `targetRuntime` | string | Yes      | Runtime to replay against (must share `executionMode` with source) |
+| `targetPool`    | string | No       | Specific pool for the replayed session                             |
+| `replayMode`    | string | No       | `prompt_history` (default) or `workspace_derive`                   |
+| `evalRef`       | string | No       | Link to an experiment or eval set                                  |
 
 **Valid precondition states:** terminal states only.
 
@@ -158,13 +159,13 @@ Re-run a session against a different runtime version using the same workspace an
 
 ## Messages and Interaction
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `POST` | `/v1/sessions/{id}/messages` | Send a message to a session |
-| `GET` | `/v1/sessions/{id}/messages` | List messages (paginated) |
-| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/approve` | Approve a pending tool call |
-| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/deny` | Deny a pending tool call |
-| `POST` | `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` | Respond to an elicitation |
+| Method | Endpoint                                                  | Description                   |
+| :----- | :-------------------------------------------------------- | :---------------------------- |
+| `POST` | `/v1/sessions/{id}/messages`                              | Send a message to a session   |
+| `GET`  | `/v1/sessions/{id}/messages`                              | List messages (paginated)     |
+| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/approve`       | Approve a pending tool call   |
+| `POST` | `/v1/sessions/{id}/tool-use/{tool_call_id}/deny`          | Deny a pending tool call      |
+| `POST` | `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` | Respond to an elicitation     |
 | `POST` | `/v1/sessions/{id}/elicitations/{elicitation_id}/dismiss` | Dismiss a pending elicitation |
 
 ### POST /v1/sessions/{id}/messages
@@ -173,11 +174,11 @@ Send a message to a running or suspended session.
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `input` | array | Yes | Content parts to send (e.g., `[{"type": "text", "inline": "..."}]`) |
-| `delivery` | string | No | `"immediate"` or `"queued"` (default) |
-| `inReplyTo` | string | No | Message ID this is replying to |
+| Parameter   | Type   | Required | Description                                                         |
+| :---------- | :----- | :------- | :------------------------------------------------------------------ |
+| `input`     | array  | Yes      | Content parts to send (e.g., `[{"type": "text", "inline": "..."}]`) |
+| `delivery`  | string | No       | `"immediate"` or `"queued"` (default)                               |
+| `inReplyTo` | string | No       | Message ID this is replying to                                      |
 
 **Valid precondition states:** any non-terminal state. Delivery semantics vary by state.
 
@@ -219,13 +220,13 @@ Dismiss a pending elicitation. The agent receives a timeout/dismissed signal.
 
 ## Artifacts and Streaming
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `GET` | `/v1/sessions/{id}/artifacts` | List session artifacts |
-| `GET` | `/v1/sessions/{id}/events` | SSE event stream |
-| `GET` | `/v1/sessions/{id}/setup-output` | Setup command stdout/stderr |
-| `GET` | `/v1/sessions/{id}/webhook-events` | Webhook event history |
-| `GET` | `/v1/blobs/{ref}` | Resolve a `lenny-blob://` reference |
+| Method | Endpoint                           | Description                         |
+| :----- | :--------------------------------- | :---------------------------------- |
+| `GET`  | `/v1/sessions/{id}/artifacts`      | List session artifacts              |
+| `GET`  | `/v1/sessions/{id}/events`         | SSE event stream                    |
+| `GET`  | `/v1/sessions/{id}/setup-output`   | Setup command stdout/stderr         |
+| `GET`  | `/v1/sessions/{id}/webhook-events` | Webhook event history               |
+| `GET`  | `/v1/blobs/{ref}`                  | Resolve a `lenny-blob://` reference |
 
 ### GET /v1/sessions/{id}/artifacts
 
@@ -267,10 +268,10 @@ Resolve and download a `lenny-blob://` reference. `{ref}` is the full `lenny-blo
 
 ## Discovery
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `GET` | `/v1/runtimes` | List available runtimes |
-| `GET` | `/v1/pools` | List available pools |
+| Method | Endpoint       | Description             |
+| :----- | :------------- | :---------------------- |
+| `GET`  | `/v1/runtimes` | List available runtimes |
+| `GET`  | `/v1/pools`    | List available pools    |
 
 ### GET /v1/runtimes
 
@@ -294,13 +295,13 @@ List pools and warm pod counts.
 
 User-managed credentials for the "bring your own API key" workflow. See the [User Credentials tutorial](../tutorials/user-credentials.html) for a walkthrough.
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `POST` | `/v1/credentials` | Register a user credential |
-| `GET` | `/v1/credentials` | List user credentials |
-| `PUT` | `/v1/credentials/{ref}` | Update (rotate) a credential |
-| `POST` | `/v1/credentials/{ref}/revoke` | Revoke a credential |
-| `DELETE` | `/v1/credentials/{ref}` | Delete a credential |
+| Method   | Endpoint                       | Description                  |
+| :------- | :----------------------------- | :--------------------------- |
+| `POST`   | `/v1/credentials`              | Register a user credential   |
+| `GET`    | `/v1/credentials`              | List user credentials        |
+| `PUT`    | `/v1/credentials/{ref}`        | Update (rotate) a credential |
+| `POST`   | `/v1/credentials/{ref}/revoke` | Revoke a credential          |
+| `DELETE` | `/v1/credentials/{ref}`        | Delete a credential          |
 
 ### POST /v1/credentials
 
@@ -308,11 +309,11 @@ Register a credential for the authenticated user. One credential per provider; r
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `provider` | string | Yes | Provider identifier (e.g., `anthropic`, `openai`) |
-| `secret` | string | Yes | API key or OAuth token |
-| `metadata` | object | No | Provider-specific metadata |
+| Parameter  | Type   | Required | Description                                       |
+| :--------- | :----- | :------- | :------------------------------------------------ |
+| `provider` | string | Yes      | Provider identifier (e.g., `anthropic`, `openai`) |
+| `secret`   | string | Yes      | API key or OAuth token                            |
+| `metadata` | object | No       | Provider-specific metadata                        |
 
 **Key error codes:** `VALIDATION_ERROR` (400), `UNAUTHORIZED` (401).
 
@@ -344,11 +345,11 @@ Remove a registered credential. Active session leases are unaffected (they conti
 
 ## Evaluation (Built-in Endpoint)
 
-Evaluation is independent of experimentation — any session can be scored whether or not it is part of an experiment. Runtimes with dedicated eval platforms (LangSmith, Braintrust, etc.) use those platforms directly for scoring and observability. The endpoints below are the **built-in alternative** for deployers without dedicated eval tooling. When a session is enrolled in an experiment, the gateway auto-populates experiment attribution on eval results.
+Runtimes with dedicated eval platforms (LangSmith, Braintrust, etc.) use those platforms directly for scoring and observability. The endpoints below are the **built-in alternative** for deployers without dedicated eval tooling. When a session is enrolled in an experiment, the gateway auto-populates experiment attribution on eval results.
 
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| `POST` | `/v1/sessions/{id}/eval` | Submit an evaluation score |
+| Method | Endpoint                             | Description                   |
+| :----- | :----------------------------------- | :---------------------------- |
+| `POST` | `/v1/sessions/{id}/eval`             | Submit an evaluation score    |
 | `POST` | `/v1/sessions/{id}/extend-retention` | Extend artifact retention TTL |
 
 ### POST /v1/sessions/{id}/eval
@@ -357,12 +358,12 @@ Submit scored evaluation results for a session. Accepts scores from any authenti
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `scores` | object | Yes | Dimension-keyed scores (e.g., `{"accuracy": 0.95, "helpfulness": 0.8}`) |
-| `evaluator` | string | No | Evaluator identifier |
-| `metadata` | object | No | Additional eval context |
-| `idempotency_key` | string | No | Prevents duplicate scoring in pipeline retries |
+| Parameter         | Type   | Required | Description                                                             |
+| :---------------- | :----- | :------- | :---------------------------------------------------------------------- |
+| `scores`          | object | Yes      | Dimension-keyed scores (e.g., `{"accuracy": 0.95, "helpfulness": 0.8}`) |
+| `evaluator`       | string | No       | Evaluator identifier                                                    |
+| `metadata`        | object | No       | Additional eval context                                                 |
+| `idempotency_key` | string | No       | Prevents duplicate scoring in pipeline retries                          |
 
 **Rate limits:** Configurable via `evalRateLimit.perSessionPerMinute` (default: 100) and `evalRateLimit.perTenantPerMinute` (default: 10,000) in tenant configuration.
 
@@ -386,13 +387,13 @@ Create, upload inline files, and start a session in one call. Combines session c
 
 **Request body:**
 
-| Parameter | Type | Required | Description |
-|:----------|:-----|:---------|:------------|
-| `runtime` | string | Yes | Runtime name |
-| `input` | array | No | Initial message content parts |
-| `files` | array | No | Inline files (`{path, content, encoding}`) |
-| `labels` | object | No | Key-value labels |
-| `callbackUrl` | string | No | Webhook URL |
+| Parameter     | Type   | Required | Description                                |
+| :------------ | :----- | :------- | :----------------------------------------- |
+| `runtime`     | string | Yes      | Runtime name                               |
+| `input`       | array  | No       | Initial message content parts              |
+| `files`       | array  | No       | Inline files (`{path, content, encoding}`) |
+| `labels`      | object | No       | Key-value labels                           |
+| `callbackUrl` | string | No       | Webhook URL                                |
 
 Returns a running session with the first message already delivered.
 
