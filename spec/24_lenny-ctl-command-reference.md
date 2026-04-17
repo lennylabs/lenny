@@ -2,6 +2,17 @@
 
 `lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over the Admin API ([Section 15.1](15_external-api-surface.md#151-rest-api)) with near-zero business logic — every operation maps to an Admin API call. It requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag). Minimum required role is noted per command group. **Exception:** `lenny-ctl preflight` operates in two modes — standalone (reads `values.yaml` directly and probes infrastructure without a running gateway) and API-backed (delegates to `POST /v1/admin/preflight` on a running gateway). In standalone mode it embeds the preflight check logic locally; this is the only `lenny-ctl` subcommand that carries business logic, justified because preflight must run before the platform is deployed.
 
+### 24.0 Packaging and Installation
+
+The CLI ships in two interchangeable forms that use identical flags, arguments, and output formats:
+
+1. **Standalone binary `lenny-ctl`.** Released as signed binaries for Linux, macOS, and Windows on every tagged release. Installed via the project's Homebrew tap (`brew install lenny-platform/tap/lenny-ctl`), via `go install github.com/lenny-platform/lenny/cmd/lenny-ctl@latest`, or by downloading the binary directly. This is the canonical form for CI/CD pipelines, air-gapped environments, and operators who do not use `kubectl`.
+2. **kubectl plugin `kubectl-lenny`.** The same binary, released with the name `kubectl-lenny`, is distributed through the [krew plugin index](https://krew.sigs.k8s.io/). Installation: `kubectl krew install lenny`. Invocation: `kubectl lenny <subcommand>` — every subcommand, flag, and environment variable is identical to `lenny-ctl <subcommand>`. The plugin is discoverable via `kubectl krew search lenny` and upgradable via `kubectl krew upgrade lenny`.
+
+Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kubectl-lenny` does NOT auto-discover the Lenny API URL from the active kubeconfig context — `kubectl lenny` and `lenny-ctl` use the same explicit discovery rules described in [§24.16](#2416-server-discovery-and-routing). This is intentional: the `kubectl` context identifies the Kubernetes cluster, not the Lenny deployment within it, and Lenny may live in any namespace or behind any Ingress hostname. Operators who want kubectl-context-derived discovery can set `LENNY_API_URL` via a per-context shell alias.
+
+**Release process.** Each tagged Lenny release produces: (a) the standalone `lenny-ctl` binaries (signed with cosign); (b) the same binaries released as `kubectl-lenny` with a krew `plugin.yaml` manifest pointing at their checksums. The krew-index pull request is opened post-tag by the release automation. See [§17.6](17_deployment-topology.md#176-packaging-and-installation) for the full release pipeline.
+
 ### 24.1 Bootstrap
 
 | Command | Description | API Mapping | Min Role |
@@ -82,13 +93,13 @@
 
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
-| `lenny-ctl admin external-adapters validate --name <name>` | Run the `RegisterAdapterUnderTest` compliance suite against a registered adapter. Transitions the adapter from `pending_validation` to `active` on success, or `validation_failed` on failure. Must be called before the adapter receives traffic. See [Section 15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract). | `POST /v1/admin/external-adapters/{name}/validate` | `platform-admin` |
+| `lenny-ctl admin external-adapters validate --name <name>` | Run the `RegisterAdapterUnderTest` compliance suite against a registered adapter. The suite is **schema-driven**: assertions are generated from the published `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and `schemas/outputpart.schema.json` artifacts ([Section 15.4](15_external-api-surface.md#154-runtime-adapter-specification)) rather than hand-coded against prose. Transitions the adapter from `pending_validation` to `active` on success, or `validation_failed` on failure (validation report cites the specific schema assertion that failed). Must be called before the adapter receives traffic. See [Section 15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract). | `POST /v1/admin/external-adapters/{name}/validate` | `platform-admin` |
 
 ### 24.9 User and Token Management
 
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token and patch Kubernetes Secret | `POST /v1/admin/users/{user_id}/rotate-token` | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token and patch Kubernetes Secret. Internally calls the canonical OAuth token endpoint with an RFC 8693 token-exchange grant (`subject_token=<current>`, `requested_token_type=<same>`), then writes the returned token to the `lenny-admin-token` Kubernetes Secret. | `POST /v1/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` | `platform-admin` |
 
 ### 24.10 Tenant Management
 
@@ -119,6 +130,7 @@
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
 | `lenny-ctl migrate status` | Show the current expand-contract phase for every active schema migration. Output includes: `version` (migration file number), `phase` (`phase1_applied` \| `phase2_deployed` \| `phase3_applied` \| `complete`), `appliedAt` (timestamp), `gateCheckResult` (Phase 3 only: `pass`, `fail:<N>_rows`, or `not_run`), and `migrationJobName` (the Kubernetes Job that applied it). Use to confirm Phase 1 is fully deployed before starting Phase 2, or to verify the Phase 3 gate has passed before approving a Phase 3 deployment. See [Section 10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy) for the expand-contract discipline and Phase 3 gate query performance guidance. | `GET /v1/admin/schema/migrations/status` | `platform-admin` |
+| `lenny-ctl migrate down --version <N> --confirm` | Reverse the most recently applied partial migration at version `<N>` by launching the down-migration Job with the provided `down.sql` file. Last-resort recovery path for a migration that left the database in a `dirty=true` state and whose failure cannot be resolved by a forward-fix. Requires `--confirm` because the operation is destructive. The Job releases stale advisory locks, applies the down migration, and clears the dirty flag on success. On failure, the caller inspects Job logs and falls back to direct DBA intervention. Audited as `platform.schema_migration_rolled_back`. See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (Schema migration failure) and [Section 10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy). | `POST /v1/admin/schema/migrations/{version}/down` | `platform-admin` |
 
 **Phase coordination workflow:**
 
@@ -153,7 +165,7 @@ The `phase` field reflects the last migration Job that completed successfully; i
 | `lenny-ctl diagnose` | Run the diagnostic endpoints for sessions, pools, credential pools, and platform connectivity. | `/v1/admin/diagnostics/*` |
 | `lenny-ctl runbooks` | List and fetch structured (agent-parseable) runbook steps. | `/v1/admin/runbooks`, `/v1/admin/runbooks/{name}/steps` |
 | `lenny-ctl upgrade` | Drive the platform-upgrade state machine: check, start, pause, rollback, complete, verify. | `/v1/admin/platform/upgrade/*`, `/v1/admin/platform/upgrade-check` |
-| `lenny-ctl audit` | Query audit events with scatter-gather across shards; summarize by caller kind / operation ID. | `/v1/admin/audit-events`, `/v1/admin/audit-events/summary` |
+| `lenny-ctl audit` | Query audit events with scatter-gather across shards; summarize by caller kind / operation ID; retry OCSF translation on failed rows; force-drop blocked audit partitions. | `/v1/admin/audit-events`, `/v1/admin/audit-events/summary`, `/v1/admin/audit-events/{id}/retranslate`, `/v1/admin/audit-partitions/{partition}/drop` |
 | `lenny-ctl drift` | Fetch the drift report, trigger reconciliation, validate or refresh the desired-state snapshot. | `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh` |
 | `lenny-ctl backup` | List backups, verify, manage schedule and retention policy. | `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy` |
 | `lenny-ctl restore` | Preview, safety-check, execute, monitor, and resume restore operations. | `/v1/admin/restore/*` |

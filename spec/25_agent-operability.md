@@ -61,6 +61,8 @@ Agent callers authenticate using the same OIDC-based mechanism as human operator
 
 The `platform-admin` role confers broad authority; granting it in full to every automation agent is often too much. Tokens therefore support the standard OAuth 2.0 **`scope`** JWT claim (RFC 9068, "JWT Profile for OAuth 2.0 Access Tokens") that narrows the caller's effective tool surface below the role ceiling. The role sets the maximum; scopes restrict further.
 
+**Issuing a scoped token.** Operators issue narrowed tokens by calling the canonical [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) token-exchange endpoint `POST /v1/oauth/token` ([§15.1](15_external-api-surface.md#151-rest-api)) with the agent's existing token as `subject_token` and the narrower space-separated `scope` as the exchange parameter. The Token Service enforces that every value in the requested `scope` is present in `subject_token.scope` (scope narrowing is monotonic; broadening is rejected with `invalid_scope` per [§13](13_security-model.md#133-credential-flow)). This replaces any earlier ad-hoc "mint a narrowed token" mechanism — RFC 8693 is the only path.
+
 **Claim format.** Per RFC 9068, the `scope` claim is a **space-separated string** of scope values (not an array):
 
 ```json
@@ -637,8 +639,15 @@ None.
 
 Gateway subsystems emit operational events by writing to a Redis stream and an in-memory ring buffer. This is not a new endpoint — it's an internal behavior.
 
+Every emitted event is a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON record; see [§12.6](../spec/12_storage-architecture.md#126-interface-design) EventBus for the envelope contract. The CloudEvents `id` attribute is the canonical `eventKey` described below — the two names refer to the same value. The CloudEvents `type` follows the form `dev.lenny.<short_name>` (see [§16.6](../spec/16_observability.md#166-operational-events-catalog) for the full type catalogue); the short names in the table below are the suffix of the `type`.
+
+**Single-envelope model — no double-wrapping.** Audit-bearing events carry the OCSF record **directly** in the CloudEvents `data` field with `datacontenttype: application/ocsf+json`. The CloudEvents envelope is the transport; the OCSF record is the payload; there is no intermediate container between them. Consumers parse the CloudEvents record first, read `data` as the OCSF v1.1.0 record ([§11.7](../spec/11_policy-and-controls.md#117-audit-logging) Wire Format), and apply the Lenny → OCSF field mapping. Non-audit operational events use `datacontenttype: application/json` and carry an event-specific JSON payload in `data` whose schema is documented per `type` in the catalogue ([§16.6](../spec/16_observability.md#166-operational-events-catalog)).
+
 ```go
 // pkg/gateway/events/emitter.go
+
+// OperationalEvent is a CloudEvents v1.0.2 Event — see §12.6.
+type OperationalEvent = cloudevents.Event
 
 type EventEmitter interface {
     Emit(ctx context.Context, event OperationalEvent) error
@@ -2304,6 +2313,10 @@ This proxies to the K8s API's pod log endpoint. The `SessionDiagnosis.RelatedLog
 
 A real-time feed of platform operational events. `lenny-ops` reads from the Redis stream that the gateway writes to (or the gateway's in-memory event buffer when Redis is unavailable) and exposes SSE, polling, and webhook delivery.
 
+**Event envelope.** Every event emitted and delivered by this service — SSE, polling (`GET /v1/admin/events`), and webhook — is a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON record ([§12.6](../spec/12_storage-architecture.md#126-interface-design) envelope contract). The `type` field is `dev.lenny.<short_name>` (e.g., `dev.lenny.alert_fired`, `dev.lenny.platform_upgrade_progressed`, `dev.lenny.operation_progressed`) using the event-type identifiers catalogued in [§16.6](../spec/16_observability.md#166-operational-events-catalog); `source` identifies the emitting component (`//lenny.dev/gateway/{replicaId}` or `//lenny.dev/ops/{replicaId}`); Lenny extensions `lennytenantid`, `lennyoperationid`, and `lennyrootsessionid` carry tenant, operation, and delegation-tree correlation. The event's source-independent identity is the CloudEvents `id` attribute, which matches the `eventKey` described in [§25.3](#253-gateway-side-ops-endpoints) (Event Buffer); the two names refer to the same value (the CloudEvents attribute is authoritative on the wire, the `eventKey` name is used in internal storage prose).
+
+**Audit-bearing events.** When an operational event carries an audit record (e.g., `dev.lenny.audit_session_terminated`), `datacontenttype` is `application/ocsf+json` and the CloudEvents `data` field is the [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) record defined in [§11.7](../spec/11_policy-and-controls.md#117-audit-logging) Wire Format. Single-envelope model: CloudEvents is the transport, OCSF is the payload. Nothing is double-wrapped.
+
 ### Endpoints
 
 | Method | Path | Description |
@@ -2425,7 +2438,7 @@ The canonical ordering key is `eventKey` (a ULID-like `{replicaID}:{emittedAt}:{
 
 ### SSE Delivery
 
-The SSE handler holds an open HTTP response and reads from the Redis stream via `XREAD BLOCK 0` in a goroutine. Client reconnection with `Last-Event-ID` header resumes via `XRANGE`. Clients filter via canonical query parameters (`?eventType=`, `?severity=`, `?resourceType=pool&resourceId=default-gvisor`, `?since=`) defined in Section 25.2.
+The SSE handler holds an open HTTP response and reads from the Redis stream via `XREAD BLOCK 0` in a goroutine. Each SSE frame is a CloudEvents JSON record — the full envelope in the frame's `data:` line — per CloudEvents' [JSON Format](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/formats/json-format.md). The SSE `id:` line carries the CloudEvents `id` attribute so clients reconnecting with `Last-Event-ID` resume from the correct position via `XRANGE`. Clients filter via canonical query parameters (`?eventType=`, `?severity=`, `?resourceType=pool&resourceId=default-gvisor`, `?since=`) defined in Section 25.2.
 
 Each SSE connection gets an independent read cursor against the raw Redis stream (not a consumer group). Multiple agents can subscribe concurrently — each sees all events that match their filters. There is no "competing consumer" behavior; every subscriber gets every matching event.
 
@@ -2449,13 +2462,15 @@ History is limited to the buffer window (~500 events) while Redis is down. The r
 
 ### Webhook Delivery
 
-A background goroutine per active subscription reads events from the Redis stream (or gateway event buffer when Redis is unavailable) and POSTs to the callback URL. Each delivery includes:
+A background goroutine per active subscription reads events from the Redis stream (or gateway event buffer when Redis is unavailable) and POSTs the CloudEvents JSON record to the callback URL. `Content-Type` is `application/cloudevents+json` (CloudEvents JSON Format). Each delivery includes these HTTP headers:
 
 - `X-Lenny-Signature` — HMAC-SHA256 of the request body using the subscription's secret. Agents validate this to confirm the delivery originated from Lenny.
-- `X-Lenny-Event-Type` — the event type (e.g., `alert_fired`).
-- `X-Lenny-Event-Id` — the event's stable `eventKey` (Section 25.3 Event Buffer).
+- `X-Lenny-Event-Type` — the CloudEvents `type` attribute (e.g., `dev.lenny.alert_fired`).
+- `X-Lenny-Event-Id` — the CloudEvents `id` attribute (same value as `eventKey`, [§25.3](#253-gateway-side-ops-endpoints) Event Buffer).
 - `X-Lenny-Delivery-Id` — a UUID unique to this delivery attempt (enables idempotency on the receiver).
 - `X-Lenny-Delivery-Attempt` — attempt number (1-based).
+
+Receivers MAY also read the CloudEvents attributes directly from the JSON body; the `X-Lenny-Event-*` headers are duplicates for consumers that prefer header-level filtering.
 
 Retry: 3 attempts with exponential backoff (1s, 5s, 30s). After 3 failed attempts, the delivery is marked `failed` in `ops_event_deliveries` and an `event_delivery_failed` operational event is emitted (but not itself delivered to that subscription, to avoid loops).
 
@@ -2640,7 +2655,7 @@ When the diagnostic is served from a fallback source, the `Degradation` envelope
 2. Reads metrics from Prometheus (`lenny_warmpool_pod_startup_duration_seconds`, `lenny_warmpool_replenishment_rate`, `lenny_warmpool_warmup_failure_total`) via `MetricSource`. Falls back to scraping all gateway replicas' `/metrics` endpoints via the headless Service if Prometheus is unreachable — point-in-time values only, summed/max'd across replicas. When using fallback, the response includes `"metricsSource": "gateway-scrape"`.
 3. Reads pool config via `GatewayClient.GetPoolConfig()`.
 4. Reads CRD sync status via `GatewayClient.GetPoolSyncStatus()`.
-5. Classifies bottleneck: if `warmup_failure_total{reason="image_pull_error"} > 0` → `IMAGE_PULL`; if `warmup_failure_total{reason="node_pressure"} > 0` → `NODE_PRESSURE`; if `warmup_failure_total{reason="resource_quota_excluded"} > 0` → `QUOTA_EXHAUSTED`; if replenishment rate < claim rate → `DEMAND_EXCEEDS_SUPPLY`.
+5. Classifies bottleneck: if `lenny_warmpool_warmup_failure_total{error_type="image_pull_error"} > 0` → `IMAGE_PULL`; if `lenny_warmpool_warmup_failure_total{error_type="node_pressure"} > 0` → `NODE_PRESSURE`; if `lenny_warmpool_warmup_failure_total{error_type="resource_quota_exceeded"} > 0` → `QUOTA_EXHAUSTED`; if replenishment rate < claim rate → `DEMAND_EXCEEDS_SUPPLY`.
 
 **Connectivity (`CheckConnectivity`):**
 `lenny-ops` runs parallel dependency probes (Postgres, Redis, MinIO, K8s API) with 2s timeouts. Additionally, it probes the gateway admin API itself (`GET /v1/admin/health/summary`) — if the gateway is unreachable, this appears in the connectivity report as a failed dependency. It also reads registered connectors via `GatewayClient.ListConnectors()` and probes each. This tests the gateway from the outside (real network path).
@@ -2940,9 +2955,14 @@ Similarly, `alert_fired` events in the operational event stream (Section 25.5) i
 
 ```json
 {
-  "type": "alert_fired",
-  "severity": "critical",
-  "payload": {
+  "specversion": "1.0",
+  "id": "01HN7Y0QW6S7X9ZP8M2F5K4R3B",
+  "source": "//lenny.dev/gateway/gw-7f4c2a1e",
+  "type": "dev.lenny.alert_fired",
+  "time": "2026-04-17T14:32:08Z",
+  "datacontenttype": "application/json",
+  "data": {
+    "severity": "critical",
     "alertName": "WarmPoolExhausted",
     "labels": { "pool": "default-gvisor" },
     "runbook": "warm-pool-exhaustion"
@@ -3348,13 +3368,17 @@ If the release channel is unreachable: `upgrade-check` returns cached data with 
 
 Structured query access to the audit trail (Section 11.7). Enables agents to investigate incidents without direct database access.
 
+**Wire format.** All endpoints in this subsection return audit records as [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) JSON objects per the Wire Format in [§11.7](../spec/11_policy-and-controls.md#117-audit-logging). The `items[]` array in paginated responses is an array of OCSF records. Lenny's chain-integrity fields (`chainIntegrity`, `prev_hash`) are surfaced via the OCSF `unmapped.lenny_chain.*` extension on each record. A scope-restricted `?format=raw-canonical` query parameter returns the Lenny-internal canonical tuple (pre-OCSF) for chain auditors who need to verify the hash chain against the exact bytes Postgres hashed over; this requires the `audit:raw-canonical:read` scope. The response envelope carries `ocsfVersion` ("1.1.0") and `chainIntegrityReport` ({verified, broken, gap_suspected, rechained_post_outage}) as top-level fields outside `items[]`.
+
 ### Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/admin/audit-events` | Paginated query. Params: `?since=`, `?until=`, `?eventType=`, `?actorId=`, `?resourceType=`, `?resourceId=`, `?tenantId=`, `?severity=`, `?limit=` (default 100, max 1000), `?cursor=` |
+| `GET` | `/v1/admin/audit-events` | Paginated query. Params: `?since=`, `?until=`, `?eventType=`, `?actorId=`, `?resourceType=`, `?resourceId=`, `?tenantId=`, `?severity=`, `?limit=` (default 100, max 1000), `?cursor=`, `?ocsf_translation_state=` (one of `pending` \| `retry_pending` \| `succeeded` \| `dead_lettered`; see [§11.7](../spec/11_policy-and-controls.md#117-audit-logging) OCSF translation failure), `?eventbus_publish_state=` (one of `pending` \| `retry_pending` \| `published` \| `failed`; see [§12.2](../spec/12_storage-architecture.md#122-storage-roles) for the authoritative column enum and [§12.6](../spec/12_storage-architecture.md#126-interface-design) Publish failure after durable commit). Combining filters is AND. Default view returns events regardless of `ocsf_translation_state` (dead-lettered events still appear, with their OCSF payload replaced by the class 2004 receipt); pass `?ocsf_translation_state=succeeded` to exclude dead-lettered and in-flight rows. Operators reconciling after an EventBus outage typically query `?eventbus_publish_state=failed&since=<outage_start>`. |
 | `GET` | `/v1/admin/audit-events/{id}` | Single event with full payload |
 | `GET` | `/v1/admin/audit-events/summary` | Aggregate counts by type/actor/resource over a time window. Params: `?since=`, `?until=`, `?groupBy=eventType|actorId|resourceType` |
+| `POST` | `/v1/admin/audit-events/{id}/retranslate` | Re-run OCSF translation on a single audit row after a translator version bump or a schema-gap fix. Body: `{"translatorVersion": "<semver>" }` (optional; defaults to the active translator). Only rows with `ocsf_translation_state IN ('retry_pending', 'dead_lettered')` are eligible; other rows return `409 ocsf_translation_not_retryable`. On success the row transitions back to `pending` and is picked up by the next translator sweep; the response returns the updated row state and the receiving translator version. Requires `audit:retranslate` scope. Audited as `audit.ocsf_retranslate_requested`. |
+| `POST` | `/v1/admin/audit-partitions/{partition}/drop` | Force-drop an audit partition whose retention TTL has expired but whose `AuditPartitionDropBlocked` alert is active because the SIEM forwarder has not advanced past the partition's last event. Requires the `?force=true` query parameter AND a request body `{"acknowledgeDataLoss": true, "partition": "<partition-name>"}` (the `partition` field must match the path and is an anti-footgun cross-check). Irreversibly drops the Postgres partition; events not yet delivered to the SIEM are permanently lost. Requires `audit:partition:drop` scope. Audited as `audit.partition_drop_forced` with the last observed SIEM high-water mark and the partition's (oldest, newest) event timestamps. |
 
 ### Implementation
 
@@ -4516,6 +4540,8 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | `lenny-ctl audit query --since <time> [...]` | `GET /v1/admin/audit-events` | Query audit log |
 | `lenny-ctl audit get <id>` | `GET /v1/admin/audit-events/{id}` | Get a single audit event |
 | `lenny-ctl audit summary --since <time>` | `GET /v1/admin/audit-events/summary` | Aggregate counts |
+| `lenny-ctl audit retranslate <id> [--translator-version <semver>]` | `POST /v1/admin/audit-events/{id}/retranslate` | Retry OCSF translation on a single `retry_pending` or `dead_lettered` row (e.g., after a translator schema-gap fix) |
+| `lenny-ctl audit drop-partition <partition> --force --acknowledge-data-loss` | `POST /v1/admin/audit-partitions/{partition}/drop` | Force-drop an audit partition held by the SIEM delivery guard; permanently discards any events not yet forwarded to the SIEM |
 
 ### Drift Commands
 
@@ -4751,7 +4777,7 @@ The gateway's health service detects that `default-gvisor` has 0 idle pods and f
 ```
 id: 1681234567890-0
 event: alert_fired
-data: {"type":"alert_fired","severity":"critical","payload":{"alertName":"WarmPoolExhausted","labels":{"pool":"default-gvisor"},"runbook":"warm-pool-exhaustion","suggestedAction":{"action":"SCALE_WARM_POOL","endpoint":"PUT /v1/admin/pools/default-gvisor/warm-count","body":{"minWarm":15},"reasoning":"Pool exhausted for 3 minutes. Peak claim rate: 4.2/min."}}}
+data: {"specversion":"1.0","id":"01HN7Y0QW6S7X9ZP8M2F5K4R3B","source":"//lenny.dev/gateway/gw-7f4c2a1e","type":"dev.lenny.alert_fired","time":"2026-04-17T14:32:08Z","datacontenttype":"application/json","data":{"severity":"critical","alertName":"WarmPoolExhausted","labels":{"pool":"default-gvisor"},"runbook":"warm-pool-exhaustion","suggestedAction":{"action":"SCALE_WARM_POOL","endpoint":"PUT /v1/admin/pools/default-gvisor/warm-count","body":{"minWarm":15},"reasoning":"Pool exhausted for 3 minutes. Peak claim rate: 4.2/min."}}}
 ```
 
 ### Step 2: Detect — Agent Evaluates

@@ -9,6 +9,8 @@ nav_order: 3
 
 Lenny supports multiple streaming mechanisms for receiving real-time output from agent sessions. This page covers SSE log streaming, Streamable HTTP (MCP transport), WebSocket attachment, event types, reconnection handling, and backpressure.
 
+> **Session output vs. operational events.** This page covers **session output streaming** -- real-time agent tokens, tool calls, and results consumed by the end-client. **Operational event streaming** -- platform-level events consumed by operators and agent-operability tools -- uses a separate endpoint (`/v1/admin/events/stream`) and a different wire format (CloudEvents v1.0.2). See the [CloudEvents catalog](../reference/cloudevents-catalog.md) for operational-event consumption. The two streams are distinct.
+
 ---
 
 ## Streaming Options

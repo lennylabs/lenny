@@ -87,6 +87,51 @@ Access tokens have a limited lifetime (configured by your OIDC provider, typical
 
 Best practice: refresh proactively before expiry. Most OIDC providers include an `expires_in` field in the token response.
 
+### Token Rotation and Exchange (`/v1/oauth/token`)
+
+For token lifecycle operations inside Lenny — rotating an admin token, minting a narrowed scoped token for an agent service account, or any internal delegation child-token issuance — Lenny exposes the canonical OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
+
+**Example — rotate an admin token:**
+
+```http
+POST /v1/oauth/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Bearer <current_admin_token>
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=<current_admin_token>
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+```
+
+**Example — narrow scope for an automation agent:**
+
+```http
+POST /v1/oauth/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Bearer <agent_token>
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=<agent_token>
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+&scope=tools%3Adiagnostics%3Aread+tools%3Apools%3Aread
+```
+
+**Response:**
+
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+**Scope narrowing is monotonic.** An exchange may only request a `scope` that is a subset of the `subject_token`'s existing scope. Broadening is rejected with `invalid_scope`. See [Security -> Credential Flow](../operator-guide/security.md) for the full claim-mapping table and scope-narrowing rules.
+
+The CLI command `lenny-ctl admin users rotate-token --user <name>` is a convenience wrapper that calls this endpoint internally.
+
 ---
 
 ## Credential Registration for LLM Providers

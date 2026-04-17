@@ -36,6 +36,8 @@ This page covers end-to-end installation of Lenny on a Kubernetes cluster, from 
 | External Secrets Operator | Synchronize credentials from AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager | Tier 3 deployments with hundreds of credentials per pool |
 | KEDA | ScaledObject-based HPA with direct Prometheus query (bypasses Prometheus Adapter cache) | Alternative to Prometheus Adapter for more responsive autoscaling |
 | Prometheus + Grafana | Metrics collection and dashboarding | Required for observability (see [Observability](observability.html)) |
+| LiteLLM sidecar | Upstream provider wire translation for proxy-mode credential pools | **Required when using `deliveryMode: proxy` on any CredentialPool**. Configured via `llmProxy.litellm.*` Helm values; runs as a sidecar container in the gateway pod. See [LiteLLM sidecar](litellm-sidecar.md). |
+| krew (for operators) | kubectl plugin manager; needed to install `kubectl-lenny` | Optional convenience for operators who prefer `kubectl lenny` over the standalone `lenny-ctl` binary. See [krew installation](krew-install.md). |
 
 ### Infrastructure Sizing Quick Reference
 
@@ -277,7 +279,7 @@ kubectl get secret lenny-admin-token -n lenny-system \
   -o jsonpath='{.data.token}' | base64 -d
 ```
 
-To rotate the initial admin token:
+To rotate the initial admin token (internally calls `POST /v1/oauth/token` with an RFC 8693 token-exchange grant and patches the `lenny-admin-token` Kubernetes Secret):
 
 ```bash
 lenny-ctl admin users rotate-token --user lenny-admin

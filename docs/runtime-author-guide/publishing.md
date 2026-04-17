@@ -332,6 +332,8 @@ Before publishing:
    lenny-compliance --binary ./my-agent --tier standard --json > compliance.json
    ```
 
+   The compliance suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `outputpart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Adapter Contract → Canonical artifacts](adapter-contract.md#canonical-artifacts) for the full list.
+
 2. **Write a clear description** of what your runtime does, what tier it implements, and what LLM providers it supports.
 
 3. **Include a Dockerfile** in your repository.

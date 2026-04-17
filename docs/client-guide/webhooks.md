@@ -47,49 +47,56 @@ Authorization: Bearer <token>
 
 ## Webhook Event Types
 
-The gateway delivers webhook events for session state changes:
+Every webhook delivery is a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON record. The CloudEvents `type` attribute identifies the event:
 
-| Event Type | Trigger |
+| CloudEvents `type` | Trigger |
 |---|---|
-| `session.started` | Session transitions to `running` |
-| `session.completed` | Session reaches `completed` state |
-| `session.failed` | Session reaches `failed` state |
-| `session.cancelled` | Session reaches `cancelled` state |
-| `session.expired` | Session reaches `expired` state |
-| `session.suspended` | Session transitions to `suspended` |
-| `session.awaiting_action` | Session transitions to `awaiting_client_action` (retries exhausted) |
-| `session.expiring_soon` | 5 minutes before `maxSessionAge` expires |
+| `dev.lenny.session_completed` | Session reaches `completed` state |
+| `dev.lenny.session_failed` | Session reaches `failed` state |
+| `dev.lenny.session_terminated` | Admin or system terminated the session |
+| `dev.lenny.session_cancelled` | User/runtime cancelled the session |
+| `dev.lenny.session_expired` | Session reached `maxSessionAge` or `maxIdleTimeSeconds` |
+| `dev.lenny.session_awaiting_action` | Session transitioned to `awaiting_client_action` (retries exhausted) |
+| `dev.lenny.delegation_completed` | Child session reached a terminal state |
+
+See the [CloudEvents catalog](../reference/cloudevents-catalog.md) for the complete event inventory.
 
 ---
 
 ## Webhook Delivery
 
-Webhook events are delivered as HTTP POST requests to the registered `callbackUrl`:
+Webhook events are delivered as HTTP POST requests to the registered `callbackUrl` with a CloudEvents envelope body:
 
 ```
 POST https://my-app.example.com/webhooks/lenny
 Content-Type: application/json
-X-Lenny-Webhook-Signature: sha256=a1b2c3d4e5f6...
+X-Lenny-Signature: t=1718203320,v1=a1b2c3d4e5f6...
 
 {
-  "eventType": "session.completed",
-  "sessionId": "sess_abc123",
-  "state": "completed",
-  "timestamp": "2026-01-15T10:45:00Z",
-  "runtime": "claude-worker",
-  "result": {
-    "parts": [
-      {"type": "text", "text": "Code review complete. 3 issues found."}
-    ]
+  "specversion": "1.0",
+  "id": "t_acme:gw-7f4c2:1718203320000000000:9f3a",
+  "source": "//lenny.dev/gateway/gw-7f4c2",
+  "type": "dev.lenny.session_completed",
+  "time": "2026-01-15T10:45:00Z",
+  "datacontenttype": "application/json",
+  "subject": "session/sess_abc123",
+  "lennytenantid": "t_acme",
+  "data": {
+    "session_id": "sess_abc123",
+    "status": "completed",
+    "usage": { "inputTokens": 15000, "outputTokens": 8000 },
+    "artifacts": ["workspace.tar.gz"]
   }
 }
 ```
 
 Your webhook endpoint should:
 
-1. Verify the `X-Lenny-Webhook-Signature` header (HMAC-SHA256)
-2. Return a `2xx` status code to acknowledge receipt
-3. Process the event asynchronously if needed
+1. Verify the `X-Lenny-Signature` header (HMAC-SHA256 over `<unix_seconds>.<raw_body_bytes>`; reject events where the timestamp is more than 5 minutes old).
+2. Deduplicate by CloudEvents `id` (an `id` seen previously is a retry; respond 2xx but do not re-process).
+3. Read the event kind from CloudEvents `type` and the payload from the `data` field.
+4. Return a `2xx` status code to acknowledge receipt.
+5. Process the event asynchronously if needed.
 
 ---
 
@@ -124,10 +131,15 @@ Authorization: Bearer <token>
 {
   "items": [
     {
-      "eventType": "session.completed",
-      "sessionId": "sess_abc123",
-      "state": "completed",
-      "timestamp": "2026-01-15T10:45:00Z",
+      "cloudevent": {
+        "specversion": "1.0",
+        "id": "t_acme:gw-7f4c2:1718203320000000000:9f3a",
+        "source": "//lenny.dev/gateway/gw-7f4c2",
+        "type": "dev.lenny.session_completed",
+        "time": "2026-01-15T10:45:00Z",
+        "subject": "session/sess_abc123",
+        "data": { "session_id": "sess_abc123", "status": "completed" }
+      },
       "deliveryAttempts": 6,
       "lastAttemptAt": "2026-01-15T11:00:00Z",
       "lastError": "Connection refused"
@@ -148,12 +160,44 @@ Webhook-only clients cannot respond to elicitations. Elicitations require an act
 
 ## Webhook Secret Configuration
 
-The webhook signature (`X-Lenny-Webhook-Signature`) is computed using a shared secret. There are two ways to configure this secret:
+The webhook signature (`X-Lenny-Signature`) uses the format `t=<unix_seconds>,v1=<hex_signature>` where the signature is HMAC-SHA256 over the ASCII bytes of the string `<unix_seconds>.<raw_body_bytes>` — that is, the decimal-string form of `t`, followed by a literal `.` (`0x2E`), followed by the raw request body exactly as received on the wire (no trimming, no re-serialization). There are two ways to configure the shared secret:
 
 - **Per-session** -- pass a `callbackSecret` field alongside `callbackUrl` when creating the session. This secret is used exclusively for that session's webhook deliveries.
 - **Tenant-level** -- configure a default webhook secret via the admin API at the tenant level. Sessions that specify a `callbackUrl` without a `callbackSecret` use the tenant-level secret.
 
-Always verify the `X-Lenny-Webhook-Signature` header using HMAC-SHA256 with the applicable secret before processing any webhook event.
+A 5-minute replay window is enforced: receivers MUST reject events where `abs(current_time - t) > 300`. Always verify the `X-Lenny-Signature` header before processing any webhook event.
+
+> **`t` vs CloudEvents `time`, and retry compatibility:** `t` is the **delivery attempt** timestamp — the gateway regenerates it (and therefore the HMAC signature) on every retry attempt, so a retry delivered 15 minutes after the original event carries a fresh `t` equal to the retry dispatch time, not the original event time. The 5-minute replay window therefore applies to each delivery attempt independently and is NOT in conflict with the 15-minute maximum retry interval below — the gateway re-signs with the current `t` on every retry, and the signed timestamp is always close to the moment the HTTPS request was initiated. The CloudEvents `time` field inside the body (`{"time": "2026-01-15T10:45:00Z"}`) is the **event occurrence** timestamp and is stable across retries. Use CloudEvents `id` (not `time`) for deduplication; use `t` only for replay-window enforcement.
+
+### Verification pseudocode
+
+```python
+import hmac, hashlib, time
+
+def verify_lenny_webhook(headers, raw_body_bytes, secret_bytes):
+    # 1. Parse the header.
+    sig_header = headers.get("X-Lenny-Signature", "")
+    parts = dict(kv.split("=", 1) for kv in sig_header.split(",") if "=" in kv)
+    t_str = parts.get("t", "")
+    v1_hex = parts.get("v1", "")
+    if not t_str or not v1_hex:
+        raise ValueError("malformed X-Lenny-Signature header")
+
+    # 2. Replay-window check (5 minutes).
+    t = int(t_str)
+    if abs(int(time.time()) - t) > 300:
+        raise ValueError("timestamp outside 5-minute replay window")
+
+    # 3. Recompute HMAC over "<t>.<body>" (ASCII bytes).
+    signed_payload = t_str.encode("ascii") + b"." + raw_body_bytes
+    expected = hmac.new(secret_bytes, signed_payload, hashlib.sha256).hexdigest()
+
+    # 4. Constant-time compare.
+    if not hmac.compare_digest(expected, v1_hex):
+        raise ValueError("invalid signature")
+```
+
+**Deduplication guidance.** Retain each delivered CloudEvents `id` for at least **20 minutes** — long enough to cover the entire retry schedule above (final retry fires at 15 minutes after the previous attempt, plus a safety margin for clock skew and network delay). A CloudEvents `id` seen previously within this window is a retry of an already-processed event; respond 2xx but do not re-process. Beyond 20 minutes, retention is optional; longer retention lets consumers tolerate operational incidents (e.g., a retry that the gateway queued during its own outage and redelivers hours later). Dedup scope is per webhook subscription (the `callbackUrl` + `callbackSecret` pair); consumers need not share dedup state across subscriptions. Note that the 5-minute replay window on `t` is independent of dedup retention: `t` is regenerated per retry (see above), so a 15-minute-old retry still arrives with a fresh `t` and passes replay-window validation — only the CloudEvents `id` reveals that it is a duplicate.
 
 ---
 
@@ -165,7 +209,7 @@ Webhooks enable a fire-and-forget pattern for CI/CD pipelines and batch processi
 1. Create session with callbackUrl  ──>  Lenny creates session and starts agent
 2. Return immediately               <──  Response: {sessionId, state: "running"}
 3. Do other work...
-4. Receive webhook notification      <──  POST to callbackUrl: {session.completed}
+4. Receive webhook notification      <──  POST to callbackUrl: CloudEvents {type: "dev.lenny.session_completed"}
 5. Retrieve results                  ──>  GET /v1/sessions/{id}/artifacts
 ```
 
@@ -253,39 +297,52 @@ async def create_async_session(code: str, prompt: str) -> str:
 # Step 2: Receive webhook notifications
 @app.post("/webhooks/lenny")
 async def handle_webhook(request: Request):
-    """Handle Lenny webhook notifications."""
+    """Handle Lenny webhook notifications (CloudEvents envelope)."""
 
-    # Verify signature
+    # Verify signature: X-Lenny-Signature = t=<unix_seconds>,v1=<hex>
     body = await request.body()
-    signature = request.headers.get("X-Lenny-Webhook-Signature", "")
-    expected = "sha256=" + hmac.new(
-        WEBHOOK_SECRET.encode(),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
+    sig_header = request.headers.get("X-Lenny-Signature", "")
+    parts = dict(p.split("=", 1) for p in sig_header.split(","))
+    ts, provided_sig = parts.get("t"), parts.get("v1")
+    if not ts or not provided_sig:
+        raise HTTPException(status_code=401, detail="Malformed signature")
 
-    if not hmac.compare_digest(signature, expected):
+    # Replay protection: 5-minute window
+    import time
+    if abs(int(time.time()) - int(ts)) > 300:
+        raise HTTPException(status_code=401, detail="Signature expired")
+
+    signing_input = f"{ts}.".encode() + body
+    expected = hmac.new(WEBHOOK_SECRET.encode(), signing_input, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(provided_sig, expected):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # Parse event
+    # Parse CloudEvents envelope
     event = await request.json()
-    event_type = event["eventType"]
-    session_id = event["sessionId"]
+    event_type = event["type"]
+    event_id = event["id"]
+    data = event["data"]
+    session_id = data.get("session_id")
+
+    # Deduplicate by CloudEvents id
+    if await already_processed(event_id):
+        return {"status": "duplicate"}
 
     print(f"Received webhook: {event_type} for {session_id}")
 
-    if event_type == "session.completed":
+    if event_type == "dev.lenny.session_completed":
         # Session finished -- retrieve artifacts
         await retrieve_results(session_id)
 
-    elif event_type == "session.failed":
-        print(f"Session {session_id} failed!")
+    elif event_type == "dev.lenny.session_failed":
+        print(f"Session {session_id} failed: {data.get('error', {}).get('message')}")
         # Handle failure (alert, retry, etc.)
 
-    elif event_type == "session.awaiting_action":
+    elif event_type == "dev.lenny.session_awaiting_action":
         print(f"Session {session_id} needs attention (retries exhausted)")
         # Decide whether to resume or terminate
 
+    await mark_processed(event_id)
     return {"status": "ok"}
 
 

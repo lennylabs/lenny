@@ -9,6 +9,15 @@ nav_order: 11
 
 `lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over the Admin API with near-zero business logic -- every operation maps to an Admin API call.
 
+## Installation
+
+The CLI ships in two interchangeable forms with identical flags, arguments, and output:
+
+- **Standalone binary** (`lenny-ctl`) -- Homebrew, `go install`, or direct download.
+- **kubectl plugin** (`kubectl-lenny`) -- installed via krew: `kubectl krew install lenny`. Invocation: `kubectl lenny <subcommand>`.
+
+See [krew installation](krew-install.md) for kubectl-plugin details. Everything in this reference works identically under both forms; `kubectl lenny admin pools list` and `lenny-ctl admin pools list` are equivalent.
+
 ---
 
 ## Global Flags
@@ -194,7 +203,7 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token and patch K8s Secret | `platform-admin` |
+| `lenny-ctl admin users rotate-token --user <name>` | Rotate admin token (internally calls `POST /v1/oauth/token` with RFC 8693 token-exchange grant) and patch K8s Secret | `platform-admin` |
 | `lenny-ctl admin users invalidate --user <name>` | Invalidate all active sessions for a user | `platform-admin` |
 
 ---
@@ -237,6 +246,12 @@ lenny-ctl preflight --config values.yaml \
 | Command | Description | Min Role |
 |---|---|---|
 | `lenny-ctl admin audit drop-partition --force` | Drop an audit partition that is past retention TTL but blocked by SIEM forwarder backlog | `platform-admin` |
+| `lenny-ctl admin audit query --tenant <id> --since <ts> [--filter <field=value>]` | Query OCSF audit records from the hot tier. Output is OCSF v1.1.0 JSON; combine with `jq` to extract specific fields. | `platform-admin` / `tenant-admin` |
+| `lenny-ctl admin audit chain-verify --partition <YYYY-MM>` | Re-hash a partition's records and verify the `prev_hash` chain end-to-end. Reports any tamper or gap with row IDs. | `platform-admin` |
+
+### Output format
+
+Audit query output follows the OCSF v1.1.0 wire format documented in the [OCSF audit guide](audit-ocsf.md). Records are NDJSON, one OCSF record per line, unwrapped (no CloudEvents envelope -- the CLI reads directly from the Postgres hot tier).
 
 ---
 

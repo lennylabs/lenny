@@ -70,6 +70,25 @@ TOKEN=$(curl -s -X POST https://your-oidc-provider.com/oauth/token \
 echo "Token: ${TOKEN:0:20}..."
 ```
 
+### Token rotation via `/v1/oauth/token`
+
+Lenny exposes a canonical RFC 8693 token-exchange endpoint for rotation and delegation:
+
+```bash
+# Rotate the current token (e.g., shortly before expiry)
+ROTATED=$(curl -s -X POST "$LENNY_URL/v1/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=$TOKEN" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  | jq -r '.access_token')
+
+TOKEN=$ROTATED
+```
+
+For delegation child-token minting, additionally supply `actor_token=$PARENT_SESSION_TOKEN` and a narrowed `scope` string. See [Authentication](../authentication.md#token-rotation-and-exchange-v1oauthtoken).
+
 ---
 
 ## Session Lifecycle -- Every Endpoint

@@ -88,11 +88,13 @@ The Token Service runs as a **separate process** with its own ServiceAccount and
 - Gateway replicas call the Token Service over mTLS
 - Gateway replicas receive short-lived access tokens, never refresh tokens or KMS keys
 - 2+ replicas with `PodDisruptionBudget` (`minAvailable: 1`)
+- Serves the canonical `POST /v1/oauth/token` endpoint (RFC 6749 + RFC 8693 token exchange) for all bearer-token minting
 
 ### What It Manages
 
 1. **Connector credentials** -- OAuth tokens for external tools and agents (GitHub, Jira, etc.) accessed via registered connectors
 2. **LLM provider credentials** -- API keys, cloud IAM roles for backing LLMs
+3. **Bearer tokens** -- admin tokens, session tokens, delegation child tokens, credential-lease tokens, agent-operability scoped tokens. Every token minted by Lenny flows through the RFC 8693 token-exchange path, either by direct caller request (admin rotation via `lenny-ctl`) or by internal Token Service calls (credential leasing, delegation minting). RFC 8693 semantic preservation is enforced: scope may only narrow, `delegation_depth` may only increase, audience may not broaden, `caller_type` may not elevate.
 
 ### Token Storage
 
@@ -209,22 +211,30 @@ This immediately:
 
 ## LLM Proxy
 
-### Architecture
+### Architecture (two components)
 
-The LLM Proxy is a gateway subsystem that acts as a credential-injecting reverse proxy:
+The LLM Proxy is structured as two cooperating components in the gateway pod:
 
-- Validates lease tokens from pods
-- Injects real API keys into upstream requests
-- Forwards streaming responses back to pods
-- Provides gateway-observed token counting for quota enforcement
+1. **Lenny proxy subsystem** -- the gateway's fourth internal subsystem boundary. Validates the lease token, verifies SPIFFE binding, runs the `PreLLMRequest` / `PostLLMResponse` interceptor chain, extracts authoritative token usage from the upstream response. Speaks OpenAI- or Anthropic-compatible HTTP to the agent pod (per the pool's `proxyDialect`).
+2. **LiteLLM sidecar** -- a [LiteLLM](https://github.com/BerriAI/litellm) container running alongside the gateway. Holds the real upstream provider credentials (read from a gateway-populated tmpfs file). Translates OpenAI/Anthropic requests to the upstream provider's native wire format, injects the real API key, forwards to the upstream. Never exposed outside the gateway pod's loopback.
+
+See [LiteLLM sidecar](litellm-sidecar.md) for configuration details.
+
+### Security posture
+
+- **Real API keys live only in the gateway pod's LiteLLM sidecar memory.** They never enter the agent pod's environment, memory, filesystem, or network path.
+- **Agent-pod wire format is provider-agnostic.** Runtimes use standard OpenAI or Anthropic SDKs; the upstream provider can change without any runtime code change.
+- **LiteLLM is part of the gateway's trust envelope.** It does not have an independent SPIFFE identity; outbound provider connections use the gateway pod's network identity.
+- **Loopback authentication.** The Lenny proxy subsystem and LiteLLM authenticate with a shared secret (`litellm_master_key`) generated at gateway startup. Traffic never leaves the pod-local loopback.
+- **Lease revocation enforced at Lenny, not LiteLLM.** Expired/revoked leases are rejected by the Lenny subsystem before reaching LiteLLM.
 
 ### Network Isolation
 
-Only pods in pools with `deliveryMode: proxy` can reach the LLM Proxy port (8443). The NetworkPolicy `allow-pod-egress-llm-proxy` is applied selectively using the `lenny.dev/delivery-mode: proxy` label.
+Only pods in pools with `deliveryMode: proxy` can reach the Lenny proxy port (8443). The NetworkPolicy `allow-pod-egress-llm-proxy` is applied selectively using the `lenny.dev/delivery-mode: proxy` label.
 
 ### Token Counting
 
-In proxy mode, the gateway extracts `input_tokens` and `output_tokens` directly from upstream LLM responses. These gateway-observed counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
+In proxy mode, the Lenny proxy subsystem extracts `input_tokens` and `output_tokens` directly from the upstream LLM response metadata forwarded by LiteLLM. These upstream-extracted counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
 
 ---
 
@@ -361,6 +371,10 @@ Every audit event includes:
 - `session_id`, `tenant_id`, `trace_id`, `span_id`
 - Structured error codes (TRANSIENT/PERMANENT/POLICY/UPSTREAM)
 - Timestamp and sequence number
+
+### Wire Format -- OCSF v1.1.0
+
+Every audit event that leaves the Postgres hot tier (SIEM forwarding, pgaudit sink, webhook subscribers, `/v1/admin/audit-events` query responses) is serialized as an [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) JSON record. OCSF is the single wire format with no alternative format switch. The hash chain is computed over the canonical Postgres tuple (not OCSF bytes), so OCSF translation cannot affect chain integrity. See [Audit (OCSF wire format)](audit-ocsf.md) for the full field mapping, SIEM delivery configuration, and verifier guidance.
 
 ### Credential-Sensitive Exclusions
 

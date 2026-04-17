@@ -718,12 +718,24 @@ Re-aggregate in-flight session usage from Postgres into Redis after Redis recove
 
 ## Users
 
-### POST /v1/admin/users/{user_id}/rotate-token
+### POST /v1/oauth/token
 {: .d-inline-block }
-platform-admin
-{: .label .label-red }
+any authenticated subject
+{: .label .label-green }
 
-Rotate an admin token and patch the corresponding Kubernetes Secret.
+Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across roles:
+
+| Caller | Purpose | Requires |
+|:-------|:--------|:---------|
+| `platform-admin` | Rotate admin tokens; mint cluster-scoped operator tokens | admin-level `subject_token` |
+| `tenant-admin` | Rotate tenant-scoped tokens; mint scoped operator tokens for the tenant | tenant-admin `subject_token` |
+| End users | Rotate their own session token | user `subject_token` |
+| Gateway (internal) | Mint delegation child tokens with `actor_token` set to the parent session token | parent session token |
+| `lenny-ops` (internal) | Mint short-lived scoped tokens for agent-operability calls | operator `subject_token` + requested scope |
+
+For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For delegation child-token minting, additionally supply `actor_token=<parent_session_token>` and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
+
+See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). The CLI command `lenny-ctl admin users rotate-token --user <name>` wraps this endpoint and additionally patches the `lenny-admin-token` Kubernetes Secret.
 
 ### POST /v1/admin/users/{user_id}/invalidate
 {: .d-inline-block }
@@ -760,7 +772,7 @@ platform-admin
 
 Apply a seed configuration file (idempotent upsert of runtimes, pools, tenants, etc.). Same schema as `bootstrap` Helm values.
 
-Every invocation emits a `platform.bootstrap_applied` audit event recording: calling identity, seed file SHA-256 hash, resource changes summary, and `dryRun` flag.
+Every invocation emits a `platform.bootstrap_applied` audit event recording: calling identity, seed file SHA-256 hash, resource changes summary, and `dryRun` flag. The audit record follows the OCSF v1.1.0 schema and crosses the EventBus as the `data` field of a CloudEvents v1.0.2 envelope with `type=dev.lenny.audit.record`; see the [CloudEvents catalog](../reference/cloudevents-catalog.md) and [OCSF audit guide](../operator-guide/audit-ocsf.md).
 
 **Dry-run:** Supported (audit event is emitted with `dryRun: true`).
 
@@ -818,7 +830,7 @@ Run preflight checks (Postgres, Redis, MinIO connectivity and schema version). P
 
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
-| `GET /v1/admin/sessions/{id}` | GET | platform-admin | Get session state with internal pod assignment and pool details |
+| `GET /v1/admin/sessions/{id}` | GET | platform-admin | Get session state with internal pod assignment and pool details. The session's materialized `workspacePlan` is included in the response body; it validates against the [WorkspacePlan JSON Schema](https://schemas.lenny.dev/workspaceplan/v1.json). |
 | `POST /v1/admin/sessions/{id}/force-terminate` | POST | platform-admin | Force-terminate a session |
 
 ---

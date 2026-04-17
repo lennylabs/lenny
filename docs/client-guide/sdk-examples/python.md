@@ -69,6 +69,27 @@ async def get_access_token() -> str:
         return data["access_token"]
 
 
+async def rotate_lenny_token(current_token: str) -> str:
+    """Rotate the current Lenny access token via RFC 8693 token exchange.
+
+    Call this shortly before `exp` to avoid a gap in authorization.
+    For delegation child-token minting, pass the parent session token via
+    `actor_token` and a narrowed `scope` string.
+    """
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{LENNY_URL}/v1/oauth/token",
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "subject_token": current_token,
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            },
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+
 # ---------------------------------------------------------------------------
 # Error Handling with Retry
 # ---------------------------------------------------------------------------

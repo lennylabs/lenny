@@ -70,7 +70,7 @@ curl -s -X POST http://localhost:8080/v1/sessions \
   }' | jq .
 ```
 
-The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key.
+The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway's LLM Proxy subsystem hands the request to a co-located **LiteLLM sidecar** (`lenny/litellm-hardened:<lenny-version>`) which translates to the upstream provider wire format. Your API key is injected inside the sidecar and never leaves the gateway pod. See [LiteLLM sidecar](../operator-guide/litellm-sidecar.md) for how it is deployed.
 
 You can verify which credential source was used by checking the session metadata:
 
@@ -158,6 +158,24 @@ The difference: `revoke` invalidates active leases immediately; `delete` removes
 - **Hot rotation**: `PUT` updates propagate to active sessions without interruption.
 - **Revoke vs. delete**: Revoke terminates active sessions; delete does not.
 - **Fallback**: If no user credential exists, the platform pool is used.
+
+## Rotating your Lenny access token
+
+The `$USER_TOKEN` above is your Lenny access token (separate from the LLM API key you registered). Rotate it via the canonical `/v1/oauth/token` endpoint:
+
+```bash
+ROTATED=$(curl -s -X POST "http://localhost:8080/v1/oauth/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=$USER_TOKEN" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "requested_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  | jq -r '.access_token')
+
+export USER_TOKEN=$ROTATED
+```
+
+See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken) for the full RFC 8693 parameter set (including `actor_token` for delegation minting).
 
 ---
 

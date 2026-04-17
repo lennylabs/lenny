@@ -351,6 +351,7 @@ credentialPools:
   - name: anthropic-production
     provider: anthropic_direct
     deliveryMode: proxy                  # proxy | direct
+    proxyDialect: anthropic              # openai | anthropic (required when deliveryMode: proxy)
     maxLeases: 50                        # Max concurrent leases per credential
     leaseTTLSeconds: 3600
     credentials:
@@ -362,6 +363,8 @@ credentialPools:
       - provider: aws_bedrock
         poolRef: bedrock-fallback
 ```
+
+**`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The LiteLLM sidecar (see [LiteLLM sidecar](litellm-sidecar.md)) handles upstream provider translation -- the agent pod speaks the declared dialect regardless of the actual upstream provider.
 
 ### Delivery Modes
 
@@ -563,13 +566,24 @@ Variant pools are automatically sized by the PoolScalingController based on `var
 
 ### External Targeting
 
-External experiment assignment webhooks support integration with:
+External experiment assignment integrates with any flag service via the [OpenFeature Go SDK](https://openfeature.dev/):
 
-- **LaunchDarkly** -- via feature flag evaluation
-- **Statsig** -- via gate evaluation
-- **Unleash** -- via toggle evaluation
+- **OFREP (Remote Evaluation Protocol)** -- recommended. Vendor-neutral REST evaluation API. Flagd, GO Feature Flag, ConfigCat, and LaunchDarkly (via Relay Proxy) all expose OFREP.
+- **LaunchDarkly, Statsig, Unleash** -- via built-in OpenFeature SDK providers linked into the gateway.
 
-Configure per-tenant via `experimentTargeting` in the tenant configuration.
+Configure per-tenant via `experimentTargeting`:
+
+```yaml
+experimentTargeting:
+  provider: ofrep                 # ofrep | launchdarkly | statsig | unleash
+  timeoutMs: 200
+  ofrep:
+    endpoint: https://flags.internal/ofrep
+    headers:
+      Authorization: "Bearer ${OFREP_TOKEN}"
+```
+
+See [OpenFeature integration](openfeature-integration.md) for provider-specific configuration (LaunchDarkly, Statsig, Unleash), failure handling, circuit-breaker behavior, and troubleshooting. Percentage-mode bucketing is built in and requires no external configuration.
 
 ---
 

@@ -9,6 +9,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
   "pool": "claude-worker-sandboxed-medium",
   "isolationProfile": "gvisor",
   "workspacePlan": {
+    "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
     "schemaVersion": 1,
     "sources": [
       {
@@ -85,46 +86,51 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
 - `env`: Key-value environment variables injected into the agent session. Validated against a deployer-configured blocklist of denied environment variable names/patterns. The blocklist supports both exact names and glob patterns using `*` (full-string wildcard — matches any sequence of zero or more characters including `_`; case-sensitive). Examples: `AWS_SECRET_ACCESS_KEY` (exact), `ANTHROPIC_API_KEY` (exact), `*_SECRET_*` (glob — matches any key containing `_SECRET_`), `*_KEY` (glob — matches any key ending in `_KEY`), `*_PASSWORD` (glob — matches any key ending in `_PASSWORD`). The gateway applies blocklist matching at session creation time; any env var whose name matches any entry (exact or glob) is rejected with `400 ENV_VAR_BLOCKLISTED` identifying the offending key name and the matching pattern. Everything else is allowed. The platform ships a default blocklist that operators can extend but not reduce in multi-tenant mode.
 - `labels`: User-defined metadata for querying and organizing sessions. Not used for internal routing. Labels are indexed in the session store and filterable in all query APIs: `GET /v1/sessions` (list), `GET /v1/usage` (usage reports), `GET /v1/metering/events` (billing events). This enables cost attribution by project, team, ticket, or any custom dimension.
 - `timeouts`: Per-session overrides, capped by deployer policy. Cannot exceed the Runtime's `limits.maxSessionAge`.
-- `callbackUrl`: Optional webhook. Gateway POSTs a `SessionComplete` payload when the session reaches a terminal state. Because this field accepts a URL from the client, it is a potential SSRF vector. The following mitigations apply:
+- `callbackUrl`: Optional webhook. Gateway POSTs a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) envelope with session-terminal event data when the session reaches a terminal state (see "Webhook Delivery Model" below for the envelope and event types). Because this field accepts a URL from the client, it is a potential SSRF vector. The following mitigations apply:
   1. **URL validation.** The value must be an HTTPS URL (no HTTP, no non-HTTP schemes). It must parse as a valid URL with a public DNS hostname. IP literals, `localhost`, loopback addresses, and link-local addresses are rejected at submission time. Additionally, well-known cloud metadata hostnames (`metadata.google.internal`, `metadata.google.internal.`, `instance-data`) are rejected regardless of their resolved IP, as a defense-in-depth measure against non-standard metadata endpoint configurations.
   2. **DNS pinning.** The gateway resolves the hostname at registration time and pins the resolved IP. If the resolved IP falls within a private or reserved range (RFC 1918, RFC 6598, loopback, link-local, etc.) the callback is rejected. The callback `http.Client` uses a custom `DialContext` that connects directly to the pinned IP at the TCP level, with the original hostname set only in the `Host` header and TLS SNI. This prevents DNS rebinding attacks where the hostname re-resolves to an internal IP between validation and request time, and ensures the pinned IP — not a re-resolved address — is always the actual connection target.
   3. **Isolated callback worker.** Callback HTTP requests are made from a dedicated goroutine pool with its own `http.Client` configured with: connect timeout of 5 s, response-read timeout of 10 s, `CheckRedirect` returning an error (no redirect following), and egress through a separate network path where possible. At minimum, the gateway's `NetworkPolicy` `except` clauses on the external HTTPS egress rule ([Section 13.2](13_security-model.md#132-network-isolation)) block callback traffic from reaching cluster-internal CIDRs (pod network, service network, node metadata endpoints).
   4. **Optional domain allowlist.** Deployers can set `callbackUrlAllowedDomains` in the platform configuration. When the list is non-empty, only callback URLs whose hostname matches an entry (exact or `*.suffix` wildcard) are accepted. When the list is empty, the public-DNS validation in (1) applies.
 
-  **Webhook Delivery Model.** The callback URL receives structured webhook events with the following contract:
+  **Webhook Delivery Model.** The callback URL receives [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON-mode events — the same envelope used across Lenny's EventBus ([§12.6](12_storage-architecture.md#126-interface-design)), SSE stream ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)), and §25 event-subscription webhooks. Receivers read the session-event-specific body from the `data` field.
 
   **Payload schema:**
 
   ```json
   {
-    "event": "session.completed",
-    "session_id": "sess_abc123",
-    "status": "completed",
-    "timestamp": "2025-01-15T10:30:00Z",
-    "idempotency_key": "evt_xyz789",
+    "specversion": "1.0",
+    "id": "t_acme:gw-7f4c2:1718203320000000000:9f3a",
+    "source": "//lenny.dev/gateway/gw-7f4c2",
+    "type": "dev.lenny.session_completed",
+    "time": "2026-04-17T10:30:00Z",
+    "datacontenttype": "application/json",
+    "subject": "session/sess_abc123",
+    "lennytenantid": "t_acme",
     "data": {
+      "session_id": "sess_abc123",
+      "status": "completed",
       "usage": { "inputTokens": 15000, "outputTokens": 8000 },
       "artifacts": ["workspace.tar.gz"]
     }
   }
   ```
 
-  **Authentication:** Webhooks are signed with HMAC-SHA256. The `X-Lenny-Signature` header format is `t=<unix_seconds>,v1=<hex_signature>`. The signing input is `"<unix_seconds>.<raw_body_bytes>"`. A replay window of 5 minutes is enforced: receivers MUST reject events where `abs(current_time - t) > 300s`. The signing secret is provided by the client at session creation (`callbackSecret` field). **`callbackSecret` storage:** The secret is stored in the `sessions` table as KMS-envelope-encrypted ciphertext using the same KMS backend as credential pool secrets ([Section 4.9](04_system-components.md#49-credential-leasing-service)). The `lenny_app` database role can `SELECT` the ciphertext column, but only the gateway process with KMS `Decrypt` permission can recover the plaintext. The plaintext is never returned by any API endpoint — `callbackSecret` is a write-only field. When the session reaches a terminal state and all webhook delivery attempts are exhausted or have succeeded, the gateway sets the column to `NULL`. GDPR erasure ([Section 12.9](12_storage-architecture.md#129-data-classification)) pseudonymizes or deletes the column as part of session data purge. The `callbackSecret` is classified as T3 data ([Section 12.9](12_storage-architecture.md#129-data-classification)).
+  `id` serves as the idempotency key — receivers MUST deduplicate by CloudEvents `id`. `time` replaces the previous `timestamp` field. `type` is `dev.lenny.<short_name>` where `<short_name>` matches the event-type catalog in [§16.6](16_observability.md#166-operational-events-catalog).
 
-  **Per-event `data` schemas:**
-  - `session.completed`: `{ "usage": { "inputTokens": N, "outputTokens": N }, "artifacts": ["<name>"] }`
-  - `session.failed`: `{ "error": { "code": "<error_code>", "message": "<string>" }, "usage": { "inputTokens": N, "outputTokens": N } }`
-  - `session.terminated` (admin or system termination; the session's external state is `completed` — this webhook type distinguishes operator-initiated completion from agent-initiated): `{ "reason": "<string>", "terminatedBy": "<admin|system>" }`
-  - `session.cancelled` (user/runtime cancelled; the session's external state is `cancelled`): `{ "reason": "<string>" }`
-  - `session.expired` (maxSessionAge or maxIdleTimeSeconds): `{ "expiryReason": "max_session_age|max_idle_time" }`
-  - `session.awaiting_action`: `{ "actionRequired": "<string>", "resumeUrl": "<string>" }`
-  - `delegation.completed`: `{ "childSessionId": "<id>", "status": "completed|failed|cancelled|expired", "usage": { "inputTokens": N, "outputTokens": N } }`
+  **Authentication:** Webhooks are signed with HMAC-SHA256. The `X-Lenny-Signature` header format is `t=<unix_seconds>,v1=<hex_signature>`. The signing input is `"<unix_seconds>.<raw_body_bytes>"`. A replay window of 5 minutes is enforced: receivers MUST reject events where `abs(current_time - t) > 300s`. The `t` value is the **delivery timestamp** (when the gateway generated this specific HMAC for transmission), NOT the event's `time` attribute inside the CloudEvents envelope. Retried deliveries re-sign with a fresh `t` each attempt; the CloudEvents `time` attribute remains fixed (it is the event's original emission timestamp). Receivers MUST use `t` for replay-window validation, never the CloudEvents `time` — otherwise a retried delivery of a stale event would be rejected even though the current delivery attempt is fresh. The signing secret is provided by the client at session creation (`callbackSecret` field). **`callbackSecret` storage:** The secret is stored in the `sessions` table as KMS-envelope-encrypted ciphertext using the same KMS backend as credential pool secrets ([Section 4.9](04_system-components.md#49-credential-leasing-service)). The `lenny_app` database role can `SELECT` the ciphertext column, but only the gateway process with KMS `Decrypt` permission can recover the plaintext. The plaintext is never returned by any API endpoint — `callbackSecret` is a write-only field. When the session reaches a terminal state and all webhook delivery attempts are exhausted or have succeeded, the gateway sets the column to `NULL`. GDPR erasure ([Section 12.9](12_storage-architecture.md#129-data-classification)) pseudonymizes or deletes the column as part of session data purge. The `callbackSecret` is classified as T3 data ([Section 12.9](12_storage-architecture.md#129-data-classification)).
 
-  **Event types:** `session.completed`, `session.failed`, `session.terminated`, `session.cancelled`, `session.expired`, `session.awaiting_action` (fired when a session enters `awaiting_client_action` state, enabling CI systems to react without polling), `delegation.completed` (for child task completion notifications).
+  **Per-event `data` schemas** (the CloudEvents `data` field):
+  - `dev.lenny.session_completed`: `{ "session_id", "status": "completed", "usage": { "inputTokens": N, "outputTokens": N }, "artifacts": ["<name>"] }`
+  - `dev.lenny.session_failed`: `{ "session_id", "status": "failed", "error": { "code": "<error_code>", "message": "<string>" }, "usage": { "inputTokens": N, "outputTokens": N } }`
+  - `dev.lenny.session_terminated` (admin or system termination; the session's external state is `completed` — this event type distinguishes operator-initiated completion from agent-initiated): `{ "session_id", "reason": "<string>", "terminatedBy": "<admin|system>" }`
+  - `dev.lenny.session_cancelled` (user/runtime cancelled; the session's external state is `cancelled`): `{ "session_id", "reason": "<string>" }`
+  - `dev.lenny.session_expired` (maxSessionAge or maxIdleTimeSeconds): `{ "session_id", "expiryReason": "max_session_age|max_idle_time" }`
+  - `dev.lenny.session_awaiting_action`: `{ "session_id", "actionRequired": "<string>", "resumeUrl": "<string>" }`
+  - `dev.lenny.delegation_completed`: `{ "parent_session_id", "childSessionId": "<id>", "status": "completed|failed|cancelled|expired", "usage": { "inputTokens": N, "outputTokens": N } }`
 
   **Retry behavior:** Failed deliveries (non-2xx response or timeout) are retried with exponential backoff: 10 s, 30 s, 60 s, 300 s, 900 s (5 attempts total). After exhaustion, the event is marked as undelivered and queryable via `GET /v1/sessions/{id}/webhook-events`.
 
-  **Idempotency:** Each event has a unique `idempotency_key`. Receivers should deduplicate by this key.
+  **Idempotency:** Deduplicate by CloudEvents `id`. Within a Lenny release, `id` collisions are astronomically improbable (ULID-like time + nonce composition); across releases, deduplication still holds because `id` embeds the originating gateway replica ID and nanosecond timestamp.
 
 - `credentialPolicy`: Per-session override hints for credential assignment. `preferredSource` can be `pool`, `user`, `prefer-user-then-pool`, or `prefer-pool-then-user`. If omitted, the tenant-level credential policy is used. Per-session overrides can only restrict, not expand, the tenant policy. See [Section 4.9](04_system-components.md#49-credential-leasing-service).
 - `runtimeOptions`: Runtime-specific options passed through to the agent binary. The field is a **per-runtime discriminated union** — the active schema is determined by the target Runtime's registered `runtimeOptionsSchema`. If the target Runtime defines a `runtimeOptionsSchema` (a JSON Schema document registered at runtime registration time), the gateway validates `runtimeOptions` against it at session creation time and rejects invalid options with a descriptive error (`400 RUNTIME_OPTIONS_INVALID`, including a JSON Schema validation report). If no schema is registered, options are passed through as-is (backward compatible) but a `RuntimeOptionsUnschematized` warning event is emitted. Maximum size: 64 KB.
@@ -185,7 +191,9 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
 
 ### 14.1 WorkspacePlan Schema Versioning
 
-**`schemaVersion` field.** The `workspacePlan` object carries a `schemaVersion` integer field (shown as `"schemaVersion": 1` in the example above). This field identifies the schema revision used when the plan was written and governs forward-compatibility obligations for all consumers of persisted workspace plans.
+**Published JSON Schema.** The full `WorkspacePlan` object is published as a canonical JSON Schema (Draft 2020-12) at `schemas/workspaceplan-v1.json` in the repository, served at the stable URL `https://schemas.lenny.dev/workspaceplan/v1.json`. The schema covers every field documented in this section — `sources[]`, `setupCommands[]`, `env`, `labels`, `timeouts`, `retryPolicy`, `credentialPolicy`, `callbackUrl`, `callbackSecret`, `runtimeOptions`, and `delegationLease`. Clients MAY reference the schema via the optional `$schema` keyword on their `workspacePlan` object for local validation; the gateway performs identical validation at `POST /v1/sessions` and `POST /v1/sessions/start` and rejects malformed plans with `400 WORKSPACE_PLAN_INVALID` carrying a JSON Schema validation report. The `runtimeOptions` subobject is validated against its Runtime-specific schema ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) in a second pass; the top-level WorkspacePlan schema treats `runtimeOptions` as an opaque object.
+
+**`schemaVersion` field.** The `workspacePlan` object carries a `schemaVersion` integer field (shown as `"schemaVersion": 1` in the example above). This field identifies the schema revision used when the plan was written and governs forward-compatibility obligations for all consumers of persisted workspace plans. `schemaVersion` is distinct from the JSON Schema `$schema` URL: the former is Lenny's wire-compat identifier; the latter references the publication that defines the wire shape for a given major schema version.
 
 **Producer obligation.** The gateway MUST set `schemaVersion` to the highest version required by the fields it writes. When a new `schemaVersion` introduces new source types, new setup-command fields, or changes field semantics, producers MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
 

@@ -22,6 +22,10 @@ The `OpenAICompletionsAdapter` provides **drop-in compatibility** with the OpenA
 
 The adapter translates between OpenAI's Chat Completions wire format and Lenny's internal session lifecycle. Each completions request creates a Lenny session, runs it to completion (or streams output), and returns the result in standard OpenAI format.
 
+**Authentication.** All requests must carry `Authorization: Bearer <access-token>`. Obtain the initial token from your OIDC provider; rotate it via the canonical [`/v1/oauth/token`](./admin.md#post-v1oauthtoken) RFC 8693 endpoint.
+
+**Upstream provider credentials.** When the chosen runtime is configured for proxy-mode credential delivery, the upstream LLM call flows: runtime → Lenny's LLM Proxy → **LiteLLM sidecar** (hardened image `lenny/litellm-hardened:<lenny-version>`) → upstream provider (OpenAI, Anthropic, Bedrock, Vertex, etc.). Your provider API key never reaches the agent pod. See [LiteLLM sidecar](../operator-guide/litellm-sidecar.md).
+
 ---
 
 ## Endpoints

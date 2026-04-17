@@ -31,7 +31,9 @@ The OpenAI SDK accepts a `base_url` parameter that overrides the default `https:
 from openai import OpenAI
 
 # In dev mode, authentication is disabled -- use any string as the API key.
-# In production, use your Lenny bearer token.
+# In production, use your Lenny bearer token. See
+# [Authentication](../client-guide/authentication.md) for how to obtain the
+# initial token and rotate it via /v1/oauth/token (RFC 8693).
 client = OpenAI(
     base_url="http://localhost:8080/v1",
     api_key="dev-mode-no-auth-needed",

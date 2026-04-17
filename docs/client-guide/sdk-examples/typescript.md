@@ -205,6 +205,30 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
+// Rotate the current Lenny access token via RFC 8693 token exchange.
+// Call shortly before `exp` to avoid a gap in authorization. For delegation
+// child-token minting, pass the parent session token via `actor_token` and a
+// narrowed `scope` string.
+async function rotateLennyToken(currentToken: string): Promise<string> {
+  const response = await fetch(`${LENNY_URL}/v1/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token: currentToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token rotation failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.access_token;
+}
+
 // ---------------------------------------------------------------------------
 // API Client with Retry
 // ---------------------------------------------------------------------------

@@ -15,6 +15,22 @@ This page covers Prometheus metrics by component, alert rules with thresholds, S
 
 Lenny exports Prometheus metrics from every component. All metrics use the `lenny_` prefix.
 
+### Attribute naming (OpenTelemetry semantic conventions)
+
+Metric labels and trace attributes follow the [OpenTelemetry semantic conventions](https://opentelemetry.io/docs/specs/semconv/) where a convention exists. Dot-form OTel attribute names map to Prometheus labels by replacing dots with underscores; both forms refer to the same attribute.
+
+| OTel attribute | Prometheus label | Meaning |
+|---|---|---|
+| `k8s.pod.name` | `k8s_pod_name` | Name of the Kubernetes pod |
+| `service.instance.id` | `service_instance_id` | Stable process/replica identity (gateway replica, controller pod, webhook replica) |
+| `service.name` | `service_name` | Service identifier (`lenny-gateway`, `lenny-ops`, etc.) |
+| `service.version` | `service_version` | Build tag |
+| `error.type` | `error_type` | Error/failure/rejection classification (e.g., `image_pull_error`, `rate_limit`) |
+
+Lenny-specific labels that have no OTel convention retain their domain-specific names: `tenant_id`, `pool`, `runtime_class`, `provider`. A `reason` label is used only for lifecycle/operational classifications (e.g., pod retirement triggers); error classifications use `error_type`.
+
+See the full attribute table in [SPEC §16.1.1](../../spec/16_observability.md#1611-attribute-naming).
+
 ### Gateway Metrics
 
 | Metric | Type | Description |
@@ -47,7 +63,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `lenny_warmpool_idle_pods` | Gauge | Pods in `idle` state ready to be claimed |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | Pod creation to `idle` state |
 | `lenny_warmpool_replenishment_rate` | Gauge | Pods/min entering `idle` state |
-| `lenny_warmpool_warmup_failure_total` | Counter | Pods failing to reach `idle` (by reason) |
+| `lenny_warmpool_warmup_failure_total` | Counter | Pods failing to reach `idle` (by `error_type`: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`) |
 | `lenny_warmpool_cold_start_total` | Counter | Sessions served from cold pods |
 | `lenny_warmpool_claims_total` | Counter | Warm pod claims |
 | `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted before assignment |
@@ -121,6 +137,10 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `DataResidencyViolationAttempt` | Storage write or delegation rejected for region mismatch | Investigate misconfiguration or code-path bypass |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
+| `TokenStoreUnavailable` | `/v1/oauth/token` 5xx rate with `error_type="token_store_unavailable"` sustained > 5 min | Token Service database backpressure; check Postgres, Token Service pods |
+| `LiteLLMRouteAnomaly` | Non-allowlisted route hit observed on LiteLLM sidecar | Potential sidecar compromise; isolate replica, audit recent config pushes |
+| `LiteLLMEgressAnomaly` | Outbound connection to non-allowlisted upstream detected | Investigate SPIFFE boundary, NetworkPolicy coverage |
+| `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 
 ### Warning Alerts
 
@@ -145,6 +165,9 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `EtcdWriteLatencyHigh` | P99 etcd WAL fsync latency > 25 ms for > 2 min | Leading indicator of etcd saturation; consider dedicated cluster |
 | `ControllerWorkQueueDepthHigh` | Work queue depth > 50% of configured max for > 2 min | Controller reconciliation backlog; check CPU throttling |
 | `RuntimeUpgradeStuck` | Upgrade state machine in non-terminal state > `phaseTimeoutSeconds` | Pool image upgrade not progressing; investigate |
+| `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` for > 5 min | CloudEvents publishing backpressure; check EventBus transport and `eventBus.publishQueueDepth` |
+| `LiteLLMUnexpectedRestart` | Sidecar restarts excluding `config_reload` over 15m > 0 | LiteLLM sidecar crash-looping; check memory limits, upstream provider connectivity |
+| `PgAuditSinkDeliveryFailed` | pgaudit events failing to deliver to configured sink | pgaudit forwarding broken; see [OCSF audit guide](audit-ocsf.md) |
 
 ---
 
@@ -251,7 +274,7 @@ Instrument four timestamps per session to identify bottlenecks:
 
 ### Structured Logging
 
-All components emit structured JSON logs with correlation fields:
+All components emit structured JSON logs with correlation fields. Field names follow the same OpenTelemetry semantic conventions as metric labels (`k8s.pod.name`, `service.instance.id`, `error.type`); Lenny-specific domain fields (`session_id`, `tenant_id`, `pool`, `runtime_class`) retain their native names.
 
 ```json
 {
@@ -259,6 +282,8 @@ All components emit structured JSON logs with correlation fields:
   "msg": "Session created",
   "session_id": "sess_abc123",
   "tenant_id": "default",
+  "k8s.pod.name": "lenny-gateway-7d5f6b-9h2xz",
+  "service.instance.id": "gateway-replica-3",
   "trace_id": "4bf92f3577b34da6",
   "span_id": "00f067aa0ba902b7",
   "timestamp": "2026-04-09T10:30:00Z"
@@ -285,6 +310,10 @@ Estimated log volume:
 
 Configure an external log aggregation stack (ELK, Loki, CloudWatch) for long-term retention beyond the Postgres window.
 
+### Audit events and EventBus envelopes
+
+Audit events leave the Postgres hot tier as **OCSF v1.1.0** records (see [OCSF audit guide](audit-ocsf.md) for the field mapping). When an audit record crosses the EventBus, it is carried as the `data` field of a **CloudEvents v1.0.2** envelope with `type=dev.lenny.audit.record`. SIEM forwarders consuming from the EventBus should unwrap the CloudEvents envelope first; consumers reading directly from the Postgres audit tables see the OCSF record without any additional wrapping. Full event type catalog: [CloudEvents catalog](../reference/cloudevents-catalog.md).
+
 ---
 
 ## Grafana Dashboards
@@ -302,7 +331,7 @@ The Helm chart includes pre-built Grafana dashboards (enable with `docker compos
 
 - Idle pods per pool
 - Pod startup duration distribution
-- Warmup failure rate by reason
+- Warmup failure rate by `error_type`
 - Cold-start session count
 
 ### Credential Dashboard

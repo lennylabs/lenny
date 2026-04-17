@@ -466,6 +466,38 @@ func getAccessToken() (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
+// rotateLennyToken rotates the current Lenny access token via RFC 8693 token
+// exchange. Call shortly before `exp` to avoid a gap in authorization. For
+// delegation child-token minting, additionally set `actor_token` to the parent
+// session token and narrow `scope`.
+func rotateLennyToken(currentToken string) (string, error) {
+	data := url.Values{
+		"grant_type":           {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":        {currentToken},
+		"subject_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
+		"requested_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+	}
+
+	resp, err := http.PostForm(lennyURL+"/v1/oauth/token", data)
+	if err != nil {
+		return "", fmt.Errorf("token rotation failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("token rotation failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", err
+	}
+	return tokenResp.AccessToken, nil
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------

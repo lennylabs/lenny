@@ -551,7 +551,7 @@ Effective cross-environment access requires both sides to permit it. Neither sid
 
 ### 10.7 Experiment Primitives
 
-Lenny provides built-in A/B traffic routing for runtime version rollouts. The platform handles **session routing and variant pool management** — it decides which pool a session lands in, not how to analyze the results. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash) can delegate variant assignment via webhook integration instead of using Lenny's built-in bucketing.
+Lenny provides built-in A/B traffic routing for runtime version rollouts. The platform handles **session routing and variant pool management** — it decides which pool a session lands in, not how to analyze the results. Deployers who already use a feature-flagging or experimentation platform (LaunchDarkly, Statsig, Unleash, Flagd, GO Feature Flag, ConfigCat) can delegate variant assignment through the OpenFeature Go SDK — either via [OFREP](https://openfeature.dev/specification/appendix-c/) (recommended) or a built-in provider adapter — instead of using Lenny's built-in bucketing. See "Tenant-level experiment targeting configuration" below.
 
 **Experiment context delivery to runtimes.** When a session is enrolled in an experiment, its `experimentContext` (containing `experimentId`, `variantId`, and `inherited` flag) is delivered to the runtime in the adapter manifest ([Section 15.4](15_external-api-surface.md#154-runtime-adapter-specification)). Runtimes can use this context to tag their traces with variant metadata (e.g., as metadata on LangSmith runs or Braintrust logs) for filtering and grouping in their eval platform. Note that eval platforms do not provide native A/B comparison features — variant comparison works via metadata filtering in those platforms' UIs. For statistical rigor (significance testing, confidence intervals), use a dedicated experimentation platform — see "Full A/B testing with external platforms" below.
 
@@ -583,7 +583,7 @@ The optional `initialMinWarm` field on each variant entry provides a deployer-su
 
 **Sizing guidance for `initialMinWarm`:** A conservative starting point is `ceil(expected_peak_rps × weight_fraction × (failover_seconds + pod_startup_seconds))` where `weight_fraction` is the variant's `weight` value (already a fraction in [0.0, 1.0]) and `expected_peak_rps` is the deployer's estimate of base pool peak arrival rate. Example: weight 0.10 (10%), estimated 20 req/s peak, 25s failover + 10s startup → `ceil(20 × 0.10 × 35) = 70`. For low-weight ramp experiments (≤ 5%), a flat value of 3–5 warm pods is typically sufficient to absorb the initial traffic burst without significant cold-start exposure. Setting `initialMinWarm` higher than necessary wastes resources during bootstrap; setting it to 0 (or omitting it) risks cold-start latency spikes on the variant's first sessions. If omitted, `initialMinWarm` defaults to `0` — the controller produces a zero-warm pool at creation, consistent with the no-history formula result.
 
-**Targeting modes:** `percentage` (deterministic hash) and `external` (webhook-based, delegates to deployer's targeting service).
+**Targeting modes:** `percentage` (deterministic hash) and `external` (delegates variant assignment to an OpenFeature provider — OFREP or a built-in SDK adapter).
 
 **Targeting schema.** The `targeting` block in the `ExperimentDefinition` varies by mode. Each mode's additional fields are defined below:
 
@@ -596,13 +596,15 @@ targeting:
   # cumulative weight partitioning. See "Bucketing algorithm" below.
   # Null/anonymous user_id: see "Anonymous session handling" below.
 
-# Mode: external (webhook-based)
+# Mode: external (OpenFeature provider — OFREP or built-in SDK adapter)
 targeting:
   mode: external
   sticky: user               # user | session | none
-  # Assignment is delegated to the tenant's experimentTargeting webhook.
-  # No additional per-experiment fields — the webhook receives user context
-  # and returns assignments for all external experiments in one call.
+  # Assignment is delegated to the tenant's experimentTargeting OpenFeature
+  # provider (configured at tenant scope — see "Tenant-level experiment targeting
+  # configuration" below). The gateway calls the provider's evaluation API once
+  # per session creation with user context; the provider returns a variant
+  # assignment for this experiment.
 ```
 
 **Bucketing algorithm (percentage mode).** The `ExperimentRouter` uses the following deterministic cumulative-weight partitioning algorithm to assign a session to a variant (or control) when `targeting.mode: percentage`:
@@ -649,23 +651,28 @@ func assignVariant(assignment_key, experiment_id string, variants []Variant) str
 - **Three-variant example:** variants A (weight 0.10), B (weight 0.20), C (weight 0.15) — bucket in [0.0, 0.10) → A; [0.10, 0.30) → B; [0.30, 0.45) → C; [0.45, 1.0) → control (55%).
 - **Anonymous sessions:** when `assignment_key` cannot be derived (null `user_id` under `sticky: user`), the algorithm is not invoked — the session is assigned `"control"` unconditionally. See "Anonymous session handling" below.
 
-**Tenant-level experiment targeting configuration.** The `experimentTargeting` block on the tenant configuration defines how external experiment assignment is resolved. It is called once per session creation for tenants that have any active experiments with `mode: external`.
+**Tenant-level experiment targeting configuration.** The `experimentTargeting` block on the tenant configuration defines how `mode: external` experiment assignment is resolved. Lenny uses the [OpenFeature](https://openfeature.dev/) Go SDK as the integration point: every external-targeting provider is an OpenFeature provider, invoked once per session creation for tenants that have any active experiments with `mode: external`. Two integration paths are supported and share the same configuration surface:
+
+- **OFREP (Remote Evaluation Protocol) — recommended.** The OpenFeature working group's [Remote Evaluation Protocol](https://openfeature.dev/specification/appendix-c/) is a standard REST evaluation API. Any flag service that exposes OFREP is usable without a provider-specific adapter. Flagd, GO Feature Flag, ConfigCat, and LaunchDarkly (via its Relay Proxy) all expose OFREP.
+- **OpenFeature SDK providers.** For services that do not yet expose OFREP, the gateway ships built-in OpenFeature SDK providers for LaunchDarkly, Statsig, and Unleash, linked into the gateway binary.
+
+Percentage-mode bucketing is unaffected by this configuration — it is Lenny's built-in HMAC-SHA256 algorithm and has no external dependency. Percentage-mode experiments on the same tenant continue to work regardless of whether `experimentTargeting` is configured.
 
 ```yaml
-# Tenant-level configuration
+# Tenant-level configuration — OFREP (recommended)
 experimentTargeting:
-  provider: generic              # launchdarkly | statsig | unleash | generic
-  timeoutMs: 200                 # webhook call timeout; on the session creation hot path
-  generic:
-    webhookUrl: https://targeting.internal/evaluate
-    headers:                     # optional static headers
-      Authorization: "Bearer ${TARGETING_SERVICE_TOKEN}"
+  provider: ofrep
+  timeoutMs: 200                     # session-creation hot path timeout
+  ofrep:
+    endpoint: https://flags.internal/ofrep    # OFREP-compliant evaluation endpoint
+    headers:                                  # optional static headers
+      Authorization: "Bearer ${OFREP_TOKEN}"
 ```
 
-Named provider examples:
+Built-in OpenFeature SDK provider examples:
 
 ```yaml
-# LaunchDarkly
+# LaunchDarkly (via built-in OpenFeature SDK provider)
 experimentTargeting:
   provider: launchdarkly
   timeoutMs: 200
@@ -673,14 +680,14 @@ experimentTargeting:
     sdkKey: "${LD_SDK_KEY}"
     baseUrl: https://app.launchdarkly.com   # optional, for private instances
 
-# Statsig
+# Statsig (via built-in OpenFeature SDK provider)
 experimentTargeting:
   provider: statsig
   timeoutMs: 200
   statsig:
     serverSecret: "${STATSIG_SERVER_SECRET}"
 
-# Unleash
+# Unleash (via built-in OpenFeature SDK provider)
 experimentTargeting:
   provider: unleash
   timeoutMs: 200
@@ -689,45 +696,29 @@ experimentTargeting:
     apiToken: "${UNLEASH_API_TOKEN}"
 ```
 
-**Webhook protocol (generic provider).** The gateway POSTs to the configured `webhookUrl`:
+**Evaluation semantics.** For each active `mode: external` experiment the gateway calls `client.ObjectValue(ctx, experimentId, defaultVariant, evaluationContext)` on the configured OpenFeature client, where `evaluationContext` carries the session's `user_id`, `tenant_id`, and session metadata (`runtime`, labels). The variant ID is resolved from the provider's response as follows:
 
-Request:
-```json
-{
-  "user_id": "user-abc-123",
-  "tenant_id": "t_acme",
-  "session_metadata": {
-    "runtime": "claude-worker",
-    "labels": { "team": "platform" }
-  }
-}
-```
+- **OFREP providers:** OFREP's evaluation response carries a top-level `variant` string field per the [OFREP specification](https://openfeature.dev/specification/appendix-c/). Lenny reads `variant` directly.
+- **OpenFeature SDK providers (LaunchDarkly, Statsig, Unleash, custom):** the SDK returns an `EvaluationDetails` with `Variant` (string, optional) and `Value` (the flag value). Lenny reads `Variant` if present; otherwise it falls back to `Value` if `Value` is a string, or to `Value["variant_id"]` if `Value` is an object containing that key. A `Value` shape that matches none of these yields `"control"` with an `experiment.unknown_variant_from_provider` warning event.
 
-Response:
-```json
-{
-  "assignments": [
-    { "experiment_id": "sonnet-vs-opus", "variant_id": "treatment" }
-  ]
-}
-```
+In both cases the gateway matches the resolved variant ID against the variant list on the `ExperimentDefinition`. Unknown variant IDs are treated as `"control"` with the same warning event. The provider's own experiment/flag catalog is authoritative for which experiments a user is enrolled in; Lenny's list of `mode: external` experiments is the set of experiments the platform knows how to route and pool-size for. Experiments present in Lenny but not returned by the provider are skipped (the session runs control for that experiment); experiments returned by the provider but not registered in Lenny are logged with an `experiment.unknown_external_id` info event and otherwise ignored.
 
-Or `{ "assignments": [] }` if the user is not targeted for any experiment.
+The `sticky` field on the experiment definition governs caching: `sticky: user` means the evaluation result is cached per `user_id` across sessions (same as percentage mode). The OpenFeature client is not called again for subsequent sessions if a cached assignment exists.
 
-The gateway matches returned `experiment_id` values against registered experiments with `mode: external`. Unknown experiment IDs in the response are silently ignored — the external system may manage experiments not registered in Lenny. The `variant_id` must match a variant defined in the corresponding `ExperimentDefinition`, or be `"control"`. Unknown variant IDs are treated as `"control"` with a warning event. The `sticky` field on the experiment definition governs caching: `sticky: user` means the assignment is cached for the user across sessions (same as percentage mode). The webhook is not called again for subsequent sessions if a cached assignment exists. Named providers (launchdarkly, statsig, unleash) are built-in adapters compiled into the gateway binary that translate between the provider's native evaluation API and Lenny's assignment format. They handle authentication, request formatting, and response mapping internally. New providers can be supported via the generic webhook — the deployer implements a thin proxy service.
+**OpenFeature evaluation failure behavior.** On OpenFeature client timeout or error (whether caused by an OFREP call failure, SDK-provider transport error, or provider-returned `ErrorResolutionDetails`): no experiment assignment is made for any `mode: external` experiment. The session proceeds with the base runtime, no experiment tracking, no eval attribution for external experiments. `mode: percentage` experiments on the same tenant are unaffected — they are evaluated independently by the gateway's built-in hash. The `lenny_experiment_targeting_error_total` metric is incremented (labeled by `provider`, `error_type`), and an `experiment.targeting_failed` warning event is emitted (fields: `tenant_id`, `user_id`, `provider`, `error`). No `fallbackOnError` configuration — on failure, exclusion is the only valid behavior since the gateway has no assignment information.
 
-**Webhook failure behavior.** On webhook timeout or error: no experiment assignment is made for any `mode: external` experiment. The session proceeds with the base runtime, no experiment tracking, no eval attribution for external experiments. `mode: percentage` experiments on the same tenant are unaffected — they are evaluated independently by the gateway's built-in hash. The `lenny_experiment_targeting_webhook_error_total` metric is incremented, and a `experiment.targeting_webhook_failed` warning event is emitted (fields: `tenant_id`, `user_id`, `provider`, `error`). No `fallbackOnError` configuration — on failure, exclusion is the only valid behavior since the gateway has no assignment information.
+**Targeting circuit breaker (SCL-023).** The OpenFeature evaluation is on the session creation hot path with a 200ms timeout. Under sustained failures, repeated 200ms waits at each session creation (even after fast-fail) reduce throughput significantly. A per-tenant circuit breaker prevents this cascade:
 
-**Targeting webhook circuit breaker (SCL-023).** The webhook is on the session creation hot path with a 200ms timeout. Under sustained failures, repeated 200ms waits at each session creation (even after fast-fail) reduce throughput significantly. A per-tenant circuit breaker prevents this cascade:
-
-- **Open condition:** 5 consecutive failures (timeout or non-2xx) within any 10-second window opens the circuit for that tenant.
-- **Open behavior:** While open, the gateway skips the webhook call entirely and returns empty assignment — same as a webhook error, but with zero wait. The `lenny_experiment_targeting_circuit_open` gauge (labeled `tenant_id`, `provider`) is set to `1`.
+- **Open condition:** 5 consecutive failures (timeout or `ErrorResolutionDetails`) within any 10-second window opens the circuit for that tenant.
+- **Open behavior:** While open, the gateway skips the OpenFeature call entirely and returns empty assignment — same as a provider error, but with zero wait. The `lenny_experiment_targeting_circuit_open` gauge (labeled `tenant_id`, `provider`) is set to `1`.
 - **Half-open / recovery:** After 30 seconds in open state, the circuit transitions to half-open and allows one probe request. If the probe succeeds, the circuit closes; if it fails, the 30s open window resets.
 - **Configuration fields** (on the `experimentTargeting` block alongside `timeoutMs`):
   - `circuitBreaker.failureThreshold` (int, default `5`) — consecutive failures required to open.
   - `circuitBreaker.windowSeconds` (int, default `10`) — rolling window for failure counting.
   - `circuitBreaker.openDurationSeconds` (int, default `30`) — how long to stay open before half-open probe.
 - **Alert:** `ExperimentTargetingCircuitOpen` (Warning) fires when `lenny_experiment_targeting_circuit_open > 0` for more than 60 seconds, indicating a sustained targeting service outage affecting experiment assignment.
+
+**Anonymous session handling under external targeting.** OpenFeature evaluations receive an `evaluationContext` with `user_id` set to the anonymous pseudo-ID `"anon:<session_id>"` (derived deterministically from the session ID). Providers that support anonymous targeting (via `device_id`, `session_id`, or similar) can use this value. Percentage-mode anonymous handling (below) is unchanged.
 
 **Anonymous session handling (null `user_id`).** For sessions with `user_id: null` (anonymous sessions), percentage-mode experiments always route to the **control variant** — no variant assignment is made. `sticky: user` caching is not applied (no cache key can be derived from a null `user_id`). Anonymous sessions are excluded from variant pools entirely; this prevents the hash-collision problem that would arise if `hash(null + experiment_id)` returned a constant bucket and concentrated all anonymous traffic into a single variant. Deployers who need to include anonymous sessions in experiments should use `mode: external` with a flag service that handles anonymous assignment (e.g., using device ID or session ID as the assignment key).
 

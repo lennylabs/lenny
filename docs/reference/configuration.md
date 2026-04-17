@@ -52,6 +52,21 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 | `gateway.extractionThresholds.mcpFabric.p99OrchestrationLatencyMs` | int | 2000 | P99 orchestration latency threshold (ms). |
 | `gateway.extractionThresholds.llmProxy.activeConnections` | int | 2000 | Active upstream LLM connection threshold. |
 
+### LLM Proxy (LiteLLM sidecar)
+
+LiteLLM runs as a sidecar container co-located with each gateway replica. The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic requests and forwards to the sidecar on loopback.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `gateway.llmProxy.litellm.enabled` | bool | `true` | Deploy the LiteLLM sidecar. When disabled, only direct-mode (runtime-managed credentials) is supported. | -- |
+| `gateway.llmProxy.litellm.image` | string | `lenny/litellm-hardened:<lenny-version>` | Container image for the LiteLLM sidecar. Lenny ships a hardened wrapper image pinned to the main Lenny release. | Valid image reference. |
+| `gateway.llmProxy.litellm.port` | int | 4000 | Loopback port inside the gateway pod on which the sidecar listens. | 1024-65535. |
+| `gateway.llmProxy.litellm.configMap` | string | `lenny-litellm-config` | Name of the ConfigMap containing `config.yaml` for LiteLLM (model list, provider credentials, routing rules). | Must reference an existing ConfigMap. |
+| `gateway.llmProxy.litellm.resources.cpu` | string | `"100m"` (request), `"500m"` (limit) | CPU request/limit for the sidecar container. | Valid Kubernetes resource quantity. |
+| `gateway.llmProxy.litellm.resources.memory` | string | `"128Mi"` (request), `"512Mi"` (limit) | Memory request/limit for the sidecar container. | Valid Kubernetes resource quantity. |
+| `gateway.llmProxy.proxyDialects` | string[] | `["openai", "anthropic"]` | Proxy dialects enabled for runtime-facing endpoints. Must cover every `Runtime.credentialCapabilities.proxyDialect` in use. | Subset of `openai`, `anthropic`. |
+| `gateway.llmProxy.upstreamTLSVerify` | bool | `true` | Verify upstream provider TLS certificates (applies to LiteLLM's connection to OpenAI/Anthropic/Bedrock/etc). | -- |
+
 ---
 
 ## Pool configuration
@@ -161,6 +176,20 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 
 ---
 
+## EventBus / CloudEvents transport
+
+Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`RedisEventBus` is the v1 implementation). `type` values follow `dev.lenny.<short_name>`.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `eventBus.source` | string | `https://lenny.example.com` | CloudEvents `source` attribute. Should be the deployment's canonical URL. | Valid URI-reference. |
+| `eventBus.typePrefix` | string | `dev.lenny` | Prefix for CloudEvents `type` values. Concrete events append a short name (`dev.lenny.session.created`, `dev.lenny.audit.record`, etc). | Non-empty, reverse-DNS style. |
+| `eventBus.datacontenttype` | string | `application/json` | CloudEvents `datacontenttype` for payloads on this bus. | Valid MIME type. |
+| `eventBus.redis.channelPrefix` | string | `lenny:events` | Redis pub/sub channel prefix. Per-topic channels are `<prefix>:<topic>`. | Non-empty. |
+| `eventBus.publishQueueDepth` | int | 2048 | In-memory publish buffer. Overflow drops events and increments `lenny_event_bus_publish_dropped_total`. | Must be > 0. |
+
+---
+
 ## Storage configuration
 
 ### Postgres
@@ -204,6 +233,20 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 | `oidc.clientId` | string | Required | OIDC client ID. |
 | `oidc.audience` | string | -- | Expected audience claim in JWT tokens. |
 
+### Token exchange (`/v1/oauth/token`)
+
+`/v1/oauth/token` is the canonical endpoint for token issuance, rotation, and delegation token minting via RFC 8693. Grant type URN: `urn:ietf:params:oauth:grant-type:token-exchange`.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `tokenExchange.defaultTokenTTLSeconds` | int | 3600 | Default lifetime for newly minted access tokens. Narrowed child tokens inherit a cap from the parent's remaining lifetime. | Must be > 0. |
+| `tokenExchange.maxTokenTTLSeconds` | int | 28800 | Absolute maximum lifetime for any token issued by `/v1/oauth/token`. Parent lifetime caps child lifetime. | Must be >= `defaultTokenTTLSeconds`. |
+| `tokenExchange.rateLimitPerUser` | int | 60 | Maximum `/v1/oauth/token` requests per user per minute. Rotation + delegation minting share this budget. | Must be > 0. |
+| `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on delegation child-token minting. Enforces the parent→child chain of custody. | -- |
+| `tokenExchange.supportedSubjectTokenTypes` | string[] | `["urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"]` | Accepted `subject_token_type` values. | Subset of IANA-registered token types. |
+
+---
+
 ### KMS
 
 | Field | Type | Default | Description |
@@ -237,6 +280,17 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 | `audit.pgaudit.sinkEndpoint` | string | -- | pgaudit log forwarding endpoint. Required when `pgaudit.enabled: true`. | Valid URL when enabled. |
 | `audit.grantCheckInterval` | duration | `5m` | Interval for periodic audit table grant checks. | Valid duration. |
 | `audit.hardFailOnDrift` | bool | `false` | Initiate graceful gateway shutdown on audit grant drift. | -- |
+
+### OCSF wire format
+
+Lenny's audit events leave the Postgres hot tier as OCSF v1.1.0 records. Wrapping in a CloudEvents envelope is applied only when the audit stream crosses the EventBus. The hash chain (`prev_hash`) is computed over the canonical pre-OCSF tuple; see `spec/11_policy-and-controls.md` §11.7.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `audit.ocsf.version` | string | `1.1.0` | OCSF schema version emitted by the audit translator. | Must match a supported OCSF release. |
+| `audit.ocsf.productName` | string | `lenny` | Value for `metadata.product.name` in every OCSF record. | Non-empty. |
+| `audit.ocsf.productVendorName` | string | Required | Value for `metadata.product.vendor_name` (typically the deploying organization). | Non-empty. |
+| `audit.ocsf.includeRawRequest` | bool | `false` | Include the original gateway request body in `enrichments[]`. Raises PII/size concerns; enable only for regulated tenants with explicit sign-off. | -- |
 
 ---
 
@@ -291,6 +345,35 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `eval.maxEvalsPerSession` | int | 50 | Maximum `EvalResult` submissions per session. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. |
+
+---
+
+## Experiment targeting (OpenFeature / OFREP)
+
+Lenny routes external experiment lookups through the OpenFeature Go SDK and the OFREP HTTP provider. Percentage-mode bucketing is built-in and does not require an OpenFeature provider.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `experimentTargeting.provider` | string | `percentage` | Provider mode. Built-in: `percentage`. External: `ofrep`, `launchdarkly`, `statsig`, `unleash`, `flagd`, `goff`. | One of the listed values. |
+| `experimentTargeting.ofrep.endpoint` | string | -- | OFREP provider endpoint. Required when `provider: ofrep`. | Valid URL when required. |
+| `experimentTargeting.ofrep.headers` | map[string]string | `{}` | Additional HTTP headers sent on every OFREP request (e.g., auth tokens). | -- |
+| `experimentTargeting.ofrep.timeoutMs` | int | 250 | Per-evaluation request timeout. OFREP is on the session-creation hot path; keep this tight. | Must be > 0. |
+| `experimentTargeting.ofrep.cacheTTLSeconds` | int | 30 | Local cache TTL for provider responses, per `(flagKey, evaluationContextHash)`. | Must be >= 0. |
+
+---
+
+## Lenny-ops service configuration
+
+`lenny-ops` is the operability control plane that exposes AI-agent-driven diagnostic and remediation endpoints. Deployed as a separate Deployment alongside the gateway.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `lennyOps.enabled` | bool | `true` | Deploy the `lenny-ops` service. When disabled, operability endpoints under `/v1/ops/*` return `503`. | -- |
+| `lennyOps.replicas` | int | 2 | Replica count. `lenny-ops` is stateless; scale for availability, not throughput. | Must be > 0. |
+| `lennyOps.image` | string | `lenny/lenny-ops:<lenny-version>` | Container image. Pinned to the main Lenny release. | Valid image reference. |
+| `lennyOps.remediationLocks.defaultTTLSeconds` | int | 900 | Default TTL for remediation locks (scaling changes, cordon, pod quarantine). Prevents locks from surviving a crashed operator agent. | Must be > 0. |
+| `lennyOps.remediationLocks.maxTTLSeconds` | int | 3600 | Absolute ceiling for remediation-lock TTL. | Must be >= `defaultTTLSeconds`. |
+| `lennyOps.scopes.requireExplicit` | bool | `true` | Require scoped tokens (minted via `/v1/oauth/token`) rather than tenant-level OIDC tokens for write operations. | -- |
 
 ---
 

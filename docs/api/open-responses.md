@@ -29,6 +29,10 @@ The `OpenResponsesAdapter` provides support for the **Open Responses** specifica
 
 Lenny implements the Open Responses specification. OpenAI Responses API clients work against Lenny for all standard operations, but Lenny does not implement OpenAI's proprietary hosted tools.
 
+**Authentication.** Requests use `Authorization: Bearer <access-token>`. Rotate or exchange tokens via the canonical [`/v1/oauth/token`](./admin.md#post-v1oauthtoken) RFC 8693 endpoint.
+
+**Upstream provider credentials.** When the selected runtime uses proxy-mode credential delivery, upstream LLM traffic is routed through Lenny's LLM Proxy and the co-located **LiteLLM sidecar** (`lenny/litellm-hardened:<lenny-version>`). Real provider API keys never reach the agent pod. See [LiteLLM sidecar](../operator-guide/litellm-sidecar.md).
+
 ---
 
 ## Endpoint

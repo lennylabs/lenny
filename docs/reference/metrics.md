@@ -25,12 +25,12 @@ Complete reference for all Prometheus metrics emitted by Lenny platform componen
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_gateway_active_sessions` | Gauge | `replica_id` | Number of sessions coordinated by this gateway replica. Postgres-backed count; lags real goroutine pressure. | `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling signal only -- NOT an HPA trigger). |
-| `lenny_gateway_active_streams` | Gauge | `replica_id` | In-flight streaming connections per replica. | Secondary HPA metric. |
-| `lenny_gateway_request_queue_depth` | Gauge | `replica_id` | Requests queued awaiting a handler goroutine. Reflects instantaneous back-pressure. | **Primary HPA scale-out trigger.** Target `averageValue: 10` (Tier 2). |
-| `lenny_gateway_gc_pause_p99_ms` | Gauge | `replica_id` | Process-level P99 GC pause per replica. Sustained >50 ms signals shared-process boundary pressure. | `Tier3GCPressureHigh` alert; LLM Proxy extraction decision. |
+| `lenny_gateway_active_sessions` | Gauge | `service_instance_id` | Number of sessions coordinated by this gateway replica. Postgres-backed count; lags real goroutine pressure. | `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling signal only -- NOT an HPA trigger). |
+| `lenny_gateway_active_streams` | Gauge | `service_instance_id` | In-flight streaming connections per replica. | Secondary HPA metric. |
+| `lenny_gateway_request_queue_depth` | Gauge | `service_instance_id` | Requests queued awaiting a handler goroutine. Reflects instantaneous back-pressure. | **Primary HPA scale-out trigger.** Target `averageValue: 10` (Tier 2). |
+| `lenny_gateway_gc_pause_p99_ms` | Gauge | `service_instance_id` | Process-level P99 GC pause per replica. Sustained >50 ms signals shared-process boundary pressure. | `Tier3GCPressureHigh` alert; LLM Proxy extraction decision. |
 | `lenny_gateway_gc_pause_fleet_p99_ms` | Gauge | -- | 99th-percentile GC pause aggregated across all active gateway replicas. Computed as `max(lenny_gateway_gc_pause_p99_ms)` over all instances. | `Tier3GCPressureHigh` alert; Tier 3 aggregate health indicator. |
-| `lenny_gateway_rejection_rate` | Gauge | `replica_id` | Requests rejected with 429/503 per second per replica. | Leading HPA scale-out indicator. |
+| `lenny_gateway_rejection_rate` | Gauge | `service_instance_id` | Requests rejected with 429/503 per second per replica. | Leading HPA scale-out indicator. |
 
 ### HPA metric roles
 
@@ -85,6 +85,19 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 | `lenny_llm_proxy_upstream_goroutines` | Gauge | -- | Goroutines handling upstream LLM streams. | -- |
 | `lenny_llm_proxy_p99_ttfb_ms` | Histogram | -- | P99 time-to-first-byte for upstream LLM requests. | -- |
 
+### LiteLLM sidecar metrics
+
+Emitted by the gateway when `deliveryMode: proxy` pools are active; the sidecar hardening contract is in [Security](../operator-guide/security.md#llm-proxy) and [LiteLLM sidecar](../operator-guide/litellm-sidecar.md).
+
+| Metric | Type | Labels | Description | Used by |
+|:-------|:-----|:-------|:------------|:--------|
+| `lenny_gateway_llm_proxy_request_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | End-to-end time from Lenny proxy receipt to response completion, including LiteLLM forwarding and upstream provider latency. | Proxy-mode translation overhead SLO. |
+| `lenny_gateway_litellm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | Time spent inside the LiteLLM sidecar translating and forwarding — request body translation + upstream call + response translation. Upstream provider's network latency is included; it is NOT subtracted because the sidecar cannot observe upstream wire timing independently of its own processing. Used as the numerator for the proxy-mode translation-overhead SLO ratio. | Go-rewrite trigger signal (c); proxy-mode SLO. |
+| `lenny_gateway_litellm_route_anomaly_total` | Counter | -- | Requests to LiteLLM routes outside the allowlist (`/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/health`). Steady-state zero; any non-zero rate is a potential compromise signal. | `LiteLLMRouteAnomaly` (Critical). |
+| `lenny_gateway_litellm_egress_anomaly_total` | Counter | -- | Outbound connection attempts observed from the gateway pod to destinations outside the `allow-gateway-egress-llm-upstream` NetworkPolicy allowlist. Detected via eBPF connection tracking where available, or via NetworkPolicy drop counters as a fallback. The source is transparent to the operator; the metric is always present. | `LiteLLMEgressAnomaly` (Critical). |
+| `lenny_gateway_litellm_process_restart_total` | Counter | `error_type`: `oom`, `crash`, `config_reload` | Sidecar process restarts during active sessions. | `LiteLLMUnexpectedRestart` (Warning). |
+| `lenny_gateway_max_sessions_per_replica` | Gauge | `delivery_mode`: `proxy`, `direct` | Maximum concurrent sessions this replica can serve under the given delivery mode. Computed at startup from Helm `maxSessionsPerReplica` (direct) or `maxSessionsPerReplicaProxyMode` (proxy). | Go-rewrite trigger signal (d); Phase 13.5 measurement. |
+
 ---
 
 ## Session metrics
@@ -108,7 +121,7 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 | `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | `pool`, `isolation_profile` | Time from pod creation to `idle` state. | `WarmPoolReplenishmentSlow` alert. |
 | `lenny_warmpool_replenishment_rate` | Gauge | `pool` | Pods per minute entering `idle` state. | Operational monitoring. |
-| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `reason` | Pods failing to reach `idle` during warm-up. Reasons: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`. | `WarmPoolReplenishmentFailing` alert. |
+| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Pods failing to reach `idle` during warm-up. Error types: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`. | `WarmPoolReplenishmentFailing` alert. |
 | `lenny_warmpool_cold_start_total` | Counter | `pool` | Sessions served from cold pod or exhausted pool. | Operational monitoring. |
 | `lenny_warmpool_fill_duration_seconds` | Histogram | `pool` | Time from pool creation to reaching `minWarm` ready pods. | Operational monitoring. |
 | `lenny_warmpool_claims_total` | Counter | `pool`, `runtime_class` | Warm pod transitions from `idle` to `claimed`. | SDK-warm demotion rate computation. |
@@ -133,11 +146,11 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
-| `lenny_task_pod_scrub_failure_count` | Gauge | `pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count in task mode. |
+| `lenny_task_pod_scrub_failure_count` | Gauge | `k8s_pod_name`, `pool`, `runtime_class` | Per-pod scrub failure count in task mode. |
 | `lenny_task_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Pod retirements. Reasons: `task_count_limit`, `uptime_limit`, `scrub_failure_limit`. |
-| `lenny_task_reuse_count` | Histogram | `pool`, `pod_name` | Tasks executed per pod in task mode. |
-| `lenny_slot_failure_total` | Counter | `reason`, `pool`, `pod_name` | Slot failures in concurrent-workspace mode. |
-| `lenny_slot_pod_replacement_total` | Counter | `pool`, `pod_name` | Pod replacements triggered by slot failures. |
+| `lenny_task_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Tasks executed per pod in task mode. |
+| `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Slot failures in concurrent-workspace mode. |
+| `lenny_slot_pod_replacement_total` | Counter | `pool`, `k8s_pod_name` | Pod replacements triggered by slot failures. |
 
 ---
 
@@ -167,6 +180,7 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 | `lenny_token_service_errors_total` | Counter | `error_type` | Token Service errors by type. | `TokenServiceUnavailable` alert. |
 | `lenny_token_service_circuit_state` | Gauge | -- | Token Service circuit breaker: 0=closed, 1=half-open, 2=open. | `TokenServiceUnavailable` alert. |
 | `lenny_token_service_secret_reloads_total` | Counter | `secret_name`, `outcome` | Secret reload outcomes: `success`, `not_found`, `parse_error`. | Operational monitoring. |
+| `lenny_oauth_token_5xx_total` | Counter | `tenant_id`, `error_type` | `/v1/oauth/token` responses that returned 5xx. Error types: `token_store_unavailable`, `internal_error`, `crypto_error`. | `TokenStoreUnavailable` alert. |
 
 ### Credential pool metrics
 
@@ -175,7 +189,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
 | Credential lease assignments | Counter | `provider`, `pool`, `source` | Credential leases assigned. |
-| Credential rotations | Counter | `reason` | Rotations by reason: `rate_limit`, `auth_expired`, `provider_unavailable`. |
+| Credential rotations | Counter | `error_type` | Rotations by error class: `rate_limit`, `auth_expired`, `provider_unavailable`. |
 | Credential pool utilization | Gauge | `pool` | Active leases / total credentials. |
 | Credential pool health | Gauge | `pool` | Credentials in cooldown. |
 | Credential lease duration | Histogram | `pool` | Duration of credential leases. |
@@ -235,7 +249,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 |:-------|:-----|:-------|:------------|
 | Upload bytes/second | Counter | -- | Upload throughput. |
 | Upload queue depth | Gauge | -- | Pending uploads. |
-| `lenny_upload_extraction_aborted_total` | Counter | `reason` | Aborted extractions. Reasons: `zip_bomb`, `size_limit`, `path_traversal`, `symlink`, `format_error`. |
+| `lenny_upload_extraction_aborted_total` | Counter | `error_type` | Aborted extractions. Classes: `zip_bomb`, `size_limit`, `path_traversal`, `symlink`, `format_error`. |
 
 ---
 
@@ -245,7 +259,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| Postgres connection pool utilization | Gauge | `replica_id` | Per-replica connection pool usage. | Operational monitoring. |
+| Postgres connection pool utilization | Gauge | `service_instance_id` | Per-replica connection pool usage. | Operational monitoring. |
 | Redis memory usage | Gauge | -- | Redis memory consumption. | `RedisMemoryHigh` alert. |
 | Redis eviction rate | Counter | -- | Redis key evictions. | Operational monitoring. |
 | mTLS handshake latency | Histogram | -- | Gateway-to-pod mTLS latency. | Operational monitoring. |
@@ -269,7 +283,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_controller_leader_lease_renewal_age_seconds` | Gauge | `controller` | Seconds since leader last renewed its lease. | `ControllerLeaderElectionFailed` alert. |
 | `lenny_controller_queue_overflow_total` | Counter | -- | Reconciliation events dropped due to queue overflow. | Operational monitoring. |
 | `lenny_orphaned_claims_total` | Counter | `pool` | Orphaned SandboxClaim deletions. | `SandboxClaimOrphanRateHigh` alert. |
-| `lenny_sandboxclaim_guard_rejections_total` | Counter | `replica_id` | Admission webhook rejections of double-claim attempts. | Bug detection. |
+| `lenny_sandboxclaim_guard_rejections_total` | Counter | `service_instance_id` | Admission webhook rejections of double-claim attempts. | Bug detection. |
 
 ### PodRegistry metrics
 
@@ -332,12 +346,15 @@ These are derived from credential lifecycle counters, not directly named in the 
 
 ## EventBus metrics
 
-| Metric | Type | Labels | Description |
-|:-------|:-----|:-------|:------------|
-| `lenny_event_bus_publish_total` | Counter | `topic` | Total publishes per topic. |
-| `lenny_event_bus_publish_duration_seconds` | Histogram | `topic` | Time to publish to underlying transport. |
-| `lenny_event_bus_handler_duration_seconds` | Histogram | `topic` | Time spent in handler function. |
-| `lenny_event_bus_handler_error_total` | Counter | `topic` | Handler error count. |
+Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudEvents catalog](cloudevents-catalog.md) for the `type` values emitted.
+
+| Metric | Type | Labels | Description | Used by |
+|:-------|:-----|:-------|:------------|:--------|
+| `lenny_event_bus_publish_total` | Counter | `topic` | Total publishes per topic. | -- |
+| `lenny_event_bus_publish_duration_seconds` | Histogram | `topic` | Time to publish to underlying transport. | -- |
+| `lenny_event_bus_publish_dropped_total` | Counter | `topic`, `error_type` | Publishes dropped because the in-memory queue (`eventBus.publishQueueDepth`) overflowed or the underlying transport rejected the message. Error types: `queue_full`, `transport_error`, `encode_error`. | `EventBusPublishDropped` alert. |
+| `lenny_event_bus_handler_duration_seconds` | Histogram | `topic` | Time spent in handler function. | -- |
+| `lenny_event_bus_handler_error_total` | Counter | `topic` | Handler error count. | -- |
 
 ---
 
@@ -412,6 +429,9 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Critical |
 | `DelegationBudgetKeysExpired` | `BUDGET_KEYS_EXPIRED` returned by Lua script | Critical |
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
+| `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[5m]) > 0.1` sustained > 5 min | Critical |
+| `LiteLLMRouteAnomaly` | `rate(lenny_gateway_litellm_route_anomaly_total[1m]) > 0` | Critical |
+| `LiteLLMEgressAnomaly` | `rate(lenny_gateway_litellm_egress_anomaly_total[1m]) > 0` | Critical |
 
 ### Warning alerts
 
@@ -444,6 +464,8 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `TenantDeletionOverdue` | Deletion exceeds 80% of tier SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
 | `PoolBootstrapMode` | Pool in bootstrap mode > 72 hours | Warning |
+| `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` sustained > 5 min | Warning |
+| `LiteLLMUnexpectedRestart` | `rate(lenny_gateway_litellm_process_restart_total{error_type!="config_reload"}[15m]) > 0` | Warning |
 
 ### SLO burn-rate alerts
 

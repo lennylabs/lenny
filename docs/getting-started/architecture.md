@@ -146,14 +146,15 @@ Orchestrates recursive delegation and manages the virtual MCP interfaces that pa
 
 #### LLM Proxy subsystem
 
-A credential-injecting reverse proxy for LLM provider traffic. When an agent pod needs to call an LLM provider:
+A credential-injecting reverse proxy for LLM provider traffic. The gateway terminates runtime-facing requests in one of two dialects (`openai` or `anthropic`, matching the runtime's `credentialCapabilities.proxyDialect`) and forwards the request to a **LiteLLM sidecar** co-located with the gateway replica. When an agent pod needs to call an LLM provider:
 
-1. The pod sends the request to the gateway's LLM Proxy (using only a lease token, not the real API key).
-2. The LLM Proxy validates the lease token against the session's active credential lease.
-3. The LLM Proxy injects the real API key (retrieved from the Credential Pool Store) into the outbound request.
-4. The LLM Proxy forwards the streaming request to the upstream LLM provider and relays the response back to the pod.
+1. The pod sends the request to the gateway's LLM Proxy (using only a lease token, not the real API key) on either `/v1/chat/completions` (OpenAI dialect) or `/v1/messages` (Anthropic dialect).
+2. The LLM Proxy validates the lease token against the session's active credential lease, applies interceptors, and performs quota accounting.
+3. The LLM Proxy injects the real API key (retrieved from the Credential Pool Store) and hands the request to the LiteLLM sidecar over loopback.
+4. The LiteLLM sidecar translates to the upstream provider wire format (Anthropic, Bedrock, Vertex, OpenAI-compatible, etc.) and streams the response back.
+5. The LLM Proxy strips credentials from the response and relays it to the pod.
 
-This architecture means pods never hold actual LLM API keys. The LLM Proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level failures.
+The sidecar is shipped as the hardened wrapper image `lenny/litellm-hardened:<lenny-version>`, pinned to the main Lenny release. This architecture means pods never hold actual LLM API keys, and upstream provider credentials are injected only inside the LiteLLM sidecar -- they never reach the agent pod. The LLM Proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level failures.
 
 ---
 
@@ -181,6 +182,8 @@ A **separate process** (Kubernetes Deployment) that manages two categories of cr
 2. **LLM provider credentials:** API keys, IAM roles, and service accounts for LLM providers (managed via Credential Pools).
 
 The Token Service is the only component with KMS decrypt permissions. It holds the envelope encryption keys for stored refresh tokens and can mint short-lived access tokens on demand. Gateway replicas communicate with the Token Service over mTLS -- they receive short-lived tokens, never refresh tokens or KMS master keys.
+
+Externally, every token issuance -- initial tokens, rotation, delegation child-token minting, scoped operator tokens -- flows through the canonical [`POST /v1/oauth/token`](../api/admin.md) endpoint using the RFC 8693 grant type `urn:ietf:params:oauth:grant-type:token-exchange`. Delegation child tokens are minted with the parent session token in the `actor_token` field to preserve the chain of custody.
 
 **High availability:** Deployed as a multi-replica Deployment (2+ replicas) with a PodDisruptionBudget. The service is fully stateless -- all persistent state lives in Postgres and KMS. Sessions that already hold credential leases continue operating during Token Service outages; only new sessions that require credentials are affected.
 
@@ -378,7 +381,7 @@ Redis provides low-latency reads for data that is accessed on every request, plu
 - **Routing cache:** Maps `session_id` to pod address. Populated lazily, evicted on session end.
 - **Lease coordination:** Distributed locks for session-level operations (coordinator election, derive serialization).
 - **Quota hot counters:** Token usage and rate limit counters, periodically checkpointed to Postgres.
-- **Pub/sub:** Event notifications for session state changes, used by gateway replicas to stay synchronized.
+- **Pub/sub:** Event notifications for session state changes, used by gateway replicas to stay synchronized. Every pub/sub payload is wrapped in a **CloudEvents v1.0.2** envelope with `type` values under `dev.lenny.*` (see [CloudEvents catalog](../reference/cloudevents-catalog.md)). Audit records that cross the EventBus carry an OCSF record as the CloudEvent `data` field (single-envelope model).
 
 Redis is a cache and coordination layer, not a source of truth. All Redis state can be reconstructed from Postgres if Redis is restarted.
 

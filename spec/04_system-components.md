@@ -186,10 +186,11 @@ Until those triggers are hit, a single binary with internal boundaries is prefer
 
 ### 4.3 Token Service
 
-**Role:** Manages two categories of credentials:
+**Role:** Manages two categories of credentials plus serves the OAuth token endpoint:
 
 1. **Connector credentials** — OAuth tokens for external tools and agents (GitHub, Jira, external A2A agents, etc.) accessed via registered connectors (see [Section 9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc) for the connector definition and OAuth/OIDC flow)
 2. **LLM provider credentials** — API keys, cloud IAM roles, and service accounts that runtimes need to access their backing LLM (see [Section 4.9](#49-credential-leasing-service) for the full credential leasing design)
+3. **Canonical token endpoint** — `POST /v1/oauth/token` ([§15.1](15_external-api-surface.md#151-rest-api)) per [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) and [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693). All Lenny bearer tokens — admin tokens, session tokens, delegation child tokens, credential-lease tokens, operability-scope tokens — are minted here (either via direct caller request or via internal Token Service calls from other gateway subsystems). See [Section 13](13_security-model.md#133-credential-flow) for the claim-mapping table and scope-narrowing rules.
 
 **Deployment:** Runs as a **separate process** (Deployment) with its own ServiceAccount and KMS access. This is the only component with KMS decrypt permissions for downstream OAuth tokens. Gateway replicas call the Token Service over mTLS — they cannot directly decrypt stored tokens.
 
@@ -226,6 +227,9 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 - Workspace checkpoint references
 - Agent session file snapshots
 - Resume metadata
+- Audit records (`audit_log`, [Section 11.7](../spec/11_policy-and-controls.md#117-audit-logging))
+
+**Audit egress translator.** The EventStore's audit-egress path includes an **OCSF translator** ([Section 11.7](../spec/11_policy-and-controls.md#117-audit-logging) Wire Format) that maps the canonical Postgres-stored tuple to OCSF v1.1.0 JSON for every consumer that sits outside the authoritative store: the SIEM forwarder (`audit.siem.endpoint`), pgaudit sink consumers, the `/v1/admin/audit-events` query API ([§25.9](../spec/25_agent-operability.md#259-audit-log-query-api)), and the CloudEvents-wrapped audit events published on the EventBus ([§12.6](12_storage-architecture.md#126-interface-design)). The translator is pure (no state outside Postgres) and deterministic — identical input produces identical OCSF output — so the same chain hash can be recomputed by an external auditor from either the OCSF record plus `unmapped.lenny_chain` extension or the raw canonical tuple. The translator version and OCSF wire version are surfaced on every response envelope.
 
 **Checkpoint Atomicity:** A checkpoint is an atomic unit comprising a workspace snapshot (tar of `/workspace/current`), a session file snapshot (copy of `/sessions/` contents), and a checkpoint metadata record (generation, timestamp, pod state). If either snapshot fails, the entire checkpoint is discarded — partial checkpoints are never stored as valid checkpoints. The metadata record in Postgres references both artifacts and is written only after both are successfully uploaded to MinIO. **Exception — preStop timeout partial manifest:** When an eviction checkpoint exceeds the preStop tiered cap ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and the upload is incomplete, the gateway writes a *partial checkpoint manifest* (not a full checkpoint record) to Postgres flagged with `partial: true`. This record is not a valid checkpoint; it is a recovery aid that tracks which multipart MinIO parts were successfully committed, enabling partial workspace reconstruction on resume. It does not override the normal atomicity guarantee for non-eviction checkpoints.
 
@@ -377,7 +381,7 @@ This indirection means a breaking upstream change or a decision to replace agent
 
 **Why optimistic locking provides sufficient fencing:** The old leader's in-flight `PATCH`/`PUT` on a `SandboxClaim` carries the `resourceVersion` observed before it died. If the new leader (or any other gateway replica) has since written to the same resource, its `resourceVersion` has changed and the API server rejects the old leader's write with HTTP 409 — the same conflict path as a concurrent gateway-vs-gateway race. The old leader's write cannot silently succeed; it either completes before the new leader touches the resource (in which case it is not a double-claim) or it arrives after and is rejected. If ADR-007's chaos test confirms this behavior holds under load, no additional fencing token or generation field is required.
 
-**`SandboxClaim` admission webhook (double-claim prevention):** As a defense-in-depth backstop against any residual double-claim risk — including the narrow failover window during which a new leader has not yet touched a `SandboxClaim` and an old leader's in-flight write could theoretically succeed — a `ValidatingAdmissionWebhook` (`lenny-sandboxclaim-guard`) is deployed alongside the warm-pool controller. The webhook intercepts every `CREATE`, `PATCH`, and `PUT` operation on `SandboxClaim` resources in agent namespaces. For `PATCH`/`PUT`, it rejects the request if the **existing** resource's `.status.phase` (as persisted in etcd) is not `idle` — i.e., the target `Sandbox` already has an active claim. Specifically: if the incoming operation attempts to transition `.status.phase` from any non-`idle` value, the webhook returns `403 Forbidden` with message `"SandboxClaim already claimed: phase is <phase>; concurrent claim rejected"`. For `CREATE`, the webhook queries the API server for any existing `SandboxClaim` whose `.spec.sandboxRef` matches the target `Sandbox`; if a non-terminal claim already exists, the creation is rejected with `403 Forbidden` and message `"SandboxClaim already exists for Sandbox <name>; concurrent claim rejected"`. This `CREATE`-time check is essential for the Postgres fallback claim path (see below), which creates a new `SandboxClaim` CRD after claiming a pod record in Postgres — without it, the fallback path could race with the normal CRD-based claim path and produce duplicate claims for the same `Sandbox`. The webhook is deployed with `failurePolicy: Fail` (fail-closed), ensuring that a webhook outage blocks new claim operations rather than silently allowing them through. Because the webhook evaluates `.status.phase` as persisted in etcd at admission time, it makes double-claim impossible regardless of timing: even if two writers race with the same `resourceVersion`, the second writer's request is rejected at admission before it reaches the API server's optimistic-lock check. The `lenny_sandboxclaim_guard_rejections_total` counter (labeled by `replica_id`) tracks admission rejections; a non-zero rate during normal operation indicates a claim-path bug. The webhook is deployed with `replicas: 2` and a `PodDisruptionBudget` (`minAvailable: 1`) matching the admission controller HA requirements in [Section 17.2](17_deployment-topology.md#172-namespace-layout). Alert `SandboxClaimGuardUnavailable` (Critical) fires when the webhook has been unreachable for more than 30 seconds — see [Section 16.5](16_observability.md#165-alerting-rules-and-slos). The webhook is deployed as part of the Helm chart under `templates/admission-policies/` and is covered by the admission policy integration test suite (`tests/integration/admission_policy_test.go`). It is included as a check in the `lenny-preflight` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)).
+**`SandboxClaim` admission webhook (double-claim prevention):** As a defense-in-depth backstop against any residual double-claim risk — including the narrow failover window during which a new leader has not yet touched a `SandboxClaim` and an old leader's in-flight write could theoretically succeed — a `ValidatingAdmissionWebhook` (`lenny-sandboxclaim-guard`) is deployed alongside the warm-pool controller. The webhook intercepts every `CREATE`, `PATCH`, and `PUT` operation on `SandboxClaim` resources in agent namespaces. For `PATCH`/`PUT`, it rejects the request if the **existing** resource's `.status.phase` (as persisted in etcd) is not `idle` — i.e., the target `Sandbox` already has an active claim. Specifically: if the incoming operation attempts to transition `.status.phase` from any non-`idle` value, the webhook returns `403 Forbidden` with message `"SandboxClaim already claimed: phase is <phase>; concurrent claim rejected"`. For `CREATE`, the webhook queries the API server for any existing `SandboxClaim` whose `.spec.sandboxRef` matches the target `Sandbox`; if a non-terminal claim already exists, the creation is rejected with `403 Forbidden` and message `"SandboxClaim already exists for Sandbox <name>; concurrent claim rejected"`. This `CREATE`-time check is essential for the Postgres fallback claim path (see below), which creates a new `SandboxClaim` CRD after claiming a pod record in Postgres — without it, the fallback path could race with the normal CRD-based claim path and produce duplicate claims for the same `Sandbox`. The webhook is deployed with `failurePolicy: Fail` (fail-closed), ensuring that a webhook outage blocks new claim operations rather than silently allowing them through. Because the webhook evaluates `.status.phase` as persisted in etcd at admission time, it makes double-claim impossible regardless of timing: even if two writers race with the same `resourceVersion`, the second writer's request is rejected at admission before it reaches the API server's optimistic-lock check. The `lenny_sandboxclaim_guard_rejections_total` counter (labeled by `service_instance_id`) tracks admission rejections; a non-zero rate during normal operation indicates a claim-path bug. The webhook is deployed with `replicas: 2` and a `PodDisruptionBudget` (`minAvailable: 1`) matching the admission controller HA requirements in [Section 17.2](17_deployment-topology.md#172-namespace-layout). Alert `SandboxClaimGuardUnavailable` (Critical) fires when the webhook has been unreachable for more than 30 seconds — see [Section 16.5](16_observability.md#165-alerting-rules-and-slos). The webhook is deployed as part of the Helm chart under `templates/admission-policies/` and is covered by the admission policy integration test suite (`tests/integration/admission_policy_test.go`). It is included as a check in the `lenny-preflight` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)).
 
 **Pod claim mechanism:** Gateway replicas claim pods via `SandboxClaim` resources with optimistic locking — exactly one gateway wins; all others receive a conflict and retry with a different idle pod from the pool. This keeps the controller off the claim hot path entirely — pod-to-session binding is resolved at the API-server level with no single-writer bottleneck. `ClaimPod` implementations must use a `resourceVersion`-guarded compare-and-swap loop: on HTTP 409, re-read the current `Sandbox` state and retry with the updated `resourceVersion` (or select a different idle pod if the target pod is no longer available). This loop is the primary defense against both concurrent gateway races and stale in-flight writes from a failed controller replica.
 
@@ -732,6 +736,11 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 | `tracingContext`            | `object` or `null` | Yes      | Tracing identifiers propagated from the parent runtime via delegation, or `null` for top-level sessions. An opaque key-value map (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) for validation rules). See [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. | All (if reading manifest) |
 | `observability`             | `object`           | No       | Observability configuration. Omitted when no OTLP collector is configured for the deployment. | Informational (all tiers) |
 | `observability.otlpEndpoint`| `string`           | No       | URL of the OTLP collector (e.g., `"http://otel-collector.lenny-system:4317"`). Runtimes that emit OpenTelemetry spans ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) configure their OTel SDK against this endpoint. Present only when the deployer has configured `observability.otlpEndpoint` in the Helm values. | Informational (all tiers) |
+| `llm`                       | `object` or `null` | Yes      | LLM provider configuration for the session. `null` if the runtime does not have an active LLM credential lease. | All (if reading manifest) |
+| `llm.deliveryMode`          | `string`           | Yes      | `direct` \| `proxy`. Tells the runtime which credential delivery mode is active for this session's LLM provider pool ([§4.9](#49-credential-leasing-service)). | All |
+| `llm.dialect`               | `string`           | No (direct) / Yes (proxy) | `openai` \| `anthropic`. In proxy mode, the runtime's LLM SDK must speak this dialect to `llm.baseUrl`. Omitted in direct mode where the runtime uses the upstream provider's native SDK. | Proxy mode |
+| `llm.baseUrl`               | `string`           | No (direct) / Yes (proxy) | In proxy mode, the `proxyUrl` value from the CredentialLease (HTTPS URL exposing `/v1/chat/completions` or `/v1/messages`). The runtime configures its SDK's base URL to this value. Omitted in direct mode. | Proxy mode |
+| `llm.apiKeyEnv`             | `string`           | No       | Canonical env var name the runtime's SDK reads for its API key. Convention: `"ANTHROPIC_API_KEY"` for `dialect: anthropic`; `"OPENAI_API_KEY"` for `dialect: openai`. The runtime sets this env var **in its own process** to the lease token from `/run/lenny/credentials.json`. The pod-level env (§14 `env` field) is NOT used for credential material; blocklisted sensitive names still cannot appear in pod-level env. | Proxy mode |
 
 **Tier reading requirements:**
 
@@ -1177,49 +1186,48 @@ The `source` field indicates how the credential was obtained: `pool` (admin-mana
 - Optional fields are omitted when not applicable (not set to `null`).
 - `expiresAt` (where present) is an ISO 8601 UTC timestamp matching the enclosing lease `expiresAt`.
 
-**In proxy delivery mode** (`deliveryMode: proxy`), the Token Service omits all secret credential fields (`apiKey`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `accessToken`, `vaultToken`) and instead sets `proxyUrl` and `leaseToken`. The runtime sends LLM requests to `proxyUrl` authenticated with `leaseToken`; the gateway injects the real credential before forwarding to the upstream provider.
+**In proxy delivery mode** (`deliveryMode: proxy`), the Token Service omits all per-provider secret fields and `materializedConfig` collapses to a uniform shape regardless of the upstream provider — the runtime speaks a provider-agnostic dialect to Lenny's proxy, which forwards to the LiteLLM sidecar that handles upstream translation (see "LLM Reverse Proxy" below).
+
+**Proxy-mode `materializedConfig` (uniform across all providers):**
+
+| Field | Type | Required | Encoding / Notes |
+| --- | --- | --- | --- |
+| `proxyUrl` | string | yes | HTTPS URL of the Lenny proxy endpoint. Exposes `POST {proxyUrl}/v1/chat/completions` (for `proxyDialect: openai`) or `POST {proxyUrl}/v1/messages` (for `proxyDialect: anthropic`). |
+| `proxyDialect` | string | yes | `openai` \| `anthropic`. Tells the runtime which SDK to use and which endpoint path to call. Matches the pool's `proxyDialect` configuration. |
+| `leaseToken` | string | yes | Opaque bearer token authenticating the runtime to `proxyUrl`. Used as the SDK's API key. |
+| `upstreamModel` | string | no | Hint passed through as the `model` field in OpenAI/Anthropic requests; LiteLLM maps this to the real upstream provider's model ID. Runtimes MAY override per-request. |
+
+**Direct-mode `materializedConfig` (per-provider; unchanged):**
 
 | Provider | Field | Type | Required | Encoding / Notes |
 | --- | --- | --- | --- | --- |
-| `anthropic_direct` | `apiKey` | string | yes (direct) | Plaintext Anthropic API key (`sk-ant-…`). Omitted in proxy mode. |
+| `anthropic_direct` | `apiKey` | string | yes | Plaintext Anthropic API key (`sk-ant-…`). |
 | | `baseUrl` | string | no | Override endpoint URL. Defaults to `https://api.anthropic.com` if omitted. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. Runtime sends requests here instead of Anthropic directly. |
-| | `leaseToken` | string | yes (proxy) | Opaque bearer token for authenticating to `proxyUrl`. Omitted in direct mode. |
-| `aws_bedrock` | `accessKeyId` | string | yes (direct) | STS short-lived access key ID. Omitted in proxy mode. |
-| | `secretAccessKey` | string | yes (direct) | STS short-lived secret access key. Plaintext. Omitted in proxy mode. |
-| | `sessionToken` | string | yes (direct) | STS session token. Plaintext. Omitted in proxy mode. |
-| | `region` | string | yes | AWS region (e.g., `us-east-1`). Present in both modes. |
+| `aws_bedrock` | `accessKeyId` | string | yes | STS short-lived access key ID. |
+| | `secretAccessKey` | string | yes | STS short-lived secret access key. Plaintext. |
+| | `sessionToken` | string | yes | STS session token. Plaintext. |
+| | `region` | string | yes | AWS region (e.g., `us-east-1`). |
 | | `endpointUrl` | string | no | Override Bedrock endpoint. Defaults to the standard regional endpoint if omitted. |
 | | `expiresAt` | string | yes | STS credential expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
-| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
-| `vertex_ai` | `accessToken` | string | yes (direct) | Short-lived GCP OAuth 2.0 access token. Plaintext. Omitted in proxy mode. |
-| | `projectId` | string | yes | GCP project ID. Present in both modes. |
-| | `region` | string | yes | GCP region (e.g., `us-central1`). Present in both modes. |
+| `vertex_ai` | `accessToken` | string | yes | Short-lived GCP OAuth 2.0 access token. Plaintext. |
+| | `projectId` | string | yes | GCP project ID. |
+| | `region` | string | yes | GCP region (e.g., `us-central1`). |
 | | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
-| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
-| `github` | `token` | string | yes (direct) | Short-lived GitHub installation access token. Plaintext. Omitted in proxy mode. |
+| `github` | `token` | string | yes | Short-lived GitHub installation access token. Plaintext. |
 | | `appId` | string | no | GitHub App ID, for runtimes that need to identify the app. |
 | | `installationId` | string | no | GitHub App installation ID. |
 | | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
-| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
-| `azure_openai` | `apiKey` | string | yes (direct, API-key pools) | Azure OpenAI API key. Omitted for Azure AD pools and in proxy mode. |
-| | `accessToken` | string | yes (direct, Azure AD pools) | Short-lived Azure AD access token. Plaintext. Omitted for API-key pools and in proxy mode. |
-| | `endpoint` | string | yes | Azure OpenAI endpoint URL (e.g., `https://<resource>.openai.azure.com`). Present in both modes. |
-| | `deploymentName` | string | yes | Azure model deployment name. Present in both modes. |
+| `azure_openai` | `apiKey` | string | yes (API-key pools) | Azure OpenAI API key. Omitted for Azure AD pools. |
+| | `accessToken` | string | yes (Azure AD pools) | Short-lived Azure AD access token. Plaintext. Omitted for API-key pools. |
+| | `endpoint` | string | yes | Azure OpenAI endpoint URL (e.g., `https://<resource>.openai.azure.com`). |
+| | `deploymentName` | string | yes | Azure model deployment name. |
 | | `apiVersion` | string | no | Azure OpenAI REST API version. Defaults to latest stable if omitted. |
 | | `expiresAt` | string | yes (Azure AD pools) | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. Absent for API-key pools. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
-| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
-| `vault_transit` | `vaultToken` | string | yes (direct) | Short-lived HashiCorp Vault token with access to the configured transit path. Plaintext. Omitted in proxy mode. |
-| | `vaultAddr` | string | yes | Vault server address (e.g., `https://vault.example.com:8200`). Present in both modes. |
-| | `transitPath` | string | yes | Vault transit mount path (e.g., `transit/`). Present in both modes. |
-| | `keyName` | string | yes | Vault transit key name. Present in both modes. |
+| `vault_transit` | `vaultToken` | string | yes | Short-lived HashiCorp Vault token with access to the configured transit path. Plaintext. |
+| | `vaultAddr` | string | yes | Vault server address (e.g., `https://vault.example.com:8200`). |
+| | `transitPath` | string | yes | Vault transit mount path (e.g., `transit/`). |
+| | `keyName` | string | yes | Vault transit key name. |
 | | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
-| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
-| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
 
 **Validation:** The Token Service validates that all `Required: yes` fields are present before issuing a lease. A missing required field causes lease issuance to fail with `CREDENTIAL_MATERIALIZATION_ERROR` (category: `INTERNAL`), which surfaces to the client as `CREDENTIAL_POOL_EXHAUSTED`. Custom providers bypass built-in field validation; deployers are responsible for validating their own schemas.
 
@@ -1319,7 +1327,7 @@ Fallback operates **per-provider**. When the runtime reports a credential failur
    - A credential.fallback_exhausted audit event is emitted (fields: session_id,
      rotation_count, last_failure_reason, fallback_chain_attempted)
    - The metric lenny_gateway_credential_fallback_exhausted_total (counter,
-     labeled by pool, provider, failure_reason) is incremented
+     labeled by pool, provider, error_type) is incremented
    - The client receives a terminal error; no further rotation attempts are made
 4. Gateway evaluates the affected provider's fallback chain (from
    credentialPolicy.providerPools.{provider}.fallback.order):
@@ -1365,17 +1373,39 @@ The resolved rotation mode is recorded in the session's metadata at creation tim
 
 #### LLM Reverse Proxy
 
-For API-key-based providers that do not support short-lived token exchange (e.g., providers where the "short-lived" key is really just the long-lived key with a TTL wrapper), the gateway can run a **credential-injecting reverse proxy** so the real API key never enters the pod:
+For API-key-based providers that do not support short-lived token exchange (e.g., providers where the "short-lived" key is really just the long-lived key with a TTL wrapper), the gateway runs a **credential-injecting reverse proxy** so the real API key never enters the agent pod. The proxy is structured as two cooperating components:
 
-1. Instead of receiving a materialized API key, the pod receives a lease token and a proxy URL (e.g., `https://gateway-internal:8443/llm-proxy/{lease_id}`).
-2. The pod sends LLM API requests to the proxy URL using the lease token for authentication.
-3. The gateway proxy validates the lease token, runs the `PreLLMRequest` interceptor chain ([Section 4.8](#48-gateway-policy-engine)) on the request body, injects the real API key into the upstream request headers, and forwards the request to the LLM provider. If a `PreLLMRequest` interceptor returns `REJECT`, the proxy returns `LLM_REQUEST_REJECTED` to the pod without contacting the upstream provider.
-4. On receiving the upstream response, the proxy runs the `PostLLMResponse` interceptor chain ([Section 4.8](#48-gateway-policy-engine)) before forwarding the response to the pod. For streaming responses, the interceptor fires once on the initial response metadata — stream chunks are forwarded without per-chunk interception. If a `PostLLMResponse` interceptor returns `REJECT`, the proxy returns `LLM_RESPONSE_REJECTED` to the pod. **The gateway extracts token usage counts (`input_tokens`, `output_tokens`) from the upstream provider response at this point and uses them as the authoritative usage record for quota accounting (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)). `ReportUsage` calls from the pod are ignored for sessions in proxy mode — the gateway is the sole counter of record, eliminating the ability of a malicious runtime to underreport token consumption.**
-5. The real API key never enters the pod's memory or environment.
+- **Lenny proxy subsystem** — the gateway's fourth internal subsystem boundary ([§4.1](#41-edge-gateway-replicas)). Speaks a stable, provider-agnostic wire format to the agent pod (OpenAI Chat Completions or Anthropic Messages — see "Proxy dialects" below). Validates the lease token, runs the `PreLLMRequest`/`PostLLMResponse` interceptor chain ([§4.8](#48-gateway-policy-engine)), extracts authoritative token usage, enforces SPIFFE-binding, and forwards the request to a LiteLLM sidecar over a loopback connection inside the gateway pod.
+- **LiteLLM sidecar** — an instance of [LiteLLM](https://github.com/BerriAI/litellm) deployed as a sidecar container in the gateway pod. Receives the provider-agnostic request from the Lenny proxy subsystem, holds the real upstream provider credentials (mounted from the gateway's Token-Service-issued credential cache), translates to the upstream provider's native wire format (Anthropic API, Bedrock Converse/InvokeModel, Vertex AI, Azure OpenAI, etc.), and forwards to the real provider. LiteLLM is configured at gateway startup from `llmProxy.litellm.config` Helm values and never accepts configuration at runtime.
 
-This is a **per-provider** configuration — deployers choose for each credential pool whether to use direct credential leasing (simpler, lower latency) or proxy mode (higher security, adds one network hop). The two modes can coexist across different pools. **Proxy mode is the recommended default for multi-tenant deployments**, since the real API key never enters the pod and a compromised agent cannot exfiltrate it. Direct mode is appropriate for single-tenant and development deployments where simplicity and lower latency are preferred.
+**Request flow:**
 
-The proxy enforces the same rate limits and budget constraints as direct leasing. When a lease expires or is revoked, the proxy immediately rejects requests — there is no window of exposure where a compromised pod could continue using a stale key.
+1. The agent pod receives a lease token, a `proxyUrl`, and a `proxyDialect` (`openai` or `anthropic`) in its `CredentialLease` instead of a materialized upstream API key.
+2. The agent pod uses a standard OpenAI or Anthropic SDK pointed at `proxyUrl` with the lease token as the API key. No Lenny-specific client code and no provider-specific SDK.
+3. The Lenny proxy subsystem authenticates the request: it validates the lease token against `TokenStore`, verifies the peer SPIFFE URI (for multi-tenant deployments), runs `PreLLMRequest` interceptors on the request body. If an interceptor returns `REJECT`, the proxy returns `LLM_REQUEST_REJECTED` to the agent pod without contacting LiteLLM.
+4. The Lenny proxy forwards the request to LiteLLM over the loopback connection (`http://127.0.0.1:4000/v1/chat/completions` or `/v1/messages` based on `proxyDialect`). The forwarding call carries the upstream provider identity in an `X-Lenny-Upstream-Provider` header (e.g., `anthropic_direct`, `aws_bedrock`) so LiteLLM selects the correct upstream route; the lease token is replaced with LiteLLM's internal auth token (shared-secret loopback auth, see "Sidecar trust boundary" below).
+5. LiteLLM translates to the upstream provider's wire format, injects the real API key from its in-memory credential cache, and forwards. It streams the upstream response back.
+6. The Lenny proxy subsystem observes the response stream, runs `PostLLMResponse` interceptors (fires once on the initial response metadata; stream chunks are forwarded without per-chunk interception), and extracts token usage counts (`input_tokens`, `output_tokens`) from the upstream provider response metadata. **These extracted counts are the authoritative usage record for quota accounting (see [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)); `ReportUsage` calls from the pod are ignored for sessions in proxy mode** — the gateway is the sole counter of record, eliminating the ability of a malicious runtime to underreport token consumption.
+7. The response streams to the agent pod. The real upstream API key never leaves the gateway pod; it never enters the agent pod's memory, environment, filesystem, or network path.
+
+**Proxy dialects.** Every proxy-mode pool declares a `proxyDialect` matching the Runtime's declared `credentialCapabilities.proxyDialect` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). Two dialects are supported at launch:
+
+- `openai` — exposes `POST {proxyUrl}/v1/chat/completions`, `POST {proxyUrl}/v1/embeddings`, and the streaming SSE variant. Accepts the standard OpenAI request body shape with a `model` field that LiteLLM maps to the upstream provider's model ID (configured in `llmProxy.litellm.config`). Any runtime using an OpenAI-compatible SDK works against this dialect regardless of the configured upstream provider.
+- `anthropic` — exposes `POST {proxyUrl}/v1/messages` and its streaming variant. Accepts the Anthropic Messages API request body. Any runtime using the Anthropic SDK works against this dialect regardless of the configured upstream provider. The Lenny proxy subsystem accepts the `anthropic-version` header from the runtime (the Anthropic SDK sets it automatically); if the header is absent, the proxy injects the default configured via the `llmProxy.anthropicVersion` Helm value (default: the latest stable version as of each Lenny release). The injected default is advertised to runtimes via the adapter manifest's `llm.headers` field so SDKs that require an explicit version can read it at startup. Runtime-supplied versions are passed through to LiteLLM verbatim, which in turn forwards them to the upstream provider (for `anthropic_direct`) or maps them to the equivalent Bedrock/Vertex API version for cross-provider translation.
+
+Admission control ([§10](../spec/10_gateway-internals.md)) rejects any pool registration or update where the pool's `proxyDialect` does not match a dialect declared in the Runtime's `credentialCapabilities.proxyDialect` set, returning `422 INVALID_POOL_PROXY_DIALECT` with message `"pool proxyDialect <X> is not declared in runtime credentialCapabilities.proxyDialect"`. This guarantees the agent pod's SDK speaks a dialect the proxy accepts.
+
+**Sidecar trust boundary.** LiteLLM runs as a sidecar container in the gateway pod, not as a separate service and not in the agent pod. The trust boundary:
+
+- **LiteLLM → gateway loopback auth:** the Lenny proxy subsystem and LiteLLM authenticate to each other via a shared secret (`litellm_master_key`, generated at gateway startup, stored in memory only, rotated on gateway restart). No TLS is required on the loopback connection because traffic never leaves the gateway pod's loopback namespace.
+- **Real credentials:** LiteLLM reads upstream API keys and STS materials from a tmpfs-backed file populated by the gateway at startup (and refreshed on credential rotation) via the Token Service. These are the same credentials that would be materialized in direct mode — the sidecar is a confinement boundary, not a separate trust domain.
+- **Gateway SPIFFE identity:** LiteLLM does not have its own SPIFFE identity. Outbound requests from LiteLLM use the gateway pod's network identity; the source SVID on upstream requests (when mTLS is used to the provider) is the gateway's. This is intentional — LiteLLM is part of the gateway's trust envelope.
+
+**Authoritative token counting.** LiteLLM emits upstream-provider-native usage metadata back through the Lenny proxy subsystem (in the response headers or SSE `usage` event, per dialect). The Lenny proxy subsystem reads those fields as the authoritative `input_tokens`/`output_tokens`; no pod-reported counts are accepted in proxy mode.
+
+**Per-pool configuration.** Deployers choose for each credential pool whether to use direct credential leasing (simpler, lower latency, no sidecar dependency) or proxy mode (higher security, LiteLLM translation). The two modes can coexist across different pools. **Proxy mode is the recommended default for multi-tenant deployments**, since the real API key never enters the agent pod and a compromised agent cannot exfiltrate it. Direct mode is appropriate for single-tenant and development deployments where simplicity and lower latency are preferred, and where the agent pod is trusted.
+
+The proxy enforces the same rate limits and budget constraints as direct leasing. When a lease expires or is revoked, the Lenny proxy subsystem immediately rejects requests before they reach LiteLLM — there is no window of exposure where a compromised agent pod could continue using a stale key.
 
 > **Hard rejection — `direct` + `standard` (runc) isolation in multi-tenant mode:** Combining `deliveryMode: direct` with `standard` (runc) isolation is **blocked by admission control** when `tenancy.mode: multi` is set in the platform configuration. In `standard` isolation, a container escape gives the attacker access to materialized credential material on the host node; in a multi-tenant deployment this represents cross-tenant credential exposure. The warm pool controller **rejects** any pool creation or update that sets both `deliveryMode: direct` and `isolationProfile: standard` when `tenancy.mode: multi`, returning a validation error `DirectModeStandardIsolationMultiTenantRejected`: `"deliveryMode: direct with isolationProfile: standard is not permitted in multi-tenant mode. Use deliveryMode: proxy, or set isolationProfile: sandboxed or microvm."` This is enforced at two layers: (1) the warm pool controller's pool-registration validation (rejects the admin API request before any pod is created), and (2) a `ValidatingAdmissionWebhook` (`lenny-direct-mode-isolation`) that rejects `SandboxTemplate` and `CredentialPool` resources carrying this combination in agent namespaces when the platform is in multi-tenant mode. The webhook is deployed with `failurePolicy: Fail` (fail-closed). In **single-tenant mode** (`tenancy.mode: single`) or **development mode** (`global.devMode: true`), this combination is permitted with an explicit opt-in field on the pool (`allowDirectModeStandardIsolation: true`) and emits a `DirectModeWeakIsolation` warning event and a startup log warning. The opt-in field cannot be set in multi-tenant mode — the admission webhook rejects it regardless of the field value.
 
@@ -1395,7 +1425,8 @@ The proxy enforces the same rate limits and budget constraints as direct leasing
 credentialPools:
   - name: claude-direct-prod
     provider: anthropic_direct
-    deliveryMode: proxy # proxy | direct (default: proxy for multi-tenant, direct for single-tenant)
+    deliveryMode: proxy           # proxy | direct (default: proxy for multi-tenant, direct for single-tenant)
+    proxyDialect: anthropic       # openai | anthropic; must match one of Runtime.credentialCapabilities.proxyDialect
     proxyEndpoint: https://gateway-internal:8443/llm-proxy
     # ... other pool config unchanged
 ```
@@ -1408,6 +1439,49 @@ credentialPools:
 > 3. The `leaseToken` field in `AssignCredentialsResponse` is unchanged — SPIFFE-binding is enforced server-side; no protocol change is required for the pod.
 >
 > **Deployment note:** SPIFFE-binding is enforced by default when `deliveryMode: proxy` is set on a pool. It can be disabled only for single-tenant or development deployments via `credentialPool.spiffeBinding: disabled`, which emits a `ProxyModeSpiffeBindingDisabled` warning event at pool registration time. Single-tenant and development deployments may omit SPIFFE-binding; in those cases the existing defense-in-depth controls (token visible only inside the pod on tmpfs mode 0400, pod sandbox isolation) remain the primary mitigations against token extraction.
+>
+> **Threat model — what SPIFFE-binding does and does not protect against.** SPIFFE-binding is a per-pod isolation control: it prevents a **different agent pod** (in a different pool, namespace, or tenant) from replaying a captured lease token, because the mTLS peer identity on the replay would not match the issuing pod's SPIFFE URI recorded in the lease record. The control is meaningful against an attacker who has extracted a lease token from one pod's memory (e.g., via log scraping or a memory-dump vulnerability) and attempts to use it from another pod. It does NOT protect against: (a) an attacker who has escaped into the gateway pod itself (the SPIFFE check applies at the gateway's mTLS ingress from agent pods, not on the gateway's loopback to LiteLLM — a gateway-pod-resident attacker can read the credential-cache tmpfs directly); (b) an attacker with control over the KMS signing key (they can forge lease tokens entirely). Containment (gateway-pod hardening, seccomp, admission-verified image signatures) is the primary defense against (a); KMS HSM-backing is the primary defense against (b). SPIFFE-binding is one layer of defense against cross-pod token theft.
+
+**LiteLLM sidecar hardening.** Because the LiteLLM sidecar handles real upstream provider credentials and sits on the hot path of every proxy-mode LLM request, its attack surface must be minimized to the smallest possible set. The platform applies the following controls; all are mandatory in production deployments (i.e., when `LENNY_ENV=production` and any pool has `deliveryMode: proxy`).
+
+1. **Container security context.** The sidecar runs with `runAsNonRoot: true`, all capabilities dropped, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, and `seccompProfile.type: RuntimeDefault`. Writable paths are limited to a `tmpfs` mount for `/tmp` and the credential-cache tmpfs (`/run/lenny/litellm-creds`, mode `0400`, owned by the sidecar UID) that the gateway populates at startup and on every credential rotation. Container-level CPU and memory limits are set explicitly to prevent DoS-induced node exhaustion.
+
+2. **Listener binding.** The sidecar MUST bind only to `127.0.0.1:4000`. Binding to `0.0.0.0` or any non-loopback interface is a startup-time error in the gateway (the gateway verifies the sidecar's listen address via a probe and refuses to enter `ready` if the sidecar is externally reachable). Inbound traffic never leaves the gateway pod's loopback namespace.
+
+3. **LiteLLM configuration lockdown.** The sidecar is started with a restricted configuration that **disables** every LiteLLM feature Lenny does not use:
+   - Admin UI and `/admin` routes — disabled (`DISABLE_ADMIN_UI=true` or equivalent; the wrapper image additionally has admin assets deleted at build time so the feature cannot be re-enabled at runtime).
+   - Runtime model management — disabled; `model_list` is read from the config file at startup and is not hot-reloadable. Config changes require a sidecar restart via gateway rollout.
+   - Telemetry and analytics callbacks (Langfuse, LangSmith, custom callbacks, phone-home) — all disabled. Lenny's own OTel collector is the authoritative telemetry path for proxy-mode traffic.
+   - Route allowlist — only `POST /v1/chat/completions`, `POST /v1/messages`, `POST /v1/embeddings`, and `GET /health` are exposed. Every other route returns HTTP 404 at the LiteLLM process level. The gateway verifies the route surface at startup via probes and refuses to enter `ready` if any disallowed route returns a non-404 response.
+   - Schedule-driven features (cron rotation, background retries, etc.) — disabled; the gateway's own rotation machinery ([§4.9](#49-credential-leasing-service) Fallback Flow) is authoritative.
+   - Response caching (prompt cache, semantic cache, Redis/in-memory response cache) — **disabled unconditionally** (`LITELLM_CACHE=disabled` and no `cache` block in the rendered config). Because the sidecar is shared across tenants within a gateway pod, any cache keyed on prompt contents alone would cross tenant boundaries; Lenny's cache-free posture is the enforcement mechanism. Prompt-cache features that require an upstream-provider contract (e.g., Anthropic prompt caching headers) are still supported because they are per-request headers forwarded to the provider — they do not populate an in-sidecar cache.
+   - Request/response body logging to file or stdout at a level that retains prompt/completion contents — disabled. The sidecar logs only structured access-log metadata (method, path, status, durations, request IDs); prompt and completion payloads are never written to sidecar logs, which would otherwise constitute a cross-tenant disclosure risk given the shared sidecar process.
+
+4. **Supply chain — hardened wrapper image.** The platform ships `lenny/litellm-hardened:<lenny-version>` as a thin wrapper image built from a digest-pinned upstream LiteLLM image (`ghcr.io/berriai/litellm@sha256:<pinned>`) with the hardening overlays applied at build time. The wrapper:
+   - Bakes in the config lockdown above (item 3) so it cannot be undone via runtime env vars or config overrides.
+   - Removes admin-UI static assets from the image filesystem.
+   - Is signed with cosign; the gateway's admission policy ([§13.1](13_security-model.md#131-pod-security)) verifies the signature and refuses to admit gateway pods whose sidecar image is not the signed wrapper.
+   - Ships with a Sigstore-attested SBOM and is scanned by the Lenny release pipeline on every publish.
+
+   The upstream pin is bumped on a cadence the maintainer team controls (typically within 48 hours of a LiteLLM upstream release; within 24 hours for any upstream CVE). Full vendoring (forking LiteLLM and building from source) is the emergency fallback when an upstream CVE requires a patch before upstream releases a fix; it is not the default maintenance mode.
+
+5. **Egress isolation at the pod NetworkPolicy.** The gateway pod's egress `NetworkPolicy` explicitly enumerates every upstream LLM provider CIDR/hostname the deployment's `CredentialPool` configurations reference. All other egress — including cluster-internal CIDRs, cloud instance metadata endpoints, and any destination not in the allowlist — is blocked. See [§13.2](13_security-model.md#132-network-isolation) for the full egress-allowlist mechanism, including the `except` clauses that block metadata endpoints regardless of other rules. Because the LiteLLM sidecar shares the gateway pod's network namespace, this NetworkPolicy applies to LiteLLM's outbound traffic automatically — no separate proxy or separate network configuration is required.
+
+6. **Attack-surface monitoring.** The gateway emits:
+   - `lenny_gateway_litellm_route_anomaly_total` (counter) — incremented whenever a request to an unexpected LiteLLM route is observed at the loopback listener. Steady-state value is zero; any non-zero rate fires `LiteLLMRouteAnomaly` (Critical).
+   - `lenny_gateway_litellm_egress_anomaly_total` (counter) — incremented when the gateway observes an outbound connection attempt from the pod to a destination outside the NetworkPolicy allowlist (detected via eBPF connection tracking where available, or via NetworkPolicy drop counters). Steady-state value is zero; any non-zero rate fires `LiteLLMEgressAnomaly` (Critical).
+   - `lenny_gateway_litellm_process_restart_total` (counter, labeled by `error_type: oom | crash | config_reload`) — any unexplained restart during an active session is a Warning signal (`LiteLLMUnexpectedRestart`).
+
+**Scalability and the Go-rewrite trigger.** LiteLLM is Python; Lenny's gateway is Go. Translation overhead and per-request CPU cost inside the sidecar compete with the gateway's own budget on the same pod. The platform commits to measuring this at Phase 13.5 ([§18](18_build-sequence.md)) and reconsidering the sidecar-vs-rewrite tradeoff if LiteLLM's footprint is disproportionate to the gateway's own. The decision is expressed as **ratios inside the gateway pod**, not absolute numbers, so the trigger stays meaningful as hardware and tier capacity evolve:
+
+| Signal | Go-rewrite trigger threshold | Measured via |
+|---|---|---|
+| (a) CPU share within the gateway pod (sustained Tier 3 load) | LiteLLM sustained CPU > 50% of gateway-pod total CPU | Container cgroup stats (`container_cpu_usage_seconds_total` from kubelet) |
+| (b) Memory share within the gateway pod (steady state) | LiteLLM RSS > 50% of gateway-pod total RSS | Container cgroup stats (`container_memory_working_set_bytes`) |
+| (c) Translation overhead ratio | `lenny_gateway_litellm_translation_duration_seconds` P95 / `lenny_gateway_llm_proxy_request_duration_seconds` P95 > 0.30 under sustained load. Both histograms are end-to-end wall-clock durations; the ratio is a structural proxy for "how much of the proxy hop is LiteLLM." It does not perfectly isolate LiteLLM's own CPU from upstream network latency (the sidecar's own instrumentation cannot observe upstream wire time independently of its processing), but under sustained load both quantities measure the same request population, so a sustained ratio > 0.30 indicates LiteLLM is a non-trivial share of the hop — the signal operators care about. | `lenny_gateway_litellm_translation_duration_seconds` and `lenny_gateway_llm_proxy_request_duration_seconds` ([§16.1](../spec/16_observability.md#161-metrics)) |
+| (d) Per-replica session budget impact | `lenny_gateway_max_sessions_per_replica{delivery_mode="direct"} / lenny_gateway_max_sessions_per_replica{delivery_mode="proxy"} > 2.0` on identical hardware | `lenny_gateway_max_sessions_per_replica` ([§16.1](../spec/16_observability.md#161-metrics)) |
+
+The rewrite trigger is **"any two signals cross threshold at Phase 13.5 or later load validation."** The thresholds are PROVISIONAL until Phase 13.5 data lands and the Phase 14.5 re-validation confirms them; deployers with pre-Phase-14.5 builds MUST NOT treat these numbers as SLA commitments. Until the trigger fires, the sidecar stays — the sidecar model's benefits (wide provider catalog, upstream maintenance cadence, zero Go-side translation code) outweigh its costs. If/when the trigger fires, the platform ships a native Go translator that replaces LiteLLM; the external wire contract (OpenAI/Anthropic dialects on the pod-facing side, upstream provider on the outbound side) is unchanged, so the rewrite is a transparent substitution from the agent pod's perspective.
 
 **Credential health scoring:** For pooled credentials, the gateway tracks per-credential:
 
