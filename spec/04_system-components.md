@@ -1,5 +1,41 @@
 ## 4. System Components
 
+### 4.0 Agent Operability Additions
+
+[Section 25](25_agent-operability.md) introduces new components and cross-component behavioral changes. They are summarized here and detailed in their owning subsections below and in Section 25.
+
+**New standalone component:** `lenny-ops` — the mandatory operability control plane ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). Deployed alongside the gateway and controllers; hosts the admin-oriented operations inventory, remediation-lock coordination, event stream, diagnostics, backup scheduling, upgrade choreography, drift detection, and the MCP Management Server. Runs 1–2 replicas with K8s Lease leader election.
+
+**Shared Go packages introduced by Section 25** (consumed by the components listed below):
+
+- `pkg/alerting/rules` — shared bundled alerting rules, compiled into both the gateway and `lenny-ops`.
+- `pkg/recommendations/rules` — shared capacity recommendation rules (same pattern).
+- `pkg/gateway/events/{emitter,buffer}.go` — `EventEmitter` interface and in-memory ring buffer. Every subsystem that emits operational events depends on this package.
+- `pkg/gateway/health/{service,runbook_links}.go` — the gateway health service and its runbook link table.
+- `pkg/gateway/recommendations/service.go` — gateway-side capacity recommendations; defines the `MetricReader` interface.
+- `pkg/ops/gateway/{client,discovery}.go` — `GatewayClient` plus headless-Service replica discovery.
+- `pkg/ops/metrics/source.go` — Prometheus-with-fan-out-fallback `MetricSource` implementation and a Prometheus-backed `MetricReader`.
+- `pkg/ops/events/service.go` — event stream service (SSE, polling, webhooks).
+- `pkg/ops/diagnostics/service.go` — diagnostic service.
+- `pkg/ops/runbooks/index.go` — runbook index with structured-step parser.
+- `pkg/ops/coordination/locks.go` — remediation lock service.
+- `pkg/ops/backup/service.go` — backup / restore service.
+- `pkg/ops/mcp/adapter.go` — MCP management adapter, including scope enforcement for the OAuth 2.0 `scope` claim.
+- `pkg/ops/me/service.go` — caller identity discovery (`/v1/admin/me` and sub-endpoints).
+- `pkg/ops/operations/{inventory,eta}.go` — unified Operations Inventory and canonical Progress Envelope / ETA computation.
+- `pkg/common/scopes/scopes.go` — RFC 9068 `scope` claim parser and matcher for `tools:<domain>:<action>` values. Consumed by the admin-API middleware and the MCP adapter.
+- `pkg/common/registry/resolver.go` — shared `ImageResolver` used by the upgrade system, the warm pool controller (agent pod images), and backup Job creation.
+
+**EventEmitter wiring on existing subsystems.** The subsystems below take `EventEmitter` as a constructor dependency and call `Emit(ctx, event)` at the documented state-change point. The full event-type catalog is in [§16.6](16_observability.md#166-operational-events-catalog) and [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints).
+
+- **Pool upgrade state machine** ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) — emits `upgrade_progressed` on each phase transition with pool, old phase, new phase, and image digest.
+- **Pool state manager** (warm pool state: `draining`, `warming`, `exhausted`) — emits `pool_state_changed` on each transition; lives alongside the warm pool controller ([§4.6.1](#461-warm-pool-controller-pod-lifecycle)).
+- **Circuit breaker handler** ([§11.6](11_policy-and-controls.md#116-circuit-breakers)) — emits `circuit_breaker_opened` / `circuit_breaker_closed` on state transition.
+- **Session manager** ([§4.2](#42-session-manager)) — emits `session_failed` when a session enters the `failed` state.
+- **Credential pool manager** ([§4.9](#49-credential-leasing-service)) — emits `credential_rotated` on lease rotation and `credential_pool_exhausted` on pool exhaustion.
+
+The health service, alert state evaluator, backup Job watcher, and upgrade-check cron are internal to `lenny-ops` and the gateway's health subsystem; they are defined in Section 25 and do not require edits to their owning components beyond the shared package imports above.
+
 ### 4.1 Edge Gateway Replicas
 
 **Role:** The only externally-facing component. All client interaction enters through the gateway.

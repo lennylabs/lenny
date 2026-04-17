@@ -12,14 +12,23 @@
 | Postgres                | StatefulSet or managed service            | HA: primary + sync replica; connection pooling required (PgBouncer for self-managed, provider proxy for cloud-managed — see [Section 17.9](#179-deployment-profiles))                  |
 | Redis                   | StatefulSet or managed service            | HA: Sentinel (3 nodes) for self-managed, managed cache service for cloud — see [Section 17.9](#179-deployment-profiles); TLS + AUTH required                                           |
 | MinIO                   | StatefulSet or managed service            | Artifact/checkpoint storage; S3/GCS/Azure Blob for cloud-managed — see [Section 17.9](#179-deployment-profiles)                                                                        |
+| `lenny-ops`             | Deployment + Service + Ingress + PDB      | **Mandatory in every tier.** 1–2 replicas with K8s Lease leader election (`lenny-ops-leader`); leader handles webhook delivery and backup scheduling; followers serve read traffic. Runs the operability control plane ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). PDB `minAvailable: 1`. |
+| `lenny-gateway-pods`    | Headless Service (`clusterIP: None`)      | Per-replica DNS so `lenny-ops` can fan out health/recommendation/event queries to every gateway replica individually ([§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints)).                                                                         |
+| `lenny-backup` Jobs     | K8s Jobs (created on-demand by `lenny-ops`) | Transient Jobs using the `lenny-backup` image for Postgres/MinIO backup, restore, and verification ([§25.11](25_agent-operability.md#2511-backup-and-restore-api)). Scheduled via `ops_backup_schedule`; ServiceAccount `lenny-backup-sa` (distinct from `lenny-ops-sa`). |
+| NetworkPolicies         | `lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job` | Rendered by the chart ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). Deny-all-ingress is the baseline; allow-from-ingress-controller references `ingress.controllerNamespace` + `ingress.controllerLabel`. Egress allows Postgres, Redis, MinIO, Prometheus. |
+| Admission / Lease       | Lease `lenny-ops-leader`                  | Created at runtime by the first `lenny-ops` pod on startup via the K8s Lease API; RBAC grants `lenny-ops-sa` permissions on `leases.coordination.k8s.io` in `{Release.Namespace}`.                                                                          |
+| `PrometheusRule` / ConfigMap | Rendered by chart, gated by `monitoring.format` | Emits the bundled alerting rules from `pkg/alerting/rules` ([§25.13](25_agent-operability.md#2513-bundled-alerting-rules)). Values: `prometheusrule`, `configmap`, `both`. PodMonitor/ServiceMonitor for `lenny-ops` port 9090 also gated by this value.                 |
+| Secrets (chart-rendered) | `lenny-backup-postgres`, `lenny-backup-minio`; optionally `lenny-ops-tls` when `ops.tls.internalEnabled: true` | Backup connection strings (narrowly-scoped DB role; bucket-scoped access key). When cert-manager is present, a `Certificate` object renders the TLS secret automatically. |
 
 ### 17.2 Namespace Layout
 
 ```
-lenny-system/         # Gateway, token service, controller, stores
+lenny-system/         # Gateway, token service, controller, lenny-ops, stores
 lenny-agents/         # Agent pods (gVisor/runc isolation boundary)
 lenny-agents-kata/    # Kata pods (separate node pool with dedicated hardware)
 ```
+
+**Operability-vs-agent boundary.** `lenny-ops` ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)) lives in `{Release.Namespace}` (default `lenny-system`) alongside the rest of the control plane, never in the agent namespaces. Agent pods are tenant-supplied code and must not reach the operational control plane — the `lenny-ops-deny-all-ingress` NetworkPolicy and per-namespace egress defaults enforce this. Runbook examples that reference `kubectl get sandboxes -n lenny-agents` ([§25.7](25_agent-operability.md#257-operational-runbooks)) inspect the agent namespace from the operability surface; they do not execute inside it.
 
 **Pod Security Standards:** The `lenny-agents` and `lenny-agents-kata` namespaces use a **split enforcement model** based on RuntimeClass:
 
@@ -81,6 +90,8 @@ The `lenny-preflight` Job validates that both `ResourceQuota` and `LimitRange` e
 - Postgres: automatic failover to sync replica in another zone
 - Agent pods: sessions on lost pods enter retry flow; warm pods in surviving zones serve new requests
 - No data loss for committed transactions
+
+**Agent-operability recovery paths.** The prose above is the human-operator summary. [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api) (Backup and Restore API) and [Section 25.15](25_agent-operability.md#2515-failure-mode-analysis) (Total-Outage Recovery) are the canonical API-driven and break-glass recovery paths used by autonomous agents — both for routine DR verification and for operator-led total-outage recovery. 25.11's tier-parameterized RTO/RPO targets take precedence over the table above and MUST be honored when planning capacity for higher tiers.
 
 ### 17.4 Local Development Mode (`lenny-dev`)
 
@@ -359,6 +370,10 @@ bootstrap:
 | T4 node isolation webhook             | Verify that the `lenny-t4-node-isolation` `ValidatingWebhookConfiguration` exists and that its `caBundle` field is non-empty. When any pool references a T4 Runtime and the webhook is absent or misconfigured, T4 pods may be admitted to shared nodes.                                   | `lenny-t4-node-isolation ValidatingWebhookConfiguration not found or caBundle empty; required for T4 dedicated-node enforcement (Section 6.4)`                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Drain-readiness webhook               | Verify that the `lenny-drain-readiness` `ValidatingWebhookConfiguration` exists and that its `caBundle` field is non-empty. When the webhook is absent or misconfigured, node drains will not check MinIO health before pod eviction.                                                        | `lenny-drain-readiness ValidatingWebhookConfiguration not found or caBundle empty; required for pre-drain MinIO health check (Section 12.5)`                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | SIEM endpoint (warning)               | When `LENNY_ENV=production` and `audit.siem.endpoint` is not set: emit a non-blocking preflight warning.                                                                                                                                                                                     | `WARNING: audit.siem.endpoint is not configured. Audit logs will be stored in Postgres only. A database superuser can bypass INSERT-only grants. This deployment does not meet compliance-grade audit integrity requirements (SOC2 CC7.2, FedRAMP AU-9, HIPAA §164.312(b)). Configure audit.siem.endpoint before using for regulated workloads (Section 11.7).`                                                                                                                                                                                                          |
+| Prometheus reachability               | Verify a Prometheus-compatible endpoint is reachable at `ops.prometheus.url`. Tier-specific severity: INFO at Tier 1, WARN at Tier 2/3. Non-blocking unless `monitoring.acknowledgeNoPrometheus: true` is set ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)).                                                                                                                                                  | `Prometheus endpoint '<url>' unreachable — lenny-ops will fall back to per-replica fan-out for metrics. Set monitoring.acknowledgeNoPrometheus=true to silence, or configure a Prometheus instance.`                                                                                                                                                                                                                                                                                                                                                                             |
+| `lenny-ops-sa` RBAC                   | Verify that the `lenny-ops-sa` ServiceAccount has the RBAC permissions documented in [§25.4](25_agent-operability.md#254-the-lenny-ops-service). Uses `kubectl auth can-i` against each rule in the canonical RBAC table (Lease coordination, Deployment patches, CRD reads, ConfigMap reads, Secret reads for backup credentials, Job create/watch). | `ServiceAccount lenny-ops-sa is missing required permissions: <rules>. Re-render the chart or apply the Role/ClusterRole templates in deploy/helm/lenny/templates/ops/rbac.yaml`                                                                                                                                                                                                                                                                                                                                                                                              |
+| `ops.ingress` ClusterIssuer (warning) | When `ops.ingress` has the `cert-manager.io/cluster-issuer` annotation set: verify the referenced ClusterIssuer exists. Non-blocking warning if missing.                                                                                                                                    | `WARNING: ops.ingress references ClusterIssuer '<name>' which was not found. Lenny-ops will run without TLS until this is corrected.`                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Monitoring namespace (warning)        | Verify the `monitoring.namespace` exists and contains at least one Prometheus pod matching `monitoring.podLabel`. Non-blocking warning; informational so operators know whether the Helm-rendered `ServiceMonitor` / `PodMonitor` will be picked up.                                         | `WARNING: namespace '<ns>' does not contain a Prometheus pod matching label '<label>'. The rendered PodMonitor/ServiceMonitor may not be discovered by your monitoring stack.`                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 **Behavior:**
 
@@ -493,6 +508,8 @@ Each runbook stub below uses a common three-part structure:
 - **Trigger** — the alert or symptom that leads an operator to this runbook.
 - **Diagnosis** — commands and checks to understand the failure scope.
 - **Remediation** — ordered steps to restore service, with rollback guidance.
+
+**Machine-consumable runbook format.** The runbooks below are consumed by both humans and agents. For agent parsing, the structure is formalized in [§25.7](25_agent-operability.md#257-operational-runbooks): each section is delimited by `<!-- access: ... -->` HTML-comment markers (`trigger`, `diagnosis`, `remediation`) and is served as structured JSON at `/v1/admin/runbooks/{name}/steps`. The examples below should be treated as the canonical format — when authoring new runbooks or editing existing ones, add the markers so `/v1/admin/runbooks/*` can parse them without ambiguity. The `issueRunbooks` lookup table (maintained in `pkg/gateway/health/runbook_links.go`) maps health-API issue codes to runbook names; the entries for `WARM_POOL_EXHAUSTED`, `WARM_POOL_LOW`, `CREDENTIAL_POOL_EXHAUSTED`, `POSTGRES_UNREACHABLE`, `REDIS_UNREACHABLE`, `MINIO_UNREACHABLE`, `CERT_EXPIRY_IMMINENT`, and `CIRCUIT_BREAKER_OPEN` are required by §25.7 Path B.
 
 ---
 
@@ -955,6 +972,31 @@ After applying Tier 3 values, monitor the following for at least 24 hours before
 - `GatewaySessionBudgetNearExhaustion` alert — must not fire more than transiently during initial load ramp.
 
 If any post-promotion check fails, revert the Helm values to the Tier 2 column and re-evaluate the no-go condition that was triggered.
+
+### 17.8.4 Tier Preset Files
+
+Each supported capacity tier ships with a Helm value preset that overrides a defined subset of the base chart values:
+
+- `deploy/helm/lenny/values-tier1.yaml`
+- `deploy/helm/lenny/values-tier2.yaml`
+- `deploy/helm/lenny/values-tier3.yaml`
+
+The preset for a given tier overrides the Section-25-dependent fields enumerated in [§25.4](25_agent-operability.md#254-the-lenny-ops-service) "lenny-ops Helm Values" — specifically `monitoring.alertThresholds.*` (tighter thresholds at higher tiers), `backups.retention.*` (longer retention at higher tiers), `ops.events.streamMaxLen` (larger buffer at higher tiers), `ops.selfHealth.checkIntervalSeconds` (10 s at Tier 2/3, 30 s acceptable at Tier 1), and `monitoring.acknowledgeNoPrometheus` (defaults `false` at Tier 2/3 so that missing Prometheus is a blocking configuration error). The comment header of each preset file lists the base values it overrides; deployers layer the preset on top of the base `values.yaml` with `helm upgrade --values values.yaml --values values-tierN.yaml`.
+
+### 17.8.5 Mandatory `lenny-ops` Deployment
+
+`lenny-ops` ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)) is **mandatory in every Lenny installation**, regardless of tier. There is no supported topology without it. The canonical component layout — including the headless `lenny-gateway-pods` service, the `lenny-ops-leader` Lease, the `lenny-backup-sa` ServiceAccount, the NetworkPolicies, and the PodDisruptionBudget `lenny-ops` — is summarized in [§25.16](25_agent-operability.md#2516-deployment-topology-summary) and rendered by the chart described in §17.1. Attempts to disable `lenny-ops` via Helm values are rejected at chart validation: the platform depends on `lenny-ops` for backup orchestration, platform-upgrade choreography, drift detection, and the agent operability surface that `lenny-ctl` and autonomous agents consume.
+
+### 17.8.6 Image Registry and Air-Gap
+
+The Helm chart's `platform.registry.*` values are the single source for all Lenny component image references (gateway, `lenny-ops`, controllers, `lenny-backup`). The canonical value block is documented in [§25.4](25_agent-operability.md#254-the-lenny-ops-service) "lenny-ops Helm Values"; in summary:
+
+- `platform.registry.url` — the registry host and root path to use for all Lenny images. Empty means "use the Lenny-published registry".
+- `platform.registry.pullSecretName` — Kubernetes `ImagePullSecret` for private registries.
+- `platform.registry.requireDigest` — when `true`, all image references MUST be digest-pinned (no tag-only references). Required for supply-chain-strict deployments.
+- `platform.registry.overrides` — per-component registry overrides (e.g., point only `lenny-ops` at a mirrored path).
+
+**Air-gapped deployments** ([§25.8](25_agent-operability.md#258-platform-lifecycle-management) Air-Gapped Support) mirror all Lenny-published images into a private registry, set `platform.registry.url` to that registry, and rely on `--skip-preflight` for environments where the preflight Job cannot reach the mirrored registry before it is populated. The procedure is documented in `docs/deployment/air-gap.md`. The chart's `ImageResolver` shared package (`pkg/common/registry/resolver.go`) composes every image reference from `platform.registry.*`, ensuring the gateway, `lenny-ops`, controllers, `lenny-backup`, and the warm-pool controller all honor the same registry configuration.
 
 ### 17.9 Deployment Profiles
 

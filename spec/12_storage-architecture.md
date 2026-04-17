@@ -493,11 +493,29 @@ type StoreRouter interface {
     // queries (e.g., list sessions for a tenant, GDPR erasure).
     AllSessionShards(ctx context.Context) ([]ShardHandle, error)
 
+    // PlatformPostgres returns the connection pool for platform-global
+    // tables that are not owned by any tenant or session (ops-scoped
+    // tables — see §12.X "Ops-scoped tables" — platform_upgrade_state,
+    // bootstrap_seed_snapshot, etc.). In v1 SingleShardRouter, returns
+    // the same pool as TenantShard. In multi-shard deployments, routes
+    // to the dedicated platform database instance.
+    PlatformPostgres(ctx context.Context) (*pgxpool.Pool, error)
+
+    // AllAuditShards returns every audit shard for scatter-gather
+    // cross-tenant audit queries (§25.9). In v1 returns a single handle.
+    AllAuditShards(ctx context.Context) ([]ShardHandle, error)
+
     // ShardCount returns the number of shards for a given store type.
     ShardCount(storeType StoreType) int
 }
 // v1: SingleShardRouter (single Postgres pool, single Redis per concern)
 ```
+
+**Section 25 ops-scoped tables.** The `lenny-ops` service (§25.4) stores its state in platform-global tables routed via `PlatformPostgres()`. The v1 `SingleShardRouter` returns the same pool as all other accessors; the dedicated method is present so multi-shard deployments can route platform tables to an isolated instance without touching call sites. The full table list — `ops_remediation_locks`, `ops_lock_epoch`, `ops_lock_conflicts`, `ops_idempotency_keys`, `ops_escalations`, `ops_event_subscriptions`, `ops_event_deliveries`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_restore_state`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`, `audit_log_deferred_writes`, `ops_postgres_outage_log`, `ops_operation_baselines` — is defined in §25.4, §25.5, §25.8, §25.9, §25.10, and §25.11. Schemas are authoritative in Section 25; only routing is documented here.
+
+**Progress column on long-running operation tables.** Each long-running operation table (`platform_upgrade_state`, `ops_restore_state`, `ops_backups`, and any future tables whose `kind` appears in the Operations Inventory of §25.4) carries a `progress JSONB` column conforming to the canonical Progress Envelope (§25.2). The owning subsystem updates `progress` atomically with each step transition; readers scatter-gather via `AllAuditShards()` or query `PlatformPostgres()` directly.
+
+**UTC timestamps.** Every `TIMESTAMPTZ` column authored by Lenny application code MUST use `now() AT TIME ZONE 'UTC'` (not `now()`). Consumers that reason across shards — split-brain resolution (§25.4 Locks), audit chain integrity (§25.9), lock-TTL comparison — depend on this. `PlatformPostgres()` callers are subject to the same convention.
 
 **Sharding strategy.** The StoreRouter separates two routing dimensions: tenant-scoped metadata (`TenantShard`) and session-scoped data (`SessionShard`). In v1 (`SingleShardRouter`), both return the same pool. A future session-sharded topology distributes session-scoped tables by consistent hash of the **shard routing prefix** embedded in each session ID (see session ID format below). All sessions in a delegation tree share the same routing prefix, so they co-locate on the same shard — enabling single-shard tree traversal, cascade cancellation, and delegation lineage queries. Standalone sessions (no delegation) have random routing prefixes and distribute uniformly. Tree sizes are bounded by `maxChildrenTotal` and `maxDepth` delegation policy limits, so no single tree creates a hot shard. Tenant-scoped metadata tables remain tenant-routed — their volume is low and they don't create hot shards.
 

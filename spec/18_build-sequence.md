@@ -70,3 +70,22 @@
 
 > **Open-source readiness:** Lenny is designed as an open-source project. The open-source license is selected in Phase 0 (ADR-008, see [Section 23.2](23_competitive-landscape.md#232-community-adoption-strategy)) and committed to the repository before any external contributor engagement. Contribution guidelines (`CONTRIBUTING.md`), governance model (BDfN transitioning to steering committee), and community communication channels will be established as part of Phase 2 (alongside the `make run` quick-start). The Phase 2 milestone includes a < 5-minute Time to Hello World (TTHW) target validated by CI. See [Section 23.2](23_competitive-landscape.md#232-community-adoption-strategy) for the full community adoption strategy including target personas and governance details. The technical design prioritizes community extensibility through pluggable credential providers, a published runtime adapter contract, and a clear SDK boundary.
 
+### 18.1 Build Artifacts Introduced by Section 25
+
+[Section 25](25_agent-operability.md) adds the following build-pipeline requirements. They are layered into the existing phases above; this index makes them discoverable from the build sequence.
+
+**New container images** (produced on every release):
+
+- `lenny-ops` — binary of the operability control plane ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)).
+- `lenny-backup` — binary used by transient backup / restore / verify Jobs scheduled by `lenny-ops` ([§25.11](25_agent-operability.md#2511-backup-and-restore-api)).
+
+The existing gateway, controller, and token-service images gain small additions: new operability endpoints ([§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints)) and `EventEmitter` wiring for subsystems that emit operational events ([§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints) Event Emission).
+
+**OpenAPI and MCP tool generation.** Phase 5 already introduces the OpenAPI → MCP schema generation step in the build pipeline. Section 25 extends the contract: every admin-API endpoint MUST carry the `x-lenny-mcp-tool`, `x-lenny-scope`, `x-lenny-required-role`, `x-lenny-category`, `x-lenny-idempotency-key`, `x-lenny-dry-run-support`, and `x-lenny-guards` extensions. A CI step fails the build if any endpoint lacks these, if any `x-lenny-scope` value is outside the documented `tools:<domain>:<action>` taxonomy ([§15.1](15_external-api-surface.md#151-rest-api)), or if the MCP tool inventory (§25.12) is out of sync with the generated OpenAPI.
+
+**Alerting-rule artifacts.** `docs/alerting/rules.yaml` is generated from the shared `pkg/alerting/rules` Go package and committed on each release. The Helm chart's `PrometheusRule` / ConfigMap templates consume the same package output; the chart build must embed or reference the generated rules so deployer-visible manifests and the in-process compiled rules never diverge ([§16.5](16_observability.md#165-alerting-rules-and-slos), [§25.13](25_agent-operability.md#2513-bundled-alerting-rules)).
+
+**Release-channel signing.** Release metadata is Ed25519-signed by the build pipeline ([§25.8](25_agent-operability.md#258-platform-lifecycle-management) Release Channel). The `lenny-ops` upgrade-check verifier rejects unsigned or mismatched-signature releases; the signing key must be available to the release automation. Mirroring deployers can override the verifying key via `platform.releaseChannel.publicKeyPath`.
+
+**Pre-GA ordering.** The new images (`lenny-ops`, `lenny-backup`), the shared `pkg/alerting/rules` and `pkg/recommendations/rules` packages, and the `pkg/common/registry/resolver.go` `ImageResolver` are prerequisites for the Phase 17a community-launch documentation pass — operability must be complete before external deployers are invited. Image signing (Phase 14) is likewise a prerequisite for `lenny-ops` upgrade-check signature verification.
+

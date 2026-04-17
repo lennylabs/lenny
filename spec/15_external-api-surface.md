@@ -450,6 +450,57 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 
 **Additional operational endpoints** are defined in [Section 24](24_lenny-ctl-command-reference.md) (`lenny-ctl` command reference), each with its REST API mapping. The table above includes all endpoints; [Section 24](24_lenny-ctl-command-reference.md) provides CLI wrappers and usage examples.
 
+**Agent operability endpoints.** [Section 25](25_agent-operability.md) adds two endpoint families authoritative for AI-agent-driven operation (full tables and response shapes in Section 25):
+
+- **Gateway-hosted (§25.3):** `/v1/admin/health[/{component}|/summary]`, `/v1/admin/recommendations`, `/v1/admin/platform/version`, `/v1/admin/platform/config`, `/v1/admin/events/buffer`.
+- **`lenny-ops`-hosted (§25.4+):** `/v1/admin/me`, `/v1/admin/me/authorized-tools`, `/v1/admin/me/operations`, `/v1/admin/operations`, `/v1/admin/operations/{id}`, `/v1/admin/events`, `/v1/admin/events/stream`, `/v1/admin/event-subscriptions`, `/v1/admin/diagnostics/*`, `/v1/admin/runbooks`, `/v1/admin/audit-events`, `/v1/admin/audit-events/summary`, `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh`, `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy`, `/v1/admin/restore/preview`, `/v1/admin/restore/safety-check`, `/v1/admin/restore/execute`, `/v1/admin/restore/{id}/status`, `/v1/admin/restore/resume`, `/v1/admin/platform/upgrade/*`, `/v1/admin/platform/version/full`, `/v1/admin/platform/upgrade-check`, `/v1/admin/platform/registry`, `/v1/admin/remediation-locks`, `/v1/admin/remediation-locks/{id}`, `/v1/admin/remediation-locks/{id}/steal`, `/v1/admin/escalations`, `/v1/admin/logs/pods/*`, `/v1/admin/ops/health`, `/v1/openapi.json`, `/v1/openapi.yaml`, `/v1/openapi/{endpoint-id}`, `/mcp/management`.
+
+**OIDC claim extensions for agent callers.** §25.1 introduces two JWT claims on top of the session/user claims documented in [§10.2](10_gateway-internals.md#102-authentication):
+
+- `caller_type` — one of `"human"`, `"service"`, `"agent"`. Labels audit events and metrics so agent activity can be broken out in observability.
+- `scope` — the standard OAuth 2.0 / RFC 9068 `scope` claim. Space-separated list of `tools:<domain>:<action>` values (e.g., `"tools:pool:* tools:health:read"`). When present, both the admin-API middleware (before routing to any handler) and the MCP Management Server (before `tools/call` dispatch) enforce the caller's tool invocation against the claim. Absent claim = no additional restriction beyond role. Scopes only restrict; they never elevate above role. See §25.1 Scoped Tokens for full semantics and §25.12 for the scope-forbidden response shape.
+
+**Scope taxonomy.** The `scope` claim values draw from a closed taxonomy so deployers configuring OIDC providers have a single reference to grant against. Format: `tools:<domain>:<action>`.
+
+- **Domains:** `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`.
+- **Actions:** `read` (any `_list` / `_get` / `_summary` tool), `write` (any mutating tool), a specific tool action name (e.g., `scale`, `rotate`, `create`, `steal`), or `*` (all actions in the domain).
+- **Enforcement:** every admin-API endpoint declares its `x-lenny-scope` (see MCP extension below). Mismatch → `403 SCOPE_FORBIDDEN` with `requiredScope` and `activeScope` in the response (§25.12).
+
+This list is the source-of-truth; new domains must be added here before being introduced in handlers.
+
+**Admin API MCP extension contract.** Every admin-API endpoint with documented RBAC MUST be exposed as an MCP tool on `/mcp/management` (§25.12). The MCP tool inventory is auto-generated from the OpenAPI spec at build time, so every endpoint in the OpenAPI document MUST carry the following extensions:
+
+- `x-lenny-mcp-tool` — canonical MCP tool name (e.g., `"lenny_pool_scale"`). Set to `null` only for endpoints purely used for internal component-to-component communication.
+- `x-lenny-scope` — scope identifier in `tools:<domain>:<action>` format (e.g., `"tools:pool:scale"`). Enforced against the caller's `scope` claim at the admin-API middleware and the MCP adapter. `null` only when `x-lenny-mcp-tool` is also `null`.
+- `x-lenny-required-role` — `"platform-admin"` or `"tenant-admin"`.
+- `x-lenny-category` — `"observation"` | `"coordination"` | `"mutation"` | `"destructive"` | `"lifecycle"`.
+- `x-lenny-idempotency-key` — `"required"` | `"recommended"` | `"ignored"`.
+- `x-lenny-dry-run-support` — `"confirm-bool"` | `"none"`.
+- `x-lenny-guards` — array of conditional-requirement rules for parameters (§25.12 Tool Schema Details).
+
+**CI contract.** A build-time check fails the build if any admin-API endpoint lacks `x-lenny-mcp-tool` (including `null`), `x-lenny-scope`, `x-lenny-required-role`, or `x-lenny-category`. An additional check asserts that every `x-lenny-scope` value conforms to `tools:<domain>:<action>` syntax and its domain is in the taxonomy above.
+
+**Optional correlation headers.** Every admin-API request accepts two optional headers (§25.1):
+
+- `X-Lenny-Operation-ID` — caller-generated UUID. Propagated to audit events, operational events, and structured logs so a single orchestrated task can be traced across every subsystem it touches.
+- `X-Lenny-Agent-Name` — human-readable agent instance identifier. Propagated to metrics labels and audit records.
+
+**Canonical response envelopes.** The admin API adopts four canonical envelopes defined in §25.2:
+
+- **`degradation`** — attached to responses whose data quality depends on external dependency availability (e.g., Prometheus, Redis). Callers inspect this to decide whether to trust the response.
+- **`pagination`** — attached to every list endpoint. Fields: `cursor`, `hasMore`, `limit`, `cursorKind`, `gapDetected`.
+- **`error`** — the error envelope above, extended with `retryable`, `suggestedRetryAfter`, and a larger shared code catalog that Section 25 adds to per subsection.
+- **`progress`** — attached to long-running operation responses. Contains `kind`, `status`, `phase`, `stepsCompleted`, `stepsTotal`, `percent`, `etaSeconds`, `etaConfidence`, `etaMethod` (§25.2 Canonical Progress Envelope).
+
+**OpenAPI generation and discovery.** The admin API exposes its contract as an OpenAPI 3.1 document at `/v1/openapi.json` and `/v1/openapi.yaml`. The document is generated at build time from the Go type definitions; it is the single source of truth for the admin API contract and is consumed by `lenny-ctl`, the MCP Management Server (§25.12), and any external SDK. The build fails if the OpenAPI is out-of-sync with the Go types.
+
+**MCP endpoint boundary.** Lenny exposes two distinct MCP endpoint families and they MUST NOT be confused:
+
+- `/mcp/runtimes/{runtime-name}` — agent-pod tool proxy (already documented in §15 above). Served by the gateway; authentication is a session-scoped token; tool surface is runtime-supplied.
+- `/mcp/management` — admin/operability surface (§25.12). Served by `lenny-ops`; authentication is the same OIDC/JWT mechanism as REST admin calls; tool surface is auto-generated from the admin OpenAPI spec.
+
+Both speak the MCP protocol; neither proxies to the other.
+
 **Admin API design constraints:** Error taxonomy, OIDC auth, etag-based concurrency, `dryRun` support, OpenAPI spec, audit logging.
 
 **Error response envelope.** All REST API endpoints (both client-facing and admin) return errors using a canonical JSON envelope:
@@ -517,6 +568,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` | `PERMANENT` | 422  | A stored `WorkspacePlan` uses a `schemaVersion` higher than this gateway version understands. Workspace materialization is blocked. `details.knownVersion` and `details.encounteredVersion` are included. See [Section 14](14_workspace-plan-schema.md).                               |
 | `BUDGET_STATE_UNRECOVERABLE` | `TRANSIENT` | 503        | A delegation tree's budget state could not be reconstructed after Redis recovery (Postgres checkpoint too stale and coordinating gateway replica was also lost). The root session is moved to `awaiting_client_action`. See [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas).                |
 | `PERMISSION_DENIED`         | `POLICY`    | 403         | The authenticated identity lacks the required permission for this specific resource or operation. Distinguished from `FORBIDDEN` (role-level rejection) in that `PERMISSION_DENIED` is policy-evaluated at the resource level (e.g., delegation scope, policy rule). |
+| `SCOPE_FORBIDDEN`           | `POLICY`    | 403         | Caller's OAuth 2.0 `scope` claim does not grant the scope required by this endpoint. `details.requiredScope` (e.g., `"tools:pool:scale"`) and `details.activeScope` (the caller's scope claim) are included. Distinguished from `FORBIDDEN` / `PERMISSION_DENIED` in that the caller's role would otherwise permit the call — only the scope claim is restricting. See [Section 25.1](25_agent-operability.md#251-design-philosophy-and-agent-model) Scoped Tokens. |
 | `CREDENTIAL_REVOKED`        | `POLICY`    | 403         | The credential backing the active session lease has been explicitly revoked (placed on the deny list). Active sessions using this credential are terminated immediately; no further requests can be made with the revoked credential. See [Section 4.9](04_system-components.md#49-credential-leasing-service).   |
 | `INVALID_POOL_CONFIGURATION` | `PERMANENT` | 422        | Pool creation or update rejected due to an invalid configuration constraint (e.g., `cleanupTimeoutSeconds / maxConcurrent < 5`, or `terminationGracePeriodSeconds` too small for the tiered checkpoint cap). `details.message` describes the violated constraint. See [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle). |
 | `CIRCUIT_BREAKER_OPEN`      | `POLICY`    | 503         | Session creation or delegation rejected because an operator-declared circuit breaker is active. `details.circuit_name`, `details.reason`, and `details.opened_at` are included. Not `retryable` — the client should wait for the circuit breaker to be closed by an operator before retrying. See [Section 11.6](11_policy-and-controls.md#116-circuit-breakers). |

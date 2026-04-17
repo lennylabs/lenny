@@ -236,8 +236,9 @@ Lenny supports two tiers of distributed tracing, serving different purposes:
 
 ### 16.4 Logging
 
-- Structured JSON logs from gateway, token service, pool controller, and runtime adapter
+- Structured JSON logs from gateway, token service, pool controller, runtime adapter, and `lenny-ops`
 - Correlation fields in every log line: `session_id`, `tenant_id`, `trace_id`, `span_id`
+- **Agent-operability correlation fields** (all components, [§25.4](25_agent-operability.md#254-the-lenny-ops-service)): every log line MUST include `ts` (RFC 3339 UTC), `level`, `msg`, `component`, and — when present on the originating request — `operation_id` (from the `X-Lenny-Operation-ID` header) and `agent_name` (from `X-Lenny-Agent-Name`). This shape is shared between the gateway and `lenny-ops` so a single orchestrated agent task can be joined across both binaries via `operation_id`.
 - Setup command stdout/stderr captured and stored in EventStore
 - Audit events for all policy decisions
 - Error events include structured error codes (TRANSIENT/PERMANENT/POLICY/UPSTREAM)
@@ -357,6 +358,27 @@ Helm configuration: `audit.retentionPreset: soc2` or `audit.retentionDays: 2190`
 | `CoordinatorHandoffSlow`         | P95 of `lenny_coordinator_handoff_duration_seconds` exceeds 5 seconds for any pool over a 5-minute window. Indicates the 3-step coordinator handoff protocol is experiencing sustained delays — possible causes: lease contention, network partition, or high fence-retry rate (`lenny_coordinator_fence_retry_total`). See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). | Warning  |
 | `RuntimeUpgradeStuck`            | `lenny_runtime_upgrade_state` for any pool has remained in a non-terminal state (`expanding`, `draining`, or `contracting`) for longer than `runtimeUpgrade.phaseTimeoutSeconds` (default: 600s). The 6-state upgrade machine is stalled — operator must investigate draining sessions (`lenny_runtime_upgrade_draining_sessions`) or manually advance/abort the upgrade. See [Section 10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy). | Warning  |
 | `CircuitBreakerActive`           | Any global circuit breaker (`lenny_circuit_breaker_open{circuit_name=...}`) has been open for more than 5 minutes without a close action. See [Section 11.6](11_policy-and-controls.md#116-circuit-breakers). | Warning  |
+| `PlatformUpgradeAvailable`       | `/v1/admin/platform/upgrade-check` reports a new Lenny release. Informational; used to drive agent-initiated upgrade workflows. See [Section 25.8](25_agent-operability.md#258-platform-lifecycle-management). | Info     |
+| `PlatformUpgradeStuck`           | `lenny_platform_upgrade_phase` gauge has remained in a non-terminal phase for > 1h. Indicates the upgrade state machine has stalled — operator must resume, roll back, or force-complete. See [Section 25.8](25_agent-operability.md#258-platform-lifecycle-management). | Warning  |
+| `PlatformVersionDrift`           | `lenny_platform_version_drift` > 0 — any component's reported version differs from the value compiled into the active `lenny-ops` binary for > 5 min. See [Section 25.10](25_agent-operability.md#2510-configuration-drift-detection). | Warning  |
+| `BackupOverdue`                  | `time() - lenny_backup_last_successful_timestamp{type="full"}` > 48h. A full backup has not completed within the expected window. See [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api). | Warning  |
+| `BackupFailed`                   | `lenny_backup_total{status="failed"}` incremented. A backup Job terminated with failure; see `ops_backups.lastError` for the cause. See [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api). | Warning  |
+| `BackupStorageHigh`              | Backup object storage utilization exceeds 80% of the provisioned quota. Retention policy may need tightening or the backup bucket may need to be resized. See [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api). | Warning  |
+| `CircuitBreakerOpen`             | Any operator-managed circuit breaker reports state `open`. Agent-oriented counterpart of `CircuitBreakerActive` with a lower firing threshold for AI triage. See [Section 11.6](11_policy-and-controls.md#116-circuit-breakers) and [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints). | Warning  |
+| `LenniOpsSelfHealthDegraded`     | `lenny_ops_self_health_status != "healthy"`. `lenny-ops` itself is degraded — dependent operability endpoints may return stale or partial data. See [Section 25.4](25_agent-operability.md#254-the-lenny-ops-service). | Warning  |
+| `LenniOpsLockSplitBrainDetected` | `lenny_ops_lock_split_brain_detected_total` incremented. Two `lenny-ops` replicas briefly believed they held the same remediation lock; outage-epoch reconciliation resolved the conflict but the event requires auditing. See [Section 25.4](25_agent-operability.md#254-the-lenny-ops-service). | Critical |
+| `OperationStalled`               | `lenny_ops_operations_stalled_total` incremented. An in-flight operation exceeded its expected inter-step cadence per the Progress Envelope (§25.2). Investigate via `GET /v1/admin/operations/{id}`. | Warning  |
+
+**Bundled alerting rules.** The alert catalog above is authored once as a shared Go package `pkg/alerting/rules`. Two consumers derive from this package:
+
+1. **Helm-rendered deployer manifests** — the chart renders the rules into a `PrometheusRule` CRD (when `monitoring.format: prometheusrule`) and/or a ConfigMap (`configmap`), controlled by `monitoring.format` ([§25.13](25_agent-operability.md#2513-bundled-alerting-rules)).
+2. **In-process alert state tracker** — the gateway compiles the rules into an in-process evaluator used as a fallback when Prometheus is unreachable ([§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints)). When `gateway.healthTracker.useCompiledRules: true`, the gateway evaluates the bundled rules against its in-process metric registry and against Prometheus through the `MetricReader` interface when available.
+
+Because both consumers share the same source, any rule change is picked up simultaneously by the rendered Helm manifests and the gateway binary on the next release. `docs/alerting/rules.yaml` is regenerated on each release and committed for deployers on non-Prometheus monitoring stacks.
+
+**Capacity recommendation rules** follow the same pattern: authored in `pkg/recommendations/rules`, compiled into both the gateway (evaluated against the in-process `MetricReader`) and `lenny-ops` (evaluated against a Prometheus-backed `MetricReader`). See [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints) for the API shape.
+
+**Operator-driven alerts (not bundled).** Two additional rules are recommended but not shipped because they depend on operator-owned Prometheus instrumentation: `PrometheusQueryLatencyHigh` on `lenny_prometheus_query_duration_seconds` P95, and a Prometheus-side rule on `prometheus_rule_evaluation_duration_seconds` P95. Document these in the deployer runbook alongside the monitoring stack setup.
 
 **Capacity tiers:**
 
@@ -424,4 +446,54 @@ Multi-window burn-rate alerting is required for all availability and latency SLO
 | `CheckpointDurationBurnRate`            | Checkpoint duration P95 < 2s (≤ 100MB) | 1 h, 14× | 6 h, 3× | Critical (fast) / Warning (slow) |
 
 **Burn-rate calculation:** For availability SLOs, burn rate is `error_rate / (1 - slo_target)` over the window. For latency SLOs, burn rate is `rate(slow_requests[window]) / rate(total_requests[window]) / error_budget_fraction`. A burn rate of 1× means the budget is consumed at exactly the rate that would exhaust it over the 30-day window. At 14× for 1 hour the alert fires if more than `14 * (1h / 720h) = 1.94%` of the monthly budget is consumed in one hour. At 3× for 6 hours the alert fires if more than `3 * (6h / 720h) = 2.5%` is consumed. Both conditions must be present simultaneously for a page (fast window page; slow window warn only) to reduce false positives. Burn-rate thresholds are configurable via Helm values (`slo.burnRate.fastMultiplier`, default 14; `slo.burnRate.slowMultiplier`, default 3).
+
+### 16.6 Operational Events Catalog
+
+Lenny emits **operational events** distinct from audit events. Operational events describe platform state transitions relevant to live operators and autonomous agents; they flow through the Redis stream and the gateway in-memory buffer described in [§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints) and [§25.5](25_agent-operability.md#255-operational-event-stream). Section 25 is the source-of-truth for payload shapes; the catalog below is the canonical enumeration.
+
+**Gateway-emitted:** `alert_fired`, `alert_resolved`, `upgrade_progressed`, `pool_state_changed`, `circuit_breaker_opened`, `circuit_breaker_closed`, `credential_rotated`, `credential_pool_exhausted`, `session_failed`, `backup_completed`, `backup_failed`, `platform_upgrade_available`, `health_status_changed`.
+
+**`lenny-ops`-emitted:** `ops_health_status_changed`, `escalation_created`, `remediation_lock_acquired`, `remediation_lock_released`, `remediation_lock_expired`, `remediation_lock_stolen`, `remediation_lock_split_brain_detected`, `drift_detected`, `platform_upgrade_completed`, `platform_upgrade_verification_failed`, `platform_upgrade_image_pull_failed`, `restore_started`, `restore_shard_completed`, `restore_completed`, `restore_failed`, `event_delivery_failed`, `prometheus_query_timeout`, `lock_split_brain_detected`, `operation_progressed` (emitted per operation state transition or percent threshold; payload: `operationId`, `kind`, `prevStatus`, `newStatus`, `progress`).
+
+### 16.7 Section 25 Audit Events
+
+[Section 25](25_agent-operability.md) introduces new audit event types. These are written through the standard audit path ([§11.7](11_policy-and-controls.md#117-audit-logging)) with the optional `operation_id` and `caller_kind` correlation fields.
+
+- `identity.discovered` ([§25.4](25_agent-operability.md#254-the-lenny-ops-service))
+- `operations.inventory_queried` ([§25.4](25_agent-operability.md#254-the-lenny-ops-service))
+- `remediation.lock_acquired`, `remediation.lock_extended`, `remediation.lock_released`, `remediation.lock_expired`, `remediation.lock_stolen`, `remediation.lock_split_brain_detected`, `remediation.escalation_persisted` ([§25.4](25_agent-operability.md#254-the-lenny-ops-service))
+- `ops_event.subscription_created`, `ops_event.subscription_updated`, `ops_event.subscription_secret_rotated`, `ops_event.subscription_deleted` ([§25.5](25_agent-operability.md#255-operational-event-stream))
+- `diagnostics.session_diagnosed`, `diagnostics.pool_diagnosed`, `diagnostics.credential_pool_diagnosed`, `diagnostics.connectivity_checked` ([§25.6](25_agent-operability.md#256-diagnostic-endpoints))
+- `platform.version_checked`, `platform.upgrade_started`, `platform.upgrade_ops_rolled`, `platform.upgrade_crds_updated`, `platform.upgrade_schema_migrated`, `platform.upgrade_gateway_rolled`, `platform.upgrade_controllers_rolled`, `platform.upgrade_phase_advanced`, `platform.upgrade_paused`, `platform.upgrade_rolled_back`, `platform.upgrade_completed`, `platform.upgrade_verified`, `platform.config_changed`, `platform.registry_updated` ([§25.8](25_agent-operability.md#258-platform-lifecycle-management))
+- `audit.query_executed`, `audit.chain_integrity_broken_detected` ([§25.9](25_agent-operability.md#259-audit-log-query-api))
+- `drift.report_generated`, `drift.reconciliation_started`, `drift.resource_reconciled`, `drift.reconciliation_completed` ([§25.10](25_agent-operability.md#2510-configuration-drift-detection))
+- `backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed` ([§25.11](25_agent-operability.md#2511-backup-and-restore-api))
+
+### 16.8 Section 25 Metrics
+
+Section 25 adds the following metrics to the platform metric registry. Full label dimensions and semantics are documented per subsection in Section 25; the list below is the canonical enumeration.
+
+- **Health:** `lenny_health_check_duration_seconds`, `lenny_health_status`.
+- **Recommendations:** `lenny_recommendations_generated_total`, `lenny_recommendations_ring_buffer_bytes`.
+- **Event emission and buffer:** `lenny_ops_events_emitted_total`, `lenny_ops_events_emit_failed_total`, `lenny_events_buffer_length`, `lenny_events_buffer_queries_total`, `lenny_events_buffer_gaps_total`.
+- **Event stream:** `lenny_ops_events_stream_length`, `lenny_ops_events_sse_active_connections`, `lenny_ops_events_webhook_delivery_total`, `lenny_ops_events_webhook_delivery_latency_seconds`.
+- **`lenny-ops` self-monitoring:** `lenny_ops_self_health_status`, `lenny_ops_postgres_pool_active`, `lenny_ops_redis_consumer_lag`, `lenny_ops_webhook_backlog`.
+- **Rate limiting:** `lenny_ops_rate_limited_total`.
+- **Remediation locks:** `lenny_ops_lock_store_active`, `lenny_ops_lock_outage_epoch`, `lenny_ops_lock_split_brain_detected_total`, `lenny_ops_lock_steal_total`, `lenny_ops_clock_skew_seconds`.
+- **Escalations:** `lenny_ops_escalation_reconciliation_batch_size`.
+- **Diagnostics:** `lenny_diagnostics_request_duration_seconds`.
+- **Audit:** `lenny_audit_query_duration_seconds`, `lenny_audit_chain_verification_broken_total`, `lenny_audit_chain_rechained_post_outage_total`, `lenny_audit_rate_limited_total`, `lenny_audit_scatter_gather_shards_queried`.
+- **Drift:** `lenny_drift_detected_total`, `lenny_drift_reconciled_total`.
+- **Backup / restore:** `lenny_backup_duration_seconds`, `lenny_backup_size_bytes`, `lenny_backup_total`, `lenny_backup_last_successful_timestamp`, `lenny_restore_duration_seconds`, `lenny_restore_total`.
+- **Platform lifecycle:** `lenny_platform_upgrade_phase`, `lenny_platform_upgrade_duration_seconds`, `lenny_platform_version_drift`, `lenny_platform_image_pull_check_duration_seconds`.
+- **Alerting:** `lenny_alerting_rules_bundled`, `lenny_alerting_rule_overrides`, `lenny_alerting_rule_eval_duration_seconds`.
+- **Gateway↔ops auth:** `lenny_ops_gateway_auth_token_refresh_total`, `lenny_ops_gateway_auth_token_refresh_failed_total`.
+- **Metrics source:** `lenny_prometheus_query_duration_seconds`.
+- **Caller discovery:** `lenny_ops_me_requests_total`.
+- **Operations inventory:** `lenny_ops_operations_inventory_requests_total`, `lenny_ops_operations_inventory_kinds_returned`, `lenny_ops_operations_stalled_total`.
+- **Scope enforcement:** `lenny_ops_scope_forbidden_total{tool, required_scope}`.
+
+### 16.9 Prometheus Scrape Targets
+
+The Helm chart renders a NetworkPolicy allowing Prometheus (in `monitoring.namespace`) to scrape the `lenny-system` metrics ports ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). The canonical scrape target set is: gateway (port 9090), controller, token service, and — mandatory in every tier — `lenny-ops` (port 9090). Deployers using an existing Prometheus stack should add `lenny-ops` to their scrape configuration or enable `monitoring.format: prometheusrule` to generate a `ServiceMonitor`/`PodMonitor` automatically.
 

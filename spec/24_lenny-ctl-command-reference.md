@@ -141,4 +141,35 @@ The `phase` field reflects the last migration Job that completed successfully; i
 |---------|-------------|-------------|----------|
 | `lenny-ctl policy audit-isolation` | Report all `DelegationPolicy` rule × pool combinations where a delegation would be rejected at runtime due to an isolation monotonicity violation. For each combination, lists the policy rule, the matching source pool, the matching target pool, and their respective isolation profiles. Read-only — does not modify any resources. Run after registering new pools or runtimes. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). | `GET /v1/admin/delegation-policies` + `GET /v1/admin/pools` (client-side join) | `platform-admin` |
 
-All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages. Global flags: `--api-url`, `--token`, `--timeout`, `--insecure-skip-verify` (dev only). Cross-reference: [§17.7](17_deployment-topology.md#177-operational-runbooks) runbooks use specific subcommands from each group above.
+### 24.15 Agent-Operability Commands
+
+[Section 25.14](25_agent-operability.md#2514-lenny-ctl-extensions) adds the following command groups for AI-agent-driven operation. Full command tables (subcommand / description / API mapping / min role) live in §25.14; this section is the index so operators discover them from the main CLI reference.
+
+| Group | Purpose | Primary API surface |
+|-------|---------|---------------------|
+| `lenny-ctl me` | Inspect the caller's own identity, scope, role, and authorized tools. | `/v1/admin/me`, `/v1/admin/me/authorized-tools`, `/v1/admin/me/operations` |
+| `lenny-ctl operations` | List active long-running operations (upgrades, restores, drains, migrations) with canonical Progress Envelope output; fetch a single operation by ID. | `/v1/admin/operations`, `/v1/admin/operations/{id}` |
+| `lenny-ctl events` | Tail the operational event stream (SSE), query the gateway buffer, and manage webhook subscriptions. | `/v1/admin/events`, `/v1/admin/events/stream`, `/v1/admin/events/buffer`, `/v1/admin/event-subscriptions` |
+| `lenny-ctl diagnose` | Run the diagnostic endpoints for sessions, pools, credential pools, and platform connectivity. | `/v1/admin/diagnostics/*` |
+| `lenny-ctl runbooks` | List and fetch structured (agent-parseable) runbook steps. | `/v1/admin/runbooks`, `/v1/admin/runbooks/{name}/steps` |
+| `lenny-ctl upgrade` | Drive the platform-upgrade state machine: check, start, pause, rollback, complete, verify. | `/v1/admin/platform/upgrade/*`, `/v1/admin/platform/upgrade-check` |
+| `lenny-ctl audit` | Query audit events with scatter-gather across shards; summarize by caller kind / operation ID. | `/v1/admin/audit-events`, `/v1/admin/audit-events/summary` |
+| `lenny-ctl drift` | Fetch the drift report, trigger reconciliation, validate or refresh the desired-state snapshot. | `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh` |
+| `lenny-ctl backup` | List backups, verify, manage schedule and retention policy. | `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy` |
+| `lenny-ctl restore` | Preview, safety-check, execute, monitor, and resume restore operations. | `/v1/admin/restore/*` |
+| `lenny-ctl locks` | Inspect, steal, and release remediation locks across `lenny-ops` replicas. | `/v1/admin/remediation-locks`, `/v1/admin/remediation-locks/{id}`, `/v1/admin/remediation-locks/{id}/steal` |
+| `lenny-ctl escalations` | List and respond to pending operator escalations. | `/v1/admin/escalations` |
+| `lenny-ctl logs` | Fetch pod logs from the ops service for sessions, controllers, and the gateway fleet. | `/v1/admin/logs/pods/*` |
+| `lenny-ctl mcp-management` | Exercise the `/mcp/management` tools for local testing and scripting. | `/mcp/management` |
+
+### 24.16 Server Discovery and Routing
+
+In addition to the existing `--api-url` (or `LENNY_API_URL`) flag that targets the gateway, `lenny-ctl` now understands a separate `--ops-server` (or `LENNY_OPS_URL`) flag that targets the `lenny-ops` Ingress. The routing rule is:
+
+1. If `--ops-server` (or `LENNY_OPS_URL`) is set, use it for every Section 25 ops-hosted endpoint.
+2. Otherwise, call `GET /v1/admin/platform/version` on the gateway. Its response includes an `opsServiceURL` field; `lenny-ctl` caches this for the duration of the command invocation and routes ops calls there.
+3. If auto-discovery fails (gateway unreachable, `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host under the assumption that gateway-hosted operability endpoints (§25.3) still work, and surfaces a warning for any ops-exclusive command.
+
+This split means operators typically only need `--api-url`; `--ops-server` is for air-gapped clusters, split-DNS configurations, or direct-to-ops debugging.
+
+All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages. Global flags: `--api-url`, `--ops-server`, `--token`, `--timeout`, `--insecure-skip-verify` (dev only). Cross-reference: [§17.7](17_deployment-topology.md#177-operational-runbooks) runbooks use specific subcommands from each group above.
