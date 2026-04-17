@@ -1,8 +1,6 @@
-# Agent Operability — Technical Design (Section 25)
+# Section 25 — Agent Operability
 
-**Status:** Draft
-**Applies to:** `SPEC.md` — proposed Section 25
-**Date:** 2026-04-15
+This document contains the content for Section 25 of `SPEC.md`. It is intended to be merged into the main specification. Before merging, also apply the edits listed in "Edits Required Outside Section 25" at the end of this document.
 
 Lenny is designed to be natively operable by AI agents. DevOps agents — running in separate orchestration platforms, in external clusters, or on an operator's workstation — can deploy, configure, monitor, troubleshoot, upgrade, and maintain a Lenny installation entirely through APIs, without direct Kubernetes, database, or storage access. All DevOps agents operate from outside the Lenny installation (Section 25.1).
 
@@ -54,12 +52,59 @@ If `lenny-ops` is unreachable, the agent falls back to the gateway's health summ
 - **External by design.** `lenny-ops` is only reachable from outside the cluster via Ingress. No internal cluster workload — including Lenny's own agent pods — can reach the operational control plane. This eliminates an entire class of lateral-movement attacks.
 - **Structured over textual.** All operational responses use typed JSON schemas. Error codes, severity levels, and suggested actions are machine-parseable.
 - **Idempotent and safe by default.** Diagnostic endpoints are read-only. Remediation endpoints are idempotent and accept an optional `Idempotency-Key` header (Section 25.4). Destructive actions require explicit `"confirm": true` in the body — without it, the endpoint returns a dry-run preview of what would happen.
-- **Coordinated.** Remediation actions acquire advisory locks (Section 25.4) to prevent conflicting concurrent operations from multiple agents.
+- **Coordinated.** Remediation actions acquire remediation locks (Section 25.4) to coordinate exclusive access and prevent conflicting concurrent operations from multiple agents. Locks are enforced at the durable tiers (Postgres, Redis); agents that need to override an existing lock do so explicitly via the `Steal` endpoint, which is audited.
 - **Audited.** All agent-initiated operations produce the same audit trail as human-initiated operations (Section 11.7). The audit event includes the caller's identity, which distinguishes agent service accounts from human operators. Agents may pass an `X-Lenny-Operation-ID` header to correlate multi-step remediations in the audit trail.
 
 ### Authentication for Agent Callers
 
 Agent callers authenticate using the same OIDC-based mechanism as human operators and `lenny-ctl` (Section 15.1). Deployers create dedicated service accounts with the `platform-admin` or `tenant-admin` role. A `caller_type: "agent"` claim in the JWT token identifies agent callers in audit events and metrics. No separate authentication mechanism is introduced — agents are first-class API consumers.
+
+#### Scoped Tokens
+
+The `platform-admin` role confers broad authority; granting it in full to every automation agent is often too much. Tokens therefore support the standard OAuth 2.0 **`scope`** JWT claim (RFC 9068, "JWT Profile for OAuth 2.0 Access Tokens") that narrows the caller's effective tool surface below the role ceiling. The role sets the maximum; scopes restrict further.
+
+**Claim format.** Per RFC 9068, the `scope` claim is a **space-separated string** of scope values (not an array):
+
+```json
+{
+  "sub": "sa-prod-watchdog-01",
+  "roles": ["platform-admin"],
+  "caller_type": "agent",
+  "scope": "tools:health:read tools:diagnostics:read tools:operations:read tools:escalation:create"
+}
+```
+
+**Scope value syntax.** Each scope follows `tools:<domain>:<action>`, where:
+
+- `<domain>` is the tool family: `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`.
+- `<action>` is `read` (any `lenny_<domain>_list` / `lenny_<domain>_get` / `lenny_<domain>_summary` / similar read tool), `write` (any mutating tool), or a specific tool name (e.g., `scale`, `rotate`, `create`, `steal`).
+- `*` is permitted in the `<action>` position only: `tools:pool:*` matches every pool tool (`read` and `write`). `tools:*` is the most permissive scope and is equivalent to omitting the claim.
+
+Each MCP tool declares its scope identifier via the `x-lenny-scope` OpenAPI extension (Section 15.1), e.g., `lenny_pool_scale` declares `x-lenny-scope: "tools:pool:scale"`. The mapping from tool to scope is therefore build-time explicit, not inferred from the tool name.
+
+**Matching.**
+
+- A scope matches a tool if the scope's domain equals the tool's domain AND the scope's action equals the tool's action OR the scope's action is `*`.
+- Multiple space-separated scopes are OR-combined; a tool is permitted if any scope matches.
+- A request for a tool not permitted by any scope returns `403 SCOPE_FORBIDDEN` with a response body listing the caller's active scopes.
+- Absent `scope` claim: no scope restriction (backward-compatible with pre-Section-25 tokens that carry only a role).
+
+Scopes are enforced in three places:
+
+1. **Admin API middleware** — every endpoint is mapped to a canonical scope via its `x-lenny-scope` OpenAPI extension. The middleware checks scopes before routing to the handler.
+2. **MCP tool invocation** — `/mcp/management` `tools/call` checks the scope before dispatch.
+3. **`/v1/admin/me/authorized-tools`** — pre-filters the tool list to what the caller's scopes permit.
+
+**Example scoped-token policies** (deployer-configured at the OIDC identity provider):
+
+- **Watchdog agent:** `"tools:health:* tools:diagnostics:* tools:recommendations:read tools:operations:read tools:me:* tools:escalation:create tools:runbooks:read tools:events:read"` — full observation plus ability to escalate; cannot mutate state.
+- **Pool scaling bot:** `"tools:health:read tools:pool:* tools:me:* tools:operations:read"` — pool-domain only.
+- **Upgrade orchestrator:** `"tools:upgrade:* tools:backup:* tools:restore:* tools:health:read tools:operations:read tools:me:*"`.
+- **Fully-privileged platform-admin agent:** no `scope` claim (or `"tools:*"`).
+
+Scopes do not replace tenancy — a `tenant-admin` caller is still constrained to its tenant regardless of scope. Scopes restrict *actions*; tenancy restricts *resources*. Both are enforced independently.
+
+**Standards note.** The claim name (`scope`), format (space-separated string), and colon-separated domain:action syntax follow OAuth 2.0 conventions so that off-the-shelf OIDC libraries can parse, sign, and inspect tokens without custom claim mappers. Deployers using any OIDC provider (Dex, Keycloak, Okta, Azure AD, AWS Cognito, etc.) can configure scopes through the provider's standard "scopes" UI — no Lenny-specific claim plumbing required.
 
 ### Agent Identity and Correlation
 
@@ -159,13 +204,22 @@ Any response whose data quality depends on the availability of an external depen
     "fallbackPath": ["prometheus", "replica-fanout", "in-memory"],
     "confidence": 0.75,                    // 0.0-1.0 — how much the agent should trust it
     "unavailableFields": ["retryHistory"], // fields that could not be populated
+    "thresholdSource": "compiled-in-defaults", // optional — for health/recommendations endpoints
+                                              // "operator-customized" | "compiled-in-defaults"
     "warnings": ["Pod events unavailable: K8s API unreachable"],
     "since": "2026-04-16T10:22:03Z"        // when degradation began (best effort)
   }
 }
 ```
 
-The envelope replaces the scattered per-endpoint fields used in earlier drafts (`aggregation`, `metricsSource`, `dataSource`, `eventsSource`, `lockStore`, `persistence`, `thresholdSource`). Those names remain valid as values of `actualSource` where applicable, but agents read the envelope as the canonical signal.
+The envelope is the canonical response-level signal for every endpoint whose data quality depends on external dependency availability. The `thresholdSource` field is used for health and recommendations responses where the active rule set may differ from operator-configured Prometheus rules (Section 25.13).
+
+**Distinguishing response signals from resource attributes.** Some Lenny resources have intrinsic durability or coordination attributes that are NOT part of the degradation envelope because they describe the resource itself, not the response that returned it:
+
+- `Lock.lockStore` (Section 25.4 Remediation Coordination) — which storage tier this specific lock lives in. Stays on the Lock struct.
+- `Escalation.persistence` (Section 25.4 Escalation) — which storage tier this specific escalation lives in. Stays on the Escalation struct.
+
+These resource-attribute fields complement the response-level `degradation` envelope — the envelope says "this response was served from a fallback source," while the resource attribute says "this specific record exists in tier X." Both pieces of information are useful and distinct.
 
 **Omitted when healthy.** Endpoints serving from their primary source omit `degradation` entirely (or return `"level": "healthy"` with no other fields set). Agents should treat an absent envelope as equivalent to healthy.
 
@@ -189,7 +243,7 @@ Response envelope for paginated responses:
     "cursor": "opaque-string",
     "hasMore": true,
     "limit": 100,
-    "cursorKind": "redis-stream-id",   // "redis-stream-id" | "buffer-seq" | "timestamp" | "pk"
+    "cursorKind": "redis-stream-id",   // endpoint-specific values; common kinds: "redis-stream-id", "buffer-seq", "timestamp", "pk", "redis", "buffer", "mixed", "none"
     "headCursor": "opaque-string"      // present when the page is at the head of a live stream
   }
 }
@@ -221,8 +275,6 @@ All mutating endpoints that make non-convergent changes follow a single pattern:
 3. With `confirm: true`, the endpoint executes the change and returns its normal response.
 
 This applies to: `PUT /v1/admin/pools/{name}/warm-count` (when the change is >50% of current), `PUT /v1/admin/platform/config`, `POST /v1/admin/backups` (full backups in production), `POST /v1/admin/restore/execute`, `POST /v1/admin/drift/reconcile`. Naturally-convergent operations (e.g., full-state `PUT` of a pool config) do not require `confirm` and simply idempotently apply.
-
-The older `"mode": "dry-run"` parameter on drift reconciliation is deprecated in favor of this pattern. Both forms are accepted during a transition window, but new endpoints use `confirm` only.
 
 Preview responses include a `preview` object describing what would be done:
 
@@ -282,7 +334,6 @@ Filter query parameters use the following canonical names across all list endpoi
 | `status` | Filter by lifecycle state (domain-specific). | `?status=open,acknowledged` |
 | `since`, `until` | Time window. | `?since=2026-04-16T00:00:00Z` |
 
-Endpoints that previously used `?types=`, `?types=` (plural), or domain-specific names (`?category=`) are aligned to this vocabulary. Older names remain accepted during a transition window.
 
 #### Operation Correlation
 
@@ -292,6 +343,56 @@ Agents include the following optional headers on any mutating request to tie mul
 - **`X-Lenny-Agent-Name`** — human-readable agent instance identifier.
 
 These are advisory; omitting them has no effect on request processing.
+
+#### Canonical Progress Envelope
+
+Long-running operations (platform upgrades, restores, backups, backup verifications, drift reconciliations, webhook backlog drains) include a `progress` object in their status endpoint responses AND in the Operations Inventory (Section 25.4). The object has a uniform shape:
+
+```json
+{
+  "progress": {
+    "percent": 47,
+    "completedSteps": 5,
+    "totalSteps": 10,
+    "currentStep": "migrating_shard_3",
+    "currentStepDetail": "executing 043_add_session_metadata.sql on shard 3",
+
+    "etaSeconds": 240,
+    "etaConfidence": 0.7,
+    "etaMethod": "historical_p50",
+
+    "rateMetric": {
+      "name": "shards_per_minute",
+      "value": 0.5
+    },
+
+    "startedAt": "2026-04-16T10:10:00Z",
+    "lastProgressAt": "2026-04-16T10:15:12Z",
+    "stalledForSeconds": null
+  }
+}
+```
+
+**Field semantics:**
+
+- **`percent`** — 0–100. Operations with discrete steps use `completedSteps / totalSteps * 100`. Size-based operations (e.g., backup dump) use `bytesWritten / bytesEstimated`. Rate-based operations (e.g., webhook backlog drain) use `1 - remaining / peak_backlog`. `null` when the operation has no meaningful percent basis.
+- **`completedSteps` / `totalSteps`** — discrete step counts where applicable; `null` otherwise.
+- **`currentStep`** — machine-readable step identifier (e.g., `"migrating_shard_3"`, `"OpsRoll"`, `"uploading_to_minio"`).
+- **`currentStepDetail`** — human-readable detail suitable for an agent to pass through to a user ("executing 043_add_session_metadata.sql on shard 3").
+- **`etaSeconds`** — server estimate of remaining time; `null` when the server has no basis (first-time operation, no historical samples).
+- **`etaConfidence`** — `0.0`–`1.0`. Low for one-off operations; higher for operations with historical baselines in `ops_operation_baselines`.
+- **`etaMethod`** — how the estimate was produced. Values: `"historical_p50"` (from baseline table), `"linear_extrapolation"` (from current rate), `"fixed_phase_durations"` (from compiled-in per-phase durations), `"rate_based"` (for size/rate operations), `"none"` (no estimate available).
+- **`rateMetric`** — current throughput metric for transparency. Agents that distrust the server's ETA can compute their own from this value.
+- **`lastProgressAt`** — when progress last advanced.
+- **`stalledForSeconds`** — populated when `now() - lastProgressAt` exceeds the operation kind's expected cadence. `null` when advancing normally.
+
+**Historical baselines.** A Postgres table `ops_operation_baselines (kind, p50_duration_ms, p90_duration_ms, sample_size, last_updated)` is updated on each operation completion. New operations of a kind with `sample_size >= 3` receive `etaMethod: "historical_p50"` and `etaConfidence >= 0.5`; below that threshold they return `etaMethod: "none"`.
+
+**Stalled detection.** Each operation kind defines an expected max inter-step cadence (e.g., 2 min per migration, 5 min per restore shard). Operations where `stalledForSeconds > 0` trigger the `OperationStalled` bundled alert (Section 25.13), giving agents and operators an automatic signal without having to track progress themselves.
+
+**Progress events.** The event stream emits `operation_progressed` events whenever a step transition occurs OR `percent` crosses a named threshold (10, 25, 50, 75, 90, 95, 99). Agents subscribed with `?eventType=operation_progressed` receive real-time updates without polling.
+
+Each operation subsystem populates the envelope with the semantics relevant to its domain (per-subsystem specifics in Sections 25.5, 25.8, 25.10, 25.11).
 
 ---
 
@@ -343,23 +444,74 @@ The `HealthService` maintains an in-memory alert state tracker that evaluates th
 
 **Per-replica scope.** This endpoint reflects the calling replica's view. Shared-state signals (dependency probes, circuit breakers, pool counts from Postgres) are identical across replicas. Per-replica signals (request queue depth, active connections, error rates) reflect only the replica that handled the request. `lenny-ops` aggregates health across all replicas via Prometheus (primary) or headless Service fan-out (fallback) — see Section 25.4, Metrics Source.
 
-#### `suggestedAction` Contract
+#### `suggestedAction` / `suggestedActions` Contract
 
-When a component is degraded or unhealthy, the `suggestedAction` object provides a machine-executable remediation hint:
+When a component is degraded or unhealthy, the response includes a machine-executable remediation hint. Two forms are used depending on whether one or multiple reasonable responses exist:
 
 ```go
 type SuggestedAction struct {
-    Action    string          `json:"action"`     // SCALE_WARM_POOL, ADD_CREDENTIALS, RESTART_COMPONENT, etc.
-    Endpoint  string          `json:"endpoint"`   // admin API endpoint to call
-    Body      json.RawMessage `json:"body"`       // request body
-    Reasoning string          `json:"reasoning"`  // human-readable explanation
-    Runbook   string          `json:"runbook,omitempty"` // operational runbook name (Section 25.7)
+    Action     string          `json:"action"`             // SCALE_WARM_POOL, ADD_CREDENTIALS, RESTART_COMPONENT, etc.
+    Endpoint   string          `json:"endpoint"`           // admin API endpoint to call
+    Body       json.RawMessage `json:"body"`               // request body
+    Reasoning  string          `json:"reasoning"`          // human-readable explanation
+    Runbook    string          `json:"runbook,omitempty"`  // operational runbook name (Section 25.7)
+    Confidence float64         `json:"confidence,omitempty"` // 0.0–1.0; present on ranked alternatives
+    Risk       string          `json:"risk,omitempty"`     // "none" | "low" | "medium" | "high"; present on ranked alternatives
 }
 ```
 
+**When one canonical response exists** (e.g., `PostgresUnreachable`, `MinioUnreachable`, `CertExpiryImminent`): the response has a single `suggestedAction` field holding one `SuggestedAction`. `Confidence` and `Risk` are omitted (the action is the singular correct response).
+
+**When multiple reasonable responses exist** (typically capacity/throttling alerts like `WarmPoolExhausted`, `CredentialPoolExhausted`, `CircuitBreakerOpen`): the response has a `suggestedActions` array containing ordered `SuggestedAction` entries, each with populated `Confidence` and `Risk`. The array is ordered by descending confidence. Agents pick based on their policy — the highest-confidence option is usually right, but alternatives exist for context (e.g., scale the pool vs. investigate the upstream cause).
+
+Example for `WarmPoolExhausted`:
+
+```json
+{
+  "status": "unhealthy",
+  "issue": "WARM_POOL_EXHAUSTED",
+  "suggestedActions": [
+    {
+      "action": "SCALE_WARM_POOL",
+      "endpoint": "PUT /v1/admin/pools/default-gvisor/warm-count",
+      "body": { "minWarm": 15 },
+      "reasoning": "Peak claim rate 4.2/min over 8 minutes. Scaling to 15 absorbs current demand with 30% headroom.",
+      "runbook": "warm-pool-exhaustion",
+      "confidence": 0.85,
+      "risk": "low"
+    },
+    {
+      "action": "INVESTIGATE_UPSTREAM",
+      "endpoint": "GET /v1/admin/diagnostics/sessions",
+      "reasoning": "Pool exhaustion may be a symptom of excessive retries from failing sessions. Investigate before scaling as a band-aid.",
+      "runbook": "oom-root-cause",
+      "confidence": 0.55,
+      "risk": "none"
+    }
+  ]
+}
+```
+
+Example for `PostgresUnreachable` (singular):
+
+```json
+{
+  "status": "unhealthy",
+  "issue": "POSTGRES_UNREACHABLE",
+  "suggestedAction": {
+    "action": "RUN_POSTGRES_FAILOVER",
+    "endpoint": null,
+    "reasoning": "Database dependency unreachable. Follow the postgres-failover runbook; no automated API-driven remediation.",
+    "runbook": "postgres-failover"
+  }
+}
+```
+
+**Alerts with ranked alternatives** (`suggestedActions`): `WARM_POOL_EXHAUSTED`, `WARM_POOL_LOW`, `CREDENTIAL_POOL_EXHAUSTED`, `CIRCUIT_BREAKER_OPEN`. All others use the singular `suggestedAction` field.
+
 The `runbook` field names the relevant operational runbook for the detected issue. See Section 25.7 "Path B" for the mapping and discovery flow.
 
-Agents can execute the suggestion by calling the endpoint directly. The `suggestedAction` is advisory — the agent is free to ignore it or modify the parameters.
+Suggestions are advisory — the agent is free to ignore them, pick a non-top alternative, or modify parameters. Agents that select an alternative should include their reasoning in the resulting audit event's `operationId`-correlated record (via a subsequent `POST /v1/admin/escalations` or a comment on the lock acquisition).
 
 #### Caching
 
@@ -462,6 +614,7 @@ None. Computed on-demand from in-memory metric state.
 | Code | Category | HTTP | Description |
 |------|----------|------|-------------|
 | `UNKNOWN_RECOMMENDATION_CATEGORY` | `PERMANENT` | 400 | Unrecognized category filter |
+| `RECOMMENDATIONS_UNAVAILABLE` | `TRANSIENT` | 503 | Returned only when `ops.recommendations.disableOnPrometheusOutage: true` and Prometheus is unreachable. |
 
 ### Version and Config Introspection
 
@@ -549,7 +702,7 @@ An in-memory ring buffer of recent operational events, exposed as an admin API e
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/v1/admin/events/buffer` | Recent events from in-memory buffer. Params: `?since={monotonic_id}`, `?types=`, `?severity=`, `?limit=` (default 100, max 500). |
+| `GET` | `/v1/admin/events/buffer` | Recent events from in-memory buffer. Params: `?since={monotonic_id}`, `?eventType=`, `?severity=`, `?limit=` (default 100, max 500). |
 
 #### Go Interface
 
@@ -577,7 +730,7 @@ type BufferedEventPage struct {
 
 #### Behavior
 
-The buffer holds the last 500 events (~250 KB). Each event is assigned a monotonic uint64 ID (per gateway replica, not globally ordered) AND carries a stable `eventKey` — a ULID-like identifier composed of `{replicaID}:{emittedAt}:{nonce}`. The `eventKey` is stable across restarts and across the gateway/`lenny-ops` emission split; it is the canonical deduplication identifier.
+The buffer holds the last 500 events (~250 KB). Each event is assigned a monotonic uint64 ID (per gateway replica, not globally ordered) AND carries a stable `eventKey` — a ULID-like identifier composed of `{replicaID}:{emittedAt}:{nonce}`, where `nonce` is a **per-replica monotonically-increasing uint64 counter** that increments for every event emitted by that replica (regardless of the emitting subsystem). Combined with the unique `replicaID`, this guarantees `eventKey` is globally unique across all replicas and across emission paths (gateway in-process emission, `lenny-ops` emission). Two events with the same `eventKey` are by definition the same event — deduplication is correct. The `eventKey` is stable across restarts (the nonce counter survives via a periodic checkpoint to local disk; on restart, the counter resumes from `last_checkpointed + safe_skip_window` to avoid any chance of replaying an old nonce).
 
 `lenny-ops` polls the buffer by passing its last-seen buffer sequence ID as `?since={uint64}`. When the buffer has wrapped and the requested ID has been evicted, the response includes the canonical `pagination.gapDetected: true` envelope (Section 25.2) along with `pagination.oldestAvailableCursor` — the oldest remaining buffer ID. Agents receiving a gap response should re-read platform state (health, diagnostics) before assuming continuity.
 
@@ -671,6 +824,8 @@ gateway:
                                          # (strict consistency with operator-customized
                                          # Prometheus rules, at the cost of losing health
                                          # status derivation when Prometheus is down)
+  recommendations:
+    windowOverrides: {}                  # per-rule window override, e.g. { warm_pool_sizing: "12h" }
 
 ops:
   replicas: 1                            # leader-elected; scale >1 for read-heavy workloads
@@ -699,6 +854,7 @@ ops:
   ingress:
     host: "ops.lenny.example.com"        # required — external hostname for agent access
     tlsSecretName: ""                    # if empty, cert-manager issues via ClusterIssuer
+    selfSigned: false                    # dev-only: chart generates self-signed cert when true
     className: "nginx"
     annotations: {}
     idleTimeoutSeconds: 900              # must exceed SSE client hold time
@@ -716,12 +872,23 @@ ops:
     renewDeadlineSeconds: 10
     retryPeriodSeconds: 2
   selfHealth:
-    checkIntervalSeconds: 10             # was 30 in earlier drafts; 10 recommended at Tier 2/3
+    checkIntervalSeconds: 10             # 10 recommended at Tier 2/3 to catch fast failures
   webhooks:
-    subscriptionCacheTTLSeconds: 60      # reduced from 5 min to 60s for tighter invalidation
+    subscriptionCacheTTLSeconds: 60      # periodic refresh interval for the subscription cache
     generationBasedInvalidation: true    # invalidate cache entries immediately on CRUD
+    allowHTTP: false                     # require HTTPS callbacks; HTTP is rejected
+    blockedCIDRs:                        # additional CIDR blocks to reject in SSRF check
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "169.254.0.0/16"
+    domainAllowlist: []                  # if non-empty, callbacks must match a suffix in this list
+    deliveryRetentionDays: 7             # ops_event_deliveries retention; tier presets override
+    deliveryTrackingMode: "full"         # "full" | "metric-only" | "failures-only"
+    failuresOnlyRetentionDays: 30        # when deliveryTrackingMode == "failures-only"
   idempotency:
-    keyTTLSeconds: 86400                 # 24h default; extends to 604800 (7d) for upgrade keys
+    keyTTLSeconds: 86400                 # 24h — for standard mutations (pool scale, config apply, etc.)
+    longRunningKeyTTLSeconds: 604800     # 7d — for multi-phase operations (upgrade, restore)
     bindToCaller: true                   # composite PK includes caller identity
   locks:
     postgresTier: "enabled"              # "enabled" | "disabled"
@@ -729,16 +896,35 @@ ops:
     memoryTier: "single-replica-only"    # "single-replica-only" | "always" | "never"
                                          # ("never" fails lock acquisition with 503 in multi-replica
                                          # when both Postgres and Redis are down)
+    minTTLSeconds: 10                    # reject lock acquire requests with TTL < 10s
+    maxTTLSeconds: 1800                  # reject lock acquire requests with TTL > 30 min
+    defaultTTLSeconds: 300               # used when caller omits ttlSeconds
+  escalation:
+    requireDurable: false                # set true to fail with 503 when no durable store available
+    reconciliationWritesPerSecond: 20    # rate-limit on flush goroutine
+  events:
+    streamMaxLen: 10000                  # Tier 1 default; tier presets raise to 50k–100k
+  recommendations:
+    disableOnPrometheusOutage: false     # set true to return 503 instead of fan-out fallback
+  drift:
+    runningStateCacheTTLSeconds: 60      # cache running-state collection across drift queries
+  audit:
+    diagnosticsRatePerMinute: 60         # cap on diagnostic-audit emissions per service account
+    scatterGatherCacheEnabled: true      # cache cross-shard audit query results
+    scatterGatherMaxConcurrency: 0       # 0 = match number of shards
+    retention:
+      diagnosticsRetainDays: 30          # diagnostic audit events; shorter than the default audit retention
 
 backups:
   schedule:
     full: "0 2 * * *"                    # daily full backup
     postgres: "0 */6 * * *"              # Postgres snapshots every 6 hours
     enabled: true
-  retention:                             # tier defaults differ (see values-tierN.yaml)
-    retainDays: 30
-    retainCount: 10
-    retainMinFull: 3
+  retention:                             # base values are Tier 2 defaults; values-tierN.yaml overrides
+    retainDays: 30                       # Tier 1: 7, Tier 2: 30, Tier 3: 90
+    retainCount: 10                      # Tier 1: 5, Tier 2: 10, Tier 3: 30
+    retainMinFull: 3                     # Tier 1: 2, Tier 2: 3, Tier 3: 7
+    preRestoreRetainDays: 7              # pre-restore safety backups; cleaned aggressively
   verification:
     schedule: "0 3 * * 0"                # weekly integrity check
     testRestoreSchedule: "0 4 1 * *"     # monthly test restore to temporary namespace
@@ -748,15 +934,28 @@ backups:
     kmsKeyId: ""                         # required when SSE-KMS
   contentPolicy:
     includeSensitiveTables: false        # excludes secrets.* tables by default
-    redactColumns: []                    # additional column redaction
+    excludeTables: []                    # additional tables to exclude beyond defaults
+    redactColumns: []                    # additional column redaction (column names matched verbatim)
+
+# Additional platform.* keys (extending the platform block defined at the top of this values file)
+platform:
+  releaseChannel:
+    publicKeyPath: ""                    # override Lenny's compiled-in Ed25519 public key when mirroring
+  upgrade:
+    opsRollTimeoutSeconds: 600           # 10 min — auto-rollback if OpsRoll doesn't finish
+    gatewayRollTimeoutSeconds: 1200      # 20 min — accounts for warm-pool drain
+    controllerRollTimeoutSeconds: 600    # 10 min
+  recommendations:
+    disabledRules: []                    # array of rule IDs to disable (across all replicas)
 
 security:
   oidc:
+    issuerUrl: ""                        # required — OIDC issuer for token validation
     tokenRefreshBeforeExpirySeconds: 60  # refresh lead time for GatewayClient's service-account token
     minTokenTTLSeconds: 300              # reject token TTLs below this
 ```
 
-**Note on the older partial Helm values shown in earlier drafts.** This block is the canonical reference. Individual subsections below may reference specific fields by path (e.g., `ops.prometheus.url`); all such paths resolve to the block above.
+This block is the canonical reference. Individual subsections below reference specific fields by path (e.g., `ops.prometheus.url`); all such paths resolve to the block above.
 
 ### Kubernetes Resources
 
@@ -1060,12 +1259,12 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 
 | Data | StoreRouter method | Rationale |
 |------|-------------------|-----------|
-| Ops-specific tables (`ops_remediation_locks`, `ops_idempotency_keys`, `ops_escalations`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_event_subscriptions`, `ops_event_deliveries`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`) | `PlatformPostgres()` | Platform-scoped, not per-tenant or per-session. Low volume. Must be reachable without a tenant or session ID. |
+| Ops-specific tables (`ops_remediation_locks`, `ops_lock_epoch`, `ops_lock_conflicts`, `ops_idempotency_keys`, `ops_escalations`, `ops_backups`, `ops_backup_schedule`, `ops_retention_policy`, `ops_restore_state`, `ops_event_subscriptions`, `ops_event_deliveries`, `platform_upgrade_state`, `platform_upgrade_check_cache`, `bootstrap_seed_snapshot`, `audit_log_deferred_writes`) | `PlatformPostgres()` | Platform-scoped, not per-tenant or per-session. Low volume. Must be reachable without a tenant or session ID. |
 | Session diagnostics | `SessionShard(sessionID)` | Reads `sessions` and `agent_pod_state` from the shard that owns the session. |
 | Audit queries | `AuditShard(tenantID)` | Per-tenant for filtered queries. Platform-admin cross-tenant queries use `AllAuditShards()` for scatter-gather. |
 | Backup (`pg_dump`) | All shards via `AllSessionShards()` + `PlatformPostgres()` | Full backups dump every shard. |
 
-`PlatformPostgres()` is a new method on `StoreRouter` (analogous to the existing `PlatformRedis()`). It returns the connection pool for platform-global tables that are not owned by any tenant or session. In v1 (`SingleShardRouter`), it returns the same pool as all other methods. In multi-shard deployments, it routes to the dedicated platform database instance.
+`PlatformPostgres()` is a `StoreRouter` method (analogous to `PlatformRedis()`) that returns the connection pool for platform-global tables that are not owned by any tenant or session. In v1 (`SingleShardRouter`), it returns the same pool as all other methods. In multi-shard deployments, it routes to the dedicated platform database instance. Adding this method requires the change listed in "Edits Required Outside Section 25".
 
 **Redis:**
 
@@ -1127,6 +1326,301 @@ For most deployments, the answer to question 1 is "no" and a single-replica depl
 ### Authentication
 
 Same OIDC middleware as the gateway admin API. `lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint. Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+
+Callers are also subject to the optional `scope` JWT claim (Section 25.1, Scoped Tokens; RFC 9068). When present, the claim narrows the caller's effective tool surface below the role ceiling — a `platform-admin` token with `"scope": "tools:pool:* tools:health:read"` can call only pool tools and health reads despite its role theoretically permitting more.
+
+### Caller Identity and Capability Discovery
+
+An agent arriving with a valid token has no built-in way to know what it can do — role, tenant scope, rate-limit budget, effective tool surface, platform capabilities — without making trial calls and observing 403s. `lenny-ops` exposes a single discovery endpoint that returns this context in one call.
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/admin/me` | Identity, authorization, rate-limit state, token lifecycle, platform context, feature flags, and tool-surface summary for the calling identity. |
+| `GET` | `/v1/admin/me/authorized-tools` | The MCP tool inventory pre-filtered to tools the caller can actually invoke (RBAC + `scope` claim applied, conditional guards annotated). |
+| `GET` | `/v1/admin/me/operations` | The caller's in-flight operations — alias for `GET /v1/admin/operations?actor=me&status=in_progress,paused,held,awaiting_flush` (Section 25.4, Operations Inventory). |
+
+#### `GET /v1/admin/me` Response
+
+```json
+{
+  "identity": {
+    "sub": "sa-prod-watchdog-01",
+    "displayName": "prod-watchdog-us-east-1",
+    "callerType": "agent",
+    "issuer": "https://auth.example.com",
+    "authenticatedAt": "2026-04-16T10:22:03Z"
+  },
+
+  "authorization": {
+    "roles": ["platform-admin"],
+    "tenantScope": "*",
+    "scope": "tools:*",
+    "authorizedLockScopes": [
+      "pool:*", "credential-pool:*", "session:*",
+      "tenant:*:*", "platform:*", "upgrade:platform",
+      "restore:platform", "config:global"
+    ],
+    "subjectToGuards": {
+      "confirmRequiredFor": ["pool-scale-over-1.5x", "full-backup", "restore", "upgrade-start"],
+      "acknowledgeDataLossRequiredFor": ["restore-with-recent-writes"]
+    }
+  },
+
+  "rateLimits": {
+    "requestsPerSecond": 20,
+    "burst": 50,
+    "currentTokensAvailable": 48,
+    "windowResetAt": "2026-04-16T10:22:13Z"
+  },
+
+  "token": {
+    "expiresAt": "2026-04-16T11:00:00Z",
+    "refreshBeforeExpiry": "60s",
+    "refreshEndpoint": "https://auth.example.com/token"
+  },
+
+  "platform": {
+    "installationId": "inst-a1b2c3",
+    "version": "1.5.0",
+    "tier": "tier2",
+    "namespace": "lenny-system",
+    "opsServiceURL": "https://ops.lenny.example.com",
+    "gatewayURL": "http://lenny-gateway:8080"
+  },
+
+  "capabilities": {
+    "prometheusAvailable": true,
+    "bundledRulesLoaded": true,
+    "opsReplicas": 1,
+    "mtlsInternal": false,
+    "lockMemoryTier": "single-replica-only",
+    "tenantFiltering": true,
+    "mcpManagementServer": true,
+    "openApiAvailable": true,
+    "headlessServiceFallback": true
+  },
+
+  "links": {
+    "authorizedTools": "/v1/admin/me/authorized-tools",
+    "myOperations": "/v1/admin/me/operations",
+    "myRecentAudit": "/v1/admin/audit-events?actorId=sa-prod-watchdog-01&limit=50",
+    "platformHealth": "/v1/admin/health/summary",
+    "openApi": "/v1/openapi.json"
+  }
+}
+```
+
+Field notes:
+
+- **`authorization.scope`** — the RFC 9068 `scope` JWT claim echoed back as a space-separated string. `"tools:*"` means no additional restriction beyond role. A narrower value restricts the caller's effective tool surface (see Section 25.1 Scoped Tokens and Section 25.12).
+- **`authorization.authorizedLockScopes`** — pre-computed from the scope-pattern rules in Section 25.4 Remediation Coordination. Tenant-admin callers see tenant-specific expansions (`tenant:t-12345:*`) rather than wildcards.
+- **`authorization.subjectToGuards`** — surfaces the conditional-requirement rules from tool `x-lenny-guards` extensions (Section 25.12). Agents learn upfront which operations will require `confirm` / `acknowledgeDataLoss` without first encountering the relevant error.
+- **`rateLimits.currentTokensAvailable`** — current token-bucket balance for this caller's rate-limit bucket. Agents can self-pace precisely. The value is instantaneous and refills at `requestsPerSecond`.
+- **`platform.installationId`** — stable UUID for this Lenny installation. Useful for multi-cluster agents that track state per installation.
+- **`capabilities`** — reflects the **actual** install state, not compiled feature flags. `prometheusAvailable: false` tells an agent not to rely on Prometheus-backed aggregation in this deployment. `lockMemoryTier` tells an agent the safety profile of Tier-3 lock acquisition.
+- **`links`** — discovery hop-off. A fresh agent typically follows these in order: `authorizedTools` for its callable surface, `myOperations` for in-flight work, `platformHealth` for current platform state.
+
+Responses are cheap to compute (all data is in-process or cached). Clients may cache `/me` for the lifetime of a logical task; re-fetch on token refresh or on any `401`/`403`.
+
+#### Authorization
+
+Any authenticated caller may call `/v1/admin/me` and its sub-endpoints — they return only the calling identity's context, never another identity's. `tenant-admin` callers receive tenant-scoped values (their tenant ID populating wildcards, not the full platform surface).
+
+#### Degradation
+
+If Postgres is unreachable, `/v1/admin/me` still returns — `identity`, `authorization`, `rateLimits`, `token`, `platform`, `capabilities` are all derivable from the authenticated request alone or from `lenny-ops` process state. Only `links.myRecentAudit` is degraded (audit is Postgres-backed); the canonical `degradation` envelope (Section 25.2) is populated accordingly.
+
+If the MCP Management Server is unreachable, `/v1/admin/me/authorized-tools` returns `503 AUTHORIZED_TOOLS_UNAVAILABLE` with a suggestion to use the OpenAPI spec at `/v1/openapi.json` plus the caller's `authorization` block to derive the tool surface locally.
+
+#### Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `lenny_ops_me_requests_total` | Counter | `caller_type` | Calls to `/v1/admin/me` and sub-endpoints. |
+
+#### Error Codes
+
+| Code | Category | HTTP | Description |
+|------|----------|------|-------------|
+| `AUTHORIZED_TOOLS_UNAVAILABLE` | `TRANSIENT` | 503 | MCP Management Server unreachable; derive the tool surface from OpenAPI + `/me.authorization`. |
+
+#### Audit Events
+
+`identity.discovered` — emitted on first `/v1/admin/me` call per token (deduplicated by `(sub, token_iat)`). Records the caller's identity, roles, and scopes at discovery time.
+
+### Operations Inventory
+
+Long-running actions — platform upgrades, restores, backups, backup verifications, held locks, buffered escalations, in-flight idempotency keys, drift reconciliations, webhook delivery backlogs — are each owned by a different subsystem with its own status endpoint. An agent that needs "what is in flight?" must otherwise query every subsystem individually and merge the results. The Operations Inventory endpoint provides a unified, filterable view.
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/admin/operations` | Paginated list of operations across all subsystems. Filters: `?actor=`, `?status=`, `?kind=`, `?since=`, `?until=`, `?tenantId=`, `?operationId=`, `?limit=`, `?cursor=`. |
+| `GET` | `/v1/admin/operations/{operationId}` | Single operation with full detail (same schema as a list entry). |
+
+Read-only. Mutations still go to the owning subsystem (`POST /v1/admin/platform/upgrade/proceed`, `POST /v1/admin/restore/resume`, `DELETE /v1/admin/remediation-locks/{id}`, etc.). The Operations Inventory surfaces the `resources` links on each operation so an agent can reach the mutating endpoints without cross-referencing sections.
+
+#### Operation Kinds
+
+| `kind` | Source table / state | Typical duration |
+|---|---|---|
+| `platform_upgrade` | `platform_upgrade_state` singleton | Minutes–hours |
+| `restore` | `ops_restore_state` | Minutes |
+| `backup` | `ops_backups` where `status IN ('running', 'verifying')` | Minutes |
+| `backup_verification` | `ops_backups` where `status='verifying'` | Minutes |
+| `escalation_open` | `ops_escalations` where `status='open'` | Indefinite |
+| `escalation_buffered` | escalations at `persistence='buffered-redis'` or `'buffered-memory'` awaiting flush | Seconds–minutes |
+| `remediation_lock` | `ops_remediation_locks` non-expired rows | Minutes (TTL-bounded) |
+| `idempotency_in_progress` | `ops_idempotency_keys` where `status='in_progress'` | Seconds–minutes |
+| `drift_reconciliation` | in-flight `POST /v1/admin/drift/reconcile` | Seconds–minutes |
+| `webhook_delivery_pending` | `ops_event_deliveries` where `status='pending'` | Seconds |
+
+#### Response
+
+```json
+{
+  "operations": [
+    {
+      "operationId": "upgrade-550e8400-e29b-41d4-a716-446655440000",
+      "kind": "platform_upgrade",
+      "status": "paused",
+      "startedBy": "sa-deploy-01",
+      "startedAt": "2026-04-16T09:12:00Z",
+      "timeoutAt": "2026-04-16T10:12:00Z",
+      "progress": {
+        "percent": 65,
+        "completedSteps": 5,
+        "totalSteps": 7,
+        "currentStep": "GatewayRoll",
+        "currentStepDetail": "Waiting for operator to call /upgrade/proceed",
+        "etaSeconds": null,
+        "etaConfidence": 0.0,
+        "etaMethod": "none",
+        "lastProgressAt": "2026-04-16T09:58:12Z",
+        "stalledForSeconds": null
+      },
+      "correlatedOperations": [
+        { "operationId": "lock-restore-platform", "kind": "remediation_lock", "scope": "upgrade:platform" }
+      ],
+      "resources": {
+        "status":   "GET /v1/admin/platform/upgrade/status",
+        "proceed":  "POST /v1/admin/platform/upgrade/proceed",
+        "pause":    "POST /v1/admin/platform/upgrade/pause",
+        "rollback": "POST /v1/admin/platform/upgrade/rollback",
+        "audit":    "GET /v1/admin/audit-events?operationId=upgrade-550e8400-e29b-41d4-a716-446655440000"
+      },
+      "cancellable": true,
+      "metadata": { "targetVersion": "1.6.0", "previousVersion": "1.5.0" }
+    },
+    {
+      "operationId": "lock-7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "kind": "remediation_lock",
+      "status": "held",
+      "startedBy": "sa-prod-watchdog-01",
+      "startedAt": "2026-04-16T10:15:00Z",
+      "timeoutAt": "2026-04-16T10:20:00Z",
+      "progress": null,
+      "correlatedOperations": [],
+      "resources": {
+        "get":     "GET /v1/admin/remediation-locks/lock-7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "extend":  "PATCH /v1/admin/remediation-locks/lock-7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "release": "DELETE /v1/admin/remediation-locks/lock-7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "steal":   "POST /v1/admin/remediation-locks/lock-7c9e6679-7425-40de-944b-e07fc1f90ae7/steal"
+      },
+      "cancellable": true,
+      "metadata": { "scope": "pool:default-gvisor", "operation": "scale" }
+    }
+  ],
+  "pagination": { "cursor": "...", "hasMore": false, "cursorKind": "pk" }
+}
+```
+
+#### Canonical `operationId` Format
+
+Operation IDs are a concatenation of the kind prefix and the subsystem's natural key:
+
+```
+operationId := <kind-prefix>-<natural-key>
+```
+
+Prefixes: `upgrade`, `restore`, `backup`, `esc`, `lock`, `idemp`, `drift-rec`, `delivery`. The natural key is the subsystem's existing ID (lock ID, restore ID, backup ID, escalation ID, or `X-Lenny-Operation-ID` for the singleton upgrade). Examples: `upgrade-550e8400-...`, `lock-abc`, `restore-xyz`, `esc-def`.
+
+This form is stable across `lenny-ops` restarts (IDs come from Postgres or Redis, not process memory) and decodable (an agent reading `lock-abc` knows to call `/v1/admin/remediation-locks/abc`).
+
+#### Filters
+
+| Parameter | Meaning | Default |
+|-----------|---------|---------|
+| `actor` | `me` (calling identity), a specific `sub` (`platform-admin` only), or `*` (all callers; `platform-admin` only). Tenant-admin is auto-restricted to `me`. | `me` |
+| `status` | CSV of operation statuses. Values: `in_progress`, `paused`, `held`, `awaiting_flush`, `failed`, `completed`, `all`. | `in_progress,paused,held,awaiting_flush` |
+| `kind` | CSV of operation kinds (from the table above), or `all`. | `all` |
+| `since`, `until` | RFC 3339 timestamps. Operation's `startedAt` falls in this window. | — |
+| `operationId` | Lookup by ID. Returns a single-element list if found. | — |
+| `tenantId` | Restrict to operations associated with a tenant. `platform-admin` only; `tenant-admin` is auto-restricted to its own tenant. | — |
+| `limit` | Page size. Default 100, max 500. | 100 |
+| `cursor` | Canonical pagination (Section 25.2). | — |
+
+#### Status Values
+
+- **`in_progress`** — actively executing (upgrade advancing, restore writing a shard, backup Job running, drift reconciliation in flight, idempotency key in progress, webhook delivery pending).
+- **`paused`** — awaiting an explicit advance (e.g., `upgrade/proceed`). Upgrade-only today.
+- **`held`** — remediation locks currently held.
+- **`awaiting_flush`** — escalations buffered in Redis or memory awaiting reconciliation to Postgres.
+- **`failed`** — terminal-failure operations (failed restore, failed upgrade). Included in the inventory because they require operator resolution (e.g., restore/resume, upgrade/rollback).
+- **`completed`** — terminal-success operations. Usually excluded from the default filter; use `?status=completed&since=1h` for recent-history queries.
+
+#### Event Subscription
+
+`lenny-ops` emits `operation_progressed` events (Section 25.5 event types) on every operation state transition. Payload: `operationId`, `kind`, `prevStatus`, `newStatus`, `progress`. Agents subscribed to the event stream with `?eventType=operation_progressed` receive real-time updates without polling the inventory.
+
+#### Implementation
+
+`/v1/admin/operations` is a scatter-gather read — `lenny-ops` queries each owning subsystem's table (or, for in-memory state, its own process state) and assembles the response. No new storage; the inventory is a **view** over existing state.
+
+#### Degradation
+
+If a subsystem's backing store is unavailable (e.g., Postgres down for upgrade/restore state, Redis down for Tier-2 buffered escalations), the operations from that subsystem are omitted from the response and listed in the canonical `degradation.warnings`:
+
+```json
+"degradation": {
+  "level": "degraded",
+  "warnings": [
+    "Operations of kind 'platform_upgrade', 'restore', 'backup', 'escalation_open' omitted: Postgres unreachable.",
+    "Operations of kind 'escalation_buffered' omitted: Redis unreachable."
+  ]
+}
+```
+
+In-memory-only operations (Tier-3 escalations, in-memory locks on the calling replica) are always included because they don't depend on external stores.
+
+#### Authorization
+
+- `tenant-admin` sees only operations where `started_by` is themselves OR `tenantId` (if present on the operation) matches their tenant.
+- `platform-admin` sees all operations.
+- `actor=*` requires `platform-admin`.
+
+Every operation row includes a `resources` block. The URLs in `resources` require the same authorization as their target endpoint — surfacing the URL does not grant access.
+
+#### Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `lenny_ops_operations_inventory_requests_total` | Counter | `actor_kind` (`self`, `other`, `all`) | Calls to the inventory endpoint. |
+| `lenny_ops_operations_inventory_kinds_returned` | Histogram | | Distribution of `kind` values returned per request (observability for how balanced the workload is). |
+
+#### Error Codes
+
+| Code | Category | HTTP | Description |
+|------|----------|------|-------------|
+| `OPERATION_NOT_FOUND` | `PERMANENT` | 404 | `operationId` not found in any subsystem. |
+| `OPERATIONS_INVENTORY_PARTIAL` | `TRANSIENT` | 207 | At least one subsystem's backing store was unreachable; response is partial per `degradation.warnings`. |
+
+#### Audit Events
+
+`operations.inventory_queried` — records query parameters and result count. Not per-operation-returned (to avoid audit log explosion under frequent polling).
 
 ### Calling the Gateway
 
@@ -1241,7 +1735,7 @@ The capacity recommendation rules (Section 25.3) are deterministic heuristics th
 | Prometheus (primary) | PromQL queries via `MetricSource` | The same metric values the recommendation rules read — but aggregated across all replicas. `sum(rate(lenny_warmpool_claims_total[5m]))` gives the true cluster-wide claim rate, not one replica's 1/N sample. `lenny-ops` evaluates the same recommendation rules against Prometheus data, producing recommendations based on the full traffic picture. |
 | All gateway replicas (fallback) | `GetRecommendationsFromAllReplicas()` via headless Service | Used when Prometheus is unreachable. **Metrics are aggregated before rule evaluation**, not after: per-replica metric values are summed (rates, counts) or max'd (queue depths, utilization) first, then the same rule set evaluates against the merged metric values. This produces the same recommendations the primary path would have, just with less history. Cached for 30s. |
 
-**Aggregate-before-evaluate (important).** Earlier drafts aggregated per-replica recommendations by "highest confidence wins," which amplified noise — a confident-but-wrong recommendation from one replica overrode correct signal from others. The revised approach aggregates the **input metric values** first, then evaluates rules once against the merged metrics. This gives recommendations comparable to what the primary (Prometheus) path produces.
+**Aggregate-before-evaluate.** Per-replica metric values are aggregated first (sum/max as appropriate); then the rule set evaluates once against the merged metrics. This produces recommendations comparable to the primary (Prometheus) path. Evaluating per-replica recommendations and merging them afterward would amplify noise — a confident-but-wrong recommendation from one replica could override correct signal from others.
 
 The recommendation rules are compiled into both the gateway and `lenny-ops` binaries as a shared `pkg/recommendations/rules` package. This avoids duplicating rule definitions — the rules are defined once, evaluated against different `MetricReader` implementations (in-process registry in the gateway, Prometheus-backed or aggregated-fan-out-backed in `lenny-ops`). Responses use the canonical `degradation` envelope.
 
@@ -1307,9 +1801,17 @@ At Tier 1 (dev), the key is optional on these endpoints to simplify interactive 
 During a Postgres outage, `lenny-ops` cannot durably record idempotency keys. In this state:
 
 - **Endpoints requiring idempotency keys return `503 IDEMPOTENCY_STORE_UNAVAILABLE`.** This is stricter than most ops endpoints (which degrade with fallback stores) because idempotency is the guarantee the agent relied on when submitting the mutation — silently proceeding without it would violate the contract.
+
+  **Chicken-and-egg note for `restore/execute` during Postgres outage.** The restore endpoint requires an idempotency key, but is also the recovery mechanism for some Postgres-failure scenarios. When Postgres is the thing that's broken and the operator wants to restore from backup, the API path is unavailable — the operator must use the manual recovery procedure documented in Section 25.15 Total-Outage Recovery (Path D for break-glass `kubectl port-forward` or, if `lenny-ops` itself can't help, the manual restore Job creation in Path D step 4). This chicken-and-egg is inherent to a self-hosted recovery API that depends on its own state store; the manual path closes the gap.
+
+  **Operation-status uncertainty after 503.** When an agent receives `503 IDEMPOTENCY_STORE_UNAVAILABLE` after submitting a required-key mutation, the operation's true state is **unknown**: the outage may have started before the row was inserted (operation didn't run) or after the row was inserted but before the response was returned (operation may be running). Agents should NOT assume either outcome. Recovery: when Postgres recovers, the agent retries with the same key. Three outcomes are possible:
+  - **`200 OK` with the original response** — the operation completed before the outage; the response was cached. Safe.
+  - **`409 OPERATION_IN_PROGRESS`** — the operation is still running. Safe to wait.
+  - **A fresh execution** — the row was never inserted; the operation runs now. Safe.
+  In all three cases, the agent ends with a known operation state, but it cannot distinguish them from the 503 response alone. For operations where this uncertainty is unacceptable (e.g., `upgrade/start`), the agent should consult a separate state endpoint (`GET /v1/admin/platform/upgrade/status`) post-recovery to confirm.
 - **Endpoints that accept optional idempotency keys proceed without tracking**, but the response includes `degradation.warnings` noting that retry-safety is not guaranteed.
 
-This avoids the multi-replica split-brain concern noted in earlier review: without Postgres, distinct `lenny-ops` replicas cannot coordinate idempotency state, so required-key endpoints fail-closed rather than returning inconsistent results.
+This avoids a multi-replica split-brain: without Postgres, distinct `lenny-ops` replicas cannot coordinate idempotency state, so required-key endpoints fail-closed rather than returning inconsistent results.
 
 ```sql
 CREATE TABLE ops_idempotency_keys (
@@ -1341,7 +1843,7 @@ A scheduled `DELETE` runs daily off-peak (02:30 UTC by default) removing expired
 
 ### Remediation Coordination
 
-To prevent conflicting concurrent remediations from multiple agents, `lenny-ops` provides advisory remediation locks. Locks use a tiered storage strategy (Postgres → Redis → in-memory) so that coordination remains available during storage outages — precisely when remediation is most needed. The rest of this subsection describes the consistency model explicitly, because tiered stores are subtle and earlier drafts left behaviors ambiguous.
+To prevent conflicting concurrent remediations from multiple agents, `lenny-ops` provides remediation locks. Locks use a tiered storage strategy (Postgres → Redis → in-memory) so that coordination remains available during storage outages — precisely when remediation is most needed. The rest of this subsection describes the consistency model explicitly because tiered stores are subtle.
 
 #### Consistency Model
 
@@ -1351,7 +1853,7 @@ The lock service provides **monotonically weakening exclusivity with epoch-enfor
 - **Tier 2 (Postgres down, Redis available):** strict exclusivity across all replicas and all callers, within Redis's own consistency guarantees (Sentinel failover may lose very recent writes; Redis Cluster does not). Acquisitions made at Tier 2 are **marked with the Postgres outage epoch** (see below) so that when Postgres recovers, split-brain is detected and resolved deterministically.
 - **Tier 3 (both down):** advisory within a single `lenny-ops` replica. In multi-replica deployments, cross-replica coordination is **not provided** — the service either rejects the acquisition (default) or records a coordinated-degradation event, depending on `ops.locks.memoryTier` configuration.
 
-This is stronger than the "advisory — they do not block API calls" framing used in earlier drafts. Locks **are** enforced when acquired through a tier that has consensus (Tiers 1 and 2). Agents may still override by explicitly stealing a lock (see Stealing below) — advisory means overridable, not unenforced.
+Locks **are** enforced when acquired through a tier that has consensus (Tiers 1 and 2). Agents may override an existing lock only by explicitly stealing it (see Stealing below) — "advisory" in this spec means overridable via a documented audited mechanism, not silently unenforced.
 
 #### Endpoints
 
@@ -1359,12 +1861,16 @@ This is stronger than the "advisory — they do not block API calls" framing use
 |--------|------|-------------|
 | `POST` | `/v1/admin/remediation-locks` | Acquire a lock. Body: `{"scope": "pool:default-gvisor", "operation": "scale", "ttlSeconds": 300}`. |
 | `GET` | `/v1/admin/remediation-locks` | List active locks. |
-| `DELETE` | `/v1/admin/remediation-locks/{id}` | Release a lock. |
+| `GET` | `/v1/admin/remediation-locks/{id}` | Get a single lock's current state (used to validate ownership before continuing remediation). |
+| `PATCH` | `/v1/admin/remediation-locks/{id}` | Extend an existing lock's TTL. Body: `{"ttlSeconds": 300}`. Requires caller to be the current `acquiredBy`. |
+| `DELETE` | `/v1/admin/remediation-locks/{id}` | Release a lock. Requires caller to be the current `acquiredBy`. |
 | `POST` | `/v1/admin/remediation-locks/{id}/steal` | Explicitly take over an existing lock. Requires `confirm: true` and a `reason`. |
 
 #### Authorization
 
-Lock scopes are authorized by pattern against the caller's role:
+Lock operations are authorized in two layers — **scope-based** (which roles can touch which scopes at all) and **identity-based** (which caller can mutate a specific existing lock). Both must pass.
+
+**Scope-based** (applies to `Acquire`, `Release`, `Steal`, `List`):
 
 | Scope pattern | `platform-admin` | `tenant-admin` |
 |---------------|------------------|----------------|
@@ -1374,7 +1880,18 @@ Lock scopes are authorized by pattern against the caller's role:
 | `tenant:{tenantID}:*` | ✓ | ✓ only when `{tenantID}` equals caller's tenant |
 | `platform:*`, `upgrade:platform`, `restore:platform`, `config:global` | ✓ | ✗ (returns `403 LOCK_SCOPE_FORBIDDEN`) |
 
-`tenant-admin` attempts on platform-scoped locks return `403 LOCK_SCOPE_FORBIDDEN`. This prevents a tenant admin from blocking a platform upgrade, for example.
+`tenant-admin` attempts on platform-scoped locks return `403 LOCK_SCOPE_FORBIDDEN`. This prevents a tenant admin from blocking a platform upgrade.
+
+**Identity-based** (applies to mutations of existing locks):
+
+| Operation | Required identity match |
+|-----------|-------------------------|
+| `Acquire` | None (creates a new lock; caller becomes `acquiredBy`). |
+| `Release` | Caller MUST equal `acquiredBy`. Returns `403 LOCK_NOT_OWNED` otherwise. To release someone else's lock, use `Steal` (audited). |
+| `Steal` | Any caller passing scope-based authorization. The steal is recorded with the previous and new `acquiredBy`; both audit and operational events are emitted. |
+| `List` / `Get` | Read-only; no identity match required (any caller passing scope-based authorization can see the lock). |
+
+The identity-based rule on `Release` resolves the otherwise-ambiguous interaction with `restore/resume` and other downstream operations that require ownership: the only paths to change a lock's holder are `Acquire` (after expiry/release) and `Steal` (audited). A second platform-admin cannot silently release another's lock; they must steal.
 
 #### Lock Struct
 
@@ -1384,6 +1901,8 @@ Lock scopes are authorized by pattern against the caller's role:
 type RemediationLockService interface {
     Acquire(ctx context.Context, req LockRequest) (*Lock, error)
     List(ctx context.Context) ([]Lock, error)
+    Get(ctx context.Context, lockID string) (*Lock, error)
+    Extend(ctx context.Context, lockID string, ttlSeconds int) (*Lock, error)
     Release(ctx context.Context, lockID string) error
     Steal(ctx context.Context, lockID string, req StealRequest) (*Lock, error)
 }
@@ -1457,25 +1976,56 @@ The default (`"single-replica-only"`) matches the recommendation for the v1 depl
 
 The critical failure mode in a naive tiered design is split-brain: agent A holds a lock in Postgres; Postgres fails; agent B acquires the same lock in Redis; both run concurrently. Lenny prevents this with **outage epochs**:
 
-**Outage epochs.** `ops:lock-epoch:current` in Redis holds a monotonically increasing integer. It is incremented whenever the lock service transitions from Tier 1 to Tier 2 (i.e., Postgres becomes unreachable). The new epoch is stamped onto every Tier 2 acquisition. When Postgres recovers, the service performs a **reconciliation pass** before serving any new Tier 1 acquisitions:
+**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:lock-epoch:current`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
 
-1. The service reads all active Redis locks with epoch ≥ the epoch of the last reconciliation.
-2. For each, it attempts `INSERT ... ON CONFLICT (scope) DO NOTHING` into Postgres.
-3. If a Postgres row already exists for the same scope (the pre-outage lock that was never released because Postgres was unreachable), the service:
-   - If the Postgres row is expired by clock, deletes it and keeps the Redis lock as the winner (stamped into Postgres with the new epoch).
-   - If the Postgres row is not expired, the reconciliation path writes both locks with distinct IDs into an `ops_lock_conflicts` table, records a `remediation.lock_split_brain_detected` audit event, and emits a `lock_split_brain_detected` operational event. The lock service returns `409 REMEDIATION_LOCK_CONFLICT` to **both** holders' next heartbeat/list call with a `splitBrain: true` flag so each agent can decide whether to abort, retry, or escalate to a human.
+- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:lock-epoch:current`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
+- On Tier 2 → Postgres recovery: the service reads `MAX(ops:lock-epoch:current_redis, ops_lock_epoch.current_postgres)`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
+- On Tier 3 (both stores down) operation: `lenny-ops` records the outage start time and an in-memory `pendingEpochIncrement` flag. When **either** Redis or Postgres recovers first, the recovering store's epoch counter is incremented by 1 and stamped with the outage start time. When the second store recovers, the standard `MAX(redis_epoch, postgres_epoch)` reconciliation brings them into sync.
+
+Because both stores hold the epoch and reconciliation uses the maximum, the system is **safe under any single-store outage and any out-of-order recovery sequence**. The only failure mode is "neither store ever recovers," in which case Lenny is effectively offline.
+
+When Postgres recovers, the service performs a **reconciliation pass** before serving any new Tier 1 acquisitions. The reconciliation runs as a **single Postgres transaction** that holds an advisory lock on `pg_advisory_xact_lock(0xLOCK_EPOCH_RECONCILE)` for its duration. New Tier 1 acquisitions block on this advisory lock — they wait for reconciliation to commit before proceeding. This eliminates the race where a Tier 1 acquisition could read a stale epoch from Postgres while reconciliation is still computing the new max.
+
+Within the transaction:
+
+1. Read `MAX(redis_epoch, postgres_epoch)` and write the max back to `ops_lock_epoch.current` in Postgres.
+2. Read all active Redis locks with epoch ≥ the epoch of the last reconciliation.
+3. For each, attempt `INSERT ... ON CONFLICT (scope) DO NOTHING` into Postgres.
+4. If a Postgres row already exists for the same scope (the pre-outage lock that was never released because Postgres was unreachable), apply the **deterministic split-brain resolution rule** (below).
+5. Commit. New Tier 1 acquisitions resume; they will read the just-updated epoch.
 
 ```sql
+CREATE TABLE ops_lock_epoch (
+    id        TEXT PRIMARY KEY DEFAULT 'singleton',
+    current   BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE ops_lock_conflicts (
     id                 BIGSERIAL PRIMARY KEY,
     scope              TEXT NOT NULL,
     pre_outage_lock    JSONB NOT NULL,
     post_outage_lock   JSONB NOT NULL,
+    winner             TEXT NOT NULL,         -- "pre_outage" | "post_outage"
+    loser_was_active   BOOLEAN NOT NULL,      -- true if the loser was non-expired at resolution time
     detected_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    resolved_at        TIMESTAMPTZ,
-    resolution         TEXT                  -- "pre_outage_won", "post_outage_won", "both_aborted"
+    resolved_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+**Deterministic split-brain resolution rule.** When both a Postgres lock (epoch `E_pre`) and a Redis lock (epoch `E_post`, `E_post > E_pre`) exist on the same scope at reconciliation time:
+
+| Postgres lock state | Redis lock state | Resolution |
+|---------------------|------------------|------------|
+| Expired by clock | Any | **Redis wins.** Postgres row deleted; Redis lock copied into Postgres with `epoch = E_post`. |
+| Not expired | Expired by clock | **Postgres wins.** Redis lock removed; Postgres lock retained with `epoch = E_pre`. |
+| Not expired | Not expired | **Pre-outage (Postgres) wins.** Postgres lock retains exclusivity. The Redis lock is removed; the Redis lock holder receives `409 REMEDIATION_LOCK_CONFLICT` with `splitBrain: true, winner: "pre_outage", winnerHolder: "<pre-outage acquiredBy>"` on its next heartbeat/list/release call. |
+
+The "pre-outage wins when both active" rule is intentional: the pre-outage lock represented exclusive ownership in a state where consensus existed; the post-outage lock was acquired during a window where the lock holder couldn't see the pre-outage one. Preferring the pre-outage holder restores the original ownership rather than rewarding the agent that happened to retry during the outage.
+
+The losing holder (always notified via the heartbeat path) can either back off (typical) or call `Steal` (Section 25.4 Stealing) to override — but stealing is now a deliberate, audited action, not a silent split-brain.
+
+`ops_lock_conflicts` records every conflict for post-incident audit. Operators alerted on `lenny_ops_lock_split_brain_detected_total` should review the table to understand which agents collided and why.
 
 **Grace period for same-epoch Redis acquisitions:** When Postgres recovers, Tier 1 is the service default again, but outstanding Tier 2 locks are honored until their TTL expires. New acquisitions for a scope currently held at Tier 2 return `409 REMEDIATION_LOCK_CONFLICT` (not silently retried at Tier 1).
 
@@ -1507,6 +2057,17 @@ Steal increments `revision`, records the previous `acquiredBy` in `stolenFrom`, 
 
 Steal is the explicit alternative to silently ignoring a lock — which the API does not support. An agent that wants to act despite an existing lock must either steal it (audited, visible) or escalate.
 
+#### Holding a Lock Across Long Remediations
+
+An agent's lock can expire mid-remediation if the chosen TTL is shorter than the remediation actually takes. The lock service offers two mechanisms agents use to keep ownership for the full duration:
+
+- **Heartbeat / extend.** `PATCH /v1/admin/remediation-locks/{id}` with body `{"ttlSeconds": 300}` extends the existing lock's `expiresAt` to `now() + ttlSeconds`. Authorization is identity-based: the caller MUST be the current `acquiredBy`, otherwise `403 LOCK_NOT_OWNED` (consistent with `Release`). Extension increments `revision`. Returns the updated lock with the new `expiresAt`. Agents performing long remediations should extend periodically (a common pattern: extend once per `ttlSeconds / 3` interval).
+- **Validation before acting.** `GET /v1/admin/remediation-locks/{id}` returns the current state. Returns `404 REMEDIATION_LOCK_NOT_FOUND` if the lock has expired or been released; returns the lock with potentially-different `acquiredBy` if it has been stolen. Agents that cannot guarantee continuous extension (e.g., long-blocking operations that prevent the heartbeat goroutine from running) should re-validate ownership before each significant remediation step.
+
+If an agent calls `Release` on a lock that no longer exists or no longer belongs to it, the call returns `404 REMEDIATION_LOCK_NOT_FOUND` or `403 LOCK_NOT_OWNED` respectively — never silent success. This forces the agent to discover lost ownership and emit an escalation if the remediation has already produced state changes that the new lock holder may conflict with.
+
+The lock service does NOT auto-extend on activity — extension is the agent's responsibility. This is intentional: silently extending would obscure the contract between TTL and remediation duration. Agents that consistently need long TTLs should request them up front (`ttlSeconds` up to the documented maximum, see Helm values `ops.locks.maxTTLSeconds`).
+
 #### Multi-Replica Behavior
 
 When `lenny-ops` runs with multiple replicas:
@@ -1522,6 +2083,7 @@ Deployers scaling `lenny-ops` beyond a single replica should review `ops.locks.m
 | `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope. Response includes `splitBrain: true` if a split-brain condition was detected. |
 | `REMEDIATION_LOCK_NOT_FOUND` | `PERMANENT` | 404 | Lock ID not found or already expired. |
 | `LOCK_SCOPE_FORBIDDEN` | `AUTH` | 403 | The caller's role does not authorize this lock scope. |
+| `LOCK_NOT_OWNED` | `AUTH` | 403 | Caller is not the lock's `acquiredBy`; use `Steal` to take over an existing lock. |
 | `REMEDIATION_LOCK_NO_COORDINATION` | `TRANSIENT` | 503 | Both Postgres and Redis are unreachable and Tier 3 is not permitted for this deployment. Retry after storage recovers. |
 
 #### Metrics
@@ -1536,7 +2098,7 @@ Deployers scaling `lenny-ops` beyond a single replica should review `ops.locks.m
 
 #### Audit Events
 
-`remediation.lock_acquired`, `remediation.lock_released`, `remediation.lock_expired`, `remediation.lock_stolen`, `remediation.lock_split_brain_detected`.
+`remediation.lock_acquired`, `remediation.lock_extended`, `remediation.lock_released`, `remediation.lock_expired`, `remediation.lock_stolen`, `remediation.lock_split_brain_detected`. (`Get` and `List` are read operations and are not individually audited; `audit.query_executed` covers them in aggregate.)
 
 ### Escalation
 
@@ -1602,7 +2164,6 @@ The event stream receives exactly one `escalation_created` event per escalation,
 - On reconciliation flush (below), the `emitted` flag is carried forward unchanged. The flush **never re-emits** — it only promotes the record to a higher-durability tier.
 - If emission itself fails (e.g., Redis and gateway buffer both unavailable at the moment of escalation creation), the `emitted` flag stays `false`. A background retry attempts emission every 30 seconds until successful. Agents querying the escalation can tell whether emission has happened via the `emitted` field.
 
-This is the fix for the "escalation duplication on tiered storage flush" failure mode identified in review.
 
 #### Reconciliation
 
@@ -1628,6 +2189,34 @@ The `escalation_created` event is emitted through the gateway's event emitter (R
 
 When **both** Redis and the gateway (and therefore both event destinations) are unreachable at escalation-creation time, `lenny-ops` sets `emitted = false` and retries the emission every 30 seconds until one of them recovers. Agents can poll the escalation to observe `emitted` transitioning to `true`.
 
+#### Storage
+
+```sql
+CREATE TABLE ops_escalations (
+    id              TEXT PRIMARY KEY,
+    severity        TEXT NOT NULL,            -- 'critical', 'warning', 'info'
+    source          TEXT NOT NULL,            -- service account / agent name
+    operation_id    TEXT,
+    alert_name      TEXT,
+    runbook_name    TEXT,
+    summary         TEXT NOT NULL,
+    diagnostic_data JSONB,
+    failed_actions  JSONB NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'open',  -- 'open', 'acknowledged', 'resolved'
+    persistence     TEXT NOT NULL,            -- 'durable-postgres', 'durable-redis', 'buffered-memory'
+    emitted         BOOLEAN NOT NULL DEFAULT false,
+    created_at      TIMESTAMPTZ NOT NULL,     -- preserved across tier flushes (NOT defaulted)
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    acknowledged_at TIMESTAMPTZ,
+    resolved_at     TIMESTAMPTZ
+);
+
+CREATE INDEX ops_escalations_status_severity ON ops_escalations (status, severity);
+CREATE INDEX ops_escalations_created_at ON ops_escalations (created_at DESC);
+```
+
+The `created_at` column is **not** defaulted to `now()` — the application supplies the original creation timestamp so that flushed-from-buffer escalations preserve their authoring time (Section 25.4 Reconciliation).
+
 #### Error Codes
 
 | Code | Category | HTTP | Description |
@@ -1641,7 +2230,7 @@ When **both** Redis and the gateway (and therefore both event destinations) are 
 
 #### Self-Health Checks
 
-A background goroutine runs every `ops.selfHealth.checkIntervalSeconds` seconds (default 10 — earlier drafts used 30s, but a 30s window can miss fast failure-and-recovery cycles entirely). The interval is tunable via Helm. Tier 1 deployments may set this back to 30s for lower overhead in dev. The check evaluates:
+A background goroutine runs every `ops.selfHealth.checkIntervalSeconds` seconds (default 10). Shorter intervals catch fast failure-and-recovery cycles; longer intervals reduce overhead. Tier 1 deployments may raise this to 30s to reduce dev-cluster overhead. The check evaluates:
 
 | Check | Condition for degraded | Condition for unhealthy |
 |---|---|---|
@@ -1651,7 +2240,9 @@ A background goroutine runs every `ops.selfHealth.checkIntervalSeconds` seconds 
 | K8s API connectivity | Latency > 2s | Unreachable |
 | Memory pressure | RSS > 80% of limit | RSS > 95% of limit |
 
-When the aggregate self-health status changes, `lenny-ops` emits an `ops_health_status_changed` event to the Redis stream. The watchdog receives this alongside platform events.
+When the aggregate self-health status changes, `lenny-ops` emits an `ops_health_status_changed` event to the Redis stream (and the gateway in-memory buffer; or its own local buffer when both are unavailable). The watchdog receives this alongside platform events.
+
+**Multi-replica scope.** Each `lenny-ops` replica runs its own self-health checks and emits its own `ops_health_status_changed` events. Events carry the replica identity (`source.replicaID` field) so subscribers can distinguish leader-replica self-health from non-leader-replica self-health. During dual gateway+Redis outages where events fall back to per-replica local buffers, `ops_health_status_changed` events are visible only to consumers connected to the emitting replica — `sessionAffinity: ClientIP` (Section 25.4 Services) keeps SSE clients on a single replica through reconnects, mitigating this for individual long-lived consumers, but no global view of self-health exists during dual outages.
 
 **Event-driven supplements.** Beyond the periodic check, `lenny-ops` also emits health-affecting events synchronously on critical state changes that would otherwise be missed within a 10s window:
 
@@ -1773,16 +2364,20 @@ Each event averages ~500 bytes (alert metadata + suggested action + payload). At
 
 ```sql
 CREATE TABLE ops_event_subscriptions (
-    id              TEXT PRIMARY KEY,
-    callback_url    TEXT NOT NULL,
-    types           TEXT[] NOT NULL,
-    severity        TEXT[],
-    secret_hash     TEXT NOT NULL,
-    description     TEXT,
-    created_by      TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    active          BOOLEAN NOT NULL DEFAULT true
+    id                    TEXT PRIMARY KEY,
+    callback_url          TEXT NOT NULL,
+    types                 TEXT[] NOT NULL,
+    severity              TEXT[],
+    secret_hash           TEXT NOT NULL,
+    secret_fingerprint    TEXT NOT NULL,             -- first 8 chars of SHA-256 (for audit)
+    description           TEXT,
+    created_by            TEXT NOT NULL,             -- OIDC sub of creator
+    created_by_tenant_id  TEXT,                      -- NULL when creator is platform-admin scope
+    tenant_filter         TEXT NOT NULL DEFAULT '*', -- "*" = match all events; otherwise a tenant ID
+    generation            BIGINT NOT NULL DEFAULT 0, -- bumped on each update; used for cache invalidation
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    active                BOOLEAN NOT NULL DEFAULT true
 );
 
 CREATE TABLE ops_event_deliveries (
@@ -1897,18 +2492,17 @@ Callback URL validation runs both at subscription creation AND at each delivery 
 - **Redirects:** the HTTP client does **not** follow redirects. A redirect from a whitelisted domain to another destination is reported as a delivery failure (receivers are expected to return 200 directly).
 - **Optional allowlist:** `ops.webhooks.domainAllowlist: ["pagerduty.com", "slack.com"]` restricts callbacks to a fixed list of domains (matches by suffix). Recommended for strict environments.
 
-This explicit per-delivery resolution replaces the vaguer "DNS pinning" phrase used in earlier drafts.
 
 #### Subscription Cache and Invalidation
 
 `lenny-ops` caches the full subscription list in memory on startup and on every subscription CRUD operation. Cache behavior:
 
 - **On CRUD,** the cache is updated synchronously in-process before the request returns. On multi-replica deployments, a `subscription_cache_invalidate` internal RPC is sent to all replicas over the `lenny-ops` headless Service. Invalidation is **version-stamped**: each subscription has a `generation` counter incremented on every update. Delivery goroutines check `generation` before each delivery; a deleted-but-not-yet-invalidated subscription will be skipped because its generation mismatches.
-- **Periodic refresh** from Postgres every 60 seconds (down from 5 minutes in earlier drafts) as a consistency safeguard. During Postgres outages, the cache ages without refresh, but per-delivery generation checks still skip deleted subscriptions that were propagated via RPC before the outage.
+- **Periodic refresh** from Postgres every 60 seconds as a consistency safeguard. During Postgres outages, the cache ages without refresh, but per-delivery generation checks still skip deleted subscriptions that were propagated via RPC before the outage.
 - **Cold-start:** if `lenny-ops` starts while Postgres is down, the cache is empty — no webhook delivery occurs. A warning is logged loudly and `ops_health_status_changed` emits with a `subscriptionsUnavailable: true` flag. When Postgres recovers, the cache is populated and delivery begins.
 - **Cache refresh is non-blocking:** the refresh runs on a background goroutine and does not block delivery goroutines. During refresh, deliveries continue against the prior snapshot.
 
-The combined effect is that a subscription deleted via the API stops receiving events within a few hundred milliseconds (synchronous cache update + RPC propagation), not up to 5 minutes as earlier drafts implied.
+The combined effect is that a subscription deleted via the API stops receiving events within a few hundred milliseconds (synchronous cache update + RPC propagation across replicas), regardless of the periodic-refresh interval.
 
 #### Tenant Isolation
 
@@ -1928,11 +2522,12 @@ Subscriptions and event delivery respect tenant boundaries:
 
 **Postgres unreachable:** Subscription CRUD endpoints return `503`. Webhook delivery and event streaming continue using cached subscriptions (see Webhook Subscription Lifecycle below). Delivery tracking (`ops_event_deliveries` table) is skipped — deliveries are best-effort without audit trail until Postgres recovers.
 
-**Redis unreachable AND gateway unreachable:** This is the one genuinely unavailable combination. `lenny-ops` cannot serve events because both sources are gone. SSE connections close with error; polling returns `503 EVENT_STREAM_UNAVAILABLE`; webhook delivery pauses. Events emitted by `lenny-ops` itself during this window are buffered locally (in `lenny-ops`'s own in-memory ring buffer — 500 events, analogous to the gateway's) and replayed to SSE/webhook consumers when either source recovers. This provides a last-resort emission channel for the operability layer's own alarms (escalations, lock events) during total event-infrastructure failure. Deduplication via `eventKey` ensures replayed events don't duplicate on recovery.
+**Redis unreachable AND gateway unreachable:** Events that originate at the **gateway** (alerts, pool state changes, session failures) cannot be observed by `lenny-ops` — they have nowhere to land. Gateway-originated events emitted during this window are lost. Events that originate in **`lenny-ops` itself** (escalations, lock changes, drift detection, ops self-health) are buffered in `lenny-ops`'s own in-memory ring buffer (500 events per replica, analogous to the gateway's) and continue to flow to SSE/webhook consumers connected to the same `lenny-ops` replica. Polling and SSE for gateway-originated events return `503 EVENT_STREAM_UNAVAILABLE`; SSE responses still serve `lenny-ops`-originated events with a `:degradation {"actualSource":"lenny-ops-local-buffer","unavailableFields":["gateway-events"]}` comment line.
 
-**Both Postgres and Redis unreachable:** Combines the two above — stream flows from the gateway buffer (if available) and from `lenny-ops`'s local buffer; webhook delivery uses cached subscriptions; subscription CRUD is unavailable; no delivery tracking.
+**`lenny-ops` local buffer mechanics.** The `lenny-ops` ring buffer is per-replica. In multi-replica deployments, only events emitted by *that* replica are in *that* replica's buffer — non-leader replicas buffer the events they emit; the leader buffers what it emits. SSE clients with `sessionAffinity: ClientIP` (the default) stay on one replica through reconnects, so a client connected to the leader sees the leader's events and a client connected to a non-leader sees that replica's events. **For any global view of `lenny-ops`-originated events during dual outages, no mechanism exists** — this is an explicit limitation of the dual-down failure mode. Recovery: when either Redis or the gateway buffer becomes available, `lenny-ops` flushes its local buffer to the recovered destination on a best-effort basis, with `eventKey` deduplication preventing duplicate consumer-side delivery.
 
-Earlier drafts described the "both unreachable" row as "fully functional within the buffer window" — that was misleading because the buffer is on the gateway, and a gateway outage eliminates it. The revised description above distinguishes gateway-available from gateway-unavailable sub-cases.
+**Both Postgres and Redis unreachable:** Combines the two above — stream flows from the gateway buffer (if available) for gateway-originated events; from `lenny-ops`'s per-replica local buffer for `lenny-ops`-originated events; webhook delivery uses cached subscriptions (only on replicas whose cache was populated before the outage — see Subscription Cache cold-start behavior); subscription CRUD is unavailable; no delivery tracking.
+
 
 ### Metrics
 
@@ -2008,8 +2603,7 @@ type SessionDiagnosis struct {
     RetryHistory     []RetryAttempt    `json:"retryHistory"`
     SuggestedActions []SuggestedAction `json:"suggestedActions"`
     RelatedLogs      *LogReference     `json:"relatedLogs,omitempty"`
-    DataSource       string            `json:"dataSource,omitempty"`  // "postgres" or "kubernetes"
-    Unavailable      []string          `json:"unavailable,omitempty"` // fields not populated due to fallback
+    Degradation      *Degradation      `json:"degradation,omitempty"`  // canonical envelope (Section 25.2)
 }
 
 type PoolBottleneck struct {
@@ -2028,10 +2622,11 @@ type PoolDiagnosis struct {
     Bottleneck       *PoolBottleneck   `json:"bottleneck,omitempty"`
     SuggestedActions []SuggestedAction `json:"suggestedActions"`
     CRDSyncStatus    SyncStatus        `json:"crdSyncStatus"`
-    MetricsSource    string            `json:"metricsSource,omitempty"` // "prometheus" or "gateway-scrape"
-    DataSource       string            `json:"dataSource,omitempty"`    // "postgres" or "kubernetes"
+    Degradation      *Degradation      `json:"degradation,omitempty"`  // canonical envelope (Section 25.2)
 }
 ```
+
+When the diagnostic is served from a fallback source, the `Degradation` envelope's `actualSource` carries values like `"kubernetes"` (K8s API fallback for pod state) or `"gateway-scrape"` (per-replica `/metrics` fallback when Prometheus is unavailable). `unavailableFields` lists any fields the fallback couldn't populate (e.g., `"retryHistory"`, `"sessionMetadata"` when Postgres is down).
 
 ### Data Sources
 
@@ -2060,15 +2655,17 @@ type PoolDiagnosis struct {
 
 ### Degradation
 
-**Postgres unreachable:** Session and pool diagnostics fall back to the K8s API for pod state and return partial results (HTTP 207 `DIAGNOSTICS_PARTIAL`). The response includes `"dataSource": "kubernetes"` and `"unavailable": ["retryHistory", "sessionMetadata"]` listing which fields could not be populated. The cause chain is built from K8s pod status — exit codes, OOM flags, and container states are available from the K8s API. Retry history and session metadata are unavailable. Connectivity check still runs and reports Postgres as unreachable.
+All degraded responses use the canonical `degradation` envelope (Section 25.2). Cases:
 
-**K8s API unreachable:** Session diagnosis omits pod events with `"podEventsUnavailable": true` (HTTP 207 `DIAGNOSTICS_PARTIAL`). Pool diagnosis cannot fall back for pod counts.
+**Postgres unreachable:** Session and pool diagnostics fall back to the K8s API for pod state and return partial results (HTTP 207 `DIAGNOSTICS_PARTIAL`). The `degradation` envelope reports `actualSource: "kubernetes"`, `primarySource: "postgres"`, and `unavailableFields: ["retryHistory", "sessionMetadata"]`. The cause chain is built from K8s pod status — exit codes, OOM flags, and container states are available from the K8s API. Connectivity check still runs and reports Postgres as unreachable.
+
+**K8s API unreachable:** Session diagnosis omits pod events; `degradation.unavailableFields` includes `"podEvents"` (HTTP 207 `DIAGNOSTICS_PARTIAL`). Pool diagnosis cannot fall back for pod counts.
 
 **Both Postgres and K8s API unreachable:** Session and pool diagnostics return `503`. Connectivity check still runs and reports both as unreachable.
 
-**Prometheus unreachable:** Pool and credential diagnostics fall back to scraping all gateway replicas' `/metrics` via headless Service; response includes `"metricsSource": "gateway-scrape"`.
+**Prometheus unreachable:** Pool and credential diagnostics fall back to scraping all gateway replicas' `/metrics` via headless Service; `degradation.actualSource: "gateway-scrape"`.
 
-**Gateway unreachable:** Pool config and connector probes fail; diagnostics return partial results (207).
+**Gateway unreachable:** Pool config and connector probes fail; diagnostics return partial results (207) with `degradation.unavailableFields: ["config", "connectors"]`.
 
 ### Metrics
 
@@ -2137,9 +2734,9 @@ Field descriptions:
 - `requires` — access levels used in the runbook's steps. Agents skip steps they cannot execute.
 - `related` — pointers to related runbooks for chained diagnosis.
 
-**2. Multi-path steps with structured access markers.** Each diagnosis and remediation step provides commands at multiple access levels. To enable agent parsing without an LLM-only pass, each access level is preceded by an HTML comment that machine consumers parse:
+**2. Multi-path steps with structured access markers.** Each diagnosis and remediation step provides commands at multiple access levels. To enable agent parsing without an LLM-only pass, each access level is preceded by an HTML comment that machine consumers parse. Below is the literal markdown source of an example step (using four-tilde fences for the outer block to avoid nested-fence confusion):
 
-```markdown
+~~~~markdown
 ### Step 1: Check pool status
 
 <!-- access: lenny-ctl -->
@@ -2157,7 +2754,7 @@ GET /v1/admin/diagnostics/pools/<pool-name>
 kubectl get sandboxes -n lenny-agents -l pool=<pool-name>
 kubectl describe sandbox <pod-name> -n lenny-agents
 ```
-```
+~~~~
 
 The `<!-- access: ... -->` comment lines are invisible to humans reading the rendered markdown (they're HTML comments) but are parsed by `lenny-ops`'s runbook indexer. The indexer extracts the structured form and exposes it via:
 
@@ -2592,6 +3189,8 @@ Any pre-SchemaMigration state → RolledBack
 
 `lenny-ops` upgrades **first**. This is critical: CRD manifests and database migrations are compiled into the `lenny-ops` binary. The old `lenny-ops` cannot apply new CRDs or run new migrations — it doesn't have them. By rolling `lenny-ops` first, the new binary takes over and orchestrates the rest of the upgrade with the correct assets.
 
+**Progress.** `GET /v1/admin/platform/upgrade/status` and the Operations Inventory (Section 25.4) return the canonical `progress` envelope (Section 25.2). `totalSteps` is 7 (one per phase); `currentStep` is the phase name; `etaSeconds` uses `etaMethod: "fixed_phase_durations"` (per-phase hard-coded durations) combined with `historical_p50` when `ops_operation_baselines` has samples. SchemaMigration nests its own sub-progress (migration N of M across S shards) into `currentStepDetail`. The `operation_progressed` event fires on every phase transition.
+
 #### Phase Details
 
 **1. Preflight** (old `lenny-ops`):
@@ -2607,7 +3206,7 @@ Any pre-SchemaMigration state → RolledBack
 - Old `lenny-ops` patches its own Deployment's image tag via K8s API to the resolved `ops` image reference. The patch is a **strategic merge patch** using the digest form when `platform.registry.requireDigest: true` (digests are stable across registry mutations).
 - Old `lenny-ops` pod terminates as K8s rolls the Deployment (RollingUpdate strategy, `maxUnavailable: 0`, `maxSurge: 1`).
 - New `lenny-ops` pod starts. On startup, it checks `platform_upgrade_state`. If `current_phase` is `OpsRoll` and `target_version` matches its own compiled-in version, it advances to `CRDUpdate`.
-- **OpsRoll timeout (10 minutes).** If the upgrade stays in `OpsRoll` for longer than `platform.upgrade.opsRollTimeoutSeconds` (default 600), the old pod (if still running) detects the timeout via a watchdog goroutine and automatically rolls back: it re-patches its Deployment to the previous image reference (stored in `platform_upgrade_state.metadata.previousImages.ops`) and sets `current_phase: "RolledBack"` with error `OPS_ROLL_TIMEOUT`. This is the fix for the "upgrade stuck on image pull failure" failure mode — previously, the state machine would hang for up to 1 hour waiting for the watchdog alert.
+- **OpsRoll timeout (10 minutes).** If the upgrade stays in `OpsRoll` for longer than `platform.upgrade.opsRollTimeoutSeconds` (default 600), the old pod (if still running) detects the timeout via a watchdog goroutine and automatically rolls back: it re-patches its Deployment to the previous image reference (stored in `platform_upgrade_state.metadata.previousImages.ops`) and sets `current_phase: "RolledBack"` with error `OPS_ROLL_TIMEOUT`. Without this timeout, an upgrade stuck on an image pull failure would hang until the `PlatformUpgradeStuck` alert fires (default 1h).
 - **Image pull failure event.** When the old pod detects that the new pod is stuck in `ImagePullBackOff` or `CrashLoopBackOff` (observed via K8s pod watch with a 60s observation window), it emits `platform_upgrade_image_pull_failed` with the pod description (image reference, failure reason). This surfaces the concrete failure to the agent before the timeout triggers automatic rollback.
 - **Observability during OpsRoll.** Upgrade state transitions to `target_phase: "CRDUpdate"` only when the new pod writes an `ops_healthy` heartbeat to Postgres (`platform_upgrade_state.metadata.opsRollHeartbeat`). If the heartbeat is not written within the timeout, the rollback logic above kicks in.
 
@@ -2649,9 +3248,20 @@ Rollback is available before `SchemaMigration` completes. The rollback path reve
 
 After `SchemaMigration` completes, the database schema may be incompatible with the old binaries. Rollback returns `409 UPGRADE_ROLLBACK_UNAVAILABLE` with `details.requiresRestore: true` and `details.backupId` pointing to the pre-migration backup.
 
+**Drift snapshot cleanup on rollback.** When rollback completes (state transitions to `RolledBack`), `lenny-ops` deletes the `bootstrap_seed_snapshot_target` row for this upgrade (matched by `upgrade_id`), if one was written. The target snapshot is written by the new `lenny-ops` early in OpsRoll (Section 25.10), so:
+- Rollback during **Preflight** is a no-op for the snapshot — none was written. The DELETE matches zero rows; this is expected.
+- Rollback during **OpsRoll or later phases** deletes the target snapshot row.
+After this point, `GET /v1/admin/drift?against=target` returns `404 DRIFT_NO_TARGET_SNAPSHOT` until a new upgrade starts. Without this cleanup, drift detection would keep comparing against an aborted upgrade's desired state, misleading operators about what the platform is supposed to look like.
+
 #### Pausing and Resuming
 
 The state machine pauses between phases and requires `POST /v1/admin/platform/upgrade/proceed` to advance. This allows the agent or operator to verify health at each step. `POST /v1/admin/platform/upgrade/pause` can be called at any time to stop the state machine after the current phase completes.
+
+**Behavior across long pauses (hours to days).** The upgrade state lives in the `platform_upgrade_state` Postgres row, not in process memory — a `lenny-ops` restart or leader-election change during a paused upgrade is harmless. When a new leader takes over (after lease expiry following a pod restart), it reads the current phase and resumes from there only when an explicit `proceed` is received. Long pauses do NOT auto-resume — the state machine waits indefinitely.
+
+**Idempotency keys for `proceed`/`pause`/`rollback`.** Each of these endpoints accepts (and at Tier 2/3 requires) an `Idempotency-Key` header per Section 25.4. Because these are multi-phase operations, they use the **long-running TTL** (`ops.idempotency.longRunningKeyTTLSeconds`, default 7d) rather than the standard 24h TTL. Agents pausing an upgrade for longer than 7 days should generate a fresh key for the eventual `proceed` call — the operation is idempotent regardless (replaying with a fresh key into the existing state machine yields the same outcome), but the per-key replay-protection window is 7 days.
+
+**Watchdog interaction.** The `PlatformUpgradeStuck` alert fires when an upgrade has been in a non-terminal phase (including `Paused`) for >1 hour by default. Operators expecting longer pauses should silence this alert for the duration of the planned pause to avoid noise; the alert is a safety net for unintentionally-stuck upgrades, not a hard limit on pause duration.
 
 ### Config Diff and Config Apply
 
@@ -2757,7 +3367,7 @@ Reads from the existing `audit_log` table (Section 11.7) via `StoreRouter.AuditS
 - `broken` — hash does NOT match predecessor; tampering or data corruption.
 - `unchecked` — verification wasn't performed (e.g., cross-shard boundary where hashes are per-shard).
 
-**Chain gap detection.** Earlier drafts used `chainIntegrity` only for tamper detection. It's extended to also detect **temporal gaps** caused by degraded-mode writes:
+**Chain gap detection.** `chainIntegrity` also detects **temporal gaps** caused by degraded-mode writes (not just tampering):
 
 - `gap_suspected` — sequence number jumps in the event stream suggest a gap (e.g., event #1000 then #1150 with no events between). Returned when querying across a period during which Postgres was unavailable.
 - The response's `auditMetadata` object lists suspected gap windows: `[{"start": "2026-04-16T10:22Z", "end": "2026-04-16T10:30Z", "reason": "postgres_unreachable"}]`. This is computed from `ops_postgres_outage_log` (a small table recording when `lenny-ops` detected Postgres unreachable) and cross-referenced with event sequence numbers.
@@ -2778,7 +3388,7 @@ Deferred writes are applied to `audit_log` during reconciliation in original-tim
 
 ### Diagnostics Audit Rate Limiting
 
-Per review, the diagnostics endpoints (`diagnostics.session_diagnosed`, `diagnostics.pool_diagnosed`, `diagnostics.credential_pool_diagnosed`, `diagnostics.connectivity_checked`) can emit hundreds of audit events per minute at Tier 3 if agents poll aggressively. Rate limiting:
+The diagnostics endpoints (`diagnostics.session_diagnosed`, `diagnostics.pool_diagnosed`, `diagnostics.credential_pool_diagnosed`, `diagnostics.connectivity_checked`) can emit hundreds of audit events per minute at Tier 3 if agents poll aggressively. Rate limiting:
 
 - **Per-resource coalescing:** repeated diagnostic calls for the same `{resourceType, resourceId}` within a 60s window emit only one audit event with an incremented `invocationCount` field, instead of one per call.
 - **Rate limit override:** `ops.audit.diagnosticsRatePerMinute` (default 60) caps the number of distinct diagnostic audit events per minute per service account. Excess is dropped silently with an `lenny_audit_rate_limited_total` counter increment (so operators can detect).
@@ -2856,7 +3466,25 @@ A field-by-field JSON diff is computed for each resource. Differences are classi
 
 This addresses the "stale snapshot" failure mode: if the operator updated Helm values but the snapshot wasn't refreshed (e.g., because the upgrade orchestrator was bypassed for an emergency manual fix), all subsequent drift detection runs against an out-of-date desired state. Validation surfaces the issue and points operators toward `POST /v1/admin/drift/snapshot/refresh`.
 
-The snapshot is automatically refreshed by the upgrade state machine on `Verification` phase completion (Section 25.8) — `lenny-ops` loads the rendered Helm values from the chart's ConfigMap and writes the snapshot. Operators bypassing the upgrade orchestrator (manual `kubectl apply`) must call `snapshot/refresh` themselves.
+**When the snapshot is updated.** The `bootstrap_seed_snapshot` is updated at two well-defined points to make drift behavior predictable across upgrades:
+
+1. **Early in OpsRoll (after the new `lenny-ops` pod becomes Ready, before CRDUpdate).** The new `lenny-ops` binary — which understands the new schema and configuration shape — reads the rendered Helm values from the chart's ConfigMap and writes them into `bootstrap_seed_snapshot_target` (a separate row from the live snapshot). The OLD `lenny-ops` cannot compute this snapshot because it lacks the new version's type definitions; the new binary is required. This means the target snapshot is only available after OpsRoll succeeds. During Preflight (run by old `lenny-ops`), drift detection has no target snapshot — `GET /v1/admin/drift?against=target` returns `404 DRIFT_NO_TARGET_SNAPSHOT`. After OpsRoll completes, drift detection during paused phases (CRDUpdate, SchemaMigration, GatewayRoll, ControllerRoll, Verification) compares the current running state against **both** the live snapshot (showing pre-upgrade drift) and the target snapshot (showing what the upgrade will change).
+2. **At the end of an upgrade (Verification phase completion).** The target snapshot is promoted to the live snapshot atomically. From this point onward, `GET /v1/admin/drift` compares against the new desired state.
+
+`GET /v1/admin/drift` returns the comparison against the **live** snapshot by default. During an active upgrade, agents can pass `?against=target` to compare against the in-flight target snapshot, or `?against=both` to receive both diffs in a single response (useful for understanding "what's drifted that the upgrade won't fix").
+
+Operators bypassing the upgrade orchestrator (manual `kubectl apply` of resources, direct API mutations) must call `snapshot/refresh` themselves to reflect their out-of-band changes in the live snapshot.
+
+```sql
+CREATE TABLE bootstrap_seed_snapshot (
+    id            TEXT PRIMARY KEY DEFAULT 'live',  -- 'live' or 'target'
+    desired_state JSONB NOT NULL,
+    source        TEXT NOT NULL,         -- 'helm-values', 'caller-supplied', 'snapshot-refresh'
+    upgrade_id    TEXT,                  -- non-null when id='target' and an upgrade is in flight
+    written_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    written_by    TEXT NOT NULL
+);
+```
 
 #### Running-State Caching
 
@@ -2878,7 +3506,9 @@ Narrow scopes complete in seconds even at Tier 3; `scope=all` may take 10-30s on
 
 ### Reconciliation
 
-`POST /v1/admin/drift/reconcile` calls admin API `PUT` endpoints via `GatewayClient` to apply the desired state. Each call goes through full RBAC, validation, and audit on the gateway side. Following the canonical dry-run pattern (Section 25.2), omitting `confirm: true` returns a preview; the older `mode: "dry-run"` parameter is deprecated.
+`POST /v1/admin/drift/reconcile` calls admin API `PUT` endpoints via `GatewayClient` to apply the desired state. Each call goes through full RBAC, validation, and audit on the gateway side. Following the canonical dry-run pattern (Section 25.2), omitting `confirm: true` returns a preview.
+
+In-flight reconciliations appear in the Operations Inventory (Section 25.4) with `kind: "drift_reconciliation"` and the canonical `progress` envelope: `totalSteps` = resources-to-reconcile count, `currentStep` = resource currently being reconciled (`"{resourceType}:{resourceId}"`), `etaMethod: "linear_extrapolation"`. The `operation_progressed` event fires on every resource reconciliation.
 
 ### Degradation
 
@@ -2901,6 +3531,7 @@ Narrow scopes complete in seconds even at Tier 3; `scope=all` may take 10-30s on
 |------|----------|------|-------------|
 | `DRIFT_RECONCILE_PARTIAL` | `TRANSIENT` | 207 | Some resources could not be reconciled |
 | `DRIFT_DESIRED_STATE_MISSING` | `PERMANENT` | 404/503 | No snapshot exists and no desired state supplied by caller |
+| `DRIFT_NO_TARGET_SNAPSHOT` | `PERMANENT` | 404 | `?against=target` requested but no upgrade is in flight (no target snapshot written). |
 
 ### Audit Events
 
@@ -2927,6 +3558,9 @@ APIs for managing platform backups, extending the disaster recovery procedures i
 | `PUT` | `/v1/admin/backups/policy` | Update policy. Body: `{"retainDays": 30, "retainCount": 10, "retainMinFull": 3}` |
 | `POST` | `/v1/admin/restore/preview` | Analyze restore impact without executing. Body: `{"backupId": "..."}`. Returns affected resources, version compatibility, and estimated downtime. |
 | `POST` | `/v1/admin/restore/execute` | Execute restore. Body: `{"backupId": "...", "confirm": true}`. Requires `confirm: true` — without it, returns a dry-run preview identical to `/restore/preview`. |
+| `GET` | `/v1/admin/restore/safety-check` | Compare a backup against current state to estimate data loss. Params: `?backupId=`. |
+| `GET` | `/v1/admin/restore/{id}/status` | Per-shard status of an in-flight or completed restore (for monitoring and failure diagnosis). |
+| `POST` | `/v1/admin/restore/resume` | Resume a partially-completed restore. Params: `?restoreId=`. Caller must hold the original `restore:platform` lock. |
 
 ### Go Interface
 
@@ -2944,7 +3578,10 @@ type BackupService interface {
     GetPolicy(ctx context.Context) (*RetentionPolicy, error)
     UpdatePolicy(ctx context.Context, policy RetentionPolicy) (*RetentionPolicy, error)
     PreviewRestore(ctx context.Context, backupID string) (*RestorePreview, error)
+    SafetyCheckRestore(ctx context.Context, backupID string) (*RestoreSafetyCheck, error)
     ExecuteRestore(ctx context.Context, req RestoreRequest) (*RestoreResult, error)
+    GetRestoreStatus(ctx context.Context, restoreID string) (*RestoreState, error)
+    ResumeRestore(ctx context.Context, restoreID string) (*RestoreResult, error)
 }
 ```
 
@@ -3001,10 +3638,9 @@ To avoid orphaned Jobs when the Postgres row insert fails, the creation sequence
 4. The Job executes, writes to MinIO, and updates the row to `completed` or `failed` on exit (via a Postgres update from inside the Job pod).
 
 A reconciler goroutine in `lenny-ops` runs every 60s and:
-- Finds `ops_backups` rows with `status: "pending"` older than 2 minutes (Job creation never happened) and marks them `status: "failed"` with error `JOB_CREATE_FAILED`.
+- Finds `ops_backups` rows with `status: "pending"` older than 2 minutes (Job creation never happened) and marks them `status: "failed"` with `error: "JOB_CREATE_FAILED"` (the row-level reason; agents observe this via `GET /v1/admin/backups/{id}`. Distinct from the HTTP-level `BACKUP_JOB_CREATION_FAILED` which is returned synchronously when `lenny-ops` cannot reach the K8s API to create the Job in the first place).
 - Finds K8s Jobs in `lenny-system` with the `lenny.dev/backup-id` annotation where no matching row exists (stale Job from earlier versions) and deletes them.
 
-This closes the "backup Job orphan on creation failure" failure mode identified in review.
 
 #### Job Pod Specification
 
@@ -3062,6 +3698,10 @@ The Helm chart renders a suggested MinIO bucket policy that:
 
 Operators deploying on cloud object stores (S3, GCS, Azure Blob) should apply equivalent policies at the cloud provider level.
 
+#### Backup Progress
+
+`GET /v1/admin/backups/{id}` includes the canonical `progress` envelope (Section 25.2) while `status IN ('running', 'verifying')`. For `running` backups: `percent` = `bytesWritten / bytesEstimated` (size-based), `etaMethod: "linear_extrapolation"`, `rateMetric: {"name": "bytes_per_second", "value": ...}`. For `verifying` backups: `percent` = `bytesScanned / archiveSize`, `etaMethod: "linear_extrapolation"`. The `operation_progressed` event fires on percent thresholds (10/25/50/75/90/95/99).
+
 ### Scheduled Backups
 
 A leader-elected goroutine in `lenny-ops` evaluates cron expressions from the `ops_backup_schedule` table and creates Jobs at the scheduled times. Default schedule: full backup daily at 02:00 UTC, Postgres backup every 6 hours. The schedule is stored in Postgres and modifiable at runtime via `PUT /v1/admin/backups/schedule`.
@@ -3072,12 +3712,12 @@ After each successful backup, `lenny-ops` evaluates the retention policy and del
 
 #### Tier-Based Retention Defaults
 
-The defaults shown in the Helm values block above are conservative; tier presets adjust them:
+The base values in the canonical Helm values block are the **Tier 2** defaults. Tier preset files (`values-tier1.yaml`, `values-tier3.yaml`) override them as follows:
 
 | Tier | `retainDays` | `retainCount` | `retainMinFull` | Notes |
 |------|-------------|---------------|-----------------|-------|
 | 1 (dev) | 7 | 5 | 2 | Minimize storage cost; recovery from a week-old backup is acceptable for dev. |
-| 2 (staging) | 14 | 10 | 3 | Standard middle ground. |
+| 2 (staging/base) | 30 | 10 | 3 | Default values from canonical Helm values block. |
 | 3 (prod) | 90 | 30 | 7 | Long retention enables forensics and complies with common audit requirements (SOC 2, ISO 27001). |
 
 **Pre-restore backups** (created automatically by `restore/execute`) follow `backups.retention.preRestoreRetainDays` (default 7) independently — they're cleaned aggressively to avoid unbounded growth from repeated failed restores.
@@ -3102,10 +3742,56 @@ The restore process:
 
 1. **Pre-validate.** Calls `/v1/admin/restore/safety-check` internally (see below) and aborts if `safe: false` unless `acknowledgeDataLoss: true` was supplied.
 2. **Acquire lock.** Takes a remediation lock on scope `restore:platform` (Section 25.4). Fails with `409 REMEDIATION_LOCK_CONFLICT` if another restore is in progress.
-3. **Pre-restore backup.** Creates a full backup tagged `type: "pre-restore"` to MinIO. This backup is retained for 7 days by default (configurable via `backups.retention.preRestoreRetainDays`) and is automatically deleted when the restore completes successfully (to avoid unbounded storage growth from repeated failed restore attempts). Failed restores keep the pre-restore backup for the full retention window for post-mortem recovery.
-4. **Create the restore K8s Job.** Runs `pg_restore` against each shard. The Job has the same security profile as backup Jobs but with write access on the target shards.
-5. **Emit events.** `restore_started` on kick-off; `restore_completed` or `restore_failed` on exit.
-6. **Gateway restart.** On completion, `lenny-ops` patches the gateway Deployment's annotations to trigger a rolling restart (so the gateway picks up restored schema/config). Agents monitoring `platform_upgrade_*` events can observe this.
+3. **Pre-restore backup.** Creates a full backup tagged `type: "pre-restore"` to MinIO. This backup is retained for 7 days by default (configurable via `backups.retention.preRestoreRetainDays`) and is automatically deleted when the restore completes successfully (see Pre-Restore Backup Lifecycle below). Failed restores keep the pre-restore backup for the full retention window for post-mortem recovery.
+4. **Create the restore K8s Job.** Runs `pg_restore` against each shard. The Job has the same security profile as backup Jobs but with write access on the target shards. Per-shard progress is recorded in `ops_restore_state` (see Failure and Recovery below).
+5. **Emit events.** `restore_started` on kick-off; per-shard `restore_shard_completed` events as each shard finishes; `restore_completed` (all shards) or `restore_failed` (any shard fails) on exit.
+6. **Gateway restart.** On successful completion, `lenny-ops` patches the gateway Deployment's annotations to trigger a rolling restart (so the gateway picks up restored schema/config). Agents monitoring `platform_upgrade_*` events can observe this. **Not** triggered on failure — a partial-restore platform should not be served until the operator decides on recovery.
+7. **Lock release on success.** After the gateway rolling restart in step 6 has completed (`status.updatedReplicas == status.replicas`), `lenny-ops` releases the `restore:platform` remediation lock automatically. From that point, subsequent `restore/execute` calls are unblocked. The pre-restore backup becomes eligible for deletion (per Pre-Restore Backup Lifecycle below). On **failure**, the lock is NOT auto-released — see Restore Failure and Recovery.
+
+#### Pre-Restore Backup Lifecycle
+
+Pre-restore backups are managed by a single deletion path to avoid races between immediate-deletion and the daily retention cron:
+
+- **On successful restore completion (step 7),** `lenny-ops` updates the pre-restore backup's `ops_backups` row in Postgres: `status: "expired", expires_at: now()`. It does NOT delete the MinIO object directly.
+- **The retention enforcement Job** (which already deletes expired backups from both MinIO and Postgres atomically) handles the actual MinIO `DeleteObject` and the Postgres row removal in a coordinated sequence (see Section 25.11 Retention Enforcement). The retention Job runs after every backup AND on the daily 03:30 UTC cron, so an expired pre-restore backup is cleaned up within minutes typically.
+- **The retention Job is leader-elected** (runs only on the leader `lenny-ops` replica) so concurrent runs across replicas are not possible.
+- This single-deletion-path design ensures the pre-restore backup is never partially deleted (Postgres row gone but MinIO object lingering, or vice versa).
+
+#### Restore Failure and Recovery
+
+Restore is multi-shard and partial failure is possible: shards 1–2 may complete while shard 3 fails. The restore service records per-shard progress so failures are recoverable:
+
+```sql
+CREATE TABLE ops_restore_state (
+    id                TEXT PRIMARY KEY,
+    backup_id         TEXT NOT NULL,
+    started_at        TIMESTAMPTZ NOT NULL,
+    completed_at      TIMESTAMPTZ,
+    status            TEXT NOT NULL,      -- 'running', 'completed', 'failed', 'paused'
+    shard_states      JSONB NOT NULL,     -- {shard_id: {status, started_at, completed_at, error}}
+    started_by        TEXT NOT NULL,
+    operation_id      TEXT,
+    pre_restore_backup_id TEXT NOT NULL,  -- safety-net backup created in step 3
+    failed_shard      TEXT,               -- first shard that failed (if status=failed)
+    error             TEXT
+);
+```
+
+**Failure semantics.** If any shard's `pg_restore` fails:
+
+- The Job exits non-zero, sets `status: "failed"`, records `failed_shard` and `error`.
+- `restore_failed` event is emitted with the per-shard breakdown.
+- **The remediation lock on `restore:platform` is NOT auto-released.** It remains held to prevent a competing restore from starting against partially-restored state. The operator must explicitly release via `DELETE /v1/admin/remediation-locks/{id}` (audited) or steal it (audited via `Steal`) to attempt recovery.
+- The pre-restore backup is retained for the full `backups.retention.preRestoreRetainDays` window.
+- The platform is in a partial-restore state. Sessions targeting restored shards may succeed; sessions targeting unrestored shards may fail with stale or inconsistent data. Operators should NOT direct production traffic to the platform until recovery completes.
+
+**Recovery options after failure:**
+
+- **Resume.** `POST /v1/admin/restore/resume?restoreId={id}` re-creates the Job, restoring only `shard_states` entries with `status != "completed"`. Idempotent — successfully-restored shards are skipped. The operator must first fix the underlying issue (storage space, schema mismatch, etc.). Lock semantics: resume requires the caller to be the **current `acquiredBy`** of the `restore:platform` remediation lock. If the lock has been stolen by another operator (Section 25.4 Stealing), the new holder is now `acquiredBy` and may resume; the original caller must steal it back to regain control. If the lock has been released or expired, resume returns `409 RESTORE_LOCK_REQUIRED` with instructions to re-acquire (`POST /v1/admin/remediation-locks` with scope `restore:platform`) before retrying. This prevents two operators from concurrently resuming the same partial restore.
+- **Restore to a different (older) backup.** First, release the held `restore:platform` lock from the failed restore (`DELETE /v1/admin/remediation-locks/{id}` if the operator is still the `acquiredBy`, or `Steal` if not — both are audited). Then initiate a fresh `restore/execute` with the earlier backup ID; the new call acquires its own lock. The `acknowledgeDataLoss: true` requirement still applies; the safety check considers the partial-restore state as "current."
+- **Manual per-shard repair.** For deeply partial failures, operators access Postgres directly via the Total-Outage Recovery Path E (Section 25.15). Per-shard rollback is not provided as an API primitive; recovery in this case is an operator-driven Postgres workflow.
+
+`GET /v1/admin/restore/{id}/status` returns the full `ops_restore_state` row including per-shard status — agents poll this for progress and to diagnose failures. The response includes the canonical `progress` envelope (Section 25.2): `totalSteps` = shard count + 1 (the post-restore gateway restart), `currentStep` = the shard currently being restored or `"gateway-restart"`, `etaSeconds` derived from `linear_extrapolation` over completed shards + `historical_p50` for the gateway restart phase. The `operation_progressed` event fires on every shard completion.
 
 #### Safety Check
 
@@ -3241,28 +3927,40 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `BACKUP_VERIFICATION_FAILED` | `PERMANENT` | 422 | Checksum mismatch or corrupt archive |
 | `RESTORE_INCOMPATIBLE` | `PERMANENT` | 422 | Backup version incompatible with current platform |
 | `RESTORE_REQUIRES_CONFIRM` | `POLICY` | 400 | `confirm: true` not provided; dry-run preview returned |
+| `RESTORE_ACKNOWLEDGE_REQUIRED` | `POLICY` | 400 | `confirm: true` supplied but `acknowledgeDataLoss: true` is missing; safety check returned `safe: false`. |
+| `RESTORE_LOCK_REQUIRED` | `POLICY` | 409 | `restore/resume` called but the caller does not hold the `restore:platform` lock; re-acquire and retry. |
+| `RESTORE_NOT_FOUND` | `PERMANENT` | 404 | Restore ID not found in `ops_restore_state`. |
 | `BACKUP_STORAGE_UNREACHABLE` | `TRANSIENT` | 503 | MinIO unreachable |
 
 ### Audit Events
 
-`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.completed`, `restore.failed`.
+`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`.
 
 ---
 
 ## 25.12 MCP Management Server
 
-Lenny exposes its operational surface as an MCP tool server, enabling any MCP-capable agent to manage Lenny natively. An agent that speaks MCP can discover all available operational tools, inspect their schemas, and invoke them without REST API knowledge.
+Lenny exposes its full admin and operability surface as an MCP tool server, enabling any MCP-capable agent to manage Lenny natively — not just observe it. An agent that speaks MCP can discover every tool (operability + platform management), inspect schemas, and invoke them without REST API knowledge.
+
+### Scope
+
+Every admin-API endpoint with documented RBAC is exposed as an MCP tool — not only the operability endpoints. This includes:
+
+- **Operability** (Sections 25.3–25.11): health, recommendations, diagnostics, runbooks, events, audit, drift, backup/restore, upgrade, remediation locks, escalations, caller identity, operations inventory.
+- **Platform management** (documented in other sections of `SPEC.md`): tenant lifecycle (create/update/suspend/resume/delete), pool CRUD (create/update/delete in addition to scaling), credential pool management (add/rotate/retire credentials, provider config), runtime registration (register/update/retire), quota management, delegation policy.
+
+The MCP inventory is the canonical agent interface for Lenny. An MCP-first agent can do anything a REST caller can. See "Admin API MCP Extension" in "Edits Required Outside Section 25" for the requirement that every admin-API endpoint carries the `x-lenny-*` extensions enabling auto-generation.
 
 ### Architecture
 
-The `ManagementMCPAdapter` lives in `lenny-ops` at `/mcp/management` on port 8090. `/mcp/runtimes/{name}` (Section 15) proxies MCP tool calls to agent pods; `/mcp/management` serves Lenny's own operational tools. They are separate MCP servers with separate capability negotiation and authentication scopes.
+The `ManagementMCPAdapter` lives in `lenny-ops` at `/mcp/management` on port 8090. `/mcp/runtimes/{name}` (Section 15) proxies MCP tool calls to agent pods; `/mcp/management` serves Lenny's own management tools. They are separate MCP servers with separate capability negotiation and authentication scopes.
 
-Tool schemas are auto-generated from the OpenAPI spec at build time. Tool invocations are routed to either:
+Tool schemas are auto-generated from the canonical OpenAPI spec (Section 15.1) at build time. Tool invocations are routed transparently to either:
 
-- **`lenny-ops` handlers** — for diagnostics, runbook index, audit, drift, backup, events, upgrades, remediation locks, escalations.
-- **Gateway admin API via `GatewayClient`** — for health, recommendations, pool scaling, runtime deployment, circuit breakers, and all other admin CRUD operations.
+- **`lenny-ops` handlers** — for ops-owned endpoints.
+- **Gateway admin API via `GatewayClient`** — for gateway-owned endpoints (all platform management plus health and recommendations).
 
-The routing is transparent to the MCP client — all tools appear in a single tool inventory.
+The routing is invisible to the MCP client — all tools appear in a single tool inventory.
 
 ```go
 // pkg/ops/mcp/adapter.go
@@ -3301,8 +3999,24 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_upgrade_check` | `GET /v1/admin/platform/upgrade-check` | Check for available upgrades |
 | `lenny_upgrade_status` | `GET /v1/admin/platform/upgrade/status` | Current upgrade state |
 | `lenny_backups_list` | `GET /v1/admin/backups` | List backups |
+| `lenny_restore_safety_check` | `GET /v1/admin/restore/safety-check` | Compare a backup against current state to estimate data loss before restore |
+| `lenny_restore_status` | `GET /v1/admin/restore/{id}/status` | Per-shard status of an in-flight or completed restore |
 | `lenny_locks_list` | `GET /v1/admin/remediation-locks` | List active remediation locks |
 | `lenny_logs_pod` | `GET /v1/admin/logs/pods/{ns}/{name}` | Get pod container logs |
+| `lenny_me_get` | `GET /v1/admin/me` | Caller identity, authorization, rate-limits, platform capabilities |
+| `lenny_me_authorized_tools` | `GET /v1/admin/me/authorized-tools` | Tool inventory pre-filtered to what caller can invoke |
+| `lenny_me_operations` | `GET /v1/admin/me/operations` | Caller's in-flight operations |
+| `lenny_operations_list` | `GET /v1/admin/operations` | Unified inventory of in-flight operations across all subsystems |
+| `lenny_operation_get` | `GET /v1/admin/operations/{id}` | Get a single operation by canonical operation ID |
+| `lenny_tenant_list` | `GET /v1/admin/tenants` | List tenants |
+| `lenny_tenant_get` | `GET /v1/admin/tenants/{id}` | Get a tenant |
+| `lenny_pool_list` | `GET /v1/admin/pools` | List warm pools |
+| `lenny_pool_get` | `GET /v1/admin/pools/{name}` | Get a pool's configuration |
+| `lenny_credential_pool_list` | `GET /v1/admin/credential-pools` | List credential pools |
+| `lenny_credential_pool_get` | `GET /v1/admin/credential-pools/{name}` | Get a credential pool's configuration |
+| `lenny_runtime_list` | `GET /v1/admin/runtimes` | List registered runtimes |
+| `lenny_runtime_get` | `GET /v1/admin/runtimes/{name}` | Get a runtime's definition |
+| `lenny_quota_get` | `GET /v1/admin/tenants/{id}/quota` | Get a tenant's quota |
 
 #### Action Tools (mutating)
 
@@ -3319,10 +4033,36 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_backup_verify` | `POST /v1/admin/backups/{id}/verify` | Verify backup integrity |
 | `lenny_restore_preview` | `POST /v1/admin/restore/preview` | Preview restore impact |
 | `lenny_restore_execute` | `POST /v1/admin/restore/execute` | Execute restore (requires confirm) |
+| `lenny_restore_resume` | `POST /v1/admin/restore/resume` | Resume a partially-completed restore |
+| `lenny_drift_validate` | `POST /v1/admin/drift/validate` | Validate a caller-supplied desired state against the stored snapshot |
+| `lenny_drift_snapshot_refresh` | `POST /v1/admin/drift/snapshot/refresh` | Replace the stored desired-state snapshot |
 | `lenny_lock_acquire` | `POST /v1/admin/remediation-locks` | Acquire a remediation lock |
+| `lenny_lock_get` | `GET /v1/admin/remediation-locks/{id}` | Get a single lock's current state (validate ownership) |
+| `lenny_lock_extend` | `PATCH /v1/admin/remediation-locks/{id}` | Extend a held lock's TTL |
 | `lenny_lock_release` | `DELETE /v1/admin/remediation-locks/{id}` | Release a remediation lock |
+| `lenny_lock_steal` | `POST /v1/admin/remediation-locks/{id}/steal` | Take over an existing lock (audited) |
 | `lenny_escalation_create` | `POST /v1/admin/escalations` | Create an escalation |
 | `lenny_config_apply` | `PUT /v1/admin/platform/config` | Apply config change |
+| `lenny_tenant_create` | `POST /v1/admin/tenants` | Provision a tenant |
+| `lenny_tenant_update` | `PUT /v1/admin/tenants/{id}` | Update a tenant |
+| `lenny_tenant_suspend` | `POST /v1/admin/tenants/{id}/suspend` | Suspend a tenant |
+| `lenny_tenant_resume` | `POST /v1/admin/tenants/{id}/resume` | Resume a suspended tenant |
+| `lenny_tenant_delete` | `DELETE /v1/admin/tenants/{id}` | Delete a tenant (destructive; requires `confirm`) |
+| `lenny_pool_create` | `POST /v1/admin/pools` | Create a warm pool |
+| `lenny_pool_update` | `PUT /v1/admin/pools/{name}` | Update a pool's configuration |
+| `lenny_pool_delete` | `DELETE /v1/admin/pools/{name}` | Delete a pool (destructive; requires `confirm`) |
+| `lenny_credential_pool_create` | `POST /v1/admin/credential-pools` | Create a credential pool |
+| `lenny_credential_pool_update` | `PUT /v1/admin/credential-pools/{name}` | Update a credential pool |
+| `lenny_credential_pool_delete` | `DELETE /v1/admin/credential-pools/{name}` | Delete a credential pool (destructive; requires `confirm`) |
+| `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential to a pool |
+| `lenny_credential_rotate` | `POST /v1/admin/credential-pools/{name}/credentials/{id}/rotate` | Rotate a credential |
+| `lenny_credential_retire` | `DELETE /v1/admin/credential-pools/{name}/credentials/{id}` | Retire a credential |
+| `lenny_runtime_register` | `POST /v1/admin/runtimes` | Register a runtime |
+| `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
+| `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |
+| `lenny_quota_update` | `PUT /v1/admin/tenants/{id}/quota` | Update a tenant's quota |
+
+The tool list above is not exhaustive; every admin-API endpoint with documented RBAC becomes an MCP tool automatically via the build-time OpenAPI → MCP generation (Section 25.12 Scope, and "Admin API MCP Extension" in "Edits Required Outside Section 25"). The canonical inventory is always `/v1/admin/me/authorized-tools` (Section 25.4) for the caller's filtered view, or `/v1/openapi.json` for the full surface.
 
 ### Tool Schema Example
 
@@ -3377,24 +4117,65 @@ Agents and SDK generators use this document as the single source of truth.
 
 ### Security Model
 
-The MCP Management Server's authorization is enforced at two independent layers — **both must permit a call for it to succeed**, and the MCP layer is explicitly **not** a security boundary on its own:
+The MCP Management Server's authorization is enforced at three independent layers — **all three must permit a call for it to succeed**. The MCP-layer capability filtering is a UX convenience, not a security boundary; RBAC and scopes are the real security layers.
 
-1. **MCP-layer capability filtering (convenience, not security).** The tool list returned by `tools/list` is filtered based on the agent's declared capabilities (see Capability Negotiation below). This is a UX convenience — an agent that doesn't "see" a tool is less likely to accidentally invoke it. It does **not** prevent the agent from invoking the tool if it knows the tool's name. An agent with `readOnly: true` that calls `tools/call` with `name: "lenny_pool_scale"` still hits the MCP adapter.
-2. **REST-layer RBAC (the real boundary).** Every MCP tool invocation is translated into a REST call against `lenny-ops` or the gateway admin API. That REST call passes through the standard OIDC/JWT middleware and RBAC check. An agent with an OIDC token containing only `tenant-admin` role receives `403` from the underlying REST endpoint when calling an MCP tool that requires `platform-admin`, regardless of what the MCP capability declaration says.
+1. **MCP-layer capability filtering (convenience, not security).** The tool list returned by `tools/list` is filtered based on the agent's declared capabilities (see Capability Negotiation below) AND the caller's `scope` claim. This is a UX convenience — an agent that doesn't "see" a tool is less likely to accidentally invoke it. It does **not** prevent the agent from invoking the tool by name; that's what layers 2–3 are for.
+2. **Scope enforcement (the narrowing layer).** Every `tools/call` invocation checks the caller's `scope` JWT claim (RFC 9068, space-separated values) against the tool's declared `x-lenny-scope` identifier. A caller whose scope doesn't match receives `403 SCOPE_FORBIDDEN` from the MCP adapter before any REST call is issued. This enforces the per-tool scoping model introduced in Section 25.1.
+3. **REST-layer RBAC (the role layer).** Every MCP tool invocation that passes the scope check is translated into a REST call against `lenny-ops` or the gateway admin API. That REST call passes through the standard OIDC/JWT middleware and role-based authorization check. An agent with a `tenant-admin` role receives `403` from the underlying REST endpoint when calling a tool that requires `platform-admin`, regardless of what its scopes declare (scopes narrow; they don't elevate).
 
-**Every MCP tool has explicit RBAC on its mapped endpoint.** The MCP tool inventory above includes a `requiredRole` column in the expanded schema (omitted here for brevity; available in `/v1/openapi.json`). The CI suite includes a test that iterates every MCP tool, attempts to call it with a token carrying no role, and asserts `403` — this catches endpoints that accidentally skip RBAC at implementation time.
+**Every MCP tool has explicit RBAC and scope metadata on its mapped endpoint.** The OpenAPI spec records `x-lenny-required-role` and the mapping `x-lenny-mcp-tool` on every admin-API endpoint. The CI suite includes two tests:
+
+- Iterates every MCP tool, attempts to call it with a token carrying no role, asserts `403`.
+- Iterates every MCP tool, attempts to call it with a scope-restricted token that excludes the tool, asserts `403 SCOPE_FORBIDDEN`.
+
+These catch endpoints that accidentally skip authorization at implementation time.
 
 **Unhealthy-endpoint behavior.** When an underlying endpoint is unreachable (e.g., gateway is down and the tool maps to a gateway endpoint), the MCP adapter returns `-32000` (generic server error) with `data.code: "ENDPOINT_UNAVAILABLE"` and the standard `retryable: true`. It does **not** remove the tool from `tools/list` during the outage — removing tools would cause confusing client behavior (tools "disappearing" from the inventory).
 
+**Scope-forbidden behavior.** When a caller invokes a tool outside its `scope` claim, the adapter returns `-32001` with `data.code: "SCOPE_FORBIDDEN"`, `data.retryable: false`, `data.requiredScope: "tools:<domain>:<action>"`, and `data.activeScope: "<space-separated current scopes>"`. Callers should either use `/v1/admin/me/authorized-tools` upfront to avoid forbidden calls, or inspect the returned fields to understand the restriction.
+
+### Dry-Run Result Mapping
+
+For tools with `x-lenny-dry-run-support: "confirm-bool"` (the canonical dry-run pattern from Section 25.2), invoking the tool without `confirm: true` produces a REST response of `200 OK` with `dryRun: true` in the body. The MCP adapter maps this to:
+
+```json
+{
+  "isError": false,
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"dryRun\":true,\"preview\":{...}}"
+    }
+  ],
+  "_meta": {
+    "lenny.dryRun": true,
+    "lenny.preview": { ... }
+  }
+}
+```
+
+The structured `_meta.lenny.dryRun: true` field is the canonical signal — MCP clients programmatically check this rather than parsing the text content. The text content remains JSON-formatted so clients without metadata support can still detect the dry-run via string parsing.
+
+**Why `isError: false`.** A dry-run is a successful preview, not a failure. Reporting it as `isError: true` would cause MCP clients to surface it as an error to users, which is wrong — the agent successfully performed a preview. The `_meta.lenny.dryRun` flag distinguishes "this was a preview, not a mutation" from "this was a real mutation that succeeded."
+
+**Agent guidance.** Agents that report tool outcomes to users (typical LLM agents) MUST check `_meta.lenny.dryRun`. A truthful report when this flag is `true` is "I previewed the change but did not apply it. To apply, retry with `confirm: true`." A truthful report when the flag is `false` (or absent) is the action's actual effect.
+
 ### Capability Negotiation
 
-During MCP initialization, the agent declares its capabilities in the `initialize` request's `clientInfo.capabilities` field. The MCP Management Server uses this to filter the tool list:
+During MCP initialization, the agent declares its capabilities in the `initialize` request's `clientInfo.capabilities` field. The MCP Management Server uses these declarations to filter the tool list for display purposes. Filtering is ALWAYS intersected with the caller's `scope` claim (tools not permitted by scope are filtered out regardless of capability declaration).
 
-- An agent that declares `"capabilities": {"access": ["admin-api"]}` sees all tools.
-- An agent that declares `"capabilities": {"access": ["admin-api"], "readOnly": true}` sees only observation tools.
-- An agent that declares `"capabilities": {"access": ["admin-api"], "tenantScoped": true}` sees only tools whose underlying endpoints are accessible to `tenant-admin` callers.
+| Capability declaration | Filter effect |
+|---|---|
+| `{"access": ["admin-api"]}` (or omitted) | All tools the caller's scopes permit. Default. |
+| `{"access": ["admin-api"], "scope": "operability"}` | Only operability tools (health, diagnostics, runbooks, events, audit, drift, backup/restore, upgrade, locks, escalations, caller identity, operations inventory). |
+| `{"access": ["admin-api"], "scope": "admin"}` | Only platform-management tools (tenant/pool/credential/runtime/quota lifecycle). |
+| `{"access": ["admin-api"], "readOnly": true}` | Only observation-category tools regardless of domain. |
+| `{"access": ["admin-api"], "nonDestructive": true}` | Excludes tools with `x-lenny-category: "destructive"`. |
+| `{"access": ["admin-api"], "tenantScoped": true}` | Only tools whose underlying endpoints are accessible to `tenant-admin` callers. |
 
-If the agent does not declare capabilities, all tools are returned. See Security Model above for why this is safe — RBAC is enforced independently at the REST layer.
+Multiple filters can be combined (e.g., `"scope": "operability"` + `"readOnly": true` yields read-only operability tools). If the agent declares no capabilities, all scope-permitted tools are returned.
+
+Capability filtering is a convenience for agents that want a curated view. It is **not** a security mechanism — the scope and RBAC layers in Security Model above are what actually prevent unauthorized calls.
 
 ### Tool Schema Details
 
@@ -3701,6 +4482,88 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | `lenny-ctl logs pod <ns> <name> --tail 100` | Same with `?tail=100` | Last N lines |
 | `lenny-ctl logs pod <ns> <name> --previous` | Same with `?previous=true` | Previous container logs |
 
+### Identity and Operations Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl me` | `GET /v1/admin/me` | Show caller identity, authorization, rate-limits, and platform capabilities |
+| `lenny-ctl me tools` | `GET /v1/admin/me/authorized-tools` | List tools the caller can actually invoke |
+| `lenny-ctl me operations` | `GET /v1/admin/me/operations` | Caller's in-flight operations |
+| `lenny-ctl operations list [--actor=<sub>] [--kind=<csv>] [--status=<csv>]` | `GET /v1/admin/operations` | Unified list of in-flight operations |
+| `lenny-ctl operations get <operationId>` | `GET /v1/admin/operations/{id}` | Full detail of a single operation |
+
+### Diagnose Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl diagnose session <id>` | `GET /v1/admin/diagnostics/sessions/{id}` | Diagnose a session |
+| `lenny-ctl diagnose pool <name>` | `GET /v1/admin/diagnostics/pools/{name}` | Diagnose a pool |
+| `lenny-ctl diagnose connectivity` | `GET /v1/admin/diagnostics/connectivity` | Check dependency connectivity |
+| `lenny-ctl diagnose credential-pool <name>` | `GET /v1/admin/diagnostics/credential-pools/{name}` | Diagnose a credential pool |
+
+### Event Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl events tail` | `GET /v1/admin/events/stream` | Stream operational events (SSE) |
+| `lenny-ctl events list --since <time>` | `GET /v1/admin/events?since=<time>` | List operational events (polling) |
+| `lenny-ctl events subscriptions list` | `GET /v1/admin/event-subscriptions` | List webhook subscriptions |
+| `lenny-ctl events subscriptions create --url <url> --types <csv>` | `POST /v1/admin/event-subscriptions` | Create a webhook subscription |
+| `lenny-ctl events subscriptions delete <id>` | `DELETE /v1/admin/event-subscriptions/{id}` | Delete a webhook subscription |
+
+### Audit Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl audit query --since <time> [...]` | `GET /v1/admin/audit-events` | Query audit log |
+| `lenny-ctl audit get <id>` | `GET /v1/admin/audit-events/{id}` | Get a single audit event |
+| `lenny-ctl audit summary --since <time>` | `GET /v1/admin/audit-events/summary` | Aggregate counts |
+
+### Drift Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl drift report [--scope <s>] [--against <live\|target\|both>]` | `GET /v1/admin/drift` | Drift report |
+| `lenny-ctl drift validate --desired <file>` | `POST /v1/admin/drift/validate` | Validate desired state against snapshot |
+| `lenny-ctl drift snapshot refresh --desired <file>` | `POST /v1/admin/drift/snapshot/refresh` | Replace stored snapshot |
+| `lenny-ctl drift reconcile [--scope <s>] [--confirm]` | `POST /v1/admin/drift/reconcile` | Reconcile drifted resources |
+
+### Backup and Restore Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl backup list` | `GET /v1/admin/backups` | List backups |
+| `lenny-ctl backup get <id>` | `GET /v1/admin/backups/{id}` | Backup details |
+| `lenny-ctl backup create --type <full\|postgres\|config> [--confirm]` | `POST /v1/admin/backups` | Trigger a backup |
+| `lenny-ctl backup verify <id> [--mode test-restore]` | `POST /v1/admin/backups/{id}/verify` | Verify backup integrity |
+| `lenny-ctl backup schedule get / set` | `GET/PUT /v1/admin/backups/schedule` | Backup schedule |
+| `lenny-ctl backup policy get / set` | `GET/PUT /v1/admin/backups/policy` | Retention policy |
+| `lenny-ctl restore safety-check --backup <id>` | `GET /v1/admin/restore/safety-check` | Estimate data loss before restore |
+| `lenny-ctl restore preview --backup <id>` | `POST /v1/admin/restore/preview` | Preview restore |
+| `lenny-ctl restore execute --backup <id> --confirm --acknowledge-data-loss` | `POST /v1/admin/restore/execute` | Execute restore |
+| `lenny-ctl restore status <id>` | `GET /v1/admin/restore/{id}/status` | Per-shard restore status |
+| `lenny-ctl restore resume <id>` | `POST /v1/admin/restore/resume` | Resume partially-completed restore |
+
+### Upgrade Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl upgrade check` | `GET /v1/admin/platform/upgrade-check` | Check for new release |
+| `lenny-ctl upgrade preflight --version <v>` | `POST /v1/admin/platform/upgrade/preflight` | Validate upgrade safety |
+| `lenny-ctl upgrade start --version <v> [--confirm]` | `POST /v1/admin/platform/upgrade/start` | Begin upgrade |
+| `lenny-ctl upgrade proceed` | `POST /v1/admin/platform/upgrade/proceed` | Advance to next phase |
+| `lenny-ctl upgrade pause` | `POST /v1/admin/platform/upgrade/pause` | Pause upgrade |
+| `lenny-ctl upgrade rollback [--confirm]` | `POST /v1/admin/platform/upgrade/rollback` | Rollback upgrade |
+| `lenny-ctl upgrade status` | `GET /v1/admin/platform/upgrade/status` | Current upgrade state |
+| `lenny-ctl upgrade verify` | `POST /v1/admin/platform/upgrade/verify` | Post-upgrade health verification |
+
+### MCP-Management Commands
+
+| Command | API Mapping | Description |
+|---------|-------------|-------------|
+| `lenny-ctl mcp-management tools list` | MCP `tools/list` against `/mcp/management` | List exposed MCP tools |
+| `lenny-ctl mcp-management tools call <name> --args <json>` | MCP `tools/call` | Invoke a tool through MCP (for end-to-end testing) |
+
 **Auto-discovery.** To avoid requiring deployers to configure two URLs, the gateway's `GET /v1/admin/platform/version` response includes an `opsServiceURL` field (configured via `ops.ingress.host` Helm value). `lenny-ctl` fetches this on first use and caches it for the session. If the ops URL is not configured, `lenny-ctl` falls back to `--ops-server` or errors with a clear message.
 
 ---
@@ -3713,7 +4576,7 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | **Gateway overloaded** | `lenny-ops` has an independent resource budget. Zero contention with client traffic. Health and recommendations on the gateway remain lightweight (in-process reads). |
 | **Postgres down** | Audit queries, backup management, and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
 | **Redis down** | Event stream falls back to gateway in-memory event buffer — degraded but functional. Webhook delivery continues from buffer with cached subscriptions. Remediation locks fall back to in-memory (if Postgres also down). Health endpoint still works (in-process circuit breaker cache fallback). |
-| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory, escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions. Unavailable: audit queries, backup management, upgrade state machine, subscription CRUD, retry history. |
+| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: audit queries, backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
 | **`lenny-ops` degraded** | Self-monitoring detects internal degradation (Postgres pool, Redis lag, memory pressure) and emits `ops_health_status_changed` to the event stream (Redis or gateway buffer). Watchdog receives this event and can poll `GET /v1/admin/ops/health` for details. |
 | **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, audit, drift, backup, and upgrade APIs are unavailable. Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |
@@ -3879,7 +4742,7 @@ The `default-gvisor` pool runs out of idle pods. Session creation starts failing
 The watchdog agent maintains a persistent SSE connection to `lenny-ops`:
 
 ```
-GET /v1/admin/events/stream?types=alert_fired,health_status_changed HTTP/1.1
+GET /v1/admin/events/stream?eventType=alert_fired,health_status_changed HTTP/1.1
 Host: ops.lenny.example.com
 Authorization: Bearer <jwt>
 Accept: text/event-stream
@@ -4008,3 +4871,454 @@ The `escalation_created` event is emitted to the event stream. A webhook subscri
 ### Multi-Cluster Note
 
 This design operates per-installation. In a multi-cluster deployment, each Lenny installation has its own `lenny-ops` Ingress. A multi-cluster watchdog agent maintains SSE connections to each installation's `lenny-ops` and performs the same operational loop independently per cluster. Cross-cluster coordination (e.g., draining traffic from one cluster before upgrading) is outside the scope of this section — it is the responsibility of the deployment orchestrator or the agent's own logic.
+
+---
+
+# Edits Required Outside Section 25
+
+The Section 25 content above has implications for other parts of `SPEC.md`. Before Section 25 is merged, the following edits must be applied to the rest of the spec and the surrounding repository. This list is intended to be exhaustive — once these are applied and Section 25 is merged, `SPEC.md` should contain no dangling references, missing types, or undocumented subsystems.
+
+The exact sub-section numbers below are the ones referenced by Section 25 (e.g., "Section 11.7" because Section 25 references it). Where a number is given as `X`, the edit is a new addition and the author should choose a consistent numbering.
+
+## Existing Lenny components — behavioral changes
+
+Section 25 places requirements on several existing Lenny components (the gateway binary, warm pool controllers, `lenny-preflight`, etc.). The changes they need are summarized here; the specific edits to their owner sections are listed above and below.
+
+### Existing gateway subsystems — EventEmitter wiring
+
+Section 25.3 Event Emission lists the gateway subsystems that must call `EventEmitter.Emit()` at the point of state change. Most of these subsystems are defined in other `SPEC.md` sections and must be updated to take the `EventEmitter` dependency and emit the correct event type/payload.
+
+| Subsystem | Event types | Owner section (approximate) | Edit required |
+|-----------|-------------|-----------------------------|---------------|
+| Pool upgrade state machine | `upgrade_progressed` | Section 10.5 | On each phase transition, emit with pool, old phase, new phase, image digest. |
+| Pool state manager (warm pool state: draining, warming, exhausted) | `pool_state_changed` | Section 10 | On each state transition, emit with pool, old state, new state. |
+| Circuit breaker handler | `circuit_breaker_opened`, `circuit_breaker_closed` | Section 11.6 | On state transition, emit with breaker name, reason, opener/closer identity. |
+| Session manager | `session_failed` | Section on session lifecycle (likely Section 4–9) | On session entering `failed` state, emit with session ID, runtime, failure class. |
+| Credential pool manager | `credential_rotated`, `credential_pool_exhausted` | Section on credentials (likely Section 11) | On credential lease rotation (include pool, credential ID, reason) and pool exhaustion. |
+| Alert state evaluator | `alert_fired`, `alert_resolved` | Gateway-internal — part of Section 25.3 Health API (no external edit needed). |
+| Health service | `health_status_changed` | Gateway-internal — part of Section 25.3 (no external edit needed). |
+| Backup Job watcher (observes K8s Job completion) | `backup_completed`, `backup_failed` | Section 25.11 (internal to ops service). |
+| Upgrade-check cron | `platform_upgrade_available` | Section 25.8 (internal to ops service). |
+
+For each external subsystem, the edit is: (1) add `EventEmitter` as a constructor dependency, (2) call `Emit(ctx, event)` at the documented state-change point, (3) update the subsystem's unit tests to verify emission happens.
+
+### Warm pool controller and pool scaling controller
+
+Section 25.8's ControllerRoll phase patches the Deployments `WarmPoolController` and `PoolScalingController` during platform upgrades. Their Deployment names and the namespace they live in (`{Release.Namespace}`, default `lenny-system`) must be documented in whichever section describes controller deployment (Section 10 or equivalent). The chart must render these Deployments (if not already), and `lenny-ops-sa` RBAC must include `patch` permission on Deployments (already covered in Section 25.4 RBAC).
+
+### `ImageResolver` shared with warm pool controller
+
+Section 25.8 states: "`ImageResolver` is shared by the upgrade system, the warm pool controller (for agent pod images — those use runtime-defined image references, not the platform registry), and backup job creation." This means the warm pool controller already uses (or must be updated to use) the shared `ImageResolver` from `pkg/common/registry/resolver.go`. If Section 10 describes warm-pool image resolution, update it to reference the shared resolver.
+
+### Migration framework
+
+Section 25.8's SchemaMigration phase says "Runs migrations using the same migration framework as `lenny-preflight` (Section 17.6). Migration SQL is compiled into the new binary." Section 17.6 must describe the migration framework so that it can be reused by both `lenny-preflight` and `lenny-ops` (in the upgrade path). The migration framework must support serial multi-shard execution with per-shard progress tracking (Section 25.8).
+
+## Section 10 — Warm Pools
+
+(See "Existing Lenny components — behavioral changes" above for pool-upgrade and pool-state emission, and warm pool controller's use of `ImageResolver`. No other edits to Section 10.)
+
+## Section 11 — Postgres Data Layer
+
+### 11.X — Ops-scoped tables
+
+Add the following table definitions to the Postgres schema section. All are platform-scoped and routed via `StoreRouter.PlatformPostgres()` (see Section 12.4 edit below). Full schemas are provided in Section 25; only the table names and routing are added here.
+
+- `ops_remediation_locks` (Section 25.4)
+- `ops_lock_epoch` (Section 25.4)
+- `ops_lock_conflicts` (Section 25.4)
+- `ops_idempotency_keys` (Section 25.4)
+- `ops_escalations` (Section 25.4)
+- `ops_event_subscriptions` (Section 25.5)
+- `ops_event_deliveries` (Section 25.5)
+- `ops_backups` (Section 25.11)
+- `ops_backup_schedule` (Section 25.11)
+- `ops_retention_policy` (Section 25.11)
+- `ops_restore_state` (Section 25.11)
+- `platform_upgrade_state` (Section 25.8)
+- `platform_upgrade_check_cache` (Section 25.8)
+- `bootstrap_seed_snapshot` (Section 25.10) — two rows supported: `id='live'` and `id='target'`.
+- `audit_log_deferred_writes` (Section 25.9)
+- `ops_postgres_outage_log` (Section 25.9) — records timestamps when `lenny-ops` detected Postgres unreachable; cross-referenced by audit query gap-detection.
+- `ops_operation_baselines` (Section 25.2 Progress Envelope) — per-operation-kind historical duration baselines (`kind`, `p50_duration_ms`, `p90_duration_ms`, `sample_size`, `last_updated`). Populated on each operation completion; used for ETA calculation.
+
+### 11.X — Progress column on long-running operation tables
+
+Each long-running operation table (`platform_upgrade_state`, `ops_restore_state`, `ops_backups`, and any others added later with `kind` in the Operations Inventory) gains a `progress JSONB` column conforming to the canonical Progress Envelope (Section 25.2). The column is updated atomically with step transitions inside the owning subsystem.
+
+### 11.6 — Circuit breaker in-process cache
+
+The circuit breaker subsystem (Section 11.6) must maintain an **in-process cache of circuit breaker state** in addition to writing to Redis via `StoreRouter.PlatformRedis()`. The gateway health service (Section 25.3) reads this cache when Redis is unreachable. The cache is eventually consistent with Redis; stale entries during short Redis outages are acceptable because the alternative is no circuit breaker signal at all.
+
+### 11.7 — Audit log extensions
+
+Extend the existing `audit_log` description:
+
+- The `chainIntegrity` field gains two values beyond the current `verified` / `broken` / `unchecked`: `rechained_post_outage` (rewritten after reconciliation from `audit_log_deferred_writes`) and `gap_suspected` (sequence number gap detected; cross-reference `ops_postgres_outage_log` for cause).
+- Document the deferred-write path: during Postgres outages, audit events generated by `lenny-ops` are buffered in `audit_log_deferred_writes` (written when Postgres briefly recovers, or via in-memory buffering until it does). On full recovery, a reconciliation pass inserts deferred events into `audit_log` with their **original timestamps** and recomputes the hash chain for the affected range (hence `rechained_post_outage`).
+- Document that every audit event gains two optional correlation fields: `operation_id` (from `X-Lenny-Operation-ID` header) and `caller_kind` (from the OIDC `caller_type` claim — `"human"` / `"service"` / `"agent"`). These enable the post-incident-analysis queries described in Section 25.9.
+
+### 11.X — Convention: UTC Postgres timestamps
+
+Every TIMESTAMPTZ column authored by the application must use `now() at time zone 'UTC'` (not `now()`). This is a cross-cutting convention that the split-brain-resolution logic, audit chain integrity, and lock-TTL comparison all depend on. Document as a global convention.
+
+## Section 12 — Storage Interfaces
+
+### 12.4 — StoreRouter additions
+
+Add to the `StoreRouter` interface:
+
+```go
+// PlatformPostgres returns the connection pool for platform-global tables
+// that are not owned by any tenant or session. In v1 SingleShardRouter it
+// returns the same pool as all other methods. In multi-shard deployments
+// it routes to the dedicated platform database instance.
+PlatformPostgres() *sql.DB
+
+// AllAuditShards returns every audit shard for scatter-gather queries
+// (used by platform-admin cross-tenant audit queries, Section 25.9).
+AllAuditShards() []*sql.DB
+```
+
+The `SingleShardRouter` v1 implementation returns the same pool/client for all new methods. Section 25 depends on these being present.
+
+## Section 15 — Admin API
+
+### 15.1 — Admin API surface extensions
+
+The following endpoint groups are added to the admin API and detailed in Section 25. List them in the 15.1 index for discoverability:
+
+- Health and recommendations (served by the gateway, Section 25.3):
+  `/v1/admin/health[/{component}|/summary]`, `/v1/admin/recommendations`, `/v1/admin/platform/version`, `/v1/admin/platform/config`, `/v1/admin/events/buffer`.
+- Operability surface (served by `lenny-ops`, Section 25.4+):
+  `/v1/admin/me`, `/v1/admin/me/authorized-tools`, `/v1/admin/me/operations`, `/v1/admin/operations`, `/v1/admin/operations/{id}`, `/v1/admin/events`, `/v1/admin/events/stream`, `/v1/admin/event-subscriptions`, `/v1/admin/diagnostics/*`, `/v1/admin/runbooks`, `/v1/admin/audit-events`, `/v1/admin/drift`, `/v1/admin/drift/validate`, `/v1/admin/drift/snapshot/refresh`, `/v1/admin/backups`, `/v1/admin/backups/{id}/verify`, `/v1/admin/backups/schedule`, `/v1/admin/backups/policy`, `/v1/admin/restore/preview`, `/v1/admin/restore/safety-check`, `/v1/admin/restore/execute`, `/v1/admin/restore/{id}/status`, `/v1/admin/restore/resume`, `/v1/admin/platform/upgrade/*`, `/v1/admin/platform/version/full`, `/v1/admin/platform/upgrade-check`, `/v1/admin/platform/registry`, `/v1/admin/remediation-locks`, `/v1/admin/remediation-locks/{id}`, `/v1/admin/remediation-locks/{id}/steal`, `/v1/admin/escalations`, `/v1/admin/logs/pods/*`, `/v1/admin/ops/health`, `/v1/admin/openapi.json`, `/v1/admin/openapi.yaml`, `/v1/admin/openapi/{endpoint-id}`, `/v1/admin/audit-events/summary`, `/mcp/management`.
+
+### 15.1 — OIDC claims
+
+Agents authenticate using the same OIDC mechanism as human operators. Add the following claims to the documented JWT token structure:
+
+- `caller_type` — values `"human"`, `"service"`, `"agent"` (Section 25.1). Labels audit events and metrics.
+- `scope` — standard OAuth 2.0 / RFC 9068 claim. Space-separated string of scope values (e.g., `"tools:pool:* tools:health:read"`) that narrows the caller's effective tool surface below the role ceiling (Section 25.1 Scoped Tokens). When present, both the admin API middleware (before routing to any handler) and the MCP adapter (before `tools/call` dispatch) enforce the caller's tool invocation against this list. Absent claim = no additional restriction. Scopes do not elevate a caller beyond their role; they only restrict. Uses the standard claim name (`scope`), format (space-separated string), and colon-separated `resource:action` syntax so off-the-shelf OIDC libraries and provider UIs work without custom claim mappers.
+
+### 15.1 — Admin API MCP extension
+
+Every admin API endpoint with documented RBAC MUST be exposed as an MCP tool on `/mcp/management` (Section 25.12). This is a contract between Section 15.1 and Section 25.12 — the MCP tool inventory is auto-generated from the OpenAPI spec at build time, so every endpoint in the OpenAPI must carry the following extensions:
+
+- `x-lenny-mcp-tool` — canonical MCP tool name (e.g., `"lenny_pool_scale"`). Set to `null` to explicitly exclude the endpoint from MCP exposure (rare; only for endpoints that are purely for internal component-to-component communication).
+- `x-lenny-scope` — the scope identifier this endpoint requires, in `tools:<domain>:<action>` format (e.g., `"tools:pool:scale"`). Enforced against the caller's `scope` JWT claim (Section 25.1 Scoped Tokens) at both the admin API middleware and the MCP adapter. Set to `null` only when `x-lenny-mcp-tool` is also `null` (endpoint not callable by scoped tokens).
+- `x-lenny-required-role` — `"platform-admin"` or `"tenant-admin"`.
+- `x-lenny-category` — `"observation"` | `"coordination"` | `"mutation"` | `"destructive"` | `"lifecycle"`.
+- `x-lenny-idempotency-key` — `"required"` | `"recommended"` | `"ignored"`.
+- `x-lenny-dry-run-support` — `"confirm-bool"` | `"none"`.
+- `x-lenny-guards` — array of conditional-requirement rules for parameters (Section 25.12 Tool Schema Details).
+
+**CI contract.** A build-time check fails the build if any admin-API endpoint lacks `x-lenny-mcp-tool` (including `null`), `x-lenny-scope`, `x-lenny-required-role`, or `x-lenny-category`. An additional check asserts that every `x-lenny-scope` value conforms to `tools:<domain>:<action>` syntax. This ensures the MCP tool inventory stays complete, the authorization story stays explicit, and scopes match the documented taxonomy.
+
+Existing admin API sections (tenant lifecycle, pool management, credential management, runtime registration, quota management — wherever they currently live in `SPEC.md`) must be updated to document these extensions on each endpoint. The MCP tool names in Section 25.12 Tool Inventory list the expected `x-lenny-mcp-tool` values.
+
+**New Section-25-introduced endpoints that also carry the extensions** (the OpenAPI spec generated from `lenny-ops` types automatically emits them, but the `x-lenny-scope` values are fixed per Section 25.1 Scoped Tokens and listed here for traceability):
+
+| Endpoint | `x-lenny-mcp-tool` | `x-lenny-scope` | `x-lenny-required-role` | `x-lenny-category` |
+|---|---|---|---|---|
+| `GET /v1/admin/me` | `lenny_me_get` | `tools:me:read` | either role | `observation` |
+| `GET /v1/admin/me/authorized-tools` | `lenny_me_authorized_tools` | `tools:me:read` | either role | `observation` |
+| `GET /v1/admin/me/operations` | `lenny_me_operations` | `tools:me:read` | either role | `observation` |
+| `GET /v1/admin/operations` | `lenny_operations_list` | `tools:operations:read` | either role | `observation` |
+| `GET /v1/admin/operations/{id}` | `lenny_operation_get` | `tools:operations:read` | either role | `observation` |
+
+All `/v1/admin/me/*` endpoints are always accessible to the authenticated caller (they only return self-context) and therefore accept any role; the `tools:me:read` scope restriction still applies when `scope` claim is present.
+
+### 15.1 — Optional correlation headers
+
+Document two optional headers accepted on any admin-API request (Section 25.1):
+
+- `X-Lenny-Operation-ID` — caller-generated UUID. Propagated to audit events, operational events, and structured logs.
+- `X-Lenny-Agent-Name` — human-readable agent instance identifier.
+
+### 15.1 — Scope taxonomy
+
+The OAuth 2.0 `scope` claim (Section 25.1 Scoped Tokens) uses a `tools:<domain>:<action>` syntax. Document the canonical domain list in Section 15.1 so that deployers configuring OIDC providers have a single reference for the values they can grant:
+
+**Domains:** `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`.
+
+**Actions:** `read` (any `_list` / `_get` / `_summary` tool), `write` (any mutating tool), a specific tool action name (e.g., `scale`, `rotate`, `create`, `steal`), or `*` (all actions in the domain).
+
+**Enforcement.** Every admin-API endpoint carries its `x-lenny-scope` value. The middleware parses the caller's `scope` claim and matches against the endpoint's declared scope. Mismatch → `403 SCOPE_FORBIDDEN` with `requiredScope` and `activeScope` in the response body (Section 25.12 Scope-forbidden behavior).
+
+This list is the source of truth; any new scope domain introduced later must be added here first.
+
+### 15.1 — API convention envelopes
+
+The admin API adopts four canonical envelopes defined in Section 25.2:
+
+- **`degradation`** on responses whose data quality depends on external dependency availability.
+- **`pagination`** on all list endpoints (cursor, hasMore, limit, cursorKind, gapDetected).
+- **`error`** on all 4xx/5xx responses (code, category, message, retryable, suggestedRetryAfter, details).
+- **`progress`** on responses for long-running operations (Section 25.2 Canonical Progress Envelope).
+
+If Section 15 documents response shapes, cross-reference Section 25.2 for the canonical definitions.
+
+### 15.X — OpenAPI spec generation and discovery
+
+The admin API exposes its contract as an OpenAPI 3.1 document at `/v1/openapi.json` and `/v1/openapi.yaml`. The document is generated at build time from the Go type definitions; it is the single source of truth for the admin API contract and is consumed by `lenny-ctl`, the MCP Management Server (Section 25.12), and any external SDK. If the spec documents API contract generation, add this.
+
+### 15.X — MCP endpoint boundary
+
+Section 25.12 adds `/mcp/management` served by `lenny-ops`. This is distinct from `/mcp/runtimes/{name}` (agent-pod tool proxy, already documented in Section 15). Both are MCP endpoints but serve different purposes and have different authn scopes. Add cross-references so the two are not confused.
+
+## Section 16 — Observability
+
+### 16.5 — Alerting rules
+
+Lenny's bundled alerting rules (the catalog in Section 16.5) gain two consumers:
+
+1. **Rendered into deployer-visible manifests by the Helm chart** (`PrometheusRule` CRD and/or ConfigMap), controlled by `monitoring.format` (see Section 25.13).
+2. **Compiled into the gateway binary's in-process alert state tracker** as a fallback when Prometheus is unreachable (Section 25.3).
+
+Both sources derive from a single Go package `pkg/alerting/rules`. If rule definitions change, both the rendered Helm manifests and the gateway binary are regenerated by the normal build pipeline; this should be called out in 16.5.
+
+**New alerts introduced by Section 25** that must be added to the Section 16.5 catalog if not already present:
+
+- `PlatformUpgradeAvailable` (Info) — new Lenny release detected via `/v1/admin/platform/upgrade-check`.
+- `PlatformUpgradeStuck` (Warning) — upgrade in non-terminal phase for >1h.
+- `PlatformVersionDrift` (Warning) — any component version drifts from compiled-in required for >5m.
+- `BackupOverdue` (Warning) — `lenny_backup_last_successful_timestamp{type="full"}` older than 48h.
+- `BackupFailed` (Warning) — `lenny_backup_total{status="failed"}` incremented.
+- `BackupStorageHigh` (Warning) — backup storage utilization >80%.
+- `CertExpiryImminent` (Critical when <7d, Warning when <30d, per Section 25.4 cert-manager integration).
+- `CircuitBreakerOpen` (Warning) — any circuit breaker open.
+- `LenniOpsSelfHealthDegraded` (Warning) — `lenny_ops_self_health_status != healthy`.
+- `LenniOpsLockSplitBrainDetected` (Critical) — `lenny_ops_lock_split_brain_detected_total` incremented.
+- `OperationStalled` (Warning) — `lenny_ops_operations_stalled_total` incremented; an in-flight operation has exceeded its expected inter-step cadence (Section 25.2 Progress Envelope).
+
+Two additional alerts are **recommended for operators but not bundled** (Section 25.4 and 25.13 describe them as operator-driven observability): `PrometheusQueryLatencyHigh` on `lenny_prometheus_query_duration_seconds` p95 and a Prometheus-side rule on `prometheus_rule_evaluation_duration_seconds` p95. These are not part of the bundled rule set because they depend on the operator's Prometheus instrumentation.
+
+### 16.X — Operational events catalog
+
+Section 25.3 defines a catalog of operational events (distinct from audit events) emitted to the Redis stream / gateway buffer. If Section 16 has an observability catalog beyond metrics and alerts, add the events catalog (pointing to Section 25.3 Event Types as the source-of-truth):
+
+Gateway-emitted: `alert_fired`, `alert_resolved`, `upgrade_progressed`, `pool_state_changed`, `circuit_breaker_opened`, `circuit_breaker_closed`, `credential_rotated`, `credential_pool_exhausted`, `session_failed`, `backup_completed`, `backup_failed`, `platform_upgrade_available`, `health_status_changed`.
+
+`lenny-ops`-emitted: `ops_health_status_changed`, `escalation_created`, `remediation_lock_acquired`, `remediation_lock_released`, `remediation_lock_expired`, `remediation_lock_stolen`, `remediation_lock_split_brain_detected`, `drift_detected`, `platform_upgrade_completed`, `platform_upgrade_verification_failed`, `platform_upgrade_image_pull_failed`, `restore_started`, `restore_shard_completed`, `restore_completed`, `restore_failed`, `event_delivery_failed`, `prometheus_query_timeout`, `lock_split_brain_detected`, `operation_progressed` (per operation state transition or percent threshold; payload includes `operationId`, `kind`, `prevStatus`, `newStatus`, `progress`).
+
+### 16.X — Audit events introduced by Section 25
+
+Audit events are documented per-subsection in Section 25 rather than consolidated in a single catalog. For implementers who maintain an audit-event taxonomy elsewhere in `SPEC.md` (e.g., a Section 16 or Section 11.7 reference list), the full set of new audit event types introduced by Section 25 is:
+
+- `identity.discovered` (Section 25.4 Caller Identity and Capability Discovery)
+- `operations.inventory_queried` (Section 25.4 Operations Inventory)
+- `remediation.lock_acquired`, `remediation.lock_extended`, `remediation.lock_released`, `remediation.lock_expired`, `remediation.lock_stolen`, `remediation.lock_split_brain_detected` (Section 25.4 Remediation Coordination)
+- `remediation.escalation_persisted` (Section 25.4 Escalation reconciliation)
+- `ops_event.subscription_created`, `ops_event.subscription_updated`, `ops_event.subscription_secret_rotated`, `ops_event.subscription_deleted` (Section 25.5)
+- `diagnostics.session_diagnosed`, `diagnostics.pool_diagnosed`, `diagnostics.credential_pool_diagnosed`, `diagnostics.connectivity_checked` (Section 25.6)
+- `platform.version_checked`, `platform.upgrade_started`, `platform.upgrade_ops_rolled`, `platform.upgrade_crds_updated`, `platform.upgrade_schema_migrated`, `platform.upgrade_gateway_rolled`, `platform.upgrade_controllers_rolled`, `platform.upgrade_phase_advanced`, `platform.upgrade_paused`, `platform.upgrade_rolled_back`, `platform.upgrade_completed`, `platform.upgrade_verified`, `platform.config_changed`, `platform.registry_updated` (Section 25.8)
+- `audit.query_executed`, `audit.chain_integrity_broken_detected` (Section 25.9)
+- `drift.report_generated`, `drift.reconciliation_started`, `drift.resource_reconciled`, `drift.reconciliation_completed` (Section 25.10)
+- `backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed` (Section 25.11)
+
+All new audit events carry the standard correlation fields (Section 11.7 edit): optional `operation_id` (from `X-Lenny-Operation-ID` header) and `caller_kind` (from the OIDC `caller_type` claim).
+
+### 16.X — Capacity recommendation rules
+
+The capacity recommendation rules (defined in Section 25.3) are a shared Go package (`pkg/recommendations/rules`) compiled into both the gateway (evaluated against the in-process `MetricReader`) and `lenny-ops` (evaluated against a Prometheus-backed `MetricReader`). Add a sentence noting this shared-package design so implementers know the rules are not duplicated.
+
+### 16.X — Metrics added by Section 25
+
+Section 25 defines many new metrics. If Section 16 has a canonical metrics catalog, add these (or reference Section 25 as source-of-truth):
+
+- Health: `lenny_health_check_duration_seconds`, `lenny_health_status`.
+- Recommendations: `lenny_recommendations_generated_total`, `lenny_recommendations_ring_buffer_bytes`.
+- Event emission/buffer: `lenny_ops_events_emitted_total`, `lenny_ops_events_emit_failed_total`, `lenny_events_buffer_length`, `lenny_events_buffer_queries_total`, `lenny_events_buffer_gaps_total`.
+- Event stream: `lenny_ops_events_stream_length`, `lenny_ops_events_sse_active_connections`, `lenny_ops_events_webhook_delivery_total`, `lenny_ops_events_webhook_delivery_latency_seconds`.
+- Self-monitoring: `lenny_ops_self_health_status`, `lenny_ops_postgres_pool_active`, `lenny_ops_redis_consumer_lag`, `lenny_ops_webhook_backlog`.
+- Rate limiting: `lenny_ops_rate_limited_total`.
+- Locks: `lenny_ops_lock_store_active`, `lenny_ops_lock_outage_epoch`, `lenny_ops_lock_split_brain_detected_total`, `lenny_ops_lock_steal_total`, `lenny_ops_clock_skew_seconds`.
+- Escalation: `lenny_ops_escalation_reconciliation_batch_size`.
+- Diagnostics: `lenny_diagnostics_request_duration_seconds`.
+- Audit: `lenny_audit_query_duration_seconds`, `lenny_audit_chain_verification_broken_total`, `lenny_audit_chain_rechained_post_outage_total`, `lenny_audit_rate_limited_total`, `lenny_audit_scatter_gather_shards_queried`.
+- Drift: `lenny_drift_detected_total`, `lenny_drift_reconciled_total`.
+- Backup/restore: `lenny_backup_duration_seconds`, `lenny_backup_size_bytes`, `lenny_backup_total`, `lenny_backup_last_successful_timestamp`, `lenny_restore_duration_seconds`, `lenny_restore_total`.
+- Platform lifecycle: `lenny_platform_upgrade_phase`, `lenny_platform_upgrade_duration_seconds`, `lenny_platform_version_drift`, `lenny_platform_image_pull_check_duration_seconds`.
+- Alerting: `lenny_alerting_rules_bundled`, `lenny_alerting_rule_overrides`, `lenny_alerting_rule_eval_duration_seconds`.
+- Gateway auth: `lenny_ops_gateway_auth_token_refresh_total`, `lenny_ops_gateway_auth_token_refresh_failed_total`.
+- Metrics source: `lenny_prometheus_query_duration_seconds`.
+- Caller discovery: `lenny_ops_me_requests_total`.
+- Operations inventory: `lenny_ops_operations_inventory_requests_total`, `lenny_ops_operations_inventory_kinds_returned`, `lenny_ops_operations_stalled_total` (incremented per `OperationStalled` transition).
+- Scope enforcement: `lenny_ops_scope_forbidden_total{tool, required_scope}` (requests rejected due to `scope` claim mismatch).
+
+### 16.X — Structured logging convention
+
+Section 25.4 mandates that `lenny-ops` and the gateway emit structured JSON logs with the fields `ts`, `level`, `msg`, `component`, `operation_id` (optional), `agent_name` (optional), `trace_id` (optional). If Section 16 has a logging convention, align it with this shape. If no such convention exists, add one so all Lenny components log consistently.
+
+### 16.X — Prometheus scrape requirement
+
+Section 25.4 states that the Helm chart renders NetworkPolicy allowing Prometheus (in `monitoring.namespace`) to scrape `lenny-system` component metrics ports. If Section 16 documents Prometheus scraping, confirm the scrape target list includes `lenny-ops` on port 9090 in addition to the existing gateway/controller/token-service targets.
+
+## Section 17 — Deployment and Operations
+
+### 17.3 — Disaster recovery
+
+Cross-reference Section 25.11 (Backup and Restore API) and Section 25.15 (Total-Outage Recovery) as the canonical API-driven and break-glass recovery paths. The prose runbook in 17.3 is the human-operator summary; 25.11 and 25.15 are the structured procedures.
+
+Also, document the RTO/RPO targets by tier from Section 25.11 (Restore Workflow) in 17.3's planning section.
+
+### 17.6 — Preflight checks
+
+Add to the `lenny-preflight` Job's check list:
+
+- Verify a Prometheus-compatible endpoint is reachable at `ops.prometheus.url`. Message is tier-specific (INFO at Tier 1, WARN at Tier 2/3). Non-blocking unless `monitoring.acknowledgeNoPrometheus: true` is set.
+- Verify the `lenny-ops-sa` ServiceAccount has the RBAC permissions documented in Section 25.4. Use `kubectl auth can-i` against each rule.
+- Verify `cert-manager.io/cluster-issuer` annotation on `ops.ingress` (if set) points to an existing ClusterIssuer. Non-blocking warning if missing.
+- Verify the monitoring namespace (configured via `monitoring.namespace`) exists and contains at least one Prometheus pod matching `monitoring.podLabel` (non-blocking warning if missing).
+
+### 17.7 — Operational runbooks
+
+The existing runbook conventions gain machine-consumable structure (HTML-comment access markers, `/v1/admin/runbooks/{name}/steps` structured endpoint) documented in Section 25.7. 17.7 should cross-reference 25.7 as the authoritative format for agent-parseable runbooks; 17.7's own examples should be updated to use `<!-- access: ... -->` markers so they exercise the same format.
+
+Add mapping entries for new Section 25 alerts to runbook names in the `issueRunbooks` lookup table (Section 25.7 Path B; the mapping is in `pkg/gateway/health/runbook_links.go`). Specifically: `WARM_POOL_EXHAUSTED`, `WARM_POOL_LOW`, `CREDENTIAL_POOL_EXHAUSTED`, `POSTGRES_UNREACHABLE`, `REDIS_UNREACHABLE`, `MINIO_UNREACHABLE`, `CERT_EXPIRY_IMMINENT`, `CIRCUIT_BREAKER_OPEN`.
+
+### 17.X — Tier preset values
+
+Section 25 assumes tier preset files exist: `deploy/helm/lenny/values-tier1.yaml`, `-tier2.yaml`, `-tier3.yaml`. If Section 17 documents tier presets, add or update it to reflect Section 25's tier-dependent fields (full list in Section 25.4 "lenny-ops Helm Values", especially `monitoring.alertThresholds` tier overrides, `backups.retention` tier overrides, `ops.events.streamMaxLen` tier overrides).
+
+### 17.X — `lenny-ops` deployment requirement
+
+Update any deployment-topology content to reflect that `lenny-ops` is **mandatory** in every Lenny installation regardless of tier (Section 25.1). There is no supported topology without it. The full topology is summarized in Section 25.16.
+
+### 17.X — Image registry and air-gap
+
+The Helm chart's `platform.registry.*` values (in the canonical block in Section 25.4) are the single source for all Lenny component image references (gateway, `lenny-ops`, controllers, `lenny-backup`). Document that this also affects air-gapped deployments (Section 25.8 Air-Gapped Support).
+
+## Section 24 — `lenny-ctl`
+
+### 24.X — lenny-ctl extensions
+
+The `lenny-ctl` command groups defined in Section 25.14 (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`) must be added to the main `lenny-ctl` command index in Section 24. Section 25.14 contains the full command tables; Section 24's index should link to them.
+
+Also, the `--ops-server` flag and the gateway-based auto-discovery (via `GET /v1/admin/platform/version` → `opsServiceURL` field) are part of the `lenny-ctl` routing model — document alongside existing `--server` flag conventions.
+
+## Namespace model
+
+Section 25 uses two namespaces by convention:
+
+- `{Release.Namespace}` (default `lenny-system`) — hosts `lenny-ops`, `lenny-gateway`, controllers, Postgres/Redis/MinIO Services, backup Jobs, ConfigMaps, Secrets.
+- `lenny-agents` — hosts tenant workload (agent) pods. Referenced by runbook examples (`kubectl get sandboxes -n lenny-agents`) and discussed in Cross-namespace deployments (Section 25.4).
+
+If `SPEC.md` has a section describing Lenny's namespace model, confirm both are documented and the isolation rationale is stated (agent pods are tenant-supplied code and must not reach the operational control plane).
+
+## Tenancy model
+
+Section 25.5 introduces tenant-scoped webhook subscriptions via `tenant_filter` column. If `SPEC.md` has a section on the tenancy model, add the `tenantFilter` pattern and document how `platform-admin` vs `tenant-admin` calls map to allowed `tenantFilter` values (Section 25.5 Tenant Isolation).
+
+## Chart-level edits (Helm)
+
+The Helm chart (repo path: `deploy/helm/lenny/`) needs the following additions. Any `SPEC.md` section describing chart structure should reference these:
+
+1. **New resources (rendered by the chart):**
+   - Deployment `lenny-ops`
+   - Service `lenny-ops` (ClusterIP, port 8090, `sessionAffinity: ClientIP`)
+   - Service `lenny-gateway-pods` (headless, `clusterIP: None`)
+   - Ingress `lenny-ops` with TLS (required, not optional)
+   - ServiceAccount `lenny-ops-sa`
+   - Role + RoleBinding in `{Release.Namespace}` for `lenny-ops-sa` (namespace-scoped permissions)
+   - ClusterRole + ClusterRoleBinding for `lenny-ops-sa` (cluster-scoped permissions: CRDs, Nodes)
+   - ServiceAccount `lenny-backup-sa` (distinct from `lenny-ops-sa`; minimal permissions for backup Job pods)
+   - NetworkPolicies: `lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job`
+   - PodDisruptionBudget `lenny-ops` (always rendered; `minAvailable: 1`)
+   - `PrometheusRule` (via prometheus-operator CRD) **or** ConfigMap `lenny-alerting-rules`, gated by `monitoring.format` (values `"prometheusrule"` / `"configmap"` / `"both"`)
+   - PodMonitor or ServiceMonitor for `lenny-ops` (gated by `monitoring.format`; selects on app=lenny-ops, port 9090)
+   - Secret templates: `lenny-backup-postgres` (connection string), `lenny-backup-minio` (access key), potentially others for mTLS certs when `ops.tls.internalEnabled: true`
+
+   Runtime-managed resources (NOT rendered by the chart but expected to exist at runtime):
+   - Lease `lenny-ops-leader` in `{Release.Namespace}` (created via K8s Lease API by the first `lenny-ops` pod; `lenny-ops-sa` RBAC must grant permissions on `leases.coordination.k8s.io` in this namespace)
+   - Backup Jobs in `{Release.Namespace}` (created by `lenny-ops` on schedule and on-demand)
+
+2. **New top-level Helm values** (full reference in Section 25.4 "lenny-ops Helm Values"):
+   - `platform.tier`, `platform.registry.*`, `platform.upgradeChannel`, `platform.releaseChannel.publicKeyPath`, `platform.upgrade.*`, `platform.recommendations.disabledRules`
+   - `monitoring.namespace`, `monitoring.podLabel`, `monitoring.bundleRules`, `monitoring.format`, `monitoring.acknowledgeNoPrometheus`, `monitoring.prometheusRule.*`, `monitoring.configMap.*`, `monitoring.alertThresholds.*`, `monitoring.alertOverrides`
+   - `ops.*` (bulk of new config)
+   - `backups.*` (schedule, retention, verification, encryption, contentPolicy, access)
+   - `security.oidc.*`
+   - `gateway.healthTracker.useCompiledRules`, `gateway.recommendations.windowOverrides`
+
+3. **Chart-infrastructure values referenced by NetworkPolicy templates** (Section 25.4 Kubernetes Resources). These may already exist in pre-Section-25 chart values — if not, add them:
+   - `ingress.controllerNamespace` — namespace hosting the Ingress controller (e.g., `"ingress-nginx"`).
+   - `ingress.controllerLabel` — label selector matching Ingress controller pods (e.g., `{ app.kubernetes.io/name: ingress-nginx }`).
+   - `storage.namespace` — namespace hosting Postgres, Redis, MinIO Services (defaults to `{Release.Namespace}` in single-namespace deployments).
+
+3. **Release-channel signing key** — the Lenny release channel's Ed25519 public key is compiled into `lenny-ops`. Mirroring deployers can override via `platform.releaseChannel.publicKeyPath`. Document the key distribution mechanism wherever chart packaging is described.
+
+4. **Tier preset files** — `deploy/helm/lenny/values-tier1.yaml`, `-tier2.yaml`, `-tier3.yaml`. Each preset overrides a defined subset of base values (a summary of what each overrides should be in the comment header of each preset file). Overriding includes `monitoring.alertThresholds.*` (tighter thresholds at higher tiers), `backups.retention.*` (longer retention at higher tiers), `ops.events.streamMaxLen` (larger buffer at higher tiers), `ops.selfHealth.checkIntervalSeconds` (10s at Tier 2/3, 30s acceptable at Tier 1), `monitoring.acknowledgeNoPrometheus` (defaults false at Tier 2/3).
+
+5. **Rendered-values ConfigMap** — the chart renders the effective merged Helm values (with secrets redacted) into a ConfigMap `lenny-platform-values` in `{Release.Namespace}`. `lenny-ops` reads this ConfigMap during OpsRoll (Section 25.10) to compute the target `bootstrap_seed_snapshot`. The ConfigMap is updated on every `helm install`/`helm upgrade`. `lenny-ops-sa` RBAC includes read access on this ConfigMap.
+
+6. **Initial `bootstrap_seed_snapshot` population** — on first install (when `bootstrap_seed_snapshot` is empty), a post-install Helm hook Job (or `lenny-ops` first-startup logic) populates `bootstrap_seed_snapshot` with `id='live'` from the rendered Helm values ConfigMap. Without this, drift detection on a fresh install returns `404 DRIFT_DESIRED_STATE_MISSING` until the operator manually calls `POST /v1/admin/drift/snapshot/refresh`.
+
+7. **Backup/MinIO Secrets** — the chart renders two Secrets referenced by backup Jobs (Section 25.11): `lenny-backup-postgres` (Postgres connection string for a dedicated read-only-plus-dump role) and `lenny-backup-minio` (MinIO/S3 access key with narrowly-scoped bucket permissions). These Secret names are hardcoded in Section 25.11; if they need to be parameterized, add Helm values to do so.
+
+8. **mTLS certs (opt-in)** — when `ops.tls.internalEnabled: true`, the chart renders a cert Secret referenced by `ops.tls.certSecretName`. If cert-manager is available, the chart renders a `Certificate` resource; otherwise the operator provides the Secret externally.
+
+## Build system
+
+Section 25 requires the following from the build pipeline:
+
+1. **New container images** produced on release:
+   - `lenny-ops` — the `lenny-ops` binary.
+   - `lenny-backup` — the `lenny-backup` binary (used by backup/restore/verify Jobs).
+
+   The gateway, controller, and token-service images already exist and may need small additions (new endpoints, `EventEmitter` wiring).
+
+2. **OpenAPI generation** — a build-time step produces `/v1/openapi.json` from the Go type definitions, and generates MCP tool schemas from the OpenAPI via an `openapi-to-mcp` step (Section 25.12).
+
+3. **`docs/alerting/rules.yaml`** — generated from `pkg/alerting/rules` and committed on each release. Used by deployers on non-Prometheus monitoring stacks (Section 25.13).
+
+4. **Bundled alerting rules rendering** — the Helm chart's `PrometheusRule` / ConfigMap templates consume `pkg/alerting/rules` output. The chart build must embed or reference the generated rules.
+
+5. **Release-channel signing** — release metadata is Ed25519-signed (Section 25.8); the build/release process must have access to the signing key.
+
+## Other documentation
+
+Operator-facing docs (outside `SPEC.md`) that Section 25 refers to and expects to exist:
+
+- `docs/runbooks/*.md` — bundled operational runbooks matching the `issueRunbooks` table in Section 25.7. Create stubs for each referenced runbook: `warm-pool-exhaustion`, `credential-pool-exhaustion`, `postgres-failover`, `redis-failure`, `minio-failure`, `cert-manager-outage`, `gateway-replica-failure`.
+- `docs/runbooks/total-outage.md` — full human-operator runbook extending Section 25.15 Total-Outage Recovery.
+- `docs/runbooks/manual-restore.md` — manual restore procedure referenced by Section 25.15 Path D step 4.
+- `docs/alerting/routing-recommendations.md` — Alertmanager routing recommendations referenced by Section 25.13.
+- `docs/alerting/rules.yaml` — generated reference of the bundled alerting rules (committed on each release).
+- `docs/deployment/air-gap.md` — air-gap install procedure referenced by Section 25.8.
+
+## Go package additions
+
+Section 25 introduces the following Go packages (paths under the Lenny repo root). Whichever `SPEC.md` section lists the code organization should include them:
+
+- `pkg/alerting/rules` — shared bundled alerting rules, compiled into gateway and `lenny-ops`.
+- `pkg/recommendations/rules` — shared capacity recommendation rules.
+- `pkg/gateway/events/emitter.go`, `pkg/gateway/events/buffer.go` — event emission and in-memory ring buffer. Also defines the `EventEmitter` interface consumed by existing gateway subsystems.
+- `pkg/gateway/health/service.go`, `pkg/gateway/health/runbook_links.go` — health service with runbook link table.
+- `pkg/gateway/recommendations/service.go` — capacity recommendations service. Defines the `MetricReader` interface.
+- `pkg/ops/gateway/client.go`, `pkg/ops/gateway/discovery.go` — `GatewayClient` and headless Service replica discovery.
+- `pkg/ops/metrics/source.go` — Prometheus-with-fan-out-fallback `MetricSource` and a Prometheus-backed `MetricReader` implementation.
+- `pkg/ops/events/service.go` — event stream service (SSE, polling, webhooks).
+- `pkg/ops/diagnostics/service.go` — diagnostic service.
+- `pkg/ops/runbooks/index.go` — runbook index with structured step parser.
+- `pkg/ops/coordination/locks.go` — remediation lock service.
+- `pkg/ops/backup/service.go` — backup and restore service.
+- `pkg/ops/mcp/adapter.go` — MCP management adapter. Includes scope enforcement for the `scope` JWT claim (Section 25.1).
+- `pkg/ops/me/service.go` — caller identity discovery (`/v1/admin/me` and sub-endpoints, Section 25.4 Caller Identity and Capability Discovery).
+- `pkg/ops/operations/inventory.go` — unified Operations Inventory (`/v1/admin/operations`, Section 25.4 Operations Inventory). Scatter-gathers across subsystems and assembles the response.
+- `pkg/ops/operations/eta.go` — canonical Progress Envelope computation (Section 25.2). Reads `ops_operation_baselines` and produces `etaSeconds`/`etaConfidence`/`etaMethod` for each operation kind.
+- `pkg/common/scopes/scopes.go` — RFC 9068 `scope` claim parser and matcher for `tools:<domain>:<action>` values. Consumed by both the admin API middleware and the MCP adapter.
+- `pkg/common/registry/resolver.go` — shared `ImageResolver`.
+
+New interfaces expected to be imported by existing gateway subsystems (Section 10, Section 11.6, Session manager, Credential pool manager):
+
+- `EventEmitter` (from `pkg/gateway/events/emitter.go`) — injected into every subsystem that emits operational events.
+- `MetricReader` (from `pkg/gateway/recommendations/service.go`) — used by the recommendation rules to read from the gateway's in-process `prometheus.Registry`.
+
+## Cross-reference integrity
+
+Before merging, verify:
+
+1. Every `Section 25.X` cross-reference in `SPEC.md` (outside Section 25 itself) resolves to a subsection that exists in the merged Section 25 content. The canonical Section 25 structure is 25.1 through 25.17.
+2. Every reference from Section 25 outward (Section 10.5, 11.6, 11.7, 12.4, 15.1, 16.5, 17.3, 17.6, 17.7, 24) targets an existing subsection or — if not — the edits above create that subsection.
+3. Every metric, alert, event, error code, audit event, and Helm value referenced anywhere in `SPEC.md` appears in exactly one authoritative catalog (Section 16 for metrics/alerts/events, Section 25 per-subsection for error codes and audit events, Section 25.4 for Helm values).
