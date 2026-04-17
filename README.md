@@ -21,7 +21,7 @@ Lenny is a self-hosted, runtime-agnostic agent platform built around security, i
 7. **Experimentation and evaluation** — built-in A/B traffic routing; two-tier eval model with runtime-native platforms as the primary path
 8. **Ecosystem-composable** — memory, caching, guardrails, eval, credential routing are all pluggable interfaces
 
-For comparisons with other projects, see [Section 23 of the spec](SPEC.md#23-competitive-landscape).
+For comparisons with other projects, see [Section 23 of the spec](spec/23_competitive-landscape.md).
 
 ---
 
@@ -180,13 +180,13 @@ For users that don't have access to external eval tools, Lenny's built-in `/eval
 
 ## Project Status
 
-Lenny is in the **design phase**. The [technical specification](SPEC.md) is complete and covers the full architecture. Implementation has not started yet.
+Lenny is in the **design phase**. The [technical specification](spec/) is complete and covers the full architecture. Implementation has not started yet.
 
 We welcome feedback on the design and early contributors. See [Contributing](#contributing) below.
 
 ## Documentation
 
-- [Technical Specification](SPEC.md) — comprehensive architecture specification
+- [Technical Specification](spec/) — comprehensive architecture specification (split by section under `spec/`)
 - [Documentation Site](docs/) — guides, tutorials, API reference (Jekyll/GitHub Pages)
 - [Agent Operability](AGENTIC_OPERABILITY.md) — design addendum for AI DevOps agent integration
 

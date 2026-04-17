@@ -1,0 +1,14 @@
+## 22. Explicit Non-Decisions
+
+**22.1 No Model B Runtime Deployment.** No mechanism for packaging a graph definition as a new registered runtime. Users register derived runtimes via admin API. (Context: LangGraph deployment discussion — Model A chosen: one generic LangGraph runtime, many deployed graphs via derived runtimes.)
+
+**22.2 No Built-In Eval Logic.** Lenny provides hooks and storage. No LLM-as-judge or hallucination detection.
+
+**22.3 No Built-In Guardrail Logic.** Lenny provides the `RequestInterceptor` hook ([Section 4.8](04_system-components.md#48-gateway-policy-engine)) and the `contentPolicy` on `DelegationPolicy` ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)). No content classifiers or prompt injection detection are built in. **Deployers enabling delegation chains without configuring `contentPolicy.interceptorRef` accept the risk that a compromised or manipulated parent agent can craft adversarial `TaskSpec.input` payloads targeting child agents.** The `maxInputSize` limit provides a baseline size constraint, but content-level scanning requires an external interceptor. **Elicitation responses** ([Section 9.2](09_mcp-integration.md#92-elicitation-chain)) flowing downward from clients or gateway-registered connectors to pods are not subject to `contentPolicy` interceptors — they originate from humans or trusted connectors and are delivered as replies to pending `lenny/request_input` calls. A malicious human user or compromised connector could provide adversarial content in an elicitation response; this is an inherent property of human-in-the-loop systems and is mitigated by connector registration requirements and provenance metadata, not by content scanning.
+
+**22.4 No Built-In Memory Extraction.** Lenny provides the `MemoryStore` interface and tools ([Section 9.4](09_mcp-integration.md#94-memory-store)). Runtimes decide what to write.
+
+**22.5 No Direct External Connector Access.** Connectors are session-internal in v1. External clients do not call connectors directly. Whether to add this later is an independent product decision; the data model accommodates it without requiring a redesign.
+
+**22.6 Hooks-and-Defaults Design Principle.** Every cross-cutting AI capability (memory, caching, guardrails, evaluation, routing) follows the same pattern: defined as an interface with a sensible default implementation, disabled unless explicitly enabled by the deployer, fully replaceable. Lenny never implements AI-specific logic (eval scoring, memory extraction, content classification) — that belongs to specialized tools in the ecosystem. This is a governing architectural principle, not a limitation — it is the reason Lenny can serve as a platform layer without competing with the ecosystem tools deployers already use. See [Section 23.1](23_competitive-landscape.md#231-why-lenny), differentiator 6 for the competitive positioning of this principle.
+

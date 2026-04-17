@@ -1,0 +1,1573 @@
+## 4. System Components
+
+### 4.1 Edge Gateway Replicas
+
+**Role:** The only externally-facing component. All client interaction enters through the gateway.
+
+**Responsibilities:**
+
+- Authenticate clients (OIDC/OAuth 2.1)
+- Expose multiple external interfaces: REST API and protocol adapters via `ExternalAdapterRegistry` (MCP, OpenAI Completions, Open Responses — see [Section 15](15_external-api-surface.md))
+- Route sessions to the correct runtime pod
+- Proxy long-lived interactive streams (WebSocket / gRPC bidi / Streamable HTTP)
+- Run the Policy Engine and `RequestInterceptor` chain on every request
+- Handle reconnect/reattach after disconnection
+- Mediate all file uploads to pods
+- Host virtual MCP child interfaces for delegation
+- Serve dedicated MCP endpoints for `type: mcp` runtimes at `/mcp/runtimes/{name}`
+
+**Deployment:**
+
+- Stateless-ish replicas behind ingress/load balancer
+- HPA on CPU, request queue depth, and active streams (see [§4.1](#41-edge-gateway-replicas) HPA metric role table for the canonical metric-to-role mapping). `lenny_gateway_active_sessions` is a capacity ceiling alert signal only — it is NOT used as an HPA trigger.
+- Per-tier HPA configuration (min/max replicas, target utilization, scale-down policy) is in [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults).
+- Sticky routing is an optimization, not a correctness requirement
+- PodDisruptionBudget to limit simultaneous disruptions
+
+**Per-replica session capacity budget:**
+
+Each gateway replica has a maximum number of concurrent sessions it can handle before session-acceptance latency and stream proxy queue depth degrade. This limit is expressed as `gateway.maxSessionsPerReplica`.
+
+**HPA metric roles — canonical definition (SCL-026):** Three gateway metrics are used in HPA and alerting, each with a distinct role. This is the authoritative mapping; [§10.1](10_gateway-internals.md#101-horizontal-scaling) and [§17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) cross-reference it:
+
+| Metric | Role | Where used |
+| ------ | ---- | ---------- |
+| `lenny_gateway_request_queue_depth` | **Primary HPA scale-out trigger.** Reflects instantaneous back-pressure (requests queued awaiting a handler goroutine). Reacts faster than CPU and does not depend on Prometheus Adapter cache TTL when surfaced via KEDA. Target `averageValue: 10` (Tier 2); see [§17.8.2](17_deployment-topology.md#1782-capacity-tier-reference). | HPA / KEDA ScaledObject |
+| `lenny_gateway_active_streams` | **Secondary HPA metric.** Per-replica gauge of in-flight streaming connections, surfaced via Prometheus Adapter or KEDA alongside `request_queue_depth` and CPU. | HPA / KEDA ScaledObject |
+| `lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` | **Capacity ceiling alert, not an HPA trigger.** Fires `GatewaySessionBudgetNearExhaustion` ([§16.5](16_observability.md#165-alerting-rules-and-slos)) when > 90% on any replica, giving a last-resort signal if HPA scale-out is lagging. Must NOT be used as the sole HPA trigger — it measures Postgres-backed session count (not live goroutine pressure) and lags real load. | Alert only |
+
+`gateway.maxSessionsPerReplica` defines the capacity ceiling used by the alert above; it is calibrated by the Phase 2 benchmark methodology below.
+
+| Tier | Provisional `maxSessionsPerReplica` | HPA target utilization |
+| ---- | ----------------------------------- | ---------------------- |
+| Tier 1 (Starter) | 50 | 80% |
+| Tier 2 (Growth) | 200 | 80% |
+| Tier 3 (Scale) | 400 | 80% |
+| Tier 4 (Platform) | 400 | 80% |
+
+**These values are provisional first-principles estimates.** The Tier 1 and Tier 2 values are derived from the respective max concurrent sessions targets (100 and 1,000) and assumed starting replica counts. The Tier 3 value (400) assumes that the LLM Proxy subsystem has been extracted to a dedicated service before the Tier 2→3 promotion decision — removing the long-lived upstream goroutine workload from the gateway process reduces heap and GC pressure, roughly doubling the per-replica session capacity. **Tier 3 deployment therefore carries the following prerequisite:** the Phase 13.5 load tests must confirm that (a) the LLM Proxy subsystem has been extracted or `lenny_llm_proxy_active_connections / lenny_gateway_active_sessions` is sustainably below 0.3:1 at Tier 2 peak (see extraction threshold guidance in the "Extraction triggers" subsection below), and (b) `lenny_gateway_gc_pause_p99_ms` remains below 50 ms at Tier 2 peak load. If either condition is not met, the Tier 3 provisional value reverts to 200 and additional replicas must be used to reach the 10,000-session target. All values must be replaced with empirically validated measurements produced by the Phase 2 (Tier 1/2) and Phase 13.5 (Tier 3) benchmark harnesses before any production deployment.
+
+**Capacity budget calibration methodology (Phase 2 deliverable):**
+
+1. **Ramp test.** Drive a single gateway replica from 0 to `maxSessionsPerReplica × 1.5` concurrent sessions in 10% increments. At each step record: `lenny_stream_proxy_p99_attach_latency_ms`, `lenny_stream_proxy_queue_depth`, `lenny_gateway_gc_pause_p99_ms`, and RSS.
+2. **Saturation point.** Identify the session count at which `lenny_stream_proxy_p99_attach_latency_ms` first exceeds 800 ms or `lenny_stream_proxy_queue_depth` first exceeds 500. That count is the empirical saturation point.
+3. **Budget setting.** Set `maxSessionsPerReplica` to the saturation point minus 20% headroom. For example, if saturation occurs at 250 sessions, set `maxSessionsPerReplica` to 200.
+4. **HPA validation.** Confirm that a horizontal scale-out triggered by `lenny_gateway_request_queue_depth` reaching its HPA target fires at least one full HPA scale cycle (typically 2–3 minutes) before the replica reaches its empirical saturation point. Verify that `lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` reaching 90% triggers the `GatewaySessionBudgetNearExhaustion` alert (this metric is an alert-only signal, not an HPA trigger — see metric role table above).
+5. **Document and replace.** Replace each provisional value in the table above with the calibrated value, annotated with the benchmark run identifier and date. Provisional values must not remain in place for any Tier 2 production deployment.
+
+This calibration must be completed as a Phase 2 exit criterion, aligned with the subsystem extraction threshold calibration described below. The `GatewaySessionBudgetNearExhaustion` alert in [Section 16.5](16_observability.md#165-alerting-rules-and-slos) fires when `lenny_gateway_active_sessions / gateway.maxSessionsPerReplica` exceeds 90% on any replica, giving a last-resort signal if HPA scale-out is lagging.
+
+**Key invariant:** A client can land on any gateway replica. Session state is always in durable stores.
+
+#### Gateway Internal Subsystems
+
+The gateway binary is internally partitioned into four subsystem boundaries. These are **not** separate services — they are Go interfaces within a single binary that enforce isolation at the concurrency and failure-domain level, so that a problem in one area (e.g., a slow upload) cannot starve or crash another (e.g., MCP streaming).
+
+**Subsystems:**
+
+1. **Stream Proxy** — MCP streaming, session attachment, event relay, and client reconnection handling.
+2. **Upload Handler** — File upload proxying, payload validation, staging to the Artifact Store, and archive extraction.
+3. **MCP Fabric** — Delegation orchestration, virtual child MCP interfaces, and elicitation chain management.
+4. **LLM Proxy** — Credential-injecting reverse proxy for LLM provider traffic ([Section 4.9](#49-credential-leasing-service)). Validates lease tokens, injects real API keys, and forwards streaming requests to upstream LLM providers.
+
+**Per-subsystem isolation guarantees:**
+
+Each subsystem is defined as a Go interface with its own:
+
+- **Goroutine pool / concurrency limits:** A saturated Upload Handler cannot consume goroutines needed by the Stream Proxy. Each subsystem has independently configured `maxConcurrent` and queue-depth settings. See [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults) for per-tier recommended values.
+- **Per-subsystem metrics:** Latency histograms, error rates, and queue depth are emitted per subsystem, enabling targeted alerting (e.g., upload p99 latency spike does not hide a stream proxy degradation).
+- **Circuit breaker:** Each subsystem has its own automatic, in-memory circuit breaker (not the operator-managed circuit breakers in [Section 11.6](11_policy-and-controls.md#116-circuit-breakers)). The Upload Handler can trip to half-open or open state — returning 503 for uploads — while the Stream Proxy and MCP Fabric continue serving normally. This is the primary mechanism for partial gateway degradation. **These breakers are intentionally per-replica (not shared across replicas).** When a downstream dependency failure is infrastructure-wide (e.g., MinIO down), each replica independently discovers the failure and opens its own breaker after its local failure threshold. This means the first N requests per replica fail before the breaker opens, and clients behind a load balancer may see non-deterministic 503s during the convergence window. This is the intended design: shared-state breakers would add a Redis dependency on the critical upload and streaming paths. Clients should retry on 503; the load balancer distributes retries across replicas, and all replicas converge to open state within seconds. For infrastructure-wide outages that require immediate platform-wide rejection, operators should use the operator-managed circuit breakers ([Section 11.6](11_policy-and-controls.md#116-circuit-breakers)), which are Redis-backed and propagate across all replicas within one round-trip.
+
+**Extraction triggers:**
+
+These internal boundaries are designed so that any subsystem can be extracted to a dedicated service if scaling requires it. The following table defines the observable metrics and indicative threshold ranges for each subsystem. All threshold values in this table are **provisional first-principles estimates** derived from capacity reasoning against the Tier 2 load targets. They must be replaced with empirically validated values produced by the Phase 2 benchmark harness (see calibration methodology below) before those thresholds are used to make any extraction decision.
+
+| Subsystem          | Key Metrics                                                                                                           | Indicative Extraction Threshold (provisional — see calibration note)                                                                                                                                                                                                                                                                                    | Failure Mode if Not Extracted                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Stream Proxy**   | `lenny_stream_proxy_queue_depth`, `lenny_stream_proxy_goroutines`, `lenny_stream_proxy_p99_attach_latency_ms`         | Queue depth sustained >500 **or** p99 attach latency >800 ms under normal (non-burst) load for ≥5 min. These figures are provisional; final values must be set per the calibration methodology below.                                                                                                                                                   | Head-of-line blocking on session attach; reconnection storms amplify the problem                            |
+| **Upload Handler** | `lenny_upload_handler_active_uploads`, `lenny_upload_handler_queue_depth`, `lenny_upload_handler_p99_latency_ms`      | Active uploads sustained >200 concurrent **or** HPA signals consistently driven by upload load rather than session load. These figures are provisional; final values must be set per the calibration methodology below.                                                                                                                                  | Upload bursts cause gateway over-provisioning that wastes resources on stream proxy replicas                |
+| **MCP Fabric**     | `lenny_mcp_fabric_active_delegations`, `lenny_mcp_fabric_goroutines`, `lenny_mcp_fabric_p99_orchestration_latency_ms` | Active delegations sustained >1,000 concurrent **or** p99 orchestration latency >2,000 ms. These figures are provisional; final values must be set per the calibration methodology below.                                                                                                                                                               | Deep delegation trees starve goroutine pool; GC pressure from delegation state affects Stream Proxy latency |
+| **LLM Proxy**      | `lenny_llm_proxy_active_connections`, `lenny_llm_proxy_upstream_goroutines`, `lenny_llm_proxy_p99_ttfb_ms`            | Active upstream connections sustained >2,000 **or** `lenny_llm_proxy_active_connections` exceeds 60% of `maxConcurrent` across all replicas for ≥10 min and is growing faster than gateway HPA can respond **or** HPA signals dominated by LLM proxy connection load. These figures are provisional; final values must be set per the calibration methodology below. | Long-lived upstream streaming goroutines inflate heap and GC pause time for all subsystems                  |
+
+**Extraction threshold Helm values.** All indicative threshold values in the table above are configurable at deploy time via `gateway.extractionThresholds.<subsystem>.<metric>` Helm values (e.g., `gateway.extractionThresholds.streamProxy.queueDepth`, `gateway.extractionThresholds.uploadHandler.activeConcurrent`, `gateway.extractionThresholds.mcpFabric.activeDelegations`, `gateway.extractionThresholds.llmProxy.activeConnections`). The defaults encode the provisional first-principles estimates shown in the table; operators must replace them with empirically calibrated values produced by the Phase 2 benchmark harness before any extraction decision is made. Storing the thresholds as Helm values (rather than hardcoded prose) ensures that validated measurements can be applied without a code change and that the values used for an extraction decision are auditable in the Helm release history.
+
+**LLM Proxy-to-session ratio guidance:** When the ratio of `lenny_llm_proxy_active_connections` to `lenny_gateway_active_sessions` approaches 1:1 (i.e., nearly every active session has an open LLM proxy stream), the LLM Proxy subsystem is effectively as large as the Stream Proxy subsystem. At ratios above 0.5:1 sustained for more than 15 minutes, operators should begin planning extraction. Below 0.3:1, the combined binary is expected to remain sustainable at Tier 3 scale. Between 0.3:1 and 0.5:1, operators should monitor `lenny_gateway_gc_pause_p99_ms` for early signs of shared-process GC pressure. These ratio boundaries are also provisional and subject to revision after Phase 2 benchmarking.
+
+**Shared-process GC pressure signal:** When any two subsystems simultaneously approach their indicative thresholds, the combined goroutine count and heap allocation rate can cause GC pauses that affect all subsystems. The metric `lenny_gateway_gc_pause_p99_ms` is emitted at the process level; a sustained value >50 ms is an additional signal that the process boundary is becoming a bottleneck regardless of per-subsystem queue depth.
+
+**Threshold calibration methodology (Phase 2 deliverable):**
+
+Before any extraction threshold is treated as actionable, the following procedure must be executed against the Phase 2 benchmark harness running a **monolithic gateway** (all four subsystems in a single binary):
+
+1. **Baseline sweep.** Drive the gateway through four synthetic load levels: 25%, 50%, 75%, and 100% of the Tier 2 session concurrency target. At each level, record p50, p95, and p99 latency for every per-subsystem key metric listed in the table above, plus `lenny_gateway_gc_pause_p99_ms`.
+2. **Stress identification.** Identify the load level at which any subsystem's p99 latency or queue depth first shows a statistically significant inflection (non-linear growth relative to the prior level). This is the empirical saturation point for that subsystem.
+3. **Threshold setting.** Set the extraction threshold for each subsystem at the metric value observed at the saturation point **minus 20% headroom**. For example, if Stream Proxy p99 attach latency first inflects at 1,000 ms at 75% Tier 2 load, the extraction threshold for that metric is set to 800 ms.
+4. **Sensitivity check.** Verify that the 20%-headroom threshold fires at least one full HPA scale cycle (typically 2–3 minutes) before the subsystem reaches the measured saturation point, giving operators time to react.
+5. **Document and replace.** Replace each provisional threshold in the table above with the calibrated value, annotated with the benchmark run identifier and date. The provisional values must not remain in place for any Tier 2 production deployment.
+
+This calibration must be completed as a Phase 2 exit criterion. Phase 13.5 load testing will perform a second validation at Tier 3 scale; at that point the thresholds may be revised upward if the combined binary remains healthy, or extraction may be triggered if the empirical saturation point has moved.
+
+Until those triggers are hit, a single binary with internal boundaries is preferred for operational simplicity.
+
+### 4.2 Session Manager
+
+**Role:** Source of truth for all session and task metadata.
+
+**Backed by:** Postgres (primary), Redis (hot routing cache, short-lived locks)
+
+**Manages:**
+
+- Session records (id, **tenant_id**, user_id, state, pool, pod assignment, cwd, recovery_generation, coordination_generation, **schema_version**). **`recovery_generation`** is incremented on each pod recovery (visible to clients via the session API and `session.resumed` events); it tracks how many times this logical session has been recovered onto a new pod. **`coordination_generation`** is incremented on coordinator handoff across gateway replicas (internal only, used for split-brain fencing); it tracks which gateway replica is the authoritative coordinator. These are independent counters: a coordinator handoff does not increment `recovery_generation`, and a session recovery does not reset `coordination_generation`.
+- Task records and parent/child lineage (task tree)
+- Retry counters and policy enforcement
+- Resume eligibility and window
+- Pod-to-session binding
+- Delegation lease tracking
+
+**Multi-tenancy:** `tenant_id` is carried on all session, task, quota, token, memory store, and credential pool store records. **Runtime and pool records are platform-global** — they have no `tenant_id` field and are not subject to RLS. Instead, visibility and write access are enforced at the application layer via a `runtime_tenant_access` join table (columns: `runtime_name`, `tenant_id`, `granted_by`, `granted_at`) and an equivalent `pool_tenant_access` table. A `tenant-admin`'s calls to `/v1/admin/runtimes` and `/v1/admin/pools` are filtered to the rows in these access tables for their tenant; `platform-admin` calls are unfiltered. This design allows a single runtime or pool to be made available to multiple tenants without data duplication, and avoids applying RLS policies to resources that are inherently shared infrastructure. The **primary** tenant isolation mechanism is PostgreSQL Row-Level Security (RLS) policies tied to the database session role. Every tenant-scoped table has an RLS policy that filters rows using `current_setting('app.current_tenant', false)` — the `false` parameter causes a hard error if the setting is unset, preventing silent fallback to an empty string. Every database call is wrapped in an explicit transaction that begins with `SET LOCAL app.current_tenant = '<tenant_id>'`. `SET LOCAL` is transaction-scoped: the value is automatically cleared on `COMMIT` or `ROLLBACK`, which is essential under PgBouncer transaction-mode pooling where bare `SET` could leak tenant context to subsequent requests sharing the same pooled connection. As defense-in-depth, PgBouncer's `connect_query` is configured to set a sentinel value (`SET app.current_tenant = '__unset__'`) on every fresh connection checkout; any query that reaches RLS evaluation with `__unset__` will be rejected by the policy. Application-layer `tenant_id` filtering in queries remains as additional defense-in-depth, but a missing WHERE clause in application code **cannot** break isolation — the database enforces it regardless. An integration test must verify tenant isolation at startup by confirming that a query without `SET LOCAL` is rejected and that cross-tenant reads return zero rows. Namespace-level or cluster-level isolation is a future goal. All quotas, rate limits, and usage reports can be scoped by tenant.
+
+**`platform-admin` cross-tenant database access.** `platform-admin` code paths that require cross-tenant reads (e.g., `GET /v1/admin/tenants`, usage dashboards, erasure jobs) use a dedicated sentinel value: `SET LOCAL app.current_tenant = '__all__'`. Every RLS policy on tenant-scoped tables includes an additional clause: `OR current_setting('app.current_tenant', false) = '__all__'`, which disables row filtering for the transaction. The `__all__` sentinel is restricted to the `platform-admin` code path: the gateway sets it only after RBAC verification confirms the caller holds the `platform-admin` role. Non-`platform-admin` callers can never trigger this sentinel — the gateway always sets the caller's actual `tenant_id`. The `lenny_tenant_guard` trigger ([Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements)) treats `__all__` as a valid value (alongside concrete tenant IDs) and does not reject it. The `__unset__` sentinel and empty-string checks remain unchanged — they continue to reject queries with no tenant context. An integration test (`TestRLSPlatformAdminAllSentinel`) must verify that: (a) `SET LOCAL app.current_tenant = '__all__'` returns rows from multiple tenants, (b) a non-`platform-admin` caller cannot reach the `__all__` code path, and (c) the `__all__` sentinel is rejected by the `lenny_tenant_guard` trigger when `LENNY_POOLER_MODE = external` and the trigger is configured to allow only concrete tenant IDs (i.e., `__all__` must be explicitly allowlisted in the trigger alongside concrete IDs).
+
+**Resource tenant-scoping classification.** The following table classifies every admin-managed resource type by its tenant isolation mechanism:
+
+| Resource type | Scoping model | Isolation mechanism |
+| --- | --- | --- |
+| Sessions, tasks, tokens, memories, quota counters, credential pools, eval results, eviction state, audit/billing events | **Tenant-scoped** | `tenant_id` column + RLS (`current_setting('app.current_tenant')`) |
+| Delegation policies | **Tenant-scoped** | `tenant_id` column + RLS. Each policy belongs to exactly one tenant. `platform-admin` can read/write across tenants; `tenant-admin` sees only own tenant's policies. |
+| Connectors | **Tenant-scoped** | `tenant_id` column + RLS. Connector definitions (endpoint URL, auth config) are per-tenant. |
+| Environments | **Tenant-scoped** | `tenant_id` column + RLS. Each environment belongs to exactly one tenant (see `tenantId` field in [Section 10.6](10_gateway-internals.md#106-environment-resource-and-rbac-model)). |
+| Experiments | **Tenant-scoped** | `tenant_id` column + RLS. Experiment definitions, variant assignments, and sticky caches are per-tenant. |
+| External adapters | **Platform-global** | No `tenant_id` column; no RLS. Visible to all tenants. Managed exclusively by `platform-admin`. |
+| Runtimes, pools | **Platform-global** | No `tenant_id` column; no RLS. Visibility controlled by `runtime_tenant_access` / `pool_tenant_access` join tables with application-layer filtering (see above). Write access to `runtime_tenant_access` and `pool_tenant_access` is restricted to `platform-admin` at the application layer ([Section 10.2](10_gateway-internals.md#102-authentication)); as defense-in-depth, a `BEFORE INSERT/UPDATE/DELETE` trigger on both tables validates that `current_setting('lenny.admin_mode', true) = 'true'` (set by the gateway only for `platform-admin` code paths via `SET LOCAL`) and rejects modifications otherwise. An integration test must verify that a `tenant-admin`-scoped request cannot modify these tables. |
+| `agent_pod_state` | **Platform-global** | No `tenant_id` column; no RLS. Mirror of `Sandbox` CRD status, updated by the WarmPoolController. All cross-references to tenant-scoped session rows are mediated through RLS-protected `SessionStore` queries; direct queries against `agent_pod_state` must never return tenant-scoped data without a subsequent session-row lookup under RLS. |
+| `session_dlq_archive` | **Tenant-scoped** | `tenant_id` column + RLS (`current_setting('app.current_tenant')`). Keyed by `(tenant_id, session_id, message_id)`. |
+| User role mappings | **Tenant-scoped** | `tenant_id` column + RLS. Per-tenant `user_id → role` records. |
+| Custom role definitions | **Tenant-scoped** | `tenant_id` column + RLS. Per-tenant custom role definitions. |
+
+**Single-tenant default:** For single-tenant deployments, `tenant_id` defaults to a built-in value (`default`). The field is always present internally — RLS policies and queries always filter by it — but single-tenant deployers never need to set or think about it; the gateway automatically applies the default tenant. Multi-tenant mode is enabled by configuring OIDC claims that carry tenant identity, or by setting `tenant_id` explicitly in the API. No additional configuration is required for single-tenant use.
+
+**`tenant_id` claim extraction:** The OIDC claim used to extract the tenant identifier is configurable via the `auth.tenantIdClaim` Helm value (default: `tenant_id`). In single-tenant deployments this value is ignored — all requests are assigned the `default` tenant. In multi-tenant deployments the gateway reads the configured claim from the validated OIDC ID token and uses its string value as the `tenant_id`. If the claim is absent from the token or its value is an empty string, the gateway rejects the request with `401 Unauthorized` and error code `TENANT_CLAIM_MISSING`; it does not fall back to the default tenant. If the claim value is present but does not match any registered tenant, the gateway rejects the request with `403 Forbidden` and error code `TENANT_NOT_FOUND`. Both rejection reasons are logged (INFO level, with `user_id` and `jti` for traceability) and emitted as `auth_failure` audit events.
+
+### 4.3 Token Service
+
+**Role:** Manages two categories of credentials:
+
+1. **Connector credentials** — OAuth tokens for external tools and agents (GitHub, Jira, external A2A agents, etc.) accessed via registered connectors (see [Section 9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc) for the connector definition and OAuth/OIDC flow)
+2. **LLM provider credentials** — API keys, cloud IAM roles, and service accounts that runtimes need to access their backing LLM (see [Section 4.9](#49-credential-leasing-service) for the full credential leasing design)
+
+**Deployment:** Runs as a **separate process** (Deployment) with its own ServiceAccount and KMS access. This is the only component with KMS decrypt permissions for downstream OAuth tokens. Gateway replicas call the Token Service over mTLS — they cannot directly decrypt stored tokens.
+
+**Key rules:**
+
+- Pods never hold downstream OAuth tokens — the Token Service does
+- Refresh tokens stored encrypted at rest (envelope encryption via KMS)
+- Access tokens short-lived, cached in Redis (encrypted, not plaintext)
+- Scoped by user + connector + tenant + environment
+- Kubernetes Secrets used only for bootstrap/internal credentials, not per-user OAuth tokens
+- Gateway replicas request tokens via the Token Service API; they receive short-lived access tokens, never refresh tokens or KMS keys
+- Each gateway replica has a distinct mTLS identity so compromise of one is attributable and revocable independently
+
+**High availability and failure handling:**
+
+The Token Service is deployed as a **multi-replica Deployment (2+ replicas)** with a `PodDisruptionBudget` (`minAvailable: 1`) to survive voluntary disruptions. The service is fully stateless — all persistent state lives in Postgres (encrypted tokens) and KMS, so any replica can handle any request with no affinity requirements.
+
+The gateway wraps all Token Service calls in an **automatic, in-memory circuit breaker** (a per-subsystem breaker, distinct from the operator-managed circuit breakers in [Section 11.6](11_policy-and-controls.md#116-circuit-breakers)). If the Token Service becomes unavailable:
+
+- Sessions that already hold credential leases **continue operating** — leases are self-contained and do not require the Token Service until renewal.
+- New sessions that require LLM or OAuth credentials **cannot start** and fail with a retryable error, allowing clients to back off and retry.
+- Sessions that do not need LLM credentials (e.g., file-processing-only runtimes) are **unaffected**.
+
+Additionally, the gateway **caches active credential leases in memory**. Token Service unavailability does not affect already-leased credentials until the lease expires, providing a grace period proportional to the lease TTL.
+
+### 4.4 Event / Checkpoint Store
+
+**Role:** Enables session recovery and observability.
+
+**Stores:**
+
+- Event cursors / stream offsets
+- Session logs and runtime stderr
+- Workspace checkpoint references
+- Agent session file snapshots
+- Resume metadata
+
+**Checkpoint Atomicity:** A checkpoint is an atomic unit comprising a workspace snapshot (tar of `/workspace/current`), a session file snapshot (copy of `/sessions/` contents), and a checkpoint metadata record (generation, timestamp, pod state). If either snapshot fails, the entire checkpoint is discarded — partial checkpoints are never stored as valid checkpoints. The metadata record in Postgres references both artifacts and is written only after both are successfully uploaded to MinIO. **Exception — preStop timeout partial manifest:** When an eviction checkpoint exceeds the preStop tiered cap ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and the upload is incomplete, the gateway writes a *partial checkpoint manifest* (not a full checkpoint record) to Postgres flagged with `partial: true`. This record is not a valid checkpoint; it is a recovery aid that tracks which multipart MinIO parts were successfully committed, enabling partial workspace reconstruction on resume. It does not override the normal atomicity guarantee for non-eviction checkpoints.
+
+**Partial checkpoint manifest cleanup:** Partial checkpoint manifest records and their referenced MinIO parts have a defined cleanup path to prevent permanent orphaning. On resume — whether the partial reconstruction succeeds or fails — the gateway MUST delete all MinIO parts referenced by the manifest (via `AbortMultipartUpload` for any still-open multipart upload IDs, or `DeleteObject` for any parts that were individually committed) and then delete the Postgres row. This cleanup is executed as part of the resume path in both the success and failure branches, so the manifest is consumed exactly once. If the delete call fails (e.g., transient MinIO unavailability), the gateway retries with the same exponential backoff as other artifact deletions; any manifest that escapes this path (e.g., gateway crash before cleanup, or a session that is never resumed before its resume window expires) is picked up by the GC sweep ([Section 12.5](12_storage-architecture.md#125-artifact-store)). The `lenny_partial_manifest_cleanup_total` counter (labeled by `outcome: success|failed_deleted|gc_collected`) tracks cleanup disposition for observability.
+
+**Checkpoint quiescence strategy by tier:**
+
+- **Full-tier runtimes (lifecycle channel):** Cooperative `checkpoint_request`/`checkpoint_ready` handshake via the lifecycle channel (see [Section 4.7](#47-runtime-adapter)) is the only mechanism that produces consistent checkpoints under all isolation profiles (runc, gVisor, Kata). The adapter sends `checkpoint_request`, the runtime quiesces and replies `checkpoint_ready`, snapshots are captured, and the adapter resumes the runtime with `checkpoint_complete`.
+- **Minimum / Standard-tier runtimes (no lifecycle channel):** Best-effort snapshot without pausing. Checkpoint tagged `consistency: best-effort`. Deployers should expect minor workspace inconsistencies on resume. Consistent checkpoints require Full-tier.
+- **Embedded adapter mode only:** `SIGSTOP`/`SIGCONT` may be used when the adapter is embedded in the same process (not the default sidecar model). This is **not available** in the default sidecar deployment because `shareProcessNamespace: false` prevents cross-container signaling. This is **not supported** under gVisor or Kata — signal-based checkpointing under sandboxed runtimes is unsupported; use the lifecycle channel instead. **Tool-call consistency limitation:** SIGSTOP checkpoints do not provide tool-call consistency guarantees. If the agent is mid-way through a tool call execution (e.g., a filesystem write, an HTTP request, or an LLM API call) when SIGSTOP fires, the tool call is frozen mid-execution. On SIGCONT, the tool call resumes with potentially stale or inconsistent state (half-written files captured in the workspace snapshot, timed-out HTTP connections). This is an inherent limitation of the SIGSTOP path — unlike the Full-tier lifecycle channel path, there is no quiescence handshake to wait for in-flight tool calls to settle. For periodic checkpoints, embedded adapter mode should prefer the lifecycle channel when available, falling back to SIGSTOP only when the runtime does not implement the lifecycle channel or for eviction checkpoints where time constraints preclude cooperative quiescence.
+
+**Checkpoint timeout and recovery:** All checkpoint paths enforce a 60-second checkpoint timeout measured from the initial quiescence request to completion. For the **Full-tier lifecycle channel path**: if the runtime sends `checkpoint_ready` but does not receive `checkpoint_complete` within 60 seconds, it MUST autonomously resume normal operation and log a `checkpoint_timeout` warning. This protects against adapter crashes or network partitions during the snapshot phase. For the **embedded adapter path**: the adapter MUST issue `SIGCONT` in a deferred cleanup handler (Go `defer` or equivalent) so that `SIGCONT` is sent on all exit paths — including panics and crashes. Additionally, a 60-second watchdog timer starts when `SIGSTOP` is sent; if the checkpoint does not complete within that window, `SIGCONT` is sent unconditionally, the checkpoint is marked failed, and the adapter sets `checkpointStuck = true` immediately on failure (see liveness integration below).
+
+**SIGCONT confirmation:** After sending `SIGCONT`, the adapter MUST confirm that the agent process has actually left the stopped state before considering the resume complete. The adapter polls `/proc/{pid}/stat` up to 5 times with 100 ms intervals; it reads the process state field (field 3 in `/proc/{pid}/stat`) and waits until it is no longer `T` (stopped) or `t` (tracing stop). If the process state remains `T`/`t` after all 5 retries (500 ms total), the adapter sets `checkpointStuck = true` immediately — it does not wait for the watchdog timeout — and the `/healthz` liveness endpoint returns HTTP 503, triggering Kubernetes pod restart. This closes the window where `SIGCONT` is successfully sent by the OS but the process remains pathologically stopped (e.g., due to kernel scheduling anomalies, cgroup freezer interference, or a secondary `SIGSTOP` from a tracing tool). On Linux, `/proc/{pid}/stat` is only available when `shareProcessNamespace: true` is set on the pod spec; the embedded adapter mode requires this setting for SIGCONT confirmation to function. If `/proc/{pid}/stat` is unavailable (e.g., non-Linux, or `shareProcessNamespace: false`), the adapter skips polling, logs a `sigcont_confirmation_unavailable` warning, and proceeds — the watchdog timer remains the backstop.
+
+**Checkpoint abort cleanup:** When a checkpoint is aborted — whether by watchdog timeout, adapter crash, or any other failure — the adapter MUST delete any partially uploaded MinIO objects for that checkpoint attempt. For multipart uploads, the adapter calls the S3 `AbortMultipartUpload` API; for single-part uploads that may have completed server-side, the adapter issues a `DeleteObject` call for the checkpoint's object key. The checkpoint metadata record in Postgres is never written for an aborted checkpoint (per the atomicity guarantee above), so no Postgres cleanup is needed. This cleanup is best-effort: if the delete call itself fails (e.g., MinIO is unreachable), the orphaned partial object is harmless (it cannot be mistaken for a valid checkpoint because no metadata references it) but consumes storage. The `lenny_checkpoint_orphaned_objects_total` metric (counter, labeled by `pool` and `trigger`) is incremented when cleanup fails, enabling operators to run periodic garbage collection sweeps against MinIO for unreferenced checkpoint objects. Any Go `recover()` call wrapping the checkpoint goroutine MUST either re-panic or explicitly set the liveness endpoint to unhealthy if `SIGCONT` cannot be confirmed sent — silently recovering a checkpoint goroutine panic without signaling unhealthiness is forbidden, as it leaves the agent process permanently frozen while the liveness probe continues to pass.
+
+**Embedded adapter liveness integration:** In embedded adapter mode, the `/healthz` liveness endpoint MUST incorporate checkpoint state. The adapter maintains a shared atomic flag (`checkpointStuck`) that is set in two cases: (a) by the watchdog timer when a `SIGSTOP` has been held for more than `watchdogTimeoutSeconds` (default 60s) without checkpoint completion, and (b) immediately when SIGCONT confirmation polling (see above) exhausts all 5 retries without observing the process leaving the stopped state. Setting `checkpointStuck` immediately on any SIGCONT confirmation failure avoids waiting for the full 60-second watchdog timeout in cases where the process is verifiably still frozen. When `checkpointStuck` is set, the `/healthz` endpoint returns HTTP 503 with `{"status": "unhealthy", "reason": "checkpoint_stuck"}`, causing the liveness probe to fail and Kubernetes to restart the pod. This closes the deadlock window where the adapter's HTTP server remains healthy while the agent process is permanently frozen — the liveness probe now actively detects stuck checkpoints rather than relying solely on adapter process crashes. The `checkpointStuck` flag is cleared on successful checkpoint completion or after SIGCONT is confirmed sent (process state transitions out of `T`/`t`). If the embedded adapter process itself crashes entirely while the agent is SIGSTOPped (not a recovered goroutine panic but a full process exit), the agent process remains stopped; the pod's liveness probe will fail (since the adapter process is gone), Kubernetes will restart the pod, and the session resumes from the last successful checkpoint per [Section 7.2](07_session-lifecycle.md#72-interactive-session-model).
+
+**Checkpoint duration SLO and workspace size impact:** Checkpoint duration is dominated by workspace tar creation and MinIO upload. Target SLO: P95 checkpoint duration < 2 seconds for workspaces ≤ 100MB. Expected scaling: ~1 second per 100MB on typical node-local SSD with gigabit-class MinIO connectivity; 500MB workspaces may reach 5-10 seconds. For **Minimum/Standard-tier** (best-effort, no pause): duration affects only checkpoint freshness, not agent responsiveness. For **Full-tier** (cooperative handshake): the runtime is quiesced during the snapshot phase, so checkpoint duration directly impacts agent pause time — deployers with large workspaces should monitor the `lenny_checkpoint_duration_seconds` histogram and consider workspace hygiene (`.lennyignore` excludes, smaller working sets). For **embedded adapter mode** (SIGSTOP): the agent is fully frozen for the entire checkpoint duration, making this the most latency-sensitive path. The Phase 2 startup benchmark harness ([Section 18](18_build-sequence.md)) must include a **checkpoint duration benchmark** that measures end-to-end checkpoint time across workspace sizes (10MB, 100MB, 500MB) and storage backends, and validates the < 2s SLO for ≤ 100MB workspaces. Incremental checkpoints (diffing against the previous snapshot) are deferred but noted as the primary mitigation if the SLO cannot be met at larger workspace sizes.
+
+**Hard workspace size limit.** To prevent unbounded agent quiescence under Full-tier or SIGSTOP checkpoint paths, `/workspace/current` (and `/workspace/slots/{slotId}/current/` in concurrent-workspace mode) MUST carry a hard `emptyDir.sizeLimit` set to `workspaceSizeLimitBytes` (pool-level configuration, default: 512Mi). This limit is enforced by the kubelet OOM eviction path — if disk usage under the emptyDir volume exceeds the limit, the pod is evicted. This provides an unconditional hard cap and prevents a runaway workspace from making Full-tier checkpoint quiescence unacceptably long. The adapter additionally performs a **pre-checkpoint workspace size probe** before initiating the quiescence handshake: it stats the total size of `/workspace/current` (or the slot-specific path). If the measured size exceeds `workspaceSizeLimitBytes`, the checkpoint is aborted immediately (without quiescing the runtime), the `lenny_checkpoint_size_exceeded_total` counter is incremented (labeled by `pool` and `tier`), a `WorkspaceSizeExceeded` warning is logged, and the session emits a `checkpoint.skipped` event with `reason: "workspace_size_limit"` so the client is aware. The `lenny_checkpoint_duration_seconds` histogram (labeled by `pool`, `tier`, and `trigger`) MUST be exported for all checkpoint completions (success and failure). Alert rule `CheckpointDurationHigh` ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the P95 of `lenny_checkpoint_duration_seconds` for Full-tier or embedded-adapter pools exceeds 2.5 seconds over a 5-minute window (25% headroom above the 2s SLO for ≤100MB workspaces). Quiescence time scales linearly with workspace size — the direct relationship is: `expected_quiescence_seconds ≈ workspace_bytes / (100 × 1024 × 1024)` — deployers should set `workspaceSizeLimitBytes` to align with their acceptable agent pause budget.
+
+**Checkpoint freshness SLO:** Every active session MUST have a successful checkpoint recorded within the last `periodicCheckpointIntervalSeconds` (default: 600s / 10 minutes). The gateway enforces this by scheduling periodic checkpoints for active sessions. The `lenny_checkpoint_stale_sessions` gauge (per pool/tier, reported by the gateway) counts the number of active sessions whose last checkpoint age exceeds the interval. A `CheckpointStale` warning alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when any pool has stale sessions for > 60s. This SLO bounds the maximum workspace state that can be lost if an eviction checkpoint fails — any session that has met the SLO loses at most 10 minutes of workspace changes, not unbounded progress.
+
+**Periodic checkpoint scheduling:** The gateway schedules periodic checkpoints for all active sessions using a configurable interval (`periodicCheckpointIntervalSeconds`, default: 600s). Periodic checkpoints are best-effort (see non-eviction path below) — they do not block agent progress. Failed periodic checkpoints are logged and retried on the next interval; they do not affect session state. The gateway tracks `last_successful_checkpoint_at` on the session record in Postgres, updated on every successful checkpoint regardless of trigger (periodic, eviction, pre-drain). **Jitter:** To prevent thundering-herd checkpoint storms (all sessions started in the same burst aligning their periodic checkpoints at the same wall-clock second), each session's first periodic checkpoint is scheduled at `periodicCheckpointIntervalSeconds + random(0, periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)` seconds after session start. `periodicCheckpointJitterFraction` (default: 0.2, range: 0.0–1.0, configurable via `gateway.periodicCheckpointJitterFraction` Helm value) spreads the initial checkpoint uniformly across a 120s window (at the default 600s interval), preventing correlated burst patterns at Tier 3 scale. Subsequent checkpoints are scheduled at the fixed interval from the previous checkpoint (no additional jitter), so sessions naturally desynchronize after the first cycle.
+
+**Checkpoint storage failure:** MinIO uploads during checkpoint are retried with exponential backoff. The retry budget differs by checkpoint trigger:
+
+- **Non-eviction checkpoints** (periodic scheduled checkpoints, pre-scale-down checkpoints): Retried with exponential backoff (initial 200ms, factor 2x, up to ~5 seconds total). If all upload retries fail, the adapter resumes the agent immediately — via `checkpoint_complete` on the lifecycle channel (Full-tier), `SIGCONT` (embedded adapter), or no-op (Minimum/Standard-tier best-effort). The failed checkpoint is discarded. The adapter logs the failure and increments the `lenny_checkpoint_storage_failure_total` metric (counter, labeled by `pool`, `tier`, and `trigger`). The next scheduled checkpoint retries normally.
+- **Eviction checkpoints** (preStop hook): Retried with exponential backoff (initial 500ms, factor 2x, capped at 5s per attempt, up to **30 seconds total**). The eviction retry budget is deliberately longer than non-eviction checkpoints because (a) the pod is terminating regardless — there is no agent to resume, so retry cost is just wall-clock time, (b) `terminationGracePeriodSeconds` (240s at Tier 1/2, 300s at Tier 3 — see [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)) provides ample headroom beyond the combined MinIO and Postgres retry budgets, and (c) transient MinIO unavailability (network blip, brief leader election) typically resolves within 10-20 seconds. If all retries fail, the gateway falls back to writing a **minimal session state record** directly to Postgres (see below). A `CheckpointStorageUnavailable` critical alert fires (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)). The adapter also increments `lenny_checkpoint_eviction_fallback_total` (counter, labeled by `pool` and `had_prior_checkpoint: true|false`) to distinguish evictions that fell back to Postgres with a prior full checkpoint from those without one — the latter represent sessions where workspace state is permanently lost. If a previous successful full checkpoint exists, the session is resumed from that checkpoint per [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). If only the minimal state record exists, the session is resumed on a fresh pod with conversation context but without workspace files — the client receives a `session.resumed` event with `resumeMode: "conversation_only"` and `workspaceLost: true` so it can take appropriate action (re-upload files, restart workspace setup, etc.).
+
+**Eviction fallback: Postgres minimal state record.** When an eviction checkpoint cannot be persisted to MinIO, the gateway writes a minimal state record to the `session_eviction_state` table in Postgres. This record is intentionally small — it contains only what is needed to resume a conversation on a fresh pod without the workspace:
+
+- `session_id` — the session identifier
+- `recovery_generation` — the session recovery generation counter (tracks pod recoveries; used to identify which generation of the session this eviction state corresponds to)
+- `coordination_generation` — the coordinator generation counter (used for coordinator fencing on resume)
+- `conversation_cursor` — the last event cursor from the EventStore (allows replay of conversation history from the event log)
+- `last_message_context` — the last gateway-persisted prompt/response pair stored as a **MinIO object key** (`/{tenant_id}/eviction/{session_id}/context`) when the context exceeds 2KB; for contexts ≤ 2KB the value is stored inline as plain TEXT directly in the column. This two-tier approach keeps the Postgres row small (≤ 2KB inline, or a short object key), avoiding TOAST entirely and honoring the "never Postgres for blobs" principle ([Section 12.1](12_storage-architecture.md#121-design-principle)). On MinIO unavailability during a fallback write, the context is truncated to 2KB and stored inline with a `context_truncated: true` flag on the row so the runtime can detect partial context on resume. The original context may reach up to 64KB before truncation.
+- `evicted_at` — timestamp of the eviction event
+- `workspace_lost` — boolean, always `true` for this record
+
+This record is written in a single Postgres transaction. It does not store workspace file contents (no blobs, no TOAST). The workspace tar is not stored in Postgres — this fallback provides conversation continuity, not workspace recovery. On resume from minimal state, workspace materialization is skipped and the pod starts with an empty workspace; the client is notified to re-upload files if needed.
+
+**Postgres fallback retry during failover.** The Postgres write is retried with exponential backoff (initial 500ms, factor 2x, capped at 5s per attempt) for up to **60 seconds total**. This retry budget covers the managed Postgres failover window (RDS Multi-AZ, Cloud SQL HA: typically 15–30s) that can prevent the first write attempt from succeeding. The 60s budget fits comfortably within `terminationGracePeriodSeconds` (240s at Tier 1/2, 300s at Tier 3), leaving ample time for stream drain after the Postgres write completes or the budget is exhausted. If all Postgres retry attempts are exhausted, the gateway proceeds to the total-loss path below.
+
+**MinIO object key logging for manual recovery.** Before entering the total-loss path, the gateway logs a `WARN`-level structured message that includes the MinIO object keys for any checkpoint parts that were successfully uploaded before MinIO became unavailable (i.e., parts committed during the partial-upload attempt before the retry budget exhausted). Fields: `session_id`, `tenant_id`, `generation`, `committed_minio_keys: [...]` (array of object key strings, may be empty if no parts were committed), `minio_error` (error summary). This allows operators to perform manual workspace reconstruction from committed parts if Postgres eventually recovers and the session record can be written by hand. The `lenny_checkpoint_eviction_partial_keys_logged_total` counter (labels: `pool`, `keys_committed: 0|1+`) tracks how often partial key sets were logged, distinguishing total-MinIO-failure (no keys committed) from partial-upload scenarios.
+
+The `session_eviction_state` table is cleaned up when the session reaches a terminal state. If `last_message_context` was stored as a MinIO object key (context > 2KB path), the gateway deletes the corresponding MinIO object (`/{tenant_id}/eviction/{session_id}/context`) atomically as part of the same terminal-state cleanup sequence — the object deletion is issued before the Postgres row is removed. Failures to delete the MinIO object are retried with the same backoff as other artifact deletions; any outstanding objects that escape this path are picked up by the GC sweep ([Section 12.5](12_storage-architecture.md#125-artifact-store)).
+
+**Total-loss path: MinIO and Postgres both unavailable during eviction.** When all Postgres retry attempts for the minimal state write are exhausted (e.g., Postgres failover exceeds the 60s retry budget, or a network partition persists throughout the grace period), all recovery paths are exhausted and the session is unrecoverable. In this scenario the gateway MUST:
+
+1. Emit a `session.lost` event on the session's event stream with `reason: "eviction_total_loss"` and fields `session_id`, `tenant_id`, `generation`, `evicted_at`, and `minio_error` / `postgres_error` (error summaries for diagnostic context). The event is delivered on a best-effort basis — the gateway publishes it to the event stream before the preStop hook exits; if the event stream itself is unavailable the emission is skipped (logged only), as there is no safe durable target remaining.
+2. Increment the `lenny_session_eviction_total_loss_total` counter (labels: `pool`, `had_prior_checkpoint: true|false`). This counter is distinct from `lenny_checkpoint_eviction_fallback_total` — the latter fires on MinIO failure (Postgres fallback attempted); the former fires only when both stores fail and the session is irrecoverably lost. The `had_prior_checkpoint` label allows operators to distinguish sessions that had a previous durable checkpoint (resumable from an earlier snapshot) from those with no prior checkpoint (complete data loss).
+3. Log a `CRITICAL`-level structured message including `session_id`, `tenant_id`, `generation`, `evicted_at`, and the errors from both the MinIO retry exhaustion and the Postgres write failure.
+
+The `SessionEvictionTotalLoss` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires immediately when `lenny_session_eviction_total_loss_total` increments — any value above zero is an actionable signal. Note that the pre-drain MinIO health check webhook ([Section 12.5](12_storage-architecture.md#125-artifact-store)) prevents most planned drain-triggered instances of this scenario by blocking drains when MinIO is unhealthy; the total-loss path is most likely to occur during spontaneous node failures (not planned drains) or when the forced-drain override (`lenny.dev/drain-force: "true"`) is used while both stores are degraded.
+
+**Storage quota accounting for eviction context objects.** When the gateway successfully writes an eviction context object to MinIO (the context > 2KB path), it MUST insert an `artifact_store` row for that object in the **same Postgres transaction** that writes the `session_eviction_state` row. The `artifact_store` row records `artifact_size_bytes` equal to the confirmed MinIO object size (bytes actually written), `object_key = /{tenant_id}/eviction/{session_id}/context`, and `artifact_type = eviction_context`. After both rows are durably committed, the gateway follows the standard post-upload increment ([Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas) step 2) and increments the tenant's Redis `storage_bytes_used` counter by the confirmed object size. This ensures eviction context bytes are included in the per-tenant quota counter and in the Postgres sum used to rehydrate Redis on restart. The GC-triggered decrement ([Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas) step 3) and the GC sweep's cleanup path ([Section 12.5](12_storage-architecture.md#125-artifact-store) eviction context objects bullet) both operate on the `artifact_store` row, providing a consistent accounting lifecycle identical to other stored artifacts. On MinIO unavailability during the eviction fallback (context truncated to 2KB and stored inline with `context_truncated: true`), no MinIO object is written and therefore no `artifact_store` row is inserted and no quota increment is issued.
+
+**Tenant isolation for `session_eviction_state`.** The table stores T3 Confidential data and carries a `tenant_id` column (non-null, indexed). It is included in the RLS policy scope identical to all other tenant-scoped tables ([Section 4.2](#42-session-manager)): an RLS policy filters rows by `current_setting('app.current_tenant', false)`, every access is wrapped in a transaction with `SET LOCAL app.current_tenant`, and the `lenny_tenant_guard` trigger covers this table. The `TestRLSTenantGuardMissingSetLocal` integration test covers `session_eviction_state` as part of its tenant-scoped table inventory.
+
+### 4.5 Artifact Store
+
+**Role:** Durable storage for workspace files and exports.
+
+**Stores:**
+
+- Original uploaded workspace files (the canonical "initial workspace")
+- Sealed workspace bundles
+- Exported file subsets for delegation
+- Runtime checkpoints
+- Large logs and artifacts
+
+**Implementation:** MinIO (S3-compatible). Local disk for development mode. **Never** Postgres for blob storage — the TOAST overhead and vacuum pressure degrade transactional workload performance. See [Section 12.5](12_storage-architecture.md#125-artifact-store) for retention policy.
+
+**Tenant isolation:** All object paths in MinIO are prefixed with `/{tenant_id}/`. The `ArtifactStore` interface enforces this: every method that reads, writes, lists, or deletes objects validates that the supplied `tenant_id` matches the path prefix before issuing the S3 call. Paths that fail prefix validation are rejected without reaching MinIO. This guarantees tenant-scoped access at the interface level, prevents cross-tenant reads or writes regardless of caller bugs, and ensures that `DeleteByTenant(tenant_id)` ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) maps to a deterministic prefix-scoped bulk delete (`/{tenant_id}/*`).
+
+**Workspace lineage:** Each workspace snapshot is immutable and identified by a content-addressed hash (SHA-256 of the tar archive). The session record tracks lineage via a `parent_workspace_ref` field that records the session ID and artifact path of the workspace snapshot that seeded this session (from uploads or a derived session per [Section 7.1](07_session-lifecycle.md#71-normal-flow)). This field is a **metadata lineage pointer only** — it does not create a shared MinIO object reference. When a session is derived ([Section 7.1](07_session-lifecycle.md#71-normal-flow)), the gateway copies the parent's workspace snapshot bytes into a new MinIO object scoped to the derived session's own path (`/{tenant_id}/{object_type}/{new_session_id}/...`). The derived session owns its artifact independently; GC on the parent's artifacts has no effect on the derived session's workspace. This enables lineage queries such as "which sessions were derived from this workspace?" and "what was the workspace history for this session?" Full workspace versioning (tracking incremental changes within a session) is not supported — snapshots are full workspace captures at checkpoint or seal time.
+
+### 4.6 Pod Lifecycle Controllers
+
+Pod lifecycle management is split into two controllers with distinct responsibilities.
+
+#### 4.6.1 Warm Pool Controller (Pod Lifecycle)
+
+**Role:** Manages individual pod lifecycle, state transitions, and health.
+
+**Responsibilities:**
+
+- Maintain warm pods per pool (between `minWarm` and `maxWarm`)
+- Manage pod state transitions via CRD status subresource
+- Surface readiness status to gateway
+- Claim/release/drain lifecycle
+- Garbage-collect orphaned pods via owner references
+- Handle node drain gracefully (checkpoint active sessions before eviction)
+- Track certificate expiry on idle pods; proactively replace (drain and recreate) any idle pod whose certificate will expire within 30 minutes, preventing a claimed pod from having insufficient cert validity for a full session (see [Section 10.3](10_gateway-internals.md#103-mtls-pki) for cert TTLs)
+
+**Implementation:** Built on **`kubernetes-sigs/agent-sandbox`** (launched at KubeCon Atlanta, November 2025). The upstream project solves the same Kubernetes-native pod lifecycle, warm pool, and claim management problem. Building on it means Lenny stops maintaining a Kubernetes controller for pod lifecycle and gets upstream community maintenance, Pod Snapshots on GKE (which directly helps with checkpointing), and a claim model designed by the Kubernetes SIG Apps community. Lenny's gateway, runtime adapter protocol, credential leasing, delegation, and MCP fabric remain entirely Lenny's own — agent-sandbox has no opinion on any of those layers.
+
+**Internal abstraction layer:** All Lenny components interact with pod lifecycle through two interfaces, never directly with agent-sandbox CRD types. Both embed a shared read-only `PoolReader`.
+
+**`PoolReader`** (shared, embedded by both interfaces):
+
+- `ListPools() → ([]PoolStatus, error)` — pool health and capacity
+- `GetPoolStatus(ctx, poolName) → (PoolStatus, error)` — single pool status
+
+**`PodLifecycleManager`** (gateway-facing, embeds `PoolReader`):
+
+- `ClaimPod(ctx, poolName, sessionID, opts ClaimOpts) → (PodHandle, error)` — acquire idle pod. `ClaimOpts` includes `requiresDemotion` (true when workspace plan includes `sdkWarmBlockingPaths` — gateway signals that the claimed SDK-warm pod must be demoted before use), optional `priority`, optional `clusterID` (nullable, for future multi-cluster). `PodHandle` carries metadata: `warmMode`, `certExpiresAt`, `adapterEndpoint`.
+- `ReleasePod(ctx, podHandle) → error` — release pod after session ends
+- `DrainPod(ctx, podHandle, checkpointFirst bool) → (DrainResult, error)` — gracefully terminate. `DrainResult` includes retry state for seal-and-export hold semantics.
+- `GetPodStatus(ctx, podHandle) → (PodStatus, error)` — read pod state, health, cert expiry
+
+**`PoolManager`** (controller-facing, embeds `PoolReader`):
+
+- `ReconcilePool(ctx, poolConfig) → error` — ensure pool matches desired state (minWarm/maxWarm)
+- `ApplyPoolDefinition(ctx, poolDef) → error` — CRUD for pool definitions (creates/updates/deletes `SandboxTemplate` and `SandboxWarmPool` CRDs)
+- `ReplacePod(ctx, podHandle, reason string) → error` — proactive replacement (cert expiry, health failure)
+- `TransitionPodState(ctx, podHandle, from PodState, to PodState) → error` — transition pod through state machine; validates legal transitions
+- `GarbageCollect(ctx) → ([]OrphanResult, error)` — orphan detection and cleanup. Covers orphaned `Sandbox` pods (no matching pool) and orphaned `SandboxClaim` resources (see orphan claim detection below).
+- `ManageFinalizer(ctx, podHandle, action FinalizerAction) → error` — add/remove finalizer; `FinalizerAction` is an enum (`Add`, `Remove`)
+- `ManagePDB(ctx, poolName, config PDBConfig) → error` — create/update/delete PodDisruptionBudget per pool
+- `DrainPool(ctx, poolName, checkpointFirst bool) → error` — drain all pods in a pool (admin API)
+- `SetPoolCondition(ctx, poolName, condition PoolCondition, reason string) → error` — set pool health status (e.g., Degraded when RuntimeClass missing)
+
+Default implementations: `AgentSandboxPodLifecycleManager` and `AgentSandboxPoolManager`, which delegate to agent-sandbox CRDs.
+
+Future extension points (reserved, not implemented now): `PodDebugger` interface for troubleshooting (exec, logs, describe); `SnapshotPod`/`RestoreFromSnapshot` for GKE Pod Snapshots integration; `clusterID` on `ClaimOpts` and `PoolStatus` for multi-cluster readiness.
+
+This indirection means a breaking upstream change or a decision to replace agent-sandbox requires changing only the implementations behind these interfaces, not the gateway, scaling controller, or any other consumer.
+
+**CRD mapping from agent-sandbox:**
+
+**API group:** All four CRDs are registered under the `lenny.dev` API group (e.g., `sandboxes.lenny.dev`), not under the upstream `kubernetes-sigs/agent-sandbox` project's API group. This is a deliberate design choice: Lenny ships its own CRD manifests in `charts/lenny/crds/`, pins them to a specific schema version, and maintains full control over the API surface — including validation rules, CEL admission policies, and webhook configurations — independent of upstream release cadence. Re-registering under `lenny.dev` also ensures that the CRDs coexist cleanly with any standalone upstream installation and that the fallback plan (replacing agent-sandbox with custom controllers) requires no CRD migration.
+
+| Agent-Sandbox CRD | Replaces (old Lenny CRD)     | Purpose                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SandboxTemplate` | `AgentPool`                  | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy, `executionMode`                                                                                                                                                 |
+| `SandboxWarmPool` | (part of WarmPoolController) | Upstream warm pool management with configurable `minWarm`/`maxWarm`                                                                                                                                                                                            |
+| `Sandbox`         | `AgentPod`                   | Represents a managed agent pod. Status subresource carries the authoritative state machine. Enables GC, structured claim semantics, and warm-pool PDB targeting.                                                                                               |
+| `SandboxClaim`    | `AgentSession`               | Represents an active session binding. Created by the gateway only after it has successfully claimed a `Sandbox`. Links the claimed pod to session metadata (deliberately not an `ownerReference`, so the session survives pod deletion and can be reassigned). |
+
+**ADR-007: `SandboxClaim` optimistic-locking and failover fencing verification — Phase 1 blocking prerequisite.** Before Phase 1 implementation begins, verify that `SandboxClaim`'s optimistic-locking semantics match Lenny's claim approach and that the Kubernetes API server's `resourceVersion`-guarded update provides sufficient fencing during the 25s crash-case failover window. Document the result as ADR-007. If the semantics diverge or fencing proves insufficient, the `PodLifecycleManager.ClaimPod` implementation must compensate (e.g., by wrapping claims in a compare-and-swap loop at the gateway level). **Verification approach — two required tests:**
+
+1. **Concurrent-claim integration test.** Create a `SandboxClaim` resource with a `resourceVersion`-guarded update; race two concurrent claim attempts against the same `Sandbox`; confirm exactly one succeeds with HTTP 409 Conflict for the loser. If the 409 path works as expected, the ADR records "optimistic locking confirmed, no compensation needed." If it does not, the ADR must specify the compensating CAS loop design before Phase 1 proceeds.
+
+2. **Chaos test (leader-kill acceptance test).** Run a chaos scenario that kills the WarmPoolController leader mid-claim at high concurrency (≥ 50 concurrent claim goroutines against a pool of 10 pods). Verify zero double-claims in the resulting `SandboxClaim` set. This test validates that any in-flight `resourceVersion`-guarded write from the killed leader is correctly rejected by the API server with HTTP 409 after the new leader begins claiming — confirming that Kubernetes optimistic locking acts as a fencing mechanism even across the 25s failover window. ADR-007 must record the test results and explicitly accept or reject the "optimistic locking is sufficient fencing" hypothesis before Phase 1 proceeds.
+
+**Why optimistic locking provides sufficient fencing:** The old leader's in-flight `PATCH`/`PUT` on a `SandboxClaim` carries the `resourceVersion` observed before it died. If the new leader (or any other gateway replica) has since written to the same resource, its `resourceVersion` has changed and the API server rejects the old leader's write with HTTP 409 — the same conflict path as a concurrent gateway-vs-gateway race. The old leader's write cannot silently succeed; it either completes before the new leader touches the resource (in which case it is not a double-claim) or it arrives after and is rejected. If ADR-007's chaos test confirms this behavior holds under load, no additional fencing token or generation field is required.
+
+**`SandboxClaim` admission webhook (double-claim prevention):** As a defense-in-depth backstop against any residual double-claim risk — including the narrow failover window during which a new leader has not yet touched a `SandboxClaim` and an old leader's in-flight write could theoretically succeed — a `ValidatingAdmissionWebhook` (`lenny-sandboxclaim-guard`) is deployed alongside the warm-pool controller. The webhook intercepts every `CREATE`, `PATCH`, and `PUT` operation on `SandboxClaim` resources in agent namespaces. For `PATCH`/`PUT`, it rejects the request if the **existing** resource's `.status.phase` (as persisted in etcd) is not `idle` — i.e., the target `Sandbox` already has an active claim. Specifically: if the incoming operation attempts to transition `.status.phase` from any non-`idle` value, the webhook returns `403 Forbidden` with message `"SandboxClaim already claimed: phase is <phase>; concurrent claim rejected"`. For `CREATE`, the webhook queries the API server for any existing `SandboxClaim` whose `.spec.sandboxRef` matches the target `Sandbox`; if a non-terminal claim already exists, the creation is rejected with `403 Forbidden` and message `"SandboxClaim already exists for Sandbox <name>; concurrent claim rejected"`. This `CREATE`-time check is essential for the Postgres fallback claim path (see below), which creates a new `SandboxClaim` CRD after claiming a pod record in Postgres — without it, the fallback path could race with the normal CRD-based claim path and produce duplicate claims for the same `Sandbox`. The webhook is deployed with `failurePolicy: Fail` (fail-closed), ensuring that a webhook outage blocks new claim operations rather than silently allowing them through. Because the webhook evaluates `.status.phase` as persisted in etcd at admission time, it makes double-claim impossible regardless of timing: even if two writers race with the same `resourceVersion`, the second writer's request is rejected at admission before it reaches the API server's optimistic-lock check. The `lenny_sandboxclaim_guard_rejections_total` counter (labeled by `replica_id`) tracks admission rejections; a non-zero rate during normal operation indicates a claim-path bug. The webhook is deployed with `replicas: 2` and a `PodDisruptionBudget` (`minAvailable: 1`) matching the admission controller HA requirements in [Section 17.2](17_deployment-topology.md#172-namespace-layout). Alert `SandboxClaimGuardUnavailable` (Critical) fires when the webhook has been unreachable for more than 30 seconds — see [Section 16.5](16_observability.md#165-alerting-rules-and-slos). The webhook is deployed as part of the Helm chart under `templates/admission-policies/` and is covered by the admission policy integration test suite (`tests/integration/admission_policy_test.go`). It is included as a check in the `lenny-preflight` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)).
+
+**Pod claim mechanism:** Gateway replicas claim pods via `SandboxClaim` resources with optimistic locking — exactly one gateway wins; all others receive a conflict and retry with a different idle pod from the pool. This keeps the controller off the claim hot path entirely — pod-to-session binding is resolved at the API-server level with no single-writer bottleneck. `ClaimPod` implementations must use a `resourceVersion`-guarded compare-and-swap loop: on HTTP 409, re-read the current `Sandbox` state and retry with the updated `resourceVersion` (or select a different idle pod if the target pod is no longer available). This loop is the primary defense against both concurrent gateway races and stale in-flight writes from a failed controller replica.
+
+**Leader election:** The WarmPoolController runs as a Deployment with 2+ replicas using Kubernetes Lease-based leader election with lease name `lenny-warm-pool-controller` (lease duration: 15s, renew deadline: 10s, retry period: 2s). The PoolScalingController uses a separate lease (`lenny-pool-scaling-controller`); see [Section 4.6.2](#462-poolscalingcontroller-pool-configuration). During failover, existing sessions continue unaffected; only new pod creation and pool scaling pause. **Failover duration depends on the trigger:** on clean shutdown (rolling update, voluntary termination), the outgoing leader releases its lease via `LeaderCallbacks.OnStoppedLeading`, reducing the gap to near-zero. On crash (process kill, node failure), the worst-case failover window is `leaseDuration + renewDeadline = 25s` — the new leader cannot acquire the lease until the old lease expires after its full duration plus the renew deadline elapses without renewal. All `minWarm` formulas and capacity planning use the 25s crash-case as the sizing basis (see below and [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)).
+
+**Controller crash during active scale-down drain — no additional fencing required.** When the WarmPoolController crashes while a scale-down drain is in progress (i.e., some pods have already been transitioned to `draining` phase), the new leader does not require a generation-stamped drain operation record or any other fencing token. The reason is twofold:
+
+1. **Idle pods being scale-down drained have no checkpoint.** Warm (idle) pods being retired due to a `minWarm` reduction carry no active session and no in-flight workspace checkpoint. The new leader's reconciler, on startup, re-lists all `Sandbox` resources and finds pods already in `draining` phase. It processes them idempotently — advancing each toward deletion — rather than re-issuing a fresh drain signal. Re-processing a pod already in `draining` is safe and produces the same outcome: pod termination. No double-drain hazard exists.
+
+2. **Active-session checkpointing is fenced by `coordination_generation`.** For admin-initiated pool drains (`DrainPool` with `checkpointFirst: true`) where some pods carry active sessions, the checkpoint protocol is coordinated by the gateway, not the controller. Coordinator handoff — including the fencing that prevents a stale coordinator from re-signaling an in-progress checkpoint — is already handled by the `coordination_generation` CAS mechanism specified in [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). The controller only removes the finalizer after the gateway has written the session to a terminal state; it does not directly drive checkpointing and therefore does not require its own drain fencing record.
+
+The K8s Lease-based leader election guarantee (single active writer at any time) means the new leader reads the current authoritative `Sandbox.status.phase` from etcd before taking any action. Pods in `draining` are not re-targeted as `idle`; pods not yet in `draining` are not spuriously advanced. No additional `SandboxWarmPool.status` drain operation record is needed.
+
+**Scaling:** Pools support `minWarm`, `maxWarm`, and an optional `scalePolicy` with time-of-day schedules or demand-based rules. Pools referencing a `preConnect`-capable runtime warm all pods to SDK-warm state; demotion to pod-warm happens on demand at claim time (see [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Low-traffic pools can scale to zero warm pods with documented cold-start latency as fallback.
+
+**Idle cost visibility and scale-to-zero:** The metric `lenny_warmpool_idle_pod_minutes` (counter, labeled by pool and resource class) tracks cumulative idle pod-minutes, letting deployers estimate warm pool cost from their monitoring stack. Pools support `minWarm: 0` for off-hours via time-of-day rules in `scalePolicy`: `scaleToZero: { schedule: "0 22 * * *", resumeAt: "0 6 * * *" }` sets `minWarm: 0` during the window; sessions arriving in zero-warm periods incur cold-start latency. `scaleToZero` disabled by default for `type: mcp` pools (deployer opt-in required). **Cron timezone:** Both `schedule` and `resumeAt` are interpreted as **UTC by default**. An optional `timezone` field (IANA timezone string, e.g., `"America/New_York"`) overrides the default: `scaleToZero: { schedule: "0 22 * * *", resumeAt: "0 6 * * *", timezone: "Europe/Berlin" }`. The `timezone` field is parsed by the PoolScalingController's embedded cron scheduler (Go cron library); any IANA timezone string is accepted on all Kubernetes versions. A `WarmPoolIdleCostHigh` warning alert fires when idle pod-minutes exceed a deployer-configured threshold over a 24 h window (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)).
+
+**CRD validation:** All CRDs include OpenAPI schema validation with CEL rules to catch common misconfigurations at admission time. Key rules: `minWarm <= maxWarm`, `maxWarm > 0`, valid RuntimeClass reference format, resource class values within the allowed set, `maxSessionAge > 0`, and `taskPolicy.maxTasksPerPod > 0` when `executionMode: task`. Malformed specs are rejected by the API server before reaching the controller, preventing reconciliation loops on invalid input. The controller also validates at reconciliation time as defense-in-depth.
+
+**Controller failover and warm pool sizing:** During a leader-election failover (near-zero on clean shutdown; up to 25s on crash — see leader election paragraph above), the controller cannot create new pods or reconcile pool scaling. If the warm pool is undersized, this pause can exhaust available pods. To prevent this, `minWarm` should account for both the failover window and burst absorption: `minWarm >= peak_claims_per_second * (failover_seconds + pod_startup_seconds) + burst_p99_claims * pod_warmup_seconds`. **Use `failover_seconds = 25` (the crash-case worst case) for all sizing calculations.** The burst term ensures the pool is not exhausted by demand spikes that arrive faster than replacement pods can become ready (see [Section 4.6.2](#462-poolscalingcontroller-pool-configuration) for full formula and variable definitions). For example, at 2 claims/sec with a 25s failover pause, 10s pod startup, and a p99 burst rate of 4 claims/sec with 10s warmup: `minWarm >= 2 * 35 + 4 * 10 = 110`. (This example uses the same value for both `pod_startup_seconds` and `pod_warmup_seconds` for simplicity; for SDK-warm pools the two diverge significantly — `pod_startup_seconds` covers only container pull + runtime startup while `pod_warmup_seconds` additionally includes SDK initialization, which can add 20–60s. See [Section 4.6.2](#462-poolscalingcontroller-pool-configuration) for precise definitions.) Per-tier claim rate estimates and recommended minWarm values are in [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults). During the failover window, the gateway queues incoming pod claim requests for up to `podClaimQueueTimeout` (default: **60s**). If no pod becomes available before the timeout, the session creation fails with a retryable error so the client can back off and retry. Note: `podClaimQueueTimeout` (60s) provides a 35-second margin above the 25s worst-case failover window, accommodating API server slowness (elevated latency under load can extend effective failover by 5–15s) and pod readiness probe delays. The previous default of 30s provided only a 5s margin, which was insufficient under API server pressure. As an early-warning mechanism, the `WarmPoolLow` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when available pods drop below 25% of `minWarm`, giving operators time to investigate before exhaustion occurs.
+
+**Fallback claim path via Postgres:** If `ClaimPod` cannot find an available `Sandbox` in `idle` state via the Kubernetes API within `podClaimQueueTimeout`, the gateway attempts a **Postgres-backed fallback claim** before returning a retryable error. The fallback path queries the `agent_pod_state` table (a Postgres-side mirror of `Sandbox` CRD status, updated by the WarmPoolController on every state transition) using `SELECT ... FOR UPDATE SKIP LOCKED` to atomically claim an idle pod record, then creates the corresponding `SandboxClaim` CRD. This path is slower than the normal API-server path (one extra Postgres query + CRD create) but decouples claim availability from the API server's Endpoints/watch stream. The fallback is activated automatically when the API-server-based claim attempt exhausts `podClaimQueueTimeout`; no configuration is required. If the Postgres fallback also finds no idle pods (the warm pool is genuinely exhausted), session creation fails with `WARM_POOL_EXHAUSTED`. The `lenny_pod_claim_fallback_total` counter tracks fallback activations; a sustained non-zero rate indicates the primary claim path is degraded and operators should investigate API server health or warm pool sizing.
+
+**Simultaneous controller failover:** The WarmPoolController and PoolScalingController use separate leases and may failover independently. If both crash simultaneously (e.g., both leaders co-located on a failed node): (1) pool replenishment pauses (WPC down) — no new pods are created, (2) scaling intelligence pauses (PSC down) — `minWarm`/`maxWarm` values are not updated from Postgres. The blast radius is additive but not multiplicatively worse: since the PSC only adjusts scaling parameters (which the WPC reads from CRDs), losing both controllers for 25s is equivalent to losing the WPC alone — the stale CRD values from before the PSC crash remain valid and the WPC will reconcile against them once it re-elects. The `podClaimQueueTimeout` (60s) comfortably covers this scenario and provides 35s of additional margin for API server slowness. To prevent co-located leader failures, operators should use pod anti-affinity on controller deployments (see [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)) so WPC and PSC leaders run on different nodes.
+
+**Controller leader election monitoring:** A `ControllerLeaderElectionFailed` critical alert fires when any controller's Lease has not been renewed within `leaseDuration` (15s) — detectable via the `lenny_controller_leader_lease_renewal_age_seconds` gauge (one per controller). This gives operators early warning that failover is imminent or in progress before the lease fully expires. The alert auto-resolves when a new leader acquires the lease and begins renewing.
+
+**API server rate limiting:** The controller uses two separate client-side rate limiter buckets to prevent pod creation starvation during scale-up:
+
+- **Pod creation bucket:** token bucket at 20 QPS, burst 50. Dedicated to `Create` calls for new `Sandbox` pods, ensuring scale-up is never starved by status update traffic.
+- **Status update bucket:** token bucket at 30 QPS, burst 100. Dedicated to `UpdateStatus` calls on `Sandbox` and `SandboxWarmPool` resources.
+
+Both buckets are configurable via controller flags (`--create-qps`, `--create-burst`, `--status-qps`, `--status-burst`). All other API server requests (reads, deletions, finalizer updates) share the controller-runtime default rate limiter (10 QPS, burst 100).
+
+During steady-state pool replenishment, pod creation is processed through the work queue with controlled concurrency. The work queue max depth is configurable (default: 500); if the queue exceeds this depth, new reconciliation events are dropped and a `lenny_controller_queue_overflow_total` metric is incremented. The number of concurrent reconciliation workers is configurable via `--max-concurrent-reconciles` (default: 1). For cold-start scenarios (initial pool fill from zero, cluster restart recovery), operators should increase concurrent workers to match the tier's parallelism needs — see [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults) for per-tier recommendations. The rate limiter remains the throughput ceiling regardless of worker count, preventing API server or etcd overload even with multiple concurrent workers.
+
+**Cold-start pool fill:** When a pool is created or recovers from zero (e.g., after a cluster restart or scale-from-zero resume), filling to `minWarm` takes time proportional to `minWarm / effective_create_throughput`. The `WarmPoolExhausted` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) is suppressed during an initial fill grace period (`--initial-fill-grace-period`, default: 120s from pool creation or controller startup) to avoid false-positive alerts during expected cold-start fill time. The metric `lenny_warmpool_fill_duration_seconds` (histogram, labeled by pool) tracks the time from pool creation to reaching `minWarm` ready pods, enabling operators to set SLO targets for cold-start recovery. See [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults) for controller tuning recommendations.
+
+**Re-activation grace period:** The fill grace period also applies whenever a pool's `minWarm` transitions from `0` to a positive value — not just at initial pool creation. This covers experiment variant pool re-activations (`paused → active`, see [Section 10.7](10_gateway-internals.md#107-experiment-primitives)), scale-from-zero resume via `scaleToZero` schedule, and any operator-initiated `minWarm` increase from zero. When the WarmPoolController detects a `minWarm 0 → positive` transition, it resets the pool's `fill_grace_period_until` timestamp to `now() + --initial-fill-grace-period`. The `WarmPoolLow` alert is suppressed until the grace period expires, preventing alert storms on expected re-fill operations. Alert suppression does not affect pool fill metrics — `lenny_warmpool_fill_duration_seconds` still records the actual fill duration.
+
+**etcd write pressure at scale:** At high concurrent session counts, CRD status updates drive significant etcd write traffic. Estimated write rates by tier:
+
+| Tier | Concurrent sessions | Estimated etcd writes/s (sustained) | Notes |
+| ---- | ------------------- | ------------------------------------ | ----- |
+| Tier 1 | 100 | ~8 | Well within shared etcd capacity |
+| Tier 2 | 1,000 | ~80 | Shared etcd with `statusUpdateDeduplicationWindow: 500ms` |
+| Tier 3 | 10,000 | ~800 (ceiling: ~120 QPS after dedup at 250ms) | Approaches shared-etcd practical limits; dedicated etcd cluster recommended ([Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)) |
+
+The estimate assumes ~1 status write per pod per 2-minute lifetime (claim → active → released) plus warm-pool reconciliation writes. The status update rate limiter ([Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) controller tuning table: 120 QPS / burst 400 at Tier 3) and `statusUpdateDeduplicationWindow: 250ms` combine to reduce effective write rate; the ~120 QPS ceiling reflects the dedup-bounded steady-state, not the raw pre-dedup rate. At Tier 3, etcd p99 write latency (`etcd_disk_wal_fsync_duration_seconds`) should be monitored continuously — if p99 exceeds 25ms, operators must either scale etcd resources, reduce `maxSessionsPerReplica`, or migrate to a dedicated etcd cluster. The `EtcdWriteLatencyHigh` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when p99 write latency exceeds this threshold. Mitigations: (1) The state machine uses 3 coarse label values instead of 10+ fine-grained labels, reducing label mutation frequency ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)). (2) Status updates are batched by the controller's work queue — not every state transition is immediately written. (3) The dedicated status update rate limiter bounds the update rate while the separate pod creation bucket prevents creation starvation. (4) The `ControllerWorkQueueDepth` metric (labeled by controller name and queue name) tracks the instantaneous depth of the controller work queues — a sustained high depth indicates the controller cannot process reconciliation events as fast as they arrive, which amplifies write bursts when the backlog finally drains. The `ControllerWorkQueueDepthHigh` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when queue depth exceeds 50% of the configured `Work queue max depth` ([Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference)) for more than 2 minutes.
+
+**etcd operational tuning:** Deployers must configure the following to maintain etcd health under sustained CRD churn:
+
+- **Compaction:** Enable automatic compaction with `--auto-compaction-mode=periodic` and `--auto-compaction-retention=5m`. This prevents unbounded revision history growth from frequent status updates. Note: compaction mode and retention are etcd startup flags, not runtime-adjustable. Changing them requires an etcd member restart. On managed Kubernetes (EKS, GKE, AKS), the cloud provider controls etcd flags — operators cannot change compaction settings directly. Self-managed clusters must perform rolling etcd member restarts (one member at a time, waiting for cluster health between restarts) to apply new values without downtime. See the etcd operations runbook ([Section 17.7](17_deployment-topology.md#177-operational-runbooks)) for the procedure.
+- **Defragmentation:** Schedule periodic defragmentation during low-traffic windows (e.g., via a CronJob running `etcdctl defrag` on each member). Defrag reclaims free pages after compaction and should run at least once daily for clusters with high CRD write rates. **Operational caveat:** `etcdctl defrag` on a given member blocks all reads and writes to that member while defrag runs (typically 1–30 seconds depending on database size). To avoid disrupting Kubernetes API availability, defrag one member at a time, starting with followers and finishing with the leader. Never run `etcdctl defrag --cluster` in production — it defrags all members sequentially but provides no control over timing. On managed Kubernetes, the cloud provider handles defragmentation automatically; operators should not schedule their own defrag CronJobs. For Tier 3 deployments where "off-peak" is difficult to define (e.g., 10,000 concurrent sessions with global traffic), defrag should target the window with the lowest observed `etcd_server_proposals_committed_total` rate, or operators should use a dedicated etcd cluster (as recommended in [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)) where defrag does not affect the main API server.
+- **Quota monitoring:** Set `--quota-backend-bytes` (recommended: 8 GB) and alert when usage exceeds 80% (`etcd_server_quota_backend_bytes` minus `etcd_debugging_mvcc_db_total_size_in_bytes`). An `EtcdQuotaNearLimit` alert should fire at 80% to give operators time to defragment or increase quota before etcd enters alarm state. **Quota exhaustion recovery:** If etcd reaches its quota limit, it enters alarm state and refuses all write operations — the Kubernetes API server becomes read-only for CRD operations, blocking pod claims, state transitions, and pool reconciliation (existing sessions continue as described in "etcd unavailability" below). Recovery requires: (1) defragment all members to reclaim space (`etcdctl defrag` on each member individually), (2) verify database size dropped below quota (`etcdctl endpoint status`), (3) disarm the alarm (`etcdctl alarm disarm`), (4) verify writes resume by checking API server health. On managed Kubernetes, quota exhaustion is a cloud-provider support escalation — the operator cannot access etcd directly. See the etcd operations runbook ([Section 17.7](17_deployment-topology.md#177-operational-runbooks)) for the full procedure.
+- **Snapshot frequency:** Ensure `--snapshot-count` is tuned for the write rate (default 100,000 is reasonable for most deployments; reduce to 10,000 for very high write rates to limit recovery time).
+
+**etcd tuning topology matrix.** The degree to which Lenny can influence etcd tuning depends on whether the Kubernetes cluster is managed or self-managed. The table below clarifies responsibilities by topology:
+
+| Tuning area | Managed K8s (EKS, GKE, AKS) | Self-managed (kubeadm, Talos, etc.) |
+|---|---|---|
+| `--auto-compaction-mode` / `--auto-compaction-retention` | **Provider-controlled** — operators cannot change etcd flags; compaction settings are the cloud provider's defaults and cannot be tuned. | **Operator responsibility** — set at etcd member startup; changing requires rolling member restart per the etcd operations runbook ([Section 17.7](17_deployment-topology.md#177-operational-runbooks)). Recommended: `periodic / 5m` (Tier 1/2), `periodic / 2m` (Tier 3). |
+| `--quota-backend-bytes` | **Provider-controlled** — quota size is set by the cloud provider and cannot be increased by the operator. If quota is insufficient at Tier 3, escalate to the provider or migrate to self-managed etcd. | **Operator responsibility** — set at member startup. Recommended: 4 GB (Tier 1), 8 GB (Tier 2/3). Increasing requires member restart. |
+| `--snapshot-count` | **Provider-controlled.** | **Operator responsibility** — default 100,000; reduce to 10,000 at high write rates (see tuning note above). |
+| Defragmentation | **Provider-managed** — cloud providers run defragmentation automatically; operators **must not** schedule additional defrag CronJobs, as double-defrag during provider maintenance can cause brief write pauses. | **Operator responsibility** — schedule `etcdctl defrag` CronJob during low-traffic windows; follow the procedure in the etcd operations runbook. |
+| Quota exhaustion recovery | **Provider escalation path only** — operators cannot access etcd directly. Open a support ticket with the cloud provider; expect recovery time in the range of minutes to hours depending on provider SLA. Lenny's recovery guidance (defrag → alarm disarm) does not apply. | **Operator-executed** — follow the full quota exhaustion recovery procedure in [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (`etcdctl defrag` all members → `etcdctl alarm disarm` → verify writes resume). |
+| Snapshot / backup | **Provider-managed** — cloud providers snapshot etcd automatically; backup configuration is part of the managed control plane and cannot be customized. | **Operator responsibility** — configure ETCD backup to object storage. |
+| Write rate reduction (Lenny-controlled) | **Applicable to both topologies** — regardless of tuning access, operators can reduce etcd write pressure by: (1) increasing `statusUpdateDeduplicationWindow` on the WarmPoolController to batch status writes; (2) reducing pool count (fewer `SandboxTemplate` CRDs means fewer reconciliation events); (3) at Tier 3, using a dedicated etcd cluster for Kubernetes system objects and a separate etcd cluster for Lenny CRDs ([Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)). |
+
+> **`statusUpdateDeduplicationWindow` semantics.** The `--status-update-dedup-window` controller flag (type: `time.Duration`, default: `500ms`) sets the **minimum interval between consecutive `UpdateStatus` writes for the same `Sandbox` resource**. When a reconciliation loop produces a status change within this window of the previous write for the same resource, the write is deferred until the window expires — coalescing multiple rapid status transitions (e.g., `Pending → Creating → Running` within a few hundred milliseconds) into a single API server write. The deduplication is trailing: the last observed status in the window is always written (no status changes are lost, only intermediate writes are suppressed). This is the primary mechanism for reducing etcd write pressure on managed Kubernetes where compaction and quota-backend-bytes are not operator-controllable. Per-tier recommended values are in [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults) controller tuning table.
+
+**Summary:** On managed Kubernetes, the only etcd levers available to Lenny operators are Lenny-side write rate controls (row 8 above). All low-level etcd configuration is the cloud provider's responsibility. On self-managed clusters, operators are responsible for the full set of tuning parameters. The etcd operations runbook ([Section 17.7](17_deployment-topology.md#177-operational-runbooks)) covers only the self-managed procedures; managed Kubernetes operators should use the provider escalation path.
+
+See [Section 17.8](17_deployment-topology.md#178-capacity-planning-and-defaults) for controller tuning recommendations.
+
+**etcd unavailability (degraded mode):** etcd is a critical dependency for the Kubernetes API server. When etcd is unavailable, the API server cannot process CRD writes, which means pod claims (`SandboxClaim` creation), pod state transitions (`Sandbox` status updates), and pool reconciliation all freeze. The platform enters a degraded mode with the following behavior:
+
+- **Existing sessions continue unaffected.** Active session pods are already running and communicate with the gateway via gRPC — they do not depend on etcd for ongoing operation. Session state is persisted to Postgres, not etcd.
+- **New session creation is rejected.** The gateway detects API server unavailability when `ClaimPod` fails and returns a retryable error to the client (same mechanism as the `podClaimQueueTimeout` path described above). Clients back off and retry.
+- **Pool replenishment is frozen.** The warm pool controller cannot create new pods or update CRD status. Once etcd recovers, the controller's work queue replays pending reconciliations and the pool self-heals.
+- **Alerting:** An `EtcdUnavailable` critical alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the API server reports etcd connection failures (`etcd_request_duration_seconds` errors or `apiserver_storage_errors_total` sustained > 0) for more than 15 seconds. Operators should treat this as a cluster-wide incident.
+
+**Disruption protection for agent pods:** The primary protection against voluntary disruption (node drains, cluster upgrades) is a **preStop hook** on every agent pod that triggers a checkpoint via the runtime adapter's `Checkpoint` RPC before allowing termination. The pod's `terminationGracePeriodSeconds` is set high enough (default: 120s) to give the checkpoint time to complete and be persisted to object storage. For active pods whose sessions have been checkpointed (or that have no session at all), the session retry mechanism described in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) handles resumption on a replacement pod.
+
+The warm pool controller can optionally create a PDB **per `SandboxTemplate`** for warm (unclaimed) pods. The PDB MUST use `maxUnavailable: 1` rather than `minAvailable: minWarm`. Using `minAvailable: minWarm` causes a deadlock at steady state: when exactly `minWarm` idle pods exist (the normal operating condition), the PDB allows zero evictions, permanently stalling node drains. `maxUnavailable: 1` allows voluntary disruptions one pod at a time while limiting simultaneous impact. When a warm pod is evicted, the WarmPoolController proactively creates a replacement pod immediately to restore `minWarm`. The PDB targets only unclaimed (warm) pods via a label selector (`lenny.dev/state: idle`), so it does not interfere with the preStop-based protection on active session pods.
+
+**Sandbox finalizers:** Every `Sandbox` resource carries a finalizer (`lenny.dev/session-cleanup`) to prevent Kubernetes from deleting the pod — and its local workspace — while a session is still active. When a `Sandbox` enters the `Terminating` state, the warm pool controller checks whether any active `SandboxClaim` still references the pod. It removes the finalizer only after confirming one of two conditions: (a) no session references the pod, or (b) the session has been successfully checkpointed and the gateway has been notified so it can resume the session on a replacement pod. If the finalizer is not removed within 5 minutes (pod stuck in `Terminating`), the controller fires a `FinalizerStuck` alert. Operators should follow the stuck finalizer runbook (`docs/runbooks/stuck-finalizer.md`; see [Section 17.7](17_deployment-topology.md#177-operational-runbooks)) to safely verify session state, confirm checkpoint and artifact integrity, and remove the finalizer without orphaning resources. This ensures that node drains, scale-downs, and accidental deletions never silently orphan an active session.
+
+**Orphaned `SandboxClaim` detection:** Because `SandboxClaim` resources deliberately omit an `ownerReference` (to survive pod deletion and allow reassignment), Kubernetes will not garbage-collect them automatically. The WarmPoolController's `GarbageCollect` reconciliation loop detects orphaned claims as follows: every 60 seconds, **the leader replica** lists all `SandboxClaim` resources whose `metadata.creationTimestamp` is older than `claimOrphanTimeout` (default: 5 minutes, configurable via `--claim-orphan-timeout`). Because the WarmPoolController runs with Lease-based leader election (see leader election paragraph above), only the current leader executes the `GarbageCollect` loop — non-leader replicas skip it. This is the deliberate reason orphan detection is owned by the WarmPoolController rather than the gateway: placing the GC loop in the gateway would cause all gateway replicas to run API server list operations against the agent namespace simultaneously at each 60-second tick, multiplying API load proportionally with the gateway replica count. By running GC exclusively in the single elected leader of the WarmPoolController, the API list load is constant regardless of how many gateway or controller replicas are deployed. For each candidate orphaned claim, the controller queries Postgres to check whether an active session references it. If no active session exists, the claim is deleted and the underlying `Sandbox` pod is transitioned back to `idle`, returning it to the warm pool. This handles the crash scenario where a gateway creates a `SandboxClaim` but crashes before persisting the session to Postgres — on recovery, the gateway has no record of the claim, so the controller's orphan loop reclaims it. The metric `lenny_orphaned_claims_total` (counter, labeled by pool) is incremented for each orphaned claim deleted. A `SandboxClaimOrphanRateHigh` warning alert fires when `lenny_orphaned_claims_total` exceeds 10 in a 15-minute window, indicating potential gateway instability (see [Section 16.5](16_observability.md#165-alerting-rules-and-slos)).
+
+**Dependency pinning and upgrade policy:** Lenny pins `kubernetes-sigs/agent-sandbox` to a specific tagged release (initially the latest stable tag at implementation start). Because agent-sandbox is a v0.x project, minor-version releases may contain breaking API changes. The one-release-delay cadence (upgrade to release N only after release N+1 is published) is insufficient on its own for a v0.x dependency: it confirms API surface stability across two releases but does not gate against rapid successive breaking changes. Therefore the upgrade policy is augmented as follows: (1) **CI gate** — all CRD schema changes require the integration test suite to pass before merge; (2) **breaking-change hold** — if upstream introduces a breaking CRD API change in release N, Lenny does not upgrade until the next release (N+1) demonstrates that the N API surface has stabilized (i.e., no further structural changes to the same fields); (3) **API stability monitoring** — the engineering team subscribes to upstream release notes and the `kubernetes-sigs/agent-sandbox` issue tracker; any field removal, rename, or semantic change to `SandboxClaim`, `Sandbox`, `SandboxTemplate`, or `SandboxWarmPool` triggers an immediate impact assessment before the next Lenny release cycle.
+
+**Go/no-go criteria for the agent-sandbox dependency:** The Phase 1 exit gate includes an explicit dependency health assessment. Before Phase 2 begins, the team evaluates agent-sandbox against all three of the following criteria:
+
+1. **API stability.** The CRD API (`SandboxClaim`, `Sandbox`, `SandboxTemplate`, `SandboxWarmPool`) must not have had a structural breaking change (field removal, semantic rename, or schema incompatibility) in the two most recent upstream releases. If it has, the fallback path (see below) is activated.
+2. **Community support SLO.** The upstream project must demonstrate active maintenance: at least one tagged release in the prior 6 months, critical bug reports acknowledged within 30 days, and no open blocker-severity issues affecting `SandboxClaim` optimistic-locking or warm-pool reconciliation that are unaddressed for more than 60 days.
+3. **Integration test pass rate.** Lenny's agent-sandbox integration test suite (covering concurrent claims, orphan detection, pool reconciliation, and the ADR-007 chaos test) must pass at 100% against the pinned upstream release.
+
+If any criterion is not met at Phase 1 exit, the team activates the fallback implementation (see below) before Phase 2 begins. The decision and its rationale are recorded as an ADR.
+
+**Fallback plan if agent-sandbox is abandoned or diverges:** Because all consumers use `PodLifecycleManager` and `PoolManager` interfaces, Lenny can replace the agent-sandbox backend with custom kubebuilder-based controllers implementing the same interfaces. Estimated effort: 2-3 engineering-weeks for a minimal replacement covering pod claiming, release, drain, and basic warm pool reconciliation (the interface definitions serve as functional requirements). Advanced features (Pod Snapshots on GKE, upstream community PDB patterns) would require additional effort. This fallback is viable but undesirable — the preferred path is continued upstream contribution. **Trigger:** fallback activation is initiated when the go/no-go assessment above (at Phase 1 exit, or at any subsequent quarterly dependency review) finds one or more criteria unmet and the upstream team cannot commit to resolution within 30 days.
+
+#### 4.6.2 PoolScalingController (Pool Configuration)
+
+**Role:** Manages desired pool configuration, scaling intelligence, and experiment variant pool sizing. Separate from the WarmPoolController which manages individual pod lifecycle.
+
+**Responsibilities:**
+
+- Reconcile pool configuration from Postgres (admin API source of truth) into `SandboxTemplate` and `SandboxWarmPool` CRDs
+- Manage scaling decisions: time-of-day schedules, demand-based rules, experiment variant sizing
+- Integrate with experiment definitions to automatically size variant pools
+
+**Leader election:** The PoolScalingController runs its own Lease-based leader election using a separate lease name (`lenny-pool-scaling-controller`) from the WarmPoolController (`lenny-warm-pool-controller`). Lease parameters: duration 15s, renew deadline 10s, retry period 2s (matching WarmPoolController). The two controllers elect leaders independently — they may run on different replicas. Failover timing follows the same model as the WarmPoolController: near-zero on clean shutdown (voluntary lease release), up to 25s on crash (see [Section 4.6.1](#461-warm-pool-controller-pod-lifecycle)).
+
+**Pluggable `PoolScalingStrategy` interface.** Fully replaceable by deployers.
+
+**Default formula (non-experiment pools):**
+
+```
+target_minWarm = ceil(base_demand_p95 × safety_factor × (failover_seconds + pod_startup_seconds)
+                      + burst_p99_claims × pod_warmup_seconds)
+```
+
+The first term covers steady-state demand during a failover or leader-election gap: `base_demand_p95` is the p95 claim arrival rate (claims/second); multiplying by `(failover_seconds + pod_startup_seconds)` converts it to a pod count — the number of claims that will arrive while the pool cannot create new ready pods. `failover_seconds` is the worst-case controller failover time (default: 25s — `leaseDuration + renewDeadline = 15s + 10s`); `pod_startup_seconds` is the time from pod creation to `idle` state (container pull + runtime startup, excluding SDK warm). `safety_factor` scales the result to provide a buffer above the raw demand estimate.
+
+The second term (`burst_p99_claims × pod_warmup_seconds`) absorbs request bursts that arrive faster than the pool can refill. `burst_p99_claims` is the p99 claim arrival rate (claims/second) observed over a short window (default: 60s). `pod_warmup_seconds` is the time from pod creation to ready state (pod pull + startup + optional SDK warm). During a burst, each second of warmup latency means one fewer pod available to serve the next claim — the burst term reserves enough headroom so the pool is not exhausted before replacement pods become ready. The `pod_warmup_seconds` value used in formulas corresponds to the pool's `scalingPolicy.podWarmupSecondsBaseline` field (default: 30s) — set this field to match observed pod startup times for accurate sizing.
+
+`safety_factor` defaults to 1.5 for agent-type pools, 2.0 for mcp-type pools. This formula assumes session mode (one session per pod). For task and concurrent modes, a `mode_factor` adjustment reduces pod demand based on reuse and slot multiplexing — see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) "Execution Mode Scaling Implications" for per-mode formula variants.
+
+**Variant pool formula (experiment pools only).** For A/B experiment variant pools, `variant_weight` scales demand proportionally to the traffic fraction routed to the variant:
+
+```
+target_minWarm = ceil(base_demand_p95 × variant_weight × safety_factor × (failover_seconds + pod_startup_seconds)
+                      + burst_p99_claims × variant_weight × pod_warmup_seconds)
+```
+
+`variant_weight` is defined on each variant entry in the experiment definition (see [Section 10.7](10_gateway-internals.md#107-experiment-primitives)). This formula is not used for standard (non-experiment) pools; `variant_weight` has no meaning outside experiment context. This formula assumes session mode (`mode_factor = 1.0`). For task-mode or concurrent-mode variant pools, apply `/ mode_factor` to the steady-state term and `/ burst_mode_factor` to the burst term, consistent with the mode-adjusted formula in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
+
+**Variant pool sizing and base pool adjustment.** When one or more experiments create variant pools on the same base pool, the PoolScalingController must recompute the **base pool's** `minWarm` to reflect the total fraction of traffic being diverted to all active variants. Without this adjustment, total warm pods across the base and all variant pools equal `(1 + Σ variant_weights) × original_base_minWarm` — a significant over-provisioning.
+
+The adjusted base pool formula is:
+
+```
+base_minWarm = ceil(base_demand_p95 × (1 - Σ variant_weights) × safety_factor × (failover_seconds + pod_startup_seconds)
+                    + burst_p99_claims × (1 - Σ variant_weights) × pod_warmup_seconds)
+```
+
+This formula assumes session mode. For task-mode or concurrent-mode base pools, apply `/ mode_factor` to the steady-state term and `/ burst_mode_factor` to the burst term, consistent with the mode-adjusted formula in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
+
+Where `Σ variant_weights` is the sum of `variant_weight` values across all **active** variants of **all active experiments** targeting the same base pool. When multiple experiments concurrently divert traffic from the same base pool, the controller aggregates their variant weights in a single pass — not per-experiment — to avoid last-write-wins overwriting. The controller recalculates this aggregate sum whenever any experiment on the pool becomes active, any variant weight changes, or any experiment is paused or concluded (see [Section 10.7](10_gateway-internals.md#107-experiment-primitives)). `Σ variant_weights` is clamped to `[0, 1)` — the base pool always retains at least `1 - max_total_variant_weight > 0` of demand. If `Σ variant_weights >= 1`, the controller rejects the experiment configuration at admission time with `INVALID_VARIANT_WEIGHTS`.
+
+The PoolScalingController applies this recomputation in a single reconciliation cycle: it updates both the base pool's `SandboxWarmPool` CRD and the new variant pool's `SandboxWarmPool` CRD in the same reconcile pass. Because Kubernetes does not support multi-resource atomic transactions, there is a brief window (between the two sequential CRD updates within the cycle) where total warm pod count may be inconsistent. The WarmPoolController self-corrects on its next reconciliation, so the total warm pod count never exceeds the target for more than one cycle.
+
+**Cold-start limitation:** The formula inputs (`base_demand_p95`, `burst_p99_claims`) are derived from historical traffic metrics and are not available at first deployment. For new pools, the operator must set `minWarm` manually — the PoolScalingController cannot auto-configure this value without observed demand. New pools automatically enter **bootstrap mode** (`status.scalingMode: bootstrap`) using a static `bootstrapMinWarm` override until convergence criteria are met. See [Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) "First deployment sizing" for the full cold-start bootstrap procedure: fallback `minWarm` starting values, the five convergence criteria for exiting bootstrap mode, the operator-facing override API (`PUT /v1/admin/pools/{name}` with `bootstrapMinWarm` and `DELETE /v1/admin/pools/{name}/bootstrap-override`), and the `lenny_pool_bootstrap_mode` gauge / `PoolBootstrapMode` alert.
+
+**Pool phases:** pre-warm, ramp, steady state, wind-down — all automatic. For experiment-lifecycle-driven pool teardown (what happens to variant pools when an experiment is paused or concluded), see the "PoolScalingController behavior on experiment status transitions" paragraph in [Section 10.7](10_gateway-internals.md#107-experiment-primitives).
+
+**CRDs become derived state** reconciled from Postgres by PoolScalingController. The admin API is the source of truth for pool configuration; the controller translates that into Kubernetes CRDs.
+
+**Reconciliation drift detection.** Because CRDs are derived state, any period where the PoolScalingController is down (crash, leader election, network partition to the API server) causes CRD specs to diverge from Postgres desired state. The WarmPoolController continues operating against stale CRD values indefinitely — it has no mechanism to detect that the values it reads are outdated. To close this observability gap:
+
+1. **Reconciliation lag metric.** The PoolScalingController exposes a `lenny_pool_config_reconciliation_lag_seconds` gauge (labeled by pool name) that records the time since the last successful CRD reconciliation for each pool. On every successful reconciliation cycle, the controller resets the gauge to zero. If the controller is down, the gauge value grows monotonically (scraped from the last-active replica's `/metrics` endpoint until the process exits; after exit, the metric disappears and the `PoolConfigDrift` alert fires on the absence condition below).
+2. **`PoolConfigDrift` warning alert.** Fires when any pool's Postgres `pool_config_generation` (incremented on every admin API write) differs from its CRD's `metadata.annotations["lenny.dev/config-generation"]` for more than 60 seconds. Detection runs in the gateway (which reads both Postgres and CRD state) rather than in the PoolScalingController itself, so the alert fires even when the controller is completely down. The alert auto-resolves when the controller catches up and reconciles the CRD. Added to the alert inventory in [Section 16.5](16_observability.md#165-alerting-rules-and-slos).
+3. **Admin API sync status.** The `PUT /v1/admin/pools/{name}` response includes a `syncStatus` field: `"pending"` immediately after a write (Postgres updated, CRD reconciliation not yet confirmed), or `"synced"` once the CRD generation matches. This prevents operators from believing changes are instantly effective. The `GET /v1/admin/pools/{name}` response also includes `syncStatus` for consistency.
+4. **Sync-status endpoint.** `GET /v1/admin/pools/{name}/sync-status` returns detailed reconciliation state: `postgresGeneration`, `crdGeneration`, `lastReconciledAt`, `lagSeconds`, and `inSync` (boolean). This gives operators a single endpoint to diagnose whether the PoolScalingController is keeping up.
+
+#### 4.6.3 CRD Field Ownership and Write Boundaries
+
+Both the WarmPoolController and PoolScalingController interact with the same CRD types (`SandboxTemplate`, `SandboxWarmPool`, `Sandbox`). To prevent conflicting writes, each controller owns a disjoint set of fields:
+
+| CRD               | Field / Subresource                                | Owner                      | Notes                                           |
+| ----------------- | -------------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `SandboxTemplate` | `spec.*`                                           | PoolScalingController      | Reconciled from Postgres pool definitions       |
+| `SandboxTemplate` | `status.*`                                         | WarmPoolController         | Pool health conditions, observed generation     |
+| `SandboxWarmPool` | `spec.minWarm`, `spec.maxWarm`, `spec.scalePolicy`, `spec.sdkWarmDisabled` | PoolScalingController      | Scaling parameters from Postgres; `spec.sdkWarmDisabled` is the circuit-breaker flag set by PSC |
+| `SandboxWarmPool` | `status.*`                                         | WarmPoolController         | Current warm count, ready count, conditions     |
+| `Sandbox`         | `spec.*`                                           | WarmPoolController         | Pod creation and configuration                  |
+| `Sandbox`         | `status.*`                                         | WarmPoolController         | State machine transitions, health               |
+| `SandboxClaim`    | `spec.*`, `status.*`                               | Gateway (not a controller) | Created/deleted by gateway during claim/release |
+
+**Server-Side Apply (SSA) enforcement:** Field ownership is enforced via Kubernetes Server-Side Apply with named field managers. Each controller applies only its owned fields using a distinct field manager name (`lenny-warm-pool-controller` and `lenny-pool-scaling-controller`). If a controller attempts to update a field owned by another manager, the API server returns a conflict error (HTTP 409) without applying the update. This is the primary enforcement mechanism — it is enforced by the API server itself, without any additional controller logic.
+
+**SSA conflict retry policy (crash recovery).** When a controller crashes and restarts, its in-memory view of CRD state is stale. If the restarted controller immediately applies its owned fields using a cached resource version, the API server may return an HTTP 409 conflict (the resource has been updated by the other controller or by a prior apply that was not yet reflected). The required retry policy is:
+
+1. **Always re-read before re-applying.** On any SSA HTTP 409 conflict error, the controller **must** discard its cached copy of the resource and issue a fresh `GET` to the API server to obtain the current `resourceVersion` and the current managed fields map. The controller then re-computes its apply patch against the freshly read state.
+2. **Never force-conflict.** Controllers **must not** use `--force-conflicts` (SSA `Force: true`) except as a last-resort operator-initiated recovery action. Force-conflicts unconditionally steals field ownership from the other manager — it bypasses the isolation invariant that prevents the two controllers from overwriting each other's fields. Using `Force: true` in reconciliation code is explicitly prohibited and would defeat the ownership boundary enforced by the SSA mechanism.
+3. **Bounded retry with backoff.** After re-reading and re-computing the patch, the controller retries the apply. If a second 409 occurs (concurrent apply from the other controller), the controller backs off with jitter (initial 100ms, max 2s) and re-reads again. After 5 consecutive 409s without progress, the controller emits a `crd_ssa_conflict_stuck` structured log event (labeled by `controller`, `resource`, `name`) and increments the `lenny_crd_ssa_conflict_total` counter, then continues with exponential backoff. A `CRDSSAConflictStuck` warning alert fires when this counter exceeds 10 in a 5-minute window on any single resource, indicating an abnormal ownership dispute that requires operator investigation.
+4. **No force on normal startup.** After a crash and leader-election re-acquisition, the restarted controller executes a full list-and-sync reconciliation of all resources it owns before accepting new watch events. Each reconciliation apply follows the re-read policy above. This ensures the controller's first post-crash apply is always based on the current API server state, not stale pre-crash cache.
+
+**RBAC enforcement (coarse-grained backstop):** Each controller's ServiceAccount has RBAC rules granting access at resource and subresource granularity. The WarmPoolController ServiceAccount has `create`/`update`/`delete` on `Sandbox` and `get`/`patch` on `status` subresources of `Sandbox`, `SandboxTemplate`, and `SandboxWarmPool` (SSA status updates require `get` to read the current resource and `patch` to apply the partial object — `update` is insufficient for SSA Apply requests), `list`/`delete` on `SandboxClaim` (required for orphan claim garbage collection — see `GarbageCollect` above), `create`/`update`/`delete` on `PodDisruptionBudget` (required for `ManagePDB`), `get`/`create`/`update` on `Leases` in `lenny-system` (required for leader election), `get`/`list` on `Nodes` (required for CIDR drift detection — the continuous drift goroutine reads node `spec.podCIDR` to compute actual cluster CIDRs; see [Section 13.2](13_security-model.md#132-network-isolation)), `get`/`list` on `NetworkPolicies` in agent namespaces (required for CIDR drift detection — the goroutine reads installed `except` blocks from `internet` egress NetworkPolicies to compare against actual CIDRs), `get`/`list`/`watch` on `Pods` in agent namespaces (required for reading pod phase/conditions and certificate annotations for cert-expiry tracking — the WPC reads cert-manager annotations on the underlying Pod to determine remaining certificate validity for idle pods; see [Section 10.3](10_gateway-internals.md#103-mtls-pki)), and `get`/`list`/`watch` on the same CRD types listed above. The PoolScalingController ServiceAccount has `create`/`update`/`delete` on `SandboxTemplate` and `SandboxWarmPool`, `get`/`create`/`update` on `Leases` in `lenny-system` (required for leader election), and `get`/`list`/`watch` on status subresources, with no access to `Sandbox` resources. Note: Kubernetes RBAC operates at resource and subresource granularity, not individual field granularity — it cannot distinguish which fields within `spec` a controller may write. Field-level boundaries are enforced by SSA (above), not RBAC.
+
+**Gateway ServiceAccount RBAC grants:** The gateway's ServiceAccount (`system:serviceaccount:lenny-system:lenny-gateway`) requires RBAC grants separate from the controller ServiceAccounts. The gateway performs pod label mutations (setting `lenny.dev/tenant-id` on first assignment and toggling `lenny.dev/state` between `idle` and `active`) and manages `SandboxClaim` resources. Required grants: `get`/`patch` on `Pods` in agent namespaces (`lenny-agents`, `lenny-agents-kata`) for tenant-id and state label mutations, `create`/`get`/`delete` on `SandboxClaim` resources for the claim/release lifecycle, and `get`/`list` on `Sandbox` resources for pod selection during claim. The `lenny-tenant-label-immutability` webhook ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) must include the gateway ServiceAccount in its allowlist for the `unset → {tenant_id}` initial label write — the webhook allows the gateway SA to set `lenny.dev/tenant-id` on initial assignment, and allows the WarmPoolController SA to reset `{tenant_id} → unassigned` when a pod is returned to the pool.
+
+**Validating webhook for Postgres-authoritative state (defense-in-depth):** A validating admission webhook rejects manual `kubectl edit` or `kubectl apply` updates to `SandboxTemplate.spec` and `SandboxWarmPool.spec` fields unless the request's `userInfo` maps to the PoolScalingController ServiceAccount (`system:serviceaccount:lenny-system:lenny-pool-scaling-controller`). This uses the same `userInfo`-based authorization as the `lenny-label-immutability` webhook — the API server populates `userInfo` from the authenticated principal, which cannot be spoofed by the caller (unlike annotations, which any principal with `patch` access could set). This prevents operators from manually editing CRD specs that would be silently overwritten on the next reconciliation cycle. The webhook returns an informative denial message directing operators to use the admin API instead. The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable, updates are denied (fail-closed) to protect Postgres-authoritative state. This webhook is a defense-in-depth backstop — SSA field manager conflicts provide the primary enforcement layer.
+
+### 4.7 Runtime Adapter
+
+**Role:** Standardized bridge between the Lenny platform and any pod binary. The adapter protocol uses a two-part model: multiple focused local MCP servers for tool access, and a separate lifecycle channel for operational signals.
+
+**Contract (internal gRPC/HTTP+mTLS API — gateway ↔ adapter):**
+
+| RPC                  | Description                                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PrepareWorkspace`   | Accept streamed files into staging area                                                                                                                |
+| `FinalizeWorkspace`  | Validate, materialize to `/workspace/current`                                                                                                          |
+| `RunSetup`           | Execute bounded setup commands                                                                                                                         |
+| `StartSession`       | Start the agent runtime with final `cwd` (pod-warm mode)                                                                                               |
+| `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode). Timeout: 10s. Idempotent (same `cwd` path is safe to send twice). On failure: gateway calls `DemoteSDK` with a 5s timeout and falls back to pod-warm materialization. If `DemoteSDK` also fails, the pod transitions to `failed` and a replacement is claimed. |
+| `DemoteSDK`          | Tear down the pre-connected SDK process and return the pod to pod-warm state (see [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Required for runtimes that declare `preConnect: true`. |
+| `Attach`             | Connect client stream to running session                                                                                                               |
+| `Interrupt`          | Interrupt current agent work                                                                                                                           |
+| `Checkpoint`         | Export recoverable session state                                                                                                                       |
+| `ExportPaths`        | Package files for delegation, rebased per export spec ([Section 8.7](08_recursive-delegation.md#87-file-export-model))                                                                                    |
+| `AssignCredentials`  | Push a per-provider credential map (one lease per authorized provider) to the runtime before session start                                             |
+| `RotateCredentials`  | Push replacement credentials for a specific provider's lease mid-session (fallback/rotation)                                                           |
+| `Resume`             | Restore from checkpoint on a replacement pod                                                                                                           |
+| `ReportUsage`        | Report LLM token counts extracted from provider responses; gateway increments quota counters and persists to Postgres on the next sync interval (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)) |
+| `Terminate`          | Graceful shutdown                                                                                                                                      |
+
+**Checkpoint / Interrupt mutual exclusion:** The adapter maintains a per-session operation lock that serializes `Checkpoint` and `Interrupt` RPCs. Only one of these operations may execute at a time; if a second arrives while the first is in progress, it is queued and executed after the first completes. Ordering semantics:
+
+- **Interrupt during checkpoint:** The interrupt is queued until the checkpoint completes (or times out per [Section 4.4](#44-event--checkpoint-store)). After the checkpoint finishes, the queued interrupt is delivered normally. Rationale: a checkpoint in progress has already paused or quiesced the runtime (via SIGSTOP or lifecycle channel `checkpoint_request`); delivering an interrupt in that state is undeliverable (signals cannot reach a SIGSTOPped process) or would violate the quiescence guarantee.
+- **Checkpoint during interrupt:** The checkpoint is queued until the runtime acknowledges the interrupt (via `interrupt_acknowledged` on the lifecycle channel for Full-tier, or until the adapter observes the runtime resume output for lower tiers). This prevents snapshotting mid-interrupt state.
+- **Queue depth:** At most one operation may be queued. If a second operation of the same type arrives while one is already queued, the second is coalesced (checkpoint) or dropped with a `BUSY` status (interrupt). The gateway retries dropped interrupts with backoff.
+
+**Runtime → Gateway events (sent over the gRPC control channel):**
+
+| Event                  | Description                                                              |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `RATE_LIMITED`         | Current credential is rate-limited; request fallback                     |
+| `AUTH_EXPIRED`         | Credential lease expired or was rejected by provider                     |
+| `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable                                         |
+| `LEASE_REJECTED`       | Runtime cannot use the assigned credential (incompatible provider, etc.) |
+
+#### Adapter ↔ Runtime Protocol (Intra-Pod)
+
+The adapter communicates with the runtime binary via two mechanisms:
+
+**Part A — Multiple focused local MCP servers** (intra-pod, abstract Unix socket):
+
+- **Platform MCP server** — Lenny-specific tools: `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/set_tracing_context`. Note: lease extension is handled via the adapter↔gateway gRPC lifecycle, not as an MCP tool (see [Section 8.6](08_recursive-delegation.md#86-lease-extension)).
+- **One MCP server per authorized connector** — each connector in the session's delegation policy gets its own independent MCP server. No aggregated connector proxy — aggregation is not lossless per MCP spec (capability negotiation is per-server, sampling breaks, tool name collisions, resource URI collisions).
+
+**No workspace MCP server.** Workspace is materialized to `/workspace/current` before the runtime starts. The runtime accesses it via the filesystem directly.
+
+**Part B — Lifecycle channel** — bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`) for operational signals. The socket path is advertised in the adapter manifest (`lifecycleChannel.socket`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`:
+
+```
+Adapter → Runtime:  lifecycle_capabilities, checkpoint_request,
+                    checkpoint_complete, interrupt_request,
+                    credentials_rotated, terminate,
+                    task_complete, task_ready
+Runtime → Adapter:  lifecycle_support, checkpoint_ready,
+                    interrupt_acknowledged, credentials_acknowledged,
+                    llm_request_started, llm_request_completed,
+                    task_complete_acknowledged
+```
+
+Optional. Runtimes that don't open it operate in fallback-only mode. Versioned by capability negotiation at the top. Unknown messages silently ignored on both sides.
+
+**Lifecycle channel message schemas** (each message is a JSON object with `type` as discriminator):
+
+| `type`                      | Direction          | Fields                                                                                                                                                              | Notes                                                                       |
+| --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`, `"task_lifecycle"`) | First message sent on channel open. Runtime must reply with `lifecycle_support`. `"task_lifecycle"` is offered only on task-mode pods and governs the `task_complete` / `task_complete_acknowledged` / `task_ready` message exchange ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). |
+| `lifecycle_support`         | Runtime → Adapter  | `type`, `capabilities` (array of strings — subset of offered capabilities the runtime supports)                                                                    | Runtime's capability handshake reply.                                       |
+| `checkpoint_request`        | Adapter → Runtime  | `type`, `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                                       | Adapter requests runtime quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
+| `checkpoint_complete`       | Adapter → Runtime  | `type`, `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                                              | Confirms snapshot upload result; runtime may resume.                        |
+| `interrupt_request`         | Adapter → Runtime  | `type`, `interruptId` (string), `deadlineMs` (integer)                                                                                                             | Requests the runtime reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
+| `credentials_rotated`       | Adapter → Runtime  | `type`, `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/credentials.json`), `leaseId` (string)                                        | New credentials written; runtime must rebind and reply with `credentials_acknowledged`. |
+| `terminate`                 | Adapter → Runtime  | `type`, `deadlineMs` (integer), `reason` (string: `"session_complete"` \| `"budget_exhausted"` \| `"eviction"` \| `"operator"`)                                    | Graceful shutdown signal. Runtime must exit within `deadlineMs`; adapter sends SIGTERM on timeout. Always means process exit — never used for between-task signaling (see `task_complete` below). |
+| `task_complete`             | Adapter → Runtime  | `type`, `taskId` (string)                                                                                                                                           | Between-task signal in task mode ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The current task is finished; the runtime must release task-specific resources (open files, temp state) and reply with `task_complete_acknowledged`. The runtime does NOT exit — it remains alive for the next task. |
+| `task_ready`                | Adapter → Runtime  | `type`, `taskId` (string)                                                                                                                                           | Sent after scrub completes and the new workspace is materialized. The runtime should re-read the adapter manifest (regenerated per task) and prepare for the next `{type: "message"}` on stdin. |
+| `deadline_approaching`      | Adapter → Runtime  | `type`, `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)                              | Advance warning before forced termination. Runtime should wrap up work.     |
+| `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
+| `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
+| `credentials_acknowledged`  | Runtime → Adapter  | `type`, `leaseId` (string), `provider` (string)                                                                                                                    | Runtime has rebound to the new credential. Adapter releases queued LLM requests with new credential. |
+| `llm_request_started`       | Runtime → Adapter  | `type`, `requestId` (string — opaque, runtime-generated), `provider` (string)                                                                                      | Runtime is about to send an outbound LLM request directly to the provider (direct mode only). Adapter increments the in-flight counter for this provider. Only required when the runtime calls the LLM API directly (not via the adapter proxy). |
+| `task_complete_acknowledged` | Runtime → Adapter  | `type`, `taskId` (string)                                                                                                                                          | Runtime has released task-specific resources and is ready for scrub. Sent in response to `task_complete`. The adapter proceeds with deployer-defined `cleanupCommands` and Lenny scrub after receiving this acknowledgment. If not received within 30 seconds, the adapter logs a `task_complete_ack_timeout` warning and proceeds with cleanup anyway (the runtime may hold stale references but the scrub will clean the workspace). |
+| `llm_request_completed`     | Runtime → Adapter  | `type`, `requestId` (string — matches the corresponding `llm_request_started`), `provider` (string), `status` (`"ok"` \| `"error"`)                               | Runtime's outbound LLM request has completed or errored. Adapter decrements the in-flight counter. When the counter reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`. |
+
+**Adapter manifest:** Written to `/run/lenny/adapter-manifest.json` on the manifest volume (read-only to the agent container) **before the runtime binary is spawned** — complete and authoritative when the binary starts. Regenerated per task execution (in task mode, re-written before each task; the runtime must re-read the manifest at the start of each task). The manifest is stable for the duration of a single task or session — it does not change while the runtime is processing.
+
+```json
+{
+  "version": 1,
+  "platformMcpServer": { "socket": "@lenny-platform-mcp" },
+  "lifecycleChannel": { "socket": "@lenny-lifecycle" },
+  "connectorServers": [{ "id": "github", "socket": "@lenny-connector-github" }],
+  "runtimeMcpServers": [],
+  "adapterLocalTools": [
+    {
+      "name": "read_file",
+      "description": "Read the contents of a file in the workspace.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Workspace-relative or absolute path to the file." }
+        },
+        "required": ["path"]
+      }
+    }
+  ],
+  "agentInterface": {
+    "description": "Analyzes codebases and produces refactoring plans",
+    "inputModes": [{ "type": "text/plain" }],
+    "outputModes": [{ "type": "text/plain", "role": "primary" }],
+    "supportsWorkspaceFiles": true,
+    "skills": [
+      {
+        "id": "review",
+        "name": "Code Review",
+        "description": "Reviews code for quality and correctness"
+      }
+    ]
+  },
+  "sessionId": "sess_abc",
+  "taskId": "task_root",
+  "mcpNonce": "a3f1...c7e2",
+  "experimentContext": {
+    "experimentId": "claude-v2-rollout",
+    "variantId": "treatment",
+    "inherited": false
+  },
+  "tracingContext": null,
+  "observability": {
+    "otlpEndpoint": "http://otel-collector.lenny-system:4317"
+  }
+}
+```
+
+**Adapter manifest field reference:**
+
+| Field                       | Type               | Required | Description                                                                                                                                                                                                                                                                                 | Tier relevance            |
+| --------------------------- | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `version`                   | `integer`          | Yes      | Schema version. Currently `1`. Runtimes MUST reject any `version` value higher than the highest version they understand (every increment is breaking; see forward-compatibility rule below).                                                                                                                                                                                                               | All (if reading manifest) |
+| `platformMcpServer`         | `object`           | Yes      | Platform MCP server endpoint.                                                                                                                                                                                                                                                               | Standard, Full            |
+| `platformMcpServer.socket`  | `string`           | Yes      | Abstract Unix socket name (e.g., `@lenny-platform-mcp`).                                                                                                                                                                                                                                    | Standard, Full            |
+| `lifecycleChannel`          | `object`           | Yes      | Lifecycle channel endpoint.                                                                                                                                                                                                                                                                 | Full                      |
+| `lifecycleChannel.socket`   | `string`           | Yes      | Abstract Unix socket name (e.g., `@lenny-lifecycle`).                                                                                                                                                                                                                                       | Full                      |
+| `connectorServers`          | `array`            | Yes      | Per-connector MCP servers. Empty array `[]` if no connectors are authorized. Never absent.                                                                                                                                                                                                  | Standard, Full            |
+| `connectorServers[].id`     | `string`           | Yes      | Connector identifier.                                                                                                                                                                                                                                                                       | Standard, Full            |
+| `connectorServers[].socket` | `string`           | Yes      | Abstract Unix socket name for this connector.                                                                                                                                                                                                                                               | Standard, Full            |
+| `runtimeMcpServers`         | `array`            | Yes      | Reserved for `type:mcp` runtimes. Empty array `[]` in v1.                                                                                                                                                                                                                                   | — (future)                |
+| `adapterLocalTools`         | `array`            | Yes      | Adapter-local tools available to the runtime ([Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-tiers)). Each entry contains `name` (string), `description` (string), and `inputSchema` (JSON Schema object). Populated by the adapter before spawning the runtime; fixed for the lifetime of the pod. Includes the four built-in tools (`read_file`, `write_file`, `list_dir`, `delete_file`) plus any custom adapter-local tools. | All (if reading manifest) |
+| `agentInterface`            | `object` or `null` | Yes      | Summary of the runtime's declared `agentInterface` from the Runtime definition ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)). `null` if not declared. Contains `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, `skills`, `examples` — same schema as the Runtime definition's `agentInterface` field. | Informational (all tiers) |
+| `sessionId`                 | `string`           | Yes      | Current session identifier.                                                                                                                                                                                                                                                                 | All (if reading manifest) |
+| `taskId`                    | `string`           | Yes      | Current task identifier.                                                                                                                                                                                                                                                                    | All (if reading manifest) |
+| `mcpNonce`                  | `string`           | Yes      | Random 256-bit hex nonce regenerated per task execution. Must be presented as the first message of the MCP `initialize` handshake on every intra-pod MCP connection (platform MCP and all connector MCP servers). The adapter rejects connections that do not present a valid nonce.        | Standard, Full            |
+| `minPlatformVersion`        | `string`           | No       | Minimum Lenny gateway version required by this runtime, in semver format (e.g., `"1.4.0"`). Written by the gateway from the Runtime definition's `minPlatformVersion` field. Runtimes may read this to confirm they are operating against a compatible gateway version; the gateway enforces the constraint at registration time — it rejects runtime definitions whose `minPlatformVersion` exceeds the running gateway version with `422 PLATFORM_VERSION_TOO_LOW`. Omitted if the Runtime definition specifies no minimum. | Informational (all tiers) |
+| `experimentContext`         | `object` or `null` | Yes      | Experiment enrollment context for this session, or `null` if the session is not enrolled in any experiment. Contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via delegation). When present, runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. See [Section 10.7](10_gateway-internals.md#107-experiment-primitives). | All (if reading manifest) |
+| `tracingContext`            | `object` or `null` | Yes      | Tracing identifiers propagated from the parent runtime via delegation, or `null` for top-level sessions. An opaque key-value map (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) for validation rules). See [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. | All (if reading manifest) |
+| `observability`             | `object`           | No       | Observability configuration. Omitted when no OTLP collector is configured for the deployment. | Informational (all tiers) |
+| `observability.otlpEndpoint`| `string`           | No       | URL of the OTLP collector (e.g., `"http://otel-collector.lenny-system:4317"`). Runtimes that emit OpenTelemetry spans ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) configure their OTel SDK against this endpoint. Present only when the deployer has configured `observability.otlpEndpoint` in the Helm values. | Informational (all tiers) |
+
+**Tier reading requirements:**
+
+- **Minimum** — The runtime does not need to read the adapter manifest for core operation — it operates purely on stdin/stdout. The four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract: Minimum-tier runtimes may hardcode their names and schemas without reading the manifest. Minimum-tier runtimes that wish to discover custom adapter-local tools added by non-standard adapters may optionally read the `adapterLocalTools` array from the manifest.
+- **Standard** — The runtime reads `platformMcpServer.socket`, `connectorServers`, and `mcpNonce` to connect to and authenticate with local MCP servers.
+- **Full** — Standard fields plus `lifecycleChannel.socket`.
+
+**Forward compatibility:** Runtimes must silently ignore unknown top-level fields. The adapter may add new fields in future versions without incrementing `version`. A `version` increment indicates a breaking change to existing field semantics.
+
+`runtimeMcpServers` slot reserved from v1 for future use by `type:mcp` runtimes accessible via adapter proxy.
+
+#### Runtime Integration Tiers (agent-type only)
+
+- **Minimum** — stdin/stdout binary protocol only. Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout. This is the floor. Zero Lenny knowledge required.
+- **Standard** — minimum plus connects to adapter's platform MCP server and connector servers via the adapter manifest. Uses platform capabilities (delegation, discovery, output parts, elicitation). Standard MCP — no Lenny-specific code.
+- **Full** — standard plus opens the lifecycle channel. True session continuity, clean interrupt points, mid-session credential rotation via `credentials_rotated` lifecycle message.
+
+**Credential rotation behavior by tier:**
+
+| Tier     | Rotation method                                                                                                                                                                              |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full     | Gateway calls `RotateCredentials` RPC; adapter sends `credentials_rotated` on lifecycle channel; runtime rebinds provider in-place. No session interruption.                                 |
+| Standard | Gateway triggers `Checkpoint` → terminates pod → schedules replacement pod → `AssignCredentials` (new lease) → `Resume`. Session experiences a brief pause; the client sees a reconnect.     |
+| Minimum  | Same as Standard: checkpoint + restart. Minimum-tier runtimes that do not support checkpoint lose in-flight context; the gateway restarts the session from the last gateway-persisted state. |
+
+The gateway selects the rotation strategy automatically based on the tier reported in the adapter's `lifecycle_support` handshake (Full) or the absence of a lifecycle channel (Standard/Minimum).
+
+**Full-tier credential rotation protocol:**
+
+The Full-tier rotation via the lifecycle channel follows a strict protocol with timeout and in-flight request handling:
+
+1. **In-flight request completion gate.** Before sending `credentials_rotated` on the lifecycle channel, the adapter MUST wait for any in-flight LLM request to complete (or receive an error from the provider). The adapter tracks active outbound LLM requests via the lease's proxy stream count (proxy mode) or the `llm_request_started`/`llm_request_completed` lifecycle messages sent by the runtime (direct mode — the adapter maintains a per-provider in-flight counter incremented on `llm_request_started` and decremented on `llm_request_completed`; the gate clears when the counter reaches zero). New outgoing LLM requests from the runtime are queued by the adapter during the rotation window — they are held until the runtime sends `credentials_acknowledged`, at which point they are released using the new credential. This prevents the runtime from starting a new request with the old credential after the rotation signal has been decided but before it has been delivered. The adapter records the gate wait duration in the `lenny_credential_rotation_inflight_wait_seconds` histogram (labeled by `pool`, `provider`). If the wait exceeds 60 seconds, the adapter emits a `credential_rotation_inflight_wait_long` warning event (fields: `session_id`, `lease_id`, `provider`, `elapsed_seconds`) for operator visibility. The wait is intentionally unbounded: the old credential remains valid, the in-flight request will complete naturally, and imposing a timeout would risk an auth failure on an otherwise successful request. The queued-request impact is bounded because the rotation trigger (`RATE_LIMITED`) means the runtime was already unable to start new LLM calls.
+
+2. **`credentials_acknowledged` timeout.** The adapter enforces a **60-second timeout** on the `credentials_acknowledged` response, matching the checkpoint timeout ([Section 4.4](#44-event--checkpoint-store)). The timeout starts when `credentials_rotated` is sent on the lifecycle channel. If the runtime does not reply within 60 seconds, the adapter:
+   - Emits a `credential_rotation_timeout` warning event (fields: `session_id`, `lease_id`, `provider`, `elapsed_seconds`).
+   - Falls back to the Standard-tier rotation path: triggers `Checkpoint` → terminates pod → schedules replacement pod → `AssignCredentials` (new lease) → `Resume`.
+   - Increments the `lenny_credential_rotation_timeout_total` counter (labeled by `pool`, `provider`, `runtime`).
+
+3. **Old credential grace period.** The old credential is NOT invalidated at the provider (removed from the pool's active set or returned to the pool) until one of: (a) `credentials_acknowledged` is received from the runtime, confirming the rebind is complete; or (b) the 60-second timeout elapses and the fallback path takes over. This ensures that if an in-flight LLM request is still completing with the old credential at the provider, it is not rejected mid-stream due to premature credential invalidation. After the grace period, the old lease is marked `released` and the credential is returned to the pool (or to cooldown, depending on the rotation reason). The metric `lenny_credential_rotation_grace_period_seconds` (histogram, labeled by `pool`, `provider`) records the actual duration between `credentials_rotated` and old credential release.
+
+#### Startup Sequence for `type: agent` Runtimes
+
+1. Pod created by Kubernetes
+2. Adapter opens gRPC connection to gateway (mTLS)
+3. Adapter writes placeholder manifest (connector servers unknown yet)
+4. Adapter signals READY to gateway — pod enters warm pool
+5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`
+6. Adapter writes **final manifest** (connector servers now known from leases; all provider credentials available)
+7. Adapter spawns runtime binary
+8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens lifecycle channel (Full)
+9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
+10. Adapter delivers first `{type: "message"}` on stdin
+
+#### Deployment Model
+
+- **Default: Sidecar container** communicating with the agent binary over **abstract Unix sockets** (Linux `\0` namespace — no filesystem path). `shareProcessNamespace: false`. The adapter writes the manifest to a dedicated `emptyDir` volume (`/run/lenny/`) mounted **read-only into the agent container** and read-write into the adapter container. Workspace is a separate `emptyDir` volume (`/workspace/`). No single shared volume carries both communication and data — sockets are abstract (kernel-only), the manifest is read-only to the agent, and workspace is isolated. This minimizes what third-party binary authors need to implement — just a binary that reads/writes on a well-defined socket protocol.
+- **Alternative: Embedded** — first-party binaries can embed the adapter directly and expose the same gRPC contract to the gateway.
+- Same external contract either way.
+
+**Sidecar vs embedded trade-offs:**
+
+| Aspect                 | Sidecar (default)                                        | Embedded                                   |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------ |
+| Complexity for authors | Low — implement stdin/stdout JSON protocol               | High — implement full gRPC contract        |
+| Resource overhead      | ~50 MB memory for adapter sidecar                        | None (shared process)                      |
+| Language support       | Any language (stdin/stdout)                              | Go only (or language with gRPC support)    |
+| Isolation              | Process isolation; abstract sockets + read-only manifest | Single process, shared memory              |
+| Recommended for        | Third-party runtimes, community adapters                 | First-party runtimes where latency matters |
+
+> **Note:** Third-party authors should always use the sidecar model. The embedded model is for first-party runtimes where the adapter and agent binary are developed together.
+
+**Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
+
+#### Adapter-Agent Security Boundary
+
+The boundary between the adapter and the agent binary is **untrusted**. A compromised or misbehaving agent binary must not be able to escalate privileges, extract credentials, or manipulate the adapter. The following controls enforce this:
+
+1. **Separate UIDs and connection authentication:** The adapter runs as a different UID than the agent binary (e.g., adapter as UID 1000, agent as UID 1001). Abstract Unix sockets use `SO_PEERCRED` for peer UID verification — the adapter accepts connections only from the expected agent UID. The expected UID is the UID within the pod's user namespace (matching the `runAsUser` in the pod spec), not a host UID — both sidecar containers share the same user namespace, so `SO_PEERCRED` reports consistent UIDs. As a defense-in-depth measure, the adapter also performs a manifest-nonce handshake on connection: the adapter writes a random nonce to the manifest file (read-only to the agent container) before spawning the agent, and the agent must present this nonce as the first message on the socket. This ensures the connecting process has legitimate access to the manifest, independent of UID verification. gVisor `SO_PEERCRED` semantics must be validated in Phase 3.5 security integration tests; if behavior diverges from the host kernel, the nonce handshake serves as the primary authentication control. The manifest volume is mounted read-only into the agent container, preventing tampering. Filesystem-level isolation prevents the agent from reading adapter config or memory.
+
+   **Mandatory `SO_PEERCRED` startup self-test (adapter prerequisite).** Before the adapter marks itself READY to the gateway (step 4 of the Startup Sequence above), it MUST execute a loopback self-test that verifies `SO_PEERCRED` is functional in the current pod environment:
+   1. The adapter opens a temporary abstract Unix socket (`@lenny-sopeercred-selftest`).
+   2. A goroutine connects to the socket from the same process (loopback connection).
+   3. The adapter calls `getsockopt(SO_PEERCRED)` on the accepted connection and asserts that the returned `uid` matches `os.Getuid()` (the adapter's own UID).
+   4. If the call fails (error) or the returned UID does not match, the adapter logs `"FATAL: SO_PEERCRED self-test failed — UID mismatch or syscall error; adapter security boundary cannot be enforced"`, emits the `lenny_adapter_sopeercred_selftest_failed_total` counter increment, and exits non-zero. The pod enters `CrashLoopBackOff`, preventing session assignment.
+   5. If the self-test passes, the adapter closes the temporary socket and proceeds to the READY signal.
+
+   This self-test ensures that environments where `SO_PEERCRED` is silently non-functional (e.g., some container runtimes with non-standard user namespace configurations) are caught before any agent process is spawned. The self-test runs on every pod start, not only in CI. If gVisor's `SO_PEERCRED` semantics diverge (Phase 3.5 validation), the self-test result determines whether UID verification is available; the nonce handshake remains active as the primary control in that case, and the self-test failure path is suppressed (configurable via `adapter.requireSoPeercred`, default `true`; set to `false` only when gVisor divergence is confirmed and nonce-only mode is explicitly accepted).
+
+   **Nonce-only fallback: challenge-response supplement and escalation gate.** When `adapter.requireSoPeercred` is `false` (i.e., `SO_PEERCRED` is unavailable), the nonce handshake alone is the authentication boundary. Because the manifest nonce is static for the lifetime of a task execution, the adapter MUST supplement it with a per-connection challenge-response exchange to maintain forward security on each new connection:
+   1. After the agent presents the manifest nonce, the adapter sends a 128-bit random challenge value (`adapterChallenge`) on the same socket.
+   2. The agent must respond with `HMAC-SHA256(key=manifestNonce, data=adapterChallenge)` within 500 ms.
+   3. The adapter validates the HMAC response. Any mismatch or timeout causes the adapter to close the socket immediately with no protocol response.
+   This ensures that a process that observed the nonce (e.g., from `/proc/<pid>/fd` inspection by another pod-local process) cannot replay it across multiple connections, because each connection requires a fresh HMAC computation gated on the adapter's ephemeral challenge.
+
+   **Escalation requirement.** Nonce-only mode (`requireSoPeercred: false`) is not a silent steady state. The adapter MUST:
+   - Emit a `lenny_adapter_sopeercred_disabled_total` counter on every pod start when the setting is `false`.
+   - Set a Kubernetes condition `SOPeercredDisabled=True` on the pod object, which pool controllers surface as a pool-level `SecurityDegradedMode=True` condition on the `SandboxTemplate` CRD.
+   - Deployers MUST configure an alert on `lenny_adapter_sopeercred_disabled_total > 0` with a human-review SLA. The setting MUST be re-evaluated when the runtime version changes (gVisor upgrades, kernel updates) — the Phase 3.5 `SO_PEERCRED` integration tests are re-run at that point and `requireSoPeercred` reverted to `true` if the behavior is fixed.
+
+2. **Adapter-initiated protocol:** The adapter is the protocol initiator — it sends messages and tool-call instructions to the agent and receives responses. The agent cannot initiate arbitrary requests to the adapter.
+
+3. **Untrusted agent responses:** The adapter treats all data received from the agent as untrusted input. It validates, sanitizes, and size-limits all responses before forwarding them to the gateway.
+
+4. **No credential material over socket:** LLM credentials (whether direct lease or proxy URL) are delivered to the agent process via a tmpfs-backed file (`/run/lenny/credentials.json`, mode `0400`, owned by the agent UID) written by the adapter before spawning the runtime binary. Credentials are never passed via environment variables (readable via `/proc`, persist in crash dumps, often captured by framework logging), Unix sockets, or MCP servers. The adapter never sends credential material to the agent post-startup. For proxy mode, only the lease token and proxy URL are written to the file — no real API keys enter the pod.
+
+   **Runtime credential file contract.** The file always contains a JSON object with a top-level `providers` array — even when only one provider is active. Each entry in the array is a credential object with the fields listed below. Runtime authors need only implement a single code path: iterate the `providers` array.
+   Single-provider example:
+   ```json
+   {
+     "providers": [
+       {
+         "leaseId": "lease_abc123",
+         "provider": "anthropic_direct",
+         "expiresAt": "2026-04-07T10:00:00Z",
+         "deliveryMode": "direct",
+         "materializedConfig": { "apiKey": "sk-..." }
+       }
+     ]
+   }
+   ```
+
+   Multi-provider example:
+   ```json
+   {
+     "providers": [
+       {
+         "leaseId": "lease_abc123",
+         "provider": "anthropic_direct",
+         "expiresAt": "2026-04-07T10:00:00Z",
+         "deliveryMode": "direct",
+         "materializedConfig": { "apiKey": "sk-..." }
+       },
+       {
+         "leaseId": "lease_def456",
+         "provider": "openai_proxy",
+         "expiresAt": "2026-04-07T10:30:00Z",
+         "deliveryMode": "proxy",
+         "materializedConfig": { "proxyUrl": "http://proxy.lenny.internal/v1", "leaseToken": "lt-..." }
+       }
+     ]
+   }
+   ```
+
+   Fields per entry: `leaseId` (string), `provider` (string — the credential provider identifier), `expiresAt` (ISO 8601), `deliveryMode` (`"direct"` or `"proxy"`), `materializedConfig` (object). For `deliveryMode: proxy`, `materializedConfig` contains only `proxyUrl` (string) and `leaseToken` (string); no real API keys appear in the file. For `deliveryMode: direct`, `materializedConfig` contains the full provider credentials (see [§4.9](#49-credential-leasing-service) `materializedConfig` schema). The file is rewritten by the adapter on credential rotation; after rewrite, the adapter sends `credentials_rotated` on the lifecycle channel and awaits `credentials_acknowledged` from the runtime before resuming operation.
+
+5. **Agent crash isolation:** If the agent process crashes, the adapter detects it (socket EOF), reports the failure to the gateway, and does not restart the agent. The gateway handles retry at the session level.
+
+6. **Credential-sensitive RPC logging exclusion:** `AssignCredentials` and `RotateCredentials` RPCs carry credential material in their payloads. These RPCs must be excluded from gRPC access log payload capture, OpenTelemetry span attributes, and any request/response logging middleware. Only the RPC name, lease ID, provider type, and success/failure status should be logged — never the `materializedConfig` contents.
+
+7. **MCP server security:** The local MCP servers never expose gateway credentials, mTLS certificates, other sessions, internal Lenny state, or anything about other tenants. The pod sandbox (gVisor/Kata) and network policy are the security boundary, not the protocol. The adapter never advertises the `sampling` MCP capability to the local server. The same manifest-nonce handshake used on the lifecycle channel (see item 1) is required on all intra-pod MCP connections (platform MCP server and each connector MCP server): the connecting process must present the manifest nonce as `params._lennyNonce` in the MCP `initialize` request (see [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-tiers) nonce wire format) before any tools are dispatched. The adapter rejects any MCP connection that does not present a valid nonce. This prevents a compromised child process from calling privileged platform tools (e.g., `lenny/delegate_task`, `lenny/memory_write`, `lenny/request_elicitation`) by directly connecting to the MCP socket without manifest access.
+
+### 4.8 Gateway Policy Engine
+
+**Role:** Centralized policy evaluation on the request path.
+
+**Physically embedded** in edge gateway replicas (not a separate service). Can be split out later if policy evaluation becomes a scaling or organizational bottleneck.
+
+**Evaluators:**
+
+| Module                      | Scope                                                               |
+| --------------------------- | ------------------------------------------------------------------- |
+| `AuthEvaluator`             | AuthN/AuthZ, user invalidation                                      |
+| `QuotaEvaluator`            | Rate limits, token budgets, concurrency limits                      |
+| `DelegationPolicyEvaluator` | Depth, fan-out, `DelegationPolicy` tag matching, budget inheritance |
+| `RetryPolicyEvaluator`      | Retry eligibility, resume window                                    |
+| `AdmissionController`       | Queue/reject/prioritize, circuit breakers                           |
+
+**Backs onto:** SessionStore (sessions, tasks, delegation tree, lineage, retry state), QuotaStore, TokenStore, UserStateStore, RuntimeRegistry
+
+#### `RequestInterceptor` Extension Point
+
+Formalized interceptor interface at gateway phases: `PreAuth`, `PostAuth`, `PreRoute`, `PreDelegation`, `PreMessageDelivery`, `PostRoute`, `PreToolResult`, `PostAgentOutput`, `PreLLMRequest`, `PostLLMResponse`, `PreConnectorRequest`, `PostConnectorResponse`.
+
+**Interceptor chain execution order:** Each phase runs its own interceptor chain independently. Within a phase, interceptors execute in ascending numeric `priority` order (lowest number runs first). An interceptor registered for multiple phases participates in each phase's chain separately. When two interceptors share the same priority within a phase, built-in interceptors run before external ones; among external interceptors with equal priority, registration order is preserved.
+
+**Built-in interceptors** (with default priorities):
+
+| Interceptor                   | Default Priority | Notes                                                                                                                          |
+| ----------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `AuthEvaluator`               | 100              | Always active                                                                                                                  |
+| `QuotaEvaluator`              | 200              | Always active                                                                                                                  |
+| `DelegationPolicyEvaluator`   | 250              | Always active; fires at `PreDelegation` only (see [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease))                                                                 |
+| `ExperimentRouter`            | 300              | Active when experiments are defined (see [Section 10.7](10_gateway-internals.md#107-experiment-primitives))                                                                         |
+| `GuardrailsInterceptor`       | 400              | Disabled by default; deployers wire in external classifiers (AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, etc.) |
+| `RetryPolicyEvaluator`        | 600              | Always active; fires at `PostRoute` only (see [Section 7.3](07_session-lifecycle.md#73-retry-and-resume))                                                                     |
+
+**Short-circuit behavior:** If any interceptor returns `REJECT`, the chain short-circuits immediately — no subsequent interceptors are invoked. The rejection reason is logged and returned to the caller. `MODIFY` results are applied to the payload before passing it to the next interceptor in the chain; `ALLOW` passes the payload through unchanged. **Audit payload on REJECT:** When a REJECT short-circuits the chain, the audit record captures the payload as it existed at the point of rejection — including all preceding `MODIFY` transformations applied by earlier interceptors. This is the natural behavior of the sequential pipeline and ensures audit trail accuracy.
+
+External interceptors are invoked via gRPC (like Kubernetes admission webhooks):
+
+> **Note for polyglot deployers:** Custom external interceptors must be implemented as gRPC services (the same protocol used by Kubernetes admission webhooks). HTTP webhook variants are planned as a post-v1 enhancement to lower the implementation barrier for deployers who prefer REST. Any language that supports gRPC code generation can implement an interceptor — see the protobuf definition below.
+
+```protobuf
+service RequestInterceptor {
+  rpc Intercept(InterceptRequest) returns (InterceptResponse);
+}
+
+message InterceptRequest {
+  string phase = 1;               // e.g. "PreDelegation", "PostAgentOutput"
+  string session_id = 2;
+  string tenant_id = 3;
+  bytes content = 4;              // phase-dependent payload (e.g. TaskSpec.input for PreDelegation)
+  map<string, string> metadata = 5;
+}
+
+message InterceptResponse {
+  enum Action {
+    ALLOW = 0;
+    REJECT = 1;
+    MODIFY = 2;                   // return modified content in `modified_content`
+  }
+  Action action = 1;
+  string reason = 2;              // human-readable; logged and returned to caller on REJECT
+  bytes modified_content = 3;     // only used when action = MODIFY
+}
+```
+
+**Interceptor registration** includes a numeric `priority` field and a `failPolicy`:
+
+| Field        | Type     | Default       | Description                                                                                                                                                                                                                                                             |
+| ------------ | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `priority`   | int32    | 500           | Execution order; lower runs first. External interceptors must use priority > 100 (priorities 1–100 are reserved for built-in security-critical interceptors). The gateway rejects registration of external interceptors with priority ≤ 100 at configuration load time. |
+| `failPolicy` | string   | `fail-closed` | Behavior on timeout or error: `fail-closed` (treat as REJECT) or `fail-open` (treat as ALLOW)                                                                                                                                                                           |
+| `timeout`    | duration | 500ms         | Per-interceptor deadline                                                                                                                                                                                                                                                |
+| `endpoint`   | string   | (required)    | gRPC address of the interceptor service (e.g., `my-interceptor.my-namespace.svc.cluster.local:50053` for in-cluster services, or an external host:port). For in-cluster services, the interceptor's namespace must also be declared in `gateway.interceptorNamespaces` so the Helm chart renders the corresponding gateway egress NetworkPolicy rule (see [Section 13.2](13_security-model.md#132-network-isolation), NET-039). |
+
+**Priority reservation.** Priorities 1–100 are reserved exclusively for built-in security-critical interceptors (`AuthEvaluator` at 100). External interceptors must register at priority > 100. The gateway validates this constraint at interceptor registration time and rejects any external interceptor configuration with `priority ≤ 100`, returning a `INVALID_INTERCEPTOR_PRIORITY` error. This prevents external interceptors from running before authentication completes, which would allow `MODIFY` actions to alter requests before auth evaluation or `fail-open` interceptors to produce audit entries from unauthenticated contexts.
+
+**`PreAuth` phase is built-in only.** The `PreAuth` phase runs exclusively within the priority 1–100 range and is therefore accessible only to built-in interceptors. External interceptors are **never** invoked at the `PreAuth` phase, regardless of their configured phase list. The gateway enforces this at registration time: any external interceptor registration that includes `PreAuth` in its phase set is rejected with `INVALID_INTERCEPTOR_PHASE`. This means the MODIFY semantics documented for `PreAuth` in the phase payload table apply exclusively to the `AuthEvaluator` built-in — no external interceptor can issue a `MODIFY` at `PreAuth` to alter unauthenticated request content before authentication runs. The `ALLOW`/`REJECT` actions (e.g., IP-based blocklisting) are also not available to external interceptors at `PreAuth`; all such controls must be registered at `PostAuth` or later phases where authenticated identity is available.
+
+**Authentication context availability.** The `InterceptRequest.metadata` map contains different context depending on the interceptor's position relative to `AuthEvaluator`:
+
+- **Priority ≤ 100 (built-in only):** `metadata` contains transport-level info only (source IP, TLS client cert DN). No authenticated identity is available.
+- **Priority > 100 (all external interceptors):** `metadata` contains authenticated identity (`user_id`, `tenant_id`, roles/claims) populated by `AuthEvaluator`. External interceptors can always rely on authentication context being present.
+
+**Timeout and failure mode:** External interceptors have a configurable timeout (default: 500ms). On timeout or error, the behavior is controlled by `failPolicy` on the interceptor registration: `fail-closed` (default) or `fail-open`. The default is fail-closed so that a misbehaving interceptor cannot silently bypass policy. Deployers who prefer availability over strict enforcement may override to `fail-open` on a per-interceptor basis. **Cumulative fail-open escalation:** The gateway tracks a per-interceptor rolling failure count. When a `fail-open` interceptor has failed (timeout or error) more than `interceptorFailOpenMaxConsecutive` times (default: 10) within a rolling 5-minute window, the gateway automatically escalates that interceptor to fail-closed for the remainder of the window — subsequent requests that would invoke the interceptor are rejected with `INTERCEPTOR_TIMEOUT` as if `failPolicy: fail-closed` were set. The gateway emits an `interceptor.fail_open_escalated` audit event (containing `interceptor_ref`, `failure_count`, `window_seconds`) when escalation triggers and `interceptor.fail_open_restored` when the interceptor begins succeeding again. This prevents a content-filtering interceptor from silently failing open for extended periods without any automatic corrective action.
+
+**Interceptor timeout error code.** When an interceptor times out, the gateway returns `INTERCEPTOR_TIMEOUT` to the caller — a distinct error code from `LLM_REQUEST_REJECTED` (which is returned only on an explicit `REJECT` decision from the interceptor). This allows callers and operators to distinguish "policy blocked this request deliberately" from "the interceptor service is degraded or unresponsive." `INTERCEPTOR_TIMEOUT` is classified as `TRANSIENT`, HTTP 503, `retryable: true`. The audit event for a timeout includes `timeout_ms`, `interceptor_ref`, and `phase`. When `failPolicy: fail-closed`, the request is rejected with `INTERCEPTOR_TIMEOUT`. When `failPolicy: fail-open`, the request proceeds with an `interceptor_bypassed` flag in the audit event, and no `INTERCEPTOR_TIMEOUT` error is returned to the caller.
+
+**`failPolicy` change audit event.** When an interceptor's `failPolicy` is updated from `fail-closed` to `fail-open`, the gateway emits an `interceptor.fail_policy_weakened` audit event (see [Section 11.7](11_policy-and-controls.md#117-audit-logging)) containing: `interceptor_ref` (the interceptor name), `old_fail_policy`, `new_fail_policy`, `affected_policy_count` (the number of active `DelegationPolicy` resources whose `contentPolicy.interceptorRef` references this interceptor), and `affected_policy_names` (list of those policy names). This is analogous to the `pool.isolation_warning` event emitted on pool registration ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)) — it surfaces a configuration change that silently weakens the effective enforcement posture of active policies. The event is emitted asynchronously and does **not** block the configuration update. The reverse change (`fail-open` to `fail-closed`) emits an `interceptor.fail_policy_strengthened` audit event with the same fields, for completeness.
+
+The `PreDelegation` phase fires before the gateway processes a `delegate_task` call, providing the full `TaskSpec.input` as the content payload. This is the hook point for the `contentPolicy.interceptorRef` field in `DelegationPolicy` ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+
+The `PreMessageDelivery` phase fires before the gateway delivers an inter-session message (`lenny/send_message`) to the target session. The content payload is the message body. This allows deployers to apply the same content scanning (prompt injection detection, content safety) to agent-to-agent messages as they apply to delegation inputs. The `contentPolicy.maxInputSize` limit from the target session's effective `DelegationPolicy` is enforced on inter-session messages in addition to delegation inputs. The `contentPolicy.interceptorRef`, if configured, is invoked at this phase with the message content.
+
+**Interceptor phase payload specification.** The `content` field of `InterceptRequest` carries a phase-specific payload. The following table defines the payload type, contents, and `MODIFY` semantics for each phase:
+
+| Phase                | `content` payload type                                                                         | Description                                                                                                                                                                 | `MODIFY` permitted changes                                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PreAuth`            | **Built-in interceptors only** (priority ≤ 100). External interceptors are **never** invoked at this phase — the gateway rejects any external interceptor registration that targets `PreAuth` with `INVALID_INTERCEPTOR_PHASE`. | The raw client request before authentication. `metadata` contains transport-level info (IP, TLS client cert DN) but no authenticated identity. Only `AuthEvaluator` (priority 100) runs here. | `MODIFY` semantics at this phase are **internal only** — `AuthEvaluator` may normalize request metadata before passing control to downstream phases (e.g., canonicalizing tenant routing hints derived from the TLS cert DN). No external interceptor may issue MODIFY at `PreAuth`. |
+| `PostAuth`           | Serialized inbound MCP request envelope (JSON)                                                 | Same request envelope as `PreAuth`, now with `metadata` populated with authenticated identity (`user_id`, `tenant_id`, roles/claims).                                       | May modify `metadata` fields (e.g., inject additional claims, override tenant routing hints). May **not** alter authenticated identity fields (`user_id`, `tenant_id`).                                |
+| `PreRoute`           | Serialized `TaskSpec` (JSON)                                                                   | The task specification after authentication and before runtime selection. Contains `input` (`OutputPart[]`), requested runtime, workspace files, and delegation parameters. | May modify `TaskSpec.input` content (e.g., prepend system instructions, redact sensitive data). May modify runtime hints. May **not** alter `tenant_id` or `user_id`.                                  |
+| `PreDelegation`      | Serialized `TaskSpec.input` (`OutputPart[]`, JSON)                                             | The delegation input payload before the gateway processes a `delegate_task` call. This is the hook point for `contentPolicy.interceptorRef`.                                | May modify, redact, or truncate input content. May add safety preambles. May **not** alter delegation metadata: `target` (delegation target runtime), `lease_slice` (budget parameters), `fileExport` (file export paths), parent session ID, depth counter, or fan-out counter. Only `TaskSpec.input` content is mutable.                                                 |
+| `PreMessageDelivery` | Serialized message body (`OutputPart[]`, JSON)                                                 | The inter-session message content before delivery to the target session (`lenny/send_message`).                                                    | May modify, redact, or truncate message content. Same permitted changes as `PreDelegation`.                                                                                                            |
+| `PostRoute`          | Serialized `TaskSpec` with resolved runtime metadata (JSON)                                    | The task specification after runtime selection, including the resolved runtime name, runtime tags, and credential pool assignment.                                          | May modify runtime-specific parameters. May **not** change the resolved runtime or credential assignment (use `PreRoute` to influence runtime selection instead).                                      |
+| `PreToolResult`      | Serialized tool result object (JSON): `{ id: string, content: OutputPart[], isError?: bool }` | The result of a tool call before it is delivered back to the agent. `id` correlates with the originating `tool_call.id`.                                                    | May modify `content` (redact sensitive data from tool output, transform structured results). May set `isError` to true to force-fail a tool call. May **not** alter `id`.                             |
+| `PostAgentOutput`    | Serialized `OutputPart[]` (JSON)                                                               | The agent's response output before delivery to the client (or to the parent session in a delegation). Includes text, structured data, images, and annotations.              | May modify, redact, or truncate output content. May remove or replace individual `OutputPart` entries. May add compliance annotations. May **not** suppress delivery entirely (use `REJECT` for that). |
+| `PreLLMRequest`      | Serialized upstream LLM API request body (JSON)                                                | The full LLM provider request before the gateway forwards it to the upstream endpoint. Proxy mode only — does not fire in direct delivery mode. Includes `model`, `messages`/`prompt`, parameters. Credential headers are injected by the proxy after this phase. | May modify any request body field (model, messages, parameters). May **not** alter credential/authorization headers (those are injected by the proxy after the interceptor runs). |
+| `PostLLMResponse`    | Serialized upstream LLM API response metadata (JSON)                                           | The LLM provider response before forwarding to the pod. For streaming responses, fires once on the initial response metadata — individual stream chunks are not intercepted. Proxy mode only. | May modify response metadata fields. For streaming, modifications apply to initial metadata only — individual stream chunks pass through unmodified. |
+| `PreConnectorRequest` | Serialized MCP tool call (JSON): `{ tool_name, arguments, connector_id }` | The outgoing tool call before the gateway proxies it to the external connector MCP server. Fires on all connector calls (all are gateway-proxied). | May modify `arguments` (redact, transform). May **not** alter `tool_name` or `connector_id` (would bypass DelegationPolicy connector access control). |
+| `PostConnectorResponse` | Serialized MCP tool result (JSON): `{ tool_name, connector_id, content: OutputPart[], isError? }` | The connector's response before forwarding to the pod. | May modify `content` (redact, transform). May set `isError` to true. May **not** alter `tool_name` or `connector_id`. |
+
+**Immutable field enforcement on MODIFY.** When an external interceptor returns `MODIFY`, the gateway enforces the per-phase immutability constraints listed in the table above. Before applying `modified_content`, the gateway snapshots all immutable fields from the pre-modification payload (e.g., `user_id`, `tenant_id` at `PostAuth`/`PreRoute`; `resolved_runtime_name`, `credential_pool_id` at `PostRoute`; `id` at `PreToolResult`; `tool_name`/`connector_id` at `PreConnectorRequest`/`PostConnectorResponse`; `target`, `lease_slice`, `fileExport`, parent session ID, depth counter, fan-out counter at `PreDelegation`). After deserializing `modified_content`, the gateway compares each snapshotted field against the corresponding field in the modified payload. If any immutable field differs, the gateway rejects the `MODIFY` with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` (category: `POLICY`, HTTP 400), logs the interceptor reference, phase, and violated field names, and short-circuits the chain — the original pre-modification payload is preserved and no subsequent interceptors see the illegal modification. This enforcement is not bypassable by the interceptor; it runs inside the gateway process after the gRPC response is received.
+
+**Built-in interceptor field dependencies and MODIFY interaction.** The built-in evaluators each read a specific set of fields from the intercepted payload. Interceptors at priority > 600 run after `RetryPolicyEvaluator` (600) at `PostRoute` — this is the only phase where priority > 600 guarantees running after all built-ins. At phases where `GuardrailsInterceptor` is active (priority 400), external interceptors at priority 401–599 run **after** guardrails; interceptors at priority 101–399 run **before** guardrails. A `MODIFY` returned by an interceptor at any priority is passed to all subsequent interceptors, including built-ins — `GuardrailsInterceptor` sees the modified content from upstream MODIFYs. Downstream external `MODIFY` operations (at priority > `GuardrailsInterceptor`'s priority) are not re-evaluated by guardrails. Because each phase runs its own chain, cross-phase priority comparisons do not imply execution ordering: `QuotaEvaluator` (priority 200) fires at `PostAuth` and `DelegationPolicyEvaluator` (priority 250) fires at `PreDelegation` — an external interceptor at priority 225 registered for `PostAuth` runs after `QuotaEvaluator` at that phase but never interacts with `DelegationPolicyEvaluator` (which runs in a different phase). Similarly, `AuthEvaluator` (priority 100) fires at `PreAuth`, so an external interceptor at priority 150 registered for `PostAuth` runs before `QuotaEvaluator` within `PostAuth` — it does not "run after `AuthEvaluator`" in any chain sense, since `PreAuth` is a separate phase that has already completed. Within a single phase, the priority ordering among co-registered interceptors holds: at `PostAuth`, an external interceptor at priority 150 runs before `QuotaEvaluator` (200); at `PreDelegation`, an external interceptor at priority 225 runs before `DelegationPolicyEvaluator` (250). When an external interceptor earlier in the chain returns `MODIFY`, the modified payload is passed to all subsequent interceptors — including built-ins. The following table defines which fields each built-in reads at each phase, priority, and which MODIFY operations affect their behavior:
+
+| Built-in           | Phase(s) where active               | Fields read                                                                                                                                    | Effect of upstream MODIFY on behavior                                                                                                                                               |
+| ------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `AuthEvaluator`    | `PreAuth` (priority 100)            | Raw MCP request envelope: `method`, `params`, bearer token or mTLS identity, `tenant_id` routing hint in headers                               | No upstream interceptor runs before `AuthEvaluator` (it is the first in chain at priority 100). MODIFY at `PreAuth` is issued only by `AuthEvaluator` itself (built-in only).        |
+| `QuotaEvaluator`   | `PostAuth` (priority 200)           | `user_id`, `tenant_id` from authenticated metadata; `TaskSpec.input` byte length (for `maxInputSize` enforcement); session/task type from request method | An external interceptor at priority 101–199 returning MODIFY that alters `TaskSpec.input` content will change the byte-length seen by `QuotaEvaluator` for `maxInputSize` checks. An interceptor that modifies `metadata` fields such as `user_id` or `tenant_id` will cause `QuotaEvaluator` to enforce quotas against the **modified** identity — modifying these fields is explicitly prohibited (see PostAuth row in the phase table). |
+| `DelegationPolicyEvaluator` | `PreDelegation` (priority 250) | `DelegationPolicy` tag matching fields, depth counter, fan-out counter, budget parameters from the parent session lease | An external interceptor at priority 101–249 returning MODIFY that alters `TaskSpec.input` metadata (depth hints, delegation parameters) will affect the values `DelegationPolicyEvaluator` reads. External interceptors MUST NOT modify delegation depth, budget, or fan-out fields — these fields are explicitly prohibited from external MODIFY (same restriction as `user_id`/`tenant_id`). `DelegationPolicyEvaluator` fires only at `PreDelegation`; it has no effect at other phases. |
+| `ExperimentRouter` | `PreRoute` (priority 300)           | `TaskSpec` runtime hint fields, `user_id`, session labels used by experiment assignment                                                         | MODIFY of `TaskSpec` runtime hints by an interceptor at priority 101–299 affects which experiment variant `ExperimentRouter` assigns. Modifying `user_id` metadata changes experiment cohort assignment. |
+| `GuardrailsInterceptor` | `PreDelegation`, `PreLLMRequest`, `PostLLMResponse`, `PostAgentOutput` (priority 400; deployer-configured) | Full `content` payload for the active phase (see phase payload table above) | MODIFY by an interceptor at priority 101–399 changes the content submitted to external classifiers wired into `GuardrailsInterceptor`. Deployers must account for this when evaluating the security value of their guardrail: if an earlier external interceptor can MODIFY delegation input, the guardrail sees the modified version. |
+| `RetryPolicyEvaluator` | `PostRoute` (priority 600) | Resolved runtime name, session retry state (`retryCount`, `lastFailureCode`), `RetryPolicy` from the effective `DelegationPolicy` | `RetryPolicyEvaluator` runs after all lower-priority interceptors at `PostRoute`. An external interceptor at priority 101–599 returning MODIFY that alters the resolved runtime or failure code fields will affect retry eligibility decisions. External interceptors MUST NOT modify `retryCount` or failure classification fields. `RetryPolicyEvaluator` fires only at `PostRoute`; it has no effect at other phases. |
+
+**Short-circuit interaction with MODIFY:** If an interceptor at priority N returns `MODIFY`, the modified content is passed to the interceptor at priority N+1. If a built-in at priority M (M > N) reads a field that was modified, it operates on the post-modification value — there is no mechanism to "re-evaluate" a built-in against the original content after an upstream MODIFY. Deployers who register external interceptors at priorities below a built-in within the same phase (e.g., priority 101–199 at `PostAuth`, where `QuotaEvaluator` runs at priority 200) must be aware that any MODIFY they return will be seen by `QuotaEvaluator`. If a quota-relevant field (e.g., input byte length) is enlarged by a MODIFY, `QuotaEvaluator` will enforce quota against the enlarged value — this is the intended behavior and does not constitute a bypass.
+
+**LLM interceptor phases.** The `PreLLMRequest` and `PostLLMResponse` phases fire exclusively in the LLM reverse proxy path ([Section 4.9](#49-credential-leasing-service), proxy mode). They have no effect when credentials are delivered directly to the pod (`deliveryMode: direct`), because in direct mode the gateway has no visibility into LLM API traffic. The default timeout for LLM interceptor phases is **100ms** (shorter than the 500ms default for other phases) because they are on the LLM call hot path — every millisecond of interceptor latency adds directly to LLM request latency. Deployers may override this via the `timeout` field on the interceptor registration, but should be aware of the latency impact. For `PostLLMResponse` with streaming responses: the interceptor receives the initial response headers/metadata and the first data chunk. It does **not** buffer the full stream — buffering would destroy streaming latency and is architecturally unacceptable. Deployers who need full-response content scanning should implement it as an async post-processing step (e.g., a `PostAgentOutput` interceptor or an external audit pipeline), not in the synchronous `PostLLMResponse` interceptor. On `REJECT`, `PreLLMRequest` returns `LLM_REQUEST_REJECTED` to the pod; `PostLLMResponse` returns `LLM_RESPONSE_REJECTED` (see error catalog, [Section 15.1](15_external-api-surface.md#151-rest-api)). Typical use cases: model governance (allowlist/denylist models via `PreLLMRequest`), prompt safety scanning, PII redaction from prompts, cost controls (reject expensive models), compliance logging, and response content filtering.
+
+**Connector interceptor phases.** The `PreConnectorRequest` and `PostConnectorResponse` phases fire on all gateway-proxied connector calls. Unlike LLM interceptors which only apply in proxy mode, connector interceptors always apply — pods cannot reach external MCP connector servers directly (NetworkPolicy enforced), so all connector traffic flows through the gateway. The default timeout for connector interceptor phases is **200ms** (connectors are on the tool-call path which is latency-sensitive but less extreme than streaming LLM calls). The `DelegationPolicy`'s `connectorSelector` controls which connectors a session may access; these interceptors govern the **content** of calls to already-authorized connectors. On `REJECT`, `PreConnectorRequest` returns `CONNECTOR_REQUEST_REJECTED` to the pod; `PostConnectorResponse` returns `CONNECTOR_RESPONSE_REJECTED` (see error catalog, [Section 15.1](15_external-api-surface.md#151-rest-api)). Typical use cases: PII redaction before data reaches external systems, audit logging of sensitive tool calls, blocking destructive operations (e.g., reject `delete` operations on a GitHub connector), compliance controls on data leaving the platform, and redacting secrets or sensitive data from connector responses.
+
+### 4.9 Credential Leasing Service
+
+This section covers: Credential Providers (pluggable per-LLM-provider interfaces), Credential Pools (admin-managed credential sets), Credential Leases (session-scoped assignments), Credential Policy (tenant-level configuration for source preference and delivery mode), the Fallback Flow (rotation on provider failure), Proactive Lease Renewal, the LLM Reverse Proxy (credential-injecting proxy mode), Semantic Caching, the Credential Router (cost/latency-aware routing), Governance Boundaries, Emergency Revocation, Security Boundaries, KMS Key Rotation, and Credential Audit Events.
+
+**Role:** Supplies runtime pods with the credentials they need to access their backing LLM provider (Anthropic API, AWS Bedrock, Vertex AI, etc.). This is distinct from the connector credential flow in [Section 4.3](#43-token-service) — this is about the runtime's own LLM access, not downstream tool OAuth.
+
+**Design principle:** Runtimes receive **short-lived credential leases**, never long-lived API keys or root credentials. The Token Service owns all durable credential material.
+
+#### Credential Provider
+
+A pluggable interface per LLM provider type. Each provider knows how to mint usable runtime credentials from its source material.
+
+| Provider           | Source Material        | Runtime Receives                                             |
+| ------------------ | ---------------------- | ------------------------------------------------------------ |
+| `anthropic_direct` | API key                | Static API key (long-lived; lease TTL governs pod access duration, not key lifetime) |
+| `aws_bedrock`      | IAM role / access keys | Short-lived STS session credentials + region/endpoint config |
+| `vertex_ai`        | GCP service account    | Short-lived access token + project/region config             |
+| `azure_openai`     | Azure AD / API key     | Short-lived token + endpoint config                          |
+| `github`           | GitHub App credentials | Short-lived installation access token + app/installation IDs |
+| `vault_transit`    | Vault token            | Short-lived Vault token + vault address + transit path/key   |
+| Custom             | Provider-specific      | Provider-specific config bundle                              |
+
+New providers are added by implementing the `CredentialProvider` interface — no gateway changes required.
+
+#### Credential Pool
+
+An admin-managed, **tenant-scoped** set of credentials for a given provider. Each `CredentialPool` belongs to exactly one tenant; the `CredentialPoolStore` tables carry a `tenant_id` column and are covered by the same RLS policies as all other tenant-scoped tables (see [Section 4.2](#42-session-manager)). A `tenant-admin` can create, update, and delete credential pools for their own tenant via the admin API. A `platform-admin` can manage credential pools across all tenants. Cross-tenant credential pool access is impossible by construction — RLS enforces this at the database level, and the gateway validates `tenant_id` on every pool operation.
+
+Deployers register pools via configuration:
+
+```yaml
+credentialPools:
+  - name: claude-direct-prod
+    provider: anthropic_direct
+    credentials:
+      - id: key-1
+        secretRef: lenny-system/anthropic-key-1 # K8s Secret reference
+      - id: key-2
+        secretRef: lenny-system/anthropic-key-2
+    assignmentStrategy: least-loaded # least-loaded | round-robin | sticky-until-failure
+    maxConcurrentSessions: 10 # per credential
+    cooldownOnRateLimit: 60s
+    leaseTTLSeconds: 3600  # optional override; defaults by provider type (see table below)
+
+  - name: bedrock-us-east-prod
+    provider: aws_bedrock
+    credentials:
+      - id: role-1
+        roleArn: arn:aws:iam::123456789:role/lenny-bedrock
+        region: us-east-1
+    assignmentStrategy: sticky-until-failure
+    maxConcurrentSessions: 50
+    # leaseTTLSeconds omitted — uses provider default of 3600s for aws_bedrock
+```
+
+**`leaseTTLSeconds` — per-pool lease TTL override.** Sets the maximum duration (in seconds) of a credential lease issued from this pool. Each lease's `expiresAt` is computed as `issuedAt + min(leaseTTLSeconds, providerMaxTTL)` where `providerMaxTTL` is the hard ceiling enforced by the provider type (e.g., AWS STS sessions cannot exceed 12 hours). When omitted, the provider-type default applies:
+
+| Provider | Default `leaseTTLSeconds` | Provider ceiling (`providerMaxTTL`) | Notes |
+|---|---|---|---|
+| `anthropic_direct` | **3600** (1 hour) | None (key is long-lived; TTL is synthetic) | The API key itself does not expire; Lenny enforces the TTL synthetically by refusing to honor leases past `expiresAt`. In direct delivery mode, the adapter MUST set a local timer for each credential lease's `expiresAt`. When the timer fires without a replacement lease having been delivered via `RotateCredentials`, the adapter deletes the credential file (`/run/lenny/credentials.json`) for that provider's entry and reports `AUTH_EXPIRED` on the control channel, triggering the standard fallback flow. This ensures that a long-lived `anthropic_direct` key cannot be used by the runtime beyond the lease boundary even though the key itself remains valid. In proxy delivery mode, the gateway enforces expiry server-side by rejecting proxy requests for expired leases, so no adapter-side timer is needed. |
+| `aws_bedrock` | **3600** (1 hour) | 43200 (12 hours, STS maximum) | STS `AssumeRole` call uses `DurationSeconds = min(leaseTTLSeconds, 43200)`. |
+| `vertex_ai` | **3600** (1 hour) | 3600 (GCP access token maximum) | GCP access tokens cannot exceed 1 hour; `leaseTTLSeconds > 3600` is silently capped. |
+| `azure_openai` | **3600** (1 hour) | 86400 (24 hours, Azure AD token maximum) | Azure AD tokens may be up to 24 hours; API-key-backed pools use the same synthetic TTL as `anthropic_direct`. |
+| `github` | **3600** (1 hour) | 3600 (GitHub installation token maximum) | GitHub installation access tokens cannot exceed 1 hour. |
+| `vault_transit` | **3600** (1 hour) | Vault policy–controlled | The Vault token TTL must be at least `leaseTTLSeconds`; a shorter Vault TTL takes precedence. When materializing a `vault_transit` lease, the Token Service sets `expiresAt = min(issuedAt + leaseTTLSeconds, vaultTokenExpiryTime)` so that `renewBefore` is computed from the actual Vault token expiry, not the pool's `leaseTTLSeconds`. This prevents silent credential failure when Vault policy TTL is shorter than `leaseTTLSeconds`. |
+| Custom | **3600** (1 hour) | Provider-specific | Custom providers may override the default via `CredentialProvider.DefaultLeaseTTL()`. |
+
+The `renewBefore` field in the issued `CredentialLease` is set to `expiresAt - renewBeforeBuffer`, where `renewBeforeBuffer` defaults to 300 seconds (5 minutes) and is configurable per pool via `renewBeforeBufferSeconds`. See "Proactive Lease Renewal" below for the renewal mechanism triggered by `renewBefore`.
+
+Pool sizing scales with tier — at Tier 3, deployers may need hundreds to over a thousand credentials per pool depending on `maxConcurrentSessions` per credential. See [Section 17.8.2](17_deployment-topology.md#1782-capacity-tier-reference) ("Credential pool sizing") for the sizing formula and per-tier starting values.
+
+#### Credential Storage Topology
+
+API keys referenced by `secretRef` are stored as Kubernetes Secrets. The topology and KMS key hierarchy are defined here.
+
+**Secret-per-credential topology.** Each credential entry in a `CredentialPool` uses a **separate Kubernetes Secret**. For example, a pool with 3 credentials has 3 Secrets: `lenny-system/anthropic-key-1`, `lenny-system/anthropic-key-2`, `lenny-system/anthropic-key-3`. This topology is required (not optional) for the following reasons:
+
+1. **Revocation granularity.** Emergency revocation of a single compromised credential (`POST /v1/admin/credential-pools/{name}/credentials/{id}/revoke`) invalidates only the specific `secretRef` Secret. Shared-Secret topologies would require re-keying all credentials in the pool on a single credential compromise.
+2. **RBAC granularity.** The Token Service's ServiceAccount has `get` permission scoped to specific Secret names (via `ResourceNames`), not `get` on all Secrets in `lenny-system`. This prevents a compromised Token Service from reading unrelated Secrets.
+3. **Secret rotation isolation.** Rotating one credential does not touch the Secrets for others in the pool, enabling zero-downtime rotation (new Secret created, pool entry updated, old Secret deleted after lease drain).
+
+**Naming convention.** Credential Secrets must follow the pattern `lenny-{pool-name}-{credential-id}` in the `lenny-system` namespace. The Helm chart creates Secrets for bootstrap credentials; operationally-added credentials are created by the operator and referenced via `secretRef`. The Token Service validates on startup that all `secretRef` values referenced in the database are accessible via its RBAC grants.
+
+**Secret shape.** Each credential Secret has one or more `data` keys whose names are the provider's canonical key fields:
+
+| Provider | Secret key | Value |
+|---|---|---|
+| `anthropic_direct` | `apiKey` | Anthropic API key (`sk-ant-…`) |
+| `aws_bedrock` (role) | `roleArn` | IAM role ARN |
+| `aws_bedrock` (access keys) | `accessKeyId` and `secretAccessKey` | Two keys in one Secret |
+| `vertex_ai` | `serviceAccountJson` | GCP service account JSON |
+| `azure_openai` (API key) | `apiKey` | Azure OpenAI API key |
+| `azure_openai` (Azure AD) | `clientId`, `clientSecret`, and `tenantId` | Azure AD service principal credentials (three keys in one Secret); Token Service uses these to request short-lived AD access tokens |
+
+**Encryption at rest — KMS key hierarchy.** Kubernetes Secrets are stored in etcd. Without etcd encryption, Secrets are readable in plaintext from etcd snapshots or backups. The required configuration depends on deployment topology:
+
+| Topology | Encryption requirement | Implementation |
+|---|---|---|
+| Managed K8s (EKS) | **Required** | Enable EKS envelope encryption with AWS KMS: `aws eks create-cluster --encryption-config resources=secrets,provider.key_arn=<CMK_ARN>`. Verify: `aws eks describe-cluster --query 'cluster.encryptionConfig'`. |
+| Managed K8s (GKE) | **Required** | Enable CMEK (Customer-Managed Encryption Keys): `gcloud container clusters update <cluster> --database-encryption-key=<KMS_KEY>`. Or use GKE's default encryption (Google-managed key) which encrypts etcd at rest without operator action. |
+| Managed K8s (AKS) | **Required** | Enable Azure Disk Encryption or use Key Vault for etcd encryption. Default AKS etcd is not encrypted at rest without explicit configuration. |
+| Self-managed | **Required** | Configure `EncryptionConfiguration` on the API server with `aescbc`, `aesgcm`, or `kms` provider for the `secrets` resource type. After enabling, run `kubectl get secrets --all-namespaces -o json | kubectl apply -f -` to re-encrypt existing Secrets with the new provider. |
+
+The preflight Job emits a non-blocking warning when etcd Secret encryption cannot be verified (see [Section 17.6](17_deployment-topology.md#176-packaging-and-installation)). Operators are responsible for verifying encryption is active before storing production credentials.
+
+**RBAC for the Token Service.** The Token Service's ServiceAccount must have the following minimum RBAC to read credential Secrets:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-token-service-secrets
+  namespace: lenny-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames: []  # populated by Helm template from credentialPool secretRef list
+```
+
+The `resourceNames` list is populated at install time from all `secretRef` values declared in bootstrap configuration. Operationally-added credentials require a manual RBAC patch or a re-run of the `helm upgrade` with updated values. `lenny-ctl admin credential-pools add-credential` includes a step that emits the required RBAC patch command.
+
+**Large pool Secret management (Tier 3).** At Tier 3 with hundreds of credentials, managing individual Secrets via `helm upgrade` on every credential addition becomes impractical. For Tier 3 deployments, operators should use an external secrets manager (AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault) with the External Secrets Operator (`external-secrets.io`) to synchronize secrets into Kubernetes Secrets automatically. The `secretRef` in `CredentialPool` always points to a Kubernetes Secret — the External Secrets Operator handles the synchronization from the external source. This preserves the Secret-per-credential topology while eliminating manual Helm updates.
+
+#### Pre-Claim Credential Availability Check
+
+Before claiming a warm pod ([Section 7.1](07_session-lifecycle.md#71-normal-flow), step 4), the gateway computes the intersection of the Runtime's `supportedProviders` and the tenant's `credentialPolicy.providerPools` keys. For each provider in the intersection, it verifies that the resolved credential source (pool, user, or fallback chain) has at least one assignable credential, evaluating pool utilization (`active leases < maxConcurrentSessions` for at least one credential), cooldown status, and health scores. If **no provider** in the intersection has an available credential, the gateway rejects the request immediately with `CREDENTIAL_POOL_EXHAUSTED` (category: `POLICY`) — no pod is claimed, preventing a pod from being wasted on a session that would fail at credential assignment. The session can proceed if at least one provider has an available credential.
+
+Because the availability check and the actual lease assignment are not atomic, a race condition exists where a credential becomes unavailable between the check and the assignment. If this occurs, the gateway releases the claimed pod back to the warm pool and returns `CREDENTIAL_POOL_EXHAUSTED` to the client. The metric `lenny_gateway_credential_preclaim_mismatch_total` (counter, labeled by pool and provider) tracks how often the pre-claim check passes but the subsequent assignment fails, letting operators detect pool contention and tune pool sizing.
+
+#### Credential Lease
+
+A session-scoped assignment from the gateway to a runtime pod. A session may hold **multiple leases** — one per provider in the intersection of Runtime `supportedProviders` and tenant `credentialPolicy.providerPools`:
+
+```json
+{
+  "leaseId": "cl_abc123",
+  "sessionId": "s_xyz789",
+  "provider": "anthropic_direct",
+  "poolId": "claude-direct-prod",
+  "credentialId": "key-1",
+  "materializedConfig": {
+    "apiKey": "sk-ant-...<short-lived or scoped>",
+    "baseUrl": "https://api.anthropic.com"
+  },
+  "expiresAt": "2026-03-23T15:30:00Z",
+  "renewBefore": "2026-03-23T15:25:00Z",
+  "fallbackAllowed": true,
+  "source": "pool"
+}
+```
+
+The `source` field indicates how the credential was obtained: `pool` (admin-managed pool), `user` (user-scoped pre-registered credential). The runtime receives the `materializedConfig` — a provider-specific bundle with everything needed to authenticate. It never receives the pool's root secret or long-lived key. Each provider's lease rotates independently via its own fallback chain; `maxRotationsPerSession` applies to the total rotation count across all providers.
+
+#### `materializedConfig` Schema by Provider
+
+`materializedConfig` is a discriminated map keyed on the `provider` field of the enclosing `CredentialLease`. Each built-in provider defines a fixed set of fields. Custom providers may use any fields; the Token Service passes them through without validation.
+
+**Encoding conventions:**
+
+- All secret values (API keys, tokens, passwords) are delivered as UTF-8 plaintext strings inside the lease. The lease itself is transmitted over mTLS and written to a tmpfs-backed file (mode `0400`) in the pod — no additional encoding layer is applied. Runtimes MUST NOT log or persist these values.
+- Optional fields are omitted when not applicable (not set to `null`).
+- `expiresAt` (where present) is an ISO 8601 UTC timestamp matching the enclosing lease `expiresAt`.
+
+**In proxy delivery mode** (`deliveryMode: proxy`), the Token Service omits all secret credential fields (`apiKey`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `accessToken`, `vaultToken`) and instead sets `proxyUrl` and `leaseToken`. The runtime sends LLM requests to `proxyUrl` authenticated with `leaseToken`; the gateway injects the real credential before forwarding to the upstream provider.
+
+| Provider | Field | Type | Required | Encoding / Notes |
+| --- | --- | --- | --- | --- |
+| `anthropic_direct` | `apiKey` | string | yes (direct) | Plaintext Anthropic API key (`sk-ant-…`). Omitted in proxy mode. |
+| | `baseUrl` | string | no | Override endpoint URL. Defaults to `https://api.anthropic.com` if omitted. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. Runtime sends requests here instead of Anthropic directly. |
+| | `leaseToken` | string | yes (proxy) | Opaque bearer token for authenticating to `proxyUrl`. Omitted in direct mode. |
+| `aws_bedrock` | `accessKeyId` | string | yes (direct) | STS short-lived access key ID. Omitted in proxy mode. |
+| | `secretAccessKey` | string | yes (direct) | STS short-lived secret access key. Plaintext. Omitted in proxy mode. |
+| | `sessionToken` | string | yes (direct) | STS session token. Plaintext. Omitted in proxy mode. |
+| | `region` | string | yes | AWS region (e.g., `us-east-1`). Present in both modes. |
+| | `endpointUrl` | string | no | Override Bedrock endpoint. Defaults to the standard regional endpoint if omitted. |
+| | `expiresAt` | string | yes | STS credential expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
+| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
+| `vertex_ai` | `accessToken` | string | yes (direct) | Short-lived GCP OAuth 2.0 access token. Plaintext. Omitted in proxy mode. |
+| | `projectId` | string | yes | GCP project ID. Present in both modes. |
+| | `region` | string | yes | GCP region (e.g., `us-central1`). Present in both modes. |
+| | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
+| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
+| `github` | `token` | string | yes (direct) | Short-lived GitHub installation access token. Plaintext. Omitted in proxy mode. |
+| | `appId` | string | no | GitHub App ID, for runtimes that need to identify the app. |
+| | `installationId` | string | no | GitHub App installation ID. |
+| | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
+| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
+| `azure_openai` | `apiKey` | string | yes (direct, API-key pools) | Azure OpenAI API key. Omitted for Azure AD pools and in proxy mode. |
+| | `accessToken` | string | yes (direct, Azure AD pools) | Short-lived Azure AD access token. Plaintext. Omitted for API-key pools and in proxy mode. |
+| | `endpoint` | string | yes | Azure OpenAI endpoint URL (e.g., `https://<resource>.openai.azure.com`). Present in both modes. |
+| | `deploymentName` | string | yes | Azure model deployment name. Present in both modes. |
+| | `apiVersion` | string | no | Azure OpenAI REST API version. Defaults to latest stable if omitted. |
+| | `expiresAt` | string | yes (Azure AD pools) | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. Absent for API-key pools. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
+| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
+| `vault_transit` | `vaultToken` | string | yes (direct) | Short-lived HashiCorp Vault token with access to the configured transit path. Plaintext. Omitted in proxy mode. |
+| | `vaultAddr` | string | yes | Vault server address (e.g., `https://vault.example.com:8200`). Present in both modes. |
+| | `transitPath` | string | yes | Vault transit mount path (e.g., `transit/`). Present in both modes. |
+| | `keyName` | string | yes | Vault transit key name. Present in both modes. |
+| | `expiresAt` | string | yes | Token expiry (ISO 8601 UTC). Must equal or precede lease `expiresAt`. |
+| | `proxyUrl` | string | yes (proxy) | Set in proxy mode. |
+| | `leaseToken` | string | yes (proxy) | Set in proxy mode. |
+
+**Validation:** The Token Service validates that all `Required: yes` fields are present before issuing a lease. A missing required field causes lease issuance to fail with `CREDENTIAL_MATERIALIZATION_ERROR` (category: `INTERNAL`), which surfaces to the client as `CREDENTIAL_POOL_EXHAUSTED`. Custom providers bypass built-in field validation; deployers are responsible for validating their own schemas.
+
+**Runtime responsibility:** Runtimes MUST treat all fields whose names contain `key`, `token`, `secret`, `password`, or `privateKey` (case-insensitive) as sensitive and MUST NOT include them in logs, traces, error messages, or agent output. The gateway's `env` blocklist ([Section 14](14_workspace-plan-schema.md)) enforces this for environment-variable delivery; tmpfs delivery relies on runtime compliance.
+
+#### Credential Policy
+
+Attached to the tenant configuration, controls how credentials are selected and managed across all sessions for that tenant. The Runtime definition declares what providers it *can* use (`supportedProviders`, `credentialCapabilities` — see [Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)); the tenant-level `credentialPolicy` declares what credentials *are* available and how they are sourced. At session creation, the gateway intersects Runtime capabilities with tenant policy (see "Intersection at session creation" below).
+
+```yaml
+# Tenant-level credential policy
+credentialPolicy:
+  preferredSource: pool  # pool | user | prefer-user-then-pool | prefer-pool-then-user
+  providerPools:
+    anthropic_direct:
+      defaultPool: claude-direct-prod
+      fallback:
+        order: [claude-direct-prod, claude-direct-backup]
+    aws_bedrock:
+      defaultPool: bedrock-us-east-prod
+      fallback:
+        order: [bedrock-us-east-prod, bedrock-us-west-prod]
+  fallback:
+    cooldownOnRateLimit: 60s
+    maxRotationsPerSession: 3  # total across all providers in a session
+  userCredentialsEnabled: true  # whether user-scoped credentials (pre-registered via POST /v1/credentials) are used
+```
+
+**Intersection at session creation.** When a session is created, the gateway computes the set of authorized providers as the intersection of the Runtime's `supportedProviders` ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) and the tenant's `credentialPolicy.providerPools` keys. Only providers present in both sets are eligible for credential assignment. If the intersection is empty, session creation fails with `CREDENTIAL_POOL_EXHAUSTED`. The gateway then assigns a `CredentialLease` for each provider in the intersection that has an available credential (see "Multi-provider lease assignment" below). A session can start if at least one provider in the intersection has a successfully assigned credential — providers without available credentials are skipped, and the session receives credentials only for the providers that were successfully assigned.
+
+#### Three Credential Modes
+
+| Mode                     | How It Works                                                                                                                                                                                                                                                                                                                                             | Use Case                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Pool (admin-managed)** | Gateway picks a credential from the per-provider pool mapping (`providerPools`) using the assignment strategy. Runtime gets a lease per provider.                                                                                                                                                                                                        | Shared team/org API keys, service accounts            |
+| **User-scoped**          | User pre-registers their own credential via `POST /v1/credentials`. Token Service stores it with the same envelope encryption via KMS used for OAuth refresh tokens ([Section 4.3](#43-token-service)) — user-supplied API keys are T4 Restricted data and receive identical encryption-at-rest, key rotation, and access-control treatment. Runtime gets a lease. | "Bring your own API key", user-specific Bedrock roles |
+| **Fallback chain**       | Policy determines precedence. E.g., prefer user credential, fall back to pool on failure.                                                                                                                                                                                                                                                                | Flexible enterprise deployments                       |
+
+> The `preferredSource` field determines which mode is used. There are effectively three configurations: pool-only (`preferredSource: pool`), user-only (`preferredSource: user`), or fallback chain (`preferredSource: prefer-user-then-pool` or `prefer-pool-then-user`). Per-provider fallback across pools is configured via each provider's `fallback.order` list within `providerPools`.
+
+> **User-scoped credential storage:** User-supplied credentials (registered via `POST /v1/credentials`) are stored in `TokenStore` (Postgres) using the same envelope encryption via KMS as OAuth refresh tokens ([Section 4.3](#43-token-service)). Each credential is encrypted with a per-tenant data encryption key (DEK), itself wrapped by the KMS key encryption key (KEK). User-scoped credentials are subject to the same KMS key rotation procedure ([Section 10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)), the same access-control boundaries (tenant-scoped RLS), and the same data classification (T4 Restricted, [Section 12.9](12_storage-architecture.md#129-data-classification)). The Token Service decrypts user-scoped credentials on demand when materializing a credential lease — the plaintext credential is never persisted outside the Token Service's in-memory processing context.
+
+#### Pre-Authorized Credential Flow
+
+The pre-authorized flow allows users to register their own credentials once per provider, after which every session automatically resolves the credential based on the authenticated user's identity. This works identically across all client interfaces (MCP, REST, OpenAI-compatible, A2A) — no interactive channel is required.
+
+**User credential management endpoints:**
+
+| Method   | Endpoint                                     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/credentials`                            | Register a credential. Body: `provider` (string, must match a known `CredentialProvider` type), `credential` (the secret material — API key, access token, etc.), optional `label` (human-readable name). The Token Service encrypts the credential using the same envelope encryption as OAuth tokens (per-tenant DEK, KMS KEK). Returns: `credential_ref` (opaque ID), `provider`, `label`, `created_at`. The secret material is never returned after registration. |
+| `GET`    | `/v1/credentials`                            | List the authenticated user's registered credentials. Returns: array of `{credential_ref, provider, label, created_at, last_used_at}`. No secret material.                                                                                                                                                                                                                                                                                                            |
+| `PUT`    | `/v1/credentials/{credential_ref}`           | Rotate (replace) the secret material for an existing user-scoped credential. Body: `credential` (new secret material), optional `label`. The Token Service atomically replaces the encrypted material. Active leases backed by this credential are immediately rotated via `RotateCredentials` RPC (same as emergency pool revocation, [Section 4.9](#49-credential-leasing-service) Emergency Credential Revocation steps 5–7) so running sessions pick up the new material within one rotation cycle. Returns: `credential_ref`, `provider`, `label`, `updated_at`. The secret material is never returned. Emits `credential.rotated` audit event (fields: `tenant_id`, `user_id`, `provider`, `credential_ref`, `active_leases_rotated`). This endpoint carries secret material and MUST be excluded from HTTP access log payload capture and request/response logging middleware (same treatment as `POST /v1/credentials`). |
+| `POST`   | `/v1/credentials/{credential_ref}/revoke`    | Revoke a user-scoped credential and immediately invalidate all active leases backed by it. Body (optional): `reason` (string), `note` (string). The Token Service: (1) marks the credential as `revoked` in `TokenStore`; (2) looks up all active session leases backed by `credential_ref`; (3) for each active lease, terminates it immediately — proxy-mode leases via the credential deny list (same propagation as pool revocation), direct-mode leases via `RotateCredentials` RPC triggering the standard fallback flow; (4) emits `credential.user_revoked` audit event (fields: `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, `active_leases_terminated`). Returns `200 OK`: `{ "credentialRef": "...", "leasesTerminated": N, "revokedAt": "..." }`. `DELETE` removes the credential registration record but does not invalidate active leases — running sessions keep their previously materialized credentials until they expire naturally. `POST .../revoke` marks the credential as `revoked`, retains the record for audit purposes, and immediately invalidates all active leases backed by it. Use `revoke` for emergency lease invalidation; use `DELETE` for non-disruptive cleanup. The user can re-register a new credential for the same provider after either operation. |
+| `DELETE` | `/v1/credentials/{credential_ref}`           | Remove a registered credential. The Token Service deletes the credential registration record from `TokenStore` and emits a `credential.deleted` audit event (fields: `tenant_id`, `user_id`, `provider`, `credential_ref`). Active session leases are unaffected — they continue using the previously materialized credentials until they expire naturally. Returns `200 OK`: `{ "credentialRef": "...", "deletedAt": "..." }`. To immediately invalidate active leases, use `POST .../revoke` instead. |
+
+**Scoping rules:**
+
+- Credentials are scoped to `(tenant_id, user_id, provider)`. A user can register at most one credential per provider (re-registering for the same provider replaces the previous one).
+- `tenant_id` and `user_id` are derived from the authenticated JWT — never supplied by the client.
+- The Token Service validates that `provider` matches a `CredentialProvider` type known to the platform. Unknown providers are rejected with `VALIDATION_ERROR`.
+
+**Resolution at session creation:**
+
+- When a session is created and the `credentialPolicy.preferredSource` includes user credentials (`prefer-user-then-pool`, `prefer-pool-then-user`, or `user` only), the gateway calls the Token Service to look up a credential for `(tenant_id, user_id, provider)` for each provider in the intersection of the Runtime's `supportedProviders` and the tenant's `credentialPolicy.providerPools`.
+- If found: the Token Service decrypts it and materializes a `CredentialLease` — same as pool-managed credentials.
+- If not found: depends on fallback configuration. With fallback enabled, falls through to pool. Without fallback, session creation fails with `USER_CREDENTIAL_NOT_FOUND` (see error catalog, [Section 15.1](15_external-api-surface.md#151-rest-api)).
+- `last_used_at` is updated on each successful resolution.
+- **Revoked credentials** (`revoked` status) are treated identically to not-found: the gateway skips the revoked credential and falls through to pool per the fallback configuration.
+
+**`userCredentialsEnabled` semantics:**
+
+- `userCredentialsEnabled: true` — the gateway resolves user-scoped credentials from the credential store (registered via `POST /v1/credentials`). If no credential is registered for the requested provider, the behavior depends on the fallback configuration: with fallback enabled (`preferredSource: prefer-user-then-pool`), falls through to pool; without fallback (`preferredSource: user`), session creation fails with `USER_CREDENTIAL_NOT_FOUND`.
+- `userCredentialsEnabled: false` — user-scoped credentials are not used regardless of what is registered.
+
+> **Why credential elicitation via MCP is not supported.** Credential elicitation via the MCP `lenny/request_input` channel is intentionally not supported. The MCP message path is subject to logging, tracing, interceptor inspection, and transcript persistence — credential material flowing through this path would be exposed to all of these systems. User-scoped credentials must be registered via the dedicated `POST /v1/credentials` endpoint, which has explicit logging exclusions and delivers credentials directly to the Token Service without traversing the MCP message chain.
+
+**Storage:** User credentials are stored in the `TokenStore` (Postgres) with the same envelope encryption, RLS, and access controls described in the "User-scoped credential storage" callout above. See that callout for the full encryption lifecycle.
+
+**Security considerations:**
+
+- The `POST /v1/credentials` and `PUT /v1/credentials/{credential_ref}` endpoints carry secret material. They MUST be excluded from HTTP access log payload capture, OpenTelemetry span attributes, and request/response logging middleware — the same treatment as `AssignCredentials` and `RotateCredentials` RPCs ([Section 4.7](#47-runtime-adapter) item 6). Only the `credential_ref`, `provider`, and success/failure status should be logged.
+- A `credential.registered` audit event is emitted on registration (fields: `tenant_id`, `user_id`, `provider`, `credential_ref`). A `credential.deleted` audit event is emitted on deletion. A `credential.rotated` audit event is emitted on rotation. A `credential.user_revoked` audit event is emitted on user-initiated revocation.
+
+#### Fallback Flow
+
+Fallback operates **per-provider**. When the runtime reports a credential failure for a specific provider, only that provider's fallback chain is walked. Other providers' leases are unaffected.
+
+```
+1. Runtime reports RATE_LIMITED (or AUTH_EXPIRED, PROVIDER_UNAVAILABLE) to gateway,
+   identifying the affected provider
+2. Gateway marks the affected provider's lease as degraded, records cooldown timestamp
+3. Gateway increments the session's rotation counter (shared across all providers).
+   If the counter exceeds maxRotationsPerSession (default: 3), the fallback chain
+   is exhausted:
+   - The session is terminated with CREDENTIAL_FALLBACK_EXHAUSTED (category: POLICY)
+   - A credential.fallback_exhausted audit event is emitted (fields: session_id,
+     rotation_count, last_failure_reason, fallback_chain_attempted)
+   - The metric lenny_gateway_credential_fallback_exhausted_total (counter,
+     labeled by pool, provider, failure_reason) is incremented
+   - The client receives a terminal error; no further rotation attempts are made
+4. Gateway evaluates the affected provider's fallback chain (from
+   credentialPolicy.providerPools.{provider}.fallback.order):
+   a. Same provider, different credential from pool?
+   b. User credential available as fallback?
+5. Gateway issues replacement CredentialLease for the affected provider only
+6. Gateway pushes the replacement credential to runtime via RotateCredentials RPC,
+   targeting the specific provider's lease
+7. Delivery depends on runtime tier and restart requirements:
+   - Full: adapter delivers via lifecycle channel; runtime rebinds the specific
+     provider in-place. Other providers' credentials are untouched.
+   - Standard/Minimum: gateway triggers Checkpoint → pod restart → Resume with
+     new lease map (see Section 4.7 tier table)
+```
+
+#### Proactive Lease Renewal
+
+The `renewBefore` timestamp in a `CredentialLease` is not decorative — it drives a gateway-side proactive renewal loop that prevents lease expiry from interrupting active sessions.
+
+**Renewal loop design:**
+
+The gateway maintains a min-heap of active leases ordered by `renewBefore`. A background goroutine (`CredentialRenewalWorker`) wakes whenever the earliest `renewBefore` in the heap is reached. On wake:
+
+1. **Check session liveness.** If the session owning the lease has ended, remove the lease from the heap and skip renewal.
+2. **Issue a replacement lease.** The renewal worker calls the same path as `AssignCredentials`, selecting a credential from the same pool and credential ID (or a replacement credential if the original is in cooldown or revoked). For user-scoped leases (`source: user`), if the `credential_ref` no longer exists (user deleted the credential between tasks or during a long-lived session), the gateway falls through to the tenant's `credentialPolicy` fallback chain — e.g., from `prefer-user-then-pool` to the next pool in the chain. If no fallback source is available, the renewal fails and enters the retry path described under "Renewal failure handling" below. The new lease has a fresh `expiresAt = now + leaseTTLSeconds` and a corresponding `renewBefore`.
+3. **Push the replacement credential to the runtime** via the standard `RotateCredentials` RPC, identical to fault-driven rotation (see Fallback Flow, steps 5–7). The runtime rebinds in-place (hot rotation) or undergoes checkpoint-and-restart, per its `credentialCapabilities.hotRotation` declaration.
+4. **Reschedule.** The new lease's `renewBefore` is inserted into the renewal heap.
+
+**Renewal does not consume `maxRotationsPerSession`.**  The rotation counter (`rotationCount` in the session record) is incremented only for **fault-driven** rotations (those triggered by `RATE_LIMITED`, `AUTH_EXPIRED`, or `PROVIDER_UNAVAILABLE` in step 3 of the Fallback Flow). Proactive renewals triggered by `renewBefore` are identified by `rotationTrigger: proactive_renewal` in the internal rotation context and are explicitly excluded from the counter increment. This preserves the full `maxRotationsPerSession` budget for fault handling regardless of how many proactive renewals occur during a long-lived session. The `credential.renewed` audit event (`rotationTrigger: proactive_renewal`) is emitted on each proactive renewal for observability.
+
+**Metric:** `lenny_gateway_credential_proactive_renewals_total` (counter, labeled by `pool`, `provider`, `outcome: success|failure`).
+
+**Renewal failure handling.** If a proactive renewal fails (e.g., all credentials in the pool are exhausted or in cooldown), the gateway does NOT immediately terminate the session. It retries the renewal at half the remaining TTL interval, up to 3 times. **`expiresAt` guard:** Before each retry attempt, the `CredentialRenewalWorker` checks whether `now >= lease.expiresAt`. If the lease has already expired, the retry is skipped and the worker immediately sends `RotateCredentials` with `CREDENTIAL_RENEWAL_FAILED` — retrying an already-expired lease is pointless and delays fault handling. On the first failed attempt, the counter `lenny_credential_proactive_renewal_first_failure_total` (counter, labeled by `pool`, `provider`) is incremented as an early-warning signal before all retries are exhausted. If all retries fail and the lease has not yet expired, the gateway sends `RotateCredentials` with the error code `CREDENTIAL_RENEWAL_FAILED` — the session falls through to the standard Fallback Flow (including `maxRotationsPerSession` budget consumption on that last-resort attempt). **This last-resort fault rotation counts against `maxRotationsPerSession`**; deployers running long-lived sessions with short-TTL credentials should set `maxRotationsPerSession >= 1 + expected_proactive_retries` to ensure the fallback rotation slot is available. The gateway emits `lenny_credential_proactive_renewal_exhausted_total` (counter, labeled by `pool`, `provider`) and a `CredentialProactiveRenewalExhausted` warning alert when all proactive retries are exhausted, providing early visibility before the fallback fault rotation fires.
+
+**Token Service unavailability guard.** When the Token Service circuit breaker is open ([Section 4.3](#43-token-service)), the proactive renewal worker MUST NOT trigger the standard Fallback Flow for Standard/Minimum-tier runtimes. The Fallback Flow for these tiers includes checkpoint-and-restart, but the replacement pod also requires `AssignCredentials` (which calls the Token Service), creating a restart loop. Instead, when the Token Service circuit breaker is open and the existing lease has not yet expired (i.e., `now < lease.expiresAt`), the renewal worker extends the adapter-side lease timer by one additional `renewBeforeBuffer` interval and reschedules the renewal attempt. This keeps the session alive on its current (still-valid) credential until the Token Service recovers. The Fallback Flow is triggered only when the credential has actually expired (`now >= lease.expiresAt`) or has been rejected by the upstream provider (`AUTH_EXPIRED`, `RATE_LIMITED`), not when renewal infrastructure is transiently unavailable.
+
+**Rotation mode resolution.** The runtime's `credentialCapabilities.hotRotation` declaration ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)) is the authoritative signal for whether credentials can be rotated in-place, because only the runtime knows whether it can rebind credentials without a restart. The gateway resolves the effective restart requirement at session start:
+
+1. If the runtime declares `credentialCapabilities.hotRotation: true`, the gateway uses **hot rotation** (lifecycle channel delivery, no restart). The runtime has affirmed it can handle in-place rebinding.
+2. If the runtime declares `credentialCapabilities.hotRotation: false` (or omits `credentialCapabilities` entirely), the gateway uses **checkpoint-and-restart rotation**. The runtime cannot handle hot rotation.
+
+The resolved rotation mode is recorded in the session's metadata at creation time and is visible in the `credential.leased` audit event (`rotationMode: "hot" | "restart"`).
+
+#### LLM Reverse Proxy
+
+For API-key-based providers that do not support short-lived token exchange (e.g., providers where the "short-lived" key is really just the long-lived key with a TTL wrapper), the gateway can run a **credential-injecting reverse proxy** so the real API key never enters the pod:
+
+1. Instead of receiving a materialized API key, the pod receives a lease token and a proxy URL (e.g., `https://gateway-internal:8443/llm-proxy/{lease_id}`).
+2. The pod sends LLM API requests to the proxy URL using the lease token for authentication.
+3. The gateway proxy validates the lease token, runs the `PreLLMRequest` interceptor chain ([Section 4.8](#48-gateway-policy-engine)) on the request body, injects the real API key into the upstream request headers, and forwards the request to the LLM provider. If a `PreLLMRequest` interceptor returns `REJECT`, the proxy returns `LLM_REQUEST_REJECTED` to the pod without contacting the upstream provider.
+4. On receiving the upstream response, the proxy runs the `PostLLMResponse` interceptor chain ([Section 4.8](#48-gateway-policy-engine)) before forwarding the response to the pod. For streaming responses, the interceptor fires once on the initial response metadata — stream chunks are forwarded without per-chunk interception. If a `PostLLMResponse` interceptor returns `REJECT`, the proxy returns `LLM_RESPONSE_REJECTED` to the pod. **The gateway extracts token usage counts (`input_tokens`, `output_tokens`) from the upstream provider response at this point and uses them as the authoritative usage record for quota accounting (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)). `ReportUsage` calls from the pod are ignored for sessions in proxy mode — the gateway is the sole counter of record, eliminating the ability of a malicious runtime to underreport token consumption.**
+5. The real API key never enters the pod's memory or environment.
+
+This is a **per-provider** configuration — deployers choose for each credential pool whether to use direct credential leasing (simpler, lower latency) or proxy mode (higher security, adds one network hop). The two modes can coexist across different pools. **Proxy mode is the recommended default for multi-tenant deployments**, since the real API key never enters the pod and a compromised agent cannot exfiltrate it. Direct mode is appropriate for single-tenant and development deployments where simplicity and lower latency are preferred.
+
+The proxy enforces the same rate limits and budget constraints as direct leasing. When a lease expires or is revoked, the proxy immediately rejects requests — there is no window of exposure where a compromised pod could continue using a stale key.
+
+> **Hard rejection — `direct` + `standard` (runc) isolation in multi-tenant mode:** Combining `deliveryMode: direct` with `standard` (runc) isolation is **blocked by admission control** when `tenancy.mode: multi` is set in the platform configuration. In `standard` isolation, a container escape gives the attacker access to materialized credential material on the host node; in a multi-tenant deployment this represents cross-tenant credential exposure. The warm pool controller **rejects** any pool creation or update that sets both `deliveryMode: direct` and `isolationProfile: standard` when `tenancy.mode: multi`, returning a validation error `DirectModeStandardIsolationMultiTenantRejected`: `"deliveryMode: direct with isolationProfile: standard is not permitted in multi-tenant mode. Use deliveryMode: proxy, or set isolationProfile: sandboxed or microvm."` This is enforced at two layers: (1) the warm pool controller's pool-registration validation (rejects the admin API request before any pod is created), and (2) a `ValidatingAdmissionWebhook` (`lenny-direct-mode-isolation`) that rejects `SandboxTemplate` and `CredentialPool` resources carrying this combination in agent namespaces when the platform is in multi-tenant mode. The webhook is deployed with `failurePolicy: Fail` (fail-closed). In **single-tenant mode** (`tenancy.mode: single`) or **development mode** (`global.devMode: true`), this combination is permitted with an explicit opt-in field on the pool (`allowDirectModeStandardIsolation: true`) and emits a `DirectModeWeakIsolation` warning event and a startup log warning. The opt-in field cannot be set in multi-tenant mode — the admission webhook rejects it regardless of the field value.
+
+> **Monitoring direct-mode usage:** Deployers should monitor the metric `lenny_gateway_credential_leases_active{delivery_mode="direct"}` and set alerts when direct-mode lease counts exceed expected thresholds. The audit event `credential.leased` ([Section 4.9.2](#492-credential-audit-events)) includes a `deliveryMode` field, enabling compliance teams to track and review all direct-mode credential deliveries. In regulated environments, consider requiring explicit admin approval for pools configured with `deliveryMode: direct`.
+
+**Subsystem isolation:** The LLM Proxy runs within the gateway's fourth internal subsystem boundary (see [Section 4.1](#41-edge-gateway-replicas)), with its own goroutine pool, concurrency limits, circuit breaker, and per-subsystem metrics (`lenny_gateway_llm_proxy_active_connections`, `lenny_gateway_llm_proxy_request_duration_seconds`, `lenny_gateway_llm_proxy_circuit_state`). This ensures that a surge in proxy traffic or an upstream provider outage cannot starve the Stream Proxy, Upload Handler, or MCP Fabric subsystems.
+
+**LLM Proxy circuit breaker open-state behavior:** When the LLM Proxy circuit breaker transitions to **open** state (tracked by `lenny_gateway_llm_proxy_circuit_state = 2`), the following behavior applies:
+
+1. **All new LLM proxy requests are immediately rejected** with a `PROVIDER_UNAVAILABLE` error. The gateway does NOT silently hang or wait for timeout.
+2. **The adapter receives a `PROVIDER_UNAVAILABLE` event** on the control channel. The adapter relays this to the runtime as a tool-result error with code `PROVIDER_UNAVAILABLE`, enabling the agent to handle the failure gracefully (e.g., inform the user, retry later, or fall back to a different provider if available via the fallback chain).
+3. **In-flight streaming responses that were established before the circuit opened continue until completion or upstream failure** — the circuit breaker applies only to new outbound connections, not to already-established streams.
+4. **Half-open retry:** After a configurable cooldown period (default: 30s, configurable via `llmProxy.circuitBreaker.halfOpenInterval`), the circuit transitions to half-open and allows a single probe request. If the probe succeeds, the circuit closes; if it fails, the circuit returns to open and the cooldown resets.
+5. **Alert coverage:** The `GatewaySubsystemCircuitOpen` Warning alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the LLM Proxy circuit breaker (or any other subsystem circuit breaker) remains in open state for > 60s. No separate `LLMProxyCircuitOpen` alert is needed — the subsystem label on `lenny_gateway_{subsystem}_circuit_state` provides per-subsystem granularity.
+
+```yaml
+credentialPools:
+  - name: claude-direct-prod
+    provider: anthropic_direct
+    deliveryMode: proxy # proxy | direct (default: proxy for multi-tenant, direct for single-tenant)
+    proxyEndpoint: https://gateway-internal:8443/llm-proxy
+    # ... other pool config unchanged
+```
+
+> **Proxy endpoint transport security:** The proxy endpoint **must** use TLS (`https://`). It shares the same mTLS certificate infrastructure as the internal gRPC control plane ([Section 4.3](#43-token-service)), so lease tokens are always encrypted in transit. The controller **rejects** pool registrations where `proxyEndpoint` uses an `http://` scheme and emits a validation error (`InvalidProxyEndpointScheme`). This ensures that proxy mode's security guarantee — real API keys never leave the gateway — is not undermined by plaintext lease-token transmission on the cluster network.
+>
+> **SPIFFE-binding for proxy mode lease tokens (v1 requirement for multi-tenant deployments):** A captured lease token could theoretically be replayed from a different pod that also has a valid mTLS certificate. To eliminate this cross-pod replay risk, lease tokens in proxy mode **must** be bound to the issuing pod's SPIFFE identity for all multi-tenant deployments. The binding is implemented as follows:
+> 1. At `AssignCredentials` time, the gateway records the issuing pod's SPIFFE URI (e.g., `spiffe://<trust-domain>/agent/{pool}/{pod-name}`, where `<trust-domain>` is the value of `global.spiffeTrustDomain`) alongside the lease record in `TokenStore`.
+> 2. On every LLM proxy request, the gateway extracts the peer SPIFFE URI from the authenticated mTLS connection and verifies it matches the SPIFFE URI stored in the lease record. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH` (category: `SECURITY`) and emits an audit event `credential.lease_spiffe_mismatch` ([Section 4.9.2](#492-credential-audit-events)).
+> 3. The `leaseToken` field in `AssignCredentialsResponse` is unchanged — SPIFFE-binding is enforced server-side; no protocol change is required for the pod.
+>
+> **Deployment note:** SPIFFE-binding is enforced by default when `deliveryMode: proxy` is set on a pool. It can be disabled only for single-tenant or development deployments via `credentialPool.spiffeBinding: disabled`, which emits a `ProxyModeSpiffeBindingDisabled` warning event at pool registration time. Single-tenant and development deployments may omit SPIFFE-binding; in those cases the existing defense-in-depth controls (token visible only inside the pod on tmpfs mode 0400, pod sandbox isolation) remain the primary mitigations against token extraction.
+
+**Credential health scoring:** For pooled credentials, the gateway tracks per-credential:
+
+- Recent rate-limit events and cooldown expiry
+- Auth failure count
+- Concurrent session count
+- Spend tracking (if provider reports it)
+
+Assignment strategies use this health data to avoid assigning degraded credentials. All credential health scoring data (cooldown timers, rate-limit event history, auth failure counts, concurrent session counts) is persisted in Postgres as part of the `CredentialPoolStore` ([Section 12.1](12_storage-architecture.md#121-design-principle)), which is tenant-scoped with `tenant_id` column and RLS. No credential health data is stored in Redis; the Redis key prefix table in [Section 12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes) does not include credential health entries because the data is exclusively Postgres-backed.
+
+#### Semantic Caching
+
+Optional `CachePolicy` on `CredentialPool` backed by pluggable `SemanticCache` interface:
+
+```yaml
+cachePolicy:
+  strategy: semantic
+  ttl: 300
+  similarityThreshold: 0.92
+  backend: redis
+```
+
+Default Redis-backed implementation. Fully replaceable by deployers. Disabled by default, opt-in per pool. **Erasure contract test:** A `ValidateSemanticCacheErasure(t *testing.T, cache SemanticCache)` contract validation helper is provided for pluggable implementations. The test verifies: (a) `DeleteByUser` removes all cached entries for the specified user; (b) a subsequent `Query` for the deleted user returns zero results; (c) entries for other users in the same tenant are unaffected. Pluggable `SemanticCache` implementations must pass this test. The erasure job treats a `DeleteByUser` call that returns an error as a hard failure — the erasure job halts and does not proceed to subsequent stores — preventing silent no-op implementations from producing an erasure receipt that falsely records the cache as erased.
+
+**Tenant and user isolation:** Semantic cache implementations MUST scope all cache lookups and writes to the `tenant_id` of the current session. Cross-tenant cache hits are forbidden regardless of semantic similarity. The effective cache key space is `(tenant_id, query_embedding, model, provider)` at minimum. When the credential source is `user`-scoped (i.e., the user provides their own API key), the cache key MUST additionally include `user_id`, since responses may reflect user-specific context or permissions. **For pool-scoped credentials, the default cache scope is also `per-user`: the cache key MUST include `user_id` by default.** Deployers may opt into cross-user sharing within a tenant by setting `cacheScope: tenant` on the pool's semantic cache configuration — this explicitly acknowledges that responses may be shared across different users in the same tenant. The allowed `cacheScope` values are: `per-user` (default — cache key includes `user_id`; no cross-user sharing), `per-session` (cache key includes `session_id`; most restrictive), `tenant` (cache key omits `user_id`; allows cross-user sharing within the tenant, deployer opt-in only). Setting `cacheScope: tenant` on a pool with a regulated `complianceProfile` (`hipaa`, `fedramp`) is rejected at pool registration time with `400 COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` — this rejection also mitigates a timing side-channel: with `cacheScope: tenant`, a user can infer whether semantically similar prompts have been issued by other users in the same tenant by measuring response latency differences between cache-hit and cache-miss paths. **Timing side-channel trade-off (`cacheScope: tenant`):** Deployers opting into `cacheScope: tenant` accept that response latency is an observable signal of prior cache population by other users within the tenant. This is analogous to the residual state vectors documented for task-mode scrub ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) — a documented trade-off, not a defect. For `per-user` and `per-session` scopes, cross-user timing side-channels do not arise because cache lookups are scoped to the requesting identity. The default Redis-backed implementation inherits tenant key isolation from the Redis wrapper layer ([Section 12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)), but pluggable implementations must enforce equivalent scoping independently. An integration test (`TestSemanticCacheTenantIsolation`) must verify that a cached response written for tenant A is not returned for a semantically identical query from tenant B.
+
+#### `CredentialRouter` Interface
+
+The CredentialRouter is a pluggable interface invoked at two points: (1) session creation ([Section 7.1](07_session-lifecycle.md#71-normal-flow), step 6) when the gateway assigns initial credential leases, and (2) rotation time (Fallback Flow, step 4) when the gateway selects a replacement credential for a failed provider.
+
+**Input:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `tenantId` | string | Tenant making the request |
+| `userId` | string | Authenticated user |
+| `provider` | string | The provider being assigned (e.g., `anthropic_direct`) |
+| `allowedPools` | list of pool descriptors | Pools eligible for this provider, each with current utilization stats (active leases, max capacity, health score) |
+| `userCredentialAvailable` | boolean | Whether a user-scoped credential exists for this provider |
+| `preferredSource` | string | From the tenant's `credentialPolicy.preferredSource` |
+| `rotationContext` | object (nullable) | Present only during rotation: includes `previousPoolId`, `previousCredentialId`, `failureReason`, `rotationCount` |
+| `hints` | map of string to string | Deployer-extensible key-value map. Populated from `runtimeOptions` at session creation or from static hints configured on pools. Examples: `model`, `cost_tier`, `region` |
+
+**Output:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `source` | string | `pool` or `user` |
+| `poolId` | string (nullable) | Selected pool ID (required when `source` is `pool`) |
+| `strategyOverride` | string (nullable) | If set, overrides the pool's `assignmentStrategy` for this assignment |
+
+**Built-in assignment strategies.** The default CredentialRouter uses the pool's `assignmentStrategy` field to select a credential within the chosen pool:
+
+| Strategy | Behavior |
+| --- | --- |
+| `least-loaded` | Selects the credential with the fewest active leases. Default. |
+| `round-robin` | Even distribution across credentials in the pool |
+| `sticky-until-failure` | Same credential for all sessions until a failure event triggers rotation |
+
+Deployers who need cost-aware, latency-based, or intent-based routing implement a custom CredentialRouter. The `hints` map is the primary extension point — deployers pass deployment-specific context (e.g., `model`, `cost_tier`, `region`) without modifying the core interface.
+
+**External LLM routing proxy integration.** For deployers who want external model routing, cost optimization, or provider switching, the recommended pattern is to deploy an LLM routing proxy (e.g., LiteLLM, Portkey, or a custom gateway) as a sidecar or cluster service. Configure a `CredentialPool` with a custom `CredentialProvider` that mints `materializedConfig` entries with `baseUrl` pointing to the routing proxy. The runtime (or Lenny's LLM proxy) sends LLM requests to the external proxy, which handles model routing, cost optimization, and provider switching internally. For model governance specifically, deployers can use `PreLLMRequest` interceptors ([Section 4.8](#48-gateway-policy-engine)) as a lighter-weight alternative to an external routing proxy — e.g., rejecting disallowed models or rewriting model fields before the request reaches the provider. The two approaches can be combined: `PreLLMRequest` interceptors for policy enforcement (allowlist/denylist) and an external proxy for routing intelligence and cost optimization. This pattern keeps Lenny's credential governance intact while providing flexible model governance options.
+
+#### Credential Governance Boundaries
+
+This section clarifies what Lenny governs versus what is delegated to the runtime, and how the two delivery modes affect governance scope.
+
+**What Lenny governs:**
+
+- **Which providers a runtime can access** — the intersection of the Runtime's `supportedProviders` and the tenant's `credentialPolicy.providerPools` keys determines available providers.
+- **Which credentials are used** — pool assignment via the CredentialRouter, user credentials via the pre-authorized flow, and fallback chain ordering are all gateway-controlled.
+- **Connector call content** — all connector traffic is gateway-proxied, so connector call arguments and responses are interceptable via `PreConnectorRequest` and `PostConnectorResponse` interceptors ([Section 4.8](#48-gateway-policy-engine)). There is no direct-mode bypass for connectors.
+
+**What Lenny delegates to the runtime:**
+
+- **Which model to call for a given task** — the runtime selects the model based on its own logic (e.g., agent configuration, task complexity). Lenny does not govern model selection by default. However, in proxy mode, deployers can enforce model policies via `PreLLMRequest` interceptors ([Section 4.8](#48-gateway-policy-engine)) — e.g., allowlisting/denylisting specific models, or redirecting requests to approved models. Alternatively, deployers can enforce model policies via an external LLM routing proxy (e.g., LiteLLM, Portkey).
+- **Cost optimization across providers/models** — the runtime (or an external routing proxy) handles cost-aware routing. Lenny supports this via CredentialRouter hints and multi-provider credential maps.
+
+**Proxy mode vs. direct mode:**
+
+| Aspect | Proxy mode | Direct mode |
+| --- | --- | --- |
+| Credential injection | Gateway injects; key never enters pod | Pod receives materialized key |
+| Request visibility | Gateway can inspect/audit LLM requests | Gateway has no visibility |
+| LLM request/response interception | `PreLLMRequest` and `PostLLMResponse` interceptors fire on every proxied LLM call ([Section 4.8](#48-gateway-policy-engine)) | No interception — gateway has no visibility into LLM traffic |
+| Recommended for | Multi-tenant, regulated environments | Single-tenant, development, low-latency |
+
+#### Emergency Credential Revocation
+
+When a single credential within a pool is suspected compromised (e.g., `key-2` in `claude-direct-prod` has been exfiltrated), operators must be able to pull that specific credential immediately — without deleting the entire pool or waiting for natural lease TTL expiry. During the TTL window, the compromised key would continue to be injected into upstream LLM requests for every session currently holding a lease against it.
+
+**Revocation endpoint:**
+
+```
+POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke
+```
+
+Request body (optional):
+
+```json
+{
+  "reason": "suspected_exfiltration",
+  "note": "key-2 appeared in logs — rotating immediately"
+}
+```
+
+The operation is synchronous and MUST:
+
+1. Mark the credential as `revoked` in `CredentialPoolStore` (status: `revoked`, `revokedAt`, `revokedBy`, `revocationReason`).
+2. Look up all active leases backed by `credId` (via `CredentialPoolStore` lease index).
+3. For each active lease: terminate it immediately via in-process signal or Redis pub/sub (matching the certificate deny-list pattern from [Section 10.3](10_gateway-internals.md#103-mtls-pki)). The credential ID is added to an **in-memory credential deny list** on every gateway replica, propagated via Redis pub/sub with Postgres `LISTEN/NOTIFY` as fallback. Entries in the deny list expire when the credential's natural lease TTL lapses — keeping the list small.
+4. For proxy mode: the LLM proxy checks the deny list on every upstream request. Any request presenting a lease backed by a denied credential is immediately rejected with `CREDENTIAL_REVOKED` (category: `SECURITY`) — there is no window where the compromised key continues to reach the provider.
+5. For direct-delivery mode: the gateway sends a `RotateCredentials` RPC to all pods holding leases against `credId`, triggering the standard rotation fallback flow ([Section 4.9](#49-credential-leasing-service) Fallback Flow). The pod's lease is invalidated; it must acquire a new lease from a different credential in the pool (or the fallback chain) to continue. **Residual risk (direct mode only):** Lenny's revocation stops the pod from using the key *through Lenny*, but the underlying API key continues to exist at the provider. Any party that already extracted the materialized key from the pod (e.g., via a container escape or memory read) can continue using it directly until it is rotated or deleted at the provider. **Mitigating action required:** After calling the revocation endpoint for a direct-mode credential, operators MUST also rotate or delete the key at the provider (e.g., via the Anthropic Console, AWS IAM, or GCP IAM) to achieve complete revocation. See the emergency revocation runbook below for the required sequencing. This residual risk is inherent to direct-mode delivery and is one reason proxy mode is the recommended default for multi-tenant and security-sensitive deployments.
+6. Emit a `credential.revoked` audit event (fields: `pool_id`, `credential_id`, `revoked_by`, `reason`, `active_leases_terminated`).
+7. Return `200 OK` with a summary: `{ "revokedCredential": "key-2", "leasesTerminated": 3, "propagatedAt": "2026-04-05T..." }`.
+
+**Force-rotate all credentials in a pool:**
+
+```
+POST /v1/admin/credential-pools/{poolId}/revoke
+```
+
+Revokes all credentials in the pool simultaneously. All active sessions using this pool are rotated to their fallback chain, or terminated with `CREDENTIAL_POOL_EXHAUSTED` if no fallback is available. Use when the entire pool is suspected compromised.
+
+**Credential deny list:** Mirrors the certificate deny-list mechanism from [Section 10.3](10_gateway-internals.md#103-mtls-pki). The deny list is propagated across all gateway replicas via Redis pub/sub. Each entry is keyed by `(poolId, credentialId)` and expires automatically when the last active lease against that credential reaches its natural TTL expiry. The `CredentialPoolStore` persists the `revoked` status durably so newly started gateway replicas rebuild their deny list on startup by querying for credentials in `revoked` state with active-or-recent leases.
+
+**Emergency revocation runbook:** See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (operational runbooks). Steps: (1) identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`); (2) call the revocation endpoint; (3) verify `leasesTerminated` count matches expected active sessions; (4) confirm the `CredentialCompromised` alert clears within 60s (indicating revocation propagation succeeded); (5) add a replacement credential to the pool via `PUT /v1/admin/credential-pools/{poolId}`; (6) rotate the underlying secret (Kubernetes Secret or external secrets manager) before re-enabling the credential ID. **Direct mode additional step:** For pools using `deliveryMode: direct`, step 6 is not optional — it is the only action that prevents continued use of the materialized key by an attacker who already extracted it from a pod. Rotate or delete the key at the provider before re-enabling it; updating only the Kubernetes Secret is insufficient until the provider-side key is also invalidated.
+
+#### Security Boundaries
+
+- Long-lived credentials (API keys, IAM role ARNs, service account keys) live **only** in the Token Service and Kubernetes Secrets
+- Pods receive **materialized short-lived credentials** (scoped tokens, STS sessions) via the `AssignCredentials` RPC, delivered to the agent as a tmpfs-backed file (mode `0400`) — never via environment variables
+- Leases are **revocable** — on user invalidation, or on emergency credential revocation via `POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke`, the gateway immediately terminates affected leases and the runtime loses access. **Caveat (direct mode):** Revocation stops the pod from using the key through Lenny, but the underlying API key continues to exist at the provider until rotated there. For proxy mode, revocation is complete — the key never left the gateway. For direct mode, provider-side key rotation is a mandatory part of the emergency revocation procedure (see "Emergency Credential Revocation" above).
+- Credential material is **never logged** in audit events, transcripts, or agent output — only lease IDs and provider/pool names are logged
+- The `env` blocklist ([Section 14](14_workspace-plan-schema.md), `env` field) rejects keys matching sensitive patterns (e.g., `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`, `*_SECRET_*`) regardless of whether credential leasing is configured. When leasing is enabled, credentials flow through the leasing system rather than environment variables; when leasing is not configured, the blocklist still prevents accidental credential exposure via env vars
+
+#### Credential Lifecycle and Secret Management
+
+Credential pools span two planes: the **pool definition** (admin-API-managed, stored in Postgres) and the **credential material** (Kubernetes Secrets, referenced by `secretRef`). This is by design — secret material belongs in Kubernetes Secrets (where it benefits from encryption-at-rest, RBAC, and external-secrets-operator integration), while pool configuration (assignment strategy, concurrency limits, policies) belongs in the admin API. Operators must understand the lifecycle for both halves.
+
+> **Production requirement — etcd encryption at rest for Secrets.** Kubernetes does **not** encrypt Secret data in etcd by default. Anyone with etcd access (backup tapes, compromised etcd node, etcd snapshot) sees all Secret values — including credential pool API keys — in plaintext. Production deployments **must** enable the Kubernetes `EncryptionConfiguration` resource with an `aescbc`, `aesgcm`, or `kms` provider for the `secrets` resource type. Cloud-managed Kubernetes services (EKS, GKE, AKS) offer envelope encryption via their respective KMS integrations (AWS KMS, GCP Cloud KMS, Azure Key Vault) and should be configured to use them. Self-managed clusters must configure `EncryptionConfiguration` in the API server manifest and verify encryption by running `etcdctl get /registry/secrets/lenny-system/<secret-name> | hexdump` — the output should be ciphertext, not readable JSON. The `lenny-preflight` Job emits a non-blocking warning for this check (see [Section 17.6](17_deployment-topology.md#176-packaging-and-installation)), since programmatic verification requires etcd access that the preflight Job may not have.
+
+**Initial setup workflow:**
+
+1. **Create Kubernetes Secrets** containing credential material (API keys, service account keys, etc.) in the `lenny-system` namespace.
+2. **Register the credential pool** via the admin API (`POST /v1/admin/credential-pools`) or via the bootstrap seed (`bootstrap.credentialPools` in Helm values). The pool definition references the Secrets by `secretRef`.
+3. The `lenny-bootstrap` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) seeds pool definitions but does **not** create Kubernetes Secrets — Secrets must exist before the bootstrap Job runs, or the Token Service will log errors for unresolvable `secretRef` entries and mark those credentials as `unavailable` in the pool.
+
+**Token Service secret resolution.** The Token Service uses a Kubernetes **informer** (watch) on Secrets in the `lenny-system` namespace. When a Secret referenced by a credential pool is created, updated, or deleted, the Token Service detects the change within its informer resync interval (default: 30 seconds, configurable via `tokenService.secretResyncInterval` Helm value). No explicit reload or admin API call is required after updating a Secret — the Token Service picks up the new value automatically. The metric `lenny_token_service_secret_reloads_total` (counter, labeled by secret name and outcome: `success`, `not_found`, `parse_error`) tracks secret resolution events.
+
+**Credential rotation workflow:**
+
+1. **Update the Kubernetes Secret** with the new credential material (e.g., `kubectl create secret generic anthropic-key-1 --from-literal=api-key=sk-ant-new... --dry-run=client -o yaml | kubectl apply -f -`).
+2. The Token Service detects the Secret change via its informer within 30 seconds.
+3. **No pool definition update is required** — the `secretRef` has not changed, only the Secret's content.
+4. New credential leases issued after the Secret update use the new material. Existing active leases continue using the previously materialized credentials until they expire naturally (governed by lease TTL). If immediate rotation of active sessions is required, use the emergency revocation endpoint (`POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke`) to force all active leases to re-acquire credentials with the updated material.
+
+**GitOps pattern.** For teams using GitOps (ArgoCD/Flux) with external secret management:
+
+- **Kubernetes Secrets** are managed by `external-secrets-operator` (ESO), `sealed-secrets`, or a similar controller that syncs secret material from an external vault (AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager, etc.). These are standard Kubernetes resources managed through the GitOps pipeline.
+- **Credential pool definitions** are managed via the `bootstrap.credentialPools` section in Helm values, committed to Git alongside other Helm values. The `lenny-bootstrap` Job applies them idempotently on every `helm upgrade` / ArgoCD sync.
+- **Ordering:** ESO / sealed-secrets controllers must populate the Secrets **before** the Token Service starts resolving them. In ArgoCD, use sync-wave ordering (e.g., `ExternalSecret` at sync-wave `-3`, Lenny chart at sync-wave `0`). The Token Service tolerates temporarily missing Secrets (credentials are marked `unavailable` and re-resolved on the next informer event), so brief ordering races during initial deployment are self-healing.
+
+#### 4.9.1 KMS Key Rotation Procedure
+
+The Token Service uses envelope encryption (AES-256-GCM) for OAuth refresh tokens and user-supplied API keys stored in Postgres. The KMS-backed envelope key must be rotated periodically. This procedure applies to the Token Service's application-layer encryption key (distinct from etcd Secret encryption described in "Encryption at rest — KMS key hierarchy" above).
+
+1. **Rotation steps:**
+   - Generate a new envelope key (DEK) in KMS; the old key remains active for decryption.
+   - Deploy the Token Service with the new key ID as the default encryption key.
+   - A background migration job re-encrypts all stored tokens: reads each token with the old DEK, re-encrypts with the new DEK, and updates the row atomically. The job is **idempotent** — rows already at `current_version` are skipped, so the job can be safely re-run after a partial failure or restart with no risk of data corruption.
+   - The `key_version` column on each encrypted token row tracks which DEK was used — the Token Service can decrypt with any known key version.
+   - **Verification before disabling old key:** Once all rows are re-encrypted, verify via `SELECT COUNT(*) FROM tokens WHERE key_version < current_version` returning 0 before proceeding.
+   - Only after the verification query confirms zero remaining rows should the old key be disabled in KMS.
+   - **Old key retention policy:** Disabled keys are retained in KMS for a minimum of 90 days after disabling (one full rotation cycle) before being scheduled for deletion, to allow disaster-recovery re-encryption if needed.
+   - **Redis cache:** The encryption key used to protect cached access tokens in Redis ([Section 12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)) is derived from the envelope key. After rotating the envelope key, all Redis-cached tokens are invalidated — the Token Service will re-derive tokens from Postgres using the new key on next access. No explicit Redis flush is required; cached entries simply fail decryption and are treated as cache misses.
+2. **Rollback procedure:** If the re-encryption job fails and cannot be completed, rotation can be safely aborted by reverting the Token Service's default key ID to the old version (re-deploy or update the KMS key alias). Because the Token Service decrypts using the `key_version` stored per row, all rows (some re-encrypted with the new key, others still on the old key) remain readable after rollback. The partial migration is thus fully reversible. After rollback, investigate the failure cause before retrying the rotation procedure from the beginning.
+3. **Frequency:** Recommended every 90 days, or immediately on suspected compromise.
+4. **Monitoring:** Alert if re-encryption job hasn't completed within 24h of key rotation.
+
+#### 4.9.2 Credential Audit Events
+
+All credential lifecycle events are written to the `EventStore` (Postgres, append-only — see Sections 11.7 and 12.2). Every event carries `tenant_id`, `session_id` (where applicable), and `timestamp` (RFC 3339 UTC) in addition to the event-specific fields listed below. No credential material (API keys, tokens) is ever included in any audit event payload — only identifiers (`credential_ref`, `pool_id`, `credential_id`) are recorded.
+
+| Event | Emitted When | Key Fields |
+| ----- | ------------ | ---------- |
+| `credential.registered` | User registers a new credential via `POST /v1/credentials` | `tenant_id`, `user_id`, `provider`, `credential_ref` |
+| `credential.deleted` | User deletes a credential via `DELETE /v1/credentials/{ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref` |
+| `credential.rotated` | User rotates credential material via `PUT /v1/credentials/{ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `active_leases_rotated` |
+| `credential.user_revoked` | User explicitly revokes their credential via `POST /v1/credentials/{ref}/revoke` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, `active_leases_terminated` |
+| `credential.leased` | A credential is assigned to a session at session start | `tenant_id`, `session_id`, `source` (`pool` or `user`), `delivery_mode`, `rotation_mode`. When `source: pool`: `pool_id`, `credential_id`. When `source: user`: `user_id`, `credential_ref`. |
+| `credential.revoked` | A pool credential is emergency-revoked by an operator | `tenant_id`, `pool_id`, `credential_id`, `revoked_by`, `reason`, `active_leases_terminated` |
+| `credential.re_enabled` | A previously revoked pool credential is re-enabled by an operator | `tenant_id`, `pool_id`, `credential_id`, `reason`, `re_enabled_by` |
+| `credential.renewed` | A credential lease is proactively renewed before expiry (`rotationTrigger: proactive_renewal`) | `tenant_id`, `session_id`, `pool_id`, `credential_id`, `rotation_trigger` |
+| `credential.fallback_exhausted` | All fallback providers are exhausted; session terminates with `CREDENTIAL_FALLBACK_EXHAUSTED` | `tenant_id`, `session_id`, `rotation_count`, `last_failure_reason`, `fallback_chain_attempted` |
+| `credential.lease_spiffe_mismatch` | Proxy request rejected because the pod's SPIFFE URI does not match the lease record | `tenant_id`, `session_id`, `lease_id`, `expected_spiffe_uri`, `actual_spiffe_uri` |
+
+**Storage destination:** `EventStore` (Postgres, `audit_events` table, append-only). All events are subject to the same hash-chaining, grant-verification, and SIEM-streaming controls described in [Section 11.7](11_policy-and-controls.md#117-audit-logging). The two billing-relevant events (`credential.leased`, `credential.revoked`) are additionally written to the billing event stream ([Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream)) for cost attribution and compliance reporting; all other credential audit events are audit-only.
+
