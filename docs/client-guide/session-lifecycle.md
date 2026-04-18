@@ -74,9 +74,9 @@ stateDiagram-v2
 
 ### The `input_required` Sub-State
 
-`input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required` -- the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
+`input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required`: the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
 
-While in `input_required`, all session timers (including `maxSessionAge`) continue running -- the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on pod crash with retries remaining), or `failed` (on pod crash with retries exhausted).
+While in `input_required`, all session timers (including `maxSessionAge`) continue running; the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on pod crash with retries remaining), or `failed` (on pod crash with retries exhausted).
 
 ---
 
@@ -125,7 +125,7 @@ Authorization: Bearer <token>
 }
 ```
 
-The `uploadToken` is a short-lived, session-scoped HMAC-SHA256 token. Treat it as a secret -- do not log it or include it in URLs. It expires at `session_creation_time + maxCreatedStateTimeoutSeconds`.
+The `uploadToken` is a short-lived, session-scoped HMAC-SHA256 token. Treat it as a secret; do not log it or include it in URLs. It expires at `session_creation_time + maxCreatedStateTimeoutSeconds`.
 
 ### b. Upload Files
 
@@ -191,7 +191,7 @@ X-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
 }
 ```
 
-Finalization validates the staging area, materializes the workspace, and runs any setup commands configured on the runtime. The upload token is consumed -- it cannot be reused after this call.
+Finalization validates the staging area, materializes the workspace, and runs any setup commands configured on the runtime. The upload token is consumed; it cannot be reused after this call.
 
 ### d. Start Session
 
@@ -373,7 +373,7 @@ Authorization: Bearer <token>
 }
 ```
 
-This creates the session, uploads inline files, finalizes, starts, and optionally sends the first message -- all in one request. The optional `callbackUrl` enables webhook notifications (see [Webhooks](webhooks.html)).
+This creates the session, uploads inline files, finalizes, starts, and optionally sends the first message in one request. The optional `callbackUrl` enables webhook notifications (see [Webhooks](webhooks.html)).
 
 ---
 
@@ -415,7 +415,7 @@ Authorization: Bearer <token>
 | `cancelled`, `expired` | Yes | No | Sealed or last checkpoint |
 | `running`, `suspended`, `resume_pending`, `awaiting_client_action` | Yes | **Yes** | Last checkpoint (may lag by up to checkpoint interval) |
 
-The derived session is fully independent -- it goes through standard credential policy evaluation and receives its own credential lease. Connector OAuth tokens are not inherited.
+The derived session is independent: it goes through standard credential policy evaluation and receives its own credential lease. Connector OAuth tokens are not inherited.
 
 ---
 

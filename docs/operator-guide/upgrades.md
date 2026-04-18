@@ -13,7 +13,7 @@ This page covers gateway rolling upgrades, pool image upgrade state machine, the
 
 ## Gateway Rolling Upgrades
 
-Gateway replicas are stateless-ish and upgraded via standard Kubernetes rolling deployments:
+Gateway replicas hold no per-replica durable state and are upgraded via standard Kubernetes rolling deployments:
 
 ```bash
 helm upgrade lenny lenny/lenny \

@@ -54,7 +54,7 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 
 ### LLM Proxy
 
-The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming from agent pods and talks to the upstream LLM provider on the pods' behalf. This keeps real provider API keys out of pod memory — keys live only in the gateway process, and credential rotation is zero-downtime. For deployers who want to route through a shared external LLM gateway (LiteLLM, Portkey, cloud-managed), see [external LLM proxy](../operator-guide/external-llm-proxy.md).
+The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming from agent pods and talks to the upstream LLM provider on the pods' behalf. This keeps real provider API keys out of pod memory — keys are held only in the gateway process, and credential rotation does not interrupt traffic. For deployers who want to route through a shared external LLM gateway (LiteLLM, Portkey, cloud-managed), see [external LLM proxy](../operator-guide/external-llm-proxy.md).
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|

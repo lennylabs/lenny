@@ -8,16 +8,16 @@ has_children: true
 
 # Client SDK Examples
 
-Complete, runnable code examples for interacting with the Lenny API. Each example demonstrates the full session lifecycle:
+Runnable code examples for interacting with the Lenny API. Each example demonstrates the full session lifecycle:
 
-1. **Authenticate** -- obtain an access token
-2. **Create session** -- specify a runtime and pool
-3. **Upload files** -- send workspace files to the session
-4. **Start session** -- launch the agent runtime
-5. **Send message** -- deliver a prompt to the agent
-6. **Stream output** -- receive real-time agent output
-7. **Retrieve artifacts** -- download results and transcripts
-8. **Terminate** -- cleanly end the session
+1. **Authenticate:** obtain an access token
+2. **Create session:** specify a runtime and pool
+3. **Upload files:** send workspace files to the session
+4. **Start session:** launch the agent runtime
+5. **Send message:** deliver a prompt to the agent
+6. **Stream output:** receive real-time agent output
+7. **Retrieve artifacts:** download results and transcripts
+8. **Terminate:** cleanly end the session
 
 ---
 
@@ -35,7 +35,7 @@ Complete, runnable code examples for interacting with the Lenny API. Each exampl
 
 ## REST API vs. MCP SDK
 
-The **REST API** examples (Python, TypeScript, Go, curl) use standard HTTP requests. They work with any HTTP client and are the simplest integration path.
+The **REST API** examples (Python, TypeScript, Go, curl) use standard HTTP requests. They work with any HTTP client.
 
 The **MCP SDK** examples use the Model Context Protocol SDK for interactive streaming sessions. Use MCP when you need:
 
@@ -44,7 +44,7 @@ The **MCP SDK** examples use the Model Context Protocol SDK for interactive stre
 - Elicitation (human-in-the-loop prompts)
 - MCP-native clients
 
-For most automation, CI/CD, and backend use cases, the REST API is sufficient and simpler.
+For most automation, CI/CD, and backend use cases, the REST API is sufficient.
 
 ---
 
@@ -52,4 +52,4 @@ For most automation, CI/CD, and backend use cases, the REST API is sufficient an
 
 All examples use a configurable base URL. Replace `https://lenny.example.com` with your deployment's gateway URL.
 
-The OpenAPI specification is available at `GET /openapi.yaml` (or `/openapi.json`) on any Lenny gateway -- use it to generate type-safe clients for your language of choice.
+The OpenAPI specification is available at `GET /openapi.yaml` (or `/openapi.json`) on any Lenny gateway; use it to generate type-safe clients for your language of choice.

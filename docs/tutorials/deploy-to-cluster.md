@@ -72,17 +72,17 @@ bootstrap:
 Lenny uses three namespaces to enforce isolation boundaries:
 
 ```bash
-# System namespace -- gateway, controllers, token service, stores
+# System namespace: gateway, controllers, token service, stores
 kubectl create namespace lenny-system
 
-# Agent namespace -- runc and gVisor pods
+# Agent namespace: runc and gVisor pods
 kubectl create namespace lenny-agents
 
-# Kata namespace (optional) -- microVM pods on dedicated nodes
+# Kata namespace (optional): microVM pods on dedicated nodes
 kubectl create namespace lenny-agents-kata
 ```
 
-Apply Pod Security Standards labels (warn + audit, not enforce -- enforcement is handled by RuntimeClass-aware admission policies included in the Helm chart):
+Apply Pod Security Standards labels (warn + audit, not enforce; enforcement is handled by RuntimeClass-aware admission policies included in the Helm chart):
 
 ```bash
 kubectl label namespace lenny-agents \
@@ -101,7 +101,7 @@ kubectl label namespace lenny-agents-kata \
 Create a `values.yaml` for your deployment. This example configures a single pool with runc isolation, single-tenant mode, and embedded stores suitable for testing.
 
 ```yaml
-# values.yaml -- Lenny deployment configuration
+# values.yaml: Lenny deployment configuration
 
 global:
   devMode: false  # NEVER true in production
@@ -369,7 +369,7 @@ kubectl get secret lenny-admin-token -n lenny-system \
   -o jsonpath='{.data.token}' | base64 -d
 ```
 
-Save this token -- you will need it for admin API calls. Example:
+Save this token; you will need it for admin API calls. Example:
 
 ```
 lenny_admin_01J5K9ABCDEF_a3f1c7e2d9b8...
@@ -610,5 +610,5 @@ The post-upgrade CRD validation hook will catch stale CRDs if you forget step 1.
 
 ## Next Steps
 
-- [Multi-Tenant Setup](multi-tenant-setup) -- configure tenant isolation, quotas, and OIDC
-- [Build a Runtime Adapter](build-a-runtime) -- create and deploy custom runtimes
+- [Multi-Tenant Setup](multi-tenant-setup): configure tenant isolation, quotas, and OIDC
+- [Build a Runtime Adapter](build-a-runtime): create and deploy custom runtimes

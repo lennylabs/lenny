@@ -41,7 +41,7 @@ All REST API endpoints return errors using a canonical JSON envelope:
 
 | Category | Meaning | Retry? | Client Action |
 |---|---|---|---|
-| `TRANSIENT` | Temporary failure, may resolve on its own | **Yes** -- exponential backoff | Retry with backoff; respect `Retry-After` header |
+| `TRANSIENT` | Temporary failure, may resolve on its own | **Yes** with exponential backoff | Retry with backoff; respect `Retry-After` header |
 | `PERMANENT` | Request is invalid or resource state prevents the operation | **No** | Fix the request or wait for state change |
 | `POLICY` | Request denied by policy, quota, or configuration | **No** (usually) | Check configuration, quotas, or permissions |
 | `UPSTREAM` | External dependency (LLM provider, MCP tool, auth provider) failed | **Sometimes** | Check upstream service status; may retry |
@@ -181,8 +181,8 @@ Admin API resources use ETags for safe concurrent updates. The ETag is a quoted 
 
 ### How ETags Work
 
-1. **GET** a resource -- the response includes an `ETag` header
-2. **PUT** the resource -- include `If-Match: "3"` with the ETag from step 1
+1. **GET** a resource: the response includes an `ETag` header
+2. **PUT** the resource: include `If-Match: "3"` with the ETag from step 1
 3. If the resource was modified since your GET, you get `412 ETAG_MISMATCH`
 4. If successful, you get the updated resource with a new ETag
 
@@ -249,7 +249,7 @@ def update_runtime(client, name, updates, max_retries=3):
         )
 
         if response.status_code == 412:
-            # ETag mismatch -- resource was modified, retry
+            # ETag mismatch: resource was modified, retry
             continue
         response.raise_for_status()
         return response.json()
@@ -330,10 +330,10 @@ When `code` is `VALIDATION_ERROR`, the `details.fields` array describes each val
 ```
 
 Each field entry contains:
-- `field` -- JSON path to the invalid field
-- `message` -- human-readable description
-- `rule` -- validation rule that failed (e.g., `required`, `range`, `pattern`, `enum`)
-- `params` -- rule-specific parameters (optional)
+- `field`: JSON path to the invalid field
+- `message`: human-readable description
+- `rule`: validation rule that failed (e.g., `required`, `range`, `pattern`, `enum`)
+- `params`: rule-specific parameters (optional)
 
 ---
 

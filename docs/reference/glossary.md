@@ -54,7 +54,7 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : The process by which the gateway acquires an idle warm pod for a new session. Claims use a `SandboxClaim` CRD with optimistic locking. A `lenny-sandboxclaim-guard` admission webhook prevents double-claims. See [State Machines](state-machines).
 
 **Connector**
-: An external MCP server (e.g., GitHub, Jira) registered as a first-class admin API resource, with gateway-managed OAuth and encrypted token storage. Connectors are proxied to agent sessions and are subject to content policy interceptors. See [API Reference](../api/).
+: An external MCP server (e.g., GitHub, Jira) registered as a top-level admin API resource, with gateway-managed OAuth and encrypted token storage. Connectors are proxied to agent sessions and are subject to content policy interceptors. See [API Reference](../api/).
 
 **Credential Lease**
 : A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. Leases are per-session in session mode, per-task in task mode, and per-slot in concurrent mode. See [Configuration Reference](configuration).
@@ -71,13 +71,13 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : A per-tenant regional constraint controlling where session data, artifacts, and checkpoints are stored. Specified via `dataResidencyRegion` at session creation. Enforced at storage and pool selection time; violations return `REGION_CONSTRAINT_VIOLATED` or `REGION_CONSTRAINT_UNRESOLVABLE`. See [Error Catalog](error-catalog).
 
 **Delegation**
-: The platform primitive by which an agent pod spawns a child session through the gateway. Delegations are mediated by the gateway, which enforces policy, budget, scope, depth limits, and isolation monotonicity at every hop. The parent interacts with the child through a virtual MCP child interface. See [State Machines](state-machines).
+: An operation by which an agent pod spawns a child session through the gateway. The gateway enforces policy, budget, scope, depth limits, and isolation monotonicity at every hop. The parent interacts with the child through a virtual MCP child interface. See [State Machines](state-machines).
 
 **Derived Session**
 : A session created via `POST /v1/sessions/{id}/derive`, forking from a completed session's workspace snapshot. The derived session starts with the source session's workspace but its own independent lifecycle, credential lease, and event stream. See [REST API Reference](../api/rest).
 
 **Delegation Policy**
-: A named, first-class API resource defining which runtimes, connectors, and pools a session can delegate to. Uses tag-based matching with `include`/`exclude` rules. Effective policy is the intersection of runtime-level and derived-runtime policies. See [API Reference](../api/).
+: A named, top-level API resource defining which runtimes, connectors, and pools a session can delegate to. Uses tag-based matching with `include`/`exclude` rules. Effective policy is the intersection of runtime-level and derived-runtime policies. See [API Reference](../api/).
 
 **Environment**
 : A named, RBAC-governed project context that groups runtimes and connectors for a team. Environments provide scoping for session creation, runtime discovery, and delegation policy evaluation. Managed via the Admin API.

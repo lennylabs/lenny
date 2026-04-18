@@ -7,7 +7,7 @@ nav_order: 7
 
 # Delegation
 
-Recursive delegation is a **platform primitive** in Lenny. The gateway provides the foundational operations; your runtime decides whether and how to use them. This page covers the delegation model in detail: how to spawn child tasks, manage budgets, handle results, and build reliable orchestration patterns.
+Recursive delegation is implemented by the gateway. Your runtime decides whether and how to use it. This page covers the delegation model in detail: how to spawn child tasks, manage budgets, handle results, and build reliable orchestration patterns.
 
 ---
 

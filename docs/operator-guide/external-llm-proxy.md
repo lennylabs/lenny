@@ -2,7 +2,7 @@
 
 Lenny's gateway talks to LLM providers on behalf of agent pods. It ships with a built-in translator that converts OpenAI Chat Completions and Anthropic Messages requests into the upstream wire formats for the v1 provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [`../reference/metrics.md`](../reference/metrics.md) for the metrics the translator emits, and [§4.9](../../spec/04_system-components.md#49-credential-leasing-service) of the spec for the subsystem contract.
 
-This page documents how to integrate an **external** LLM routing proxy — LiteLLM, Portkey, OpenRouter, AWS Bedrock Agent, Azure API Management, or any custom in-house gateway — as the upstream for one or more Lenny `CredentialPool`s. The external-proxy path is a first-class deployer option; Lenny itself does not ship or manage the external proxy.
+This page documents how to integrate an **external** LLM routing proxy — LiteLLM, Portkey, OpenRouter, AWS Bedrock Agent, Azure API Management, or any custom in-house gateway — as the upstream for one or more Lenny `CredentialPool`s. The external-proxy path is a supported deployer option; Lenny itself does not ship or manage the external proxy.
 
 ## When to use an external LLM proxy
 

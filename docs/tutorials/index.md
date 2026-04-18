@@ -7,7 +7,7 @@ has_children: true
 
 # Tutorials
 
-Hands-on walkthroughs, each self-contained, with runnable code, the output you should see, and an explanation of what's happening under the hood.
+Self-contained walkthroughs. Each includes runnable code, expected output, and an explanation of what happens inside Lenny.
 
 ## By role
 
@@ -15,8 +15,8 @@ Hands-on walkthroughs, each self-contained, with runnable code, the output you s
 
 | Tutorial | Difficulty | What you'll do |
 |----------|------------|----------------|
-| [`lenny up` Walkthrough](lenny-up-walkthrough) | Beginner | Install the CLI, run the whole platform on your laptop, talk to `chat` and `claude-code`, and explore the web playground -- in about five minutes |
-| [Web Playground Tour](playground-tour) | Beginner | Pick a runtime, upload a workspace, and drive a session from start to finish without writing any code |
+| [`lenny up` Walkthrough](lenny-up-walkthrough) | Beginner | Install the CLI, run the platform on your laptop, talk to `chat` and `claude-code`, and explore the web playground. Approximately five minutes. |
+| [Web Playground Tour](playground-tour) | Beginner | Pick a runtime, upload a workspace, and drive a session without writing code |
 
 ### If you're building a client
 
@@ -58,32 +58,32 @@ Running Lenny on a Kubernetes cluster.
 
 ### Beginner
 
-- [`lenny up` Walkthrough](lenny-up-walkthrough) -- everyone
-- [Web Playground Tour](playground-tour) -- everyone
-- [Your First Session](first-session) -- client developers
-- [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime) -- runtime authors
-- [Install with the `lenny-ctl install` Wizard](installer-wizard) -- operators
+- [`lenny up` Walkthrough](lenny-up-walkthrough): everyone
+- [Web Playground Tour](playground-tour): everyone
+- [Your First Session](first-session): client developers
+- [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime): runtime authors
+- [Install with the `lenny-ctl install` Wizard](installer-wizard): operators
 
 ### Intermediate
 
-- [Build a Runtime Adapter](build-a-runtime) -- runtime authors
-- [Wrap a Coding-Agent CLI](wrap-coding-agent-cli) -- runtime authors
-- [Runtime SDK Integration](runtime-sdk-integration) -- runtime authors
-- [Deploy to Kubernetes](deploy-to-cluster) -- operators
-- [Diagnose and Remediate with `doctor --fix`](doctor-fix) -- operators
-- [Bundled Alerting and OpenSLO Export](alerting-and-openslo) -- operators
-- [MCP Client Integration](mcp-client-integration) -- client developers
-- [OpenAI SDK Integration](openai-sdk-integration) -- client developers
-- [OAuth Token Exchange](oauth-token-exchange) -- client developers
+- [Build a Runtime Adapter](build-a-runtime): runtime authors
+- [Wrap a Coding-Agent CLI](wrap-coding-agent-cli): runtime authors
+- [Runtime SDK Integration](runtime-sdk-integration): runtime authors
+- [Deploy to Kubernetes](deploy-to-cluster): operators
+- [Diagnose and Remediate with `doctor --fix`](doctor-fix): operators
+- [Bundled Alerting and OpenSLO Export](alerting-and-openslo): operators
+- [MCP Client Integration](mcp-client-integration): client developers
+- [OpenAI SDK Integration](openai-sdk-integration): client developers
+- [OAuth Token Exchange](oauth-token-exchange): client developers
 
 ### Advanced
 
-- [Recursive Delegation](recursive-delegation) -- runtime authors and client developers
-- [Multi-Tenant Setup](multi-tenant-setup) -- operators
+- [Recursive Delegation](recursive-delegation): runtime authors and client developers
+- [Multi-Tenant Setup](multi-tenant-setup): operators
 
 ## Before you start
 
-- The **Lenny CLI** is the one thing every tutorial needs: `brew install lenny-dev/tap/lenny` or grab a binary from the releases page.
+- Every tutorial needs the **Lenny CLI**: `brew install lenny-dev/tap/lenny` or grab a binary from the releases page.
 - Some SDK tutorials also need **Go 1.22+**, **Python 3.10+**, or **Node.js 18+**.
 - **Docker** is required for building runtime images.
 - **Kubernetes cluster access** is required for the operator tutorials beyond `lenny up`.

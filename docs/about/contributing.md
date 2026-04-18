@@ -30,12 +30,12 @@ Lenny is in **active pre-release development**. The project welcomes bug reports
 
 File an issue on the GitHub issue tracker with:
 
-- **Summary** -- a clear, concise description of the problem.
-- **Steps to reproduce** -- minimum steps to trigger the issue.
-- **Expected behavior** -- what should have happened.
-- **Actual behavior** -- what happened instead.
-- **Environment** -- Kubernetes version, Helm chart version, runtime adapter version, isolation profile.
-- **Logs** -- relevant structured log output with `session_id`, `tenant_id`, and `trace_id` correlation fields.
+- **Summary:** a concise description of the problem.
+- **Steps to reproduce:** minimum steps to trigger the issue.
+- **Expected behavior:** what should have happened.
+- **Actual behavior:** what happened instead.
+- **Environment:** Kubernetes version, Helm chart version, runtime adapter version, isolation profile.
+- **Logs:** relevant structured log output with `session_id`, `tenant_id`, and `trace_id` correlation fields.
 
 ### Feature requests and design proposals
 
@@ -49,7 +49,7 @@ Once the project transitions to accepting external contributions (Phase 17a):
 
 1. **Fork the repository** and create a feature branch from `main`.
 2. **Follow the local development setup** below.
-3. **Write tests** -- see [test expectations](#test-expectations).
+3. **Write tests.** See [test expectations](#test-expectations).
 4. **Open a pull request** against `main` with a clear description of the change.
 
 ---
@@ -108,11 +108,11 @@ For full Kubernetes-based development, see the [Quickstart Guide](../getting-sta
 
 Every PR should include:
 
-- **What** -- a concise summary of the change.
-- **Why** -- the motivation (link to issue or discussion).
-- **How** -- implementation approach and key design decisions.
-- **Testing** -- how the change was tested (unit, integration, manual).
-- **Breaking changes** -- any backward-incompatible changes, migration steps, or deprecations.
+- **What:** a concise summary of the change.
+- **Why:** the motivation (link to issue or discussion).
+- **How:** implementation approach and key design decisions.
+- **Testing:** how the change was tested (unit, integration, manual).
+- **Breaking changes:** any backward-incompatible changes, migration steps, or deprecations.
 
 ### Review process
 
@@ -129,9 +129,9 @@ Every PR should include:
 
 Every package must have unit tests covering:
 
-- **Happy-path behavior** -- normal operation.
-- **Error paths** -- each error code returned by the package.
-- **Edge cases** -- boundary conditions, empty inputs, concurrent access.
+- **Happy-path behavior:** normal operation.
+- **Error paths:** each error code returned by the package.
+- **Edge cases:** boundary conditions, empty inputs, concurrent access.
 
 Unit tests must be fast (<100ms per test) and have no external dependencies. Use interfaces and mocks for database, Redis, and MinIO interactions.
 
@@ -139,14 +139,14 @@ Unit tests must be fast (<100ms per test) and have no external dependencies. Use
 
 Integration tests run against real (embedded or containerized) stores:
 
-- **Session lifecycle tests** -- full session creation through completion.
-- **Delegation tests** -- parent-child delegation with budget enforcement.
-- **Error handling tests** -- each error code exercised with a canonical triggering input.
-- **Admission policy tests** -- verify controller-generated pod specs pass deployed admission policies (prevents policy/spec drift from causing warm pool deadlock).
+- **Session lifecycle tests:** full session creation through completion.
+- **Delegation tests:** parent-child delegation with budget enforcement.
+- **Error handling tests:** each error code exercised with a canonical triggering input.
+- **Admission policy tests:** verify controller-generated pod specs pass deployed admission policies (prevents policy/spec drift from causing warm pool deadlock).
 
 ### Contract tests
 
-The runtime adapter contract has a dedicated compliance test suite:
+The runtime adapter contract has a compliance test suite:
 
 - **`RegisterAdapterUnderTest`** compliance suite validates that an adapter correctly implements the Basic, Standard, or Full integration-level contract.
 - All error classes (`VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED`) are exercised with canonical triggering inputs.
@@ -154,9 +154,9 @@ The runtime adapter contract has a dedicated compliance test suite:
 
 ---
 
-## Runtime adapter: the primary extension point
+## Runtime adapter: the main extension point
 
-The runtime adapter contract is Lenny's primary extension point. If you are building a custom agent or integrating an existing framework with Lenny, start here.
+The runtime adapter contract is how external agent code integrates with Lenny. If you are building a custom agent or integrating an existing framework with Lenny, start here.
 
 ### What a runtime adapter does
 
@@ -235,7 +235,7 @@ Community members can propose ADRs via the Discussions forum. The maintainer (or
 
 ## Community runtime registry
 
-A community runtime registry -- where runtime authors publish versioned adapter packages for operator discovery and installation -- is planned as a post-v1 platform service.
+A community runtime registry, where runtime authors publish versioned adapter packages for operator discovery and installation, is planned as a post-v1 platform service.
 
 In v1, runtime adapters are distributed via:
 
@@ -243,7 +243,7 @@ In v1, runtime adapters are distributed via:
 - Container registries (Docker Hub, GitHub Container Registry, private registries)
 - Helm chart repositories
 
-The runtime adapter specification provides the stable interface contract for v1 adapter distribution. The registry will build on this contract to add discoverability, versioning, and compatibility metadata.
+The runtime adapter specification defines the interface contract for v1 adapter distribution. The registry will build on this contract to add discoverability, versioning, and compatibility metadata.
 
 ---
 
@@ -278,10 +278,10 @@ The open-source license for Lenny is a **Phase 0 gating item** (ADR-008). The li
 
 The license decision evaluates:
 
-- **Competitive landscape alignment** -- E2B uses Apache 2.0 with a commercial offering; Temporal and LangChain use MIT.
-- **Enterprise legal review** -- compatibility with enterprise adoption requirements.
-- **Runtime author copyleft clarity** -- whether the license creates obligations for runtime adapter authors.
-- **Upstream compatibility** -- compatibility with `kubernetes-sigs/agent-sandbox` and other dependencies.
+- **Competitive landscape alignment:** E2B uses Apache 2.0 with a commercial offering; Temporal and LangChain use MIT.
+- **Enterprise legal review:** compatibility with enterprise adoption requirements.
+- **Runtime author copyleft clarity:** whether the license creates obligations for runtime adapter authors.
+- **Upstream compatibility:** compatibility with `kubernetes-sigs/agent-sandbox` and other dependencies.
 
 ### Candidate licenses
 

@@ -235,7 +235,7 @@ The ramp test determines the empirical saturation point for `maxSessionsPerRepli
 
 ## Subsystem Extraction Triggers
 
-The gateway's four internal subsystems are designed to be extractable to dedicated services when scaling demands it.
+The gateway's four internal subsystems can be extracted to dedicated services when scaling demands it.
 
 ### Extraction Readiness Table
 

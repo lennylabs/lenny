@@ -9,7 +9,7 @@ nav_order: 7
 
 **Persona:** Operator | **Difficulty:** Advanced
 
-Lenny is designed from the ground up for multi-tenant isolation. Every tenant's data is separated at the database level using Postgres Row-Level Security (RLS), and the platform enforces per-tenant quotas, rate limits, and access controls.
+Lenny separates tenants at the database level using Postgres row-level security (RLS), and enforces per-tenant quotas, rate limits, and access controls.
 
 In this tutorial you will configure an OIDC provider for authentication, register tenants, set per-tenant quotas, configure pool access, verify isolation, and set up metering for billing.
 
@@ -39,7 +39,7 @@ Before every query, the gateway runs:
 SET LOCAL app.current_tenant = '<tenant_id>';
 ```
 
-This means a query from Tenant A physically cannot read Tenant B's rows -- the database enforces isolation regardless of application-layer bugs.
+A query from Tenant A cannot read Tenant B's rows: the database enforces isolation regardless of application-layer bugs.
 
 ### The Three Layers
 
@@ -114,7 +114,7 @@ A valid JWT token for Lenny must include:
 
 ## Step 2: Register Tenants
 
-Tenants are first-class resources in Lenny. Each tenant gets its own RLS partition, quota configuration, and pool access grants.
+Tenants are a top-level resource. Each tenant has its own row-level-security partition, quota configuration, and pool access grants.
 
 ```bash
 TOKEN="your-platform-admin-token"
@@ -316,7 +316,7 @@ Expected output:
 
 ## Step 5: Verify Tenant Isolation
 
-The most important test in a multi-tenant deployment: verify that cross-tenant reads return zero rows.
+Verify that cross-tenant reads return zero rows.
 
 ### Test 1: Session Visibility
 
@@ -364,7 +364,7 @@ curl -s "http://localhost:8080/v1/runtimes" \
   -H "Authorization: Bearer ${GLOBEX_TOKEN}" | jq '.[].name'
 ```
 
-If Globex has access only to `echo`, they see only `echo` -- even if other runtimes exist on the platform.
+If Globex has access only to `echo`, they see only `echo`, even if other runtimes exist on the platform.
 
 ### Test 3: Cross-Tenant Message Rejection
 
@@ -566,7 +566,7 @@ Additionally, PgBouncer is configured with a `connect_query` sentinel:
 connect_query = SET app.current_tenant = '__unset__'
 ```
 
-This ensures that every new connection starts with the tenant set to `__unset__`. If the application code forgets to call `SET LOCAL`, the RLS policy evaluates against `__unset__`, which matches no rows -- fail-closed behavior.
+Every new connection starts with the tenant set to `__unset__`. If the application code forgets to call `SET LOCAL`, the RLS policy evaluates against `__unset__`, which matches no rows. This is fail-closed behavior.
 
 ### Cloud-Managed Pooler Defense
 
@@ -594,7 +594,7 @@ This trigger fires on every INSERT and UPDATE to tenant-scoped tables, rejecting
 
 ### Automated Test
 
-Here is an integration test that verifies tenant isolation works correctly:
+An integration test that verifies tenant isolation:
 
 ```python
 import requests
@@ -633,7 +633,7 @@ def test_cross_tenant_session_invisible(acme_token, globex_token):
         json={"input": [{"type": "text", "inline": "hack"}]})
     assert resp.status_code == 404
 
-    # Globex lists sessions -- Acme's session must not appear
+    # Globex lists sessions; Acme's session must not appear
     resp = requests.get(f"{GATEWAY}/v1/sessions",
         headers={"Authorization": f"Bearer {globex_token}"})
     assert resp.status_code == 200
@@ -743,5 +743,5 @@ In this tutorial you:
 
 ## Next Steps
 
-- [Deploy to Kubernetes](deploy-to-cluster) -- review production considerations
-- [Recursive Delegation](recursive-delegation) -- understand how delegation works within tenant boundaries
+- [Deploy to Kubernetes](deploy-to-cluster): review production considerations
+- [Recursive Delegation](recursive-delegation): how delegation works within tenant boundaries

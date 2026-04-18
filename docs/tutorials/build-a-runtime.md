@@ -9,7 +9,7 @@ nav_order: 2
 
 **Persona:** Runtime Author | **Difficulty:** Intermediate
 
-In this tutorial you will build a custom Lenny runtime from scratch. You will start from the echo runtime sample, understand the adapter-to-binary protocol, and build a "calculator" runtime that declares a tool and handles tool calls. By the end you will have a working runtime registered in your local dev environment.
+In this tutorial you will build a custom Lenny runtime from scratch. You will start from the echo runtime sample, review the adapter-to-binary protocol, and build a "calculator" runtime that declares a tool and handles tool calls. By the end you will have a working runtime registered in your local dev environment.
 
 ## Prerequisites
 
@@ -28,15 +28,15 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 | Type | Purpose |
 |------|---------|
 | `message` | A user or agent message with input content |
-| `heartbeat` | Liveness check -- you must reply with `heartbeat_ack` |
-| `shutdown` | Graceful shutdown signal -- exit within `deadline_ms` |
+| `heartbeat` | Liveness check; reply with `heartbeat_ack` |
+| `shutdown` | Graceful shutdown signal; exit within `deadline_ms` |
 | `tool_result` | Result of a tool call you previously requested |
 
 ### Messages You Send (stdout)
 
 | Type | Purpose |
 |------|---------|
-| `response` | Your output -- text, structured data, etc. |
+| `response` | Your output (text, structured data, etc.) |
 | `tool_call` | Request the adapter to execute a tool (e.g., `read_file`) |
 | `heartbeat_ack` | Reply to a heartbeat |
 | `status` | Optional progress update |
@@ -56,9 +56,9 @@ STDIN  -> {"type":"shutdown","reason":"drain","deadline_ms":10000}
 
 ---
 
-## Part 2: The Echo Runtime -- Starting Point
+## Part 2: The Echo Runtime (Starting Point)
 
-Before building the calculator, let us examine a complete echo runtime in Go. This is the minimal contract every Lenny runtime must implement.
+Before building the calculator, review a complete echo runtime in Go. This shows the contract every Lenny runtime implements.
 
 ```go
 // file: cmd/echo-runtime/main.go
@@ -111,7 +111,7 @@ func main() {
 
 		var msg Message
 		if err := json.Unmarshal(line, &msg); err != nil {
-			// Protocol error -- log and continue
+			// Protocol error; log and continue
 			fmt.Fprintf(os.Stderr, "parse error: %v\n", err)
 			continue
 		}
@@ -138,7 +138,7 @@ func main() {
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
 
 		case "shutdown":
-			// Graceful shutdown -- exit cleanly
+			// Graceful shutdown; exit cleanly
 			os.Exit(0)
 
 		default:
@@ -167,7 +167,7 @@ func writeJSON(v interface{}) {
 
 ## Part 3: Build the Calculator Runtime
 
-Now let us build something more interesting. The calculator runtime will:
+The calculator runtime will:
 
 1. Accept messages containing math expressions
 2. Declare a `calculate` tool that the agent can call
@@ -310,7 +310,7 @@ func main() {
 			}
 			text = strings.TrimSpace(text)
 
-			// Check if this is a "save" command -- demonstrates tool_call usage
+			// Check if this is a "save" command; demonstrates tool_call usage
 			if strings.HasPrefix(strings.ToLower(text), "save ") {
 				// The user wants to save a result to a file.
 				// We will call the adapter-local "write_file" tool.
@@ -331,14 +331,14 @@ func main() {
 					},
 				}
 				writeJSON(call)
-				// Do not send a response yet -- wait for tool_result
+				// Do not send a response yet; wait for tool_result
 				continue
 			}
 
 			// Try to evaluate as a math expression
 			result, err := evaluate(text)
 			if err != nil {
-				// Not a math expression -- provide a help message
+				// Not a math expression; provide a help message
 				resp := ResponseMsg{
 					Type: "response",
 					Output: []OutputPart{
@@ -441,11 +441,11 @@ func writeJSON(v interface{}) {
 
 ### Key Design Decisions
 
-1. **Single stdin loop:** All messages arrive on stdin. We dispatch on `msg.Type` to handle different message kinds.
+1. **Single stdin loop:** All messages arrive on stdin. Dispatch on `msg.Type` to handle different message kinds.
 
-2. **Tool calls are asynchronous within the stdin channel:** When we emit a `tool_call`, we do not get the result immediately on the next line. Other messages (heartbeats, additional user messages) may arrive first. We track pending tool calls by ID.
+2. **Tool calls are asynchronous within the stdin channel:** When you emit a `tool_call`, the result does not arrive on the next line. Other messages (heartbeats, additional user messages) may arrive first. Track pending tool calls by ID.
 
-3. **Heartbeats are critical:** If you do not respond to a heartbeat within 10 seconds, the adapter sends SIGTERM. Always handle them in your main loop.
+3. **Heartbeats:** If you do not respond to a heartbeat within 10 seconds, the adapter sends SIGTERM. Always handle them in your main loop.
 
 4. **Unknown messages are ignored:** The protocol is forward-compatible. New message types may be added in future versions. Your runtime must not crash on unrecognized types.
 
@@ -534,7 +534,7 @@ USER agent
 
 COPY --from=builder /calc-runtime /usr/local/bin/calc-runtime
 
-# The adapter spawns this binary -- it is NOT the container entrypoint.
+# The adapter spawns this binary; it is NOT the container entrypoint.
 # The adapter is the entrypoint; it starts the runtime via the sidecar model.
 # For embedded model testing, you can use this entrypoint directly:
 ENTRYPOINT ["/usr/local/bin/calc-runtime"]
@@ -612,7 +612,7 @@ Expected response includes:
 
 ## Part 7: Upgrade to the Standard level
 
-The calculator runtime so far is at the Basic level -- it uses only stdin/stdout. To unlock platform capabilities like delegation, tool discovery, and elicitation, upgrade to the Standard level by connecting to the adapter's MCP servers.
+The calculator runtime so far is at the Basic level: it uses only stdin/stdout. To add platform capabilities like delegation, tool discovery, and elicitation, upgrade to the Standard level by connecting to the adapter's MCP servers.
 
 ### What the Standard level adds
 
@@ -675,7 +675,7 @@ func Load(path string) (*AdapterManifest, error) {
 
 ### Connecting to Lenny's local tool server
 
-Standard-level runtimes connect to Lenny's local tool server as an MCP client. The connection uses abstract Unix sockets (Linux only -- use `docker compose` on macOS).
+Standard-level runtimes connect to Lenny's local tool server as an MCP client. The connection uses abstract Unix sockets (Linux only; use `docker compose` on macOS).
 
 ```go
 // Pseudocode for MCP connection setup:
@@ -750,5 +750,5 @@ In this tutorial you:
 
 ## Next Steps
 
-- [Recursive Delegation](recursive-delegation) -- build a coordinator that delegates to child runtimes
-- [Deploy to Kubernetes](deploy-to-cluster) -- deploy your runtime to a real cluster
+- [Recursive Delegation](recursive-delegation): build a coordinator that delegates to child runtimes
+- [Deploy to Kubernetes](deploy-to-cluster): deploy your runtime to a real cluster

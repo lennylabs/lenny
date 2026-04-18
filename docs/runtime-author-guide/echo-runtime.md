@@ -366,4 +366,4 @@ COPY --from=builder /build/echo-runtime /echo-runtime
 ENTRYPOINT ["/echo-runtime"]
 ```
 
-Multi-stage build produces a ~2MB static binary with no OS dependencies. The `scratch` base image is the smallest possible container.
+Multi-stage build produces a ~2MB static binary with no OS dependencies. The `scratch` base image contains no OS files.

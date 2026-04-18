@@ -9,7 +9,7 @@ nav_order: 5
 
 **Persona:** Client Developer | **Difficulty:** Intermediate
 
-The Model Context Protocol (MCP) is Lenny's native client-facing protocol. Lenny's gateway exposes an MCP Streamable HTTP endpoint that any MCP-compatible host can connect to. In this tutorial you will connect an MCP client to Lenny, discover runtimes, create sessions, send messages, handle elicitation (human-in-the-loop), and manage task state transitions.
+The Model Context Protocol (MCP) is Lenny's client-facing protocol. Lenny's gateway exposes an MCP Streamable HTTP endpoint that any MCP-compatible host can connect to. In this tutorial you will connect an MCP client to Lenny, discover runtimes, create sessions, send messages, handle elicitation (human-in-the-loop), and manage task state transitions.
 
 ## Prerequisites
 
@@ -19,12 +19,12 @@ The Model Context Protocol (MCP) is Lenny's native client-facing protocol. Lenny
 
 ---
 
-## What is MCP and Why Lenny Uses It
+## What is MCP
 
-The [Model Context Protocol](https://spec.modelcontextprotocol.io/) is an open specification for communication between AI applications and their tools/resources. Lenny uses MCP as its primary client-facing protocol because:
+The [Model Context Protocol](https://spec.modelcontextprotocol.io/) is an open specification for communication between AI applications and their tools/resources. Lenny uses MCP as its client-facing protocol:
 
-1. **Tasks:** MCP defines a task lifecycle (submitted, working, input_required, completed, failed, canceled) that maps directly to Lenny's session states
-2. **Elicitation:** MCP supports structured human-in-the-loop prompts, which Lenny uses for tool approval and user confirmation
+1. **Tasks:** MCP defines a task lifecycle (submitted, working, input_required, completed, failed, canceled) that maps to Lenny's session states
+2. **Elicitation:** MCP supports structured human-in-the-loop prompts, used by Lenny for tool approval and user confirmation
 3. **Streaming:** MCP Streamable HTTP provides server-to-client streaming for real-time output
 4. **Tool discovery:** MCP's `tools/list` mechanism is used for runtime discovery
 5. **Composability:** MCP servers can be nested, which maps to Lenny's recursive delegation model
@@ -45,7 +45,7 @@ This is a **Streamable HTTP** endpoint (not stdio, not WebSocket). Your MCP clie
 
 ## Step 2: Version Negotiation
 
-Lenny's gateway speaks **MCP 2025-03-26** (primary) and accepts **MCP 2024-11-05** (backward compatibility). The version is negotiated during the MCP `initialize` handshake.
+Lenny's gateway supports **MCP 2025-03-26** (default) and **MCP 2024-11-05**. The version is negotiated during the MCP `initialize` handshake.
 
 ### Python
 
@@ -109,7 +109,7 @@ Capabilities: {tools: {listChanged: true}, ...}
 
 ## Step 3: Discover Runtimes
 
-Lenny exposes runtime discovery through the `list_runtimes` MCP tool. The results are identity-filtered and policy-scoped -- you only see runtimes you are authorized to use.
+Lenny exposes runtime discovery through the `list_runtimes` MCP tool. The results are identity-filtered and policy-scoped: you only see runtimes you are authorized to use.
 
 ### Python
 
@@ -469,7 +469,7 @@ Every elicitation includes provenance metadata so your UI can display where the 
 }
 ```
 
-Display provenance prominently in your UI. Connector-initiated elicitations (`initiator_type: "connector"`) carry higher trust than agent-initiated ones.
+Display provenance in your UI. Connector-initiated elicitations (`initiator_type: "connector"`) carry higher trust than agent-initiated ones.
 
 ---
 
@@ -487,7 +487,7 @@ MCP tasks go through defined state transitions. Your client should handle each s
 | `cancelled` | `canceled` | Display cancellation notice |
 | `expired` | `failed` | Display expiration notice |
 
-### Python -- Complete Session Handler
+### Python: Session Handler
 
 ```python
 async def run_complete_session(session):
@@ -524,7 +524,7 @@ async def run_complete_session(session):
     print(f"\nSession terminated.")
 ```
 
-### TypeScript -- Complete Session Handler
+### TypeScript: Session Handler
 
 ```typescript
 async function runCompleteSession(client: Client) {
@@ -584,5 +584,5 @@ The following MCP tools are available on Lenny's gateway MCP endpoint:
 
 ## Next Steps
 
-- [OpenAI SDK Integration](openai-sdk-integration) -- use the familiar OpenAI SDK interface
-- [Recursive Delegation](recursive-delegation) -- observe delegation trees via MCP
+- [OpenAI SDK Integration](openai-sdk-integration): use the OpenAI SDK interface
+- [Recursive Delegation](recursive-delegation): observe delegation trees via MCP

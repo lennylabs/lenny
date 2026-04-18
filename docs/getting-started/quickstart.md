@@ -54,7 +54,7 @@ Ready in 47s. Try: lenny session start --runtime chat --message "hello"
 
 The warning banner is deliberate: the embedded stack uses stub credentials and is meant for development and evaluation, not production. It cannot be suppressed.
 
-Importantly, this isn't a simulator. `lenny up` runs the exact same gateway, controllers, and management-plane binaries a production cluster does. What you learn here transfers directly.
+`lenny up` runs the same gateway, controller, and management-plane binaries a production cluster runs. Only the external dependencies (Postgres, Redis, KMS, identity provider) are replaced with in-process equivalents.
 
 ---
 

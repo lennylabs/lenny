@@ -9,9 +9,9 @@ nav_order: 13
 
 **Persona:** Runtime Author + Client Developer | **Difficulty:** Intermediate
 
-Lenny provides a persistent memory store that agents can write to and query across sessions. Memories are scoped by tenant, user, agent, and session -- enabling agents to remember context from previous interactions. The default implementation uses Postgres with pgvector for semantic search.
+Lenny provides a persistent memory store that agents can write to and query across sessions. Memories are scoped by tenant, user, agent, and session, so agents can reuse context from previous interactions. The default implementation uses Postgres with pgvector for semantic search.
 
-In this tutorial you will write memories from one session, then query them from a subsequent session for the same user.
+In this tutorial you will write memories from one session, then query them from a later session for the same user.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ SESSION_ID=$(curl -s -X POST http://localhost:8080/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"runtime": "claude-worker"}' | jq -r '.session_id')
 
-# Finalize and start (abbreviated -- see first-session tutorial)
+# Finalize and start (abbreviated; see first-session tutorial)
 UPLOAD_TOKEN=$(curl -s "http://localhost:8080/v1/sessions/${SESSION_ID}" | jq -r '.uploadToken')
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
   -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
@@ -41,11 +41,11 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \
   -H "Content-Type: application/json" -d '{}'
 
-# Send a message -- the agent will learn and store memories
+# Send a message; the agent writes memories
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/messages" \
   -H "Content-Type: application/json" \
   -d '{
-    "input": [{"type": "text", "inline": "I prefer tabs over spaces, and my primary language is Go. Remember this for future sessions."}]
+    "input": [{"type": "text", "inline": "I prefer tabs over spaces, and my main language is Go. Store this for future sessions."}]
   }' | jq .
 ```
 
@@ -63,7 +63,7 @@ Behind the scenes, the runtime calls `lenny/memory_write`:
           "tags": ["preferences", "formatting"]
         },
         {
-          "content": "User's primary programming language is Go.",
+          "content": "User's main programming language is Go.",
           "tags": ["preferences", "language"]
         }
       ]
@@ -132,7 +132,7 @@ The gateway returns matching memories:
     },
     {
       "memoryId": "mem_02...",
-      "content": "User's primary programming language is Go.",
+      "content": "User's main programming language is Go.",
       "tags": ["preferences", "language"],
       "sessionId": "sess_01...",
       "createdAt": "2026-04-12T10:05:01Z",
@@ -142,7 +142,7 @@ The gateway returns matching memories:
 }
 ```
 
-The agent uses these memories to personalize its responses -- for example, using tabs and Go idioms without being told again.
+The agent uses these memories to personalize its responses; for example, it uses tabs and Go idioms without being told again.
 
 ---
 
@@ -158,7 +158,7 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${NEW_SESSION_ID}/messages" \
   }' | jq .
 ```
 
-The agent, having queried memories, will write the server in Go with tab indentation without being asked -- demonstrating cross-session memory persistence.
+The agent, having queried memories, writes the server in Go with tab indentation without being asked. This demonstrates cross-session memory persistence.
 
 ---
 
@@ -190,6 +190,6 @@ See [Configuration Reference](../reference/configuration) for details.
 
 ## Next Steps
 
-- [Build a Runtime Adapter](build-a-runtime) -- implement memory support in your runtime
-- [Configuration Reference](../reference/configuration) -- memory store settings
-- [Glossary](../reference/glossary) -- Memory Store definition
+- [Build a Runtime Adapter](build-a-runtime): implement memory support in your runtime
+- [Configuration Reference](../reference/configuration): memory store settings
+- [Glossary](../reference/glossary): Memory Store definition

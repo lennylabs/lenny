@@ -8,7 +8,7 @@ nav_order: 1
 
 # Python Client Examples
 
-Complete Python examples for interacting with the Lenny REST API. Uses `httpx` (async) for the primary examples and includes a `requests` (sync) variant for simpler use cases.
+Python examples for interacting with the Lenny REST API. Uses `httpx` (async) for the main examples and includes a `requests` (sync) variant.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ pip install httpx requests
 
 ```python
 """
-Complete Lenny session lifecycle using httpx (async).
+Lenny session lifecycle using httpx (async).
 
 pip install httpx
 

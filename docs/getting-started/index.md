@@ -13,7 +13,7 @@ Lenny runs interactive AI agent sessions in isolated sandboxes on your own Kuber
 
 ## Start here
 
-Three pages, in order. Together they take less than an hour and leave you with a working local install and a solid mental model.
+Three pages, in order. Together they take less than an hour and leave you with a working local install.
 
 | Page | What you'll do | Time |
 |------|----------------|------|
@@ -60,7 +60,7 @@ You're writing code -- an app, a script, a CI pipeline, an MCP host -- that crea
 
 Alerts page you, and you need to know where to look and what to do.
 
-1. Run the **Quickstart** so you have a sandbox to practice diagnostic commands against before you need them in anger.
+1. Run the **Quickstart** so you have a sandbox to practice diagnostic commands against before you need them in production.
 2. Read **Core Concepts**, focusing on pools, the gateway, session states, and the management plane.
 3. Skim **Architecture Overview** for where failures propagate.
 4. Read [**Agent Operability**](../operator-guide/agent-operability) for the diagnostic endpoints, the runbook catalog, drift detection, and backup and restore.

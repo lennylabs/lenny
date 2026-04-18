@@ -9,7 +9,7 @@ nav_order: 3
 
 Lenny supports multiple streaming mechanisms for receiving real-time output from agent sessions. This page covers SSE log streaming, Streamable HTTP (MCP transport), WebSocket attachment, event types, reconnection handling, and backpressure.
 
-> **Session output vs. operational events.** This page covers **session output streaming** -- real-time agent tokens, tool calls, and results consumed by the end-client. **Operational event streaming** -- platform-level events consumed by operators and agent-operability tools -- uses a separate endpoint (`/v1/admin/events/stream`) and a different wire format (CloudEvents v1.0.2). See the [CloudEvents catalog](../reference/cloudevents-catalog.md) for operational-event consumption. The two streams are distinct.
+> **Session output vs. operational events.** This page covers **session output streaming**: real-time agent tokens, tool calls, and results consumed by the end-client. **Operational event streaming**, the platform-level events consumed by operators and agent-operability tools, uses a separate endpoint (`/v1/admin/events/stream`) and a different wire format (CloudEvents v1.0.2). See the [CloudEvents catalog](../reference/cloudevents-catalog.md) for operational-event consumption. The two streams are distinct.
 
 ---
 
@@ -25,7 +25,7 @@ Lenny supports multiple streaming mechanisms for receiving real-time output from
 
 ## SSE Log Streaming
 
-The simplest way to receive real-time output from a session. Send a GET request with `Accept: text/event-stream`:
+To receive real-time output from a session, send a GET request with `Accept: text/event-stream`:
 
 ```
 GET /v1/sessions/{id}/logs
@@ -78,7 +78,7 @@ The `agent_output` event contains an array of `OutputPart` objects:
 | `blob` | Binary data. Fields: `mimeType` (string), `inline` (base64 string) or `ref` (lenny-blob:// URI). |
 | `structured` | Structured data. Fields: `schema` (string), `data` (object). |
 
-For `blob` parts with a `ref` field, resolve the blob via `GET /v1/blobs/{ref}` (REST adapter only -- MCP and other adapters dereference refs internally).
+For `blob` parts with a `ref` field, resolve the blob via `GET /v1/blobs/{ref}` (REST adapter only; MCP and other adapters dereference refs internally).
 
 ---
 
@@ -107,14 +107,14 @@ If the SSE connection drops (network issue, server restart, etc.):
 2. On reconnect, provide your last-seen cursor via the `Last-Event-ID` header or `?cursor=` query parameter
 3. The gateway replays missed events from the EventStore
 
-**Replay window**: Events are available for replay for `max(periodicCheckpointIntervalSeconds * 2, 1200s)` -- typically 20 minutes. If your cursor falls outside this window, the gateway sends a `checkpoint_boundary` event:
+**Replay window**: Events are available for replay for `max(periodicCheckpointIntervalSeconds * 2, 1200s)` (typically 20 minutes). If your cursor falls outside this window, the gateway sends a `checkpoint_boundary` event:
 
 ```
 event: checkpoint_boundary
 data: {"cursor": "cur_xyz", "events_lost": 42, "reason": "replay_window_exceeded", "checkpoint_timestamp": "2026-01-15T10:35:00Z"}
 ```
 
-When `events_lost > 0`, your client has missed events. Treat this as a gap in event history -- you may need to re-fetch session state via `GET /v1/sessions/{id}`.
+When `events_lost > 0`, your client has missed events. Treat this as a gap in event history; you may need to re-fetch session state via `GET /v1/sessions/{id}`.
 
 ### Reconnection Example
 
@@ -141,7 +141,7 @@ The gateway uses a **bounded-error** policy for SSE connections:
 - The client must reconnect with its last-seen cursor
 - Missed events are replayed from the EventStore (if within the replay window)
 
-This ensures a single slow client cannot cause unbounded memory growth in the gateway.
+A single slow client cannot cause unbounded memory growth in the gateway.
 
 ---
 

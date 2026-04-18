@@ -20,11 +20,11 @@ This tutorial covers how to set up evaluation using runtime-native eval platform
 
 ---
 
-## Step 1: Runtime-Native Evaluation (Primary Path)
+## Step 1: Runtime-Native Evaluation
 
-Most production runtimes integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) for scoring, observability, and prompt iteration. Lenny does not integrate outbound with these platforms — runtimes use their own SDKs and APIs directly.
+Most production runtimes integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) for scoring, observability, and prompt iteration. Lenny does not integrate outbound with these platforms; runtimes use their own SDKs and APIs directly.
 
-No Lenny-specific setup is required for runtime-native eval. Runtimes score sessions using their own tooling exactly as they would outside of Lenny.
+No Lenny-specific setup is required for runtime-native eval. Runtimes score sessions using their own tooling.
 
 ### Cross-delegation tracing
 
@@ -54,9 +54,9 @@ The gateway automatically attaches the parent's `tracingContext` to child delega
 
 ---
 
-## Step 2: Built-in Eval Endpoint (Alternative Path)
+## Step 2: Built-in Eval Endpoint
 
-For deployers without dedicated eval tooling, Lenny provides a basic score ingestion endpoint. Run a session to completion, then submit scores:
+For deployers without dedicated eval tooling, Lenny provides a score ingestion endpoint. Run a session to completion, then submit scores:
 
 ```bash
 SESSION_ID="sess_01..."
@@ -100,7 +100,7 @@ You can submit multiple evals per session (up to `maxEvalsPerSession`, default: 
 
 ## Step 3: Session Replay for Regression Testing
 
-Session replay enables controlled comparison across runtime versions without A/B experiments:
+Session replay supports controlled comparison across runtime versions without A/B experiments:
 
 ```bash
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/replay" \
@@ -136,11 +136,11 @@ When a session is enrolled in an experiment, the adapter manifest includes an `e
 
 Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. This is how variant-level comparison works: the runtime reads `experimentId` and `variantId` from the manifest and includes them as metadata on its eval traces.
 
-Note that eval platforms (LangSmith, Braintrust, W&B) do not have native A/B comparison features — variant comparison works via metadata filtering and grouping in those platforms' UIs. For statistical rigor (significance testing, confidence intervals, winner recommendation), use a dedicated experimentation platform (LaunchDarkly, Statsig) — see the SPEC Section 10.7 "Full A/B testing with external platforms" for the three-platform integration pattern.
+Note that eval platforms (LangSmith, Braintrust, W&B) do not have native A/B comparison features; variant comparison works via metadata filtering and grouping in those platforms' UIs. For statistical rigor (significance testing, confidence intervals, winner recommendation), use a dedicated experimentation platform (LaunchDarkly, Statsig). See the SPEC Section 10.7 "Full A/B testing with external platforms" for the three-platform integration pattern.
 
 ### Automatic attribution on the built-in endpoint
 
-When a session is enrolled in an experiment and you submit scores via the built-in `/eval` endpoint, the gateway automatically populates `experiment_id` and `variant_id` on the eval result — no scorer-side wiring needed. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation.
+When a session is enrolled in an experiment and you submit scores via the built-in `/eval` endpoint, the gateway automatically populates `experiment_id` and `variant_id` on the eval result. No scorer-side wiring is needed. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation.
 
 ### Setting up an experiment
 
@@ -185,17 +185,17 @@ This returns per-variant score aggregation for scores submitted via the built-in
 
 ## Key Concepts
 
-- **Eval is independent of experimentation** — any session can be scored, with or without an active experiment.
-- **Two-tier evaluation**: Runtime-native eval platforms (LangSmith, Braintrust, etc.) are the primary scoring path; Lenny's `/eval` endpoint is a basic alternative.
-- **Cross-delegation tracing**: `tracingContext` propagation enables trace stitching across delegation chains — an observability feature for any multi-agent delegation, not just experiments.
-- **Experiment context delivery** (optional): When experiments are active, the adapter manifest includes `experimentContext` so runtimes can tag traces with variant metadata for filtering and grouping.
-- **Session replay**: Replaying sessions against different runtimes provides controlled comparison, with or without experiments.
-- **Configurable rate limits**: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` control built-in eval submission rates.
+- Eval is independent of experimentation: any session can be scored, with or without an active experiment.
+- Two evaluation paths: runtime-native eval platforms (LangSmith, Braintrust, etc.) and Lenny's `/eval` endpoint.
+- Cross-delegation tracing: `tracingContext` propagation supports trace stitching across delegation chains, for any multi-agent delegation, not only experiments.
+- Experiment context delivery (optional): When experiments are active, the adapter manifest includes `experimentContext` so runtimes can tag traces with variant metadata for filtering and grouping.
+- Session replay: Replaying sessions against different runtimes provides controlled comparison, with or without experiments.
+- Configurable rate limits: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` control built-in eval submission rates.
 
 ---
 
 ## Next Steps
 
-- [Session Derive and Replay](session-derive-replay) -- workspace forking and replay details
-- [REST API Reference](../api/rest) -- eval and experiment endpoints
-- [Configuration Reference](../reference/configuration) -- eval rate limits and quota settings
+- [Session Derive and Replay](session-derive-replay): workspace forking and replay details
+- [REST API Reference](../api/rest): eval and experiment endpoints
+- [Configuration Reference](../reference/configuration): eval rate limits and quota settings

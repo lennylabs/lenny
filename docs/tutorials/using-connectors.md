@@ -16,7 +16,7 @@ In this tutorial you will register a GitHub connector, create a session with con
 ## Prerequisites
 
 - Lenny running locally via `docker compose up`
-- A GitHub OAuth App (client ID and secret) -- see [GitHub docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)
+- A GitHub OAuth App (client ID and secret); see [GitHub docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)
 - Familiarity with [Your First Session](first-session)
 - curl and jq installed
 
@@ -137,7 +137,7 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/messages" \
 
 ## Step 6: Handle the OAuth Elicitation
 
-When the agent first calls a GitHub MCP tool, the gateway checks whether the user has an active OAuth token for the `github` connector. If not, it triggers an **elicitation** requesting the user to authorize.
+When the agent first calls a GitHub MCP tool, the gateway checks whether the user has an active OAuth token for the `github` connector. If not, it triggers an elicitation requesting the user to authorize.
 
 Monitor the SSE stream for the elicitation event:
 
@@ -181,15 +181,15 @@ The gateway logs each connector call for audit. Connector traffic is subject to 
 
 ## Key Concepts
 
-- **Gateway-managed OAuth**: The gateway stores encrypted OAuth tokens and injects them into connector requests. Agent pods never see raw connector credentials.
-- **Content policy interceptors**: `PreConnectorRequest` and `PostConnectorResponse` interceptors can inspect and filter connector traffic.
-- **Elicitation flow**: When a user has not yet authorized a connector, the gateway triggers an elicitation. Once authorized, subsequent sessions reuse the stored token.
-- **Connector test endpoint**: Use `POST /v1/admin/connectors/{name}/test` to verify DNS, TLS, MCP handshake, and auth before exposing a connector to users.
+- Gateway-managed OAuth: the gateway stores encrypted OAuth tokens and injects them into connector requests. Agent pods never see raw connector credentials.
+- Content policy interceptors: `PreConnectorRequest` and `PostConnectorResponse` interceptors can inspect and filter connector traffic.
+- Elicitation flow: when a user has not yet authorized a connector, the gateway triggers an elicitation. Once authorized, subsequent sessions reuse the stored token.
+- Connector test endpoint: use `POST /v1/admin/connectors/{name}/test` to verify DNS, TLS, MCP handshake, and auth before exposing a connector to users.
 
 ---
 
 ## Next Steps
 
-- [Recursive Delegation](recursive-delegation) -- delegates can also use connectors
-- [REST API Reference](../api/rest) -- full connector admin API
-- [Error Catalog](../reference/error-catalog) -- connector-related error codes
+- [Recursive Delegation](recursive-delegation): delegates can also use connectors
+- [REST API Reference](../api/rest): connector admin API
+- [Error Catalog](../reference/error-catalog): connector-related error codes

@@ -87,7 +87,7 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 
 ### LLM translator metrics
 
-Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real API keys — the keys live only in the gateway process's memory, and credential rotation is zero-downtime. See [Security](../operator-guide/security.md#llm-proxy) for the trust boundary and [external LLM proxy](../operator-guide/external-llm-proxy.md) for deployer integrations with third-party routing gateways.
+Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real API keys — the keys are held only in the gateway process's memory, and credential rotation does not interrupt traffic. See [Security](../operator-guide/security.md#llm-proxy) for the trust boundary and [external LLM proxy](../operator-guide/external-llm-proxy.md) for deployer integrations with third-party routing gateways.
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|

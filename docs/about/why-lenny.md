@@ -24,17 +24,17 @@ Lenny is a platform for running interactive AI agent sessions in isolated sandbo
 
 The agent itself can be anything. If your program can read JSON from standard input and write JSON to standard output, it can run as a Lenny agent -- whether that program is Anthropic's Claude Code CLI, a LangGraph graph, a CrewAI crew, or 50 lines of Go you wrote this morning. Lenny handles the hard infrastructure parts: starting the pod, preparing the workspace, delivering files, leasing credentials, tracking delegation, and recording audit events. Your agent focuses on the conversation.
 
-Because the platform is built on standard Kubernetes building blocks (custom resources, controllers, network policies, autoscalers, sandboxing runtimes), there's no custom scheduler to learn, no vendor control plane to trust, and nothing phoning home. The cluster you operate is the only place your data exists.
+The platform is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing runtimes. There is no custom scheduler, no external control plane, and no outbound telemetry to a vendor. Data stays inside the cluster you operate.
 
 ---
 
 ## When Lenny is a good fit
 
-Lenny is built for teams that need one or more of:
+Lenny fits teams that need one or more of:
 
 - **Sessions that start fast even though they're isolated.** Idle pods are kept warm in a pool, so starting a new session doesn't wait for a container to boot. What a user waits on is their workspace being prepared and their agent starting -- usually a few seconds.
 - **Strict separation between sessions.** Each session runs in its own pod. You choose how strong that isolation is per pool: a normal container for trusted code, a gVisor sandbox for untrusted code (the default), or a microVM with Kata Containers for high-risk workloads. No shared memory, no shared filesystem.
-- **Truly interactive workflows.** Streaming model output to the user as it's generated. Asking the user for input mid-run and waiting for an answer. Interrupting a long-running agent cleanly. Picking up from a checkpoint if the pod dies.
+- **Interactive workflows.** Streaming model output to the user as it's generated. Asking the user for input mid-run and waiting for an answer. Interrupting a long-running agent cleanly. Picking up from a checkpoint if the pod dies.
 - **Multi-agent workflows with guardrails.** An agent can ask another agent to do part of the work, with an enforced token budget, a narrower set of permissions, and isolation that can only get stricter -- never looser -- down the tree. The gateway prevents cycles and caps tree depth and size.
 - **One integration point for multiple client styles.** Automation that wants REST, MCP hosts like Claude Desktop, code that already uses the OpenAI SDK, and clients built against the Open Responses spec all work against the same gateway.
 - **Audit, multi-tenancy, and compliance controls.** Postgres row-level security on every query. A tamper-evident audit log. Retention windows compatible with SOC 2, HIPAA, and FedRAMP. GDPR-style erasure that returns a cryptographic receipt. Legal holds. Data residency rules that pin sessions to specific regions.
@@ -45,13 +45,13 @@ Lenny is built for teams that need one or more of:
 - **You want a hosted SaaS you sign up for.** Lenny is self-hosted only; there is no managed offering.
 - **You want a specific agent framework baked in.** Lenny works with whatever agent you bring. The reference catalog covers common frameworks, but it's a starting point, not a constraint.
 - **You want evaluation scoring, LLM-as-judge, memory extraction, or prompt guardrails built in.** Lenny provides the hooks to plug those tools in, but it doesn't implement them. You bring your existing evaluation or safety stack.
-- **You can't run Kubernetes.** The platform is built on Kubernetes features (custom resources, network policies, autoscalers, admission webhooks). The single-binary stack is great for laptops and demos but isn't a production target.
+- **You can't run Kubernetes.** The platform is built on Kubernetes features (custom resources, network policies, autoscalers, admission webhooks). The single-binary stack runs on a laptop for evaluation and demos, but it is not a supported production target.
 
 ---
 
 ## How Lenny is designed
 
-The sections below describe the design choices that shape the platform -- what's true today and meant to stay true. These are the commitments that drive the architecture, not roadmap items.
+The sections below describe the design choices that shape the platform. They are implemented today, not roadmap items.
 
 ### The gateway is the only external surface
 
@@ -93,12 +93,12 @@ Every session pod runs non-root, with all Linux capabilities dropped, a read-onl
 You choose how hard the pod boundary is, per pool:
 
 - **`runc`** -- a normal Linux container. Appropriate for first-party code you trust.
-- **`gVisor`** -- a user-space kernel that intercepts system calls. This is the default. It's the right fit for arbitrary untrusted agents.
+- **`gVisor`** -- a user-space kernel that intercepts system calls. This is the default, and is appropriate for arbitrary untrusted agents.
 - **`Kata Containers`** -- a full microVM. Use it for high-risk workloads or strict multi-tenant isolation.
 
 LLM API keys live only in the gateway's memory. When an agent needs to call a model, the gateway rewrites the request and forwards it to the provider; the agent sees an opaque lease token. The gateway has built-in support for Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI. For other providers, route through an external LLM proxy like LiteLLM or Portkey alongside the built-in one.
 
-### Delegation is a platform primitive, not a convention
+### Delegation is enforced at the gateway
 
 An agent asks to delegate work with a single tool call. The gateway tracks the whole tree and enforces, at every hop:
 
@@ -114,13 +114,13 @@ The parent doesn't see the child's pod address, internal endpoints, or raw crede
 
 ### Cross-cutting capabilities are interfaces you fill in
 
-Memory, caching, guardrails, evaluation scoring, and credential routing are defined as interfaces. Lenny ships a default implementation of each that's disabled unless you opt in, and fully replaceable if you want to plug in your own tool. The platform is deliberately not an evaluation framework or a safety classifier -- it's the plumbing that lets you wire one in.
+Memory, caching, guardrails, evaluation scoring, and credential routing are defined as interfaces. Lenny ships a default implementation of each that is disabled unless you opt in, and any of them can be replaced with your own tool. Lenny does not implement evaluation scoring or safety classification; it provides the interfaces you wire those into.
 
 ### Every installation can be operated by a machine
 
-Lenny ships with a dedicated management plane (`lenny-ops`) that exposes structured endpoints for diagnostics, runbooks, backups, drift detection, and cluster management -- regardless of how big your deployment is. `lenny-ctl doctor --fix` finishes the loop for common misconfigurations automatically.
+Lenny ships with a dedicated management plane (`lenny-ops`) that exposes structured endpoints for diagnostics, runbooks, backups, drift detection, and cluster management -- regardless of how big your deployment is. `lenny-ctl doctor --fix` applies idempotent remediations for common misconfigurations.
 
-This isn't a nice-to-have. It's a commitment to being operable by AI agents as well as humans, which means every state an operator might need has to be available as a real API, not inferred from command output.
+Every state an operator might need is exposed as a structured API, so an AI DevOps agent can inspect and remediate the platform without screen-scraping `kubectl`.
 
 ---
 

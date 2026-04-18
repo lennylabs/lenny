@@ -233,7 +233,7 @@ Standard-level tests require the local stack. Use Docker Compose in CI:
 
 ## Validation Gate
 
-The compliance suite is designed as a **validation gate** for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), your runtime must pass all tests at its declared integration level:
+The compliance suite is the validation gate for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), your runtime must pass all tests at its declared integration level:
 
 ```bash
 # Required for publication

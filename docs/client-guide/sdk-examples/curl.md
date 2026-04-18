@@ -8,7 +8,7 @@ nav_order: 4
 
 # curl Command Reference
 
-Complete curl command reference for every REST endpoint, plus a session lifecycle walkthrough as a runnable bash script.
+curl command reference for every REST endpoint, plus a session lifecycle walkthrough as a runnable bash script.
 
 ## Prerequisites
 

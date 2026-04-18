@@ -91,7 +91,7 @@ lenny runtime publish my-agent \
 
 ### Reference runtimes you can learn from (or fork)
 
-Lenny ships with nine runtimes that are already production-shaped. Read the source, fork one, or register them as-is:
+Lenny ships with nine built-in runtimes. Read the source, fork one, or register them as-is:
 
 | Runtime | Category | Integration level |
 |---|---|---|
@@ -154,7 +154,7 @@ With it, you can support:
 - Pod reuse across sequential tasks in task-mode pools.
 - Coordinated draining when the pool is shutting down.
 
-Use this level for production-grade agents that need to survive pod failures, handle interrupts cleanly, and rotate credentials without interruption. About 300-400 lines of code, including a small background goroutine or thread to handle lifecycle signals.
+Use this level for agents that need to survive pod failures, handle interrupts, and rotate credentials without restarting. About 300-400 lines of code, including a small background goroutine or thread to handle lifecycle signals.
 
 ---
 

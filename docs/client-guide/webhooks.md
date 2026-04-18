@@ -160,14 +160,14 @@ Webhook-only clients cannot respond to elicitations. Elicitations require an act
 
 ## Webhook Secret Configuration
 
-The webhook signature (`X-Lenny-Signature`) uses the format `t=<unix_seconds>,v1=<hex_signature>` where the signature is HMAC-SHA256 over the ASCII bytes of the string `<unix_seconds>.<raw_body_bytes>` — that is, the decimal-string form of `t`, followed by a literal `.` (`0x2E`), followed by the raw request body exactly as received on the wire (no trimming, no re-serialization). There are two ways to configure the shared secret:
+The webhook signature (`X-Lenny-Signature`) uses the format `t=<unix_seconds>,v1=<hex_signature>` where the signature is HMAC-SHA256 over the ASCII bytes of the string `<unix_seconds>.<raw_body_bytes>`: the decimal-string form of `t`, followed by a literal `.` (`0x2E`), followed by the raw request body exactly as received on the wire (no trimming, no re-serialization). There are two ways to configure the shared secret:
 
-- **Per-session** -- pass a `callbackSecret` field alongside `callbackUrl` when creating the session. This secret is used exclusively for that session's webhook deliveries.
-- **Tenant-level** -- configure a default webhook secret via the admin API at the tenant level. Sessions that specify a `callbackUrl` without a `callbackSecret` use the tenant-level secret.
+- **Per-session:** pass a `callbackSecret` field alongside `callbackUrl` when creating the session. This secret is used exclusively for that session's webhook deliveries.
+- **Tenant-level:** configure a default webhook secret via the admin API at the tenant level. Sessions that specify a `callbackUrl` without a `callbackSecret` use the tenant-level secret.
 
 A 5-minute replay window is enforced: receivers MUST reject events where `abs(current_time - t) > 300`. Always verify the `X-Lenny-Signature` header before processing any webhook event.
 
-> **`t` vs CloudEvents `time`, and retry compatibility:** `t` is the **delivery attempt** timestamp — the gateway regenerates it (and therefore the HMAC signature) on every retry attempt, so a retry delivered 15 minutes after the original event carries a fresh `t` equal to the retry dispatch time, not the original event time. The 5-minute replay window therefore applies to each delivery attempt independently and is NOT in conflict with the 15-minute maximum retry interval below — the gateway re-signs with the current `t` on every retry, and the signed timestamp is always close to the moment the HTTPS request was initiated. The CloudEvents `time` field inside the body (`{"time": "2026-01-15T10:45:00Z"}`) is the **event occurrence** timestamp and is stable across retries. Use CloudEvents `id` (not `time`) for deduplication; use `t` only for replay-window enforcement.
+> **`t` vs CloudEvents `time`, and retry compatibility:** `t` is the **delivery attempt** timestamp. The gateway regenerates it (and therefore the HMAC signature) on every retry attempt, so a retry delivered 15 minutes after the original event carries a fresh `t` equal to the retry dispatch time, not the original event time. The 5-minute replay window therefore applies to each delivery attempt independently and is NOT in conflict with the 15-minute maximum retry interval below: the gateway re-signs with the current `t` on every retry, and the signed timestamp is always close to the moment the HTTPS request was initiated. The CloudEvents `time` field inside the body (`{"time": "2026-01-15T10:45:00Z"}`) is the **event occurrence** timestamp and is stable across retries. Use CloudEvents `id` (not `time`) for deduplication; use `t` only for replay-window enforcement.
 
 ### Verification pseudocode
 
@@ -197,13 +197,13 @@ def verify_lenny_webhook(headers, raw_body_bytes, secret_bytes):
         raise ValueError("invalid signature")
 ```
 
-**Deduplication guidance.** Retain each delivered CloudEvents `id` for at least **20 minutes** — long enough to cover the entire retry schedule above (final retry fires at 15 minutes after the previous attempt, plus a safety margin for clock skew and network delay). A CloudEvents `id` seen previously within this window is a retry of an already-processed event; respond 2xx but do not re-process. Beyond 20 minutes, retention is optional; longer retention lets consumers tolerate operational incidents (e.g., a retry that the gateway queued during its own outage and redelivers hours later). Dedup scope is per webhook subscription (the `callbackUrl` + `callbackSecret` pair); consumers need not share dedup state across subscriptions. Note that the 5-minute replay window on `t` is independent of dedup retention: `t` is regenerated per retry (see above), so a 15-minute-old retry still arrives with a fresh `t` and passes replay-window validation — only the CloudEvents `id` reveals that it is a duplicate.
+**Deduplication guidance.** Retain each delivered CloudEvents `id` for at least **20 minutes**: long enough to cover the entire retry schedule above (final retry fires at 15 minutes after the previous attempt, plus a safety margin for clock skew and network delay). A CloudEvents `id` seen previously within this window is a retry of an already-processed event; respond 2xx but do not re-process. Beyond 20 minutes, retention is optional; longer retention lets consumers tolerate operational incidents (e.g., a retry that the gateway queued during its own outage and redelivers hours later). Dedup scope is per webhook subscription (the `callbackUrl` + `callbackSecret` pair); consumers need not share dedup state across subscriptions. Note that the 5-minute replay window on `t` is independent of dedup retention: `t` is regenerated per retry (see above), so a 15-minute-old retry still arrives with a fresh `t` and passes replay-window validation. Only the CloudEvents `id` reveals that it is a duplicate.
 
 ---
 
 ## Async Job Pattern
 
-Webhooks enable a fire-and-forget pattern for CI/CD pipelines and batch processing:
+Webhooks support a fire-and-forget pattern for CI/CD pipelines and batch processing:
 
 ```
 1. Create session with callbackUrl  ──>  Lenny creates session and starts agent
@@ -239,7 +239,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Call this endpoint in your webhook handler to ensure artifacts remain available for as long as you need them.
+Call this endpoint in your webhook handler to keep artifacts available for as long as you need them.
 
 ---
 
@@ -331,7 +331,7 @@ async def handle_webhook(request: Request):
     print(f"Received webhook: {event_type} for {session_id}")
 
     if event_type == "dev.lenny.session_completed":
-        # Session finished -- retrieve artifacts
+        # Session finished: retrieve artifacts
         await retrieve_results(session_id)
 
     elif event_type == "dev.lenny.session_failed":

@@ -60,9 +60,9 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 
 The gateway validates the token signature, checks expiry, and extracts:
 
-- `user_id` -- the authenticated user
-- `tenant_id` -- the tenant context (extracted from the identity-provider claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
-- Role claims (e.g., `lenny_role`) -- determines authorization level
+- `user_id`: the authenticated user
+- `tenant_id`: the tenant context (extracted from the identity-provider claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
+- Role claims (e.g., `lenny_role`): determines authorization level
 
 ### Tenant Context
 
@@ -89,9 +89,9 @@ Best practice: refresh proactively before expiry. Most identity providers includ
 
 ### Token Rotation and Exchange (`/v1/oauth/token`)
 
-For token lifecycle operations inside Lenny — rotating an admin token, minting a narrowed scoped token for an agent service account, or any internal delegation child-token issuance — Lenny exposes the canonical OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
+For token lifecycle operations inside Lenny (rotating an admin token, minting a narrowed scoped token for an agent service account, or any internal delegation child-token issuance) Lenny exposes the OAuth token endpoint `POST /v1/oauth/token` compliant with [RFC 6749 §5](https://www.rfc-editor.org/rfc/rfc6749#section-5) and [RFC 8693 (Token Exchange)](https://www.rfc-editor.org/rfc/rfc8693).
 
-**Example — rotate an admin token:**
+**Example: rotate an admin token:**
 
 ```http
 POST /v1/oauth/token
@@ -104,7 +104,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
 &requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
 ```
 
-**Example — narrow scope for an automation agent:**
+**Example: narrow scope for an automation agent:**
 
 ```http
 POST /v1/oauth/token
@@ -142,7 +142,7 @@ Lenny sessions need credentials to access LLM providers (Anthropic, AWS Bedrock,
 
 The deployer or tenant admin registers credential pools via the admin API. Sessions are automatically assigned credentials from the pool at creation time. This is the recommended approach for production deployments.
 
-Users do not need to register individual credentials -- the platform handles assignment, rotation, and revocation.
+Users do not need to register individual credentials; the platform handles assignment, rotation, and revocation.
 
 ### On-Demand Flow (Per-User Credentials)
 
@@ -222,7 +222,7 @@ Authorization: Bearer <access_token>
 
 **Response** (`200 OK`):
 
-Active leases backed by this credential are immediately rotated -- running sessions receive the new credential without interruption.
+Active leases backed by this credential are immediately rotated; running sessions receive the new credential without interruption.
 
 #### Revoke a Credential
 
@@ -252,10 +252,10 @@ Removes the credential record. Active session leases are unaffected (they contin
 
 ### Credential Policy
 
-Tenants configure a `CredentialPolicy` that controls how credentials are sourced for sessions. The key fields are:
+Tenants configure a `CredentialPolicy` that controls how credentials are sourced for sessions. The fields are:
 
-- **`preferredSource`** -- determines the credential resolution order: `pool` (pool-only), `user` (user credentials only), `prefer-user-then-pool` (try user first, fall back to pool), or `prefer-pool-then-user` (try pool first, fall back to user).
-- **`userCredentialsEnabled`** -- when `false`, user-scoped credentials registered via `POST /v1/credentials` are ignored regardless of the `preferredSource` setting. When `true`, the gateway resolves user-scoped credentials from the credential store according to the fallback configuration.
+- **`preferredSource`**: determines the credential resolution order: `pool` (pool-only), `user` (user credentials only), `prefer-user-then-pool` (try user first, fall back to pool), or `prefer-pool-then-user` (try pool first, fall back to user).
+- **`userCredentialsEnabled`**: when `false`, user-scoped credentials registered via `POST /v1/credentials` are ignored regardless of the `preferredSource` setting. When `true`, the gateway resolves user-scoped credentials from the credential store according to the fallback configuration.
 
 Per-session overrides can be passed at session creation time via the `credentialPolicy` field, but they can only restrict the tenant policy, never expand it.
 
@@ -265,14 +265,14 @@ Credentials reach agent pods in one of two ways:
 
 | Mode | How It Works | Security Implications |
 |---|---|---|
-| **Proxy** | The gateway injects credentials into upstream LLM requests on behalf of the pod. Pods receive a lease token and a proxy URL -- they never see the raw API key. | More secure. Recommended for most deployments. |
+| **Proxy** | The gateway injects credentials into upstream LLM requests on behalf of the pod. Pods receive a lease token and a proxy URL; they never see the raw API key. | More secure. Recommended for most deployments. |
 | **Direct** | The credential is written to a file on the pod filesystem. The runtime reads the file and calls LLM APIs directly. | Less secure (credential is present on the pod). Required for runtimes that call LLM APIs directly and cannot use the gateway proxy. |
 
 The delivery mode is configured per credential pool by the deployer. In regulated environments, consider requiring explicit admin approval for pools configured with `deliveryMode: direct`.
 
 ### Pod-bound Lease Tokens
 
-In multi-tenant deployments, proxy-mode lease tokens are cryptographically bound to the pod that requested them. Each pod has a unique cryptographic identity issued at pod startup (implemented as a SPIFFE identity), and on every LLM proxy request the gateway checks that the requesting pod's identity matches the one recorded when the credential was assigned. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH`, so a lease token lifted from one pod cannot be replayed by another. This binding is enforced on the gateway side -- no protocol change is required on the pod side.
+In multi-tenant deployments, proxy-mode lease tokens are cryptographically bound to the pod that requested them. Each pod has a unique cryptographic identity issued at pod startup (implemented as a SPIFFE identity), and on every LLM proxy request the gateway checks that the requesting pod's identity matches the one recorded when the credential was assigned. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH`, so a lease token lifted from one pod cannot be replayed by another. This binding is enforced on the gateway side; no protocol change is required on the pod side.
 
 ---
 

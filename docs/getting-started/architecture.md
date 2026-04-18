@@ -94,12 +94,12 @@ graph TB
 
 The gateway is the only externally-facing component. All client interaction enters through stateless gateway replicas deployed behind an ingress controller or load balancer.
 
-**Authentication and authorization.** The gateway authenticates clients via OIDC/OAuth 2.1 -- in other words, it delegates log-in to your identity provider and accepts the bearer tokens it issues. In multi-tenant deployments, the tenant identity is extracted from a configurable identity-provider claim (`auth.tenantIdClaim`, default: `tenant_id`). Authorization decisions (which runtimes, pools, and connectors a user can access) are evaluated against the tenant's role mappings and the `RequestInterceptor` policy chain.
+**Authentication and authorization.** The gateway authenticates clients via OIDC/OAuth 2.1: it delegates log-in to your identity provider and accepts the bearer tokens it issues. In multi-tenant deployments, the tenant identity is extracted from a configurable identity-provider claim (`auth.tenantIdClaim`, default: `tenant_id`). Authorization decisions (which runtimes, pools, and connectors a user can access) are evaluated against the tenant's role mappings and the `RequestInterceptor` policy chain.
 
 **External interfaces.** The gateway serves a native REST API (`/v1/sessions`, `/v1/admin`) and plugs in additional protocol adapters alongside it:
 
 - **REST API:** The native session and admin API for direct HTTP clients.
-- **MCP (Streamable HTTP):** The primary client protocol. Sessions appear as MCP Tasks.
+- **MCP (Streamable HTTP):** The main client protocol. Sessions appear as MCP Tasks.
 - **OpenAI Completions:** Compatibility adapter for OpenAI SDK clients.
 - **Open Responses:** Compatibility adapter for the Open Responses protocol.
 
@@ -115,11 +115,11 @@ All interfaces share the same internal session manager. Adding a new external pr
 - Delegation policy enforcement
 - Audit event emission
 
-Interceptors can block requests, modify them, or annotate them with metadata. The chain is extensible -- deployers can register custom interceptors.
+Interceptors can block requests, modify them, or annotate them with metadata. Deployers can register custom interceptors.
 
 #### Stream Proxy subsystem
 
-Manages all long-lived bidirectional connections between clients and agent pods. When a client attaches to a session, the Stream Proxy establishes a gRPC bidirectional stream to the pod's runtime adapter and relays events in both directions. Key responsibilities:
+Manages long-lived bidirectional connections between clients and agent pods. When a client attaches to a session, the Stream Proxy establishes a gRPC bidirectional stream to the pod's runtime adapter and relays events in both directions. Responsibilities:
 
 - **Session attachment and reattachment.** Clients can disconnect and reconnect to a running session. The Stream Proxy maintains a per-session event buffer so reconnecting clients receive events they missed.
 - **Event relay.** Agent output (text, tool calls, tool results, elicitation requests, status changes) flows from the pod through the Stream Proxy to the client.
@@ -140,7 +140,7 @@ Processes all file uploads from clients to pod workspaces. Uploads are streamed 
 
 Orchestrates recursive delegation and manages the virtual MCP interfaces that parent agents use to communicate with child agents. Responsibilities:
 
-- **Virtual child interfaces.** When agent A delegates to agent B, the MCP Fabric creates a virtual MCP server that A interacts with. Agent A sees a clean MCP interface (task status, results, elicitation forwarding, cancellation) without knowing anything about the underlying pod.
+- **Virtual child interfaces.** When agent A delegates to agent B, the MCP Fabric creates a virtual MCP server that A interacts with. Agent A sees an MCP interface (task status, results, elicitation forwarding, cancellation) without knowing anything about the underlying pod.
 - **Elicitation chain management.** Elicitations flow hop-by-hop through the delegation tree. The MCP Fabric routes each elicitation to the correct parent, tracks pending responses, and applies timeout and suppression policies.
 - **Task tree management.** The MCP Fabric maintains the delegation tree structure, tracks node states, and handles completed-subtree offloading to Postgres.
 
@@ -155,10 +155,10 @@ The pod can speak either an OpenAI-style or an Anthropic-style request (whicheve
 3. The gateway rewrites the request into the upstream provider's format, attaches the real credentials from its in-memory cache, and forwards it over TLS.
 4. The provider's response comes back, gets translated into the pod's style, token usage is extracted from authoritative fields, post-response policies run, and the response is relayed to the pod.
 
-Two consequences:
+Consequences:
 
 - **Pods never see API keys.** Only lease tokens.
-- **API keys never leave the gateway's memory.** They aren't written to disk, tmpfs, or any other container -- so credential rotation is zero-downtime: refresh the cache and the next outbound call picks up the new key.
+- **API keys never leave the gateway's memory.** They aren't written to disk, tmpfs, or any other container, so credential rotation is zero-downtime: refresh the cache and the next outbound call picks up the new key.
 
 The proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level outages. Operators who want a broader provider catalog, custom routing, or shared spend accounting can put an external LLM routing proxy (LiteLLM, Portkey, and the like) in front of the gateway's outbound path -- see [External LLM proxy](../operator-guide/external-llm-proxy.md).
 
@@ -176,7 +176,7 @@ The Session Manager is the source of truth for all session and task metadata. It
 - **Pod-to-session binding:** Which session is running on which pod.
 - **Delegation lease tracking:** Budget counters, depth limits, and fan-out accounting for the delegation tree.
 
-**Multi-tenancy enforcement:** Every tenant-scoped table carries a `tenant_id` column with PostgreSQL row-level security (RLS) -- a database feature that filters rows automatically based on a session variable. The gateway sets `SET LOCAL app.current_tenant = '<tenant_id>'` in every transaction, and the RLS policy filters rows accordingly. A defense-in-depth trigger (`lenny_tenant_guard`) rejects queries that reach the database without a tenant context set.
+**Multi-tenancy enforcement:** Every tenant-scoped table carries a `tenant_id` column with PostgreSQL row-level security (RLS), a database feature that filters rows automatically based on a session variable. The gateway sets `SET LOCAL app.current_tenant = '<tenant_id>'` in every transaction, and the RLS policy filters rows accordingly. A defense-in-depth trigger (`lenny_tenant_guard`) rejects queries that reach the database without a tenant context set.
 
 ---
 
@@ -187,11 +187,11 @@ A **separate process** (Kubernetes Deployment) that manages two categories of cr
 1. **Connector credentials:** OAuth tokens for external tools and agents (GitHub, Jira, Slack, etc.) accessed via registered connectors.
 2. **LLM provider credentials:** API keys, IAM roles, and service accounts for LLM providers (managed via Credential Pools).
 
-The Token Service is the only component with KMS decrypt permissions. It holds the envelope encryption keys for stored refresh tokens and can mint short-lived access tokens on demand. Gateway replicas communicate with the Token Service over mTLS -- they receive short-lived tokens, never refresh tokens or KMS master keys.
+The Token Service is the only component with KMS decrypt permissions. It holds the envelope encryption keys for stored refresh tokens and can mint short-lived access tokens on demand. Gateway replicas communicate with the Token Service over mTLS; they receive short-lived tokens, never refresh tokens or KMS master keys.
 
 Externally, every token issuance -- initial tokens, rotation, delegation child-token minting, scoped operator tokens -- flows through the canonical [`POST /v1/oauth/token`](../api/admin.md) endpoint using the RFC 8693 grant type `urn:ietf:params:oauth:grant-type:token-exchange`. Delegation child tokens are minted with the parent session token in the `actor_token` field to preserve the chain of custody.
 
-**High availability:** Deployed as a multi-replica Deployment (2+ replicas) with a PodDisruptionBudget. The service is fully stateless -- all persistent state lives in Postgres and KMS. Sessions that already hold credential leases continue operating during Token Service outages; only new sessions that require credentials are affected.
+**High availability:** Deployed as a multi-replica Deployment (2+ replicas) with a PodDisruptionBudget. The service is stateless; all persistent state lives in Postgres and KMS. Sessions that already hold credential leases continue operating during Token Service outages; only new sessions that require credentials are affected.
 
 ---
 
@@ -337,7 +337,7 @@ sequenceDiagram
 
 ## Storage architecture
 
-Lenny uses three storage backends, each chosen for its strengths:
+Lenny uses three storage backends:
 
 ```mermaid
 graph LR
@@ -403,7 +403,7 @@ MinIO (S3-compatible) stores all binary artifacts: uploaded files, workspace sna
 
 ## Internal vs external protocols
 
-Lenny uses different protocols for different boundaries, each chosen for the semantics of that boundary:
+Lenny uses different protocols for different boundaries:
 
 ```mermaid
 graph TB
@@ -435,7 +435,7 @@ graph TB
     IP6 & IP7 & IP8 --> Runtime[Agent Binary]
 ```
 
-**Why the split?** MCP is designed for task-oriented, semantically rich interactions -- creating tasks, requesting input, discovering tools, forwarding elicitations. These map naturally to client-facing and agent-to-agent communication. But lifecycle operations (start a pod, upload files, take a checkpoint, rotate credentials) are infrastructure plumbing that does not benefit from MCP's semantics. Using custom gRPC for infrastructure keeps the adapter protocol simple.
+**Why the split?** MCP covers task-oriented interactions: creating tasks, requesting input, discovering tools, forwarding elicitations. These map to client-facing and agent-to-agent communication. Lifecycle operations (start a pod, upload files, take a checkpoint, rotate credentials) are infrastructure plumbing that does not benefit from MCP's semantics. Using custom gRPC for infrastructure keeps the adapter protocol simple.
 
 ---
 

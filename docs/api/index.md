@@ -15,9 +15,9 @@ The Lenny gateway speaks several different APIs on the same port. Each one is ai
 
 | Surface | Path | Best for |
 |:--------|:-----|:---------|
-| [REST](rest/index.html) | `/v1/` | Any HTTP client -- CI/CD, scripts, dashboards, custom integrations. Covers everything. |
+| [REST](rest/index.html) | `/v1/` | HTTP clients -- CI/CD, scripts, dashboards, custom integrations. Covers every operation. |
 | [MCP](mcp.html) | `/mcp` | Interactive streaming, multi-agent delegation, mid-session user prompts, and MCP hosts like Claude Desktop or Cursor. |
-| [OpenAI Chat Completions](openai-completions.html) | `/v1/chat/completions` | Drop-in for code that already uses the OpenAI SDK. Each Lenny runtime shows up as a model. |
+| [OpenAI Chat Completions](openai-completions.html) | `/v1/chat/completions` | Code that already uses the OpenAI SDK. Each Lenny runtime shows up as a model. |
 | [Open Responses](open-responses.html) | `/v1/responses` | The Open Responses specification and the OpenAI Responses API. |
 | [Admin](admin.html) | `/v1/admin/` | Operator-only management: runtimes, pools, tenants, credential pools, delegation policies, and more. |
 | [Internal gRPC](internal.html) | internal only | Communication between the gateway and session pods. Runtime authors may need this; clients do not. |
@@ -341,7 +341,7 @@ The [REST API Reference](rest/index.html) page embeds Swagger UI loaded from the
 |:-----|:-----------------|
 | [REST API Reference (Swagger UI)](rest/index.html) | Interactive explorer for every REST endpoint |
 | [MCP API Reference](mcp.html) | Connection setup, version negotiation, and the full tool catalog |
-| [OpenAI Chat Completions API](openai-completions.html) | Drop-in compatibility for the OpenAI SDK |
+| [OpenAI Chat Completions API](openai-completions.html) | Compatibility layer for the OpenAI SDK |
 | [Open Responses API](open-responses.html) | Open Responses protocol details |
 | [Admin API Reference](admin.html) | Operator-only management endpoints |
 | [Internal gRPC API](internal.html) | Gateway-to-pod protocol, for runtime adapter authors |

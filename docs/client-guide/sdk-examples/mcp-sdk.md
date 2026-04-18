@@ -8,13 +8,13 @@ nav_order: 5
 
 # MCP SDK Examples
 
-Complete examples for interacting with Lenny through the Model Context Protocol (MCP) using both TypeScript and Python SDKs. MCP provides bidirectional streaming, delegation tree management, and elicitation (human-in-the-loop) support over Streamable HTTP.
+Examples for interacting with Lenny through the Model Context Protocol (MCP) using the TypeScript and Python SDKs. MCP provides bidirectional streaming, delegation tree management, and elicitation (human-in-the-loop) support over Streamable HTTP.
 
 Use MCP when you need:
-- **Real-time streaming** of agent output as it is produced
-- **Delegation tree** monitoring across recursive agent sessions
-- **Elicitation handling** for interactive human-in-the-loop prompts
-- **MCP-native clients** that already speak the protocol
+- Streaming of agent output as it is produced
+- Delegation tree monitoring across recursive agent sessions
+- Elicitation handling for interactive human-in-the-loop prompts
+- MCP-native clients that already speak the protocol
 
 For non-interactive automation (CI/CD, batch jobs, backend services), the [REST API examples](index.html) are simpler.
 
@@ -88,7 +88,7 @@ npm install
 ### Complete Session Lifecycle
 
 ```typescript
-// lenny_mcp.ts -- Complete Lenny MCP client lifecycle
+// lenny_mcp.ts: Lenny MCP client lifecycle
 //
 // Uses the MCP TypeScript SDK with Streamable HTTP transport to:
 //   1. Connect and negotiate protocol version
@@ -769,7 +769,7 @@ main().catch(console.error);
 This example demonstrates suspending and resuming a session mid-work:
 
 ```typescript
-// interrupt_resume.ts -- Interrupt and resume a session
+// interrupt_resume.ts: interrupt and resume a session
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -826,7 +826,7 @@ async function main(): Promise<void> {
     console.log("Waiting 10 seconds before interrupting...");
     await new Promise((r) => setTimeout(r, 10000));
 
-    // Interrupt the session -- transitions to "suspended"
+    // Interrupt the session; transitions to "suspended"
     console.log("Interrupting...");
     await client.callTool({
       name: "interrupt_session",
@@ -907,7 +907,7 @@ pip install -r requirements.txt
 
 ```python
 """
-Complete Lenny MCP client lifecycle using the Python MCP SDK.
+Lenny MCP client lifecycle using the Python MCP SDK.
 
 pip install mcp
 

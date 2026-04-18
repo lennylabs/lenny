@@ -9,9 +9,9 @@ nav_order: 1
 
 **For:** Client Developer | **Difficulty:** Beginner
 
-In this tutorial you'll create a session, send a couple of messages, stream the live output, and shut the session down. The easy path uses the `lenny session` CLI against a local `lenny up` -- no client code to write. After that you'll see the same flow as raw REST calls, Python, and TypeScript, so you have a template to drop into your own application.
+In this tutorial you'll create a session, send a couple of messages, stream the live output, and shut the session down. Path A uses the `lenny session` CLI against a local `lenny up`, with no client code. Paths B through E show the same flow via REST, Python, and TypeScript as a template for your own application.
 
-Everything below uses the `chat` runtime, which ships with every installation.
+The examples use the `chat` runtime, which ships with every installation.
 
 ## Before you start
 
@@ -19,13 +19,13 @@ Everything below uses the `chat` runtime, which ships with every installation.
 - Run `lenny up`. It starts the whole platform on your machine and prints a gateway URL (`https://localhost:8443` by default) and a development token.
 - For the SDK paths below, you'll also need Python 3.10+ or Node.js 18+.
 
-`lenny up` takes care of authentication for you -- the CLI and the web playground already know how to talk to it. When you later point the same commands at a deployed cluster, just export `LENNY_GATEWAY=https://...` and `LENNY_TOKEN=...` and they'll work the same way.
+`lenny up` handles authentication for you; the CLI and the web playground already know how to talk to it. To point the same commands at a deployed cluster, export `LENNY_GATEWAY=https://...` and `LENNY_TOKEN=...`.
 
 ---
 
 ## Path A: the `lenny session` CLI
 
-The CLI is the fastest way to drive a session by hand. Each command is a thin wrapper over the same API an SDK would use.
+The CLI drives a session by hand. Each command is a thin wrapper over the same API an SDK would use.
 
 ### Step 1: Start the session
 
@@ -43,7 +43,7 @@ message_id: msg_001
 response:   4
 ```
 
-**What just happened:** Lenny picked an idle pod for the `chat` runtime, set up a fresh isolated workspace, started the agent, delivered your message, and streamed the reply back. The session stays open -- you can keep talking to it.
+**What just happened:** Lenny picked an idle pod for the `chat` runtime, set up an isolated workspace, started the agent, delivered your message, and streamed the reply back. The session stays open; you can keep talking to it.
 
 ### Step 2: Continue the conversation
 
@@ -68,7 +68,7 @@ Every agent message, state change, and question-to-the-user comes through this f
 
 ### Step 4: Upload a workspace (optional)
 
-Some runtimes -- `claude-code`, for example -- need files to work with. Upload any directory or archive:
+Some runtimes (for example `claude-code`) need files to work with. Upload any directory or archive:
 
 ```shell
 mkdir -p /tmp/demo && echo "hello from a file" > /tmp/demo/greeting.txt
@@ -102,7 +102,7 @@ The transcript and any artifacts stay around for the retention period your opera
 
 ## Path B: the web playground
 
-If you'd rather click than type, open `https://localhost:8443/playground` while `lenny up` is running. Pick the `chat` runtime, send a message, and watch the reply stream in. The playground talks to the gateway through the exact same public API the CLI and SDKs use -- there's no back channel. Operators can turn it off entirely with `playground.enabled=false` in their Helm values.
+Open `https://localhost:8443/playground` while `lenny up` is running. Pick the `chat` runtime, send a message, and watch the reply stream in. The playground uses the same public API as the CLI and SDKs. Operators can disable it with `playground.enabled=false` in their Helm values.
 
 ---
 
@@ -150,7 +150,7 @@ curl -skN "https://localhost:8443/v1/sessions/${SESSION_ID}/logs" \
   -H "Accept: text/event-stream"
 ```
 
-The stream sends Server-Sent Events -- `agent_output`, `status_change`, and (for runtimes that ask the human questions) `elicitation_requested`. If you get disconnected, include `Last-Event-ID` on the reconnect and you'll pick up where you left off.
+The stream sends Server-Sent Events: `agent_output`, `status_change`, and (for runtimes that ask the human questions) `elicitation_requested`. If you get disconnected, include `Last-Event-ID` on the reconnect to resume.
 
 ### Upload and finalize a workspace
 
@@ -255,7 +255,7 @@ Sessions can also end in `failed` (unrecoverable error), `cancelled` (you asked 
 
 ## Where to go next
 
-- [MCP Client Integration](mcp-client-integration) -- plug Claude Desktop, Cursor, or your own MCP host into Lenny.
-- [OpenAI SDK Integration](openai-sdk-integration) -- point existing OpenAI SDK code at Lenny by changing one URL.
-- [Recursive Delegation](recursive-delegation) -- build workflows where one agent hands work to another, with budgets and scopes enforced.
-- [Build a Runtime Adapter](build-a-runtime) -- write your own agent runtime.
+- [MCP Client Integration](mcp-client-integration): plug Claude Desktop, Cursor, or your own MCP host into Lenny.
+- [OpenAI SDK Integration](openai-sdk-integration): point existing OpenAI SDK code at Lenny by changing one URL.
+- [Recursive Delegation](recursive-delegation): build workflows where one agent hands work to another, with budgets and scopes enforced.
+- [Build a Runtime Adapter](build-a-runtime): write your own agent runtime.

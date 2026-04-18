@@ -7,7 +7,7 @@ has_children: true
 
 # Operator Guide
 
-The reference for running Lenny in production. It covers everything from the first install to steady-state operations -- configuration, scaling, security hardening, observability, backups and restores, upgrades, multi-tenancy, troubleshooting, and the `lenny-ctl` CLI.
+The reference for running Lenny. It covers the first install through steady-state operations -- configuration, scaling, security hardening, observability, backups and restores, upgrades, multi-tenancy, troubleshooting, and the `lenny-ctl` CLI.
 
 ---
 

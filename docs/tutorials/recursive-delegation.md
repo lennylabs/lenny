@@ -9,7 +9,7 @@ nav_order: 4
 
 **Persona:** Runtime Author + Client Developer | **Difficulty:** Advanced
 
-Recursive delegation is a platform primitive in Lenny. A parent agent can spawn child agents through the gateway, pass them a subset of its workspace, allocate a token budget, and wait for results. The gateway enforces scope, budget, and lineage at every hop.
+Recursive delegation is implemented by the gateway. A parent agent can spawn child agents through the gateway, pass them a subset of its workspace, allocate a token budget, and wait for results. The gateway enforces scope, budget, and lineage at every hop.
 
 In this tutorial you will:
 1. Build a "coordinator" runtime that receives a task and delegates sub-tasks to workers
@@ -55,7 +55,7 @@ In this tutorial you will:
 - Children cannot exceed the parent's budget (budgets are strictly narrowing)
 - Children cannot use a less restrictive isolation profile than the parent
 - Delegation depth, total children, and parallel children are all bounded by the lease
-- All delegation goes through the gateway -- pods never communicate directly
+- All delegation goes through the gateway; pods never communicate directly
 
 ---
 
@@ -431,7 +431,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 		// Call lenny/delegate_task with a budget slice
 		result, err := mcp.CallTool(ctx, "lenny/delegate_task", map[string]interface{}{
-			// Target is opaque -- the coordinator does not know if this is
+			// Target is opaque; the coordinator does not know if this is
 			// a local runtime, derived runtime, or external agent.
 			"target": workerName,
 
@@ -472,9 +472,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	emitStatus(mcp, ctx, fmt.Sprintf("Waiting for %d child task(s)...", len(childIDs)))
 
 	// lenny/await_children blocks until all children reach a terminal state.
-	// mode: "all" -- wait for every child
-	// mode: "any" -- return as soon as one child completes
-	// mode: "settled" -- return when all are terminal (including failures)
+	// mode: "all" waits for every child
+	// mode: "any" returns as soon as one child completes
+	// mode: "settled" returns when all are terminal (including failures)
 	awaitResult, err := mcp.CallTool(ctx, "lenny/await_children", map[string]interface{}{
 		"child_ids": childIDs,
 		"mode":      "all",
@@ -627,7 +627,7 @@ curl -s -X POST http://localhost:8080/v1/admin/runtimes \
 Create pools for both runtimes:
 
 ```bash
-# Worker pool -- needs enough warm pods for fan-out
+# Worker pool: needs enough warm pods for fan-out
 curl -s -X POST http://localhost:8080/v1/admin/pools \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
@@ -697,7 +697,7 @@ Expected response:
 
 ### Stream the Output
 
-Watch the coordinator's output to see delegation in action:
+Watch the coordinator's output:
 
 ```bash
 curl -s -N "http://localhost:8080/v1/sessions/sess_coordinator_01/logs" \
@@ -789,7 +789,7 @@ Expected response:
 
 ## Part 7: Token Budget Enforcement
 
-The delegation lease enforces a total token budget across the entire tree. Let us demonstrate what happens when the budget is exhausted.
+The delegation lease enforces a total token budget across the entire tree. This example shows what happens when the budget is exhausted.
 
 Create a session with a very small budget:
 
@@ -848,7 +848,7 @@ curl -s "http://localhost:8080/v1/sessions/${SESSION_ID}/usage" \
 
 ## Part 8: Scope Narrowing
 
-Children always receive a **strictly narrower** scope than their parent. This is enforced automatically:
+Children always receive a strictly narrower scope than their parent. This is enforced automatically:
 
 | Parent Lease | Child Lease (enforced) |
 |-------------|----------------------|
@@ -864,7 +864,7 @@ ISOLATION_MONOTONICITY_VIOLATED: child isolation profile 'runc' is less
 restrictive than parent profile 'gvisor'
 ```
 
-Similarly, the delegation policy is always intersected -- children can never have broader permissions than their parent.
+Similarly, the delegation policy is always intersected; children cannot have broader permissions than their parent.
 
 ---
 
@@ -878,7 +878,7 @@ In this tutorial you:
 4. Ran a delegation chain with 4 parallel children
 5. Inspected the task tree to see the parent-child hierarchy
 6. Observed token budget enforcement when the budget was exhausted
-7. Learned how scope narrowing ensures children never exceed their parent's authority
+7. Reviewed how scope narrowing keeps children within their parent's authority
 
 ### Key Delegation Tools
 
@@ -894,5 +894,5 @@ In this tutorial you:
 
 ## Next Steps
 
-- [MCP Client Integration](mcp-client-integration) -- interact with delegation trees from an MCP client
-- [Deploy to Kubernetes](deploy-to-cluster) -- run your delegation setup in a real cluster
+- [MCP Client Integration](mcp-client-integration): interact with delegation trees from an MCP client
+- [Deploy to Kubernetes](deploy-to-cluster): run your delegation setup in a real cluster

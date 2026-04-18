@@ -23,7 +23,7 @@ This page describes Lenny's governance model, decision-making process, and polic
 
 Lenny adopts a **Benevolent Dictator for Now (BDfN)** governance model during its early development phase. A single maintainer makes final decisions on all architectural, implementation, and community matters.
 
-This model is intentionally lightweight and designed to minimize decision-making overhead while the project is in active pre-release development. It is not intended to be permanent.
+This model is intentionally lightweight to minimize decision-making overhead while the project is in active pre-release development. It is not intended to be permanent.
 
 ### Why BDfN
 
@@ -81,7 +81,7 @@ Once formed, the steering committee is responsible for:
 ### During BDfN phase
 
 1. **Proposals** are submitted via the Discussions forum or as draft ADRs.
-2. **Discussion** happens publicly -- all input is welcome.
+2. **Discussion** happens publicly; all input is welcome.
 3. **Decision** is made by the BDfN, documented in the relevant ADR or issue.
 4. **Rationale** is always recorded, especially for rejected proposals.
 
@@ -90,7 +90,7 @@ Once formed, the steering committee is responsible for:
 1. **Proposals** follow the same public process.
 2. **Consensus** is the preferred decision-making mode. Committee members discuss until agreement is reached.
 3. **Voting** is the fallback when consensus cannot be reached within a reasonable timeframe. Simple majority wins, with the committee chair casting tie-breaking votes.
-4. **Veto** -- any committee member can request a 48-hour delay on a decision for further consideration. This can only be exercised once per proposal.
+4. **Veto:** any committee member can request a 48-hour delay on a decision for further consideration. This can only be exercised once per proposal.
 
 ---
 
@@ -159,9 +159,9 @@ The decision and rationale are recorded as ADR-008 in `docs/adr/`.
 
 The CLA policy is determined alongside the license decision in ADR-008. Options under consideration:
 
-- **No CLA** -- contributions are accepted under the project's license. Simplest for contributors.
-- **Developer Certificate of Origin (DCO)** -- contributors certify they have the right to submit the code. Enforced via `Signed-off-by` in commit messages. Used by the Linux kernel and CNCF projects.
-- **CLA** -- contributors sign a formal agreement granting rights to the project. More legally precise but higher friction for new contributors.
+- **No CLA:** contributions are accepted under the project's license. Simplest for contributors.
+- **Developer Certificate of Origin (DCO):** contributors certify they have the right to submit the code. Enforced via `Signed-off-by` in commit messages. Used by the Linux kernel and CNCF projects.
+- **CLA:** contributors sign a formal agreement granting rights to the project. More legally precise but higher friction for new contributors.
 
 ---
 
@@ -196,11 +196,11 @@ During early development, releases follow an as-needed cadence driven by phase c
 
 ### Release process
 
-1. **Feature freeze** -- no new features merged after the freeze date.
-2. **Release candidate** -- a tagged RC is cut and tested against the full integration suite.
-3. **Regression testing** -- all SLO burn-rate alerts validated at Growth-sized sustained load.
-4. **Release** -- tag, build artifacts, publish Helm chart, update documentation.
-5. **Announcement** -- release notes published via the Discussions forum and changelog.
+1. **Feature freeze:** no new features merged after the freeze date.
+2. **Release candidate:** a tagged RC is cut and tested against the full integration suite.
+3. **Regression testing:** all SLO burn-rate alerts validated at Growth-sized sustained load.
+4. **Release:** tag, build artifacts, publish Helm chart, update documentation.
+5. **Announcement:** release notes published via the Discussions forum and changelog.
 
 ---
 

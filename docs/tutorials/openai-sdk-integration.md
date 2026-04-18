@@ -9,9 +9,9 @@ nav_order: 6
 
 **Persona:** Client Developer | **Difficulty:** Intermediate
 
-Lenny exposes an OpenAI Chat Completions-compatible API. This means you can point the standard OpenAI Python or TypeScript SDK at Lenny's gateway and use familiar `openai.chat.completions.create()` calls. Behind the scenes, Lenny creates a session, starts a runtime, delivers your messages, and streams output back through the Completions API format.
+Lenny exposes an OpenAI Chat Completions-compatible API. You can point the standard OpenAI Python or TypeScript SDK at Lenny's gateway and use `openai.chat.completions.create()` calls. Lenny creates a session, starts a runtime, delivers your messages, and streams output back through the Completions API format.
 
-This tutorial shows you how to configure the OpenAI SDK, list models (mapped to runtimes), create chat completions, and handle streaming responses.
+This tutorial shows how to configure the OpenAI SDK, list models (mapped to runtimes), create chat completions, and handle streaming responses.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ The OpenAI SDK accepts a `base_url` parameter that overrides the default `https:
 ```python
 from openai import OpenAI
 
-# In dev mode, authentication is disabled -- use any string as the API key.
+# In dev mode, authentication is disabled; use any string as the API key.
 # In production, use your Lenny bearer token. See
 # [Authentication](../client-guide/authentication.md) for how to obtain the
 # initial token and rotate it via /v1/oauth/token (RFC 8693).
@@ -51,7 +51,7 @@ const client = new OpenAI({
 });
 ```
 
-That is all the configuration needed. Every subsequent `client` call goes to Lenny instead of OpenAI.
+That is the configuration needed. Every subsequent `client` call goes to Lenny instead of OpenAI.
 
 ---
 
@@ -93,7 +93,7 @@ Each runtime is surfaced as a "model" with its name as the model ID. The `owned_
 
 ## Step 3: Create a Chat Completion
 
-The `POST /v1/chat/completions` endpoint maps to a full Lenny session lifecycle: session creation, runtime start, message delivery, response collection, and session termination -- all in a single API call.
+The `POST /v1/chat/completions` endpoint maps to a full Lenny session lifecycle: session creation, runtime start, message delivery, response collection, and session termination, all in a single API call.
 
 ### Python
 
@@ -246,18 +246,18 @@ const response = await client.chat.completions.create({
 console.log(`Response: ${response.choices[0].message.content}`);
 ```
 
-**How Lenny handles conversation history:** The gateway creates a fresh session for each completions call (unless you use the session continuation extension -- see below). The full message history is delivered to the runtime as the initial context, and the runtime responds to the last user message. The session is terminated after the response.
+**How Lenny handles conversation history:** The gateway creates a new session for each completions call (unless you use the session continuation extension shown below). The full message history is delivered to the runtime as the initial context, and the runtime responds to the last user message. The session is terminated after the response.
 
 ---
 
 ## Step 6: Session Continuation (Lenny Extension)
 
-Standard OpenAI Chat Completions are stateless -- each call creates a new session. Lenny provides an extension header to continue an existing session across multiple completions calls:
+Standard OpenAI Chat Completions are stateless: each call creates a new session. Lenny provides an extension header to continue an existing session across multiple completions calls:
 
 ### Python
 
 ```python
-# First call -- create a new session
+# First call: create a new session
 response1 = client.chat.completions.create(
     model="echo",
     messages=[
@@ -273,7 +273,7 @@ response1 = client.chat.completions.create(
 session_id = response1._response.headers.get("X-Lenny-Session-Id")
 print(f"Session ID: {session_id}")
 
-# Second call -- continue the same session
+# Second call: continue the same session
 response2 = client.chat.completions.create(
     model="echo",
     messages=[
@@ -286,7 +286,7 @@ response2 = client.chat.completions.create(
 
 print(f"Response: {response2.choices[0].message.content}")
 
-# Clean up -- terminate the persistent session
+# Clean up: terminate the persistent session
 import requests
 requests.post(
     f"http://localhost:8080/v1/sessions/{session_id}/terminate",
@@ -297,11 +297,11 @@ requests.post(
 ### TypeScript
 
 ```typescript
-// First call -- create a persistent session
+// First call: create a persistent session
 const response1 = await client.chat.completions.create({
   model: "echo",
   messages: [{ role: "user", content: "Remember the number 42." }],
-  // @ts-ignore -- custom header
+  // @ts-ignore: custom header
   headers: {
     "X-Lenny-Session-Mode": "persistent",
   },
@@ -311,7 +311,7 @@ const response1 = await client.chat.completions.create({
 const sessionId = response1._response?.headers.get("x-lenny-session-id");
 console.log(`Session ID: ${sessionId}`);
 
-// Second call -- continue the session
+// Second call: continue the session
 const response2 = await client.chat.completions.create({
   model: "echo",
   messages: [
@@ -383,39 +383,39 @@ try {
 
 ---
 
-## Limitations: What is Different from Real OpenAI
+## Limitations: Differences from OpenAI
 
-The OpenAI Completions adapter provides compatibility, not identity. Here are the key differences:
+The OpenAI Completions adapter provides compatibility, not identity. Key differences:
 
 | Feature | OpenAI | Lenny via OpenAI SDK |
 |---------|--------|---------------------|
 | **Models** | GPT-4, GPT-3.5, etc. | Registered Lenny runtimes |
-| **Function calling** | Native function_call support | Not passed through -- tools are handled inside the runtime |
+| **Function calling** | Native function_call support | Not passed through; tools are handled inside the runtime |
 | **Logprobs** | Supported | Not supported |
 | **Token counting** | Precise | Approximate (depends on runtime reporting) |
 | **Statefulness** | Stateless | Optional persistence via `X-Lenny-Session-Id` |
 | **Max tokens** | `max_tokens` parameter | Mapped to session token budget |
 | **Temperature** | Controls randomness | Passed to runtime but behavior depends on implementation |
-| **System messages** | First-class | Delivered as the first message to the runtime |
-| **Tool calls in response** | `tool_calls` in response | Not in the completions response -- tools execute inside the runtime |
+| **System messages** | Part of the protocol | Delivered as the first message to the runtime |
+| **Tool calls in response** | `tool_calls` in response | Not in the completions response; tools execute inside the runtime |
 | **Structured output** | JSON mode | Depends on runtime implementation |
 
 ### When to Use MCP Instead
 
 Use the [MCP integration](mcp-client-integration) when you need:
 
-- **Session persistence** -- MCP sessions are naturally long-lived
-- **Elicitation** -- human-in-the-loop prompts
-- **Delegation visibility** -- observing task trees
-- **Tool approval** -- approving/denying tool calls
-- **Fine-grained state control** -- interrupt, suspend, resume
+- Session persistence: MCP sessions are long-lived
+- Elicitation: human-in-the-loop prompts
+- Delegation visibility: observing task trees
+- Tool approval: approving or denying tool calls
+- Fine-grained state control: interrupt, suspend, resume
 
-The OpenAI SDK integration is best for:
+The OpenAI SDK integration is suitable for:
 
-- **Quick integration** -- drop-in replacement for OpenAI calls
-- **Existing codebases** -- applications already using the OpenAI SDK
-- **Simple request/response** -- stateless question-answer patterns
-- **Streaming output** -- real-time text streaming with familiar API
+- Drop-in replacement for OpenAI calls
+- Existing codebases already using the OpenAI SDK
+- Stateless question-answer patterns
+- Real-time text streaming
 
 ---
 
@@ -521,5 +521,5 @@ main();
 
 ## Next Steps
 
-- [MCP Client Integration](mcp-client-integration) -- full MCP protocol integration with elicitation and delegation
-- [Your First Session](first-session) -- learn the REST API for fine-grained session control
+- [MCP Client Integration](mcp-client-integration): MCP protocol integration with elicitation and delegation
+- [Your First Session](first-session): REST API for fine-grained session control

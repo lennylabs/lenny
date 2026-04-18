@@ -71,7 +71,7 @@ This page covers RPO/RTO targets, Postgres/Redis/MinIO high availability, backup
 
 ### Recovery from Redis Loss
 
-Redis loss is designed to be recoverable because all durable state lives in Postgres:
+Redis loss is recoverable because all durable state lives in Postgres:
 
 1. **Quota counters** -- rehydrated from Postgres checkpoints using the MAX rule
 2. **Routing cache** -- rebuilt from SessionStore pod assignments

@@ -47,17 +47,17 @@ All gateway-to-pod communication is protected by mutual TLS (mTLS).
 | Gateway replicas | 24h | DNS: `lenny-gateway.lenny-system.svc` | cert-manager auto-renewal at 2/3 lifetime |
 | Agent pods | 4h | SPIFFE URI: `spiffe://<trust-domain>/agent/{pool}/{pod-name}` | cert-manager auto-renewal; pod restart if renewal fails |
 
-Each pod is issued a SPIFFE identity at startup -- a cryptographic identity encoded as a URI in the pod's TLS certificate -- so the gateway can tell one pod apart from another and reject requests that try to impersonate a different pod.
+Each pod is issued a SPIFFE identity at startup -- a cryptographic identity encoded as a URI in the pod's TLS certificate. The gateway uses this to distinguish pods and reject requests from a pod claiming to be a different one.
 
 ### Identity verification
 
-- The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection. A mismatch means the pod cannot prove it is the pod the gateway expected, and the connection is refused.
-- Each gateway replica gets a **distinct certificate** so compromise of one replica can be detected and revoked independently.
+- The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection. A mismatch refuses the connection.
+- Each gateway replica has a **distinct certificate** so compromise of one replica can be detected and revoked independently.
 - Pods cannot forge or extend session JWTs. The gateway validates JWT signatures on every pod-to-gateway request.
 
 ### Trust domain
 
-The SPIFFE trust domain (the namespace under which pod identities are issued) is configurable via the `global.spiffeTrustDomain` Helm value (default: `lenny`). Deployers **must** override this in any environment where multiple Lenny instances share the same Kubernetes cluster and CA, so that identities from one Lenny instance cannot be confused with identities from another.
+The SPIFFE trust domain (the namespace under which pod identities are issued) is configurable via the `global.spiffeTrustDomain` Helm value (default: `lenny`). Deployers **must** override this in any environment where multiple Lenny instances share the same Kubernetes cluster and CA to keep identities from the two instances distinct.
 
 ---
 

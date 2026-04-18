@@ -37,7 +37,7 @@ ENTRYPOINT ["/my-agent"]
 | Guideline | Reason |
 |-----------|--------|
 | Use multi-stage builds | Keeps the final image small (no build tools). |
-| Use `scratch` or `distroless` as the base | Minimizes attack surface. No shell, no package manager. |
+| Use `scratch` or `distroless` as the base | Reduces attack surface. No shell, no package manager. |
 | Build with `CGO_ENABLED=0` | Produces a static binary that runs on `scratch`. |
 | Use `-ldflags="-s -w"` | Strips debug info, reducing binary size by ~30%. |
 | Copy only the binary | No source code, no intermediate artifacts. |
@@ -59,7 +59,7 @@ WORKDIR /app
 ENTRYPOINT ["python", "-u", "main.py"]
 ```
 
-The `-u` flag disables Python's stdout buffering. This is critical --- without it, the adapter never receives your output and the session hangs.
+The `-u` flag disables Python's stdout buffering. Without it, the adapter never receives your output and the session hangs.
 
 ### TypeScript Runtimes
 
@@ -89,7 +89,7 @@ ENTRYPOINT ["node", "dist/main.js"]
 | TypeScript | `node:20-alpine` | 100--200 MB |
 | Java | `eclipse-temurin:21-jre-alpine` | 200--300 MB |
 
-Smaller images improve warm pool startup time and reduce image pull latency.
+Smaller images reduce warm pool startup time and image pull latency.
 
 ---
 

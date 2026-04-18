@@ -7,7 +7,7 @@ has_children: true
 
 # Reference
 
-This section contains lookup tables, schemas, and diagrams for cross-cutting concerns in the Lenny platform. It is designed as reference material -- not tutorials or walkthroughs. Use it to look up specific error codes, metric names, state machine transitions, configuration fields, and terminology.
+This section contains lookup tables, schemas, and diagrams for cross-cutting concerns in the Lenny platform. It is reference material -- not tutorials or walkthroughs. Use it to look up specific error codes, metric names, state machine transitions, configuration fields, and terminology.
 
 ---
 

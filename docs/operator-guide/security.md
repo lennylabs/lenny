@@ -219,11 +219,11 @@ The LLM Proxy is the gateway subsystem that talks to LLM providers on behalf of 
 
 ### Security posture
 
-- **Real API keys live only in the gateway process's in-memory credential cache.** They are never written to disk, never placed on tmpfs, and never entered into the agent pod's environment, memory, filesystem, or network path.
-- **Agent-pod wire format is provider-agnostic.** Runtimes use standard OpenAI or Anthropic SDKs; the upstream provider can change without any runtime code change.
-- **The translator is part of the gateway's trust envelope.** It has no separate pod identity; outbound provider connections use the gateway pod's network identity.
-- **Credential rotation is zero-downtime.** The gateway's credential cache is refreshed atomically on lease rotation; the next outbound call reads the new key. No reload signal, no file replacement, no SIGHUP.
-- **Lease revocation is enforced before the translator runs.** Expired or revoked leases are rejected by the subsystem's lease check before any upstream call is attempted.
+- Real API keys live only in the gateway process's in-memory credential cache. They are never written to disk, never placed on tmpfs, and never entered into the agent pod's environment, memory, filesystem, or network path.
+- Agent-pod wire format is provider-agnostic. Runtimes use standard OpenAI or Anthropic SDKs; the upstream provider can change without any runtime code change.
+- The translator runs inside the gateway process. It has no separate pod identity; outbound provider connections use the gateway pod's network identity.
+- Credential rotation does not interrupt traffic. The gateway's credential cache is refreshed atomically on lease rotation; the next outbound call reads the new key. No reload signal, no file replacement, no SIGHUP.
+- Lease revocation is enforced before the translator runs. Expired or revoked leases are rejected by the subsystem's lease check before any upstream call is attempted.
 
 ### Network Isolation
 

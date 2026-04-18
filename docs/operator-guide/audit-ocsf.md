@@ -13,9 +13,9 @@ Lenny persists audit records in Postgres with a hash-chained append-only schema 
 
 ## Why OCSF
 
-- **Turnkey SIEM integration.** Splunk, Microsoft Sentinel, Google Chronicle, Panther, and others parse OCSF records natively. No per-vendor connector is needed.
-- **Cross-platform audit portability.** OCSF is a vendor-neutral CNCF-adjacent standard — audit data stays portable if you later change SIEMs.
-- **Stable field names.** OCSF decouples Lenny's internal schema evolution from external consumer expectations.
+- **SIEM compatibility.** Splunk, Microsoft Sentinel, Google Chronicle, Panther, and others parse OCSF records natively, so no per-vendor connector is needed.
+- **Audit portability.** OCSF is a vendor-neutral CNCF-adjacent standard, so audit data remains portable if you later change SIEMs.
+- **Stable field names.** Lenny's internal schema can evolve without changing the external wire format.
 
 ---
 

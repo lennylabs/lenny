@@ -7,7 +7,7 @@ nav_order: 2
 
 # MCP API Reference
 
-The MCP interface is Lenny's surface for **interactive streaming sessions** and **recursive delegation**. It exposes the gateway as an MCP server over **Streamable HTTP** via the built-in `MCPAdapter`.
+The MCP interface is Lenny's surface for interactive streaming sessions and recursive delegation. It exposes the gateway as an MCP server over **Streamable HTTP** via the built-in `MCPAdapter`.
 
 Use the MCP API when you need:
 - Real-time streaming output from agent sessions
@@ -983,7 +983,7 @@ All error responses use the same error categories (`TRANSIENT`, `PERMANENT`, `PO
 
 ### 3. OpenAPI as source of truth
 
-MCP tool schemas for overlapping operations are **generated from the OpenAPI spec**, not maintained independently. This ensures structural consistency by construction.
+MCP tool schemas for overlapping operations are **generated from the OpenAPI spec**, not maintained independently. This keeps the schemas structurally consistent.
 
 ### 4. Contract testing
 

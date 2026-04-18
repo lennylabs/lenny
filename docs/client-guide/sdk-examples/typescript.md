@@ -8,7 +8,7 @@ nav_order: 2
 
 # TypeScript Client Examples
 
-Complete TypeScript/Node.js examples for interacting with the Lenny REST API using the built-in `fetch` API.
+TypeScript/Node.js examples for interacting with the Lenny REST API using the built-in `fetch` API.
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ npm install
 ## Type Definitions
 
 ```typescript
-// types.ts -- Type definitions for Lenny API responses
+// types.ts: type definitions for Lenny API responses
 
 export interface Session {
   sessionId: string;
@@ -161,7 +161,7 @@ export interface TaskTreeNode {
 ## Full Session Lifecycle
 
 ```typescript
-// lenny_client.ts -- Complete Lenny session lifecycle
+// lenny_client.ts: Lenny session lifecycle
 
 import type {
   CreateSessionResponse,

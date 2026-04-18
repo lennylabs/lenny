@@ -52,7 +52,7 @@ Expected response:
 }
 ```
 
-**One credential per provider.** If you register a second credential for the same provider, it replaces the first. The `secret` field is write-only -- it is never returned in API responses.
+One credential per provider: if you register a second credential for the same provider, it replaces the first. The `secret` field is write-only; it is never returned in API responses.
 
 ---
 
@@ -70,7 +70,7 @@ curl -s -X POST http://localhost:8080/v1/sessions \
   }' | jq .
 ```
 
-The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway talks to LLM providers on behalf of agent pods: it reads your API key from its in-memory Token Service cache, translates the request to the upstream provider's wire format, and forwards it. Your API key only ever lives in the gateway's memory, which means agent pods never hold real credentials and rotation happens with zero downtime. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
+The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests; the agent pod never sees the raw key. The gateway talks to LLM providers on behalf of agent pods: it reads your API key from its in-memory Token Service cache, translates the request to the upstream provider's wire format, and forwards it. Your API key only lives in the gateway's memory, so agent pods do not hold real credentials and rotation happens without restarting pods. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
 
 You can verify which credential source was used by checking the session metadata:
 
@@ -109,7 +109,7 @@ curl -s http://localhost:8080/v1/credentials \
 
 ## Step 4: Rotate the Credential
 
-When you get a new API key, rotate the secret without disrupting active sessions. Active leases are immediately updated:
+When you get a new API key, rotate the secret without disrupting active sessions. Active leases are updated:
 
 ```bash
 curl -s -X PUT "http://localhost:8080/v1/credentials/cred_01..." \
@@ -124,13 +124,13 @@ curl -s -X PUT "http://localhost:8080/v1/credentials/cred_01..." \
   }' | jq .
 ```
 
-Active sessions using the old key are seamlessly rotated to the new key via the Token Service's hot-rotation mechanism. No session interruption occurs.
+Active sessions switch to the new key without interruption. The token service refreshes its credential cache atomically, and the next outbound call uses the new key.
 
 ---
 
 ## Step 5: Revoke When Done
 
-When a credential is compromised or no longer needed, revoke it to immediately invalidate all active leases:
+When a credential is compromised or no longer needed, revoke it to invalidate all active leases:
 
 ```bash
 curl -s -X POST "http://localhost:8080/v1/credentials/cred_01.../revoke" \
@@ -138,7 +138,7 @@ curl -s -X POST "http://localhost:8080/v1/credentials/cred_01.../revoke" \
   -H "Content-Type: application/json" -d '{}' | jq .
 ```
 
-Active sessions using this credential are terminated immediately. Future sessions fall back to the platform credential pool.
+Active sessions using this credential are terminated. Future sessions fall back to the platform credential pool.
 
 To remove the credential record entirely (without terminating active sessions):
 
@@ -147,17 +147,17 @@ curl -s -X DELETE "http://localhost:8080/v1/credentials/cred_01..." \
   -H "Authorization: Bearer $USER_TOKEN" | jq .
 ```
 
-The difference: `revoke` invalidates active leases immediately; `delete` removes the record but lets active sessions finish with the credential they already hold.
+The difference: `revoke` invalidates active leases; `delete` removes the record but lets active sessions finish with the credential they already hold.
 
 ---
 
 ## Key Concepts
 
-- **User credentials take priority** over platform credential pools when both exist for the same provider.
-- **Write-only secrets**: The `secret` field is never returned in API responses.
-- **Hot rotation**: `PUT` updates propagate to active sessions without interruption.
-- **Revoke vs. delete**: Revoke terminates active sessions; delete does not.
-- **Fallback**: If no user credential exists, the platform pool is used.
+- User credentials take precedence over platform credential pools when both exist for the same provider.
+- Write-only secrets: the `secret` field is never returned in API responses.
+- Rotation: `PUT` updates propagate to active sessions without interruption.
+- Revoke vs. delete: revoke terminates active sessions; delete does not.
+- Fallback: if no user credential exists, the platform pool is used.
 
 ## Rotating your Lenny access token
 
@@ -181,6 +181,6 @@ See [Authentication](../client-guide/authentication.md#token-rotation-and-exchan
 
 ## Next Steps
 
-- [Your First Session](first-session) -- session lifecycle basics
-- [REST API Reference](../api/rest) -- full credentials endpoint documentation
-- [Error Catalog](../reference/error-catalog) -- `USER_CREDENTIAL_NOT_FOUND`, `CREDENTIAL_REVOKED`
+- [Your First Session](first-session): session lifecycle basics
+- [REST API Reference](../api/rest): credentials endpoint documentation
+- [Error Catalog](../reference/error-catalog): `USER_CREDENTIAL_NOT_FOUND`, `CREDENTIAL_REVOKED`

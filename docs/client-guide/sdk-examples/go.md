@@ -8,7 +8,7 @@ nav_order: 3
 
 # Go Client Examples
 
-Complete Go examples for interacting with the Lenny REST API using `net/http`.
+Go examples for interacting with the Lenny REST API using `net/http`.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ module lenny-go-client
 go 1.21
 
 require (
-    // No external dependencies -- uses only the standard library.
+    // No external dependencies; uses only the standard library.
 )
 ```
 
@@ -28,7 +28,7 @@ require (
 ## Full Session Lifecycle
 
 ```go
-// main.go -- Complete Lenny session lifecycle in Go.
+// main.go: Lenny session lifecycle in Go.
 //
 // Run with: go run main.go
 //

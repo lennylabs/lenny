@@ -9,7 +9,7 @@ nav_order: 2
 
 {: .no_toc }
 
-Side-by-side analysis of Lenny versus other platforms in the agent infrastructure space. Each comparison focuses on architectural differences, not feature checklists -- the goal is to help evaluators understand where each platform's design choices lead to different outcomes.
+Side-by-side analysis of Lenny against other platforms in the agent infrastructure space. Each comparison focuses on architectural differences rather than feature counts.
 
 <details open markdown="block">
   <summary>Table of contents</summary>
@@ -28,7 +28,7 @@ Side-by-side analysis of Lenny versus other platforms in the agent infrastructur
 | **Runtime-agnostic**       | Yes (adapter contract)                     | Sandbox only            | Sandbox only              | Container-based             | SDK-coupled              | Container-based             | LangChain-coupled               |
 | **Runtime types**          | `agent` (task lifecycle) + `mcp` (MCP server hosting) | Single type   | Single type               | Single type                 | Worker type              | Single type                 | Graph-based                     |
 | **Execution modes**        | session / task / concurrent (workspace + stateless) | N/A            | N/A                       | N/A                         | N/A (workflow-based)     | N/A                         | N/A (graph-based)               |
-| **Recursive delegation**   | Yes (platform primitive)                   | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
+| **Recursive delegation**   | Yes (gateway-enforced)                     | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
 | **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses + A2A (post-v1 adapter) | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, isolation) | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
 | **Experimentation**        | Built-in A/B, variant pools, eval hooks    | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
@@ -68,7 +68,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | **Runtime contract**    | Formal adapter contract with three integration levels (Basic, Standard, Full) that separates platform integration from agent logic. Any process can be a Lenny runtime. | Sandbox environment where the operator's code runs. No orchestration contract -- the sandbox is a blank execution environment. |
 | **Runtime types**       | Two types: `agent` (full task lifecycle) and `mcp` (managed MCP server hosting with zero code changes).                                         | Single sandbox type.                                                                                                           |
 | **Execution modes**     | Three modes: `session` (1:1 pod), `task` (sequential reuse with scrub), `concurrent` (slot multiplexing). Mode-aware pool scaling.              | Single sandbox per request. No pod reuse or multiplexing.                                                                      |
-| **Delegation**          | First-class platform primitive with per-hop budget, scope, and policy enforcement.                                                              | Not available. Multi-agent coordination must be built at the application layer.                                                |
+| **Delegation**          | Gateway-enforced delegation with per-hop budget, scope, and policy.                                                                             | Not available. Multi-agent coordination must be built at the application layer.                                                |
 | **Self-hosting**        | Standard Kubernetes deployment. Runs wherever K8s runs.                                                                                         | Self-hosting requires managing Firecracker/microVM infrastructure separately from Kubernetes clusters.                         |
 | **Isolation**           | Deployer-selectable: runc (fast), gVisor (medium), Kata (strong).                                                                               | Firecracker microVM only (strong isolation).                                                                                   |
 | **Protocol support**    | REST, MCP, OpenAI, Open Responses.                                                                                                              | REST API.                                                                                                                      |
@@ -93,7 +93,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | Aspect               | Lenny                                                       | Daytona                                                     |
 | :------------------- | :---------------------------------------------------------- | :---------------------------------------------------------- |
 | **Runtime contract** | Formal adapter contract with layered integration levels.    | Environment provisioning without an orchestration contract. |
-| **Delegation**       | Platform primitive with budget/scope enforcement.           | Not available.                                              |
+| **Delegation**       | Gateway-enforced, with budget and scope controls.           | Not available.                                              |
 | **Protocol support** | Multi-protocol gateway (REST, MCP, OpenAI, Open Responses). | REST API.                                                   |
 | **Focus**            | Agent session lifecycle management, delegation, and policy. | Fast development environment provisioning.                  |
 
@@ -114,7 +114,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | Aspect                 | Lenny                                                                                           | Fly.io Sprites                                         |
 | :--------------------- | :---------------------------------------------------------------------------------------------- | :----------------------------------------------------- |
 | **Deployment model**   | Self-hosted on your Kubernetes cluster. All data in your infrastructure.                        | Hosted on Fly.io infrastructure.                       |
-| **Delegation**         | Platform primitive with gateway-mediated policy enforcement.                                    | Not available as a platform primitive.                 |
+| **Delegation**         | Gateway-mediated, with policy enforced at every hop.                                            | Not available.                                         |
 | **Policy engine**      | Built-in rate limiting, token budgets, concurrency controls, isolation profiles, audit logging. | Basic platform-level controls.                         |
 | **Checkpoint/restore** | Workspace-level checkpointing via MinIO. Session state in Postgres.                             | Process-level checkpoint/restore via Firecracker CRIU. |
 
@@ -137,7 +137,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | **Runtime coupling**     | Runtime-agnostic adapter contract. Agent code does not import Lenny libraries.                                                              | Agent logic must use Temporal SDK (Go, Java, TypeScript, Python). Workflow definitions are Temporal-native.          |
 | **Delegation**           | Gateway-mediated delegation without workflow coupling. Parent and child sessions are independent runtimes connected by budget/scope policy. | Child workflows are tightly coupled to parent via Temporal SDK primitives.                                           |
 | **Durability model**     | Workspace checkpointing + session state in Postgres + event replay.                                                                         | Deterministic replay from event history. Strongest durability guarantees in the space.                               |
-| **Interactive sessions** | First-class support for streaming, elicitation, interrupts, and tool approvals.                                                             | Designed for batch/async workflows. Interactive patterns require additional infrastructure.                          |
+| **Interactive sessions** | Streaming, elicitation, interrupts, and tool approvals are part of the session contract.                                                    | Designed for batch/async workflows. Interactive patterns require additional infrastructure.                          |
 | **Self-hosting**         | Standard Kubernetes deployment.                                                                                                             | Self-hosted Temporal adds significant operational burden (Cassandra/MySQL, Elasticsearch, multi-service deployment). |
 
 ### Where Temporal has advantages
@@ -197,9 +197,9 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 
 ---
 
-## When to choose Lenny
+## When Lenny fits
 
-Lenny is a strong fit when your requirements include several of these:
+Lenny's design matches these requirements:
 
 - **Self-hosted on your own Kubernetes cluster** -- data sovereignty, compliance, or existing K8s infrastructure.
 - **Multiple agent frameworks** -- your teams use different agent runtimes and you need a single platform.
@@ -208,7 +208,7 @@ Lenny is a strong fit when your requirements include several of these:
 - **Recursive delegation** -- orchestrator agents that spawn child agents with enforced budgets and scope.
 - **Enterprise controls** -- multi-tenancy, RBAC, audit logging, token budgets, content policy enforcement.
 - **Multi-protocol clients** -- REST, MCP, OpenAI, and Open Responses clients connecting to the same infrastructure.
-- **Interactive sessions** -- streaming, elicitation, interrupts, and tool approvals as first-class operations.
+- **Interactive sessions** -- streaming, elicitation, interrupts, and tool approvals are part of the session contract.
 - **A/B experimentation** -- runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation pipelines** -- session replay for regression testing, multi-dimensional eval scoring, and experiment results aggregation.
 - **Credential management** -- centralized credential pools with leasing and rotation. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real provider API keys. Each lease token is cryptographically bound to the pod that requested it, so a token lifted from one pod cannot be used by another.
@@ -216,10 +216,10 @@ Lenny is a strong fit when your requirements include several of these:
 - **Pluggable guardrails** -- content safety interceptors at 12 gateway phases, compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
 - **Agent memory** -- pluggable memory store (default: Postgres + pgvector, replaceable with Mem0, Zep, or any vector database).
 
-Lenny may not be the best fit when:
+Lenny is not a fit when:
 
 - You need GPU support (not in v1).
 - You do not have Kubernetes infrastructure and prefer a hosted solution.
 - You are building within the LangChain ecosystem and want tight framework integration.
-- You need the simplest possible sandbox without orchestration features.
+- You need a minimal sandbox without orchestration features.
 - Your primary use case is batch inference rather than interactive agent sessions.

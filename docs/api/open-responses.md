@@ -31,7 +31,7 @@ Lenny implements the Open Responses specification. OpenAI Responses API clients 
 
 **Authentication.** Requests use `Authorization: Bearer <access-token>`. Rotate or exchange tokens via the canonical [`/v1/oauth/token`](./admin.md#post-v1oauthtoken) RFC 8693 endpoint.
 
-**Upstream provider credentials.** When the selected runtime uses proxy-mode credential delivery, the gateway talks to the LLM provider on behalf of the agent pod. The pod sends its request to the gateway carrying only a short-lived lease token, and the gateway rewrites the request with the real provider credentials before forwarding it. Real provider API keys never reach the agent pod and are never written to disk -- they live only in the gateway process's in-memory cache, which means credential rotation is zero-downtime. See [LLM Proxy security](../operator-guide/security.md#llm-proxy).
+**Upstream provider credentials.** When the selected runtime uses proxy-mode credential delivery, the gateway talks to the LLM provider on behalf of the agent pod. The pod sends its request to the gateway carrying only a short-lived lease token, and the gateway rewrites the request with the real provider credentials before forwarding it. Real provider API keys never reach the agent pod and are never written to disk -- they are kept only in the gateway process's in-memory cache, so credential rotation does not interrupt traffic. See [LLM Proxy security](../operator-guide/security.md#llm-proxy).
 
 ---
 

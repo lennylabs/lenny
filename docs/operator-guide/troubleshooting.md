@@ -259,7 +259,7 @@ lenny-ctl admin circuit-breakers close <name>
 
 ### Per-Replica Automatic Circuit Breakers
 
-Each gateway subsystem has its own per-replica automatic circuit breaker. These are intentionally **not shared across replicas** -- each replica independently discovers failures.
+Each gateway subsystem has its own per-replica automatic circuit breaker. These are not shared across replicas -- each replica independently discovers failures.
 
 **Behavior:**
 - Clients may see non-deterministic 503s during the convergence window

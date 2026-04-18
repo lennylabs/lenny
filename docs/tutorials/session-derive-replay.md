@@ -9,7 +9,7 @@ nav_order: 11
 
 **Persona:** Client Developer | **Difficulty:** Intermediate
 
-Lenny supports two ways to build on completed sessions: **derive** (fork a session's workspace into a new session) and **replay** (re-run a session's prompt history against a different runtime). Both are essential for iterative development and regression testing.
+Lenny supports two ways to build on completed sessions: derive (fork a session's workspace into a new session) and replay (re-run a session's prompt history against a different runtime). Derive supports iterative development; replay supports regression testing across runtime versions.
 
 ## Prerequisites
 
@@ -104,13 +104,13 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${DERIVED_ID}/messages" \
 
 The derived session has the modified `main.go` from the source session, so the agent can build on previous work.
 
-**Deriving from live sessions:** By default, derive requires the source session to be in a terminal state. To derive from a running session, pass `"allowStale": true` -- this uses the most recent checkpoint snapshot.
+Deriving from live sessions: by default, derive requires the source session to be in a terminal state. To derive from a running session, pass `"allowStale": true`; this uses the most recent checkpoint snapshot.
 
 ---
 
 ## Step 3: Replay Against a Different Runtime
 
-Replay re-runs the source session's prompt history against a different runtime version. This is the primary mechanism for regression testing runtime upgrades.
+Replay re-runs the source session's prompt history against a different runtime version. Use it for regression testing runtime upgrades.
 
 ```bash
 REPLAY=$(curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/replay" \
@@ -154,15 +154,15 @@ The replayed session:
 
 ## Key Concepts
 
-- **Derive** forks a workspace for iterative development -- continue where a previous session left off.
-- **Replay** runs the same prompts against a different runtime for regression testing.
-- Both operations create fully independent sessions with their own credentials and lifecycle.
+- Derive forks a workspace for iterative development; continue where a previous session left off.
+- Replay runs the same prompts against a different runtime for regression testing.
+- Both operations create independent sessions with their own credentials and lifecycle.
 - Workspace snapshots come from the sealed workspace (terminal sessions) or the latest checkpoint (`allowStale: true`).
 
 ---
 
 ## Next Steps
 
-- [Evaluation Scoring](evaluation-scoring) -- submit eval scores to compare replay results
-- [REST API Reference](../api/rest) -- derive and replay endpoint details
-- [Error Catalog](../reference/error-catalog) -- `DERIVE_ON_LIVE_SESSION`, `REPLAY_ON_LIVE_SESSION`, `INCOMPATIBLE_RUNTIME`
+- [Evaluation Scoring](evaluation-scoring): submit eval scores to compare replay results
+- [REST API Reference](../api/rest): derive and replay endpoint details
+- [Error Catalog](../reference/error-catalog): `DERIVE_ON_LIVE_SESSION`, `REPLAY_ON_LIVE_SESSION`, `INCOMPATIBLE_RUNTIME`

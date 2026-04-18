@@ -7,7 +7,7 @@ nav_order: 4
 
 # Delegation & Tasks
 
-Lenny supports recursive delegation as a platform primitive. An agent session can spawn child sessions, which can spawn their own children, forming a delegation tree. This page covers how clients observe and interact with delegation trees.
+Lenny supports recursive delegation. An agent session can spawn child sessions, which can spawn their own children, forming a delegation tree. This page covers how clients observe and interact with delegation trees.
 
 ---
 
@@ -69,10 +69,10 @@ Authorization: Bearer <token>
 
 The tree structure shows:
 
-- `taskId` / `sessionId` -- identifiers for the session at each node
-- `state` -- current state of each session
-- `runtimeRef` -- which runtime is running at each node
-- `children` -- nested child sessions
+- `taskId` / `sessionId`: identifiers for the session at each node
+- `state`: current state of each session
+- `runtimeRef`: which runtime is running at each node
+- `children`: nested child sessions
 
 ---
 
@@ -222,7 +222,7 @@ Every elicitation includes provenance metadata so clients can make informed trus
 | `expected_domain` | Expected OAuth endpoint domain (for URL-mode elicitations) |
 | `initiator_type` | `connector` (gateway-registered, higher trust) or `agent` (agent-initiated) |
 
-Client UIs **must** display provenance prominently so users can distinguish platform OAuth flows from agent-initiated prompts. Connector-initiated elicitations (`initiator_type: "connector"`) carry higher trust than agent-initiated ones.
+Client UIs **must** display provenance so users can distinguish platform OAuth flows from agent-initiated prompts. Connector-initiated elicitations (`initiator_type: "connector"`) carry higher trust than agent-initiated ones.
 
 ### Responding to an Elicitation
 
@@ -274,7 +274,7 @@ The gateway enforces several constraints at every delegation hop. Understanding 
 
 ### Token Budgets
 
-When a parent session delegates work, it allocates a `maxTokenBudget` to the child. This budget is reserved atomically using Redis Lua scripts -- the parent's available budget is decremented at delegation time, not when tokens are actually consumed. If a child finishes under budget, unused tokens are credited back to the parent. Children cannot exceed their allocated budget; the gateway rejects LLM requests once the budget is exhausted with `BUDGET_EXHAUSTED`.
+When a parent session delegates work, it allocates a `maxTokenBudget` to the child. This budget is reserved atomically using Redis Lua scripts: the parent's available budget is decremented at delegation time, not when tokens are actually consumed. If a child finishes under budget, unused tokens are credited back to the parent. Children cannot exceed their allocated budget; the gateway rejects LLM requests once the budget is exhausted with `BUDGET_EXHAUSTED`.
 
 ### Scope Narrowing
 
@@ -282,11 +282,11 @@ Child leases are always strictly equal to or narrower than their parent's lease.
 
 ### Content Policy Inheritance
 
-Content policies (`contentPolicy.interceptorRef`) can only be made stricter at each delegation hop, never relaxed. A child may retain the parent's interceptor or add one where the parent had none, but it cannot remove a content check (`CONTENT_POLICY_WEAKENING`) or substitute a different interceptor (`CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`). This ensures content scanning cannot be bypassed by delegation depth.
+Content policies (`contentPolicy.interceptorRef`) can only be made stricter at each delegation hop, never relaxed. A child may retain the parent's interceptor or add one where the parent had none, but it cannot remove a content check (`CONTENT_POLICY_WEAKENING`) or substitute a different interceptor (`CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION`). Content scanning cannot be bypassed by delegation depth.
 
 ### Isolation Monotonicity
 
-Children must use an isolation profile at least as strong as their parent. The enforcement order is: `standard` (runc) < `sandboxed` (gVisor) < `microvm` (Kata). A `sandboxed` parent cannot delegate to a `standard` child -- the gateway rejects such delegations with `ISOLATION_MONOTONICITY_VIOLATED`.
+Children must use an isolation profile at least as strong as their parent. The enforcement order is: `standard` (runc) < `sandboxed` (gVisor) < `microvm` (Kata). A `sandboxed` parent cannot delegate to a `standard` child; the gateway rejects such delegations with `ISOLATION_MONOTONICITY_VIOLATED`.
 
 ### Cycle Detection
 

@@ -7,7 +7,7 @@ nav_order: 2
 
 # Configuration
 
-This page provides a deep dive into the `values.yaml` configuration surface, covering every major section: gateway tuning, runtime registration, pool configuration, credential pools, delegation policies, and operational defaults that vary by deployment size.
+This page covers the `values.yaml` configuration surface: gateway tuning, runtime registration, pool configuration, credential pools, delegation policies, and operational defaults that vary by deployment size.
 
 ---
 
