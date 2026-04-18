@@ -18,7 +18,7 @@ The next milestone is the first runnable slice of the platform:
 - The echo runtime as the default runtime.
 - Gateway skeleton with session create, stream, and complete.
 - `CONTRIBUTING.md` fully opened for code PRs.
-- Benchmark harness (TTHW and basic throughput).
+- Benchmark harness.
 
 When this lands, code contributions against the core platform open up. [`CONTRIBUTING.md`](CONTRIBUTING.md) will be updated the day the policy changes.
 

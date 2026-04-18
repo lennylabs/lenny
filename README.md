@@ -57,8 +57,6 @@ lenny session start --runtime claude-code --workspace ./my-repo \
   --message "Summarize the architecture."
 ```
 
-**Target: install to first chat response in under 5 minutes.**
-
 Contributors to the platform itself can skip the embedded Kubernetes layer and run `make run` for a native-process dev loop with SQLite and in-memory stores — see [Contributing](#contributing).
 
 ---

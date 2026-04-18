@@ -101,8 +101,6 @@ The `make run` target starts the gateway with:
 - The echo runtime sample as the default runtime
 - 100% trace sampling with stdout exporter
 
-**Target: under 5 minutes** from `git clone` to a completed round-trip echo session on a standard development machine. CI includes a TTHW smoke test that validates this path.
-
 For full Kubernetes-based development, see the [Quickstart Guide](../getting-started/quickstart).
 
 ---
@@ -129,7 +127,7 @@ Every PR should include:
 ### Review process
 
 - PRs require at least one maintainer approval before merge.
-- CI must pass (unit tests, integration tests, linter, TTHW smoke test).
+- CI must pass (unit tests, integration tests, linter, smoke test).
 - During the BDfN governance phase, the maintainer has final decision authority on all merges.
 - Reviewers focus on: correctness, test coverage, documentation, backward compatibility, and adherence to the design principles in [Why Lenny](why-lenny).
 
