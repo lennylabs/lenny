@@ -116,6 +116,22 @@ The parent doesn't see the child's pod address, internal endpoints, or raw crede
 
 Memory, caching, guardrails, evaluation scoring, and credential routing are defined as interfaces. Lenny ships a default implementation of each that is disabled unless you opt in, and any of them can be replaced with your own tool. Lenny does not implement evaluation scoring or safety classification; it provides the interfaces you wire those into.
 
+### Experimentation
+
+Lenny's focus is **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and propagation of the chosen variant into the adapter manifest so the runtime knows which configuration it's running under. These are the parts you can't get anywhere else and that every experimentation flow needs.
+
+A **basic built-in variant assigner** ships with the platform. It supports deterministic bucketing on a session-level key (for example, tenant or user ID) with configurable split ratios. It is intentionally limited — enough for simple runtime-version rollouts, not enough to replace a real experimentation platform.
+
+Most teams will plug in an **external experimentation platform** (LaunchDarkly, Statsig, Unleash, or any OpenFeature-compatible provider) for assignment decisions. Lenny integrates through OpenFeature, so the assignment platform is swappable and experiment lifecycle management — targeting rules, rollout curves, auto-winner declaration, stats — lives where your team already runs it.
+
+What Lenny deliberately does **not** provide: experiment lifecycle management, statistical significance testing, multi-armed bandits, or auto-winner declaration. All transitions between variants are operator-initiated or driven by the external platform you plug in.
+
+### Evaluation
+
+Lenny is **not an eval platform** and does not ship one. Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` across delegation chains so those external platforms can stitch traces end-to-end.
+
+For teams that want to persist scores alongside session state without standing up another system, Lenny exposes a **basic score storage and retrieval mechanism** (`/eval` endpoint). It is a database table with an API in front of it — not an eval runner, not a judge, not a scoring model. Use it if it fits; replace it or ignore it otherwise.
+
 ### Every installation can be operated by a machine
 
 Lenny ships with a dedicated management plane (`lenny-ops`) that exposes structured endpoints for diagnostics, runbooks, backups, drift detection, and cluster management -- regardless of how big your deployment is. `lenny-ctl doctor --fix` applies idempotent remediations for common misconfigurations.

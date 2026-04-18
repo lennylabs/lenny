@@ -211,7 +211,7 @@ When a pool's `minWarm > 0` and there are zero idle pods, the pool enters `PoolW
 
 ## Capacity Calibration Methodology
 
-### Ramp Test (Phase 2 Deliverable)
+### Ramp Test (first-working-slice deliverable)
 
 The ramp test determines the empirical saturation point for `maxSessionsPerReplica`:
 
@@ -289,13 +289,13 @@ gateway:
 - Scale Postgres to 4 vCPU / 16 GB
 - Scale Redis to 8 GB with Sentinel HA
 - Move to erasure-coded MinIO (4 nodes)
-- **Run Phase 2 benchmark** to calibrate `maxSessionsPerReplica`
+- **Run the first-working-slice benchmark** to calibrate `maxSessionsPerReplica`
 - Replace all provisional values with calibrated measurements
 
 ### Growth to Scale
 
 - **Prerequisites:**
-  1. Phase 13.5 load tests confirm LLM Proxy extraction has occurred OR `llm_proxy_active_connections / active_sessions` is sustainably below 0.3:1
+  1. Pre-hardening load tests confirm LLM Proxy extraction has occurred OR `llm_proxy_active_connections / active_sessions` is sustainably below 0.3:1
   2. `gc_pause_p99_ms` remains below 50 ms at Growth-size peak load
 - Increase gateway replicas to 5-30
 - Scale Postgres to 8 vCPU / 32 GB

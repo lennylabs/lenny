@@ -605,9 +605,9 @@ Live connectivity test. Rate-limited to 10 requests per connector per minute.
 
 ## Experiments
 
-Experiments enable A/B testing of runtime versions. The gateway assigns sessions to variants, delivers experiment context to runtimes in the adapter manifest (`experimentContext` with `experimentId`, `variantId`, `inherited`), and provides optional built-in score attribution via the `/eval` endpoint.
+Experiments configure variant pools for runtime version rollouts. Lenny provides infrastructure primitives (pods organised into variant pools, deterministic sticky routing, variant context in the adapter manifest) and a basic built-in assigner for simple splits. For anything beyond simple rollouts, integrate an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature — assignment decisions then live in the external platform.
 
-When experiments are active, runtimes can use the experiment context to tag traces with variant metadata for filtering and grouping in their eval platform.
+Regardless of who decides the assignment, the gateway delivers `experimentContext` (`experimentId`, `variantId`, `inherited`) in the adapter manifest so runtimes can tag traces with variant metadata for filtering and grouping in their chosen eval platform. When scores are also stored via the `/eval` endpoint, the gateway auto-populates variant attribution on those stored records.
 
 ### CRUD endpoints
 

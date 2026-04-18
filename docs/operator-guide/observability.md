@@ -173,7 +173,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 
 ## SLO Definitions
 
-All SLO targets are **provisional first-principles estimates** that must be validated by Phase 14.5 load testing before use in customer-facing SLAs.
+All SLO targets are **provisional first-principles estimates** that must be validated by Growth-sized load testing (the SLO-validation milestone) before use in customer-facing SLAs.
 
 | SLO | Target (Provisional) | Measurement |
 |---|---|---|

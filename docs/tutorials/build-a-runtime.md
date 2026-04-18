@@ -14,7 +14,7 @@ In this tutorial you will build a custom Lenny runtime from scratch. You will st
 ## Prerequisites
 
 - Go 1.22+ installed
-- Lenny running locally via `make run`
+- Lenny running locally via `lenny up` (recommended) or `make run` if you are also iterating on platform internals
 - Familiarity with the [Your First Session](first-session) tutorial
 
 ---

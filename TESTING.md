@@ -390,7 +390,7 @@ Test each of the gateway's four internal subsystems (Session Orchestrator, File 
 - Runs against a real gateway process (Tier 2 docker-compose stack)
 - Tagged `//go:build contract`
 
-**CI gate:** Runs on every PR (Phase 5+). Blocks merge.
+**CI gate:** Runs on every PR once the contract test suite is wired up. Blocks merge.
 
 ### Layer 4: Integration Tests (multi-component, no real cluster)
 
@@ -485,30 +485,30 @@ Test each of the gateway's four internal subsystems (Session Orchestrator, File 
 
 **SLO gates (from the spec):**
 
-| Metric | Target | Measured at |
-|--------|--------|-------------|
-| Pod-warm session start (runc) | P95 < 2s | Phase 2+ |
-| Pod-warm session start (gVisor) | P95 < 5s | Phase 2+ |
-| Checkpoint <= 100MB workspace | P95 < 2s | Phase 2+ |
-| Streaming reconnect latency | P95 < 500ms | Phase 6.5+ |
-| Delegation fan-out (N=50) | Complete < 30s | Phase 9.5+ |
-| Credential rotation propagation | P95 < 5s | Phase 11.5+ |
-| Gateway at 10,000 sessions | No OOM, latency within SLO | Phase 13.5 |
+| Metric | Target | First measured at |
+|--------|--------|-------------------|
+| Pod-warm session start (runc) | P95 < 2s | First working slice |
+| Pod-warm session start (gVisor) | P95 < 5s | First working slice |
+| Checkpoint <= 100MB workspace | P95 < 2s | First working slice |
+| Streaming reconnect latency | P95 < 500ms | Streaming-path load stage |
+| Delegation fan-out (N=50) | Complete < 30s | Delegation load stage |
+| Credential rotation propagation | P95 < 5s | Credential-lifecycle load stage |
+| Gateway at 10,000 sessions | No OOM, latency within SLO | Full-system load stage |
 
-**Incremental load test phases (aligned with build sequence):**
+**Incremental load test stages (aligned with the build sequence in `spec/18_build-sequence.md`, which is directional):**
 
-| Phase | Focus | Cluster |
+| Stage | Focus | Cluster |
 |-------|-------|---------|
-| 2 | Startup latency, checkpoint duration baseline | Kind |
-| 6.5 | Streaming path: 500 concurrent sessions | Dedicated GKE/EKS |
-| 9.5 | Delegation: fan-out N=50, depth=10 | Dedicated GKE/EKS |
-| 11.5 | Credential lifecycle: 200 concurrent sessions | Dedicated GKE/EKS |
-| 13.5 | Full-system: Tier 2 sustained load, all paths combined | Dedicated GKE/EKS |
-| 14.5 | Re-run 13.5 with full security hardening | Dedicated GKE/EKS |
+| First working slice | Startup latency, checkpoint duration baseline | Kind |
+| Streaming path | 500 concurrent sessions | Dedicated GKE/EKS |
+| Delegation | Fan-out N=50, depth=10 | Dedicated GKE/EKS |
+| Credential lifecycle | 200 concurrent sessions | Dedicated GKE/EKS |
+| Full-system | Tier 2 sustained load, all paths combined | Dedicated GKE/EKS |
+| SLO validation | Re-run full-system with full security hardening | Dedicated GKE/EKS |
 
 **Regression detection:** Each run produces a JSON artifact with latency histograms. CI compares against the previous baseline and flags regressions > 15%.
 
-**CI gate:** Phase 2 baseline on every PR (fast, Kind-based). Full load tests on nightly/weekly schedule and before releases.
+**CI gate:** First-working-slice baseline on every PR (fast, Kind-based). Full load tests on nightly/weekly schedule and before releases.
 
 ### Layer 7: Chaos Tests
 
@@ -580,12 +580,12 @@ Nightly Pipeline:
 ├── e2e tests — full suite (GKE with gVisor)
 ├── chaos tests — core scenarios
 ├── security tests — full suite + API fuzzing
-├── load test — Phase 2 baseline (startup latency, checkpoint)
+├── load test — first-working-slice baseline (startup latency, checkpoint)
 └── dependency audit (go mod vulnerabilities, image CVE scan)
 
 Weekly / Pre-Release Pipeline:
 ├── full nightly pipeline
-├── load tests — full tier (6.5, 9.5, 11.5, 13.5 scenarios)
+├── load tests — full suite (streaming, delegation, credential-lifecycle, full-system scenarios)
 ├── chaos tests — full suite
 ├── multi-profile validation (cloud-managed + self-managed Helm configs)
 └── SLO regression comparison against previous release baseline

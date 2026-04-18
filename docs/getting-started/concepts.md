@@ -520,27 +520,27 @@ Platform operators can partition a tenant's resources into logical project bound
 
 ## Experimentation
 
-Lenny includes A/B experiment primitives for runtime version rollouts. `ExperimentDefinition` is an admin API resource with three lifecycle states: `active`, `paused`, and `concluded`.
+Lenny provides **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and propagation of the chosen variant into the adapter manifest. These are the parts every experimentation flow needs and that are awkward to build anywhere else.
 
-The `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. External targeting integration supports LaunchDarkly, Statsig, Unleash, and generic webhooks for deployers who prefer external feature-flag systems.
+Lenny also ships a **basic built-in variant assigner**. `ExperimentDefinition` is an admin API resource with three lifecycle states (`active`, `paused`, `concluded`), and the `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. This built-in path is intentionally limited — enough for simple runtime-version rollouts, not a replacement for a real experimentation platform.
 
-**Experiment context delivery.** When a session is enrolled in an experiment, the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the adapter manifest. Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform.
+For anything beyond simple rollouts, most teams plug in an **external experimentation platform** (LaunchDarkly, Statsig, Unleash, or any OpenFeature-compatible provider). Lenny integrates via OpenFeature and generic webhook targeting, so assignment decisions, targeting rules, rollout curves, and statistical analysis live where your team already runs them. See [OpenFeature integration](../operator-guide/openfeature-integration.md).
 
-Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All experiment lifecycle transitions are operator-initiated; Lenny does not build automatic winner declaration or statistical significance testing. See SPEC Section 10.7.
+**Variant context delivery.** When a session is routed to a variant — by the built-in assigner or by an external platform — the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the adapter manifest. Runtimes use this to tag traces with variant metadata for filtering and grouping in their eval platform.
+
+Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All variant-pool lifecycle transitions are operator-initiated or driven by the external platform; Lenny does not implement automatic winner declaration, statistical significance testing, or multi-armed bandits. See SPEC Section 10.7.
 
 ---
 
 ## Evaluation
 
-Lenny uses a **two-tier evaluation model**:
+**Lenny is not an eval platform.** Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Weights & Biases, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` through delegation for cross-runtime trace stitching in those external platforms. When a session is routed to a variant, `experimentContext` is also available in the adapter manifest; runtimes can use it to tag traces with variant metadata for filtering and grouping.
 
-**Primary: runtime-native evaluation.** Most production runtimes integrate with dedicated eval platforms (LangSmith, Braintrust, Weights & Biases, etc.) for scoring, observability, and prompt iteration. Lenny supports this by propagating `tracingContext` through delegation for cross-runtime trace stitching. When experiments are active, `experimentContext` is also available in the adapter manifest; runtimes can use it to tag traces with variant metadata for filtering and grouping.
-
-**Built-in alternative: `/eval` endpoint.** For deployers without dedicated eval tooling, Lenny provides a score ingestion and attribution layer. External scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When a session is enrolled in an experiment, the gateway auto-populates `experiment_id` and `variant_id`. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) supports regression testing across runtime versions.
+**Basic score storage (`/eval` endpoint).** For teams that want to persist scores alongside session state without standing up another system, Lenny exposes a basic mechanism to store and retrieve scores. It is a database table with an API in front of it — not an eval runner, not a judge, not a scoring model. Scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When a session is routed to a variant, the gateway auto-populates `experiment_id` and `variant_id` on the stored record. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation over stored scores with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) supports regression testing across runtime versions.
 
 **Cross-delegation tracing.** Runtimes register tracing identifiers (run IDs, trace IDs) via `lenny/set_tracing_context` (MCP) or `set_tracing_context` (JSONL). The gateway propagates these identifiers to child delegation leases, supporting cross-runtime trace stitching in external eval platforms. This is an observability feature useful for any multi-agent delegation, not just experiments.
 
-Lenny does not build LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms; eval computation is the deployer's responsibility. See SPEC Section 10.7.
+Lenny does not implement LLM-as-judge integration, scoring pipelines, eval scheduling, or outbound integrations with eval platforms; eval computation belongs in the framework the runtime chose. See SPEC Section 10.7.
 
 ---
 

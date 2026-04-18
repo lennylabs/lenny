@@ -343,9 +343,9 @@ Remove a registered credential. Active session leases are unaffected (they conti
 
 ---
 
-## Evaluation (Built-in Endpoint)
+## Score Storage (Basic `/eval` Endpoint)
 
-Runtimes with dedicated eval platforms (LangSmith, Braintrust, etc.) use those platforms directly for scoring and observability. The endpoints below are the **built-in alternative** for deployers without dedicated eval tooling. When a session is enrolled in an experiment, the gateway auto-populates experiment attribution on eval results.
+Lenny is **not an eval platform** and does not ship one. Runtime builders choose whichever eval framework they prefer (LangSmith, Braintrust, Arize, Langfuse, home-grown) and use that framework directly for scoring and observability. The endpoints below are a **basic mechanism to store and retrieve scores** alongside session state — useful when you want to persist results without standing up another system. They are not an eval runner, a judge, or a scoring model. When a session is routed to a variant, the gateway auto-populates variant attribution on stored records.
 
 | Method | Endpoint                             | Description                   |
 | :----- | :----------------------------------- | :---------------------------- |

@@ -5,14 +5,14 @@ parent: "Operator Guide"
 nav_order: 17
 ---
 
-# OpenFeature Integration (External Experiment Targeting)
+# OpenFeature Integration (External Experimentation Platforms)
 
-Lenny's built-in experiment primitives support two targeting modes:
+Lenny's focus is infrastructure primitives (variant pools and deterministic routing). For **assignment decisions**, variant pools support two modes:
 
-- **`mode: percentage`** — deterministic HMAC-SHA256 bucketing. Fully built-in, no external dependency. Use for simple A/B traffic splits.
-- **`mode: external`** — delegates variant assignment to a flag/experimentation service via the [OpenFeature](https://openfeature.dev/) Go SDK.
+- **`mode: percentage`** — Lenny's basic built-in assigner. Deterministic HMAC-SHA256 bucketing, no external dependency. Intentionally limited — use for simple runtime-version splits.
+- **`mode: external`** — delegates variant assignment to an experimentation platform (LaunchDarkly, Statsig, Unleash, or any OpenFeature-compatible provider) via the [OpenFeature](https://openfeature.dev/) Go SDK. This is the recommended path for anything beyond simple rollouts — targeting rules, rollout curves, statistical analysis, and auto-winner declaration all live in the external platform.
 
-This page covers `mode: external` setup. Percentage-mode experiments require no external configuration and work out of the box.
+This page covers `mode: external` setup. Percentage-mode variant pools require no external configuration and work out of the box.
 
 ---
 

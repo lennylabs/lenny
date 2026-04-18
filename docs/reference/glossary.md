@@ -83,10 +83,10 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : A named, RBAC-governed project context that groups runtimes and connectors for a team. Environments provide scoping for session creation, runtime discovery, and delegation policy evaluation. Managed via the Admin API.
 
 **Eval Result**
-: A scored evaluation record submitted via `POST /v1/sessions/{id}/eval`, with multi-dimensional scores (e.g., accuracy, helpfulness) and automatic experiment attribution. Used for runtime comparison and regression testing. Subject to `maxEvalsPerSession` quota. See [Configuration Reference](configuration).
+: A score record stored via `POST /v1/sessions/{id}/eval`, with multi-dimensional scores (e.g., accuracy, helpfulness) and automatic variant attribution when a variant pool is active. Lenny is not an eval platform — this is a basic score storage mechanism; runtime builders choose whichever eval framework they prefer (LangSmith, Braintrust, Arize, Langfuse, home-grown). Subject to `maxEvalsPerSession` quota. See [Configuration Reference](configuration).
 
 **Experiment**
-: An A/B testing configuration for runtime version rollouts, with variant pools, deterministic bucketing, and sticky assignment. Experiments control which runtime variant a session is assigned to and link eval results for statistical comparison. Managed via the Admin API.
+: A variant-pool configuration for runtime version rollouts, with variant pools and deterministic sticky routing. Lenny provides the infrastructure primitives (pools, routing, manifest delivery) and a basic built-in variant assigner; for anything beyond simple rollouts, integrate an external experimentation platform via OpenFeature (LaunchDarkly, Statsig, Unleash). Managed via the Admin API.
 
 **Elicitation**
 : A mechanism by which an agent or tool requests interactive input from the human user. Elicitations flow through the delegation chain -- child sessions can trigger elicitations that bubble up to the root session's client. Subject to `maxElicitationsPerSession`, `maxElicitationWait`, and `elicitationDepthPolicy` controls. See [Configuration Reference](configuration).

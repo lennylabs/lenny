@@ -21,7 +21,7 @@ This page describes Lenny's governance model, decision-making process, and polic
 
 ## Governance model: Benevolent Dictator for Now (BDfN)
 
-Lenny adopts a **Benevolent Dictator for Now (BDfN)** governance model during its early development phase. A single maintainer makes final decisions on all architectural, implementation, and community matters.
+Lenny adopts a **Benevolent Dictator for Now (BDfN)** governance model during early development. A single maintainer makes final decisions on all architectural, implementation, and community matters.
 
 This model is intentionally lightweight to minimize decision-making overhead while the project is in active pre-release development. It is not intended to be permanent.
 
@@ -78,7 +78,7 @@ Once formed, the steering committee is responsible for:
 
 ## Decision-making process
 
-### During BDfN phase
+### During BDfN governance
 
 1. **Proposals** are submitted via the Discussions forum or as draft ADRs.
 2. **Discussion** happens publicly; all input is welcome.
@@ -156,21 +156,21 @@ Lenny uses the **Developer Certificate of Origin (DCO)**: contributors certify a
 - **Deprecation policy:** features are deprecated for at least one minor version before removal.
 - **Changelog** maintained in `CHANGELOG.md` with entries for every user-facing change.
 
-### Phase-gated development
+### Milestone-gated development
 
-Lenny follows a phase-gated development process where each phase has defined deliverables and exit criteria:
+Lenny follows a milestone-gated development process where each milestone has defined deliverables and exit criteria. The current plan lives in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) and is directional — ordering and timing will shift as implementation surfaces new constraints. Governance-relevant gates include:
 
-| Phase | Focus | Key deliverables |
-|:------|:------|:-----------------|
-| **Phase 0** | Foundation | License (ADR-008), repository setup, CI pipeline. |
-| **Phase 2** | Core platform | `make run` local dev mode, echo runtime, `CONTRIBUTING.md`, `GOVERNANCE.md` draft, benchmark harness. |
-| **Phase 13.5** | Pre-hardening baselines | Load tests at Growth-sized deployment load, pre-hardening performance baselines. |
-| **Phase 14.5** | SLO validation | Full security hardening active, SLO compliance gate. |
-| **Phase 17a** | Community launch | Documentation review, governance finalization, comparison guides, community onboarding. |
+| Milestone | Key deliverables |
+|:----------|:-----------------|
+| **Foundation** | License (ADR-008), repository setup, CI pipeline. |
+| **First working slice** | `make run` local dev mode, echo runtime, `CONTRIBUTING.md`, `GOVERNANCE.md` draft, benchmark harness. |
+| **Pre-hardening baselines** | Load tests at Growth-sized deployment load, pre-hardening performance baselines. |
+| **SLO validation** | Full security hardening active, SLO compliance gate. |
+| **Community launch** | Documentation review, governance finalization, comparison guides, community onboarding. |
 
 ### Release cadence
 
-During early development, releases follow an as-needed cadence driven by phase completion. After GA:
+During early development, releases follow an as-needed cadence driven by milestone completion. After GA:
 
 - **Minor releases** on a regular cadence (target: monthly or bi-monthly).
 - **Patch releases** as needed for security fixes and critical bugs.
@@ -191,7 +191,7 @@ During early development, releases follow an as-needed cadence driven by phase c
 | Artifact | Location | Status |
 |:---------|:---------|:-------|
 | `LICENSE` | Repository root | MIT, committed. |
-| `CONTRIBUTING.md` | Repository root | Published (design-phase policy; opens fully in Phase 2 with `make run`). |
+| `CONTRIBUTING.md` | Repository root | Published (design-phase policy; opens fully when the first working slice with `make run` lands). |
 | `CODE_OF_CONDUCT.md` | Repository root | Published. Contributor Covenant v2.1. |
 | `SECURITY.md` | Repository root | Published. Coordinated disclosure policy. |
 | `GOVERNANCE.md` | Repository root | Published. Finalized alongside steering-committee transition. |

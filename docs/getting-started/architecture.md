@@ -111,7 +111,7 @@ All interfaces share the same internal session manager. Adding a new external pr
 
 - Content filtering and input validation
 - Rate limiting and quota enforcement
-- Experiment routing (A/B variant assignment)
+- Variant routing (basic built-in assigner or external experimentation platform via OpenFeature)
 - Delegation policy enforcement
 - Audit event emission
 
@@ -248,14 +248,14 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 
 ### Pool Scaling Controller
 
-Manages desired pool configuration, scaling intelligence, and experiment variant pool sizing. Separate from the Warm Pool Controller.
+Manages desired pool configuration, scaling intelligence, and variant pool sizing. Separate from the Warm Pool Controller.
 
 **Key responsibilities:**
 
 - Reconcile pool configuration from Postgres (admin API, the source of truth) into `SandboxTemplate` and `SandboxWarmPool` CRDs.
-- Manage scaling decisions: time-of-day schedules, demand-based rules, experiment variant sizing.
+- Manage scaling decisions: time-of-day schedules, demand-based rules, variant pool sizing.
 - Compute `minWarm` targets using a demand-based formula that accounts for steady-state claim rates, burst patterns, controller failover windows, and pod startup times.
-- Adjust base pool sizing when experiment variants divert traffic.
+- Adjust base pool sizing when variants divert traffic.
 
 **CRDs become derived state:** The admin API (Postgres) is the source of truth for pool configuration. The Pool Scaling Controller translates admin API state into Kubernetes CRDs that the Warm Pool Controller reconciles. Manual `kubectl edit` of CRD specs is rejected by a validating webhook.
 

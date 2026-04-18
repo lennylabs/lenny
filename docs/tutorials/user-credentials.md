@@ -13,7 +13,7 @@ Lenny supports a "bring your own API key" workflow where users register their ow
 
 ## Prerequisites
 
-- Lenny running locally via `make run` or `docker compose up`
+- Lenny running locally via `lenny up` (recommended; see [Quickstart](../getting-started/quickstart)) or via `make run` / `docker compose up` for contributor dev loops
 - An API key for an LLM provider (e.g., Anthropic, OpenAI)
 - Familiarity with [Your First Session](first-session)
 - curl and jq installed

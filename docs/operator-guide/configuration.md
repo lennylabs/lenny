@@ -55,7 +55,7 @@ gateway:
 
 ### `maxSessionsPerReplica` by Deployment Size
 
-These values are **provisional first-principles estimates** and must be replaced with empirically calibrated measurements from the Phase 2 benchmark harness.
+These values are **provisional first-principles estimates** and must be replaced with empirically calibrated measurements from the first-working-slice benchmark harness.
 
 | Size | Provisional Value | HPA Target Utilization | Notes |
 |---|---|---|---|
@@ -94,7 +94,7 @@ gateway:
       activeConnections: 2000
 ```
 
-The extraction thresholds determine when a subsystem should be extracted to its own service. These are also provisional and must be calibrated via the Phase 2 benchmark harness.
+The extraction thresholds determine when a subsystem should be extracted to its own service. These are also provisional and must be calibrated via the first-working-slice benchmark harness.
 
 ### HPA Configuration
 
@@ -548,7 +548,7 @@ connectors:
 
 ## Experiment Configuration
 
-Experiments are managed via the admin API or `lenny-ctl admin experiments`. They enable A/B testing of runtime versions, configurations, or delegation policies.
+Experiments are managed via the admin API or `lenny-ctl admin experiments`. They configure variant pools and deterministic routing for runtime version rollouts. Lenny provides the infrastructure primitives (variant pools, routing, manifest delivery) and a basic built-in assigner; most teams plug in an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
 
 ### Experiment Lifecycle
 

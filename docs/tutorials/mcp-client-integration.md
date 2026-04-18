@@ -13,7 +13,7 @@ The Model Context Protocol (MCP) is Lenny's client-facing protocol. Lenny's gate
 
 ## Prerequisites
 
-- Lenny running locally via `make run` or `docker compose up`
+- Lenny running locally via `lenny up` (recommended; see [Quickstart](../getting-started/quickstart)) or via `make run` / `docker compose up` for contributor dev loops
 - Python 3.10+ with `mcp` package, or Node.js 18+ with `@modelcontextprotocol/sdk`
 - Familiarity with [Your First Session](first-session)
 

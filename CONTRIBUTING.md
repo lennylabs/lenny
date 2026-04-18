@@ -17,7 +17,7 @@ Because there is no merged codebase for PRs to land against yet, the highest-sig
 
 ## When code PRs open up
 
-Code contributions against core platform components open up once Phase 2 lands — that's the first working slice (`make run`, echo runtime, gateway skeleton). See [`spec/18_build-sequence.md`](spec/18_build-sequence.md) for the plan. This file will be updated the day the policy changes.
+Code contributions against core platform components open up once the first working slice lands (`make run`, echo runtime, gateway skeleton). `make run` is the contributor dev loop (native-process, SQLite, in-memory stores, local filesystem); evaluators and users should instead use `lenny up`, the single-binary Tier 0 embedded stack. See [`spec/18_build-sequence.md`](spec/18_build-sequence.md) for the directional plan. This file will be updated the day the policy changes.
 
 ## Ground rules
 

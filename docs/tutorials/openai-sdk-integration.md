@@ -15,7 +15,7 @@ This tutorial shows how to configure the OpenAI SDK, list models (mapped to runt
 
 ## Prerequisites
 
-- Lenny running locally via `make run` or `docker compose up`
+- Lenny running locally via `lenny up` (recommended; see [Quickstart](../getting-started/quickstart)) or via `make run` / `docker compose up` for contributor dev loops
 - Python: `pip install openai` (v1.0+)
 - TypeScript/Node.js: `npm install openai` (v4.0+)
 

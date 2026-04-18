@@ -25,7 +25,7 @@ Complete reference for all Helm `values.yaml` configuration fields, organized by
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by Phase 2 benchmarks. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
+| `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by the first-working-slice benchmark harness. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
 | `gateway.maxCreatedStateTimeoutSeconds` | int | 300 | Maximum time a session can remain in `created` state before automatic cleanup. Also governs upload token TTL. | Must be > 0. |
 
 ### Subsystem concurrency limits
@@ -41,7 +41,7 @@ Each gateway subsystem has independently configurable concurrency and queue-dept
 
 ### Extraction thresholds
 
-Configurable thresholds for subsystem extraction decisions. All values are provisional and must be calibrated by Phase 2 benchmarks.
+Configurable thresholds for subsystem extraction decisions. All values are provisional and must be calibrated by the first-working-slice benchmark harness.
 
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
@@ -260,7 +260,7 @@ Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption key
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `global.traceSamplingRate` | float | 0.10 | Default probabilistic trace sampling rate (0.0-1.0). 100% for errors, slow requests, and delegation trees. | 0.0-1.0. |
-| `slo.validated` | bool | `false` | Set to `true` by Phase 14.5 benchmark automation after SLO validation. Suppresses the provisional-values startup warning. | -- |
+| `slo.validated` | bool | `false` | Set to `true` by the SLO-validation benchmark automation after a Growth-sized load run passes. Suppresses the provisional-values startup warning. | -- |
 | `slo.burnRate.fastMultiplier` | int | 14 | Fast-window burn rate multiplier for SLO alerts. | Must be > 0. |
 | `slo.burnRate.slowMultiplier` | int | 3 | Slow-window burn rate multiplier for SLO alerts. | Must be > 0. |
 
@@ -339,17 +339,19 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 
 ---
 
-## Evaluation configuration
+## Score storage configuration
+
+Lenny is not an eval platform. The settings below apply only to the basic `/eval` score storage endpoint.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `eval.maxEvalsPerSession` | int | 50 | Maximum `EvalResult` submissions per session. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. |
+| `eval.maxEvalsPerSession` | int | 50 | Maximum score records stored per session via `/eval`. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. |
 
 ---
 
 ## Experiment targeting (OpenFeature / OFREP)
 
-Lenny routes external experiment lookups through the OpenFeature Go SDK and the OFREP HTTP provider. Percentage-mode bucketing is built-in and does not require an OpenFeature provider.
+Lenny routes external variant-assignment lookups through the OpenFeature Go SDK and the OFREP HTTP provider. Percentage-mode is the basic built-in assigner and does not require an OpenFeature provider; for anything beyond simple rollouts, configure an external experimentation platform (LaunchDarkly, Statsig, Unleash) via the settings below.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|

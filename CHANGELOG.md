@@ -21,6 +21,6 @@ Lenny is in the design phase. There are no tagged releases yet. This section wil
 
 ### Notes
 
-The first tagged release will correspond to the completion of Phase 2 (first working slice). See [`ROADMAP.md`](ROADMAP.md) and [`spec/18_build-sequence.md`](spec/18_build-sequence.md).
+The first tagged release will correspond to the first working slice landing on `main`. See [`ROADMAP.md`](ROADMAP.md) and [`spec/18_build-sequence.md`](spec/18_build-sequence.md).
 
 [Unreleased]: https://github.com/lennylabs/lenny/compare/HEAD

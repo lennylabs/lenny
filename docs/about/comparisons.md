@@ -31,8 +31,8 @@ Side-by-side analysis of Lenny against other platforms in the agent infrastructu
 | **Recursive delegation**   | Yes (gateway-enforced)                     | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
 | **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses + A2A (post-v1 adapter) | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, isolation) | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
-| **Experimentation**        | Built-in A/B, variant pools, eval hooks    | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
-| **Eval hooks**             | Pull-based, multi-dimensional, experiment-attributed | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
+| **Experimentation**        | Variant pool + routing primitives; basic built-in assigner; integrates with LaunchDarkly/Statsig/Unleash via OpenFeature | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
+| **Eval**                   | Not an eval platform; basic score storage only. Compatible with any eval framework (LangSmith, Braintrust, Arize, Langfuse, home-grown). | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
 | **Session replay**         | Built-in (prompt_history + workspace_derive) | No                    | No                        | No                          | Deterministic replay     | No                          | Dataset replay                   |
 | **Memory store**           | Pluggable interface (Postgres+pgvector default) | No                 | No                        | No                          | No                       | No                          | Built-in (LangChain-coupled)     |
 | **Credential management**  | Pools, leasing, gateway-mediated LLM proxy, pod-bound lease tokens | No                      | No                        | No                          | No                       | No                          | Basic                            |
@@ -52,7 +52,7 @@ The cold-start figures in this table are **not directly comparable**. Each platf
 - **E2B (~150ms), Daytona (sub-90ms), Fly.io Sprites (~300ms):** These measure **container/VM boot time** -- the wall-clock duration to go from a stopped state to a running process. No workspace setup, no file delivery, no credential assignment.
 - **Lenny (P95 <2s runc, <5s gVisor):** This measures **full session-ready time** -- pod claim + workspace file delivery + setup command execution + agent session start. The pod-claim-and-routing step alone (the operation most analogous to competitor cold-start numbers) is in the millisecond range because pods are pre-warmed.
 
-A fair comparison requires aligning on the same end-point definition. Lenny's numbers are also explicitly **unvalidated targets** (first-principles estimates) that must be measured by the Phase 2 benchmark harness before any comparison claim is made.
+A fair comparison requires aligning on the same end-point definition. Lenny's numbers are also explicitly **unvalidated targets** (first-principles estimates) that must be measured by the first-working-slice benchmark harness before any comparison claim is made.
 
 ---
 
@@ -209,8 +209,8 @@ Lenny's design matches these requirements:
 - **Enterprise controls** -- multi-tenancy, RBAC, audit logging, token budgets, content policy enforcement.
 - **Multi-protocol clients** -- REST, MCP, OpenAI, and Open Responses clients connecting to the same infrastructure.
 - **Interactive sessions** -- streaming, elicitation, interrupts, and tool approvals are part of the session contract.
-- **A/B experimentation** -- runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
-- **Evaluation pipelines** -- session replay for regression testing, multi-dimensional eval scoring, and experiment results aggregation.
+- **Runtime version rollouts** -- variant pool and deterministic routing primitives, a basic built-in variant assigner, and integration with external experimentation platforms (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
+- **Compatibility with any eval framework** -- bring LangSmith, Braintrust, Arize, Langfuse, or a home-grown pipeline. Lenny is not an eval platform; it only provides a basic mechanism to store and retrieve scores alongside session state, plus session replay for regression testing.
 - **Credential management** -- centralized credential pools with leasing and rotation. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real provider API keys. Each lease token is cryptographically bound to the pod that requested it, so a token lifted from one pod cannot be used by another.
 - **Compliance requirements** -- GDPR data erasure, legal holds, data residency, audit logging with hash-chained integrity, and configurable retention presets.
 - **Pluggable guardrails** -- content safety interceptors at 12 gateway phases, compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
