@@ -81,5 +81,5 @@ You're changing gateway code, a controller, a storage backend, or the docs.
 
 1. Run the **Quickstart** once to see the full system from the outside. Day-to-day, you'll probably prefer `make run` (native process) or `docker compose up` (containerized) for faster iteration on core components.
 2. Read **Core Concepts** end to end.
-3. Read **Architecture Overview**, then dive into the canonical spec under [`spec/`](https://github.com/lenny-dev/lenny/tree/main/spec), starting with `spec/README.md`.
+3. Read **Architecture Overview**, then dive into the canonical spec under [`spec/`](https://github.com/lennylabs/lenny/tree/main/spec), starting with `spec/README.md`.
 4. Check `CONTRIBUTING.md` for the development workflow and code conventions.

@@ -62,7 +62,7 @@ nav_external_links: []
 # --------------------------------------------------------------------------
 aux_links:
   "Lenny on GitHub":
-    - "https://github.com/your-org/lenny"    # TODO: replace with real URL
+    - "https://github.com/lennylabs/lenny"
 
 aux_links_new_tab: true
 
@@ -70,7 +70,7 @@ aux_links_new_tab: true
 # Footer
 # --------------------------------------------------------------------------
 footer_content: >-
-  Lenny is open-source software released under the Apache 2.0 license.
+  Lenny is open-source software released under the MIT license.
   Built with <a href="https://just-the-docs.com">just-the-docs</a>.
 
 last_edit_timestamp: true
@@ -78,7 +78,7 @@ last_edit_time_format: "%b %e %Y at %I:%M %p"
 
 gh_edit_link: true
 gh_edit_link_text: "Edit this page on GitHub"
-gh_edit_repository: "https://github.com/your-org/lenny"   # TODO: replace
+gh_edit_repository: "https://github.com/lennylabs/lenny"
 gh_edit_source: docs
 gh_edit_branch: main
 gh_edit_view_mode: "edit"

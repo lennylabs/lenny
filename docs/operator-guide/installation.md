@@ -141,7 +141,7 @@ Helm does not update CRDs on `helm upgrade`. CRDs must be applied as a separate 
 
 ```bash
 # Download CRDs from the release
-kubectl apply -f https://github.com/lenny-dev/lenny/releases/latest/download/crds.yaml
+kubectl apply -f https://github.com/lennylabs/lenny/releases/latest/download/crds.yaml
 
 # Verify installation
 kubectl get crd sandboxtemplates.lenny.dev sandboxwarmpools.lenny.dev \
@@ -231,7 +231,7 @@ bootstrap:
   runtimes:
     - name: echo
       type: agent
-      image: "ghcr.io/lenny-dev/echo-runtime:latest"
+      image: "ghcr.io/lennylabs/echo-runtime:latest"
       supportedProviders: []
       labels:
         team: default

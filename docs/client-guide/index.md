@@ -103,7 +103,7 @@ For most applications, REST + the log streaming endpoint (`GET /v1/sessions/{id}
 
 ## From zero to a session
 
-1. Install the CLI: `brew install lenny-dev/tap/lenny` (or grab a binary from the releases page).
+1. Install the CLI: `brew install lennylabs/tap/lenny` (or grab a binary from the releases page).
 2. Start the stack locally: `lenny up`. This runs the whole platform on your machine.
 3. Open a session: `lenny session start --runtime chat --message "hello"`.
 4. Prefer clicking? Visit `https://localhost:8443/playground`.

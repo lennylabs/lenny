@@ -157,12 +157,12 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_checkpoint_duration_seconds` | Histogram | `pool`, `tier`, `trigger` | Time for quiescence through snapshot upload. | `CheckpointDurationHigh`, `CheckpointDurationBurnRate` alerts. |
-| `lenny_checkpoint_stale_sessions` | Gauge | `pool`, `tier` | Sessions whose last checkpoint age exceeds `periodicCheckpointIntervalSeconds`. | `CheckpointStale` alert. |
+| `lenny_checkpoint_duration_seconds` | Histogram | `pool`, `level`, `trigger` | Time for quiescence through snapshot upload. | `CheckpointDurationHigh`, `CheckpointDurationBurnRate` alerts. |
+| `lenny_checkpoint_stale_sessions` | Gauge | `pool`, `level` | Sessions whose last checkpoint age exceeds `periodicCheckpointIntervalSeconds`. | `CheckpointStale` alert. |
 | `lenny_checkpoint_storage_bytes_total` | Gauge | `tenant_id`, `pool` | Per-tenant checkpoint storage bytes. | `CheckpointStorageHigh` alert. |
 | `lenny_checkpoint_orphaned_objects_total` | Counter | `pool`, `trigger` | Increments when checkpoint abort cleanup fails to delete partial MinIO objects. | Operational monitoring. |
-| `lenny_checkpoint_size_exceeded_total` | Counter | `pool`, `tier` | Pre-checkpoint workspace size probe exceeds `workspaceSizeLimitBytes`. | Operational monitoring. |
-| `lenny_checkpoint_storage_failure_total` | Counter | `pool`, `tier`, `trigger` | Non-eviction checkpoint upload failures after all retries. | Operational monitoring. |
+| `lenny_checkpoint_size_exceeded_total` | Counter | `pool`, `level` | Pre-checkpoint workspace size probe exceeds `workspaceSizeLimitBytes`. | Operational monitoring. |
+| `lenny_checkpoint_storage_failure_total` | Counter | `pool`, `level`, `trigger` | Non-eviction checkpoint upload failures after all retries. | Operational monitoring. |
 | `lenny_checkpoint_eviction_fallback_total` | Counter | `pool`, `had_prior_checkpoint` | Checkpoint storage fallback to Postgres minimal state. | Operational monitoring. |
 | `lenny_checkpoint_eviction_partial_keys_logged_total` | Counter | `pool`, `keys_committed` | Partial MinIO key sets logged during eviction total-loss path. | Operational monitoring. |
 | `lenny_checkpoint_barrier_ack_total` | Counter | `pool`, `outcome` | Barrier ack outcomes: `success`, `timeout`, `error`. | Operational monitoring. |

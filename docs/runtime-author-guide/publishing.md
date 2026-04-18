@@ -309,14 +309,14 @@ A registry entry includes:
 name: my-agent
 author: your-org
 description: A code review agent that checks for security vulnerabilities
-tier: standard
+level: standard
 image: ghcr.io/your-org/my-agent:v1.0.0
 source: https://github.com/your-org/my-agent
 labels:
   category: code-review
   language: go
 complianceReport:
-  tier: standard
+  level: standard
   passed: 25
   total: 25
   version: "1.0.0"
@@ -329,7 +329,7 @@ Before publishing:
 1. **Pass the compliance suite** at your declared integration level:
 
    ```bash
-   lenny-compliance --binary ./my-agent --tier standard --json > compliance.json
+   lenny-compliance --binary ./my-agent --level standard --json > compliance.json
    ```
 
    The compliance suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `outputpart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Adapter Contract → Canonical artifacts](adapter-contract.md#canonical-artifacts) for the full list.

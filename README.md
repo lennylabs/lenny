@@ -4,7 +4,9 @@
 
 Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a unified gateway. It handles session lifecycle, workspace setup, credential leasing, recursive delegation, experimentation, evaluation, policy enforcement, and recovery — so your team can run any AI agents as a shared, on-demand cloud service.
 
-[Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing)
+[Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing) | [Implementation Status](docs/about/status.md)
+
+> **Status: design phase.** The technical specification is complete; implementation is in progress. The documentation describes the v1 surface and is a source of truth for spec-driven development — not yet a working product. Early feedback on the design is very welcome: open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
 
 ---
 
@@ -12,7 +14,7 @@ Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a
 
 Lenny is a self-hosted, runtime-agnostic agent platform built around security, isolation, and operational control — from single-team setups to large multi-tenant deployments.
 
-1. **Runtime-agnostic** — any process, any framework, [tiered adapter contract](#runtime-adapter-contract)
+1. **Runtime-agnostic** — any process, any framework, [leveled adapter contract](#runtime-adapter-contract)
 2. **Self-hosted, Kubernetes-native** — your cluster, your data, standard K8s primitives
 3. **Security by default** — pods run non-root, all capabilities dropped, read-only root filesystem, default-deny network policies. No standing credentials — only short-lived leases. Gateway-mediated file delivery — pods never fetch external data directly. Deployer-selectable isolation: gVisor, Kata microVM, or runc
 4. **Recursive delegation** — agents spawn child agents with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection at every hop
@@ -27,8 +29,10 @@ For comparisons with other projects, see [Section 23 of the spec](spec/23_compet
 
 ## Quickstart
 
+> Commands below describe the target v1 developer experience. They will run against the first released drop; see [Implementation Status](docs/about/status.md) for what's wired up today.
+
 ```bash
-git clone https://github.com/your-org/lenny.git
+git clone https://github.com/lennylabs/lenny.git
 cd lenny
 make run
 ```
@@ -118,12 +122,12 @@ curl -s -X POST http://localhost:8080/v1/sessions/{id}/terminate | jq .
 
 ## Runtime Adapter Contract
 
-Lenny is not tied to any specific agent runtime. It defines a tiered adapter contract:
+Lenny is not tied to any specific agent runtime. It defines a leveled adapter contract:
 
-| Tier         | Interface                        | Effort                    | Capabilities                                                                                                                         |
+| Level        | Interface                        | Effort                    | Capabilities                                                                                                                         |
 | ------------ | -------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Minimum**  | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
-| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                     |
+| **Basic**    | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Basic + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                       |
 | **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
@@ -180,26 +184,27 @@ For users that don't have access to external eval tools, Lenny's built-in `/eval
 
 ## Project Status
 
-Lenny is in the **design phase**. The [technical specification](spec/) is complete and covers the full architecture. Implementation has not started yet.
+Lenny is in the **design phase**. The [technical specification](spec/) is complete and drives implementation under a spec- and test-driven workflow. The [Implementation Status](docs/about/status.md) page tracks what's wired up today against the phase plan in [`spec/18_build-sequence.md`](spec/18_build-sequence.md).
 
-We welcome feedback on the design and early contributors. See [Contributing](#contributing) below.
+Early feedback is welcome right now. PR-level contributions open up once the core lands — see [Contributing](#contributing).
 
 ## Documentation
 
 - [Technical Specification](spec/) — comprehensive architecture specification (split by section under `spec/`)
 - [Documentation Site](docs/) — guides, tutorials, API reference (Jekyll/GitHub Pages)
-- [Agent Operability](AGENTIC_OPERABILITY.md) — design addendum for AI DevOps agent integration
+- [Implementation Status](docs/about/status.md) — what's shipped, in progress, and planned, mapped to spec phases
+- [Roadmap](ROADMAP.md) — short-horizon priorities and the link to the full build sequence
 
 ## Contributing
 
-Lenny is open source and we welcome contributions. Areas where help is especially valuable:
+Lenny is MIT-licensed and open source. While the project is in the design phase, the highest-leverage contributions are:
 
-- **Runtime adapters** — implement adapters for your favorite agent framework
-- **Kubernetes expertise** — CRD design, controller logic, networking
-- **Security review** — threat modeling, policy design, credential management
-- **Documentation** — guides, tutorials, comparison guides
+- **Spec feedback** — read [`spec/`](spec/) and open issues or discussions with questions, disagreements, and concrete suggestions.
+- **Runtime adapter sketches** — prototype an adapter for your framework against the [adapter contract](spec/04_system-components.md). It doesn't need to run yet — contract pressure helps us find gaps.
+- **Comparisons and use cases** — tell us where Lenny does or doesn't fit your workflow.
+- **Security review** — threat-model the design; comment on [`spec/13_security.md`](spec/13_security.md) and related sections.
 
-Please open an issue to discuss before submitting large changes.
+Code PRs against platform components open up once the core lands. See [CONTRIBUTING.md](CONTRIBUTING.md) for the current policy and [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made.
 
 ## License
 

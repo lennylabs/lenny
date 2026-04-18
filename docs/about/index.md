@@ -16,6 +16,7 @@ Background on what Lenny is, where it fits next to other platforms, and how to t
 | Page | What it covers |
 |:-----|:---------------|
 | [Why Lenny?](why-lenny) | What Lenny is, when it's a good fit, and the design choices you're signing up for. |
+| [Implementation Status](status) | What's wired up today versus what the rest of these docs describe as the v1 target. |
 | [Comparisons](comparisons) | Side-by-side with E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith. |
 | [Contributing](contributing) | How to contribute code, report bugs, write runtimes, and propose architectural changes. |
 | [Governance](governance) | How decisions get made, the license, and the roadmap. |

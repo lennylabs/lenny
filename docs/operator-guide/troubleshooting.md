@@ -140,7 +140,7 @@ kubectl exec -n lenny-system deploy/lenny-gateway -- \
 | MinIO unavailable | Restore MinIO; sessions continue without new checkpoints |
 | Checkpoint duration too high | Reduce `workspaceSizeLimitBytes`; use `.lennyignore` |
 | Workspace size limit exceeded | Review workspace hygiene; increase limit if justified |
-| Full-tier quiescence timeout | Check runtime `checkpoint_ready` response time |
+| Full-level quiescence timeout | Check runtime `checkpoint_ready` response time |
 
 ---
 

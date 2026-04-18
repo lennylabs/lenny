@@ -13,6 +13,9 @@ Lenny gives every agent session its own locked-down pod. Your agent -- whether i
 
 Lenny is self-hosted. There is no managed service and no telemetry sent to an external vendor; data stays inside the cluster you operate.
 
+{: .note }
+> **Status: design phase.** The specification is complete and drives implementation under a spec- and test-driven workflow. These docs describe the v1 surface; see [Implementation Status](about/status) for what's wired up today. Design feedback is welcome right now — open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
+
 ---
 
 ## What's included
@@ -52,7 +55,7 @@ Lenny is self-hosted. There is no managed service and no telemetry sent to an ex
 
 **Compliance controls.** GDPR-style erasure that returns a cryptographic receipt. Legal holds. Configurable retention windows compatible with SOC 2, HIPAA, and FedRAMP control sets. Data residency policy that pins sessions to specific regions.
 
-Every capability on this page is specified in [`spec/`](https://github.com/lenny-dev/lenny/tree/main/spec) and covered by the integration test suite.
+Every capability on this page is specified in [`spec/`](https://github.com/lennylabs/lenny/tree/main/spec) and covered by the integration test suite.
 
 ---
 
@@ -136,7 +139,7 @@ You assess Lenny for isolation, audit, and regulatory fit.
 - [Quickstart -- `lenny up` in 5 minutes](/lenny/getting-started/){: .btn .btn-outline }
 - [Reference Runtime Catalog](/lenny/reference/){: .btn .btn-outline }
 - [API Reference](/lenny/api/){: .btn .btn-outline }
-- [GitHub](https://github.com/lenny-dev/lenny){: .btn .btn-outline }
+- [GitHub](https://github.com/lennylabs/lenny){: .btn .btn-outline }
 
 ---
 

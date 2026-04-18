@@ -90,7 +90,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 
 | Metric | Type | Description |
 |---|---|---|
-| `lenny_checkpoint_duration_seconds` | Histogram | By pool, tier, trigger |
+| `lenny_checkpoint_duration_seconds` | Histogram | By pool, level, trigger |
 | `lenny_checkpoint_stale_sessions` | Gauge | Sessions exceeding checkpoint interval |
 | `lenny_checkpoint_storage_failure_total` | Counter | Non-eviction checkpoint upload failures |
 | `lenny_checkpoint_eviction_fallback_total` | Counter | Evictions falling back to Postgres |

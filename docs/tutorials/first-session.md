@@ -15,7 +15,7 @@ The examples use the `chat` runtime, which ships with every installation.
 
 ## Before you start
 
-- Install the CLI: `brew install lenny-dev/tap/lenny` (or grab a binary from the releases page).
+- Install the CLI: `brew install lennylabs/tap/lenny` (or grab a binary from the releases page).
 - Run `lenny up`. It starts the whole platform on your machine and prints a gateway URL (`https://localhost:8443` by default) and a development token.
 - For the SDK paths below, you'll also need Python 3.10+ or Node.js 18+.
 
@@ -210,10 +210,10 @@ For a remote cluster, pass `token=...` and drop `verify=False`.
 
 ## Path E: TypeScript SDK
 
-Install: `npm install @lenny-io/client`
+Install: `npm install @lennylabs/client`
 
 ```typescript
-import { Client } from "@lenny-io/client";
+import { Client } from "@lennylabs/client";
 
 const client = new Client({
   baseUrl: "https://localhost:8443",

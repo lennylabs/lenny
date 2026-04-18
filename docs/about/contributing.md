@@ -20,7 +20,18 @@ nav_order: 3
 
 ## Project status
 
-Lenny is in **active pre-release development**. The project welcomes bug reports and discussion via the issue tracker at any phase. Unsolicited pull requests will not be reviewed or merged until the community launch phase. This notice will be updated when the project transitions to accepting external contributions.
+Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The public API surface described throughout these docs is the v1 target; the [Implementation Status](status) page tracks what's wired up today.
+
+### Where to plug in right now
+
+- **Issues and discussions are open.** Questions, disagreements, concrete suggestions, and use-case reports are all welcome. File an [issue](https://github.com/lennylabs/lenny/issues) or start a [discussion](https://github.com/lennylabs/lenny/discussions).
+- **Spec feedback is especially valuable.** We'd rather find gaps before code than after.
+- **Runtime adapter sketches against the contract.** Prototype an adapter for your framework against [`spec/04_system-components.md`](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md); contract pressure helps us find gaps.
+- **Security threat-modelling.** Read [`spec/13_security.md`](https://github.com/lennylabs/lenny/blob/main/spec/13_security.md) and push on it.
+
+### Code pull requests
+
+Large code contributions against core platform components are not the best fit yet — there is no merged codebase for PRs to land against, and the early build sequence is tightly coupled. Small fixes (typos, broken links, documentation improvements) are welcome anytime. Code PRs against the core open up in [Phase 2](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) when the first working slice lands. This section will be updated the day that changes.
 
 ---
 
@@ -45,12 +56,13 @@ For larger changes that affect the platform's architecture, use the **Discussion
 
 ### Code contributions
 
-Once the project transitions to accepting external contributions (Phase 17a):
+Once the first working slice lands (Phase 2):
 
 1. **Fork the repository** and create a feature branch from `main`.
 2. **Follow the local development setup** below.
 3. **Write tests.** See [test expectations](#test-expectations).
-4. **Open a pull request** against `main` with a clear description of the change.
+4. **Sign off your commits** (`git commit -s`) to agree to the [Developer Certificate of Origin](https://developercertificate.org/).
+5. **Open a pull request** against `main` with a clear description of the change.
 
 ---
 
@@ -69,7 +81,7 @@ Lenny's local development mode (`make run`) runs with embedded stores and the ec
 
 ```bash
 # Clone the repository
-git clone https://github.com/lenny-platform/lenny.git
+git clone https://github.com/lennylabs/lenny.git
 cd lenny
 
 # Run in local dev mode with embedded stores
@@ -148,7 +160,7 @@ Integration tests run against real (embedded or containerized) stores:
 
 The runtime adapter contract has a compliance test suite:
 
-- **`RegisterAdapterUnderTest`** compliance suite validates that an adapter correctly implements the Basic, Standard, or Full integration-level contract.
+- **`RegisterAdapterUnderTest`** compliance suite validates that an adapter correctly implements the Basic, Standard, or Full integration level contract.
 - All error classes (`VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED`) are exercised with canonical triggering inputs.
 - For each error class, the test asserts identical `code`, `category`, and `retryable` values.
 
@@ -272,24 +284,4 @@ Key principles:
 
 ## License
 
-The open-source license for Lenny is a **Phase 0 gating item** (ADR-008). The license must be committed to the repository root before any contributor engagement, `CONTRIBUTING.md` publication, or external PR is accepted.
-
-### Evaluation criteria
-
-The license decision evaluates:
-
-- **Competitive landscape alignment:** E2B uses Apache 2.0 with a commercial offering; Temporal and LangChain use MIT.
-- **Enterprise legal review:** compatibility with enterprise adoption requirements.
-- **Runtime author copyleft clarity:** whether the license creates obligations for runtime adapter authors.
-- **Upstream compatibility:** compatibility with `kubernetes-sigs/agent-sandbox` and other dependencies.
-
-### Candidate licenses
-
-| License                       | Notes                                                                   |
-| :---------------------------- | :---------------------------------------------------------------------- |
-| MIT                           | Maximally permissive. Used by Temporal, LangChain.                      |
-| Apache 2.0                    | Permissive with patent grant. Used by E2B, Kubernetes.                  |
-| AGPL + commercial exception   | Copyleft with commercial flexibility. Less common in the K8s ecosystem. |
-| BSL (Business Source License) | Time-delayed open source. Used by some database companies.              |
-
-The decision and rationale are recorded as ADR-008 in `docs/adr/`. See [Governance](governance) for the decision-making process.
+Lenny is licensed under the **MIT License** ([`LICENSE`](https://github.com/lennylabs/lenny/blob/main/LICENSE)). Contributions are accepted under the same license via the [Developer Certificate of Origin](https://developercertificate.org/) — sign off each commit with `git commit -s`. See [Governance → License and CLA policy](governance#license-and-cla-policy) for rationale.

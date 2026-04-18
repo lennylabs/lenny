@@ -344,7 +344,7 @@ func truncate(s string, n int) string {
 ## go.mod
 
 ```
-module github.com/lenny-dev/lenny/examples/runtimes/file-summarizer-go
+module github.com/lennylabs/lenny/examples/runtimes/file-summarizer-go
 
 go 1.22
 ```

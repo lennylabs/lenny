@@ -59,9 +59,9 @@ You don't have to implement the wire format yourself. Lenny publishes official S
 
 | Language | Install |
 |---|---|
-| Go | `go get github.com/lenny-io/runtime-sdk-go` |
+| Go | `go get github.com/lennylabs/runtime-sdk-go` |
 | Python | `pip install lenny-runtime` |
-| TypeScript / JavaScript | `npm install @lenny-io/runtime-sdk` |
+| TypeScript / JavaScript | `npm install @lennylabs/runtime-sdk` |
 
 The SDKs are thin wrappers, not frameworks. They expose whichever integration level you want; you can always drop to raw JSON if your language isn't represented or you'd rather keep the dependency footprint to zero.
 
@@ -165,7 +165,7 @@ Use this level for agents that need to survive pod failures, handle interrupts, 
 1. Scaffold a runtime: `lenny runtime init <name> --language <lang> --template minimal`.
 2. Read the [Echo Runtime Sample](echo-runtime.md) for a complete working example you can copy.
 3. Skim the [Adapter Contract](adapter-contract.md) for the exact message formats.
-4. Use the [Integration Levels](integration-tiers.md) reference to confirm what you can ignore at this level.
+4. Use the [Integration Levels](integration-levels.md) reference to confirm what you can ignore at this level.
 5. Use [Local Development](local-development.md) to run your runtime against `lenny up`.
 6. Run the [compliance tests](testing.md) before you publish.
 

@@ -83,7 +83,7 @@ Running Lenny on a Kubernetes cluster.
 
 ## Before you start
 
-- Every tutorial needs the **Lenny CLI**: `brew install lenny-dev/tap/lenny` or grab a binary from the releases page.
+- Every tutorial needs the **Lenny CLI**: `brew install lennylabs/tap/lenny` or grab a binary from the releases page.
 - Some SDK tutorials also need **Go 1.22+**, **Python 3.10+**, or **Node.js 18+**.
 - **Docker** is required for building runtime images.
 - **Kubernetes cluster access** is required for the operator tutorials beyond `lenny up`.

@@ -258,7 +258,7 @@ LENNY_AGENT_RUNTIME=my-agent docker compose up
 
 Alternatively, add your runtime to the bootstrap seed file (`lenny-data/seed.yaml`) and restart. The controller-sim picks up the registered runtime on next pool warm cycle. The seed file is applied idempotently on every `docker compose up`.
 
-> **macOS note:** `make run` (Tier 1) supports macOS for Minimum-tier runtimes (stdin/stdout binary protocol only). Standard- and Full-tier runtimes require abstract Unix sockets (`@` prefix names), which are **Linux-only** — macOS does not support abstract sockets. If you are developing a Standard- or Full-tier runtime on macOS, use `docker compose up` (Tier 2) instead, which runs the adapter inside a Linux container. See [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-tiers) for tier definitions.
+> **macOS note:** `make run` (Tier 1) supports macOS for Basic-level runtimes (stdin/stdout binary protocol only). Standard- and Full-level runtimes require abstract Unix sockets (`@` prefix names), which are **Linux-only** — macOS does not support abstract sockets. If you are developing a Standard- or Full-level runtime on macOS, use `docker compose up` (Tier 2) instead, which runs the adapter inside a Linux container. See [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) for level definitions.
 
 ### 17.5 Cloud Portability
 
@@ -444,7 +444,7 @@ bootstrap:
 
 1. **Install CRDs.** CRDs must be applied before the Helm chart:
    ```
-   kubectl apply -f https://github.com/lenny-dev/lenny/releases/latest/download/crds.yaml
+   kubectl apply -f https://github.com/lennylabs/lenny/releases/latest/download/crds.yaml
    ```
 
 2. **Create a `values.yaml`.** Minimal annotated example with the echo runtime:
@@ -501,7 +501,7 @@ bootstrap:
      runtimes:
        - name: echo
          type: agent
-         image: "ghcr.io/lenny-dev/runtime-echo:latest"
+         image: "ghcr.io/lennylabs/runtime-echo:latest"
          isolationProfile: sandboxed   # gVisor; use 'baseline' for test clusters without gVisor
      pools:
        - name: echo-pool

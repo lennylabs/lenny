@@ -131,37 +131,19 @@ Community members can propose ADRs by:
 
 ## License and CLA policy
 
-### Open-source license selection (ADR-008)
+### License
 
-License selection is a **Phase 0 gating item**. The license must be committed to the repository root before any contributor engagement, `CONTRIBUTING.md` publication, or external PR is accepted. This gates Phase 2 community onboarding.
+Lenny is licensed under the **MIT License**. The full text is in [`LICENSE`](https://github.com/lennylabs/lenny/blob/main/LICENSE) at the repository root.
 
-### Evaluation criteria
+MIT was chosen for:
 
-| Criterion | Description |
-|:----------|:------------|
-| **Competitive landscape alignment** | E2B uses Apache 2.0 with a commercial offering. Temporal and LangChain use MIT. The license should position Lenny competitively. |
-| **Enterprise legal review** | The license must pass standard enterprise legal review processes. Copyleft licenses face higher friction. |
-| **Runtime author copyleft clarity** | The license must not create ambiguity about obligations for runtime adapter authors who distribute their own code alongside Lenny's adapter contract. |
-| **Upstream compatibility** | Must be compatible with `kubernetes-sigs/agent-sandbox` (Apache 2.0) and other dependencies. |
-
-### Candidate licenses
-
-| License | Advantages | Disadvantages |
-|:--------|:-----------|:--------------|
-| **MIT** | Maximally permissive. Lowest enterprise adoption friction. Used by Temporal, LangChain. | No patent protection. No copyleft protection against proprietary forks. |
-| **Apache 2.0** | Permissive with explicit patent grant. Used by Kubernetes, E2B. Standard in the cloud-native ecosystem. | Slightly more complex than MIT. Patent retaliation clause may concern some enterprises. |
-| **AGPL + commercial exception** | Strong copyleft protects against proprietary hosted forks. Commercial exception allows commercial use without AGPL obligations. | High enterprise legal friction. Unfamiliar to many K8s ecosystem contributors. Runtime author obligations unclear. |
-| **BSL (Business Source License)** | Time-delayed open source (code becomes open after a defined period). Protects commercial interests during early growth. | Not truly open source during the BSL period. May discourage enterprise and community adoption. |
-
-The decision and rationale are recorded as ADR-008 in `docs/adr/`.
+- **Lowest enterprise adoption friction.** Standard enterprise legal review tends to clear MIT quickly.
+- **Runtime-author clarity.** No copyleft obligations for runtime adapter authors who distribute their own code against Lenny's contract.
+- **Ecosystem alignment.** Compatible with `kubernetes-sigs/agent-sandbox` (Apache 2.0) and other upstream dependencies.
 
 ### Contributor License Agreement (CLA)
 
-The CLA policy is determined alongside the license decision in ADR-008. Options under consideration:
-
-- **No CLA:** contributions are accepted under the project's license. Simplest for contributors.
-- **Developer Certificate of Origin (DCO):** contributors certify they have the right to submit the code. Enforced via `Signed-off-by` in commit messages. Used by the Linux kernel and CNCF projects.
-- **CLA:** contributors sign a formal agreement granting rights to the project. More legally precise but higher friction for new contributors.
+Lenny uses the **Developer Certificate of Origin (DCO)**: contributors certify authorship by adding `Signed-off-by` to each commit (`git commit -s`). No separate CLA to sign. This matches the Linux kernel and CNCF projects and minimizes friction for contributors.
 
 ---
 
@@ -208,10 +190,11 @@ During early development, releases follow an as-needed cadence driven by phase c
 
 | Artifact | Location | Status |
 |:---------|:---------|:-------|
-| `GOVERNANCE.md` | Repository root | Drafted in Phase 2, finalized in Phase 17a. |
-| `CONTRIBUTING.md` | Repository root | Published in Phase 2 alongside `make run` quick-start. |
-| `CODE_OF_CONDUCT.md` | Repository root | Published in Phase 2. |
-| `LICENSE` | Repository root | Phase 0 gating item (ADR-008). |
+| `LICENSE` | Repository root | MIT, committed. |
+| `CONTRIBUTING.md` | Repository root | Published (design-phase policy; opens fully in Phase 2 with `make run`). |
+| `CODE_OF_CONDUCT.md` | Repository root | Published. Contributor Covenant v2.1. |
+| `SECURITY.md` | Repository root | Published. Coordinated disclosure policy. |
+| `GOVERNANCE.md` | Repository root | Published. Finalized alongside steering-committee transition. |
+| `ROADMAP.md` | Repository root | Published. Short-horizon priorities; full sequence lives in `spec/18_build-sequence.md`. |
+| `CHANGELOG.md` | Repository root | Starts at first tagged release. |
 | ADRs | `docs/adr/` | Ongoing. New decisions recorded as they are made. |
-
-All governance artifacts are v1 launch deliverables.

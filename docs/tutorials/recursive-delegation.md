@@ -118,7 +118,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "worker: cannot read manifest: %v\n", err)
 		// Fall back to Basic-level mode (no MCP)
-		runMinimumTier()
+		runBasicLevel()
 		return
 	}
 
@@ -137,7 +137,7 @@ func main() {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "worker: MCP connect failed: %v\n", err)
-		runMinimumTier()
+		runBasicLevel()
 		return
 	}
 	defer mcp.Close()
@@ -222,7 +222,7 @@ func extractText(parts []InputPart) string {
 	return strings.Join(texts, " ")
 }
 
-func runMinimumTier() {
+func runBasicLevel() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {

@@ -336,14 +336,14 @@ case "tool_result":
 
 4. **Add error handling** for malformed input, missing files, and LLM failures. Use the `error` field on the `response` message to report structured errors.
 
-5. **Upgrade to the Standard level** when you need delegation, connectors, or platform tools. See the [Integration Tiers](integration-tiers.md) page for the migration path.
+5. **Upgrade to the Standard level** when you need delegation, connectors, or platform tools. See the [Integration Levels](integration-levels.md) page for the migration path.
 
 ---
 
 ## go.mod
 
 ```
-module github.com/lenny-dev/lenny/examples/runtimes/echo
+module github.com/lennylabs/lenny/examples/runtimes/echo
 
 go 1.22
 ```

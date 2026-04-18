@@ -19,7 +19,7 @@ This is the recommended starting point for anyone evaluating Lenny. If you're go
 
 | Requirement | Version | Notes |
 |------------|---------|-------|
-| **Lenny CLI** | latest | `brew install lenny-dev/tap/lenny`, or download a single binary from the [releases page](https://github.com/lenny-dev/lenny/releases) |
+| **Lenny CLI** | latest | `brew install lennylabs/tap/lenny`, or download a single binary from the [releases page](https://github.com/lennylabs/lenny/releases) |
 | **macOS or Linux** | anything recent | Windows works through WSL2 |
 
 That's it. The first `lenny up` downloads its dependencies into `~/.lenny/` and takes about a minute. Every subsequent start is a few seconds.
@@ -191,7 +191,7 @@ You saw `chat` and `claude-code` in action. To build your own:
 
 1. Scaffold a new runtime: `lenny runtime init my-agent --language go --template coding`.
 2. Read the [Runtime Author Guide](../runtime-author-guide/) for the three integration levels and what each one gives you.
-3. Use the Go (`github.com/lenny-io/runtime-sdk-go`), Python (`lenny-runtime`), or TypeScript (`@lenny-io/runtime-sdk`) SDK to skip the wire format.
+3. Use the Go (`github.com/lennylabs/runtime-sdk-go`), Python (`lenny-runtime`), or TypeScript (`@lennylabs/runtime-sdk`) SDK to skip the wire format.
 4. Run `lenny runtime validate` before publishing to catch integration problems early.
 
 ### If you're deploying to a real cluster

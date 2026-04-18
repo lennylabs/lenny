@@ -190,7 +190,7 @@ Helm does **not** update CRDs on `helm upgrade`. This is a known limitation that
 
 1. **Apply CRDs first:**
    ```bash
-   kubectl apply -f https://github.com/lenny-dev/lenny/releases/latest/download/crds.yaml
+   kubectl apply -f https://github.com/lennylabs/lenny/releases/latest/download/crds.yaml
    ```
 
 2. **Run `helm upgrade`:**

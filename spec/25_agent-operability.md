@@ -797,7 +797,7 @@ The full canonical values.yaml reference is maintained at `deploy/helm/lenny/val
 platform:
   tier: "tier2"                          # "tier1" | "tier2" | "tier3" — drives tier-dependent defaults
   registry:
-    url: "ghcr.io/lenny-dev"             # all component images resolve relative to this
+    url: "ghcr.io/lennylabs"             # all component images resolve relative to this
     overrides: {}                        # per-component: { gateway: "my-registry/lenny/gateway" }
     pullSecretName: ""                   # K8s Secret of type kubernetes.io/dockerconfigjson
     requireDigest: false                 # require digest-pinned refs (recommended for prod)
@@ -3071,8 +3071,8 @@ All Lenny components pull container images from a configurable registry. Deploye
 platform:
   registry:
     # Base registry URL. All Lenny component images are resolved relative to this.
-    # Default: ghcr.io/lenny-dev
-    url: "ghcr.io/lenny-dev"
+    # Default: ghcr.io/lennylabs
+    url: "ghcr.io/lennylabs"
 
     # Optional: override per component. Useful when some images are mirrored
     # to a different path than others.
@@ -3158,7 +3158,7 @@ When any component's current version does not match the compiled-in required ver
   "minUpgradeFrom": "1.3.0",
   "schemaVersion": 42,
   "crdVersion": "v1beta2",
-  "releaseNotes": "https://github.com/lenny-dev/lenny/releases/tag/v1.5.0"
+  "releaseNotes": "https://github.com/lennylabs/lenny/releases/tag/v1.5.0"
 }
 ```
 

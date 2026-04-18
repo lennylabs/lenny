@@ -153,7 +153,7 @@ spec:
         spec:
           containers:
             - name: restore-test
-              image: ghcr.io/lenny-dev/lenny-restore-test:latest
+              image: ghcr.io/lennylabs/lenny-restore-test:latest
               # ...
 ```
 

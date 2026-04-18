@@ -166,7 +166,7 @@ bootstrap:
   runtimes:
     - name: echo
       type: agent
-      image: ghcr.io/lenny-dev/echo-runtime:latest
+      image: ghcr.io/lennylabs/echo-runtime:latest
       description: "Echo runtime for testing"
       tenantAccess: ["default"]
 
@@ -254,7 +254,7 @@ Helm does not update CRDs on `helm upgrade`. You must always apply CRDs as a sep
 
 ```bash
 # Download and apply CRDs
-kubectl apply -f https://github.com/lenny-dev/lenny/releases/latest/download/crds.yaml
+kubectl apply -f https://github.com/lennylabs/lenny/releases/latest/download/crds.yaml
 ```
 
 Verify CRDs are installed:
@@ -594,7 +594,7 @@ Every upgrade requires CRDs to be applied first:
 
 ```bash
 # 1. Apply CRDs
-kubectl apply -f https://github.com/lenny-dev/lenny/releases/download/vX.Y.Z/crds.yaml
+kubectl apply -f https://github.com/lennylabs/lenny/releases/download/vX.Y.Z/crds.yaml
 
 # 2. Run Helm upgrade
 helm upgrade lenny lenny/lenny \

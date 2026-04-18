@@ -32,8 +32,8 @@ When runtimes delegate to child agents, tracing identifiers need to follow the d
 
 Runtimes register their tracing identifiers via:
 
-- **MCP** (Standard+ tier): `lenny/set_tracing_context` tool
-- **JSONL** (all tiers): `set_tracing_context` message
+- **MCP** (Standard+ level): `lenny/set_tracing_context` tool
+- **JSONL** (all levels): `set_tracing_context` message
 
 ```bash
 # Example: runtime registers its LangSmith run ID

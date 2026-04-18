@@ -36,19 +36,19 @@ The compliance suite (`lenny-compliance`) is a standalone test harness that exer
 ### Prerequisites
 
 - Your runtime binary, built and ready to execute.
-- The `lenny-compliance` binary (installed via `go install github.com/lenny-dev/lenny/cmd/lenny-compliance@latest`).
+- The `lenny-compliance` binary (installed via `go install github.com/lennylabs/lenny/cmd/lenny-compliance@latest`).
 
 ### Basic Usage
 
 ```bash
 # Test a Basic-level runtime
-lenny-compliance --binary ./my-agent --tier minimum
+lenny-compliance --binary ./my-agent --level basic
 
 # Test a Standard-level runtime
-lenny-compliance --binary ./my-agent --tier standard
+lenny-compliance --binary ./my-agent --level standard
 
 # Test a Full-level runtime
-lenny-compliance --binary ./my-agent --tier full
+lenny-compliance --binary ./my-agent --level full
 ```
 
 ### Options
@@ -56,7 +56,7 @@ lenny-compliance --binary ./my-agent --tier full
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--binary` | (required) | Path to your runtime binary |
-| `--tier` | `minimum` | Integration level to test: `minimum`, `standard`, `full` |
+| `--level` | `basic` | Integration level to test: `basic`, `standard`, `full` |
 | `--timeout` | `30s` | Per-test timeout |
 | `--verbose` | `false` | Show detailed test output including stdin/stdout traces |
 | `--filter` | (all) | Run only tests matching this pattern |
@@ -127,7 +127,7 @@ Run the compliance suite directly against your binary:
 go build -o my-agent .
 
 # Run compliance tests
-lenny-compliance --binary ./my-agent --tier minimum --verbose
+lenny-compliance --binary ./my-agent --level basic --verbose
 ```
 
 This requires no Docker, Kubernetes, or infrastructure. The test harness spawns your binary and communicates via stdin/stdout.
@@ -141,7 +141,7 @@ For Standard and Full level tests that require MCP servers:
 docker compose up -d
 
 # Run compliance tests against the running stack
-lenny-compliance --binary ./my-agent --tier standard \
+lenny-compliance --binary ./my-agent --level standard \
   --manifest-path ./lenny-data/adapter-manifest.json
 ```
 
@@ -184,10 +184,10 @@ jobs:
         run: go build -o my-agent .
 
       - name: Install compliance suite
-        run: go install github.com/lenny-dev/lenny/cmd/lenny-compliance@latest
+        run: go install github.com/lennylabs/lenny/cmd/lenny-compliance@latest
 
       - name: Run Basic-level tests
-        run: lenny-compliance --binary ./my-agent --tier minimum --json > results.json
+        run: lenny-compliance --binary ./my-agent --level basic --json > results.json
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -226,7 +226,7 @@ Standard-level tests require the local stack. Use Docker Compose in CI:
             -d '{"name": "my-agent", "type": "agent", "image": "my-agent:dev"}'
 
       - name: Run Standard-level tests
-        run: lenny-compliance --binary ./my-agent --tier standard --json > results.json
+        run: lenny-compliance --binary ./my-agent --level standard --json > results.json
 ```
 
 ---
@@ -237,7 +237,7 @@ The compliance suite is the validation gate for runtime publication. Before publ
 
 ```bash
 # Required for publication
-lenny-compliance --binary ./my-agent --tier standard --json | \
+lenny-compliance --binary ./my-agent --level standard --json | \
   jq '.summary.passed == .summary.total'
 ```
 
@@ -245,7 +245,7 @@ The compliance report includes:
 
 ```json
 {
-  "tier": "standard",
+  "level": "standard",
   "binary": "./my-agent",
   "summary": {
     "total": 25,

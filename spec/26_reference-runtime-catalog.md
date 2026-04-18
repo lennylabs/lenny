@@ -5,7 +5,7 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 1. **Day-one utility** — an operator running `lenny up` has functioning agents to work with, not just `echo`. The coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`) cover the most common developer use case directly; the framework runtimes cover popular agent frameworks so teams can adopt Lenny without rewriting their agents.
 2. **Authoring reference** — each runtime is a worked example of the adapter contract ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)), the `runtimeOptions` schema ([§14](14_workspace-plan-schema.md)), credential-lease scoping ([§4.9](04_system-components.md#49-credential-leasing-service)), and workspace materialization ([§14](14_workspace-plan-schema.md)). Teams building their own runtimes MUST start from the scaffolder (`lenny-ctl runtime init`, [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)) which copies one of these as a template.
 
-**Ownership and lifecycle.** Reference runtimes live in first-party repositories under `github.com/lenny-io/runtime-<name>`. Each ships a Dockerfile, adapter implementation, `Runtime` YAML, conformance test suite ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-tiers)), and CI that publishes OCI images to the canonical Lenny registry. Reference runtimes claim a **conformance tier** in their README; CI fails the release if conformance tests for the claimed tier regress.
+**Ownership and lifecycle.** Reference runtimes live in first-party repositories under `github.com/lennylabs/runtime-<name>`. Each ships a Dockerfile, adapter implementation, `Runtime` YAML, conformance test suite ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)), and CI that publishes OCI images to the canonical Lenny registry. Reference runtimes claim a **conformance level** in their README; CI fails the release if conformance tests for the claimed level regress.
 
 **Distinction from bundled runtimes.** The `echo` runtime ([§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)) is a conformance exemplar embedded in the platform repo. Reference runtimes are first-party but live in separate repos with independent release cadences, since they track upstream framework/CLI changes.
 
@@ -13,7 +13,7 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 
 ### 26.1 Catalog Overview
 
-| Runtime            | Category        | Tier     | Primary use case                                                                 |
+| Runtime            | Category        | Level    | Primary use case                                                                 |
 |--------------------|-----------------|----------|----------------------------------------------------------------------------------|
 | `claude-code`      | Coding agent    | Full     | Anthropic's Claude Code CLI inside a Lenny-managed sandbox                       |
 | `gemini-cli`       | Coding agent    | Full     | Google's Gemini CLI inside a Lenny-managed sandbox                               |
@@ -127,16 +127,16 @@ The CLI uploads the workspace, creates the session via the gateway REST API, the
 
 Anthropic's Claude Code CLI running inside a Lenny-managed sandbox.
 
-**Repository:** `github.com/lenny-io/runtime-claude-code`
-**Image:** `ghcr.io/lenny-io/runtime-claude-code:<release>` (semver-tagged; `:latest` pinned to the latest release)
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-claude-code`
+**Image:** `ghcr.io/lennylabs/runtime-claude-code:<release>` (semver-tagged; `:latest` pinned to the latest release)
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **`Runtime` definition** (platform-global; installed by `lenny-ctl install` or `lenny up`):
 
 ```yaml
 name: claude-code
-image: ghcr.io/lenny-io/runtime-claude-code:1.0.0
+image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
 type: agent
 capabilities:
   interaction: multi_turn
@@ -186,7 +186,7 @@ agentInterface:
     - {id: "refactor", name: "Refactoring", description: "Restructure code without behavior change"}
     - {id: "review", name: "Code review", description: "Review diffs and suggest improvements"}
 labels:
-  maintainer: lenny-io
+  maintainer: lennylabs
   upstream: anthropic/claude-code
 ```
 
@@ -233,9 +233,9 @@ The CLI uploads the repo, creates the session, and streams Claude Code's output 
 
 Google's Gemini CLI running inside a Lenny-managed sandbox.
 
-**Repository:** `github.com/lenny-io/runtime-gemini-cli`
-**Image:** `ghcr.io/lenny-io/runtime-gemini-cli:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-gemini-cli`
+**Image:** `ghcr.io/lennylabs/runtime-gemini-cli:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Differences from the shared coding-agent pattern (§26.2):**
@@ -255,9 +255,9 @@ All other fields (isolation, limits, `setupCommandPolicy`, egress defaults, work
 
 OpenAI's Codex CLI running inside a Lenny-managed sandbox.
 
-**Repository:** `github.com/lenny-io/runtime-codex`
-**Image:** `ghcr.io/lenny-io/runtime-codex:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-codex`
+**Image:** `ghcr.io/lennylabs/runtime-codex:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Differences from the shared coding-agent pattern (§26.2):**
@@ -277,9 +277,9 @@ Codex supports the OpenAI Responses API and the Chat Completions API; the adapte
 
 Cursor's agent CLI running inside a Lenny-managed sandbox.
 
-**Repository:** `github.com/lenny-io/runtime-cursor-cli`
-**Image:** `ghcr.io/lenny-io/runtime-cursor-cli:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-cursor-cli`
+**Image:** `ghcr.io/lennylabs/runtime-cursor-cli:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Differences from the shared coding-agent pattern (§26.2):**
@@ -297,18 +297,18 @@ Cursor's agent CLI running inside a Lenny-managed sandbox.
 
 ### 26.7 `chat`
 
-A minimal general-purpose "talk to an LLM" runtime. No tools, no workspace files, no shell. Demonstrates the smallest useful Full-tier runtime.
+A minimal general-purpose "talk to an LLM" runtime. No tools, no workspace files, no shell. Demonstrates the smallest useful Full-level runtime.
 
-**Repository:** `github.com/lenny-io/runtime-chat`
-**Image:** `ghcr.io/lenny-io/runtime-chat:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-chat`
+**Image:** `ghcr.io/lennylabs/runtime-chat:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **`Runtime` definition (highlights; full definition in the repo):**
 
 ```yaml
 name: chat
-image: ghcr.io/lenny-io/runtime-chat:1.0.0
+image: ghcr.io/lennylabs/runtime-chat:1.0.0
 type: agent
 capabilities:
   interaction: multi_turn
@@ -355,9 +355,9 @@ defaultPoolConfig:
 
 LangGraph (Python) agent runtime. Framework-specific: the runtime loads a LangGraph `Graph` object from a Python module path at session start.
 
-**Repository:** `github.com/lenny-io/runtime-langgraph`
-**Image:** `ghcr.io/lenny-io/runtime-langgraph:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-langgraph`
+**Image:** `ghcr.io/lennylabs/runtime-langgraph:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Key characteristics:**
@@ -384,9 +384,9 @@ LangGraph (Python) agent runtime. Framework-specific: the runtime loads a LangGr
 
 Mastra (TypeScript) agent framework runtime.
 
-**Repository:** `github.com/lenny-io/runtime-mastra`
-**Image:** `ghcr.io/lenny-io/runtime-mastra:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-mastra`
+**Image:** `ghcr.io/lennylabs/runtime-mastra:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Key characteristics:**
@@ -413,9 +413,9 @@ Mastra (TypeScript) agent framework runtime.
 
 Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle. Existing Assistants API users can move to Lenny by registering their assistant ID as a `runtimeOptions` value.
 
-**Repository:** `github.com/lenny-io/runtime-openai-assistants`
-**Image:** `ghcr.io/lenny-io/runtime-openai-assistants:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-openai-assistants`
+**Image:** `ghcr.io/lennylabs/runtime-openai-assistants:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Key characteristics:**
@@ -441,9 +441,9 @@ Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle
 
 CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/delegate_task`.
 
-**Repository:** `github.com/lenny-io/runtime-crewai`
-**Image:** `ghcr.io/lenny-io/runtime-crewai:<release>`
-**Conformance tier:** Full
+**Repository:** `github.com/lennylabs/runtime-crewai`
+**Image:** `ghcr.io/lennylabs/runtime-crewai:<release>`
+**Conformance level:** Full
 **Runtime `type`:** `agent`
 
 **Key characteristics:**
@@ -468,5 +468,5 @@ CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/del
 
 ### 26.12 Adding a new reference runtime
 
-New reference runtimes are proposed via a PR to `github.com/lenny-io/runtime-templates` with: (a) a scaffolded runtime from `lenny-ctl runtime init` ([§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), (b) conformance test results at the claimed tier, and (c) an appendix entry (this section) for maintainer review. Community-authored runtimes that live outside `github.com/lenny-io/` are documented by their authors in the runtime registry ([§21](21_planned-post-v1.md)) once that ships; they do not receive appendix entries in this spec.
+New reference runtimes are proposed via a PR to `github.com/lennylabs/runtime-templates` with: (a) a scaffolded runtime from `lenny-ctl runtime init` ([§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), (b) conformance test results at the claimed level, and (c) an appendix entry (this section) for maintainer review. Community-authored runtimes that live outside `github.com/lennylabs/` are documented by their authors in the runtime registry ([§21](21_planned-post-v1.md)) once that ships; they do not receive appendix entries in this spec.
 
