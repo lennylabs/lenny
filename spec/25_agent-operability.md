@@ -2699,6 +2699,49 @@ All degraded responses use the canonical `degradation` envelope (Section 25.2). 
 
 `diagnostics.session_diagnosed`, `diagnostics.pool_diagnosed`, `diagnostics.connectivity_checked`, `diagnostics.credential_pool_diagnosed`.
 
+### Auto-remediation (`fix=true` mode)
+
+The diagnostic suite can run in a read-only mode (default) or an auto-remediation mode that applies a narrow set of safe, idempotent fixes and reports what it did. Agents and operators invoke this via `lenny-ctl doctor --fix` (Section 24.2) or the REST endpoint:
+
+```
+POST /v1/admin/diagnostics/run?fix=true
+Content-Type: application/json
+
+{
+  "findings": ["coreDnsStuckEndpoint", "bootstrapConfigDrift", "certManagerExpiring"]
+}
+```
+
+Response is a long-running operation envelope (Section 25.2 Progress Envelope). The `operationId` correlates all log lines, audit events, and progress updates for the fix run.
+
+**Fixable findings and what the fix does:**
+
+| Finding code | Detection | Remediation | Idempotent? |
+|--------------|-----------|-------------|-------------|
+| `coreDnsStuckEndpoint` | CoreDNS Service `.subsets[].addresses` out of sync with Ready pods | Rolling restart of CoreDNS Deployment (`kubectl rollout restart -n kube-system deployment/coredns` equivalent via controller-runtime client); waits for Ready | Yes |
+| `bootstrapConfigDrift` | ConfigMap `lenny-bootstrap` hash differs from Helm-rendered value (release annotation) | Re-applies the Helm-rendered ConfigMap; does NOT restart gateway (reload is watch-driven) | Yes |
+| `certManagerExpiring` | Certificate within 7 days of expiry and cert-manager healthy | Annotates Certificate with `cert-manager.io/issue-temporary-certificate: "true"` and deletes the Secret to force re-issuance | Yes |
+| `prometheusRuleMissing` | `monitoring.enabled=true` but no PrometheusRule/ServiceMonitor in the release namespace | Re-applies the Helm-rendered `monitoring.yaml` template | Yes |
+| `warmPoolStuckReplenish` | Pool status `DEMAND_EXCEEDS_SUPPLY` with zero in-flight warm-up claims for > 5m | Bumps pool generation (triggers controller to re-drive) | Yes |
+
+**Non-fixable findings** (returned as read-only recommendations): any finding not in this table — including anything that requires destructive action, credential rotation, or schema migration — is reported with `remediation: "manual"` and a pointer to the runbook.
+
+**Guardrails:**
+- Each fix has a per-operation timeout (default 120s) configurable via `admin.doctor.fixTimeoutSeconds`.
+- Fixes never run when `global.maintenanceMode=true`.
+- Fixes never run against components whose `lenny.dev/doctor-optout: "true"` annotation is set.
+- The set of fixable findings is gated by `admin.doctor.allowedFixes` (Helm value, defaults to the full list above). Operators can narrow the list per environment.
+
+**Audit events:**
+
+| Event | When | Fields |
+|-------|------|--------|
+| `diagnostics.fix_started` | Fix run begins | `operationId`, `findings`, `principal` |
+| `diagnostics.fix_applied` | Individual finding fixed | `operationId`, `finding`, `resource`, `result: "applied"` |
+| `diagnostics.fix_skipped` | Finding not applied (guardrail) | `operationId`, `finding`, `reason` |
+| `diagnostics.fix_failed` | Fix attempted and failed | `operationId`, `finding`, `error` |
+| `diagnostics.fix_completed` | Run finishes | `operationId`, `appliedCount`, `skippedCount`, `failedCount` |
+
 ---
 
 ## 25.7 Operational Runbooks
@@ -4897,4 +4940,3 @@ The `escalation_created` event is emitted to the event stream. A webhook subscri
 This design operates per-installation. In a multi-cluster deployment, each Lenny installation has its own `lenny-ops` Ingress. A multi-cluster watchdog agent maintains SSE connections to each installation's `lenny-ops` and performs the same operational loop independently per cluster. Cross-cluster coordination (e.g., draining traffic from one cluster before upgrading) is outside the scope of this section — it is the responsibility of the deployment orchestrator or the agent's own logic.
 
 ---
-

@@ -1,5 +1,12 @@
 ## 15. External API Surface
 
+**REST vs MCP split (operator vs session).** Lenny's external surface has two roles, exposed over two protocols that callers pick based on what they're doing:
+
+- **Admin / operator flows — REST.** Creating tenants, runtimes, pools, credential pools, credential leases, delegation policies, environments, backups, upgrades, RBAC bindings, retention configuration, and every other `/v1/admin/*` resource uses the REST API ([§15.1](#151-rest-api)). These are imperative, single-shot operations against platform state; their consumers are CLIs, CI/CD jobs, dashboards, and agent operability clients ([§25](25_agent-operability.md)). The canonical CLI entry points are the `lenny-ctl admin <resource> <verb>` commands ([§24](24_lenny-ctl-command-reference.md)).
+- **Session flows — MCP.** Creating and interacting with sessions — `lenny/create_session`, `lenny/send_message`, `lenny/delegate_task`, output streaming, elicitation, interrupt — flows through the MCP API ([§15.2](#152-mcp-api)). Session creation **also** exists as a plain REST call (`POST /v1/sessions`) for callers that cannot implement MCP, but the MCP path is the recommended one because the same connection carries the interactive lifecycle. The canonical CLI entry points are the `lenny session <verb>` commands ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)).
+
+Both surfaces live behind the same adapter registry below; the split above is a description of **which path a given caller uses**, not an architectural partition. Deployer-side runtimes consume a third contract — the **Runtime Adapter Specification** ([§15.4](#154-runtime-adapter-specification)) and the **Runtime Author SDKs** ([§15.7](#157-runtime-author-sdks)) — which is independent of both REST and MCP.
+
 Lenny exposes multiple client-facing APIs through the **`ExternalAdapterRegistry`** — a pluggable adapter system where simultaneously active adapters route by path prefix. All adapters implement a common interface:
 
 ```go
@@ -1842,4 +1849,55 @@ Lenny provides official client SDKs for **Go** and **TypeScript/JavaScript** as 
 SDKs are generated from the OpenAPI spec (REST) and MCP tool schemas, with hand-written streaming and reconnect logic layered on top. Community SDKs for other languages can build on the published OpenAPI spec and the MCP protocol specification.
 
 Client SDKs follow the same versioning scheme as the API surfaces they wrap ([Section 15.5](#155-api-versioning-and-stability)): SDK major versions track REST API versions, and SDK releases note any MCP tool schema changes.
+
+> **Client SDKs vs Runtime Author SDKs.** The SDKs described in this subsection target **clients** of a running Lenny deployment — code that creates sessions and consumes their output. The complementary surface for **runtime authors** (code that runs inside an agent pod, talks to the gateway over the Runtime Adapter Specification from [§15.4](#154-runtime-adapter-specification), and packages a runtime image for the platform) is documented in [§15.7](#157-runtime-author-sdks) as a separate set of libraries and scaffolding tools.
+
+### 15.7 Runtime Author SDKs
+
+Runtime authors build a new agent image that plugs into Lenny by implementing the [Runtime Adapter Specification](#154-runtime-adapter-specification). To make that contract approachable without requiring every author to re-derive the stdin/stdout line protocol, abstract-Unix-socket wire format, and mTLS handshake from the spec, Lenny ships **first-party Runtime Author SDKs** in Go, Python, and TypeScript, plus the `lenny runtime init` scaffolding CLI.
+
+**Package names and publication.**
+
+| Language | Package | Repository |
+|---|---|---|
+| Go | `github.com/lenny-io/runtime-sdk-go` | `github.com/lenny-io/runtime-sdk-go` |
+| Python | `lenny-runtime` (PyPI) | `github.com/lenny-io/runtime-sdk-python` |
+| TypeScript / JavaScript | `@lenny-io/runtime-sdk` (npm) | `github.com/lenny-io/runtime-sdk-ts` |
+
+All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtime Adapter Specification version from [§15.4](#154-runtime-adapter-specification) (`lenny.runtime.protocol_version`).
+
+**What the SDKs provide.**
+
+- **Protocol codec.** Line-delimited JSON framing, abstract Unix socket setup (`@lenny-<pod_id>-ctl`), mTLS handshake using gateway-issued certs, graceful shutdown, and the `lenny.runtime.*` request/response vocabulary.
+- **Tool call plumbing.** Typed helpers for `lenny/tool_call`, `lenny/delegate_task`, `lenny/send_message`, `lenny/request_elicitation`, `lenny/interrupt`, and `lenny/ready`.
+- **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode env-var refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
+- **Workspace utilities.** Helpers for materializing files into `/workspace`, respecting the workspace plan ([§14](14_workspace-plan-schema.md)), and uploading checkpoints ([§7.1](07_session-lifecycle.md#71-normal-flow) seal-and-export).
+- **Telemetry.** Prometheus counters for request counts, errors, and latencies, and OpenTelemetry spans wrapping each request.
+- **Test doubles.** In-process gateway fake for unit testing; a CI-friendly `runtime-sdk testserver` binary that speaks the gateway-side protocol against a runtime binary for integration tests.
+
+**API surface (Go).**
+
+```go
+package runtime
+
+// Handler is the single interface runtime authors implement.
+type Handler interface {
+    OnCreate(ctx context.Context, req CreateRequest) error
+    OnMessage(ctx context.Context, msg Message) (Reply, error)
+    OnTerminate(ctx context.Context, reason TerminationReason) error
+}
+
+// Run wires up stdin/stdout framing, the abstract-UDS control channel,
+// credential refresh, and the lenny.runtime.* dispatch loop. Blocks until
+// the gateway closes the connection.
+func Run(h Handler, opts ...Option) error
+```
+
+Python and TypeScript SDKs expose an equivalent `Handler` protocol/interface and an equivalent `run()` entrypoint.
+
+**`lenny runtime init` scaffolder.** The [§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference) CLI includes a `lenny runtime init` subcommand that generates a new runtime skeleton (`<runtime>/`): `Dockerfile`, `main.<lang>` using the SDK's `Handler` interface, `runtime.yaml` ([§15.4.2](#1542-runtime-yaml-contract)), a `Makefile` with `build`, `test`, and `push` targets, and a CI workflow that publishes images to `ghcr.io/<org>/runtime-<name>`. Supported templates: Go, Python, TypeScript, and the generic stdin/stdout binary template.
+
+**Versioning and stability.** SDK releases follow semver. A breaking change to the Runtime Adapter Specification bumps SDK major versions in lockstep; backward-compatible additions (new optional methods) bump the minor version. The gateway honors the protocol version negotiation from [§15.4.1](#1541-adapterbinary-protocol) so that a runtime built against an older SDK continues to work against a newer gateway within the same major version.
+
+**Relationship to reference runtime catalog.** Every reference runtime in [§26](26_reference-runtime-catalog.md) — `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai` — is built on top of the Runtime Author SDKs above, using the scaffolder output as the starting point. Third-party runtimes get the same code path at release time: `lenny runtime init <name>` produces a repository identical in structure to the first-party reference runtimes.
 

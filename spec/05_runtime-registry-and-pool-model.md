@@ -311,6 +311,10 @@ Tenant-overridable via `tenantRbacConfig.mcpAnnotationMapping` (see [Section 10.
 
 **`capabilityInferenceMode`** (field on `RuntimeDefinition`, `strict` | `permissive`, default: `strict`) controls the default capability for unannotated tools: in `strict` mode (default), unannotated tools infer as `admin` and emit the WARN log above; in `permissive` mode, unannotated tools infer as `write`, suppressing the WARN log. Use `permissive` mode for third-party runtimes with unannotated tools that do not require admin pool assignment. Note: `capabilityInferenceMode` does not affect tools with explicit `toolCapabilityOverrides` entries — those always use their explicit value.
 
+#### First-Party Reference Runtimes
+
+Lenny ships a catalog of maintained, first-party reference runtimes — `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`. Each is a complete `Runtime` definition plus container image, published under `github.com/lenny-io/runtime-<name>`. Deployers get working agents without writing their own. See [Section 26](26_reference-runtime-catalog.md) for the full catalog, per-runtime `runtimeOptions` schemas ([§14](14_workspace-plan-schema.md)), workspace conventions, and credential-lease scopes. Reference runtimes are registered by `lenny-ctl install` (Section 17.6) or auto-installed by `lenny up` (Section 17.4.0). They are platform-global records with no default tenant access grants; operators explicitly grant access per tenant.
+
 #### Minimal Configuration
 
 Most fields above have sensible defaults. The absolute minimum to register a runtime and start handling sessions:

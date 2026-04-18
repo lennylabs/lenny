@@ -9,15 +9,15 @@
 | Warm Pool Controller    | Deployment (2+ replicas, leader election) | Manages pod lifecycle via `PoolManager` interface (default implementation: `kubernetes-sigs/agent-sandbox` CRDs)                                           |
 | PoolScalingController   | Deployment (2+ replicas, leader election) | Reconciles pool config from Postgres into CRDs; manages scaling intelligence                                                                               |
 | Agent Pods              | Pods owned by `Sandbox` CRD               | RuntimeClass per pool; preStop checkpoint hook for active pods; optional PDB per pool on warm (idle) pods to enforce `minWarm` during voluntary disruption |
-| Postgres                | StatefulSet or managed service            | HA: primary + sync replica; connection pooling required (PgBouncer for self-managed, provider proxy for cloud-managed — see [Section 17.9](#179-deployment-profiles))                  |
-| Redis                   | StatefulSet or managed service            | HA: Sentinel (3 nodes) for self-managed, managed cache service for cloud — see [Section 17.9](#179-deployment-profiles); TLS + AUTH required                                           |
-| MinIO                   | StatefulSet or managed service            | Artifact/checkpoint storage; S3/GCS/Azure Blob for cloud-managed — see [Section 17.9](#179-deployment-profiles)                                                                        |
+| Postgres                | StatefulSet or managed service            | HA: primary + sync replica; connection pooling required (PgBouncer for self-managed, provider proxy for cloud-managed — see [Section 17.9](#179-deployment-answer-files))                  |
+| Redis                   | StatefulSet or managed service            | HA: Sentinel (3 nodes) for self-managed, managed cache service for cloud — see [Section 17.9](#179-deployment-answer-files); TLS + AUTH required                                           |
+| MinIO                   | StatefulSet or managed service            | Artifact/checkpoint storage; S3/GCS/Azure Blob for cloud-managed — see [Section 17.9](#179-deployment-answer-files)                                                                        |
 | `lenny-ops`             | Deployment + Service + Ingress + PDB      | **Mandatory in every tier.** 1–2 replicas with K8s Lease leader election (`lenny-ops-leader`); leader handles webhook delivery and backup scheduling; followers serve read traffic. Runs the operability control plane ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). PDB `minAvailable: 1`. |
 | `lenny-gateway-pods`    | Headless Service (`clusterIP: None`)      | Per-replica DNS so `lenny-ops` can fan out health/recommendation/event queries to every gateway replica individually ([§25.3](25_agent-operability.md#253-gateway-side-ops-endpoints)).                                                                         |
 | `lenny-backup` Jobs     | K8s Jobs (created on-demand by `lenny-ops`) | Transient Jobs using the `lenny-backup` image for Postgres/MinIO backup, restore, and verification ([§25.11](25_agent-operability.md#2511-backup-and-restore-api)). Scheduled via `ops_backup_schedule`; ServiceAccount `lenny-backup-sa` (distinct from `lenny-ops-sa`). |
 | NetworkPolicies         | `lenny-ops-deny-all-ingress`, `lenny-ops-allow-ingress-from-ingress-controller`, `lenny-ops-egress`, `lenny-backup-job` | Rendered by the chart ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)). Deny-all-ingress is the baseline; allow-from-ingress-controller references `ingress.controllerNamespace` + `ingress.controllerLabel`. Egress allows Postgres, Redis, MinIO, Prometheus. |
 | Admission / Lease       | Lease `lenny-ops-leader`                  | Created at runtime by the first `lenny-ops` pod on startup via the K8s Lease API; RBAC grants `lenny-ops-sa` permissions on `leases.coordination.k8s.io` in `{Release.Namespace}`.                                                                          |
-| `PrometheusRule` / ConfigMap | Rendered by chart, gated by `monitoring.format` | Emits the bundled alerting rules from `pkg/alerting/rules` ([§25.13](25_agent-operability.md#2513-bundled-alerting-rules)). Values: `prometheusrule`, `configmap`, `both`. PodMonitor/ServiceMonitor for `lenny-ops` port 9090 also gated by this value.                 |
+| `ServiceMonitor` / `PodMonitor` / `PrometheusRule` (Prometheus Operator CRDs) or ConfigMap | Rendered by chart, gated by `monitoring.format` | One `ServiceMonitor` covers gateway/controller/token-service; one `PodMonitor` covers `lenny-ops`; one `PrometheusRule` emits the bundled alert catalog from `pkg/alerting/rules` ([§16.9](16_observability.md#169-prometheus-scrape-targets-and-crds), [§25.13](25_agent-operability.md#2513-bundled-alerting-rules)). Values: `prometheusrule`, `configmap`, `both`. Falls back to `configmap` when the operator CRDs are absent. |
 | Secrets (chart-rendered) | `lenny-backup-postgres`, `lenny-backup-minio`; optionally `lenny-ops-tls` when `ops.tls.internalEnabled: true` | Backup connection strings (narrowly-scoped DB role; bucket-scoped access key). When cert-manager is present, a `Certificate` object renders the TLS secret automatically. |
 
 ### 17.2 Namespace Layout
@@ -95,27 +95,74 @@ The `lenny-preflight` Job validates that both `ResourceQuota` and `LimitRange` e
 
 ### 17.4 Local Development Mode (`lenny-dev`)
 
-For development, testing, and runtime adapter authoring, Lenny provides a **two-tier local development mode** that runs without Kubernetes:
+For local use Lenny provides a **three-tier local mode**. Tier 0 is the primary path for deployers evaluating or using Lenny on a workstation; Tier 1 and Tier 2 are developer-oriented paths for contributors working on Lenny itself or authoring runtime adapters.
 
-#### Tier 1: `make run` — Zero-dependency local mode
+#### Tier 0: `lenny up` — Single-binary embedded stack
+
+```
+lenny up                                  # Brings up a full Lenny stack on localhost
+lenny session new --runtime=chat --attach "hello"    # Ready to use in < 60s
+lenny down                                 # Tear everything down
+```
+
+A single statically-linked binary — `lenny` — embeds every dependency needed to run a complete Lenny installation on one host. No Kubernetes cluster, no Postgres operator, no cert-manager, no OIDC provider required beforehand. Intended audience: operators evaluating Lenny, developers building **against** Lenny (workload authors and runtime authors), and anyone who wants a functioning deployment on their laptop.
+
+**Embedded components.** The binary ships with:
+
+| Dependency     | Embedded option                                                  | Notes                                                                     |
+|----------------|------------------------------------------------------------------|---------------------------------------------------------------------------|
+| Kubernetes     | [k3s](https://k3s.io) (single-node, rootless where supported)    | Downloaded on first `lenny up` into `~/.lenny/k3s/` and started in-process |
+| Postgres       | `embedded-postgres` (PostgreSQL 16 binary bundle)                | `~/.lenny/postgres/`; same Go storage interface as production              |
+| Redis          | Embedded `miniredis`-compatible implementation                   | In-process; lost on `lenny down`                                          |
+| KMS            | In-process soft-HSM (AES-256-GCM with a file-backed master key)  | `~/.lenny/kms/master.key`; operators MUST NOT reuse this key in production |
+| OIDC provider  | Embedded dev-only provider issuing short-lived JWTs              | Single built-in user; rotating signing key                                 |
+| Object storage | Local filesystem (`~/.lenny/artifacts/`)                         | Same artifact-store interface as MinIO/S3                                  |
+| TLS            | Self-signed certs rotated per `lenny up` (valid for 24h)         | Gateway listens on `https://localhost:8443` and `http://localhost:8080`     |
+
+**Same platform code path as production.** Tier 0 uses the production gateway, controllers, CRDs, and storage interfaces. Only the driver selection differs: `mode=embedded` is signaled by a platform flag that the storage, KMS, and identity interfaces consume to pick their embedded backends. There are no tier-dependent code splits in business logic.
+
+**Reference runtimes pre-installed.** `lenny up` installs all reference runtimes from [Section 26](26_reference-runtime-catalog.md) as platform-global records and auto-grants access to the `default` tenant so the developer can invoke any of them without further configuration. Container images are pulled lazily on first session start for each runtime; subsequent sessions reuse the cached image. The warm pool defaults are overridden to `warmCount: 0` (cold-start on first use) to keep resource usage low on laptops.
+
+**Command surface.**
+
+| Command               | Behavior                                                                                                    |
+|-----------------------|-------------------------------------------------------------------------------------------------------------|
+| `lenny up`            | Starts the embedded stack. Idempotent — subsequent invocations are no-ops if already running.              |
+| `lenny down`          | Gracefully terminates all components. State under `~/.lenny/` is preserved unless `--purge` is passed.      |
+| `lenny status`        | Prints component health and active session count.                                                           |
+| `lenny logs [<component>]` | Tails merged logs or filters to one component (`gateway`, `controller`, `ops`, `postgres`, etc.).          |
+| `lenny session ...`   | Session CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)); targets the local stack. |
+
+**Production warning banner.** On every `lenny up` the binary prints a prominent, non-suppressible banner: `"Tier 0 embedded mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`; the gateway rejects externally-issued tokens. Any attempt to expose the gateway outside localhost (e.g., by binding `0.0.0.0`) fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+
+**State and resets.**
+
+- `~/.lenny/` is the sole state directory. `lenny down --purge` removes it.
+- Upgrades: `lenny up` on a newer binary runs the standard schema migration path ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) against the embedded Postgres. Rollback is **not** supported in Tier 0 — the user is expected to `lenny down --purge` and start fresh if they need to revert.
+
+**Binary-vs-symlink.** The `lenny` binary is the same executable as `lenny-ctl` ([§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference)) installed under a short name. When invoked as `lenny`, the binary defaults to the Tier 0 ergonomics (local stack, no `--api-url` required); when invoked as `lenny-ctl`, it targets a remote gateway (`--api-url` required). Every command is available under both names; docs use the short form in local/developer contexts and the long form in operator contexts.
+
+#### Tier 1: `make run` — Zero-dependency developer mode
 
 ```
 make run   # Starts: gateway + controller-sim + single agent container (single binary)
 ```
 
-A single binary entry point that embeds all required state:
+A developer-oriented local entry point for **contributing to the Lenny platform itself**. Unlike Tier 0 (which uses the released `lenny` binary and embedded k3s), Tier 1 runs the Lenny source tree directly without Kubernetes:
 
 - **Embedded SQLite** replaces Postgres for session and metadata storage
 - **In-memory caches** replace Redis for pub/sub and ephemeral state
 - **Local filesystem directory** (`./lenny-data/`) replaces MinIO for artifact storage
 - Gateway, controller-sim, and a single agent container run as goroutines in one process
 
-No Postgres, Redis, MinIO, or Docker required. Suitable for:
+No Postgres, Redis, MinIO, Kubernetes, or Docker required. Suitable for:
 
-- Runtime adapter authors testing their adapter against the gateway contract
+- Lenny platform contributors iterating on gateway or controller code
+- Runtime adapter authors testing their adapter against the gateway contract without full pod scheduling
 - First-time contributors getting oriented with the codebase
-- Quick demos and evaluations
-- Agent binary authors iterating on their binary locally
+- CI test jobs that need the full platform surface without cluster provisioning
+
+Deployers evaluating Lenny as an end user should prefer Tier 0 (`lenny up`) — it exercises the real Kubernetes code path and installs reference runtimes.
 
 #### Tier 2: `docker compose up` — Full local stack
 
@@ -501,6 +548,84 @@ bootstrap:
    ```
    A non-empty `sessionId` confirms the full path from empty cluster to live session is functional.
 
+#### Helm `values.schema.json`
+
+The Lenny Helm chart ships a canonical JSON Schema (Draft 2020-12) describing every documented value at `charts/lenny/values.schema.json`. Helm validates `-f values.yaml` and `--set` inputs against this schema on every `helm install` / `helm upgrade`, rejecting unknown keys, wrong types, and out-of-range values before any Kubernetes resource is applied.
+
+**Generation.** The schema is generated at build time from the Go struct definitions in `pkg/chart/values/` using `invopop/jsonschema` (or an equivalent Go reflection-based generator). The build fails if the committed `values.schema.json` differs from the regenerated output, preventing drift between Go types and the published schema. The same Go structs serve as the source of truth for the `lenny-ctl install` wizard's question engine (below), the `lenny-ctl preflight` config parser, and the OpenAPI-based admin types for `POST /v1/admin/platform/upgrade` ([§25.8](25_agent-operability.md#258-platform-lifecycle-management)).
+
+**IDE integration.** Editors with YAML support (VS Code + Red Hat YAML extension, Neovim + `yamlls`, IntelliJ) auto-complete and validate against the schema when the `values.yaml` file includes the schema reference:
+
+```yaml
+# yaml-language-server: $schema=https://schemas.lenny.dev/helm/values/v1.json
+```
+
+The schema is served from the Lenny documentation domain at a stable URL, versioned per Lenny release. Deployers who prefer a pinned local reference MAY vendor the schema into their repo.
+
+**`lenny-ctl values validate`.** The CLI exposes a standalone validator ([§24.20](24_lenny-ctl-command-reference.md#2420-installation-wizard)): `lenny-ctl values validate --config values.yaml` exits 0 on success and prints a JSON Schema validation report on failure. This is the recommended check for CI pipelines that render values but do not run `helm install`.
+
+#### Interactive installer (`lenny-ctl install`)
+
+For operators who do not want to hand-write a full `values.yaml`, `lenny-ctl install` provides an interactive installation wizard. It detects cluster capabilities, asks a small number of targeted questions, previews the generated values file, and runs `helm install` on approval.
+
+**Flow.**
+
+1. **Detection phase.** The CLI connects to the target cluster (via current `kubeconfig` context, overridable with `--context`). It probes for: cert-manager CRDs and at least one Ready `ClusterIssuer`; Prometheus Operator CRDs (`ServiceMonitor`, `PrometheusRule`); installed CNI plugin (Calico, Cilium, or other NetworkPolicy-supporting CNI); available `RuntimeClass` objects (gVisor, Kata); Postgres/Redis/MinIO availability via the same probes as `lenny-preflight`; cluster Kubernetes version. Results are presented as a summary before the wizard asks any questions.
+
+2. **Question phase.** The wizard asks a minimum set of questions, with sensible defaults for each:
+
+   | Question                                          | Default / behavior                                                                                 |
+   |---------------------------------------------------|----------------------------------------------------------------------------------------------------|
+   | Cluster name / release namespace                  | `lenny-system`                                                                                     |
+   | Target environment                                | `local` \| `dev` \| `prod` (drives alert thresholds, warm-pool sizes, log verbosity)               |
+   | Answer file base                                  | Auto-suggested from detection (e.g., `eks-small-team.yaml` if AWS EKS detected) — see §17.9         |
+   | Capacity tier                                     | `tier1` \| `tier2` \| `tier3` — defaults to `tier1` for `local`/`dev`, `tier2` for `prod`          |
+   | Gateway domain / TLS strategy                     | `cert-manager` if detected, `bring-your-own` otherwise                                             |
+   | Postgres DSN                                      | Prompt for external DSN or opt into embedded mode (`local` profile only)                          |
+   | Redis DSN                                         | Same pattern as Postgres                                                                           |
+   | Object storage endpoint + credentials             | MinIO defaults for `local`/`dev`; external S3-compatible or cloud-managed for `prod`              |
+   | OIDC issuer URL and client ID                     | Optional in `local` (embedded dev OIDC is used); required in `prod`                                |
+   | Reference runtimes to install (multi-select)      | All of §26 selected by default; deployer can deselect to minimize image-pull footprint             |
+
+   Each question displays a one-line help string explaining the field and a reference to the relevant spec section. Questions are skipped when their answer is unambiguous from detection (e.g., if only one ClusterIssuer is Ready, no TLS strategy prompt is shown).
+
+3. **Preview phase.** The wizard renders the resulting composite values file — an answer-file base plus a tier preset plus the per-question overrides — to stdout (or `--output-values path.yaml` to write to disk). The operator reviews the file before proceeding.
+
+4. **Preflight.** The wizard runs `lenny-ctl preflight --config <rendered.yaml>` against the target cluster using the same checks as the Helm post-install preflight Job. Any hard failure aborts; warnings are displayed with the option to continue.
+
+5. **Apply phase.** On approval, the wizard runs `helm install lenny lenny/lenny -f <rendered.yaml>`, streams the Helm progress, then runs the `lenny-ctl bootstrap` seed (using the bootstrap values from the composed file) and the standard post-install smoke test (create a session against the `chat` reference runtime — §26.7 — to confirm the full path works end-to-end).
+
+**Non-interactive mode.** `lenny-ctl install --non-interactive --answers=answers.yaml` runs the same flow without prompts. The `answers.yaml` file is a simple key-value mapping of question IDs to answers; the wizard's Go structs serialize to this shape on every interactive run (via `--save-answers`), so operators can capture an interactive session once and replay it in CI/IaC. Example:
+
+```yaml
+# answers.yaml — captured from interactive install, replayable
+release:
+  namespace: lenny-system
+  name: lenny
+environment: prod
+profile: eks-small-team
+tier: tier2
+domain: lenny.example.com
+tls: cert-manager
+postgres:
+  dsn: "postgres://lenny:${LENNY_PG_PASSWORD}@lenny-pg:5432/lenny"
+redis:
+  dsn: "rediss://:${LENNY_REDIS_PASSWORD}@lenny-redis:6380"
+objectStorage:
+  endpoint: "https://s3.us-east-1.amazonaws.com"
+  bucket: "acme-lenny-prod"
+oidc:
+  issuer: "https://auth.example.com"
+  clientId: "lenny"
+referenceRuntimes: [chat, claude-code, langgraph]
+```
+
+Environment-variable interpolation (`${VAR}` syntax) is supported for secret material; values are resolved at render time, never stored in the answer file.
+
+**Airgap / no-network mode.** `lenny-ctl install --offline` skips detection probes that require cluster connectivity beyond reading `kubeconfig`, and uses only defaults and operator-supplied answers. The preflight phase is still run against the target cluster; only the detection phase is affected.
+
+**Relationship to the Helm chart.** The wizard produces a normal `values.yaml`; `helm install` can be run directly from that file at any time. Nothing about the wizard is load-bearing — it is a convenience layer over the chart. Operators who prefer hand-written values retain the full Helm surface.
+
 ### 17.7 Operational Runbooks
 
 Lenny must ship with operational runbooks for key failure scenarios as part of the documentation deliverables. The minimum required set:
@@ -830,7 +955,7 @@ After 48–72 hours of production traffic, the PoolScalingController will have s
 | etcd quota-backend-bytes                                  | 4 GB           | 8 GB                                    | 8 GB (dedicated cluster recommended)     |
 | etcd monitoring                                           | Standard       | Enhanced (write latency + quota alerts) | Dedicated etcd cluster with full metrics |
 
-**Postgres and connection pooling** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-profiles)):
+**Postgres and connection pooling** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-answer-files)):
 
 | Parameter                              | Tier 1        | Tier 2         | Tier 3                                            |
 | -------------------------------------- | ------------- | -------------- | ------------------------------------------------- |
@@ -850,7 +975,7 @@ After 48–72 hours of production traffic, the PoolScalingController will have s
 
 > ³ **Tier 3 `default_pool_size` derivation:** Per the sizing formula in [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements), `default_pool_size ≈ (max_connections − superuser_and_replication_headroom) / pgbouncer_replicas`. At Tier 3: `(500 − 20) / 4 = 120`. The value is reduced to 110 to reserve backend connection budget for the audit sync write pool (`audit.syncWritePoolSize`, default: 4 connections per gateway replica; 30 replicas × 4 = 120 total audit connections distributed across 4 PgBouncer replicas, consuming ~30 backend connections per PgBouncer replica). Operators should verify that `(default_pool_size + reserve_pool_size) × pgbouncer_replicas + audit_sync_pool_total ≤ max_connections`.
 
-**Redis** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-profiles)):
+**Redis** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-answer-files)):
 
 | Parameter                   | Tier 1                                                  | Tier 2                                                           | Tier 3                                                                                            |
 | --------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -871,7 +996,7 @@ After 48–72 hours of production traffic, the PoolScalingController will have s
 
 Redis Cluster is warranted only when **a single concern** exceeds ~150–200K ops/s on its dedicated Sentinel instance (the single-threaded-primary throughput ceiling). At Tier 3 single-tenant scale the total ops/s across all concerns (~80K) is well below this ceiling; 3–4 Sentinel instances provide sufficient capacity with simpler operations than Cluster. The multi-tenant Redis Cluster guidance in the table above applies unchanged once there is more than one tenant, because per-tenant key distribution resumes across hash slots. Operators should evaluate their tenant count when selecting topology; the `capacityPlanning.singleTenantRedisTopology: sentinel` Helm value documents the operator's intent and suppresses the `[WARN] RedisClusterRecommended` gateway startup log that fires at Tier 3 startup when the topology appears to be single-tenant Sentinel (this is a gateway startup log message, not a Prometheus alert — consistent with the `[WARN] capacityPlanning` startup log pattern in [§16.5](16_observability.md#165-alerting-rules-and-slos)).
 
-**Object storage** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-profiles)):
+**Object storage** (self-managed profile — for cloud-managed equivalents see [Section 17.9](#179-deployment-answer-files)):
 
 | Parameter                         | Tier 1                            | Tier 2                      | Tier 3                       |
 | --------------------------------- | --------------------------------- | --------------------------- | ---------------------------- |
@@ -1030,17 +1155,53 @@ The Helm chart's `platform.registry.*` values are the single source for all Lenn
 
 **Air-gapped deployments** ([§25.8](25_agent-operability.md#258-platform-lifecycle-management) Air-Gapped Support) mirror all Lenny-published images into a private registry, set `platform.registry.url` to that registry, and rely on `--skip-preflight` for environments where the preflight Job cannot reach the mirrored registry before it is populated. The procedure is documented in `docs/deployment/air-gap.md`. The chart's `ImageResolver` shared package (`pkg/common/registry/resolver.go`) composes every image reference from `platform.registry.*`, ensuring the gateway, `lenny-ops`, controllers, `lenny-backup`, and the warm-pool controller all honor the same registry configuration.
 
-### 17.9 Deployment Profiles
+### 17.9 Deployment Answer Files
 
-> **Note:** Prior to this section, Sections 17.8.1 (Operational Defaults) and 17.8.2 (Capacity Tier Reference) provide per-tier sizing and tunable defaults.
+> **Note:** Prior to this section, Sections 17.8.1 (Operational Defaults), 17.8.2 (Capacity Tier Reference), and 17.8.4 (Tier Preset Files) provide per-tier sizing and tunable defaults.
 
-Lenny's data store layer (Postgres, Redis, object storage) is accessed exclusively through pluggable interfaces ([Section 12.6](12_storage-architecture.md#126-interface-design)). The implementation behind each interface varies by deployment environment. This section defines two deployment profiles — **cloud-managed** and **self-managed** — so that Lenny takes advantage of cloud-provider redundancy and scalability when available, and falls back to self-managed components when deployed outside major cloud environments.
+Lenny's data store layer (Postgres, Redis, object storage) is accessed exclusively through pluggable interfaces ([Section 12.6](12_storage-architecture.md#126-interface-design)). The implementation behind each interface varies by deployment environment. Rather than collapsing that variability onto a single "profile" axis, Lenny ships a catalog of **answer files** composed along several orthogonal dimensions. Each answer file is a normal Helm values fragment; operators layer them with `helm install -f base.yaml -f answer-file.yaml -f values-tierN.yaml -f overrides.yaml`.
 
-**Design principle:** Lenny must not depend on any single cloud provider. Cloud-managed profiles use provider-native services for operational simplicity, but the self-managed profile is always a fully supported first-class path. Helm values select the active profile; the gateway and controllers are unaware of which profile is active.
+**Design principle.** Lenny must not depend on any single cloud provider. Cloud-managed backends use provider-native services for operational simplicity; self-managed backends are always a fully supported first-class path. Helm values select the active backends; the gateway and controllers are unaware of which backend is active.
 
-#### Cloud-Managed Profile
+#### 17.9.1 Composition Dimensions
 
-Use this profile when deploying on AWS, GCP, or Azure. The provider's managed services handle HA, replication, scaling, patching, and backups. Fewer Kubernetes Deployments to operate; the Helm chart omits PgBouncer, Redis Sentinel, and MinIO resources.
+Every Lenny installation is described by a tuple of orthogonal choices. The catalog is organized so that each dimension maps to a separate answer-file stanza; files can be mixed and matched.
+
+| Dimension | Values | Drives |
+|---|---|---|
+| **Environment** | `local` \| `dev` \| `staging` \| `prod` | Alert thresholds, log verbosity, `LENNY_DEV_MODE`, TLS strictness, `acknowledgeNoPrometheus` default |
+| **Cluster type** | `laptop` (k3s/kind) \| `eks` \| `gke` \| `aks` \| `openshift` \| `vanilla` (generic k8s) | CNI assumptions, StorageClass defaults, cloud-provider IAM integration, LoadBalancer behavior |
+| **Backends** | `cloud-managed` \| `self-managed` \| `embedded` | Postgres (RDS/CloudSQL/Azure DB vs CloudNativePG/Patroni vs embedded), Redis (ElastiCache/Memorystore/Azure Cache vs Sentinel/Cluster vs miniredis), object storage (S3/GCS/ABS vs MinIO vs local disk) |
+| **Capacity tier** | `tier1` \| `tier2` \| `tier3` | Gateway replica counts, warm-pool baselines, controller rate limiters, Redis topology — see [§17.8.2](#1782-capacity-tier-reference) |
+| **Isolation profile** | `baseline` \| `sandboxed` (gVisor) \| `hypervisor` (Kata) | Default RuntimeClass for seeded runtimes, T4 webhook requirements |
+
+Each dimension has an independent default so that operators only need to override the axes that differ from the chart base. An `eks-small-team.yaml` answer file, for example, declares cluster type = `eks` and backends = `cloud-managed` but leaves environment and capacity tier to be specified separately.
+
+#### 17.9.2 Answer File Catalog
+
+The chart ships with the following curated answer files under `deploy/helm/lenny/answers/`. Each is documented with a comment header that lists the dimensions it sets and the dimensions it leaves open:
+
+| Answer file | Dimensions fixed | Typical layering |
+|---|---|---|
+| `answers/laptop.yaml` | cluster=`laptop`, backends=`embedded`, environment=`local`, tier=`tier1` | Used as-is; equivalent to `lenny up` ([§17.4](#174-local-development-mode-lenny-dev)) |
+| `answers/docker-compose.yaml` | cluster=n/a, backends=`self-managed` (containerized), environment=`dev` | Layered with `values-tier1.yaml` for Tier 2 dev ([§17.4](#174-local-development-mode-lenny-dev)) |
+| `answers/eks-small-team.yaml` | cluster=`eks`, backends=`cloud-managed` (RDS + ElastiCache + S3), environment=`prod`, tier=`tier1` | Layered with `values-tier1.yaml` or `values-tier2.yaml` depending on load |
+| `answers/eks-production.yaml` | cluster=`eks`, backends=`cloud-managed`, environment=`prod`, tier=`tier2` (Tier 3 capable) | Layered with `values-tier2.yaml` or `values-tier3.yaml` |
+| `answers/gke-production.yaml` | cluster=`gke`, backends=`cloud-managed` (CloudSQL + Memorystore + GCS), environment=`prod` | Layered with `values-tierN.yaml` |
+| `answers/aks-production.yaml` | cluster=`aks`, backends=`cloud-managed` (Azure DB + Azure Cache + ABS), environment=`prod` | Layered with `values-tierN.yaml` |
+| `answers/openshift-self-managed.yaml` | cluster=`openshift`, backends=`self-managed` (CloudNativePG + Redis Sentinel + MinIO), environment=`prod` | Layered with `values-tierN.yaml` |
+| `answers/bare-metal-self-managed.yaml` | cluster=`vanilla`, backends=`self-managed`, environment=`prod` | Layered with `values-tierN.yaml` |
+| `answers/airgap-self-managed.yaml` | cluster=`vanilla`, backends=`self-managed`, `platform.registry.*` set to a private mirror, `preflight.skipNetworkProbes: true` | Layered with `values-tierN.yaml`; requires operator to set mirror details |
+
+**Adding new answer files.** Operators may publish their own answer files in their own repos (e.g., `answers/acme-eks.yaml`). Files are just values fragments; no plugin registration is required. The chart CI lints every shipped answer file against `values.schema.json` ([§17.6](#176-packaging-and-installation)) so that committed files cannot drift out of sync with the schema.
+
+**Wizard integration.** The `lenny-ctl install` wizard ([§17.6](#176-packaging-and-installation)) auto-suggests an answer-file base from the detection phase (e.g., `eks-small-team.yaml` when AWS EKS is detected). Operators who prefer hand-written values can skip the wizard entirely and run `helm install -f <answer-file>.yaml -f values-tierN.yaml -f overrides.yaml` directly — both paths are first-class.
+
+**Tier layering.** The capacity tier is intentionally a separate file (`values-tier1.yaml`, `values-tier2.yaml`, `values-tier3.yaml`, see [§17.8.4](#1784-tier-preset-files)) rather than baked into every answer file. Operators promote between tiers by swapping the tier file without rewriting the base answer file.
+
+#### 17.9.3 Cloud-Managed Backends
+
+Answer files whose **backends** dimension is `cloud-managed` omit PgBouncer, Redis Sentinel, and MinIO resources and reference provider-native endpoints instead. Provider-native services handle HA, replication, scaling, patching, and backups.
 
 | Component                         | Cloud-Managed Equivalent                     | Provider Examples                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1052,7 +1213,7 @@ Use this profile when deploying on AWS, GCP, or Azure. The provider's managed se
 **Helm configuration (cloud-managed):**
 
 ```yaml
-deploymentProfile: cloud-managed
+backends: cloud-managed  # selected by the answer file; see §17.9.2
 
 postgres:
   # No PgBouncer Deployment created; gateway connects through provider proxy
@@ -1076,7 +1237,7 @@ objectStorage:
   # Encryption, versioning, lifecycle managed by provider
 ```
 
-#### Cloud Object Storage Lifecycle Requirements
+#### 17.9.4 Cloud Object Storage Lifecycle Requirements
 
 Cloud-managed object storage buckets must be configured with the same lifecycle rules that [Section 12.5](12_storage-architecture.md#125-artifact-store) mandates for MinIO — bucket versioning (to prevent accidental overwrites during checkpoint upload) and delete-marker / noncurrent-version expiration (to prevent `ListObjects` performance degradation at scale). The Helm chart post-install Job configures these rules for MinIO via `mc ilm add`. For cloud providers, the deployer must apply equivalent rules before installation; the preflight Job validates them (see [Checks performed](#checks-performed) in [Section 17.6](#176-packaging-and-installation)).
 
@@ -1153,9 +1314,9 @@ Apply with: `az storage account blob-service-properties update --account-name <a
 
 > **Note:** Azure Blob does not natively emit S3-style delete markers. When using the Azure Blob S3-compatible gateway, delete markers are emulated; noncurrent-version expiration is sufficient to bound storage growth.
 
-#### Self-Managed Profile
+#### 17.9.5 Self-Managed Backends
 
-Use this profile when deploying on bare-metal, on-premises Kubernetes, or any environment without managed database/cache services. The Helm chart deploys PgBouncer, Redis Sentinel (or Cluster), and MinIO as Kubernetes workloads alongside Lenny's own components.
+Answer files whose **backends** dimension is `self-managed` deploy PgBouncer, Redis Sentinel (or Cluster), and MinIO as Kubernetes workloads alongside Lenny's own components. Use this when deploying on bare-metal, on-premises Kubernetes, or any environment without managed database/cache services.
 
 | Component             | Self-Managed Implementation                          | Notes                                                                                        |
 | --------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -1167,7 +1328,7 @@ Use this profile when deploying on bare-metal, on-premises Kubernetes, or any en
 **Helm configuration (self-managed):**
 
 ```yaml
-deploymentProfile: self-managed
+backends: self-managed  # selected by the answer file; see §17.9.2
 
 postgres:
   connectionPooler: pgbouncer
@@ -1190,19 +1351,19 @@ objectStorage:
   bucket: "lenny-artifacts"
 ```
 
-#### Local Development Profile
+#### 17.9.6 Embedded Backends (Tier 0)
 
-A third implicit profile exists for local development ([Section 17.4](#174-local-development-mode-lenny-dev)): single Postgres container, no pooler, single Redis container, local disk for artifacts. This profile is activated by `make run` / docker-compose and requires zero cloud dependencies.
+Answer file `answers/laptop.yaml` selects backends=`embedded`, the mode used by `lenny up` ([§17.4](#174-local-development-mode-lenny-dev) Tier 0): embedded Postgres (single-node bundle), in-process Redis, local-disk artifact storage, embedded k3s. This mode requires zero external cloud or cluster dependencies and is the primary path for laptop-scale evaluation of Lenny. Tier 1 (`make run`) and Tier 2 (`docker compose up`) are developer-oriented paths for contributors, documented in [§17.4](#174-local-development-mode-lenny-dev).
 
-#### Profile-Invariant Requirements
+#### 17.9.7 Backend-Invariant Requirements
 
-Regardless of deployment profile, the following requirements apply uniformly:
+Regardless of backend selection (`cloud-managed`, `self-managed`, or `embedded`), the following requirements apply uniformly:
 
 - **Transaction-mode pooling** for Postgres connections (RLS compatibility)
-- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment profile; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements)
-- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004).
+- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements). The embedded-Postgres Tier 0 mode ships the trigger pre-installed.
+- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004). Tier 0 embedded Redis runs loopback-only and is exempt from AUTH/TLS.
 - **Tenant key prefix** (`t:{tenant_id}:`) enforced at the Redis wrapper layer
-- **S3-compatible API** for object storage (all providers above satisfy this)
-- **Encryption at rest** for all persistent stores
-- **Interface contracts** ([Section 12.6](12_storage-architecture.md#126-interface-design)) are identical across profiles — the gateway does not branch on deployment profile
+- **S3-compatible API** for object storage (all cloud and self-managed providers above satisfy this; the Tier 0 local-disk driver implements the same `ArtifactStore` interface)
+- **Encryption at rest** for all persistent stores (exempt in Tier 0 embedded mode, which prints the non-suppressible production-warning banner documented in [§17.4](#174-local-development-mode-lenny-dev))
+- **Interface contracts** ([Section 12.6](12_storage-architecture.md#126-interface-design)) are identical across backends — the gateway does not branch on backend selection
 

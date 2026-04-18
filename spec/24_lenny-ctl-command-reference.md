@@ -1,6 +1,20 @@
 ## 24. `lenny-ctl` Command Reference
 
-`lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over the Admin API ([Section 15.1](15_external-api-surface.md#151-rest-api)) with near-zero business logic — every operation maps to an Admin API call. It requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag). Minimum required role is noted per command group. **Exception:** `lenny-ctl preflight` operates in two modes — standalone (reads `values.yaml` directly and probes infrastructure without a running gateway) and API-backed (delegates to `POST /v1/admin/preflight` on a running gateway). In standalone mode it embeds the preflight check logic locally; this is the only `lenny-ctl` subcommand that carries business logic, justified because preflight must run before the platform is deployed.
+`lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over two complementary external surfaces ([§15](15_external-api-surface.md)) and carries near-zero business logic of its own:
+
+- **Admin / operator commands** (`lenny-ctl admin *`, `lenny-ctl tenants *`, `lenny-ctl runtimes *`, `lenny-ctl pools *`, `lenny-ctl credentials *`, every `/v1/admin/*` call, and the agent-operability commands in [§24.15](#2415-agent-operability-commands)) map 1:1 to the **REST** Admin API ([§15.1](15_external-api-surface.md#151-rest-api)).
+- **Session commands** (`lenny session *` — or equivalently `lenny-ctl session *`; see [§24.17](#2417-session-operations)) map to the **MCP** API ([§15.2](15_external-api-surface.md#152-mcp-api)). They use the Lenny Go client SDK under the hood so that the interactive streaming, elicitation, and delegation flows work through the same MCP path as any other client. The short form (`lenny session`) is preferred in developer-facing examples; the long form (`lenny-ctl session`) is preferred in operator runbooks.
+
+Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin token (`LENNY_API_TOKEN` or `--token` flag), with the exceptions below. Minimum required role is noted per command group.
+
+**Exceptions to the thin-client rule.**
+
+1. **`lenny-ctl preflight`** operates in two modes — standalone (reads `values.yaml` directly and probes infrastructure without a running gateway) and API-backed (delegates to `POST /v1/admin/preflight` on a running gateway). In standalone mode it embeds the preflight check logic locally because preflight must run before the platform is deployed.
+2. **`lenny-ctl install`** ([§24.20](#2420-installation-wizard)) carries the interactive installer's question engine and values-rendering logic locally; it calls `helm` and then `lenny-ctl bootstrap` internally.
+3. **`lenny up` / `lenny down` / `lenny status`** ([§24.19](#2419-local-stack)) manage the Tier 0 embedded single-binary stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) and run the gateway, controllers, embedded Postgres/Redis, and k3s in-process. These are local-only commands; they do not call any remote API.
+4. **`lenny runtime init`** ([§24.18](#2418-runtime-scaffolding)) is an offline scaffolder that emits a new runtime repository skeleton.
+
+**One binary, two names.** The binary ships as both `lenny` (short name, Tier 0 ergonomics) and `lenny-ctl` (long name, operator context). Both names support every subcommand; the docs use the short form in local/developer contexts and the long form in operator contexts. See [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) for the binary-vs-symlink layout.
 
 ### 24.0 Packaging and Installation
 
@@ -27,6 +41,8 @@ Both forms read `LENNY_API_URL` / `--api-url` to locate the Lenny gateway. `kube
 | Command | Description | API Mapping | Min Role |
 |---------|-------------|-------------|----------|
 | `lenny-ctl preflight --config <values.yaml>` | Run all preflight checks. Uses standalone mode by default; delegates to the Admin API when `--api-url` is set and the gateway is reachable. | `POST /v1/admin/preflight` (API-backed mode) or local execution (standalone mode) | `platform-admin` (API-backed) / none (standalone) |
+| `lenny-ctl doctor` | Run a richer diagnostic pass combining `preflight` checks with the server-side diagnostic endpoints from [§25.6](25_agent-operability.md#256-diagnostic-endpoints) (connectivity, pool health, credential pool health). Outputs a remediation report. | `POST /v1/admin/diagnostics/run` | `platform-admin` |
+| `lenny-ctl doctor --fix` | Run `lenny-ctl doctor` and apply the auto-remediations documented in [§25.6](25_agent-operability.md#256-diagnostic-endpoints) (e.g., restart CoreDNS replicas, re-seed the bootstrap config, refresh cert-manager certificates). Each remediation is logged with the corresponding operation ID ([§25.2](25_agent-operability.md#252-architecture-overview)). Non-fixable findings are printed as an operator action list. | `POST /v1/admin/diagnostics/run?fix=true` | `platform-admin` |
 
 **Standalone mode credential handling.** In standalone mode, `lenny-ctl preflight` must connect to Postgres, Redis, and MinIO to validate infrastructure. Connection strings (DSNs) are resolved in the following precedence order (highest wins): (1) **CLI flags** `--postgres-dsn`, `--redis-dsn`, `--minio-endpoint` override all other sources (use in CI pipelines where credentials are injected from a secrets manager: `lenny-ctl preflight --config values.yaml --postgres-dsn "\$LENNY_PG_DSN"`); (2) **Environment variables** `LENNY_POSTGRES_DSN`, `LENNY_REDIS_DSN`, `LENNY_MINIO_ENDPOINT` (plus `LENNY_MINIO_ACCESS_KEY`, `LENNY_MINIO_SECRET_KEY`) take precedence over the values file but are overridden by CLI flags; (3) **Values file** fields (`postgres.connectionString`, `redis.connectionString`, `minio.endpoint`) from `--config` are the fallback. This precedence order allows operators to commit a values file without inline credentials and inject secrets at runtime. The values file example in [Section 17.6](17_deployment-topology.md#176-packaging-and-installation) uses inline credentials for illustrative purposes only; production CI pipelines should use option 1 or 2.
 
@@ -185,3 +201,57 @@ In addition to the existing `--api-url` (or `LENNY_API_URL`) flag that targets t
 This split means operators typically only need `--api-url`; `--ops-server` is for air-gapped clusters, split-DNS configurations, or direct-to-ops debugging.
 
 All commands support `--output json` for machine-readable output and `--quiet` to suppress informational messages. Global flags: `--api-url`, `--ops-server`, `--token`, `--timeout`, `--insecure-skip-verify` (dev only). Cross-reference: [§17.7](17_deployment-topology.md#177-operational-runbooks) runbooks use specific subcommands from each group above.
+
+### 24.17 Session Operations
+
+Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses ([§15.2](15_external-api-surface.md#152-mcp-api)) — the CLI embeds the Lenny Go client SDK ([§15.6](15_external-api-surface.md#156-client-sdks)) and opens a full MCP session for the duration of the command.
+
+| Command | Description | API / SDK mapping | Min Role |
+|---------|-------------|------------------|----------|
+| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...` | Create a session against the specified runtime. When `--attach` is set (the default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline until the session terminates. | MCP `lenny/create_session` + stream | `user` |
+| `lenny session attach <sessionId>` | Attach to an existing session and stream its output from the current cursor. Supports reconnect-with-cursor. | MCP connect + cursor resume | `user` (owner) |
+| `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | MCP `lenny/send_message` | `user` (owner) |
+| `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | MCP `lenny/interrupt` | `user` (owner) |
+| `lenny session cancel <sessionId>` | Cancel a session cooperatively. | MCP `lenny/cancel_session` | `user` (owner) |
+| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. This is the one session command that also works over REST for non-interactive callers. | `GET /v1/sessions` | `user` |
+| `lenny session get <sessionId>` | Fetch a session's current state. | `GET /v1/sessions/{id}` | `user` (owner) |
+| `lenny session logs <sessionId> [--since <time>]` | Fetch session transcript from the event store. | `GET /v1/sessions/{id}/events` | `user` (owner) |
+
+`lenny session` commands honor the same `--api-url` / `LENNY_API_URL` discovery rules as admin commands; there is no separate MCP endpoint flag because Lenny's MCP surface is served from the same gateway host under `/mcp`.
+
+### 24.18 Runtime Scaffolding
+
+`lenny runtime init` scaffolds a new runtime repository by emitting the files described in [§15.7](15_external-api-surface.md#157-runtime-author-sdks) (Dockerfile, `main.<lang>`, `runtime.yaml`, Makefile, CI workflow). All logic is local — no API calls are made.
+
+| Command | Description | Min Role |
+|---------|-------------|----------|
+| `lenny runtime init <name> --language {go\|python\|typescript\|binary} --template {chat\|coding\|minimal}` | Generate a new runtime skeleton in `./<name>/`. The `coding` template pre-wires the shared coding-agent workspace plan from [§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes); `chat` is the minimal non-coding template; `minimal` is a bare Hello World. | none (local) |
+| `lenny runtime validate [<path>]` | Validate a runtime repository against the Runtime Adapter Specification ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)) and the `runtime.yaml` contract. Runs in the current directory by default. | none (local) |
+| `lenny runtime publish <name> --image <ref>` | Convenience wrapper for `docker push` and `lenny-ctl admin runtimes register` that pushes the built image to the configured registry and registers the runtime against the target gateway. Requires `--api-url` and an admin token. | `platform-admin` (for the register step) |
+
+### 24.19 Local Stack
+
+The Tier 0 embedded stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) is managed entirely through these local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+
+| Command | Description |
+|---------|-------------|
+| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "Tier 0 — NOT for production use" banner. |
+| `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
+| `lenny status` | Print component health, active session count, and resource usage. |
+| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |
+| `lenny restart [<component>]` | Restart a single embedded component without tearing down the rest of the stack. |
+
+When invoked as `lenny` (short name) these commands default to the Tier 0 stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
+
+### 24.20 Installation Wizard
+
+The installer wizard orchestrates the flow from [§17.6](17_deployment-topology.md#176-packaging-and-installation): cluster detection → question phase → preview → preflight → `helm install` → bootstrap seed → smoke test. All detection, question rendering, and values composition logic is local; the actual install step delegates to `helm` (invoked as a subprocess) and `lenny-ctl bootstrap`.
+
+| Command | Description | API Mapping | Min Role |
+|---------|-------------|-------------|----------|
+| `lenny-ctl install` | Interactive installer. Runs cluster detection, asks the question set from [§17.6](17_deployment-topology.md#176-packaging-and-installation), previews the composite values file, runs preflight, invokes `helm install`, seeds the bootstrap config, and runs a smoke test against the `chat` reference runtime. | `helm install` + `POST /v1/admin/bootstrap` + MCP session smoke test | `platform-admin` on the target cluster |
+| `lenny-ctl install --non-interactive --answers <file>` | Run the installer using a pre-captured answer file (shape documented in [§17.6](17_deployment-topology.md#176-packaging-and-installation)). Used in CI/IaC. | Same as above | `platform-admin` |
+| `lenny-ctl install --save-answers <file>` | Run the interactive wizard and save the answer file to `<file>` for replay. Does not run `helm install` when combined with `--dry-run`. | Local; optionally followed by the same APIs as above | `platform-admin` |
+| `lenny-ctl install --offline` | Skip cluster-reachability probes in the detection phase. Preflight still runs against the target cluster. | Same as above | `platform-admin` |
+| `lenny-ctl values validate --config <values.yaml>` | Validate a `values.yaml` against the Helm `values.schema.json` published by the chart ([§17.6](17_deployment-topology.md#176-packaging-and-installation)). Exits 0 on success. | Local | none |
+| `lenny-ctl upgrade --answers <file>` | Replay an answer file against an existing install. Runs preflight, renders the values diff, and invokes `helm upgrade`. | `helm upgrade` + `POST /v1/admin/preflight` | `platform-admin` |

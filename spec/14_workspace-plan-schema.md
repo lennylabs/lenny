@@ -170,20 +170,115 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
   }
   ```
 
-  **`openai-agents` runtime:**
+  **`openai-assistants` runtime:**
 
   ```json
   {
     "type": "object",
     "properties": {
-      "model":            { "type": "string", "description": "OpenAI model ID" },
+      "assistantId":      { "type": "string", "description": "OpenAI Assistants API assistant ID (asst_...)" },
+      "model":            { "type": "string", "description": "Optional model override; defaults to the assistant's configured model" },
       "temperature":      { "type": "number", "minimum": 0, "maximum": 2 },
       "parallelToolCalls":{ "type": "boolean", "default": true },
       "responseFormat":   { "type": "string", "enum": ["text", "json_object", "json_schema"], "default": "text" }
     },
+    "required": ["assistantId"],
     "additionalProperties": false
   }
   ```
+
+  **`gemini-cli` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "model":            { "type": "string", "description": "Gemini model ID (e.g. gemini-2.5-pro)" },
+      "streamingMode":    { "type": "boolean", "default": true },
+      "maxTokens":        { "type": "integer", "minimum": 1, "maximum": 1000000, "description": "Override max output tokens" },
+      "temperature":      { "type": "number", "minimum": 0, "maximum": 2 },
+      "thinkingBudget":   { "type": "integer", "minimum": 0, "description": "Extended thinking token budget; 0 disables thinking" }
+    },
+    "additionalProperties": false
+  }
+  ```
+
+  **`codex` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "model":             { "type": "string", "description": "OpenAI model ID used by Codex (e.g. gpt-5-codex)" },
+      "streamingMode":     { "type": "boolean", "default": true },
+      "maxTokens":         { "type": "integer", "minimum": 1, "maximum": 200000 },
+      "temperature":       { "type": "number", "minimum": 0, "maximum": 2 },
+      "reasoningEffort":   { "type": "string", "enum": ["low", "medium", "high"], "description": "Codex reasoning effort hint" }
+    },
+    "additionalProperties": false
+  }
+  ```
+
+  **`cursor-cli` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "model":            { "type": "string", "description": "Cursor agent model selection (e.g. cursor-auto, cursor-fast)" },
+      "streamingMode":    { "type": "boolean", "default": true },
+      "rulesFile":        { "type": "string", "description": "Relative path under /workspace/current to a rules file (e.g. .cursor/rules)" }
+    },
+    "additionalProperties": false
+  }
+  ```
+
+  **`chat` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "model":            { "type": "string", "description": "Provider model ID; provider is inferred from the pool's credential identity" },
+      "temperature":      { "type": "number", "minimum": 0, "maximum": 2 },
+      "maxTokens":        { "type": "integer", "minimum": 1, "maximum": 1000000 },
+      "systemPrompt":     { "type": "string", "description": "Prepended as a system-role message" }
+    },
+    "additionalProperties": false
+  }
+  ```
+
+  **`mastra` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "agentModule":      { "type": "string", "description": "TypeScript module path to the exported Mastra Agent" },
+      "configSchema":     { "type": "object", "description": "Runtime-specific config forwarded to the Mastra Agent at construction" }
+    },
+    "required": ["agentModule"],
+    "additionalProperties": false
+  }
+  ```
+
+  **`crewai` runtime:**
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "crewModule":       { "type": "string", "description": "Python dotted path to the exported Crew object" },
+      "process":          { "type": "string", "enum": ["sequential", "hierarchical"], "default": "sequential" },
+      "verbose":          { "type": "boolean", "default": false },
+      "configSchema":     { "type": "object", "description": "Runtime-specific config forwarded to the Crew at kickoff" }
+    },
+    "required": ["crewModule"],
+    "additionalProperties": false
+  }
+  ```
+
+  All built-in runtime schemas above are published at `https://schemas.lenny.dev/runtime-options/<runtime-name>/v1.json`. Reference runtimes in [§26](26_reference-runtime-catalog.md) declare their `runtimeOptionsSchema` field as a `$ref` to these URLs rather than inlining the schema body, so the canonical schema lives in one place.
 
   Custom runtimes declare their schema in the `runtimeOptionsSchema` field of the `RuntimeDefinition` ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)). Derived runtimes ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime), Derived Runtime) inherit the base runtime's schema; they MAY narrow it by registering a stricter schema but MAY NOT declare properties that the base schema forbids. **Validation:** at derived-runtime registration the gateway computes `derived.properties.keys() − base.properties.keys()`; if the difference is non-empty the registration is rejected with `INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares forbidden property '<name>'` for each offending property name. Constraints on existing properties (e.g. tightened `minimum`/`maximum`, added `enum`, changed `default`) are permitted.
 
