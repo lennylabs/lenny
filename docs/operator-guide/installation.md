@@ -9,6 +9,87 @@ nav_order: 1
 
 This page covers end-to-end installation of Lenny on a Kubernetes cluster, from infrastructure prerequisites through post-install verification.
 
+Lenny supports three installation paths. Pick one based on the scenario:
+
+| Path | When to use | Starting point |
+|------|-------------|----------------|
+| **Tier 0: `lenny up`** | Evaluation, developer laptops, demos, smoke testing. Single binary, embedded k3s, same code path as production. Never production. | [`lenny up` quickstart](#tier-0-lenny-up) |
+| **`lenny-ctl install` wizard** | New production installs. Interactive detection + question flow; generates a composed `values.yaml` and runs `helm install`, bootstrap, and a smoke test. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
+| **Direct Helm** | IaC / GitOps. Hand-write `values.yaml` or compose an answer-file base with tier overrides. | [Helm Chart Installation](#helm-chart-installation) |
+
+All three paths exercise the same chart, the same preflight, and the same bootstrap. The wizard is a convenience layer over the third.
+
+---
+
+## Tier 0: `lenny up`
+
+For evaluation and developer laptops, the single `lenny` binary runs the full platform in-process:
+
+```bash
+lenny up
+```
+
+On first run it downloads k3s to `~/.lenny/k3s/`, starts embedded Postgres, Redis, a KMS shim, an OIDC provider, the gateway, `lenny-ops`, the controllers, and the entire reference runtime catalog. The warm pool controller pre-warms pods; `lenny session new --runtime=chat --attach "hello"` is ready in under 60 seconds.
+
+Tier 0 is gated by a non-suppressible banner stating that credentials, the KMS master key, and identities are insecure. The embedded OIDC provider refuses any audience claim not matching `dev.local`, and the gateway rejects externally-issued tokens. Any attempt to bind the gateway outside localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+
+Use Tier 0 to understand the platform, to demo it to stakeholders, or to smoke-test a new runtime before pushing it to a real cluster. Do not use Tier 0 in production.
+
+Teardown:
+
+```bash
+lenny down          # preserves ~/.lenny/
+lenny down --purge  # deletes everything for a fresh start
+```
+
+---
+
+## Interactive Installer (`lenny-ctl install`)
+
+For production installs, the interactive wizard orchestrates detection, question rendering, values composition, preflight, `helm install`, bootstrap, and a smoke test against the `chat` reference runtime:
+
+```bash
+lenny-ctl install
+```
+
+The wizard runs in five phases:
+
+1. **Detection** -- probes the target cluster for capabilities (CNI, RuntimeClass availability, admission controllers, cert-manager, Prometheus Operator, StorageClass options, cloud provider). Results seed default answers and rule out questions that do not apply.
+2. **Questions** -- a small, targeted set (typically ~10 prompts) covering environment (production / staging / dev), cluster type (EKS / GKE / AKS / on-prem / k3s), backend services (managed RDS / self-hosted Postgres / cloud pooler), capacity tier, isolation profile, auth mode, and the handful of tenant/runtime/pool bootstrap entries.
+3. **Preview** -- renders the composed `values.yaml` and diffs it against any existing install. Nothing is applied yet.
+4. **Preflight + install** -- runs `lenny-ctl preflight`, then `helm install` (or `helm upgrade`), then `lenny-ctl bootstrap --from-values`.
+5. **Smoke test** -- creates an MCP session against the `chat` reference runtime and verifies the full round trip.
+
+### Answer files
+
+Every interactive session can be captured to an answer file:
+
+```bash
+lenny-ctl install --save-answers ./answers.yaml
+```
+
+The saved file is plain YAML -- the wizard's Go structs serialized. Replay it non-interactively in CI/IaC:
+
+```bash
+lenny-ctl install --non-interactive --answers ./answers.yaml
+```
+
+The Lenny chart also ships **answer-file bases** for common scenarios (e.g., `answers/eks-small-team.yaml`, `answers/gke-tier2.yaml`, `answers/laptop.yaml`). Operators who prefer hand-written values can skip the wizard entirely and run `helm install -f answers/<base>.yaml -f values-tierN.yaml -f overrides.yaml`. Both paths are first-class.
+
+### Upgrades
+
+Upgrades replay the answer file against the existing install:
+
+```bash
+lenny-ctl upgrade --answers ./answers.yaml
+```
+
+This runs preflight, diffs the composed values against the live release, and invokes `helm upgrade` on approval.
+
+### Airgap mode
+
+`lenny-ctl install --offline` skips cluster-reachability probes in the detection phase. Preflight still runs against the target cluster -- only detection is affected.
+
 ---
 
 ## Cluster Prerequisites
@@ -339,18 +420,37 @@ kubectl describe limitrange -n lenny-agents
 ### Expected Healthy State
 
 - All gateway replicas are Running and Ready
+- `lenny-ops` has 1-2 replicas Running with one holding the leader Lease
 - Token Service has 2+ replicas Running
 - Warm Pool Controller has 2+ replicas (one active leader)
 - PoolScalingController has 2+ replicas (one active leader)
 - Warm pool pods are reaching `idle` state within expected startup time
-- No `PoolConfigDrift` or `WarmPoolBootstrapping` alerts firing
+- No `PoolConfigDrift`, `WarmPoolBootstrapping`, or `LenniOpsSelfHealthDegraded` alerts firing
 - `lenny_warmpool_idle_pods` gauge shows expected warm pod count per pool
+
+### Structured diagnostics via `lenny-ctl doctor`
+
+For a one-shot health assessment, run:
+
+```bash
+lenny-ctl doctor
+```
+
+This probes every subsystem via the `lenny-ops` diagnostic endpoints and renders a structured report of healthy / degraded / failing components. It does not make changes.
+
+For common classes of misconfiguration (missing ResourceQuota, PSS labels out of date, ServiceMonitor missing required `app.kubernetes.io/instance` label, preflight trigger absent on external Postgres pooler, etc.), run with `--fix`:
+
+```bash
+lenny-ctl doctor --fix
+```
+
+The command executes idempotent remediations, each guarded by a per-finding guardrail. Every fix is recorded in the audit log with the operator identity and the before/after state. Use `--dry-run` to preview fixes without applying them.
 
 ---
 
 ## Cloud-Managed Services Integration
 
-For production deployments, cloud-managed services are recommended over self-managed infrastructure. See the deployment profile guidance in the technical design (Section 17.9) for full details.
+For production deployments, cloud-managed services are recommended over self-managed infrastructure. See the answer-file backends guidance in the spec (Section 17.9) for full details; `lenny-ctl install` detects and suggests an appropriate answer-file base when it recognizes the cloud provider.
 
 ### AWS
 

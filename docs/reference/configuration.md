@@ -192,7 +192,7 @@ Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`Re
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `postgres.connectionString` | string | Required | PostgreSQL connection string. Supports DSN format. | Valid DSN. |
-| `postgres.deploymentProfile` | string | `self-managed` | Database deployment profile: `self-managed` (with PgBouncer) or `cloud-managed` (provider proxy). | One of `self-managed`, `cloud-managed`. |
+| `postgres.connectionPooler` | string | `pgbouncer` | Connection pooler mode: `pgbouncer` (self-managed, supports `connect_query` sentinel) or `external` (cloud-managed proxy; activates the `lenny_tenant_guard` migration for RLS). Defaults to `external` when the top-level `backends` answer-file value is `cloud-managed`. | One of `pgbouncer`, `external`. |
 
 ### Redis
 

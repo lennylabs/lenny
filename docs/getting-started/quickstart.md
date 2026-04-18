@@ -7,9 +7,11 @@ nav_order: 1
 
 # Quickstart
 
-**Goal:** Clone the repository, start Lenny locally, and complete a full echo session -- all in under 5 minutes.
+**Goal:** Install Lenny on your laptop, open a chat session against a real agent, and tear it down -- all in under 5 minutes.
 
-This guide uses Lenny's **Tier 1 local development mode** (`make run`), which runs the entire platform as a single Go binary with no external dependencies. No Kubernetes, Docker, Postgres, Redis, or MinIO required.
+This guide uses Lenny's **Tier 0 embedded stack** (`lenny up`), a single binary that boots k3s, Postgres, Redis, a KMS shim, an OIDC provider, the gateway, `lenny-ops`, and the reference runtime catalog in-process. No Docker, no Kubernetes, no external services required.
+
+Tier 0 is the recommended starting point for every persona. Tier 1 (`make run`) and Tier 2 (`docker compose up`) remain available for contributors and CI scenarios; see [Local Development](../runtime-author-guide/local-development.html).
 
 ---
 
@@ -17,256 +19,166 @@ This guide uses Lenny's **Tier 1 local development mode** (`make run`), which ru
 
 | Requirement | Version | Notes |
 |------------|---------|-------|
-| **Go** | 1.22+ | [Install Go](https://go.dev/dl/) |
-| **Git** | Any recent | To clone the repository |
-| **curl** | Any recent | To interact with the API (or use any HTTP client) |
+| **Lenny CLI** | latest | Single binary; download from the [releases page](https://github.com/lenny-dev/lenny/releases) or `brew install lenny-dev/tap/lenny` |
+| **macOS or Linux** | Any recent | k3s runs rootless where supported. Windows users should use WSL2 |
 
-That is all you need. Tier 1 mode embeds everything.
-
----
-
-## Step 1: Clone the repository
-
-```bash
-git clone https://github.com/your-org/lenny.git
-cd lenny
-```
+That is all. The first `lenny up` downloads k3s into `~/.lenny/k3s/` and seeds the embedded Postgres and Redis. Subsequent runs start in seconds.
 
 ---
 
-## Step 2: Start Lenny
+## Step 1: Start the embedded stack
 
 ```bash
-make run
+lenny up
 ```
 
-This single command starts a **single Go binary** that runs three components as goroutines within one process:
-
-| Component | What it does |
-|-----------|-------------|
-| **Gateway** | The API entry point. Handles authentication, session routing, file uploads, and stream proxying. In dev mode, it listens on `http://localhost:8080`. |
-| **Controller simulator** | Simulates the Warm Pool Controller. Instead of managing Kubernetes CRDs, it manages a single in-process "pod" that runs the echo runtime. |
-| **Echo runtime** | A built-in agent runtime that echoes back whatever you send it. It implements the Minimum-tier adapter protocol (stdin/stdout JSON Lines). No LLM credentials required. |
-
-**Storage in Tier 1 mode:**
-
-| Production backend | Tier 1 replacement | Purpose |
-|---|---|---|
-| Postgres | **Embedded SQLite** | Session metadata, task records, tenant configuration |
-| Redis | **In-memory caches** | Pub/sub, ephemeral state, routing cache, lease coordination |
-| MinIO | **Local filesystem** (`./lenny-data/`) | Artifact storage (uploaded files, workspace snapshots, checkpoints) |
-
-You should see output indicating the gateway is listening:
+You should see output similar to:
 
 ```
-INFO  gateway listening on :8080
-INFO  controller-sim started (echo runtime ready)
-INFO  warm pool: 1 pod idle (echo)
-WARN  WARNING: TLS disabled — dev mode active. Do not use in production.
+Tier 0 embedded mode. NOT for production use. Credentials, KMS master
+key, and identities are insecure.
+
+[✓] k3s started (127.0.0.1:6443)
+[✓] postgres ready
+[✓] redis ready
+[✓] kms shim ready
+[✓] oidc provider ready (issuer=https://localhost:8443/dev-oidc)
+[✓] gateway listening on https://localhost:8443 (plain http on :8080)
+[✓] lenny-ops listening on https://localhost:8443/ops
+[✓] installed reference runtimes: chat, claude-code, gemini-cli, codex,
+    cursor-cli, langgraph, mastra, openai-assistants, crewai
+[✓] playground available at https://localhost:8443/playground
+
+Ready in 47s. Try: lenny session new --runtime=chat --attach "hello"
 ```
 
-The TLS warning is expected and repeats every 60 seconds. Tier 1 mode sets `LENNY_DEV_MODE=true` automatically.
+The red production-warning banner is not suppressible -- Tier 0 is only for development and evaluation.
+
+Under the hood, `lenny up` is *not* a simulator: it runs the same gateway, controllers, CRDs, and `lenny-ops` binaries that production Kubernetes deployments use. Every reference runtime is registered against the platform-global registry and granted access to the `default` tenant.
 
 ---
 
-## Step 3: Create a session
+## Step 2: Open a chat session
 
-Open a new terminal and create a session using the echo runtime:
-
-```bash
-curl -s -X POST http://localhost:8080/v1/sessions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "runtime": "echo"
-  }' | jq .
-```
-
-**Response:**
-
-```json
-{
-  "session_id": "ses_abc123",
-  "uploadToken": "ses_abc123.1712700000.a1b2c3d4e5f6",
-  "sessionIsolationLevel": {
-    "executionMode": "session",
-    "isolationProfile": "runc",
-    "podReuse": false
-  }
-}
-```
-
-Save the `session_id` and `uploadToken` for subsequent steps:
+Open a session against the bundled `chat` runtime. This is an LLM-only runtime with no tools -- the simplest possible useful agent. It requires no API keys; Tier 0 seeds a mock provider that replays deterministic responses.
 
 ```bash
-export SESSION_ID="ses_abc123"
-export UPLOAD_TOKEN="ses_abc123.1712700000.a1b2c3d4e5f6"
+lenny session new --runtime=chat --attach "What is Lenny?"
 ```
 
-Replace the values above with the actual values from the response.
+**Output (streamed):**
 
-**What happened:** The gateway authenticated the request (dev mode uses a permissive default), selected the echo runtime's pool, claimed an idle warm pod from the controller simulator, persisted the session record to SQLite, and returned the session ID along with an upload token for file delivery.
+```
+session.id=ses_01HN0J...                       state=running
+assistant: Lenny is a Kubernetes-native, runtime-agnostic agent
+           session platform. It manages the lifecycle of interactive
+           agent sessions -- pod allocation, workspace materialization,
+           streaming I/O, recursive delegation, credential leasing, and
+           session recovery -- behind a unified gateway.
+session.id=ses_01HN0J...                       state=suspended
+```
+
+`lenny session` commands route through the MCP client SDK, not REST. They exercise the same code path that a production MCP client uses.
 
 ---
 
-## Step 4: Upload a file
+## Step 3: Continue the conversation
 
-Upload a workspace file to the session. This is optional for the echo runtime (it does not read files), but demonstrates the workspace delivery mechanism:
+While attached, type follow-up messages and press Enter. To detach without ending the session, press `Ctrl+]`. You can always re-attach:
 
 ```bash
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/upload" \
-  -H "Authorization: Bearer ${UPLOAD_TOKEN}" \
-  -F "file=@README.md;filename=README.md" | jq .
+lenny session attach ses_01HN0J...
 ```
 
-**Response:**
+Or send a one-off message without attaching:
 
-```json
-{
-  "uploaded": [
-    {
-      "path": "README.md",
-      "size": 1234
-    }
-  ]
-}
+```bash
+lenny session send ses_01HN0J... "Give me three bullet points on delegation."
 ```
-
-**What happened:** The gateway validated the upload token (session-scoped, HMAC-signed, short-lived), streamed the file into the pod's staging area (`/workspace/staging`), and recorded the upload. The file is staged but not yet visible to the runtime.
 
 ---
 
-## Step 5: Finalize the workspace
+## Step 4: Try a coding agent
 
-Finalize the workspace to make uploaded files available to the runtime:
+The reference runtime catalog includes four coding agents: `claude-code`, `gemini-cli`, `codex`, and `cursor-cli`. Each wraps an existing CLI inside a gVisor-isolated sandbox with a materialized workspace.
+
+Point the agent at a local repository:
 
 ```bash
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "Authorization: Bearer ${UPLOAD_TOKEN}" | jq .
+lenny session new --runtime=claude-code --workspace=./my-repo --attach \
+  "Read the README and summarize the architecture."
 ```
 
-**Response:**
+The gateway materializes `./my-repo` into the pod's `/workspace/current/`, starts the runtime, and streams its output back to your terminal. Any files the agent writes to `/workspace/output/` are recoverable via the artifact API after the session ends.
 
-```json
-{
-  "status": "finalized",
-  "workspace": {
-    "files": ["README.md"],
-    "cwd": "/workspace/current"
-  }
-}
+Tier 0 uses mock LLM credentials by default. To exercise a real provider, set the corresponding environment variable before `lenny up`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+lenny down && lenny up
 ```
-
-**What happened:** The gateway instructed the pod's adapter to validate the staging area and atomically materialize it to `/workspace/current`. Any setup commands defined on the runtime would execute at this point (the echo runtime defines none). The upload token is now invalidated -- it cannot be reused.
 
 ---
 
-## Step 6: Start the session
+## Step 5: Open the web playground
 
-Start the agent runtime within the pod:
+Open [`https://localhost:8443/playground`](https://localhost:8443/playground) in your browser. The playground is a minimal single-page UI for picking a runtime, uploading a workspace, and chatting with the session. It speaks the same public MCP surface your CLI just used -- no private endpoints.
 
-```bash
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" | jq .
-```
-
-**Response:**
-
-```json
-{
-  "status": "running"
-}
-```
-
-**What happened:** The gateway called the adapter's `StartSession` RPC, which spawned the echo runtime binary with its working directory set to `/workspace/current`. The runtime is now reading from stdin and ready to receive messages.
+In Tier 0, the playground runs in `authMode=dev` (no auth) with a persistent red "DEV MODE -- NOT FOR PRODUCTION" banner. Production installations gate the playground behind OIDC or API keys.
 
 ---
 
-## Step 7: Send a message
+## Step 6: Inspect and tear down
 
-Send a message and see the echo output:
-
-```bash
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/messages" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": [
-      {
-        "type": "text",
-        "text": "Hello, Lenny!"
-      }
-    ]
-  }' | jq .
-```
-
-**Response (streamed):**
-
-```json
-{
-  "events": [
-    {
-      "type": "agent_output",
-      "parts": [
-        {
-          "type": "text",
-          "text": "Echo: Hello, Lenny!"
-        }
-      ]
-    },
-    {
-      "type": "status_change",
-      "state": "suspended"
-    }
-  ]
-}
-```
-
-**What happened:** The gateway delivered the message to the echo runtime via stdin as a `{type: "message"}` JSON Line. The runtime read it, prepended "Echo: ", and wrote a `{type: "response"}` JSON Line to stdout. The gateway relayed the response back to you as an `agent_output` event. The echo runtime then suspended, waiting for the next message.
-
-You can send additional messages -- the echo runtime supports multi-turn interaction.
-
----
-
-## Step 8: Terminate the session
-
-When you are done, terminate the session:
+List your active sessions:
 
 ```bash
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/terminate" | jq .
+lenny session list
 ```
 
-**Response:**
+Inspect platform state without leaving the CLI:
 
-```json
-{
-  "status": "completed",
-  "session_id": "ses_abc123"
-}
+```bash
+lenny status                          # component health + active sessions
+lenny-ctl admin pools list            # warm pool state
+lenny-ctl admin diagnostics connectivity   # end-to-end dependency check
 ```
 
-**What happened:** The gateway sent a `{type: "shutdown"}` message to the runtime via stdin, sealed the workspace (exported a final snapshot to `./lenny-data/`), terminated the pod, marked the session as `completed` in SQLite, and released the pod back to the controller simulator for cleanup.
+When you are done, shut everything down:
+
+```bash
+lenny down          # stops the stack; preserves data in ~/.lenny/
+lenny down --purge  # also deletes ~/.lenny/ for a fresh start next time
+```
 
 ---
 
 ## What just happened?
 
-You walked through the complete session lifecycle that Lenny manages for every agent session:
+You exercised the full platform flow -- the same flow every Lenny client uses in production:
 
 ```
-CreateSession       →  Gateway claims a warm pod from the pool
-UploadWorkspace     →  Files are staged on the pod via gateway-mediated delivery
-FinalizeWorkspace   →  Staging area is materialized to /workspace/current
-StartSession        →  Agent runtime binary is started
-SendMessage         →  Messages flow through the gateway's stream proxy
-Terminate           →  Workspace is sealed, pod is released, session is completed
+lenny up            →  Embedded k3s comes up; CRDs install; gateway,
+                        lenny-ops, controllers, and reference runtimes
+                        start; warm pool controller pre-warms pods.
+session new         →  Gateway authenticates, claims a warm pod,
+                        materializes the workspace, starts the runtime
+                        adapter, and opens an MCP stream.
+session attach      →  Bidirectional MCP stream carries messages,
+                        tool-call events, elicitation prompts, and
+                        lifecycle transitions.
+session (implicit)  →  Runtime suspends between messages; pod remains
+                        warm in task-mode pools.
+lenny down          →  Gracefully terminates components. Session state
+                        persists in embedded Postgres for next `lenny up`.
 ```
 
-In a production deployment, this same flow runs on Kubernetes with real isolation (gVisor/Kata), mTLS between gateway and pods, credential leasing from a KMS-backed Token Service, workspace checkpointing to MinIO, and horizontal scaling across gateway replicas.
+Design principles you touched:
 
-The key design principles you saw in action:
-
-- **Gateway-centric:** Every interaction went through `localhost:8080`. The pod was never directly exposed.
-- **Pod-local workspace, gateway-owned state:** Files were delivered through the gateway, not mounted from shared storage.
-- **Pre-warm everything possible:** The pod was already running and idle before your session started. Workspace setup was the only hot-path work.
-- **Zero-credential mode:** The echo runtime required no LLM API keys, demonstrating that platform mechanics work independently of provider credentials.
+- **Gateway-centric.** Every interaction went through the gateway. The pod was never directly exposed.
+- **Pod-local workspace, gateway-owned state.** The repo was streamed into the pod through the gateway; no shared volume mounts.
+- **Runtime-agnostic.** `chat`, `claude-code`, and any custom runtime you build all use the same adapter contract.
+- **Secure by default.** Pods run non-root with all capabilities dropped, under gVisor, with default-deny networking.
 
 ---
 
@@ -274,33 +186,29 @@ The key design principles you saw in action:
 
 ### For runtime authors
 
-You just saw the echo runtime in action. It implements the **Minimum tier** (stdin/stdout JSON Lines only). To build your own runtime:
+You just saw the `chat` and `claude-code` reference runtimes. To build your own:
 
-1. Read [Core Concepts](concepts.html) -- focus on **Runtimes** and **Workspaces**.
-2. Copy the echo runtime as your starting point.
-3. Test locally with `make run LENNY_AGENT_BINARY=/path/to/your-binary`.
-4. Graduate to Standard tier (add MCP tool access) or Full tier (add lifecycle channel for checkpointing and credential rotation).
+1. Scaffold a new runtime: `lenny runtime init my-agent --language go --template coding`.
+2. Read the [Runtime Author Guide](../runtime-author-guide/) for the three integration tiers (Minimum, Standard, Full).
+3. Use the first-party [Runtime Author SDKs](../runtime-author-guide/) for Go (`github.com/lenny-io/runtime-sdk-go`), Python (`lenny-runtime`), or TypeScript (`@lenny-io/runtime-sdk`) to skip the raw wire-protocol work.
+4. `lenny runtime validate` your repo against the adapter specification before publishing.
 
 ### For platform operators
 
-You ran Lenny in its simplest mode. To move toward production:
+You ran Lenny as a single binary. To move toward a real cluster:
 
-1. Read [Architecture Overview](architecture.html) to understand all components.
-2. Try **Tier 2** (`docker compose up`) for a production-like local environment with real Postgres, Redis, and MinIO.
-3. Proceed to the **Operator Guide** for Helm chart configuration, capacity planning, and security hardening.
+1. Run `lenny-ctl install` against your target cluster -- the interactive wizard detects capabilities, asks ~10 targeted questions, and produces a composed `values.yaml` you can commit to Git.
+2. Or hand-write values using an answer-file base from [`spec/deployment-topology`](../reference/) (e.g., `eks-small-team.yaml`).
+3. Read the [Operator Guide](../operator-guide/) for hardening, observability, `lenny-ops` agent operability endpoints, and the `lenny-ctl doctor --fix` diagnostics loop.
 
 ### For client developers
 
-You used raw curl commands. To build a real integration:
+You used the CLI. To build a real integration:
 
-1. Read [Core Concepts](concepts.html) -- focus on **Sessions** and **MCP**.
-2. Explore the full **API Reference** for all endpoints, streaming semantics, and error codes.
-3. Learn about **delegation** to build multi-agent workflows.
+1. Read the [Client Guide](../client-guide/) for the full MCP and REST API reference.
+2. Use one of the bundled client SDKs (Go, Python, TypeScript) or any off-the-shelf MCP host.
+3. Explore [delegation](../tutorials/recursive-delegation) for multi-agent workflows.
 
 ### For contributors
 
-You have a working local environment. To contribute:
-
-1. Read [Core Concepts](concepts.html) and [Architecture Overview](architecture.html) for the full mental model.
-2. Read the **Technical Design** document for the authoritative specification.
-3. Run `make test-smoke` to verify the full pipeline in under 10 seconds.
+`lenny up` covers most day-to-day work. When you need to iterate on core components without repackaging the binary, drop to Tier 1 (`make run`) or Tier 2 (`docker compose up`) -- both documented in [Local Development](../runtime-author-guide/local-development.html).

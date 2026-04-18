@@ -45,9 +45,59 @@ A **runtime** in Lenny is any process that implements the adapter contract --- a
 The key properties of this architecture:
 
 - **Language-agnostic.** Your runtime can be written in any language. If it can read lines from stdin and write lines to stdout, it works.
-- **No Lenny SDK required.** The simplest runtimes need zero Lenny dependencies. You parse JSON, you emit JSON. That is the entire contract.
+- **No Lenny SDK required, SDKs available.** The simplest runtimes need zero Lenny dependencies. For idiomatic integrations, use the first-party [Runtime Author SDKs](#first-party-sdks-and-scaffolding) for Go, Python, and TypeScript.
 - **Progressive complexity.** Start with the simplest possible integration and add platform features incrementally as you need them.
 - **Isolation by default.** Each runtime runs in its own pod with its own filesystem, network namespace, and (optionally) a gVisor or Kata sandbox. You never share memory or state with other sessions.
+
+---
+
+## First-Party SDKs and Scaffolding
+
+You do not have to hand-roll the adapter wire format. Lenny ships official SDKs that encapsulate the stdin/stdout JSON Lines protocol, the abstract-Unix-socket MCP handshake for Standard tier, and the lifecycle channel for Full tier.
+
+| Language | Import | Source |
+|---|---|---|
+| Go | `github.com/lenny-io/runtime-sdk-go` | `github.com/lenny-io/runtime-sdk-go` |
+| Python | `lenny-runtime` (PyPI) | `github.com/lenny-io/runtime-sdk-python` |
+| TypeScript / JavaScript | `@lenny-io/runtime-sdk` (npm) | `github.com/lenny-io/runtime-sdk-ts` |
+
+The SDKs are thin -- they mirror the tier model, so you pay only for the features you opt into. You can drop down to raw JSON Lines at any point if your language is not represented or you prefer a minimal dependency footprint.
+
+### Scaffolding a new runtime
+
+`lenny runtime init` emits a complete repository skeleton with Dockerfile, entry point in your chosen language, `runtime.yaml`, Makefile, and a CI workflow:
+
+```bash
+lenny runtime init my-agent --language go --template coding
+lenny runtime init my-chat  --language python --template chat
+lenny runtime init hello    --language typescript --template minimal
+```
+
+Templates:
+
+- `coding` -- pre-wires the shared coding-agent workspace plan (git materialization, pre-installed toolchains, sandboxed isolation).
+- `chat` -- a minimal non-coding runtime that speaks to an LLM and streams responses.
+- `minimal` -- a bare Hello World that echoes messages.
+
+Validate and publish:
+
+```bash
+lenny runtime validate                       # checks runtime.yaml + adapter compliance
+lenny runtime publish my-agent \
+  --image ghcr.io/my-org/my-agent:0.1.0      # docker push + register against the gateway
+```
+
+### Reference runtime catalog
+
+Lenny ships with nine production-shaped reference runtimes you can read, fork, or register as-is:
+
+| Runtime | Category | Tier |
+|---|---|---|
+| `claude-code`, `gemini-cli`, `codex`, `cursor-cli` | Coding agents | Full |
+| `chat` | General-purpose LLM | Standard |
+| `langgraph`, `mastra`, `openai-assistants`, `crewai` | Framework runtimes | Full |
+
+All four coding-agent runtimes share the same workspace layout, pre-installed toolchains, and gVisor isolation -- the only differences are image, LLM credential, and the shell command invoked inside the pod. Start there if you are wrapping an existing CLI.
 
 ---
 
@@ -121,11 +171,12 @@ Lenny defines three integration tiers. Each tier adds capabilities on top of the
 
 ### If you want the Minimum tier (get something running fast):
 
-1. **[Echo Runtime Sample](echo-runtime.md)** --- Copy this working code as your starting point.
-2. **[Adapter Contract](adapter-contract.md)** --- The stdin/stdout JSON Lines protocol, message types, and wire format.
-3. **[Integration Tiers](integration-tiers.md)** --- Confirms what you can skip at Minimum tier.
-4. **[Local Development](local-development.md)** --- Use `make run` to test your runtime locally with zero dependencies.
-5. **[Testing](testing.md)** --- Run the compliance suite against your runtime.
+1. **Scaffold a runtime** --- `lenny runtime init <name> --language <lang> --template minimal` emits a working skeleton.
+2. **[Echo Runtime Sample](echo-runtime.md)** --- Copy this working code as an alternative starting point.
+3. **[Adapter Contract](adapter-contract.md)** --- The stdin/stdout JSON Lines protocol, message types, and wire format.
+4. **[Integration Tiers](integration-tiers.md)** --- Confirms what you can skip at Minimum tier.
+5. **[Local Development](local-development.md)** --- Use `lenny up` to test your runtime against a full platform; drop to `make run` when you need to iterate on the gateway itself.
+6. **[Testing](testing.md)** --- Run the compliance suite against your runtime.
 
 ### If you want the Standard tier (add MCP tools and delegation):
 
@@ -149,15 +200,27 @@ Read everything above, then revisit:
 
 ---
 
-## Quick Start: The Echo Runtime
+## Quick Start: Scaffold, build, publish
 
-The fastest way to understand the runtime contract is to look at a working example. The [Echo Runtime Sample](echo-runtime.md) is a complete, runnable Go program (~80 lines) that implements the Minimum tier. It reads messages from stdin, echoes them back with a sequence number, handles heartbeats, and shuts down cleanly.
+The fastest path from zero to a registered runtime:
 
 ```bash
-# Clone the repo and run the echo runtime locally
-git clone https://github.com/lenny-dev/lenny.git
-cd lenny
-make run LENNY_AGENT_BINARY=examples/runtimes/echo/echo-runtime
+# 1. Scaffold a new runtime repo in your language of choice
+lenny runtime init my-agent --language go --template chat
+cd my-agent
+
+# 2. Implement your logic against the SDK; the scaffold pre-wires
+#    message handling, heartbeats, and graceful shutdown.
+
+# 3. Build the container
+make image
+
+# 4. Register it against a live gateway (Tier 0 works for this)
+lenny up
+lenny runtime publish my-agent --image my-agent:dev
+
+# 5. Open a session
+lenny session new --runtime=my-agent --attach "Hello"
 ```
 
-Start there, then progressively add features as described in this guide.
+Prefer the raw protocol? The [Echo Runtime Sample](echo-runtime.md) is a complete ~80-line Go program that implements the Minimum tier with zero Lenny dependencies. Read that first if you want to understand the wire format before picking up the SDK.

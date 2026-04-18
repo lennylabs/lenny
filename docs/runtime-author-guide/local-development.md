@@ -7,7 +7,61 @@ nav_order: 4
 
 # Local Development
 
-Lenny provides a two-tier local development mode for runtime authors. Neither requires Kubernetes. Use Tier 1 for fast iteration and Tier 2 for production-like testing.
+Lenny provides three local development modes for runtime authors. Pick the one that matches your workflow:
+
+| Tier | Command | What it runs | Best for |
+|------|---------|--------------|----------|
+| **Tier 0** | `lenny up` | Single binary; embedded k3s, Postgres, Redis, KMS shim, OIDC, gateway, `lenny-ops`, controllers, reference runtime catalog | **Default choice.** Testing a runtime against the real platform code path; end-to-end demos; wiring the full MCP surface |
+| **Tier 1** | `make run` | Single Go process with SQLite, in-memory caches, controller-sim | Iterating on gateway or adapter source code; macOS-friendly Minimum-tier work |
+| **Tier 2** | `docker compose up` | Real Postgres/Redis/MinIO + Docker containers for the gateway and your agent | Standard and Full tier runtimes on macOS, credential-mode testing, integration CI |
+
+Tier 0 is the fastest way to see your runtime in context -- it exercises the production code path with zero external dependencies. Tiers 1 and 2 are faster *iteration loops* for contributors modifying core Lenny components.
+
+---
+
+## Tier 0: `lenny up` --- Full Platform, Single Binary
+
+```bash
+lenny up
+```
+
+Starts the complete platform in-process: embedded k3s, Postgres, Redis, a KMS shim, an OIDC provider, the gateway, `lenny-ops`, the controllers, and the full reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; subsequent runs start in seconds.
+
+**What you need:** the `lenny` binary. Nothing else.
+
+**Best for:**
+- Evaluating Lenny against your own workloads
+- Validating a runtime against the same code path used in production
+- End-to-end demos (including the web playground at `https://localhost:8443/playground`)
+- First-time exploration before cluster deployment
+
+### Using Your Own Runtime
+
+Build your runtime image and register it against the live Tier 0 gateway:
+
+```bash
+docker build -t my-agent:dev .
+lenny runtime publish my-agent --image my-agent:dev
+lenny session new --runtime=my-agent --attach "Hello"
+```
+
+Or scaffold a runtime from scratch:
+
+```bash
+lenny runtime init my-agent --language go --template coding
+cd my-agent && make image && lenny runtime publish my-agent --image my-agent:dev
+```
+
+### Teardown
+
+```bash
+lenny down             # stop components, keep state in ~/.lenny/
+lenny down --purge     # also remove ~/.lenny/ for a fresh start
+```
+
+### Production warning
+
+Every `lenny up` prints a non-suppressible banner: `"Tier 0 embedded mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`, and any attempt to expose the gateway outside localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
 
 ---
 
