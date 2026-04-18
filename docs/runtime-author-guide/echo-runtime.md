@@ -7,7 +7,7 @@ nav_order: 3
 
 # Echo Runtime Sample
 
-This page presents a complete, runnable echo runtime in Go. It implements the Minimum tier of the Lenny adapter contract: reads messages from stdin, echoes them back with a sequence number, handles heartbeats, and shuts down cleanly. Use it as a starting point for your own runtime.
+This page presents a complete, runnable echo runtime in Go. It implements the Basic level of the Lenny adapter contract: reads messages from stdin, echoes them back with a sequence number, handles heartbeats, and shuts down cleanly. Use it as a starting point for your own runtime.
 
 ---
 
@@ -16,7 +16,7 @@ This page presents a complete, runnable echo runtime in Go. It implements the Mi
 ```go
 // echo-runtime: A minimal Lenny agent runtime that echoes messages.
 //
-// This implements the Minimum tier of the Lenny adapter contract:
+// This implements the Basic level of the Lenny adapter contract:
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by echoing input with a sequence number
 //   - Handles "heartbeat" by responding with "heartbeat_ack"
@@ -54,7 +54,7 @@ type InboundMessage struct {
 }
 
 // OutputPart is the Lenny internal content model.
-// At Minimum tier, only "type" and "inline" are required.
+// At the Basic level, only "type" and "inline" are required.
 type OutputPart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline,omitempty"`
@@ -117,7 +117,7 @@ func main() {
 			writeJSON(resp)
 
 		case "tool_result":
-			// At Minimum tier, tool_result arrives after a tool_call we emitted.
+			// At the Basic level, tool_result arrives after a tool_call we emitted.
 			// The echo runtime does not emit tool_calls, so this is a no-op.
 			// A real runtime would correlate by msg.ID and process the result.
 			fmt.Fprintf(os.Stderr, "echo-runtime: received tool_result id=%s (ignored)\n", msg.ID)
@@ -271,7 +271,7 @@ cd examples/runtimes/echo
 go build -o echo-runtime .
 ```
 
-### Run locally (Tier 1 --- zero dependencies)
+### Run locally with `make run` (in-process, no dependencies)
 
 ```bash
 # From the project root
@@ -280,7 +280,7 @@ make run LENNY_AGENT_BINARY=examples/runtimes/echo/echo-runtime
 
 This starts the gateway + controller-sim + your binary in a single process. No Postgres, Redis, MinIO, or Docker needed.
 
-### Run locally (Tier 2 --- Docker Compose)
+### Run locally with `docker compose up`
 
 ```bash
 # Build a container image
@@ -293,10 +293,10 @@ LENNY_AGENT_RUNTIME=echo docker compose up
 ### Run the smoke test
 
 ```bash
-# Tier 1
+# With `make run`
 make test-smoke
 
-# Tier 2
+# With `docker compose up`
 docker compose run smoke-test
 ```
 
@@ -336,7 +336,7 @@ case "tool_result":
 
 4. **Add error handling** for malformed input, missing files, and LLM failures. Use the `error` field on the `response` message to report structured errors.
 
-5. **Upgrade to Standard tier** when you need delegation, connectors, or platform MCP tools. See the [Integration Tiers](integration-tiers.md) page for the migration path.
+5. **Upgrade to the Standard level** when you need delegation, connectors, or platform tools. See the [Integration Tiers](integration-tiers.md) page for the migration path.
 
 ---
 

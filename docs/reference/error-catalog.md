@@ -164,7 +164,7 @@ Errors caused by policy enforcement. Typically require configuration changes, qu
 | `DERIVE_LOCK_CONTENTION` | 429 | Too many concurrent derive operations are in progress for this session. | Retry with exponential backoff. |
 | `REGION_CONSTRAINT_VIOLATED` | 403 | The resolved storage region does not satisfy the session's `dataResidencyRegion` constraint. `details.requiredRegion` and `details.resolvedRegion` are included. | Ensure the deployment has storage configured in the required region. |
 | `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` | 400 | An external interceptor returned `MODIFY` with changes to immutable fields. `details.interceptor_ref`, `details.phase`, and `details.violated_fields` are included. | Fix the interceptor to not modify immutable fields (`user_id`, `tenant_id`). |
-| `LEASE_SPIFFE_MISMATCH` | 403 | A pod presented a SPIFFE identity that does not match the credential lease's expected identity. The lease is invalidated. | This indicates a security violation. Investigate the pod identity mismatch. |
+| `LEASE_SPIFFE_MISMATCH` | 403 | A pod presented a cryptographic identity that does not match the one recorded on its credential lease. The lease is invalidated. | This indicates a security violation. Investigate the pod identity mismatch. |
 | `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` | 400 | Pool configuration rejected because `cacheScope: tenant` is prohibited under the active compliance profile. | Use `cacheScope: per-user` (the default) for regulated pools. |
 | `USER_CREDENTIAL_NOT_FOUND` | 404 | No pre-registered credential found for user and provider. | Register a credential via `POST /v1/credentials` or configure pool fallback. |
 

@@ -7,15 +7,15 @@ nav_order: 4
 
 # Scaling
 
-This page covers deployment tiers, HPA configuration, warm pool sizing, the PoolScalingController formula, capacity calibration methodology, subsystem extraction triggers, and KEDA integration.
+This page covers deployment sizes, HPA (Horizontal Pod Autoscaler) configuration, warm pool sizing, the PoolScalingController formula, capacity calibration methodology, subsystem extraction triggers, and KEDA integration.
 
 ---
 
-## Deployment Tiers
+## Deployment Sizes
 
-Lenny defines four deployment tiers that determine infrastructure sizing, SLO targets, and operational complexity:
+Lenny defines four T-shirt deployment sizes that determine infrastructure sizing, SLO targets, and operational complexity:
 
-| Parameter | Tier 1 (Starter) | Tier 2 (Growth) | Tier 3 (Scale) | Tier 4 (Platform) |
+| Parameter | Starter | Growth | Scale | Platform |
 |---|---|---|---|---|
 | Max concurrent sessions | 100 | 1,000 | 10,000 | 100,000 |
 | Session creation rate (sustained) | 5/s | 30/s | 200/s | 2,000/s |
@@ -24,46 +24,46 @@ Lenny defines four deployment tiers that determine infrastructure sizing, SLO ta
 | Active tenants | 5 | 50 | 500 | 5,000 |
 | LLM proxy concurrent streams | 50 | 500 | 5,000 | 50,000 |
 
-**Tier progression:**
+**Size progression:**
 
-- **Tiers 1-3** are achievable with the v1 architecture by scaling replica counts, instance sizes, and data store topology.
-- **Tier 4** requires swapping one or more scaling extension interfaces to their high-scale implementations (e.g., `PostgresPodRegistry` replacing `CRDPodRegistry`).
+- **Starter through Scale** are achievable with the v1 architecture by scaling replica counts, instance sizes, and data store topology.
+- **Platform** requires swapping one or more scaling extension interfaces to their high-scale implementations (e.g., `PostgresPodRegistry` replacing `CRDPodRegistry`).
 
 ---
 
-## Infrastructure Sizing by Tier
+## Infrastructure Sizing
 
 ### Gateway Replicas
 
-| Tier | Min Replicas | Max Replicas | `maxSessionsPerReplica` |
+| Size | Min Replicas | Max Replicas | `maxSessionsPerReplica` |
 |---|---|---|---|
-| Tier 1 | 2 | 4 | 50 (provisional) |
-| Tier 2 | 3 | 10 | 200 (provisional) |
-| Tier 3 | 5 | 30 | 400 (provisional) |
+| Starter | 2 | 4 | 50 (provisional) |
+| Growth | 3 | 10 | 200 (provisional) |
+| Scale | 5 | 30 | 400 (provisional) |
 
 ### Postgres
 
-| Tier | Instance Class | Estimated Write Ceiling | 80% Alert Threshold |
+| Size | Instance Class | Estimated Write Ceiling | 80% Alert Threshold |
 |---|---|---|---|
-| Tier 1 | 2 vCPU / 4 GB | ~200 IOPS | ~160 IOPS |
-| Tier 2 | 4 vCPU / 16 GB | ~600 IOPS | ~480 IOPS |
-| Tier 3 | 8 vCPU / 32 GB | ~1,600 IOPS | ~1,280 IOPS |
+| Starter | 2 vCPU / 4 GB | ~200 IOPS | ~160 IOPS |
+| Growth | 4 vCPU / 16 GB | ~600 IOPS | ~480 IOPS |
+| Scale | 8 vCPU / 32 GB | ~1,600 IOPS | ~1,280 IOPS |
 
 ### Redis
 
-| Tier | Memory | Notes |
+| Size | Memory | Notes |
 |---|---|---|
-| Tier 1 | 2 GB | Single node |
-| Tier 2 | 8 GB | Sentinel (3 nodes) |
-| Tier 3 | 16 GB | Sentinel (3 nodes) or managed cluster |
+| Starter | 2 GB | Single node |
+| Growth | 8 GB | Sentinel (3 nodes) |
+| Scale | 16 GB | Sentinel (3 nodes) or managed cluster |
 
 ### Object Storage (MinIO / S3 / GCS)
 
-| Tier | Topology |
+| Size | Topology |
 |---|---|
-| Tier 1 | Single node |
-| Tier 2 | 4-node erasure coded |
-| Tier 3 | 8-node erasure coded |
+| Starter | Single node |
+| Growth | 4-node erasure coded |
+| Scale | 8-node erasure coded |
 
 ---
 
@@ -99,7 +99,7 @@ gateway:
 
 ### KEDA Integration
 
-> **KEDA is mandatory for Tier 3 deployments.** At Tier 3, the Prometheus Adapter path requires `minReplicas: 30` (which equals `maxReplicas`), providing no headroom for further scale-out. Tier 1 and Tier 2 can use standard HPA with the Prometheus Adapter, though KEDA is recommended for faster reaction times.
+> **KEDA is mandatory for Scale-size deployments.** At Scale size, the Prometheus Adapter path requires `minReplicas: 30` (which equals `maxReplicas`), providing no headroom for further scale-out. Starter and Growth sizes can use standard HPA with the Prometheus Adapter, though KEDA is recommended for faster reaction times.
 
 For more responsive autoscaling that bypasses the Prometheus Adapter cache, use KEDA with a `ScaledObject`:
 
@@ -129,31 +129,31 @@ spec:
         threshold: "200"
 ```
 
-### Per-Tier HPA Queue Depth Targets
+### HPA Queue Depth Targets by Deployment Size
 
-The `lenny_gateway_request_queue_depth` HPA target `averageValue` varies by tier to provide tighter back-pressure control at higher scale:
+The `lenny_gateway_request_queue_depth` HPA target `averageValue` varies by deployment size to provide tighter back-pressure control at higher scale:
 
-| Tier | `request_queue_depth` Target |
+| Size | `request_queue_depth` Target |
 |---|---|
-| Tier 1 | 15 |
-| Tier 2 | 10 |
-| Tier 3 | 5 |
+| Starter | 15 |
+| Growth | 10 |
+| Scale | 5 |
 
-### Per-Tier Recommended Starting `minWarm` Values
+### Recommended Starting `minWarm` Values by Deployment Size
 
-The following baseline values assume `safety_factor = 1.0` (no safety margin), a 25-second failover window, and 10-second pod startup. **For production deployments**, apply the per-tier safety factor to get the production `minWarm`.
+The following baseline values assume `safety_factor = 1.0` (no safety margin), a 25-second failover window, and 10-second pod startup. **For production deployments**, apply the size-specific safety factor to get the production `minWarm`.
 
-| Tier | Baseline `minWarm` (per hot pool) | Safety Factor (agent-type) | Safety Factor (mcp-type) |
+| Size | Baseline `minWarm` (per hot pool) | Safety Factor (agent-type) | Safety Factor (mcp-type) |
 |---|---|---|---|
-| Tier 1 | 20 | 1.5 | 2.0 |
-| Tier 2 | 175 | 1.5 | 2.0 |
-| Tier 3 | 1,050 | 1.2 | 1.5 |
+| Starter | 20 | 1.5 | 2.0 |
+| Growth | 175 | 1.5 | 2.0 |
+| Scale | 1,050 | 1.2 | 1.5 |
 
-With safety factors applied: Tier 1 = `ceil(0.5 * 1.5 * 35) = 27`, Tier 2 = `ceil(5 * 1.5 * 35) = 263`, Tier 3 = `ceil(30 * 1.2 * 35) = 1,260`.
+With safety factors applied: Starter = `ceil(0.5 * 1.5 * 35) = 27`, Growth = `ceil(5 * 1.5 * 35) = 263`, Scale = `ceil(30 * 1.2 * 35) = 1,260`.
 
 ### Delegation Fan-Out Impact on `minWarm`
 
-Delegation fan-out can significantly increase required `minWarm`. At Tier 3, the baseline of 1,050 covers session-creation demand only. Deployments where a significant fraction of sessions use the `orchestrator` preset (or other high-fan-out leases) should increase `minWarm` using the delegation-adjusted formula -- a value of approximately **3,400+** (with burst term, zero historical burst data) is appropriate for Tier 3 when orchestrator-preset sessions represent a large share of load. If orchestrator-preset sessions are rare (< 10% of sessions), the baseline 1,050 remains adequate.
+Delegation fan-out can significantly increase required `minWarm`. At Scale size, the baseline of 1,050 covers session-creation demand only. Deployments where a significant fraction of sessions use the `orchestrator` preset (or other high-fan-out leases) should increase `minWarm` using the delegation-adjusted formula -- a value of approximately **3,400+** (with burst term, zero historical burst data) is appropriate for Scale-size deployments when orchestrator-preset sessions represent a large share of load. If orchestrator-preset sessions are rare (< 10% of sessions), the baseline 1,050 remains adequate.
 
 Reference SPEC Section 17.8.2 "Delegation fan-out sizing (SCL-041)" for the full formula and worked examples.
 
@@ -250,7 +250,7 @@ The gateway's four internal subsystems are designed to be extractable to dedicat
 
 | Ratio (`llm_proxy_connections / active_sessions`) | Action |
 |---|---|
-| Below 0.3:1 | Combined binary sustainable at Tier 3 |
+| Below 0.3:1 | Combined binary sustainable at Scale size |
 | 0.3:1 to 0.5:1 | Monitor `gc_pause_p99_ms` for early signs |
 | Above 0.5:1 sustained > 15 min | Begin planning extraction |
 | Approaching 1:1 | LLM Proxy is effectively as large as Stream Proxy |
@@ -259,7 +259,7 @@ The gateway's four internal subsystems are designed to be extractable to dedicat
 
 When any two subsystems simultaneously approach their thresholds, the combined goroutine count causes GC pauses. The metric `lenny_gateway_gc_pause_p99_ms` sustained > 50 ms signals that the process boundary is becoming a bottleneck.
 
-The `Tier3GCPressureHigh` alert fires when the fleet-wide P99 GC pause exceeds 50 ms for > 5 minutes on Tier 3 deployments.
+The `Tier3GCPressureHigh` alert fires when the fleet-wide P99 GC pause exceeds 50 ms for > 5 minutes on Scale-size deployments.
 
 ### Extraction Threshold Helm Values
 
@@ -281,9 +281,9 @@ gateway:
 
 ---
 
-## Tier Promotion Planning
+## Size Promotion Planning
 
-### Tier 1 to Tier 2
+### Starter to Growth
 
 - Increase gateway replicas from 2-4 to 3-10
 - Scale Postgres to 4 vCPU / 16 GB
@@ -292,20 +292,20 @@ gateway:
 - **Run Phase 2 benchmark** to calibrate `maxSessionsPerReplica`
 - Replace all provisional values with calibrated measurements
 
-### Tier 2 to Tier 3
+### Growth to Scale
 
 - **Prerequisites:**
   1. Phase 13.5 load tests confirm LLM Proxy extraction has occurred OR `llm_proxy_active_connections / active_sessions` is sustainably below 0.3:1
-  2. `gc_pause_p99_ms` remains below 50 ms at Tier 2 peak load
+  2. `gc_pause_p99_ms` remains below 50 ms at Growth-size peak load
 - Increase gateway replicas to 5-30
 - Scale Postgres to 8 vCPU / 32 GB
 - Consider separate billing/audit Postgres instance
 - Scale Redis to 16 GB
 - Move to 8-node erasure-coded MinIO
 
-### Tier 3 to Tier 4
+### Scale to Platform
 
-Tier 4 requires infrastructure changes beyond horizontal scaling:
+Platform size requires infrastructure changes beyond horizontal scaling:
 
 - Swap `CRDPodRegistry` to `PostgresPodRegistry` (eliminates etcd write pressure)
 - Deploy multi-shard `StoreRouter`
@@ -316,7 +316,7 @@ Tier 4 requires infrastructure changes beyond horizontal scaling:
 
 ## Scaling Checklist
 
-Before any tier promotion:
+Before any size promotion:
 
 - [ ] Run the ramp test and calibrate `maxSessionsPerReplica`
 - [ ] Update `capacityPlanning.*` Helm values with observed workload parameters
@@ -325,4 +325,4 @@ Before any tier promotion:
 - [ ] Validate HPA scale-out fires before saturation point
 - [ ] Confirm `GatewaySessionBudgetNearExhaustion` alert fires at 90%
 - [ ] Update `postgres.writeCeilingIops` with measured values
-- [ ] Run preflight checks at the new tier: `lenny-ctl preflight --config values.yaml`
+- [ ] Run preflight checks at the new size: `lenny-ctl preflight --config values.yaml`

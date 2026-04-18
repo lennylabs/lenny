@@ -182,7 +182,7 @@ Lenny follows a phase-gated development process where each phase has defined del
 |:------|:------|:-----------------|
 | **Phase 0** | Foundation | License (ADR-008), repository setup, CI pipeline. |
 | **Phase 2** | Core platform | `make run` local dev mode, echo runtime, `CONTRIBUTING.md`, `GOVERNANCE.md` draft, benchmark harness. |
-| **Phase 13.5** | Pre-hardening baselines | Load tests at Tier 2, pre-hardening performance baselines. |
+| **Phase 13.5** | Pre-hardening baselines | Load tests at Growth-sized deployment load, pre-hardening performance baselines. |
 | **Phase 14.5** | SLO validation | Full security hardening active, SLO compliance gate. |
 | **Phase 17a** | Community launch | Documentation review, governance finalization, comparison guides, community onboarding. |
 
@@ -198,7 +198,7 @@ During early development, releases follow an as-needed cadence driven by phase c
 
 1. **Feature freeze** -- no new features merged after the freeze date.
 2. **Release candidate** -- a tagged RC is cut and tested against the full integration suite.
-3. **Regression testing** -- all SLO burn-rate alerts validated at Tier 2 sustained load.
+3. **Regression testing** -- all SLO burn-rate alerts validated at Growth-sized sustained load.
 4. **Release** -- tag, build artifacts, publish Helm chart, update documentation.
 5. **Announcement** -- release notes published via the Discussions forum and changelog.
 

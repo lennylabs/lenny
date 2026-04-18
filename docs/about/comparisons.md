@@ -35,7 +35,7 @@ Side-by-side analysis of Lenny versus other platforms in the agent infrastructur
 | **Eval hooks**             | Pull-based, multi-dimensional, experiment-attributed | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
 | **Session replay**         | Built-in (prompt_history + workspace_derive) | No                    | No                        | No                          | Deterministic replay     | No                          | Dataset replay                   |
 | **Memory store**           | Pluggable interface (Postgres+pgvector default) | No                 | No                        | No                          | No                       | No                          | Built-in (LangChain-coupled)     |
-| **Credential management**  | Pools, leasing, LLM Proxy, SPIFFE-bound   | No                      | No                        | No                          | No                       | No                          | Basic                            |
+| **Credential management**  | Pools, leasing, gateway-mediated LLM proxy, pod-bound lease tokens | No                      | No                        | No                          | No                       | No                          | Basic                            |
 | **Compliance (GDPR/legal)**| Erasure, legal holds, data residency       | No                      | No                        | No                          | No                       | No                          | Basic                            |
 | **Guardrails/interceptors**| Pluggable gRPC interceptor chain (12 phases) | No                   | No                        | No                          | No                       | No                          | LangSmith guardrails             |
 | **Cold-start**             | P95 <2s runc, <5s gVisor (session-ready)   | ~150ms (container boot) | Sub-90ms (container boot) | ~300ms (checkpoint/restore) | N/A (persistent workers) | Sub-second (container boot) | N/A (persistent)                |
@@ -65,7 +65,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | Aspect                  | Lenny                                                                                                                                           | E2B                                                                                                                            |
 | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------- |
 | **Architecture**        | Kubernetes-native platform with gateway, controllers, and CRDs.                                                                                 | Firecracker microVM orchestrator with API server.                                                                              |
-| **Runtime contract**    | Formal adapter contract (Minimum/Standard/Full tiers) that separates platform integration from agent logic. Any process can be a Lenny runtime. | Sandbox environment where the operator's code runs. No orchestration contract -- the sandbox is a blank execution environment. |
+| **Runtime contract**    | Formal adapter contract with three integration levels (Basic, Standard, Full) that separates platform integration from agent logic. Any process can be a Lenny runtime. | Sandbox environment where the operator's code runs. No orchestration contract -- the sandbox is a blank execution environment. |
 | **Runtime types**       | Two types: `agent` (full task lifecycle) and `mcp` (managed MCP server hosting with zero code changes).                                         | Single sandbox type.                                                                                                           |
 | **Execution modes**     | Three modes: `session` (1:1 pod), `task` (sequential reuse with scrub), `concurrent` (slot multiplexing). Mode-aware pool scaling.              | Single sandbox per request. No pod reuse or multiplexing.                                                                      |
 | **Delegation**          | First-class platform primitive with per-hop budget, scope, and policy enforcement.                                                              | Not available. Multi-agent coordination must be built at the application layer.                                                |
@@ -92,7 +92,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 
 | Aspect               | Lenny                                                       | Daytona                                                     |
 | :------------------- | :---------------------------------------------------------- | :---------------------------------------------------------- |
-| **Runtime contract** | Formal adapter contract with tiered integration.            | Environment provisioning without an orchestration contract. |
+| **Runtime contract** | Formal adapter contract with layered integration levels.    | Environment provisioning without an orchestration contract. |
 | **Delegation**       | Platform primitive with budget/scope enforcement.           | Not available.                                              |
 | **Protocol support** | Multi-protocol gateway (REST, MCP, OpenAI, Open Responses). | REST API.                                                   |
 | **Focus**            | Agent session lifecycle management, delegation, and policy. | Fast development environment provisioning.                  |
@@ -185,7 +185,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 | **Protocol support**    | REST, MCP, OpenAI, Open Responses.                                                            | LangServe, LangGraph Cloud API.                                                                                      |
 | **Self-hosting**        | Standard Kubernetes deployment.                                                               | LangSmith offers self-hosted Kubernetes deployment (available since 2024). Requires LangChain ecosystem coupling.    |
 | **Ecosystem stance**    | Platform layer only. All AI capabilities (memory, eval, guardrails) are pluggable interfaces. | Bundles evaluators, tracing, memory, and observability. Rich but coupled.                                            |
-| **A2A + MCP support**   | MCP Tasks at the gateway; A2A via ExternalAdapterRegistry.                                    | LangSmith now has A2A + MCP + RemoteGraph support, closing the protocol gap.                                         |
+| **A2A + MCP support**   | MCP Tasks at the gateway; A2A via the protocol adapter registry (a plug-in point for additional client protocols). | LangSmith now has A2A + MCP + RemoteGraph support, closing the protocol gap.                                         |
 
 ### Where LangGraph/LangSmith has advantages
 
@@ -211,7 +211,7 @@ Lenny is a strong fit when your requirements include several of these:
 - **Interactive sessions** -- streaming, elicitation, interrupts, and tool approvals as first-class operations.
 - **A/B experimentation** -- runtime version rollouts with variant pools, deterministic bucketing, and automatic eval attribution.
 - **Evaluation pipelines** -- session replay for regression testing, multi-dimensional eval scoring, and experiment results aggregation.
-- **Credential management** -- centralized credential pools with leasing, rotation, LLM Proxy credential injection, and SPIFFE-bound lease tokens.
+- **Credential management** -- centralized credential pools with leasing and rotation. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real provider API keys. Each lease token is cryptographically bound to the pod that requested it, so a token lifted from one pod cannot be used by another.
 - **Compliance requirements** -- GDPR data erasure, legal holds, data residency, audit logging with hash-chained integrity, and configurable retention presets.
 - **Pluggable guardrails** -- content safety interceptors at 12 gateway phases, compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
 - **Agent memory** -- pluggable memory store (default: Postgres + pgvector, replaceable with Mem0, Zep, or any vector database).

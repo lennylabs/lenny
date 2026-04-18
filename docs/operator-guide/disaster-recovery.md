@@ -85,11 +85,11 @@ Redis loss is designed to be recoverable because all durable state lives in Post
 
 ### Deployment Options
 
-| Tier | Topology | Durability |
+| Size | Topology | Durability |
 |---|---|---|
-| Tier 1 | Single node | Daily backup |
-| Tier 2 | 4-node erasure coded | Near-zero RPO; daily replication |
-| Tier 3 | 8-node erasure coded | Near-zero RPO; site replication |
+| Starter | Single node | Daily backup |
+| Growth | 4-node erasure coded | Near-zero RPO; daily replication |
+| Scale | 8-node erasure coded | Near-zero RPO; site replication |
 
 ### Cloud Alternatives
 

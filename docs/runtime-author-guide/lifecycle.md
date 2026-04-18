@@ -86,7 +86,7 @@ When a pod is claimed for a session, the gateway materializes the client's files
 
 ### Adapter Manifest
 
-Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. At Minimum tier, you can ignore this file. At Standard tier, you read it to discover MCP server sockets:
+Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. At the Basic level, you can ignore this file. At the Standard level, you read it to discover MCP server sockets:
 
 ```json
 {
@@ -144,23 +144,23 @@ Once a session reaches `attached`, it enters the interactive session state machi
 
 ## Checkpointing
 
-Checkpointing creates a snapshot of the workspace so the session can recover after pod failure. The behavior depends on your integration tier.
+Checkpointing creates a snapshot of the workspace so the session can recover after pod failure. The behavior depends on your integration level.
 
-### Minimum Tier: No Checkpoint
+### Basic level: no checkpoint
 
 The adapter performs **no checkpoint**. If the pod fails, all in-flight context is lost. The gateway restarts the session from the last gateway-persisted state, which may be significantly behind your runtime's actual progress.
 
 This is acceptable for idempotent or stateless workloads.
 
-### Standard Tier: Best-Effort Snapshot
+### Standard level: best-effort snapshot
 
 The adapter takes **best-effort snapshots** without pausing your runtime. The workspace is snapshotted while your binary continues running, so files written during the snapshot window may be inconsistent. On resume, minor workspace inconsistencies are possible.
 
 For most workloads this is sufficient.
 
-### Full Tier: Cooperative Checkpoint
+### Full level: cooperative checkpoint
 
-Full-tier runtimes participate in a handshake that guarantees **consistent snapshots**:
+Full-level runtimes participate in a handshake that guarantees **consistent snapshots**:
 
 ```
 1. Adapter sends checkpoint_request on the lifecycle channel:
@@ -220,9 +220,9 @@ After a successful resume, the client receives a `session.resumed` event:
 
 ---
 
-## Interrupt and Suspend (Full Tier)
+## Interrupt and Suspend (Full level)
 
-Full-tier runtimes can handle clean interrupts via the lifecycle channel:
+Full-level runtimes can handle clean interrupts via the lifecycle channel:
 
 ```
 1. Adapter sends interrupt_request:
@@ -242,21 +242,21 @@ While suspended:
 - After `maxSuspendedPodHoldSeconds` (default: 900s / 15 minutes), the gateway checkpoints and releases the pod.
 - The session can be resumed by the client sending a new message or calling `resume_session`.
 
-At Minimum and Standard tiers, interrupt is SIGTERM-based --- there is no clean handshake.
+At the Basic and Standard levels, interrupt is SIGTERM-based --- there is no clean handshake.
 
 ---
 
 ## Credential Rotation
 
-When an LLM provider rate-limits or revokes a credential, the platform rotates it. The behavior depends on your tier:
+When an LLM provider rate-limits or revokes a credential, the platform rotates it. The behavior depends on your integration level:
 
-| Tier | Method | Session Impact |
+| Level | Method | Session Impact |
 |------|--------|----------------|
 | **Full** | `credentials_rotated` on lifecycle channel; runtime rebinds in-place | No session interruption |
 | **Standard** | Gateway triggers checkpoint, terminates pod, resumes on new pod with new credentials | Brief pause; client sees a reconnect |
-| **Minimum** | Same as Standard. If no checkpoint support, in-flight context is lost | Pause; potential context loss |
+| **Basic** | Same as Standard. If no checkpoint support, in-flight context is lost | Pause; potential context loss |
 
-### Full-Tier Credential Rotation
+### Full-level credential rotation
 
 ```
 1. Adapter sends on lifecycle channel:
@@ -270,9 +270,9 @@ When an LLM provider rate-limits or revokes a credential, the platform rotates i
 
 ---
 
-## Deadline Signals (Full Tier)
+## Deadline Signals (Full level)
 
-Full-tier runtimes receive advance warning before session expiry:
+Full-level runtimes receive advance warning before session expiry:
 
 ```json
 {"type":"deadline_approaching","remainingMs":60000}
@@ -280,13 +280,13 @@ Full-tier runtimes receive advance warning before session expiry:
 
 This gives your runtime time to wrap up long-running work, flush outputs, and produce a partial result before the hard deadline arrives.
 
-At Minimum and Standard tiers, you receive only a `shutdown` message when the deadline is reached.
+At the Basic and Standard levels, you receive only a `shutdown` message when the deadline is reached.
 
 ---
 
-## Terminate Signal (Full Tier)
+## Terminate Signal (Full level)
 
-Full-tier runtimes receive a `terminate` message on the lifecycle channel as the preferred shutdown path, instead of the stdin `shutdown` message. This is distinct from stdin `shutdown` --- `terminate` arrives on the lifecycle channel and is the primary graceful shutdown mechanism for Full-tier runtimes.
+Full-level runtimes receive a `terminate` message on the lifecycle channel as the preferred shutdown path, instead of the stdin `shutdown` message. This is distinct from stdin `shutdown` --- `terminate` arrives on the lifecycle channel and is the primary graceful shutdown mechanism for Full-level runtimes.
 
 ```json
 {"type":"terminate","deadlineMs":10000,"reason":"session_complete"}
@@ -301,7 +301,7 @@ Your runtime must exit within `deadlineMs`. If the process does not exit by the 
 
 ---
 
-## LLM Request Tracking (Full Tier, Direct Mode)
+## LLM Request Tracking (Full level, Direct Mode)
 
 Runtimes that call LLM provider APIs directly (not through the adapter proxy) should emit `llm_request_started` and `llm_request_completed` messages on the lifecycle channel. These signals allow the adapter to track in-flight LLM requests for credential rotation coordination --- the adapter will not send `credentials_rotated` while LLM requests are in flight.
 
@@ -336,7 +336,7 @@ When the in-flight counter for a provider reaches zero and a credential rotation
 
 ---
 
-## Task-Mode Pod Reuse (Full Tier)
+## Task-Mode Pod Reuse (Full level)
 
 Task-mode pods execute sequential tasks without pod replacement:
 
@@ -359,19 +359,19 @@ After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod 
 
 ## Execution Modes
 
-Pools are configured with an execution mode that determines how tasks are mapped to pods. The mode affects your runtime's lifecycle, workspace layout, and required integration tier.
+Pools are configured with an execution mode that determines how tasks are mapped to pods. The mode affects your runtime's lifecycle, workspace layout, and required integration level.
 
 ### Session Mode (Default)
 
-One session per pod. Your runtime receives one task, handles it, and the pod terminates after the session ends. No special runtime code is needed beyond the base adapter contract for your tier. The pod is never recycled for a different session --- this prevents cross-session data leakage.
+One session per pod. Your runtime receives one task, handles it, and the pod terminates after the session ends. No special runtime code is needed beyond the base adapter contract for your integration level. The pod is never recycled for a different session --- this prevents cross-session data leakage.
 
-This is the simplest mode and works at all integration tiers.
+This is the simplest mode and works at every integration level.
 
 ### Task Mode
 
 The pod is reused across sequential tasks with workspace scrubbing between tasks. This avoids the overhead of pod provisioning for each task.
 
-Task mode requires **Full-tier integration** (lifecycle channel) for actual pod reuse. Standard and Minimum tier runtimes effectively get one task per pod because they cannot participate in the `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle handshake.
+Task mode requires **Full-level integration** (lifecycle channel) for actual pod reuse. Standard and Basic level runtimes effectively get one task per pod because they cannot participate in the `task_complete` / `task_complete_acknowledged` / `task_ready` lifecycle handshake.
 
 The between-task sequence on the lifecycle channel:
 

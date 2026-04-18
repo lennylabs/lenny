@@ -25,7 +25,7 @@ Complete reference for all Helm `values.yaml` configuration fields, organized by
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `gateway.maxSessionsPerReplica` | int | 50 (T1), 200 (T2), 400 (T3/T4) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not HPA trigger). Values are provisional -- must be calibrated by Phase 2 benchmarks. Tier 3 value (400) assumes LLM Proxy subsystem has been extracted. | Must be > 0. |
+| `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by Phase 2 benchmarks. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
 | `gateway.maxCreatedStateTimeoutSeconds` | int | 300 | Maximum time a session can remain in `created` state before automatic cleanup. Also governs upload token TTL. | Must be > 0. |
 
 ### Subsystem concurrency limits
@@ -34,10 +34,10 @@ Each gateway subsystem has independently configurable concurrency and queue-dept
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `gateway.subsystems.streamProxy.maxConcurrent` | int | Per-tier (see Deployment Topology) | Maximum concurrent goroutines for the Stream Proxy subsystem. | Must be > 0. |
-| `gateway.subsystems.uploadHandler.maxConcurrent` | int | Per-tier | Maximum concurrent goroutines for the Upload Handler subsystem. | Must be > 0. |
-| `gateway.subsystems.mcpFabric.maxConcurrent` | int | Per-tier | Maximum concurrent goroutines for the MCP Fabric subsystem. | Must be > 0. |
-| `gateway.subsystems.llmProxy.maxConcurrent` | int | Per-tier | Maximum concurrent goroutines for the LLM Proxy subsystem. | Must be > 0. |
+| `gateway.subsystems.streamProxy.maxConcurrent` | int | Varies by deployment size (see Deployment Topology) | Maximum concurrent goroutines for the Stream Proxy subsystem. | Must be > 0. |
+| `gateway.subsystems.uploadHandler.maxConcurrent` | int | Varies by deployment size | Maximum concurrent goroutines for the Upload Handler subsystem. | Must be > 0. |
+| `gateway.subsystems.mcpFabric.maxConcurrent` | int | Varies by deployment size | Maximum concurrent goroutines for the MCP Fabric subsystem. | Must be > 0. |
+| `gateway.subsystems.llmProxy.maxConcurrent` | int | Varies by deployment size | Maximum concurrent goroutines for the gateway's LLM routing subsystem. | Must be > 0. |
 
 ### Extraction thresholds
 
@@ -54,7 +54,7 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 
 ### LLM Proxy
 
-The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic requests and translates them to the upstream provider's wire format using an in-process Go translator (no sidecar). For deployers who want to route through a shared external LLM gateway (LiteLLM, Portkey, cloud-managed), see [external LLM proxy](../operator-guide/external-llm-proxy.md).
+The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming from agent pods and talks to the upstream LLM provider on the pods' behalf. This keeps real provider API keys out of pod memory — keys live only in the gateway process, and credential rotation is zero-downtime. For deployers who want to route through a shared external LLM gateway (LiteLLM, Portkey, cloud-managed), see [external LLM proxy](../operator-guide/external-llm-proxy.md).
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
@@ -110,7 +110,7 @@ The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic req
 | `runtime.image` | string | Required | Container image reference (digest recommended for production). | Valid image reference. |
 | `runtime.executionMode` | string | `agent` | Execution mode: `agent` (full session lifecycle) or `mcp` (MCP server). | One of `agent`, `mcp`. |
 | `runtime.capabilities` | object | `{}` | Runtime capability declarations. | See capabilities table below. |
-| `runtime.agentInterface` | string | `grpc` | Adapter interface: `grpc` (Standard/Full tier) or `stdio` (Minimum tier). | One of `grpc`, `stdio`. |
+| `runtime.agentInterface` | string | `grpc` | Adapter interface: `grpc` (Standard and Full integration levels) or `stdio` (Basic integration level). | One of `grpc`, `stdio`. |
 | `runtime.publishedMetadata` | object | `{}` | Metadata published in the runtime registry for client discovery. | -- |
 | `runtime.sdkWarmBlockingPaths` | string[] | `["CLAUDE.md", ".claude/*"]` | Glob patterns for files that trigger SDK-warm demotion. Empty list disables demotion. Uses Go `path.Match` with `**` support. | Valid glob patterns. |
 | `runtime.delegationPolicyRef` | string | `null` | Reference to a named `DelegationPolicy` resource. | Must reference an existing policy if set. |
@@ -145,15 +145,15 @@ The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic req
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `scaling.hpa.minReplicas` | int | Per-tier | Minimum gateway replicas. | Must be > 0. |
-| `scaling.hpa.maxReplicas` | int | Per-tier | Maximum gateway replicas. | Must be >= minReplicas. |
-| `scaling.hpa.targetUtilization` | int | 80 | CPU target utilization percentage for HPA. | 1-100. |
+| `scaling.hpa.minReplicas` | int | Varies by deployment size | Minimum gateway replicas. | Must be > 0. |
+| `scaling.hpa.maxReplicas` | int | Varies by deployment size | Maximum gateway replicas. | Must be >= minReplicas. |
+| `scaling.hpa.targetUtilization` | int | 80 | CPU target utilization percentage for the Horizontal Pod Autoscaler (HPA). | 1-100. |
 | `scaling.hpa.requestQueueDepth.target` | int | 10 | Target `averageValue` for `lenny_gateway_request_queue_depth` HPA metric. | Must be > 0. |
 
-### Per-tier HPA defaults
+### HPA defaults by deployment size
 
-| Parameter | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
-|:----------|:-------|:-------|:-------|:-------|
+| Parameter | Starter | Growth | Scale | Platform |
+|:----------|:--------|:-------|:------|:---------|
 | `maxSessionsPerReplica` | 50 | 200 | 400 | 400 |
 | HPA target utilization | 80% | 80% | 80% | 80% |
 
@@ -192,7 +192,7 @@ Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`Re
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `postgres.connectionString` | string | Required | PostgreSQL connection string. Supports DSN format. | Valid DSN. |
-| `postgres.connectionPooler` | string | `pgbouncer` | Connection pooler mode: `pgbouncer` (self-managed, supports `connect_query` sentinel) or `external` (cloud-managed proxy; activates the `lenny_tenant_guard` migration for RLS). Defaults to `external` when the top-level `backends` answer-file value is `cloud-managed`. | One of `pgbouncer`, `external`. |
+| `postgres.connectionPooler` | string | `pgbouncer` | Connection pooler mode: `pgbouncer` (self-managed, supports `connect_query` sentinel) or `external` (cloud-managed proxy; activates the `lenny_tenant_guard` migration for row-level security). Defaults to `external` when the top-level `backends` answer-file value is `cloud-managed`. | One of `pgbouncer`, `external`. |
 
 ### Redis
 
@@ -222,10 +222,12 @@ Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`Re
 
 ### OIDC / OAuth
 
+Lenny authenticates client requests with OIDC (OpenID Connect), the standard identity-provider layer on top of OAuth 2.0.
+
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
-| `oidc.issuerUrl` | string | Required | OIDC issuer URL for client authentication. |
-| `oidc.clientId` | string | Required | OIDC client ID. |
+| `oidc.issuerUrl` | string | Required | Identity-provider issuer URL used to validate client tokens. |
+| `oidc.clientId` | string | Required | Identity-provider client ID. |
 | `oidc.audience` | string | -- | Expected audience claim in JWT tokens. |
 
 ### Token exchange (`/v1/oauth/token`)
@@ -243,6 +245,8 @@ Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`Re
 ---
 
 ### KMS
+
+Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption keys for sensitive at-rest data.
 
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
@@ -309,7 +313,7 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 | Field | Type | Default | Description |
 |:------|:-----|:--------|:------------|
 | `billing.flushMaxPending` | int | 500 | Maximum in-memory billing events before back-pressure. |
-| `billing.redisStreamMaxLen` | int | 50000 (T1/T2), 72000 (T3) | Maximum Redis stream length per tenant. |
+| `billing.redisStreamMaxLen` | int | 50000 (Starter/Growth), 72000 (Scale) | Maximum Redis stream length per tenant. |
 | `billing.streamTTLSeconds` | int | 3600 | TTL for billing events in Redis stream. |
 | `billing.approvalBacklogAlertMinutes` | int | 60 | Minutes before billing correction backlog alert fires. |
 
@@ -372,10 +376,10 @@ Lenny routes external experiment lookups through the OpenFeature Go SDK and the 
 
 ---
 
-## Capacity tiers
+## Capacity sizing
 
-| Parameter | Tier 1 (Starter) | Tier 2 (Growth) | Tier 3 (Scale) | Tier 4 (Platform) |
-|:----------|:-----------------|:----------------|:---------------|:------------------|
+| Parameter | Starter | Growth | Scale | Platform |
+|:----------|:--------|:-------|:------|:---------|
 | Max concurrent sessions | 100 | 1,000 | 10,000 | 100,000 |
 | Session creation rate (sustained) | 5/s | 30/s | 200/s | 2,000/s |
 | Gateway RPS (all endpoints) | 500 | 5,000 | 50,000 | 500,000 |
@@ -384,4 +388,4 @@ Lenny routes external experiment lookups through the OpenFeature Go SDK and the 
 | LLM proxy concurrent streams | 50 | 500 | 5,000 | 50,000 |
 | `maxSessionsPerReplica` | 50 | 200 | 400 | 400 |
 
-Tiers 1-3 are achievable with horizontal scaling of v1 components. Tier 4 requires swapping scaling extension interfaces (PostgresPodRegistry, multi-shard StoreRouter, durable EventBus).
+Starter through Scale sizes are achievable with horizontal scaling of v1 components. Platform size requires swapping scaling extension interfaces (PostgresPodRegistry, multi-shard StoreRouter, durable EventBus).

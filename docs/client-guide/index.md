@@ -7,82 +7,139 @@ has_children: true
 
 # Client Guide
 
-This guide is for **developers building applications that interact with Lenny** -- whether you are integrating an AI agent workflow into a CI/CD pipeline, building an interactive chat UI, orchestrating multi-agent delegation trees, or connecting existing OpenAI SDK code to a Lenny deployment.
+For developers integrating Lenny into an application, a script, a CI pipeline, an IDE extension, or an MCP host. You only ever talk to one thing -- the Lenny gateway. The pods, pools, and controllers behind it are implementation details; you don't need to know Kubernetes to use any of the APIs on this page.
 
-Lenny is a Kubernetes-native, runtime-agnostic agent session platform. You do not need to know anything about Kubernetes to use the client APIs. The platform handles pod lifecycle, credential management, workspace isolation, and delegation for you. From your perspective, Lenny exposes HTTP endpoints and streaming protocols that let you create sessions, send messages to agents, receive streaming output, and retrieve artifacts.
+The gateway exposes everything a client needs -- creating and ending sessions, sending and streaming messages, uploading workspaces, downloading artifacts, delegating to child agents -- over four interchangeable protocols. Pick whichever one fits the code you already have.
 
 ---
 
-## Protocol Options
+## Pick how you want to drive a session
 
-Lenny exposes multiple client-facing APIs simultaneously through its **ExternalAdapterRegistry**. Each protocol serves different use cases and all share the same underlying session engine.
+Every option below ultimately exercises the same session lifecycle. You can mix them in one application.
 
-### REST API (`/v1/...`)
+### The `lenny session` CLI
 
-The REST API covers all non-interactive operations and is the primary integration point for automation. It works with any HTTP client in any language.
+The CLI that ships with Lenny includes a `session` subcommand. It's the fastest way to drive a session without writing any client code -- useful for scripts, smoke tests, and day-to-day development.
 
-- **Full session lifecycle**: create, upload, finalize, start, message, interrupt, resume, terminate, delete
-- **Artifacts and introspection**: logs, transcripts, workspace snapshots, delegation trees, usage reports
-- **Admin operations**: runtime management, pool configuration, credential pools, tenant management
-- **Discovery**: `GET /v1/runtimes` returns available runtimes with capabilities
-- **OpenAPI spec**: served at `GET /openapi.yaml` (or `/openapi.json`)
+```shell
+lenny session start --runtime chat --message "hello"
+lenny session message $SESSION_ID --message "continue the thought"
+lenny session logs $SESSION_ID --follow
+lenny session terminate $SESSION_ID
+```
+
+Running against `lenny up` locally? No flags needed. Running against a remote cluster? Add `--gateway https://lenny.example.com --token $TOKEN`.
+
+### The web playground
+
+Every installation serves a small web UI at `/playground`. You pick a runtime, upload a workspace, and chat with the session in the browser. It uses the exact same public API your SDK would -- there's no back channel. Useful when you want to demo a runtime to someone without putting them in a terminal.
+
+You can turn the playground off in production (one Helm flag) or restrict it to authenticated tenants.
+
+### Client SDKs and raw protocols
+
+When you're ready to embed Lenny in code, pick whichever protocol matches what you already have:
+
+| Protocol | Path | Use it when |
+|:--|:--|:--|
+| **REST** | `/v1/...` | Automation, CI/CD, admin dashboards, or any language that doesn't have a Lenny SDK. Covers everything. |
+| **MCP (Streamable HTTP)** | `/mcp` | Interactive streaming, delegating to child agents, mid-session user prompts, and MCP hosts like Claude Desktop or Cursor. |
+| **OpenAI Chat Completions** | `/v1/chat/completions` | You already use the OpenAI SDK. Change the `base_url`, keep the rest. |
+| **Open Responses** | `/v1/responses` | You're using an Open Responses or OpenAI Responses API client. |
+
+The OpenAPI description is served at `GET /openapi.yaml`. The MCP endpoint supports the 2025-03-26 and 2024-11-05 protocol versions.
+
+---
+
+## Protocol details
+
+All four protocols are live at the same time on the same gateway. Pick based on what your client code already knows how to speak.
+
+### REST (`/v1/...`)
+
+A conventional HTTP API. Any language, any client library. Covers:
+
+- Every session action -- create, upload a workspace, start, send messages, interrupt, resume, terminate, delete.
+- Reading back logs, transcripts, artifacts, workspace snapshots, delegation trees, and usage reports.
+- Admin operations -- runtime and pool configuration, credential pools, tenant management.
+- Discovery -- `GET /v1/runtimes` lists the runtimes available to you, with their capabilities.
+- OpenAPI at `GET /openapi.yaml` or `/openapi.json`.
 
 ### MCP (`/mcp`)
 
-The MCP (Model Context Protocol) interface is for **interactive streaming sessions** and **recursive delegation**. Lenny acts as an MCP server over Streamable HTTP.
+Lenny speaks MCP (Model Context Protocol) as a server over Streamable HTTP. This is the right choice when:
 
-- **Interactive sessions**: bidirectional streaming with SSE for server-to-client events
-- **Delegation**: spawn child sessions, await results, handle elicitation chains
-- **Elicitation**: human-in-the-loop prompts surface through the MCP task model
-- **Version negotiation**: supports MCP 2025-03-26 and 2024-11-05
+- You want bidirectional streaming and real-time output.
+- You want an agent to spawn child agents and track them as tasks.
+- You want mid-session prompts ("the agent asked the user a question -- here is the question, please collect an answer") handled naturally by the protocol.
+- You're integrating an MCP host like Claude Desktop.
 
-### OpenAI Completions (`/v1/chat/completions`)
+### OpenAI Chat Completions (`/v1/chat/completions`)
 
-Drop-in compatibility with the OpenAI Chat Completions API. Existing code using the OpenAI SDK can point at Lenny with minimal changes.
-
-- **Model discovery**: `GET /v1/models` returns available runtimes as models
-- **Streaming**: supports `stream: true` with SSE chunks
-- **Minimal migration**: change the base URL, keep your existing SDK code
+A drop-in for existing OpenAI SDK code. Point your `openai` client at Lenny's base URL and each Lenny runtime shows up as a model (via `GET /v1/models`). Streaming works the same way it does against OpenAI.
 
 ### Open Responses (`/v1/responses`)
 
-Compatibility with the Open Responses specification (and OpenAI Responses API clients).
-
-- **Model discovery**: `GET /v1/models` returns available runtimes
-- **Open Responses-compliant**: works with any client implementing the open specification
+A drop-in for the OpenAI Responses API and for clients that target the Open Responses specification.
 
 ---
 
-## When to Use Which Protocol
+## Which protocol should I pick?
 
-| Use Case | Recommended Protocol | Why |
+| If you're... | Use | Because |
 |---|---|---|
-| CI/CD pipelines | **REST** | Simple HTTP calls, easy to script, no streaming needed |
-| Admin dashboards | **REST** | Full CRUD for all resources, pagination, filtering |
-| Simple session management | **REST** | Create, start, poll status, retrieve artifacts |
-| Any language without SDK | **REST** | Works with `curl`, `httpx`, `fetch`, `net/http`, etc. |
-| Interactive streaming sessions | **MCP** | Bidirectional streaming, real-time output |
-| Multi-agent delegation | **MCP** | Task trees, elicitation chains, child session management |
-| Human-in-the-loop workflows | **MCP** | Elicitation requests surface naturally in the MCP model |
-| MCP-native clients | **MCP** | Direct MCP tool access, version negotiation |
-| Existing OpenAI SDK code | **OpenAI Completions** | Change the base URL, keep everything else |
-| Minimal migration from OpenAI | **OpenAI Completions** | Familiar API surface, streaming support |
-| Open Responses-compliant clients | **Open Responses** | Standard-compliant, vendor-neutral |
+| Scripting a CI job | **REST** | Simple HTTP, easy to test, no streaming machinery required |
+| Building an admin dashboard | **REST** | Full CRUD with pagination and filtering |
+| Using a language without an SDK | **REST** | Works with `curl`, `httpx`, `fetch`, `net/http`, anything |
+| Building an interactive UI with live output | **MCP** | Bidirectional streaming is built into the protocol |
+| Building a multi-agent system | **MCP** | Delegation and task tracking are first-class |
+| Asking the user questions mid-session | **MCP** | Mid-session prompts fit the protocol naturally |
+| Already using the OpenAI SDK | **OpenAI Chat Completions** | Change one URL, done |
+| Using an Open Responses / OpenAI Responses client | **Open Responses** | Standards-compliant, no vendor lock-in |
 
-Most applications will use the **REST API** for session management and artifact retrieval, optionally combined with **SSE streaming** (`Accept: text/event-stream` on `GET /v1/sessions/{id}/logs`) for real-time output. The MCP protocol is the right choice when you need interactive streaming, delegation, or elicitation.
+For most applications, REST + the log streaming endpoint (`GET /v1/sessions/{id}/logs` with `Accept: text/event-stream`) is the simplest combination. Reach for MCP when you need delegation, mid-session prompts, or live bidirectional I/O.
 
 ---
 
-## Reading Order
+## The fast path from zero to a session
 
-If you are new to Lenny, read the pages in this order:
+1. Install the CLI: `brew install lenny-dev/tap/lenny` (or grab a binary from the releases page).
+2. Start the stack locally: `lenny up`. This runs the whole platform on your machine.
+3. Open a session: `lenny session start --runtime chat --message "hello"`.
+4. Prefer clicking? Visit `https://localhost:8443/playground`.
 
-1. **[Authentication](authentication.html)** -- how to obtain tokens and register credentials
-2. **[Session Lifecycle](session-lifecycle.html)** -- the complete session state machine and API calls
-3. **[Streaming](streaming.html)** -- how to receive real-time output from agents
-4. **[Delegation & Tasks](delegation-and-tasks.html)** -- multi-agent delegation trees
-5. **[Error Handling](error-handling.html)** -- error codes, retry strategies, ETags
-6. **[Webhooks](webhooks.html)** -- async notifications and callback patterns
-7. **[Client SDK Examples](sdk-examples/)** -- complete, runnable code in Python, TypeScript, Go, curl, and MCP SDK
+For a guided walkthrough, see the [`lenny up` walkthrough](../tutorials/lenny-up-walkthrough) and [Your First Session](../tutorials/first-session).
 
-Each page is self-contained with API reference tables, code examples, and expected responses. The SDK Examples section provides complete, runnable scripts that demonstrate the full session lifecycle in each language.
+## The runtimes available out of the box
+
+Every installation comes with these pre-registered:
+
+| Runtime | What it is |
+|:--|:--|
+| `chat` | A minimal LLM chat. Useful for smoke tests and the tutorial path. |
+| `claude-code` | Anthropic's Claude Code CLI, running in a sandboxed workspace. |
+| `gemini-cli` | Google's Gemini CLI, running in a sandboxed workspace. |
+| `codex` | OpenAI's Codex CLI, running in a sandboxed workspace. |
+| `cursor-cli` | Cursor's CLI, running in a sandboxed workspace. |
+| `langgraph` | A LangGraph graph runner. |
+| `mastra` | A Mastra agent runner. |
+| `openai-assistants` | An OpenAI Assistants adapter. |
+| `crewai` | A CrewAI crew runner. |
+
+List what's available and what each can do with `GET /v1/runtimes` or `lenny runtime list`.
+
+---
+
+## Reading order
+
+If this is your first pass, read the pages in the order below:
+
+1. [**Authentication**](authentication.html) -- how to get a token and register credentials
+2. [**Session Lifecycle**](session-lifecycle.html) -- the state machine every session goes through
+3. [**Streaming**](streaming.html) -- how to receive live output as the agent produces it
+4. [**Delegation & Tasks**](delegation-and-tasks.html) -- multi-agent workflows
+5. [**Error Handling**](error-handling.html) -- error codes, retry strategy, optimistic concurrency
+6. [**Webhooks**](webhooks.html) -- asynchronous notifications and callbacks
+7. [**Client SDK Examples**](sdk-examples/) -- runnable code in Python, TypeScript, Go, curl, and the MCP SDK
+
+Each page stands alone -- tables of endpoints, code examples, and the exact responses you should expect. The SDK Examples section has end-to-end scripts that take a session from creation to teardown in every language.

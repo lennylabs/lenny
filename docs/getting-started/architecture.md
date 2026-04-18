@@ -8,7 +8,7 @@ nav_order: 3
 # Architecture Overview
 {: .no_toc }
 
-This page describes Lenny's system architecture: the components, how they interact, the data flow from client request to agent response, and the security boundaries that isolate workloads.
+This page explains how Lenny is built: what the major components are, how a client request flows through them to an agent, where data is stored, and where the trust boundaries sit.
 
 <details open markdown="block">
   <summary>Table of contents</summary>
@@ -94,9 +94,9 @@ graph TB
 
 The gateway is the only externally-facing component. All client interaction enters through stateless gateway replicas deployed behind an ingress controller or load balancer.
 
-**Authentication and authorization.** The gateway authenticates clients via OIDC/OAuth 2.1. In multi-tenant deployments, the tenant identity is extracted from a configurable OIDC claim (`auth.tenantIdClaim`, default: `tenant_id`). Authorization decisions (which runtimes, pools, and connectors a user can access) are evaluated against the tenant's role mappings and the `RequestInterceptor` policy chain.
+**Authentication and authorization.** The gateway authenticates clients via OIDC/OAuth 2.1 -- in other words, it delegates log-in to your identity provider and accepts the bearer tokens it issues. In multi-tenant deployments, the tenant identity is extracted from a configurable identity-provider claim (`auth.tenantIdClaim`, default: `tenant_id`). Authorization decisions (which runtimes, pools, and connectors a user can access) are evaluated against the tenant's role mappings and the `RequestInterceptor` policy chain.
 
-**External interfaces.** The gateway serves a native REST API (`/v1/sessions`, `/v1/admin`) and exposes additional protocol adapters through an `ExternalAdapterRegistry`:
+**External interfaces.** The gateway serves a native REST API (`/v1/sessions`, `/v1/admin`) and plugs in additional protocol adapters alongside it:
 
 - **REST API:** The native session and admin API for direct HTTP clients.
 - **MCP (Streamable HTTP):** The primary client protocol. Sessions appear as MCP Tasks.
@@ -146,14 +146,21 @@ Orchestrates recursive delegation and manages the virtual MCP interfaces that pa
 
 #### LLM Proxy subsystem
 
-A credential-injecting reverse proxy for LLM provider traffic. The gateway terminates runtime-facing requests in one of two dialects (`openai` or `anthropic`, matching the runtime's `credentialCapabilities.proxyDialect`) and translates them to the upstream provider's wire format using a **native Go translator** inside the gateway binary (no sidecar, no loopback hop). When an agent pod needs to call an LLM provider:
+The gateway talks to LLM providers on behalf of agent pods so that pods never hold the actual API keys. The pod makes its call against the gateway using only a lease token, and the gateway rewrites the request with the real credentials before forwarding it.
 
-1. The pod sends the request to the gateway's LLM Proxy (using only a lease token, not the real API key) on either `/v1/chat/completions` (OpenAI dialect) or `/v1/messages` (Anthropic dialect).
-2. The LLM Proxy validates the lease token against the session's active credential lease, applies interceptors, and performs quota accounting.
-3. The native translator converts the request into the upstream provider's wire format (Anthropic, Bedrock, Vertex, Azure OpenAI), reads the real API key from the Token Service's in-memory credential cache, and forwards over TLS.
-4. The translator converts the upstream response back into the runtime's dialect, extracts authoritative token usage, runs `PostLLMResponse` interceptors, and relays the response to the pod.
+The pod can speak either an OpenAI-style or an Anthropic-style request (whichever matches its runtime). The gateway translates between that and the upstream provider's wire format directly -- Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI are handled inside the gateway itself, without any extra container or network hop. Here's what happens on each call:
 
-This architecture means pods never hold actual LLM API keys, and upstream provider credentials never leave the gateway process's memory -- they are never written to disk, tmpfs, or any other container's address space. Credential rotation is zero-downtime: the cache is refreshed atomically and the next outbound call picks up the new key with no reload signal. The LLM Proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level failures. Deployers who want a broader provider catalog, custom routing intelligence, or shared spend accounting can deploy an external LLM routing proxy and configure it as an upstream -- see [external LLM proxy](../operator-guide/external-llm-proxy.md).
+1. The pod sends the request to the gateway's LLM proxy at either `/v1/chat/completions` (OpenAI-style) or `/v1/messages` (Anthropic-style), carrying only a lease token.
+2. The gateway validates the lease token against the session's active credential lease, runs any configured policies, and accounts the request against the tenant's quota.
+3. The gateway rewrites the request into the upstream provider's format, attaches the real credentials from its in-memory cache, and forwards it over TLS.
+4. The provider's response comes back, gets translated into the pod's style, token usage is extracted from authoritative fields, post-response policies run, and the response is relayed to the pod.
+
+Two consequences:
+
+- **Pods never see API keys.** Only lease tokens.
+- **API keys never leave the gateway's memory.** They aren't written to disk, tmpfs, or any other container -- so credential rotation is zero-downtime: refresh the cache and the next outbound call picks up the new key.
+
+The proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level outages. Operators who want a broader provider catalog, custom routing, or shared spend accounting can put an external LLM routing proxy (LiteLLM, Portkey, and the like) in front of the gateway's outbound path -- see [External LLM proxy](../operator-guide/external-llm-proxy.md).
 
 ---
 
@@ -169,7 +176,7 @@ The Session Manager is the source of truth for all session and task metadata. It
 - **Pod-to-session binding:** Which session is running on which pod.
 - **Delegation lease tracking:** Budget counters, depth limits, and fan-out accounting for the delegation tree.
 
-**Multi-tenancy enforcement:** Every tenant-scoped table carries a `tenant_id` column with PostgreSQL Row-Level Security. The gateway sets `SET LOCAL app.current_tenant = '<tenant_id>'` in every transaction, and the RLS policy filters rows accordingly. A defense-in-depth trigger (`lenny_tenant_guard`) rejects queries that reach the database without a tenant context set.
+**Multi-tenancy enforcement:** Every tenant-scoped table carries a `tenant_id` column with PostgreSQL row-level security (RLS) -- a database feature that filters rows automatically based on a session variable. The gateway sets `SET LOCAL app.current_tenant = '<tenant_id>'` in every transaction, and the RLS policy filters rows accordingly. A defense-in-depth trigger (`lenny_tenant_guard`) rejects queries that reach the database without a tenant context set.
 
 ---
 
@@ -202,12 +209,12 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 
 **Checkpoint atomicity:** A checkpoint is all-or-nothing. The metadata record in Postgres references both the workspace snapshot and session file snapshot in MinIO. The metadata record is written only after both artifacts are successfully uploaded. If either upload fails, the entire checkpoint is discarded.
 
-**Checkpoint strategies by runtime tier:**
+**Checkpoint strategies by runtime integration level:**
 
-| Runtime tier | Checkpoint method | Consistency |
+| Runtime level | Checkpoint method | Consistency |
 |-------------|------------------|-------------|
 | Full | Cooperative quiescence via lifecycle channel (`checkpoint_request` / `checkpoint_ready` handshake) | Consistent |
-| Standard / Minimum | Best-effort snapshot without pausing the runtime | Best-effort |
+| Standard / Basic | Best-effort snapshot without pausing the runtime | Best-effort |
 
 ---
 
@@ -262,11 +269,11 @@ Each agent pod contains two processes:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
 - Writes the adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, credential file paths, and configuration.
 - Hosts the intra-pod MCP servers (platform tools, per-connector tools) as abstract Unix socket listeners.
-- Manages the lifecycle channel (`@lenny-lifecycle`) for Full-tier runtimes.
+- Manages the lifecycle channel (`@lenny-lifecycle`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
 **Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
-- Reads messages from stdin (Minimum tier) or connects to MCP servers and the lifecycle channel (Standard/Full tier).
+- Reads messages from stdin (Basic integration level) or connects to MCP servers and the lifecycle channel (Standard or Full integration level).
 - Reads the adapter manifest to discover available tools and credentials.
 - Operates on files in `/workspace/current`.
 - Writes responses to stdout.
@@ -317,7 +324,7 @@ sequenceDiagram
 ### Request path in detail
 
 1. **Client sends a message** to `POST /v1/sessions/{id}/messages` on any gateway replica.
-2. **Authentication:** The gateway validates the client's OIDC token and extracts the tenant ID.
+2. **Authentication:** The gateway validates the client's identity-provider token and extracts the tenant ID.
 3. **Policy evaluation:** The `RequestInterceptor` chain runs -- rate limiting, quota checks, content filtering.
 4. **Session lookup:** The gateway reads the session's pod assignment from the Redis routing cache (falling back to Postgres if the cache is empty).
 5. **Message delivery:** The gateway's Stream Proxy delivers the message to the assigned pod over the established gRPC bidirectional stream.
@@ -390,7 +397,7 @@ MinIO (S3-compatible) stores all binary artifacts: uploaded files, workspace sna
 
 - **Tenant isolation:** All object paths are prefixed with `/{tenant_id}/`. The `ArtifactStore` interface validates this prefix on every operation.
 - **Retention policy:** Artifacts are retained for a configurable TTL (default: 7 days). A background GC job deletes expired artifacts.
-- **Local development:** Replaced by the local filesystem (`./lenny-data/`) in Tier 1 dev mode.
+- **Local development:** Replaced by the local filesystem (`./lenny-data/`) in `make run` dev mode.
 
 ---
 
@@ -415,9 +422,9 @@ graph TB
     end
 
     subgraph "Intra-pod"
-        IP6["stdin/stdout JSON Lines<br/>Adapter ↔ Runtime (Minimum tier)"]
-        IP7["MCP over Unix socket<br/>Adapter ↔ Runtime (Standard/Full tier)"]
-        IP8["JSON Lines over Unix socket<br/>Lifecycle channel (Full tier)"]
+        IP6["stdin/stdout JSON Lines<br/>Adapter ↔ Runtime (Basic level)"]
+        IP7["MCP over Unix socket<br/>Adapter ↔ Runtime (Standard / Full level)"]
+        IP8["JSON Lines over Unix socket<br/>Lifecycle channel (Full level)"]
     end
 
     C[Client] --> EP1 & EP2 & EP3
@@ -489,7 +496,7 @@ graph TB
 
 ### Namespace isolation rules
 
-**`lenny-system` namespace** contains all platform components: gateway replicas, controllers, Token Service, PgBouncer. These components have the RBAC permissions needed to manage pods, CRDs, and secrets.
+**`lenny-system` namespace** contains all platform components: gateway replicas, controllers, Token Service, PgBouncer. These components have the Kubernetes role-based access control (RBAC) permissions needed to manage pods, CRDs, and secrets.
 
 **`lenny-agents` namespace** contains agent pods running with standard container isolation (runc) or gVisor sandbox. NetworkPolicies enforce:
 

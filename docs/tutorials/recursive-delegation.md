@@ -21,7 +21,7 @@ In this tutorial you will:
 ## Prerequisites
 
 - Go 1.22+ installed
-- Lenny running locally via `docker compose up` (Tier 2 -- required for Standard-tier MCP integration)
+- Lenny running locally via `docker compose up` (required for Standard-level MCP integration)
 - Familiarity with [Build a Runtime Adapter](build-a-runtime)
 - Familiarity with [Your First Session](first-session)
 
@@ -43,7 +43,7 @@ In this tutorial you will:
               +--------+    +--------+
 ```
 
-1. The coordinator calls `lenny/delegate_task(target, task, lease_slice)` on the platform MCP server
+1. The coordinator calls `lenny/delegate_task(target, task, lease_slice)` on Lenny's local tool server
 2. The gateway validates the delegation against the parent's lease (depth, fan-out, budget)
 3. The gateway creates a child session: claims a pod, streams workspace files, starts the child
 4. The gateway creates a **virtual MCP child interface** and injects it into the parent
@@ -61,7 +61,7 @@ In this tutorial you will:
 
 ## Part 1: Build the Worker Runtime
 
-The worker is a Standard-tier runtime that receives a sub-task, processes it, and returns a result. For this tutorial, it performs string transformations.
+The worker is a Standard-level runtime that receives a sub-task, processes it, and returns a result. For this tutorial, it performs string transformations.
 
 ```go
 // file: cmd/worker-runtime/main.go
@@ -117,7 +117,7 @@ func main() {
 	manifestData, err := os.ReadFile("/run/lenny/adapter-manifest.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "worker: cannot read manifest: %v\n", err)
-		// Fall back to Minimum-tier mode (no MCP)
+		// Fall back to Basic-level mode (no MCP)
 		runMinimumTier()
 		return
 	}
@@ -125,7 +125,7 @@ func main() {
 	var manifest AdapterManifest
 	json.Unmarshal(manifestData, &manifest)
 
-	// 2. Connect to the platform MCP server
+	// 2. Connect to Lenny's local tool server
 	ctx := context.Background()
 	mcp, err := mcpclient.Connect(ctx, mcpclient.ConnectOptions{
 		Socket:   manifest.PlatformMcpServer.Socket,
@@ -159,7 +159,7 @@ func main() {
 			// Perform the transformation
 			result := processTask(text)
 
-			// Emit incremental output via lenny/output (Standard tier)
+			// Emit incremental output via lenny/output (Standard level)
 			mcp.CallTool(ctx, "lenny/output", map[string]interface{}{
 				"output": []OutputPart{
 					{Type: "text", Inline: fmt.Sprintf("Processing: %s", text)},
@@ -255,7 +255,7 @@ func writeJSON(v interface{}) {
 
 ## Part 2: Build the Coordinator Runtime
 
-The coordinator is a Standard-tier runtime that:
+The coordinator is a Standard-level runtime that:
 1. Receives a task with multiple sub-tasks
 2. Discovers available worker agents via `lenny/discover_agents`
 3. Delegates each sub-task to a worker via `lenny/delegate_task`
@@ -334,7 +334,7 @@ func main() {
 	var manifest AdapterManifest
 	json.Unmarshal(manifestData, &manifest)
 
-	// 2. Connect to platform MCP server
+	// 2. Connect to Lenny's local tool server
 	ctx := context.Background()
 	mcp, err := mcpclient.Connect(ctx, mcpclient.ConnectOptions{
 		Socket:   manifest.PlatformMcpServer.Socket,

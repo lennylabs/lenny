@@ -121,7 +121,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 |---|---|---|
 | `WarmPoolExhausted` | Available warm pods = 0 for any pool > 60s | Scale pool, check warmup failures |
 | `PostgresReplicationLag` | Sync replica lag > 1s for > 30s | Check Postgres instance health |
-| `GatewayNoHealthyReplicas` | Healthy replicas below tier minimum > 30s | Check HPA, node capacity |
+| `GatewayNoHealthyReplicas` | Healthy replicas below the deployment size's configured minimum for > 30s | Check the Horizontal Pod Autoscaler (HPA) and node capacity |
 | `SessionStoreUnavailable` | Postgres primary unreachable > 15s | Check Postgres/PgBouncer connectivity |
 | `CheckpointStorageUnavailable` | MinIO checkpoint upload failed after retries | Check MinIO health, network |
 | `CredentialPoolExhausted` | 0 assignable credentials > 30s | Add credentials, check cooldowns |
@@ -138,7 +138,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
 | `TokenStoreUnavailable` | `/v1/oauth/token` 5xx rate with `error_type="token_store_unavailable"` sustained > 5 min | Token Service database backpressure; check Postgres, Token Service pods |
-| `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate SPIFFE boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
+| `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 
 ### Warning Alerts
@@ -149,18 +149,18 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `RedisMemoryHigh` | Memory > 80% of maxmemory | Scale Redis, review eviction |
 | `CredentialPoolLow` | Available credentials < 20% | Add credentials |
 | `GatewaySessionBudgetNearExhaustion` | Sessions > 90% of `maxSessionsPerReplica` > 60s | HPA lagging; check scale-out |
-| `Tier3GCPressureHigh` | Fleet P99 GC > 50 ms > 5 min (Tier 3 only) | Extract LLM Proxy subsystem |
+| `Tier3GCPressureHigh` | Fleet P99 GC > 50 ms > 5 min (Scale-size deployments only) | Extract the gateway's LLM routing subsystem to a dedicated service |
 | `CheckpointStale` | Any pool has stale sessions > 60s | Check checkpoint scheduling |
 | `PoolConfigDrift` | CRD config doesn't match Postgres > 60s | Check PoolScalingController |
 | `WarmPoolReplenishmentFailing` | Warmup failures > 1/min for > 5 min | Check image pulls, setup commands |
 | `CircuitBreakerActive` | Any breaker open > 5 min | Review affected subsystem |
-| `LLMTranslationLatencyHigh` | P95 `lenny_gateway_llm_translation_duration_seconds` > 100 ms sustained 5 min | Investigate native translator regression or payload-size change |
+| `LLMTranslationLatencyHigh` | P95 `lenny_gateway_llm_translation_duration_seconds` > 100 ms sustained 5 min | Investigate gateway translator regression or payload-size change |
 | `LLMTranslationSchemaDrift` | `lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}` rate > 0 sustained 5 min | Investigate runtime/SDK request drift or upstream provider response schema change |
 | `StorageQuotaHigh` | Tenant storage > 80% of quota | Cleanup or increase quota |
 | `CredentialProactiveRenewalExhausted` | All proactive renewal retries exhausted before expiry | Session falls through to standard fallback flow |
 | `GatewayActiveStreamsHigh` | Active streams per replica > 80% of configured max | Approaching stream proxy capacity; review scaling |
 | `ErasureJobFailed` | User-level erasure job failed | User's `processing_restricted` flag remains set; retry job |
-| `ErasureJobOverdue` | Erasure job exceeded tier-specific deadline (72h T3, 1h T4) | Requires operator investigation |
+| `ErasureJobOverdue` | Erasure job exceeded the data classification's deadline (72h for T3, 1h for T4) | Requires operator investigation |
 | `MemoryStoreGrowthHigh` | User memory count > 80% of `memory.maxMemoriesPerUser` | Review retention policy or increase limit |
 | `EtcdQuotaNearLimit` | etcd database size > 80% of `--quota-backend-bytes` | Defragment or increase quota before alarm state |
 | `EtcdWriteLatencyHigh` | P99 etcd WAL fsync latency > 25 ms for > 2 min | Leading indicator of etcd saturation; consider dedicated cluster |
@@ -302,11 +302,11 @@ All components emit structured JSON logs with correlation fields. Field names fo
 
 Estimated log volume:
 
-| Tier | Audit Events | Session Logs | Total |
+| Size | Audit Events | Session Logs | Total |
 |---|---|---|---|
-| Tier 1 | ~50 MB/day | ~250 MB/day | ~300 MB/day |
-| Tier 2 | ~100 MB/day | ~500 MB/day | ~600 MB/day |
-| Tier 3 | ~600 MB/day | ~3 GB/day | ~3.6 GB/day |
+| Starter | ~50 MB/day | ~250 MB/day | ~300 MB/day |
+| Growth | ~100 MB/day | ~500 MB/day | ~600 MB/day |
+| Scale | ~600 MB/day | ~3 GB/day | ~3.6 GB/day |
 
 Configure an external log aggregation stack (ELK, Loki, CloudWatch) for long-term retention beyond the Postgres window.
 

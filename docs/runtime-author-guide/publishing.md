@@ -205,7 +205,7 @@ curl -X POST http://localhost:8080/v1/admin/pools \
 |---------|-------------|
 | `minSize` | Minimum number of warm pods (always available) |
 | `maxSize` | Maximum number of pods (scaling ceiling) |
-| `resourceClass` | CPU/memory tier for pods |
+| `resourceClass` | CPU/memory class for pods |
 | `executionMode` | `session` (one session per pod), `task` (sequential reuse), or `concurrent` |
 | `runtimeClass` | Container isolation: `runc` (default), `gvisor`, or `kata` |
 
@@ -246,7 +246,7 @@ When upgrading your runtime:
 
 - **Protocol changes:** The stdin/stdout JSON Lines protocol is stable. Adding new response fields is safe. Removing required fields is a breaking change.
 - **New message types:** Your runtime must ignore unknown types (forward compatibility rule). New inbound message types may be added in future adapter versions.
-- **MCP tool changes:** New tools may be added to the platform MCP server. Your runtime discovers tools via `tools/list` and should handle new tools gracefully.
+- **MCP tool changes:** New tools may be added to Lenny's local tool server. Your runtime discovers tools via `tools/list` and should handle new tools gracefully.
 
 ---
 
@@ -276,8 +276,8 @@ module github.com/your-org/my-agent
 
 go 1.22
 
-// No Lenny SDK dependency required for Minimum tier.
-// Standard tier: add MCP client library
+// No Lenny SDK dependency required for the Basic level.
+// Standard level: add MCP client library
 // require github.com/mark3labs/mcp-go v0.x.x
 ```
 
@@ -289,7 +289,7 @@ Users can build your runtime directly:
 go install github.com/your-org/my-agent/cmd/my-agent@latest
 ```
 
-Or use it in Tier 1 local dev:
+Or use it in local dev with `make run`:
 
 ```bash
 make run LENNY_AGENT_BINARY=$(go env GOPATH)/bin/my-agent
@@ -326,7 +326,7 @@ complianceReport:
 
 Before publishing:
 
-1. **Pass the compliance suite** at your declared tier:
+1. **Pass the compliance suite** at your declared integration level:
 
    ```bash
    lenny-compliance --binary ./my-agent --tier standard --json > compliance.json
@@ -334,7 +334,7 @@ Before publishing:
 
    The compliance suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `outputpart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Adapter Contract → Canonical artifacts](adapter-contract.md#canonical-artifacts) for the full list.
 
-2. **Write a clear description** of what your runtime does, what tier it implements, and what LLM providers it supports.
+2. **Write a clear description** of what your runtime does, what integration level it implements, and what LLM providers it supports.
 
 3. **Include a Dockerfile** in your repository.
 
@@ -349,7 +349,7 @@ Before publishing:
 The registry CI pipeline:
 
 1. Pulls your published image.
-2. Runs the compliance suite at your declared tier.
+2. Runs the compliance suite at your declared integration level.
 3. Verifies the compliance report matches your submission.
 4. Publishes the entry if all checks pass.
 

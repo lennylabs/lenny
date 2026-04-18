@@ -7,7 +7,7 @@ nav_order: 1
 
 # Adapter Contract
 
-This page is the complete reference for the protocol between the Lenny adapter sidecar and your runtime binary. It covers the sidecar architecture, the gRPC control protocol (gateway to adapter), the stdin/stdout JSON Lines protocol (adapter to your binary), and the lifecycle channel (Full tier only).
+This page is the complete reference for the protocol between the Lenny adapter sidecar and your runtime binary. It covers the sidecar architecture, the gRPC control protocol (gateway to adapter), the stdin/stdout JSON Lines protocol (adapter to your binary), and the lifecycle channel (Full level only).
 
 ---
 
@@ -16,7 +16,7 @@ This page is the complete reference for the protocol between the Lenny adapter s
 Every Lenny agent pod contains two containers:
 
 1. **Adapter container** (Lenny-managed) --- handles all platform communication: gRPC to the gateway, mTLS certificate management, workspace staging, credential injection, health checks, and MCP server hosting.
-2. **Agent container** (your runtime binary) --- your code. Communicates with the adapter exclusively via stdin/stdout (all tiers) and optionally via local Unix sockets (Standard/Full tier).
+2. **Agent container** (your runtime binary) --- your code. Communicates with the adapter exclusively via stdin/stdout (at every integration level) and optionally via local Unix sockets (Standard and Full levels).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -38,7 +38,7 @@ Every Lenny agent pod contains two containers:
          Lenny Gateway
 ```
 
-The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, and what capabilities are available. Minimum-tier runtimes do not need to read the manifest at all --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract.
+The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, and what capabilities are available. Basic-level runtimes do not need to read the manifest at all --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract.
 
 ---
 
@@ -121,7 +121,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 
 **Field reference:**
 
-| Field | Type | Tier | Description |
+| Field | Type | Level | Description |
 |-------|------|------|-------------|
 | `type` | string | All | Always `"message"` |
 | `id` | string | All | Unique message identifier (gateway-assigned ULID, `msg_` prefix) |
@@ -133,7 +133,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
 | `slotId` | string or null | Concurrent | Present only in concurrent-workspace mode. Identifies the slot. |
 
-**Minimum-tier runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
+**Basic-level runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
 
 **The `input` array contains OutputPart objects.** The simplest OutputPart is:
 
@@ -211,7 +211,7 @@ The primary output message. Signals task completion.
 }
 ```
 
-**Simplified shorthand** (Minimum tier convenience --- adapter normalizes to the full form):
+**Simplified shorthand** (Basic-level convenience --- adapter normalizes to the full form):
 
 ```json
 { "type": "response", "text": "The answer is 42." }
@@ -234,11 +234,11 @@ The primary output message. Signals task completion.
 
 When `error` is present, the adapter maps the task to `failed` state. When `error` is absent and the process exits with code 0, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
 
-**Relationship with `lenny/output`:** At Standard/Full tier, you may emit output parts incrementally via the `lenny/output` platform MCP tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "output": []}`.
+**Relationship with `lenny/output`:** At the Standard and Full levels, you may emit output parts incrementally via the `lenny/output` platform tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "output": []}`.
 
 #### `tool_call` --- Request Tool Execution
 
-Request the adapter to execute a tool. At Minimum tier, only adapter-local tools are available (`read_file`, `write_file`, `list_dir`, `delete_file`). At Standard/Full tier, platform MCP tools are accessed via the MCP client connection, not via `tool_call`.
+Request the adapter to execute a tool. At the Basic level, only adapter-local tools are available (`read_file`, `write_file`, `list_dir`, `delete_file`). At the Standard and Full levels, platform tools are accessed via the MCP client connection, not via `tool_call`.
 
 ```json
 {
@@ -283,7 +283,7 @@ Must be sent in response to every inbound `heartbeat`. No other fields.
 { "type": "status", "state": "thinking", "message": "Analyzing code..." }
 ```
 
-Informational. The adapter forwards status updates to the gateway for client visibility. Not required for any tier.
+Informational. The adapter forwards status updates to the gateway for client visibility. Not required at any integration level.
 
 ---
 
@@ -312,9 +312,9 @@ For your runtime binary, version negotiation is transparent --- the adapter hand
 
 The adapter implements the **gRPC Health Checking Protocol** on behalf of your runtime. The gateway uses this to determine pod liveness and readiness.
 
-At Minimum tier, the adapter reports health based on process liveness (is your binary still running?) and heartbeat responsiveness (did it ack within 10 seconds?).
+At the Basic level, the adapter reports health based on process liveness (is your binary still running?) and heartbeat responsiveness (did it ack within 10 seconds?).
 
-At Standard/Full tier, you can optionally expose an HTTP health check endpoint (e.g., `/healthz` on a local port) that the adapter will incorporate into its health reporting. This is documented in the SDK examples.
+At the Standard and Full levels, you can optionally expose an HTTP health check endpoint (e.g., `/healthz` on a local port) that the adapter will incorporate into its health reporting. This is documented in the SDK examples.
 
 ---
 
@@ -353,11 +353,11 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 }
 ```
 
-**Tier reading requirements:**
+**What each level needs to read:**
 
-| Tier | What to read |
+| Level | What to read |
 |------|-------------|
-| Minimum | Not required for core operation. The four built-in tools are a fixed contract. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
+| Basic | Not required for core operation. The four built-in tools are a fixed contract. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
 | Standard | `platformMcpServer.socket`, `connectorServers`, `mcpNonce` --- to connect to and authenticate with local MCP servers. |
 | Full | Standard fields plus `lifecycleChannel.socket`. |
 
@@ -367,7 +367,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 |-------|-------------|
 | `version` | Manifest schema version. A version increment indicates a breaking change. |
 | `platformMcpServer.socket` | Abstract Unix socket path for the platform MCP server. |
-| `lifecycleChannel.socket` | Abstract Unix socket path for the lifecycle channel (Full tier). |
+| `lifecycleChannel.socket` | Abstract Unix socket path for the lifecycle channel (Full level). |
 | `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
@@ -380,11 +380,11 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 ---
 
-## Lifecycle Channel (Full Tier Only)
+## Lifecycle Channel (Full level only)
 
 The lifecycle channel is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
 
-Opening the lifecycle channel is optional. Runtimes that do not open it operate in fallback-only mode (Minimum/Standard tier behavior).
+Opening the lifecycle channel is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior).
 
 ### Capability Negotiation
 
@@ -441,7 +441,7 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 
 ## Wire Format Examples
 
-### Complete Minimum-Tier Session Trace
+### Complete Basic-level session trace
 
 ```
 1. Adapter starts agent binary, stdin/stdout pipes open.
@@ -500,7 +500,7 @@ Then the other result arrives:
 {"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
 ```
 
-### Full-Tier Checkpoint Handshake
+### Full-level checkpoint handshake
 
 ```
 Adapter sends on lifecycle channel:
@@ -515,7 +515,7 @@ Adapter snapshots the workspace and sends:
 Runtime resumes normal operation.
 ```
 
-### Full-Tier Interrupt Handshake
+### Full-level interrupt handshake
 
 ```
 Adapter sends on lifecycle channel:

@@ -70,7 +70,7 @@ curl -s -X POST http://localhost:8080/v1/sessions \
   }' | jq .
 ```
 
-The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway's LLM Proxy subsystem routes the request through an **in-process native Go translator**, which reads your API key from the gateway process's in-memory Token Service cache and translates to the upstream provider's wire format. Your API key never leaves the gateway process's memory. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
+The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway talks to LLM providers on behalf of agent pods: it reads your API key from its in-memory Token Service cache, translates the request to the upstream provider's wire format, and forwards it. Your API key only ever lives in the gateway's memory, which means agent pods never hold real credentials and rotation happens with zero downtime. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
 
 You can verify which credential source was used by checking the session metadata:
 

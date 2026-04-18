@@ -9,7 +9,7 @@ nav_order: 2
 
 {: .no_toc }
 
-This page explains the foundational concepts that underpin Lenny. Each concept is covered in depth -- what it is, how it works, and why it is designed the way it is.
+This page introduces the vocabulary you'll meet everywhere else in the docs. Read it once and the rest of the guides will read faster. Each concept is covered in enough depth to answer "what is this, how does it work, and why is it designed this way?"
 
 <details open markdown="block">
   <summary>Table of contents</summary>
@@ -108,10 +108,10 @@ A **runtime** defines a type of agent that can run on Lenny. It specifies the co
 
 ### Runtime-agnostic contract
 
-Lenny does not know or care what language your agent is written in or what LLM provider it calls. It defines a standard contract -- the **runtime adapter protocol** -- that any compliant binary can implement. The adapter protocol has two sides:
+Lenny doesn't care what language your agent is written in or which LLM it calls. Every agent meets the same contract -- a small, documented interface that a binary in any language can implement. The contract has two sides:
 
-- **Gateway to adapter:** gRPC/HTTP+mTLS RPCs for lifecycle operations (`PrepareWorkspace`, `FinalizeWorkspace`, `StartSession`, `Checkpoint`, `Terminate`, etc.).
-- **Adapter to runtime binary:** A simple stdin/stdout JSON Lines protocol at the minimum tier, with optional MCP server connections and a lifecycle channel at higher tiers.
+- **The platform talks to the pod** over a private, authenticated internal protocol. This handles the infrastructure plumbing -- preparing the workspace, starting the session, taking checkpoints, delivering credentials, tearing down. The sidecar in each pod handles this side; your code never touches it.
+- **The pod talks to your agent** through a simple stdin/stdout contract (one JSON object per line). At higher integration levels, it also opens a local tool server and a lifecycle channel -- both of which are opt-in.
 
 ### Runtime types
 
@@ -119,44 +119,44 @@ Lenny does not know or care what language your agent is written in or what LLM p
 
 **`type: mcp`** -- Hosts an MCP server. Lenny manages the pod lifecycle (isolation, credentials, workspace, pool management, egress control, audit) but does not impose its own task lifecycle. The runtime binary is oblivious to Lenny -- it simply runs an MCP server, and Lenny exposes it at a dedicated gateway endpoint (`/mcp/runtimes/{name}`). Useful for hosting tool servers, code interpreters, or specialized services that external clients connect to directly.
 
-### Integration tiers
+### Integration levels
 
-To lower the barrier for third-party runtime authors, Lenny defines three integration tiers for `type: agent` runtimes. Each tier adds capabilities on top of the previous one.
+Lenny defines three integration levels for `type: agent` runtimes, so you can ship something useful with the minimum amount of work and opt into more capabilities when you need them.
 
-#### Minimum tier
+#### Basic
 
-The floor -- enough to get a custom runtime working with zero Lenny-specific knowledge:
+The floor -- enough to get a custom runtime working without knowing anything Lenny-specific:
 
-- **Protocol:** stdin/stdout JSON Lines only.
-- **Input:** Reads `{type: "message"}` objects from stdin.
-- **Output:** Writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
-- **Heartbeat:** Must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds, or receive SIGTERM.
-- **Shutdown:** Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
-- **No MCP integration, no checkpointing, no lifecycle channel.**
-- **Credential rotation:** If the credential needs to change mid-session, the gateway checkpoints and restarts the session on a new pod (Standard-tier rotation path). Minimum-tier runtimes that do not support checkpointing lose in-flight context.
+- **Protocol:** stdin/stdout, one JSON object per line.
+- **Input:** reads `{type: "message"}` objects from stdin.
+- **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
+- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds, or SIGTERM.
+- **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
+- **No MCP, no checkpointing, no lifecycle signals.**
+- **Credential rotation:** if the credential needs to change mid-session, Lenny checkpoints the session and restarts it on a new pod. Basic-level runtimes that don't checkpoint lose the in-flight context.
 
-#### Standard tier
+#### Standard
 
-Minimum tier plus MCP integration:
+Everything in Basic, plus a local connection to a tool server that the platform exposes:
 
-- Reads the adapter manifest at `/run/lenny/adapter-manifest.json` to discover available MCP servers.
-- Connects to the adapter's **platform MCP server** (abstract Unix socket) for delegation, discovery, output parts, elicitation, and memory tools.
-- Connects to **per-connector MCP servers** for external tool access (GitHub, Jira, etc.).
-- Uses standard MCP client libraries -- no Lenny-specific code beyond reading the manifest and presenting a nonce during the MCP `initialize` handshake.
-- **Credential rotation:** Same as Minimum -- checkpoint and restart.
+- Reads the adapter manifest at `/run/lenny/adapter-manifest.json` to find the tool servers available in the pod.
+- Connects to the **platform tool server** for delegation, discovery, streaming output parts, asking the user questions, and memory.
+- Connects to **per-connector tool servers** for external tools (GitHub, Jira, and so on).
+- Uses a standard MCP client library -- there's nothing Lenny-specific beyond reading the manifest and presenting a nonce during the MCP `initialize` handshake.
+- **Credential rotation:** same as Basic -- checkpoint and restart.
 
-**Note:** Standard and Full tier runtimes require abstract Unix sockets, which are a Linux-only feature. macOS developers should use `docker compose up` (Tier 2 dev mode) for Standard/Full tier development.
+**Note:** Standard and Full runtimes use abstract Unix sockets for the local tool connection, which only exist on Linux. To develop on macOS, run your runtime inside `docker compose up`.
 
-#### Full tier
+#### Full
 
-Standard tier plus the lifecycle channel:
+Everything in Standard, plus a lifecycle channel -- a second local connection that carries operational signals:
 
-- Opens a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`) for operational signals.
-- Supports cooperative checkpoint/restore: the adapter sends `checkpoint_request`, the runtime quiesces and replies `checkpoint_ready`, snapshots are captured, and the adapter sends `checkpoint_complete`.
-- True session continuity across pod failures with consistent checkpoints.
-- Clean interrupt handling via `interrupt_request` / `interrupt_acknowledged` signals.
-- **Mid-session credential rotation without restart:** The adapter sends `credentials_rotated` on the lifecycle channel, the runtime rebinds its LLM provider in-place, and replies `credentials_acknowledged`. No session interruption.
-- Graceful shutdown coordination via `DRAINING` state.
+- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-lifecycle`).
+- Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
+- Survives pod failures with consistent checkpoints.
+- Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.
+- **Rotates credentials without restarting:** the platform sends `credentials_rotated`, the runtime rebinds its LLM provider in place, and replies `credentials_acknowledged`. The session keeps going.
+- Coordinates graceful shutdown via a `DRAINING` state when the pool is being drained.
 
 ### Runtime capabilities
 
@@ -335,7 +335,7 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 **Runtime operation:** The agent reads and writes files in `/workspace/current` during its session. All filesystem access is local to the pod -- no shared NFS mounts, no distributed filesystem.
 
-**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/current`) and uploads it to MinIO as a checkpoint. Full-tier runtimes participate in cooperative quiescence (the adapter pauses the runtime during snapshot). Minimum/Standard-tier runtimes get best-effort snapshots without pausing.
+**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence -- the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it's best-effort.
 
 **Sealing:** When the session completes, the workspace is exported to durable storage as a sealed, immutable snapshot. This snapshot is the session's final artifact and can be used to derive new sessions.
 
@@ -445,7 +445,7 @@ When a runtime needs to call an LLM (Anthropic, AWS Bedrock, Vertex AI, Azure Op
    - **Proxy mode (default):** The pod receives only a lease token. All LLM traffic flows through the gateway's LLM Proxy subsystem, which injects the real API key. The pod never sees the actual credential.
    - **Direct mode:** The pod receives the actual credential (short-lived STS token, access token, etc.) and calls the LLM provider directly. Used when proxy latency is unacceptable or when the provider requires direct client connections.
 4. Leases have a TTL (provider-dependent, e.g., 1 hour for `anthropic_direct`, 15 minutes for `aws_bedrock`). The gateway handles automatic renewal.
-5. When a credential is rate-limited, the gateway can fail over to a different credential in the pool, or rotate the credential mid-session (Full-tier runtimes support this without restart).
+5. When a credential is rate-limited, the gateway can fail over to a different credential in the pool, or rotate it mid-session (runtimes integrated at the Full level can swap in place without restarting).
 
 ### Connector credentials
 
@@ -476,8 +476,8 @@ sequenceDiagram
     Pod->>Gateway: RATE_LIMITED event
     Gateway->>CredentialPool: Get alternate credential
     Gateway->>Pod: RotateCredentials(new lease)
-    Note over Pod: Full-tier: rebind in-place
-    Note over Pod: Standard/Min: checkpoint + restart
+    Note over Pod: Full: rebind in place
+    Note over Pod: Basic/Standard: checkpoint + restart
     Client->>Gateway: Terminate
     Gateway->>CredentialPool: Release lease
 ```

@@ -97,7 +97,7 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 **Event Store**
 : A Postgres-backed store for session events, audit records, and stream cursors. Events are partitioned by time with configurable retention. The Event Store supports replay for client reconnection within the replay window. See [Configuration Reference](configuration).
 
-**ExternalAdapterRegistry**
+**Protocol Adapter Registry**
 : The gateway component that maps external client protocols (MCP, OpenAI, Open Responses, A2A) to Lenny's internal session model. Each protocol is handled by a registered adapter that translates between the external wire format and Lenny's canonical session/task states. See [API Reference](../api/).
 
 ## G
@@ -116,8 +116,8 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 **Interceptor**
 : A content policy evaluation hook in the gateway's 12-phase request processing chain. Interceptors can inspect and modify (or reject) traffic at specific phases. Built-in interceptors handle security-critical phases (priority <= 100); external interceptors are registered via gRPC and run at configurable phases with priority > 100. See [Error Catalog](error-catalog).
 
-**Integration Tier**
-: The level of Lenny platform integration a runtime adapter implements. Three tiers: Minimum (stdin/stdout JSON Lines, ~50 lines of code), Standard (gRPC adapter with lifecycle), and Full (gRPC with checkpointing, credential rotation, delegation support). See [Runtime Author Guide](../runtime-author-guide/).
+**Integration Level**
+: The level of Lenny platform integration a runtime adapter implements. Three levels: Basic (stdin/stdout JSON Lines, ~50 lines of code), Standard (gRPC adapter with lifecycle), and Full (gRPC with checkpointing, credential rotation, delegation support). See [Runtime Author Guide](../runtime-author-guide/).
 
 **Isolation Monotonicity**
 : The security invariant that a child delegation's isolation profile must be at least as restrictive as the parent's. The ordering is: `runc` < `gvisor` < `microvm` (Kata). Delegations that would weaken isolation are rejected with `ISOLATION_MONOTONICITY_VIOLATED`. See [Error Catalog](error-catalog).
@@ -136,7 +136,7 @@ Alphabetical reference for all Lenny-specific terms and concepts.
 : The gRPC bidirectional stream between the gateway and a pod's runtime adapter. Used for control-plane signals: session start/stop, interrupt, checkpoint requests, credential rotation, and workspace notifications. Distinct from the data-plane stdin/stdout pipe.
 
 **LLM Proxy**
-: A gateway subsystem that acts as a credential-injecting reverse proxy for LLM provider traffic. Validates lease tokens, injects real API keys, and forwards streaming requests to upstream providers. The LLM Proxy prevents credentials from being exposed to agent pods. See [Metrics Reference](metrics).
+: The gateway subsystem that talks to LLM providers on behalf of agent pods. It validates the pod's short-lived lease token, injects the real provider API key (which lives only in the gateway's memory), and forwards streaming requests to the upstream provider. Because the gateway handles this hop, pods never see real API keys and credential rotation is zero-downtime. See [Metrics Reference](metrics).
 
 ## M
 

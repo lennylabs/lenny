@@ -31,7 +31,7 @@ Each gateway replica has a **distinct mTLS identity**:
 
 ### SPIFFE Trust Domain
 
-Deployers **MUST** override `global.spiffeTrustDomain` (default: `lenny.local`) for shared-cluster deployments to prevent cross-deployment pod impersonation. Each Lenny deployment sharing a cluster must use a unique trust domain. Additionally, set `global.saTokenAudience` to a deployment-specific value.
+SPIFFE (Secure Production Identity Framework for Everyone) is the identity framework Lenny uses to give each pod a verifiable cryptographic identity. Deployers **MUST** override `global.spiffeTrustDomain` (default: `lenny.local`) for shared-cluster deployments to prevent cross-deployment pod impersonation. Each Lenny deployment sharing a cluster must use a unique trust domain. Additionally, set `global.saTokenAudience` to a deployment-specific value.
 
 ```yaml
 global:
@@ -39,7 +39,7 @@ global:
   saTokenAudience: "lenny-prod"
 ```
 
-Failure to override these values in a shared cluster allows pods from one Lenny deployment to present valid SPIFFE URIs for another deployment's trust domain, enabling credential lease theft.
+Failure to override these values in a shared cluster allows pods from one Lenny deployment to present valid pod identities belonging to another deployment's trust domain, enabling credential lease theft.
 
 ### Alert
 
@@ -51,7 +51,7 @@ The `CertExpiryImminent` warning alert fires when any mTLS cert expiry is less t
 
 ### Client Authentication
 
-The gateway authenticates all client requests via OIDC/OAuth 2.1:
+The gateway authenticates all client requests via OIDC (OpenID Connect, the identity-provider layer on top of OAuth 2.0) and OAuth 2.1:
 
 ```yaml
 auth:
@@ -213,17 +213,17 @@ This immediately:
 
 ### Architecture
 
-The LLM Proxy is a single in-process component inside the gateway binary — the LLM Proxy subsystem (the gateway's fourth internal subsystem boundary). It validates the lease token, verifies SPIFFE binding, runs the `PreLLMRequest` / `PostLLMResponse` interceptor chain, invokes the native Go translator to convert between the agent pod's dialect (OpenAI or Anthropic, per the pool's `proxyDialect`) and the upstream provider's wire format, injects the real upstream API key from the Token Service's in-memory credential cache, forwards to the upstream provider, and extracts authoritative token usage from the response. There is no sidecar container, no loopback listener, and no shared-secret auth — translation happens inside the same process.
+The LLM Proxy is the gateway subsystem that talks to LLM providers on behalf of agent pods. It runs inside the gateway process (it's one of four internal subsystem boundaries), which means agent pods never hold real provider API keys — keys live only in the gateway's in-memory credential cache. On every request, the subsystem validates the pod's lease token, verifies the pod's cryptographic identity, runs the `PreLLMRequest` / `PostLLMResponse` interceptor chain, converts between the agent pod's dialect (OpenAI or Anthropic, per the pool's `proxyDialect`) and the upstream provider's wire format, injects the real upstream API key from the gateway's in-memory credential cache, forwards to the upstream provider, and extracts authoritative token usage from the response.
 
 **See also:** [`external-llm-proxy.md`](external-llm-proxy.md) for deployers who want to route traffic through an external LLM gateway (LiteLLM, Portkey, cloud-managed) as the upstream.
 
 ### Security posture
 
-- **Real API keys live only in the gateway process's in-memory Token Service cache.** They are never written to disk, never placed on tmpfs, and never entered into the agent pod's environment, memory, filesystem, or network path.
+- **Real API keys live only in the gateway process's in-memory credential cache.** They are never written to disk, never placed on tmpfs, and never entered into the agent pod's environment, memory, filesystem, or network path.
 - **Agent-pod wire format is provider-agnostic.** Runtimes use standard OpenAI or Anthropic SDKs; the upstream provider can change without any runtime code change.
-- **The translator is part of the gateway's trust envelope.** It has no independent SPIFFE identity; outbound provider connections use the gateway pod's network identity.
-- **Credential rotation is zero-downtime.** The Token Service cache is refreshed atomically on lease rotation; the next outbound call reads the new key. No reload signal, no file replacement, no SIGHUP.
-- **Lease revocation enforced before the translator runs.** Expired/revoked leases are rejected by the LLM Proxy subsystem's lease check before any upstream call is attempted.
+- **The translator is part of the gateway's trust envelope.** It has no separate pod identity; outbound provider connections use the gateway pod's network identity.
+- **Credential rotation is zero-downtime.** The gateway's credential cache is refreshed atomically on lease rotation; the next outbound call reads the new key. No reload signal, no file replacement, no SIGHUP.
+- **Lease revocation is enforced before the translator runs.** Expired or revoked leases are rejected by the subsystem's lease check before any upstream call is attempted.
 
 ### Network Isolation
 
@@ -231,7 +231,7 @@ Only pods in pools with `deliveryMode: proxy` can reach the Lenny proxy port (84
 
 ### Token Counting
 
-In proxy mode, the LLM Proxy subsystem's native translator extracts `input_tokens` and `output_tokens` directly from the upstream LLM response metadata. These upstream-extracted counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
+In proxy mode, the gateway's translator extracts `input_tokens` and `output_tokens` directly from the upstream LLM response metadata. These upstream-extracted counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
 
 ---
 

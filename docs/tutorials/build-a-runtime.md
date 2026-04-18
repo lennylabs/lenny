@@ -513,7 +513,7 @@ echo $SESSION | jq .
 
 ## Part 5: Create a Dockerfile
 
-For production or Tier 2 (`docker compose`) testing, package the runtime as a container image.
+For production or `docker compose up` testing, package the runtime as a container image.
 
 ```dockerfile
 # file: Dockerfile
@@ -550,7 +550,7 @@ docker build -t calc-runtime:dev .
 
 ## Part 6: Register in Local Dev Config
 
-### Tier 2 (docker compose)
+### Register with `docker compose up`
 
 After building the image, register it via the admin API:
 
@@ -610,20 +610,20 @@ Expected response includes:
 
 ---
 
-## Part 7: Upgrade to Standard Tier
+## Part 7: Upgrade to the Standard level
 
-The calculator runtime so far is Minimum tier -- it uses only stdin/stdout. To unlock platform capabilities like delegation, tool discovery, and elicitation, upgrade to Standard tier by connecting to the adapter's MCP servers.
+The calculator runtime so far is at the Basic level -- it uses only stdin/stdout. To unlock platform capabilities like delegation, tool discovery, and elicitation, upgrade to the Standard level by connecting to the adapter's MCP servers.
 
-### What Standard Tier Adds
+### What the Standard level adds
 
-- Access to platform MCP tools (`lenny/delegate_task`, `lenny/discover_agents`, `lenny/output`, etc.)
+- Access to platform tools (`lenny/delegate_task`, `lenny/discover_agents`, `lenny/output`, etc.)
 - Access to connector MCP servers (GitHub, Jira, etc.)
 - Structured output via `lenny/output` for incremental delivery
 - Health check integration
 
 ### Reading the Adapter Manifest
 
-Standard-tier runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths:
+Standard-level runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths:
 
 ```go
 // file: internal/manifest/manifest.go
@@ -673,9 +673,9 @@ func Load(path string) (*AdapterManifest, error) {
 }
 ```
 
-### Connecting to the Platform MCP Server
+### Connecting to Lenny's local tool server
 
-Standard-tier runtimes connect to the platform MCP server as a standard MCP client. The connection uses abstract Unix sockets (Linux only -- use `docker compose` on macOS).
+Standard-level runtimes connect to Lenny's local tool server as an MCP client. The connection uses abstract Unix sockets (Linux only -- use `docker compose` on macOS).
 
 ```go
 // Pseudocode for MCP connection setup:
@@ -691,14 +691,14 @@ if err != nil {
     log.Fatal(err)
 }
 
-// Connect to platform MCP server using the mcp-go library
+// Connect to Lenny's local tool server using the mcp-go library
 // The nonce must be sent in the initialize params:
 // {"method": "initialize", "params": {"_lennyNonce": "<nonce>", ...}}
 ```
 
 ### Adding a Health Check
 
-Standard-tier runtimes should implement the gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` (ready for session assignment) only after the health check passes:
+Standard-level runtimes should implement the gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` (ready for session assignment) only after the health check passes:
 
 ```go
 // The health check is handled by the adapter sidecar in the default
@@ -732,17 +732,17 @@ When registering your runtime, declare capabilities that inform the platform abo
 In this tutorial you:
 
 1. Learned the stdin/stdout JSON Lines protocol between the adapter and runtime
-2. Built a Minimum-tier calculator runtime in Go
+2. Built a Basic-level calculator runtime in Go
 3. Handled messages, heartbeats, shutdown, and tool calls
 4. Created a Dockerfile for containerized deployment
 5. Registered the runtime in Lenny's local dev environment
-6. Understood the path to Standard tier (MCP integration)
+6. Understood the path to the Standard level (MCP integration)
 
-### Integration Tier Quick Reference
+### Integration level quick reference
 
-| Tier | What you implement | What you get |
+| Level | What you implement | What you get |
 |------|--------------------|--------------|
-| **Minimum** | stdin/stdout JSON Lines | Basic message/response, adapter-local tools (read_file, write_file, etc.) |
+| **Basic** | stdin/stdout JSON Lines | Message/response, adapter-local tools (read_file, write_file, etc.) |
 | **Standard** | + MCP client connection to adapter's local servers | Platform tools (delegation, discovery, elicitation), connector access |
 | **Full** | + Lifecycle channel | Clean interrupts, checkpoint/restore, in-place credential rotation |
 

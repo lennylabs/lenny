@@ -7,66 +7,79 @@ has_children: true
 
 # Getting Started with Lenny
 
-Lenny is a **Kubernetes-native, runtime-agnostic agent session platform** that provides on-demand, pre-warmed, isolated cloud agent instances to clients. It manages the full lifecycle of interactive agent sessions -- from pod allocation and workspace setup to streaming I/O, recursive delegation, credential leasing, and session recovery -- behind a unified gateway that owns security, policy, and protocol translation.
-
-Lenny is not tied to any single agent runtime. It defines a standard contract that any compliant pod binary can implement, whether that binary wraps Claude Code, a LangGraph agent, a custom Python script, or an MCP server. The platform handles everything around the agent: isolation, warm pools, file delivery, checkpointing, credential management, and multi-agent orchestration.
+Lenny runs interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster. Your clients talk to a single gateway; each session gets its own pod with a fresh workspace and leased credentials. The agent itself can be anything from Anthropic's Claude Code CLI to a LangGraph graph to a custom program -- a catalog of ready-to-use ones ships with every install, and the [Runtime Author Guide](../runtime-author-guide/) covers building your own.
 
 ---
 
-## What you will learn
+## Start here
 
-This section walks you through the fundamentals of Lenny, from running your first session locally to understanding the architecture that powers production deployments.
+Three pages, in order. Together they take less than an hour and leave you with a working local install and a solid mental model.
 
-| Page | What it covers | Time |
-|------|---------------|------|
-| [Quickstart](quickstart.html) | Install the `lenny` binary, run `lenny up`, attach to a `chat` session and a `claude-code` session, explore the web playground | ~5 minutes |
-| [Core Concepts](concepts.html) | Sessions, runtimes, pools, gateway, delegation, workspaces, MCP, tenants, and credentials -- explained in depth | ~20 minutes |
-| [Architecture Overview](architecture.html) | Component diagram, data flow, storage architecture, security boundaries, internal vs external protocols, `lenny-ops` operability control plane | ~15 minutes |
+| Page | What you'll do | Time |
+|------|----------------|------|
+| [Quickstart](quickstart.html) | Install the CLI, start the embedded stack with `lenny up`, open a chat session, try a coding agent, and explore the web playground | ~5 minutes |
+| [Core Concepts](concepts.html) | Learn the vocabulary: sessions, runtimes, pools, the gateway, delegation, workspaces, tenants, and credentials | ~20 minutes |
+| [Architecture Overview](architecture.html) | Component diagram, request flow, where state lives, and the trust boundaries between pods, the gateway, and your clients | ~15 minutes |
 
 ---
 
 ## Choose your path
 
-Lenny serves several personas. After completing the Quickstart, follow the reading path that matches your role.
+After the Quickstart, your next step depends on what you're trying to do.
 
-### Runtime Author
+### I'm building an agent to run on Lenny
 
-You are building a custom agent binary or adapter to run on Lenny. You want to understand the contract your binary must implement and how Lenny manages your process.
+You have an agent program -- maybe wrapping a CLI, maybe built on a framework, maybe your own code -- and you want it to run in a Lenny session.
 
-**Recommended path:**
-1. **Quickstart** -- run `lenny up` and see the reference `chat` and `claude-code` runtimes in action.
-2. Scaffold your own: `lenny runtime init my-agent --language go --template coding`.
-3. **Core Concepts** -- focus on Sessions, Runtimes (especially integration tiers), and Workspaces.
-4. **Architecture Overview** -- understand how the gateway communicates with your pod.
-5. Continue to the **Runtime Author Guide** for the full adapter protocol, the three integration tiers (Minimum/Standard/Full), and the first-party Runtime Author SDKs for Go, Python, and TypeScript.
+1. Finish the **Quickstart** to see the reference runtimes in action.
+2. Scaffold a new one to skip the boilerplate: `lenny runtime init my-agent --language go --template coding`.
+3. Read **Core Concepts**, focusing on sessions, runtimes, and workspaces.
+4. Skim **Architecture Overview** for how the gateway talks to your pod.
+5. Continue to the [**Runtime Author Guide**](../runtime-author-guide/) for the message protocol, the three integration levels, and the Go / Python / TypeScript SDKs.
 
-### Platform Operator
+### I'm deploying Lenny to a Kubernetes cluster
 
-You are deploying Lenny to Kubernetes for your team or organization. You care about Helm configuration, scaling, observability, and security hardening.
+You're the person who will install Lenny, size it, harden it, and keep it upgraded.
 
-**Recommended path:**
-1. **Quickstart** -- run `lenny up` to understand the platform before deploying to a real cluster. Same code path, same CRDs.
-2. **Core Concepts** -- focus on Pools, Gateway, Tenants, Credentials, and `lenny-ops`.
-3. **Architecture Overview** -- understand all components, storage backends, and security boundaries.
-4. Continue to the **Operator Guide** for the `lenny-ctl install` wizard, Helm configuration, `lenny-ops` agent operability, `doctor --fix` diagnostics, capacity planning, and production hardening.
+1. Run the **Quickstart** once. The embedded stack uses the same code as a real cluster install, so it's worth seeing the shape of things before you touch Helm.
+2. Read **Core Concepts**, focusing on pools, the gateway, tenants, credentials, and the management plane.
+3. Read **Architecture Overview** to understand the components you'll be operating.
+4. Continue to the [**Operator Guide**](../operator-guide/) for the install wizard, configuration reference, `lenny-ctl doctor --fix`, capacity planning, and production hardening.
 
-### Client Developer
+### I'm calling Lenny from an application
 
-You are building an application that creates and interacts with Lenny sessions via the API. You want to understand session lifecycle, file uploads, streaming, and how to use MCP or REST endpoints.
+You're writing code -- an app, a script, a CI pipeline, an MCP host -- that creates sessions and interacts with them.
 
-**Recommended path:**
-1. **Quickstart** -- see the full session flow via the embedded MCP CLI (`lenny session`).
-2. **Core Concepts** -- focus on Sessions (lifecycle states), MCP, and Delegation.
-3. **Architecture Overview** -- understand the gateway's external API surface and streaming model.
-4. Try the bundled Web Playground at `https://localhost:8443/playground` while `lenny up` is running.
-5. Continue to the **Client Guide** for the full API reference, the Go/Python/TypeScript client SDKs, and advanced patterns like delegation and elicitation.
+1. Run the **Quickstart** to see a session lifecycle end to end.
+2. Read **Core Concepts**, focusing on sessions (especially the state machine) and delegation.
+3. Skim **Architecture Overview** for the external API surface.
+4. Point your browser at `https://localhost:8443/playground` while `lenny up` is running -- it's a useful way to poke at the API interactively.
+5. Continue to the [**Client Guide**](../client-guide/) for the API reference, the official SDKs, and patterns like delegation and mid-session user prompts.
 
-### Contributor
+### I'm on call for a deployed Lenny
 
-You want to contribute to Lenny itself -- gateway code, controller logic, storage backends, or documentation.
+Alerts page you, and you need to know where to look and what to do.
 
-**Recommended path:**
-1. **Quickstart** -- run `lenny up` once to see the full system. Then drop to Tier 1 (`make run`) or Tier 2 (`docker compose up`) for day-to-day iteration.
-2. **Core Concepts** -- read all sections to build a complete mental model.
-3. **Architecture Overview** -- study component boundaries and internal protocols.
-4. Read the canonical **spec/** (starting with `spec/README.md`) for the authoritative specification, then check `CONTRIBUTING.md` for development workflow and code conventions.
+1. Run the **Quickstart** so you have a sandbox to practice diagnostic commands against before you need them in anger.
+2. Read **Core Concepts**, focusing on pools, the gateway, session states, and the management plane.
+3. Skim **Architecture Overview** for where failures propagate.
+4. Read [**Agent Operability**](../operator-guide/agent-operability) for the diagnostic endpoints, the runbook catalog, drift detection, and backup and restore.
+5. Walk through [**`lenny-ctl doctor --fix`**](../tutorials/doctor-fix) and [**Bundled Alerting and OpenSLO Export**](../tutorials/alerting-and-openslo) to wire the platform into your paging and SLO tooling.
+
+### I'm reviewing Lenny for security or compliance
+
+You need to know how sessions are isolated, how credentials are handled, what the audit trail looks like, and whether this can live inside a regulated environment.
+
+1. Read **Architecture Overview**, focusing on the trust boundaries between clients, the gateway, and pods.
+2. Read **Core Concepts**, focusing on credentials, tenants, and workspaces.
+3. Read [**Security**](../operator-guide/security) for the three sandbox profiles (plain containers, gVisor, Kata microVMs), the credential leasing model, the default-deny network perimeter, and how LLM API keys are kept out of pods.
+4. Read the Compliance section of the Operator Guide for GDPR-style erasure, the tamper-evident audit log, retention windows for SOC 2 / HIPAA / FedRAMP, legal holds, and data residency.
+
+### I want to contribute to Lenny itself
+
+You're changing gateway code, a controller, a storage backend, or the docs.
+
+1. Run the **Quickstart** once to see the full system from the outside. Day-to-day, you'll probably prefer `make run` (native process) or `docker compose up` (containerized) for faster iteration on core components.
+2. Read **Core Concepts** end to end.
+3. Read **Architecture Overview**, then dive into the canonical spec under [`spec/`](https://github.com/lenny-dev/lenny/tree/main/spec), starting with `spec/README.md`.
+4. Check `CONTRIBUTING.md` for the development workflow and code conventions.

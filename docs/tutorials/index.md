@@ -7,97 +7,95 @@ has_children: true
 
 # Tutorials
 
-Hands-on walkthroughs that take you from zero to a working Lenny deployment. Each tutorial is self-contained with complete code examples, expected outputs, and detailed explanations.
+Hands-on walkthroughs, each self-contained, with runnable code, the output you should see, and an explanation of what's happening under the hood.
 
-## By Persona
+## By role
 
-### Everyone
+### Everyone starts here
 
-| Tutorial | Difficulty | Description |
-|----------|------------|-------------|
-| [`lenny up` Walkthrough](lenny-up-walkthrough) | Beginner | Install the CLI, start the Tier 0 embedded stack, attach to `chat` and `claude-code`, explore the web playground -- all in 5 minutes |
-| [Web Playground Tour](playground-tour) | Beginner | Use the bundled playground to pick a runtime, upload a workspace, and drive a session end-to-end without writing any code |
+| Tutorial | Difficulty | What you'll do |
+|----------|------------|----------------|
+| [`lenny up` Walkthrough](lenny-up-walkthrough) | Beginner | Install the CLI, run the whole platform on your laptop, talk to `chat` and `claude-code`, and explore the web playground -- in about five minutes |
+| [Web Playground Tour](playground-tour) | Beginner | Pick a runtime, upload a workspace, and drive a session from start to finish without writing any code |
 
-### Client Developer
+### If you're building a client
 
-Build applications that interact with Lenny sessions through its APIs.
+Driving sessions from your own application, script, or MCP host.
 
-| Tutorial | Difficulty | Description |
-|----------|------------|-------------|
-| [Your First Session](first-session) | Beginner | Create, interact with, and tear down a session using the `lenny session` CLI, Python, and TypeScript |
-| [MCP Client Integration](mcp-client-integration) | Intermediate | Connect an MCP host to Lenny's gateway using the Model Context Protocol |
-| [OpenAI SDK Integration](openai-sdk-integration) | Intermediate | Use the OpenAI Python and TypeScript SDKs against Lenny's compatibility layer |
-| [OAuth Token Exchange](oauth-token-exchange) | Intermediate | Use `POST /v1/oauth/token` (RFC 8693) to rotate admin tokens and exchange identity-provider tokens for Lenny access tokens |
-| [Recursive Delegation](recursive-delegation) | Advanced | Build parent and child runtimes that delegate work through the gateway |
+| Tutorial | Difficulty | What you'll do |
+|----------|------------|----------------|
+| [Your First Session](first-session) | Beginner | Create, interact with, and tear down a session using the CLI, Python, and TypeScript |
+| [MCP Client Integration](mcp-client-integration) | Intermediate | Plug an MCP host into Lenny's gateway |
+| [OpenAI SDK Integration](openai-sdk-integration) | Intermediate | Point the OpenAI Python and TypeScript SDKs at Lenny |
+| [OAuth Token Exchange](oauth-token-exchange) | Intermediate | Use `POST /v1/oauth/token` to rotate admin tokens and exchange identity-provider tokens for Lenny access tokens |
+| [Recursive Delegation](recursive-delegation) | Advanced | Build parent and child sessions that delegate work through the gateway |
 
-### Runtime Author
+### If you're writing a runtime
 
-Build custom agent runtimes that run on the Lenny platform.
+Building your own agent to run on Lenny.
 
-| Tutorial | Difficulty | Description |
-|----------|------------|-------------|
-| [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime) | Beginner | Generate, build, and register a Minimum-tier runtime in Go, Python, or TypeScript |
-| [Build a Runtime Adapter](build-a-runtime) | Intermediate | Create a calculator runtime using the stdin/stdout JSON Lines protocol |
-| [Wrap a Coding-Agent CLI](wrap-coding-agent-cli) | Intermediate | Fork a reference runtime (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`) to wrap your own CLI in a sandboxed workspace |
-| [Runtime SDK Integration (Go / Python / TS)](runtime-sdk-integration) | Intermediate | Use the first-party Runtime Author SDKs to implement Standard tier (MCP tool access) and Full tier (lifecycle channel) |
+| Tutorial | Difficulty | What you'll do |
+|----------|------------|----------------|
+| [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime) | Beginner | Generate, build, and register a Basic-level runtime in Go, Python, or TypeScript |
+| [Build a Runtime Adapter](build-a-runtime) | Intermediate | Write a calculator runtime against the stdin/stdout JSON-lines contract |
+| [Wrap a Coding-Agent CLI](wrap-coding-agent-cli) | Intermediate | Fork one of the reference runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`) to wrap your own CLI in a sandboxed workspace |
+| [Runtime SDK Integration (Go / Python / TS)](runtime-sdk-integration) | Intermediate | Use the official SDKs to build up to the Standard level (platform tool access) and the Full level (lifecycle signals) |
 | [Recursive Delegation](recursive-delegation) | Advanced | Build coordinator and worker runtimes with delegation, budgets, and scope narrowing |
 
-### Operator
+### If you're operating a deployment
 
-Deploy and operate Lenny in Kubernetes clusters.
+Running Lenny on a Kubernetes cluster.
 
-| Tutorial | Difficulty | Description |
-|----------|------------|-------------|
-| [Install with the `lenny-ctl install` Wizard](installer-wizard) | Beginner | Run the interactive wizard against EKS, GKE, AKS, or k3s; save the answer file for replay in CI |
-| [Deploy to Kubernetes](deploy-to-cluster) | Intermediate | Helm-based installation using answer files + tier overrides, with preflight checks and bootstrap |
-| [Diagnose and Remediate with `doctor --fix`](doctor-fix) | Intermediate | Walk through the `lenny-ops` diagnostic endpoints and the auto-remediation guardrails for common misconfigurations |
-| [Bundled Alerting and OpenSLO Export](alerting-and-openslo) | Intermediate | Wire Prometheus Operator CRDs, import the bundled alerting rules, and export OpenSLO v1 manifests to your SLO platform |
-| [Multi-Tenant Setup](multi-tenant-setup) | Advanced | Configure tenant isolation with OIDC, RLS, per-tenant quotas, and metering |
+| Tutorial | Difficulty | What you'll do |
+|----------|------------|----------------|
+| [Install with the `lenny-ctl install` Wizard](installer-wizard) | Beginner | Run the interactive wizard against EKS, GKE, AKS, or k3s, and capture an answer file you can replay in CI |
+| [Deploy to Kubernetes](deploy-to-cluster) | Intermediate | Helm-based installation from an answer file, with preflight checks and bootstrap |
+| [Diagnose and Remediate with `doctor --fix`](doctor-fix) | Intermediate | Use the management plane's diagnostic endpoints and walk through the auto-remediation guardrails |
+| [Bundled Alerting and OpenSLO Export](alerting-and-openslo) | Intermediate | Wire up the Prometheus Operator custom resources, import the bundled alerting rules, and export OpenSLO v1 manifests |
+| [Multi-Tenant Setup](multi-tenant-setup) | Advanced | Set up tenant isolation with identity-provider integration, row-level security, per-tenant quotas, and metering |
 
-## By Difficulty
+## By difficulty
 
 ### Beginner
 
-- [`lenny up` Walkthrough](lenny-up-walkthrough) -- [Everyone]
-- [Web Playground Tour](playground-tour) -- [Everyone]
-- [Your First Session](first-session) -- [Client Developer]
-- [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime) -- [Runtime Author]
-- [Install with the `lenny-ctl install` Wizard](installer-wizard) -- [Operator]
+- [`lenny up` Walkthrough](lenny-up-walkthrough) -- everyone
+- [Web Playground Tour](playground-tour) -- everyone
+- [Your First Session](first-session) -- client developers
+- [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime) -- runtime authors
+- [Install with the `lenny-ctl install` Wizard](installer-wizard) -- operators
 
 ### Intermediate
 
-- [Build a Runtime Adapter](build-a-runtime) -- [Runtime Author]
-- [Wrap a Coding-Agent CLI](wrap-coding-agent-cli) -- [Runtime Author]
-- [Runtime SDK Integration](runtime-sdk-integration) -- [Runtime Author]
-- [Deploy to Kubernetes](deploy-to-cluster) -- [Operator]
-- [Diagnose and Remediate with `doctor --fix`](doctor-fix) -- [Operator]
-- [Bundled Alerting and OpenSLO Export](alerting-and-openslo) -- [Operator]
-- [MCP Client Integration](mcp-client-integration) -- [Client Developer]
-- [OpenAI SDK Integration](openai-sdk-integration) -- [Client Developer]
-- [OAuth Token Exchange](oauth-token-exchange) -- [Client Developer]
+- [Build a Runtime Adapter](build-a-runtime) -- runtime authors
+- [Wrap a Coding-Agent CLI](wrap-coding-agent-cli) -- runtime authors
+- [Runtime SDK Integration](runtime-sdk-integration) -- runtime authors
+- [Deploy to Kubernetes](deploy-to-cluster) -- operators
+- [Diagnose and Remediate with `doctor --fix`](doctor-fix) -- operators
+- [Bundled Alerting and OpenSLO Export](alerting-and-openslo) -- operators
+- [MCP Client Integration](mcp-client-integration) -- client developers
+- [OpenAI SDK Integration](openai-sdk-integration) -- client developers
+- [OAuth Token Exchange](oauth-token-exchange) -- client developers
 
 ### Advanced
 
-- [Recursive Delegation](recursive-delegation) -- [Runtime Author, Client Developer]
-- [Multi-Tenant Setup](multi-tenant-setup) -- [Operator]
+- [Recursive Delegation](recursive-delegation) -- runtime authors and client developers
+- [Multi-Tenant Setup](multi-tenant-setup) -- operators
 
-## Prerequisites
+## Before you start
 
-All tutorials assume you have:
+- The **Lenny CLI** is the one thing every tutorial needs: `brew install lenny-dev/tap/lenny` or grab a binary from the releases page.
+- Some SDK tutorials also need **Go 1.22+**, **Python 3.10+**, or **Node.js 18+**.
+- **Docker** is required for building runtime images.
+- **Kubernetes cluster access** is required for the operator tutorials beyond `lenny up`.
 
-- **Lenny CLI** installed (primary prerequisite; `brew install lenny-dev/tap/lenny` or download from the releases page)
-- **Go 1.22+**, **Python 3.10+**, and/or **Node.js 18+** (depending on the SDK tutorial you follow)
-- **Docker** installed (for building runtime images and for Tier 2 local development)
-- **Kubernetes cluster access** (for Operator tutorials beyond Tier 0)
-
-Individual tutorials list additional prerequisites at the top.
+Each tutorial lists anything extra it needs at the top.
 
 ## Conventions
 
-Throughout these tutorials:
+Throughout the tutorials:
 
-- `LENNY_GATEWAY` refers to the gateway base URL (default: `http://localhost:8080` for local dev)
-- `$SESSION_ID` refers to a session ID returned by a previous API call
-- `$TOKEN` refers to your authentication token
-- Code blocks marked with `# Expected output` show what you should see
-- Sections marked with **State transition** explain what happens inside Lenny when you make a call
+- `LENNY_GATEWAY` is your gateway's base URL. With `lenny up`, that's `https://localhost:8443`.
+- `$SESSION_ID` is a session ID returned by a previous call.
+- `$TOKEN` is your authentication token.
+- Code blocks marked `# Expected output` show what you should see.
+- Sections marked **State transition** explain what's happening inside Lenny when you make a call.

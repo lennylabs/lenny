@@ -7,15 +7,31 @@ has_children: true
 
 # About Lenny
 
-This section covers the motivations behind Lenny, how it compares to other platforms in the agent infrastructure space, and how to participate in the project.
+Background on what Lenny is, where it fits next to other platforms, and how to take part in the project.
 
 ---
 
 ## In this section
 
-| Page | Description |
-|:-----|:------------|
-| [Why Lenny?](why-lenny) | The problem Lenny solves, its architectural differentiators, target personas, and design principles. |
-| [Comparisons](comparisons) | Side-by-side analysis of Lenny versus E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith. |
-| [Contributing](contributing) | How to contribute code, report bugs, write runtime adapters, and propose architectural changes. |
-| [Governance](governance) | Decision-making process, governance model, license policy, and roadmap. |
+| Page | What it covers |
+|:-----|:---------------|
+| [Why Lenny?](why-lenny) | What Lenny is, when it's a good fit, and the design choices you're signing up for. |
+| [Comparisons](comparisons) | Side-by-side with E2B, Daytona, Fly.io Sprites, Temporal, Modal, and LangGraph/LangSmith. |
+| [Contributing](contributing) | How to contribute code, report bugs, write runtimes, and propose architectural changes. |
+| [Governance](governance) | How decisions get made, the license, and the roadmap. |
+
+---
+
+## Who Lenny is for
+
+Different people come to Lenny for different reasons. Each has a starting point in the docs:
+
+| If you are... | You probably care about... | Start here |
+|:--------------|:---------------------------|:-----------|
+| **Evaluating Lenny** | Architecture, trade-offs, how it compares to alternatives | [Why Lenny?](why-lenny), [Comparisons](comparisons) |
+| **Building a client** | Driving sessions from an application, script, or MCP host | [Client Guide](../client-guide/) |
+| **Writing a runtime** | Bringing an agent or framework onto the platform | [Runtime Author Guide](../runtime-author-guide/) |
+| **Operating a deployment** | Installing, configuring, scaling, upgrading | [Operator Guide](../operator-guide/) |
+| **On call for Lenny** | Diagnostics, runbooks, auto-remediation, alerts | [Agent Operability](../operator-guide/agent-operability) |
+| **Reviewing for security or compliance** | Isolation, credential handling, audit log, GDPR/SOC2/HIPAA controls | [Security](../operator-guide/security) |
+| **Contributing to Lenny** | Changing Lenny itself | [Contributing](contributing) |

@@ -1,19 +1,19 @@
 # External LLM Routing Proxy
 
-Lenny's gateway ships with a native Go translator that converts OpenAI Chat Completions and Anthropic Messages requests into the upstream wire formats for the v1 provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [`../reference/metrics.md`](../reference/metrics.md) for the metrics the translator emits, and [§4.9](../../spec/04_system-components.md#49-credential-leasing-service) of the spec for the subsystem contract.
+Lenny's gateway talks to LLM providers on behalf of agent pods. It ships with a built-in translator that converts OpenAI Chat Completions and Anthropic Messages requests into the upstream wire formats for the v1 provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [`../reference/metrics.md`](../reference/metrics.md) for the metrics the translator emits, and [§4.9](../../spec/04_system-components.md#49-credential-leasing-service) of the spec for the subsystem contract.
 
 This page documents how to integrate an **external** LLM routing proxy — LiteLLM, Portkey, OpenRouter, AWS Bedrock Agent, Azure API Management, or any custom in-house gateway — as the upstream for one or more Lenny `CredentialPool`s. The external-proxy path is a first-class deployer option; Lenny itself does not ship or manage the external proxy.
 
 ## When to use an external LLM proxy
 
-The native translator covers the mainstream provider set. Reach for an external proxy when your deployment needs one or more of the following:
+The gateway's built-in translator covers the mainstream provider set. Reach for an external proxy when your deployment needs one or more of the following:
 
-- **Broader provider catalog.** You route to providers Lenny's native translator does not yet support (e.g., `cohere`, `mistral`, self-hosted vLLM/TGI, on-prem inference endpoints, private-preview foundation models).
+- **Broader provider catalog.** You route to providers the gateway's built-in translator does not yet support (e.g., `cohere`, `mistral`, self-hosted vLLM/TGI, on-prem inference endpoints, private-preview foundation models).
 - **Custom routing intelligence.** Cost-aware model selection, region-aware routing, per-tenant model pinning, canary rollouts across provider accounts — logic that would live outside Lenny's `CredentialRouter` and that you prefer to centralize in a shared team gateway.
 - **Shared spend and observability.** Multiple internal teams already consume LLMs through a common gateway that aggregates spend, budget caps, and provider-side usage dashboards. Sending Lenny's traffic through the same gateway keeps spend reporting consistent.
-- **Per-request model rewriting beyond interceptor scope.** If `PreLLMRequest` interceptors are sufficient (allowlist/denylist, trivial field rewrites), prefer them — they are in-process and keep Lenny-side observability intact. Reach for an external proxy when the rewriting logic depends on external state (spend dashboards, experiment assignments, model-availability signals) that interceptors cannot access cheaply.
+- **Per-request model rewriting beyond interceptor scope.** If `PreLLMRequest` interceptors are sufficient (allowlist/denylist, trivial field rewrites), prefer them — they run inside the gateway process and keep Lenny-side observability intact. Reach for an external proxy when the rewriting logic depends on external state (spend dashboards, experiment assignments, model-availability signals) that interceptors cannot access cheaply.
 
-If none of these apply, the native translator is the recommended path — it is lower latency, requires no additional service to operate, and keeps `PreLLMRequest` / `PostLLMResponse` interceptors firing on every request.
+If none of these apply, the built-in translator is the recommended path — it is lower latency, requires no additional service to operate, and keeps `PreLLMRequest` / `PostLLMResponse` interceptors firing on every request.
 
 ## Deployment topologies
 
@@ -71,7 +71,7 @@ Two integration patterns are supported. Choose based on whether you want Lenny's
 
 ### Pattern A — external proxy as the upstream provider (recommended)
 
-Lenny treats the external proxy as an opaque upstream. The runtime's SDK talks to the external proxy **directly**; Lenny's LLM Proxy subsystem is not in the request path.
+Lenny treats the external proxy as an opaque upstream. The runtime's SDK talks to the external proxy **directly**; the gateway's LLM routing subsystem is not in the request path.
 
 Implement a custom `CredentialProvider` ([§4.9](../../spec/04_system-components.md#49-credential-leasing-service)) that mints `materializedConfig` entries pointing at the external proxy:
 
@@ -104,13 +104,13 @@ The runtime receives `{ baseUrl, apiKey }` in its `CredentialLease`, configures 
 **Governance implications.**
 
 - Lenny retains its credential-governance role: who can lease the external-proxy key is still controlled by Lenny's `CredentialPolicy`, and every lease is audited (`credential.leased`).
-- `PreLLMRequest` and `PostLLMResponse` interceptors do **not** fire on Pattern A traffic — the request never traverses Lenny's LLM Proxy subsystem. Enforce policy (model allowlist/denylist, prompt inspection, PII redaction) at the external proxy's inbound side.
+- `PreLLMRequest` and `PostLLMResponse` interceptors do **not** fire on Pattern A traffic — the request never traverses the gateway's LLM routing subsystem. Enforce policy (model allowlist/denylist, prompt inspection, PII redaction) at the external proxy's inbound side.
 - Authoritative token counting comes from the external proxy, not from Lenny. Configure the external proxy to emit usage to your billing/spend system; Lenny's `lenny_gateway_llm_proxy_*` metrics will not reflect this traffic.
 - The hard-rejection rule for `deliveryMode: direct` + `isolationProfile: standard` in multi-tenant mode still applies ([§4.9](../../spec/04_system-components.md#49-credential-leasing-service)) — Pattern A pools must use `sandboxed` or `microvm` isolation in multi-tenant deployments.
 
 ### Pattern B — external proxy behind Lenny's LLM Proxy
 
-Lenny's native translator runs normally, treating the external proxy as the upstream endpoint. `PreLLMRequest` and `PostLLMResponse` interceptors fire on the Lenny-to-external-proxy leg.
+The gateway's built-in translator runs normally, treating the external proxy as the upstream endpoint. `PreLLMRequest` and `PostLLMResponse` interceptors fire on the Lenny-to-external-proxy leg.
 
 Configure an existing built-in provider with a `baseUrl` override pointing at the external proxy:
 
@@ -127,7 +127,7 @@ credentialPools:
         secretRef: { name: litellm-tenant-key, key: api_key }
 ```
 
-Lenny's translator converts the runtime's dialect (OpenAI or Anthropic) into the Anthropic wire format, injects the credential, and forwards to the external proxy. The external proxy accepts the Anthropic-dialect request and re-translates downstream to whatever provider it routes to.
+The gateway's translator converts the runtime's dialect (OpenAI or Anthropic) into the Anthropic wire format, injects the credential, and forwards to the external proxy. The external proxy accepts the Anthropic-dialect request and re-translates downstream to whatever provider it routes to.
 
 > **External-proxy inbound contract.** The external proxy **must accept the pool's configured upstream provider wire format on its inbound side**. For a pool configured with `provider: anthropic_direct`, the external proxy's inbound must be Anthropic Messages API-compatible; for a pool configured with `provider: aws_bedrock`, the inbound must be Bedrock's Converse/InvokeModel shape; and so on. LiteLLM, Portkey, and most LLM routing gateways accept OpenAI wire format natively and an Anthropic-compatible inbound as an option — verify your specific external proxy's inbound contract before configuring the pool. A mismatch between the provider's expected shape and the external proxy's inbound will surface as `schema_mismatch` translation errors.
 
@@ -135,8 +135,8 @@ Lenny's translator converts the runtime's dialect (OpenAI or Anthropic) into the
 
 - `PreLLMRequest` and `PostLLMResponse` interceptors fire on every request (Lenny has full visibility up to the external proxy's inbound side).
 - Cross-provider translation happens at the external proxy, outside Lenny's observability scope — Lenny sees the Anthropic request and response shapes, not the downstream provider Bedrock/Vertex/Mistral shapes.
-- Authoritative token counting: Lenny's native translator extracts `usage.input_tokens` / `usage.output_tokens` from the Anthropic-shaped response returned by the external proxy. The external proxy MUST preserve these fields; if it aggregates or rewrites them, Lenny's counts will not match the external proxy's own spend reports.
-- SPIFFE-binding, interceptor chain, and the Lenny-side circuit breaker all behave as they do for any proxy-mode pool.
+- Authoritative token counting: the gateway's translator extracts `usage.input_tokens` / `usage.output_tokens` from the Anthropic-shaped response returned by the external proxy. The external proxy MUST preserve these fields; if it aggregates or rewrites them, Lenny's counts will not match the external proxy's own spend reports.
+- Pod identity binding, interceptor chain, and the Lenny-side circuit breaker all behave as they do for any proxy-mode pool.
 
 ## Picking a pattern
 
@@ -144,9 +144,9 @@ Lenny's translator converts the runtime's dialect (OpenAI or Anthropic) into the
 |---|---|---|
 | Lenny-side `PreLLMRequest` / `PostLLMResponse` interceptors must fire | — | ✓ |
 | External proxy is the sole place for policy enforcement | ✓ | — |
-| Custom provider beyond the native translator's v1 set | ✓ | ✓ (if the external proxy accepts Anthropic or OpenAI dialect) |
+| Custom provider beyond the gateway's built-in set | ✓ | ✓ (if the external proxy accepts Anthropic or OpenAI dialect) |
 | Per-request cost routing based on external-proxy logic | ✓ | ✓ |
-| Lowest latency path Lenny can offer | — (runtime → external proxy directly) | — (runtime → Lenny translator → external proxy) |
+| Lowest latency path Lenny can offer | — (runtime → external proxy directly) | — (runtime → gateway translator → external proxy) |
 | Authoritative token count produced by Lenny | — | ✓ |
 
 Pattern A is recommended unless you specifically need Lenny-side interception of external-proxy traffic.
@@ -158,7 +158,7 @@ Pattern A is recommended unless you specifically need Lenny-side interception of
 **Pattern B.** Lenny's existing metrics apply end-to-end from runtime to external proxy:
 
 - `lenny_gateway_llm_proxy_request_duration_seconds` — end-to-end hop including the external proxy.
-- `lenny_gateway_llm_translation_duration_seconds` — time spent in Lenny's native translator (does not include the external proxy's processing).
+- `lenny_gateway_llm_translation_duration_seconds` — time spent in the gateway's translator (does not include the external proxy's processing).
 - `lenny_gateway_llm_translation_errors_total{error_type="upstream_5xx"}` — external proxy failures feed this counter and the LLM Proxy circuit breaker.
 
 ## Security
@@ -170,7 +170,7 @@ Pattern A is recommended unless you specifically need Lenny-side interception of
 
 ## See also
 
-- [`security.md`](security.md) — credential flow through the native translator, NET-046 egress policy.
+- [`security.md`](security.md) — credential flow through the gateway's translator, NET-046 egress policy.
 - [`../reference/metrics.md`](../reference/metrics.md) — LLM translator metrics.
 - [`../reference/configuration.md`](../reference/configuration.md) — `gateway.llmProxy.*` Helm values.
-- [`../../spec/04_system-components.md#49-credential-leasing-service`](../../spec/04_system-components.md#49-credential-leasing-service) — full credential leasing contract, delivery modes, native translator, external-proxy integration.
+- [`../../spec/04_system-components.md#49-credential-leasing-service`](../../spec/04_system-components.md#49-credential-leasing-service) — full credential leasing contract, delivery modes, gateway translator, external-proxy integration.

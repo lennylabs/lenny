@@ -22,13 +22,13 @@ All three examples implement the same behavior:
 4. **Handle heartbeats** by immediately writing `heartbeat_ack`.
 5. **Handle shutdown** by exiting cleanly.
 
-The examples start at Minimum tier (stdin/stdout only) and include guidance for upgrading to Standard tier (adding MCP tools).
+The examples start at the Basic integration level (stdin/stdout only) and include guidance for upgrading to Standard (adding MCP tools).
 
 ---
 
 ## Language Choice Guidance
 
-| Language | Best For | Minimum Tier Complexity | Standard Tier Complexity |
+| Language | Best For | Basic Level Complexity | Standard Level Complexity |
 |----------|----------|------------------------|-------------------------|
 | **Go** | Systems programming, high-performance runtimes, production agents | ~100 lines | ~200 lines + `mcp-go` dependency |
 | **Python** | Rapid prototyping, ML/AI integrations, wrapping existing frameworks | ~80 lines | ~150 lines + `mcp` dependency |
@@ -38,11 +38,11 @@ All three languages work equally well with Lenny. The adapter contract is langua
 
 ---
 
-## Tier Coverage
+## What Each Example Covers
 
 Each example covers:
 
-### Minimum Tier (Complete)
+### Basic level (complete)
 - Message handling with file reading via `tool_call`/`tool_result`
 - Heartbeat/shutdown handling
 - Proper stdout flushing
@@ -50,9 +50,9 @@ Each example covers:
 - Multi-stage Dockerfile
 - Build and run instructions
 
-### Standard Tier (Upgrade Guide)
+### Standard level (upgrade guide)
 - Reading the adapter manifest
-- Connecting to the platform MCP server
+- Connecting to Lenny's local tool server
 - Using `lenny/output` for incremental streaming
 - Using `lenny/delegate_task` for subtask delegation
 
@@ -86,4 +86,4 @@ npm run build
 make run LENNY_AGENT_BINARY="node dist/main.js"
 ```
 
-For Standard tier features (MCP tools, delegation), use `docker compose up` instead of `make run`, since abstract Unix sockets require Linux.
+For Standard-level features (MCP tools, delegation), use `docker compose up` instead of `make run`, since abstract Unix sockets require Linux.

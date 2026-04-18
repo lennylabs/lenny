@@ -8,7 +8,7 @@ nav_order: 2
 
 # Python Runtime SDK
 
-This page presents a complete file summarizer runtime in Python. It implements the Minimum tier, reads workspace files via adapter-local tools, and produces summaries. The full source is ~180 lines including comments.
+This page presents a complete file summarizer runtime in Python. It implements the Basic integration level, reads workspace files via adapter-local tools, and produces summaries. The full source is ~180 lines including comments.
 
 ---
 
@@ -19,7 +19,7 @@ This page presents a complete file summarizer runtime in Python. It implements t
 """
 file-summarizer: A Lenny runtime that reads workspace files and produces summaries.
 
-Integration tier: Minimum
+Integration level: Basic
   - Reads JSON Lines from stdin
   - Handles "message" by reading workspace files and summarizing them
   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
@@ -286,8 +286,8 @@ Without explicit flushing, the adapter never receives your output and the sessio
 ## requirements.txt
 
 ```
-# No external dependencies for Minimum tier.
-# Standard tier: add the MCP client library:
+# No external dependencies for the Basic level.
+# Standard level: add the MCP client library:
 # mcp>=1.0.0
 ```
 
@@ -315,10 +315,10 @@ ENTRYPOINT ["python", "-u", "main.py"]
 ## Build and Run
 
 ```bash
-# Run locally (Tier 1)
+# Run locally with `make run` (in-process, no Docker)
 make run LENNY_AGENT_BINARY="python -u examples/runtimes/file-summarizer-python/main.py"
 
-# Run with Docker (Tier 2)
+# Run locally with `docker compose up`
 docker build -t file-summarizer-py:dev \
   -f examples/runtimes/file-summarizer-python/Dockerfile .
 docker compose up
@@ -329,7 +329,7 @@ docker compose up
 ## Register the Runtime
 
 ```bash
-# Tier 2: Register via admin API
+# Register via admin API
 curl -X POST http://localhost:8080/v1/admin/runtimes \
   -H "Content-Type: application/json" \
   -d '{
@@ -347,7 +347,7 @@ curl -X POST http://localhost:8080/v1/sessions \
 
 ---
 
-## Upgrading to Standard Tier
+## Upgrading to Standard level
 
 ### 1. Add MCP Client Dependency
 
@@ -367,13 +367,13 @@ def read_manifest():
         return json.load(f)
 ```
 
-### 3. Connect to the Platform MCP Server
+### 3. Connect to Lenny's local tool server
 
 ```python
 from mcp import Client
 
 async def connect_mcp(manifest):
-    """Connect to the platform MCP server via abstract Unix socket."""
+    """Connect to Lenny's local tool server via abstract Unix socket."""
     socket_path = manifest["platformMcpServer"]["socket"]
     nonce = manifest["mcpNonce"]
 
@@ -412,7 +412,7 @@ async def delegate_review(client, code):
 
 ### 5. Async Main Loop
 
-Standard tier with MCP requires an async event loop. Restructure your main loop:
+The Standard level with MCP requires an async event loop. Restructure your main loop:
 
 ```python
 import asyncio
@@ -437,4 +437,4 @@ if __name__ == "__main__":
 
 ### 6. macOS Note
 
-Standard tier requires abstract Unix sockets, which are Linux-only. Use `docker compose up` (Tier 2) on macOS.
+The Standard level requires abstract Unix sockets, which are Linux-only. Use `docker compose up` on macOS.

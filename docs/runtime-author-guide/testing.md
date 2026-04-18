@@ -7,13 +7,13 @@ nav_order: 8
 
 # Testing
 
-Lenny provides a compliance test suite that validates your runtime against the adapter contract. This page covers the test framework, the compliance matrix by tier, local testing, and CI integration.
+Lenny provides a compliance test suite that validates your runtime against the adapter contract. This page covers the test framework, the compliance matrix per integration level, local testing, and CI integration.
 
 ---
 
 ## Compliance Suite Overview
 
-The compliance suite (`lenny-compliance`) is a standalone test harness that exercises every aspect of the adapter contract for your runtime's declared integration tier. It spawns your binary, feeds it messages on stdin, reads responses from stdout, and validates correctness.
+The compliance suite (`lenny-compliance`) is a standalone test harness that exercises every aspect of the adapter contract for your runtime's declared integration level. It spawns your binary, feeds it messages on stdin, reads responses from stdout, and validates correctness.
 
 ### What It Tests
 
@@ -41,13 +41,13 @@ The compliance suite (`lenny-compliance`) is a standalone test harness that exer
 ### Basic Usage
 
 ```bash
-# Test a Minimum-tier runtime
+# Test a Basic-level runtime
 lenny-compliance --binary ./my-agent --tier minimum
 
-# Test a Standard-tier runtime
+# Test a Standard-level runtime
 lenny-compliance --binary ./my-agent --tier standard
 
-# Test a Full-tier runtime
+# Test a Full-level runtime
 lenny-compliance --binary ./my-agent --tier full
 ```
 
@@ -56,7 +56,7 @@ lenny-compliance --binary ./my-agent --tier full
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--binary` | (required) | Path to your runtime binary |
-| `--tier` | `minimum` | Integration tier to test: `minimum`, `standard`, `full` |
+| `--tier` | `minimum` | Integration level to test: `minimum`, `standard`, `full` |
 | `--timeout` | `30s` | Per-test timeout |
 | `--verbose` | `false` | Show detailed test output including stdin/stdout traces |
 | `--filter` | (all) | Run only tests matching this pattern |
@@ -64,9 +64,9 @@ lenny-compliance --binary ./my-agent --tier full
 
 ---
 
-## Test Matrix by Tier
+## Test Matrix by Integration Level
 
-### Minimum Tier Tests
+### Basic-level tests
 
 | Test | Description |
 |------|-------------|
@@ -85,7 +85,7 @@ lenny-compliance --binary ./my-agent --tier full
 | `TestMultipleMessages` | Send multiple `message` payloads in sequence |
 | `TestStdinClose` | Close stdin, verify the binary exits cleanly |
 
-### Standard Tier Tests (in addition to Minimum)
+### Standard-level tests (in addition to Basic)
 
 | Test | Description |
 |------|-------------|
@@ -101,7 +101,7 @@ lenny-compliance --binary ./my-agent --tier full
 | `TestMemoryWriteQuery` | Write a memory, query it, verify retrieval |
 | `TestConnectorMcp` | Connect to a connector MCP server (if configured) |
 
-### Full Tier Tests (in addition to Standard)
+### Full-level tests (in addition to Standard)
 
 | Test | Description |
 |------|-------------|
@@ -118,7 +118,7 @@ lenny-compliance --binary ./my-agent --tier full
 
 ## Local Testing
 
-### Tier 1: Unit-Style Tests
+### Unit-style tests with `make run`
 
 Run the compliance suite directly against your binary:
 
@@ -132,9 +132,9 @@ lenny-compliance --binary ./my-agent --tier minimum --verbose
 
 This requires no Docker, Kubernetes, or infrastructure. The test harness spawns your binary and communicates via stdin/stdout.
 
-### Tier 2: Integration Tests
+### Integration tests with `docker compose up`
 
-For Standard and Full tier tests that require MCP servers:
+For Standard and Full level tests that require MCP servers:
 
 ```bash
 # Start the full local stack
@@ -147,13 +147,13 @@ lenny-compliance --binary ./my-agent --tier standard \
 
 ### Smoke Test
 
-Both dev tiers include a built-in smoke test that validates the entire pipeline:
+Both local dev modes include a built-in smoke test that validates the entire pipeline:
 
 ```bash
-# Tier 1
+# With `make run`
 make test-smoke
 
-# Tier 2
+# With `docker compose up`
 docker compose run smoke-test
 ```
 
@@ -186,7 +186,7 @@ jobs:
       - name: Install compliance suite
         run: go install github.com/lenny-dev/lenny/cmd/lenny-compliance@latest
 
-      - name: Run Minimum tier tests
+      - name: Run Basic-level tests
         run: lenny-compliance --binary ./my-agent --tier minimum --json > results.json
 
       - name: Upload results
@@ -196,9 +196,9 @@ jobs:
           path: results.json
 ```
 
-### Standard Tier in CI
+### Standard-level tests in CI
 
-Standard tier tests require the local stack. Use Docker Compose in CI:
+Standard-level tests require the local stack. Use Docker Compose in CI:
 
 ```yaml
   compliance-standard:
@@ -225,7 +225,7 @@ Standard tier tests require the local stack. Use Docker Compose in CI:
             -H "Content-Type: application/json" \
             -d '{"name": "my-agent", "type": "agent", "image": "my-agent:dev"}'
 
-      - name: Run Standard tier tests
+      - name: Run Standard-level tests
         run: lenny-compliance --binary ./my-agent --tier standard --json > results.json
 ```
 
@@ -233,7 +233,7 @@ Standard tier tests require the local stack. Use Docker Compose in CI:
 
 ## Validation Gate
 
-The compliance suite is designed as a **validation gate** for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), your runtime must pass all tests at its declared tier:
+The compliance suite is designed as a **validation gate** for runtime publication. Before publishing your runtime to the community registry (see [Publishing](publishing.md)), your runtime must pass all tests at its declared integration level:
 
 ```bash
 # Required for publication

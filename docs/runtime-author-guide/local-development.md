@@ -7,152 +7,154 @@ nav_order: 4
 
 # Local Development
 
-Lenny provides three local development modes for runtime authors. Pick the one that matches your workflow:
+There are three ways to run Lenny locally while you work on a runtime. Pick whichever matches what you're doing:
 
-| Tier | Command | What it runs | Best for |
-|------|---------|--------------|----------|
-| **Tier 0** | `lenny up` | Single binary; embedded k3s, Postgres, Redis, KMS shim, OIDC, gateway, `lenny-ops`, controllers, reference runtime catalog | **Default choice.** Testing a runtime against the real platform code path; end-to-end demos; wiring the full MCP surface |
-| **Tier 1** | `make run` | Single Go process with SQLite, in-memory caches, controller-sim | Iterating on gateway or adapter source code; macOS-friendly Minimum-tier work |
-| **Tier 2** | `docker compose up` | Real Postgres/Redis/MinIO + Docker containers for the gateway and your agent | Standard and Full tier runtimes on macOS, credential-mode testing, integration CI |
+| Command | What it is | Best for |
+|---------|------------|----------|
+| **`lenny up`** | The whole platform running in a single binary. The default. | Testing your runtime against the real platform; end-to-end demos; anything you don't specifically need a different mode for. |
+| **`make run`** | The gateway running as a single Go process with an in-memory backend and a lightweight controller that spawns one agent process. | Contributors iterating on the gateway or adapter source code; Basic-level runtimes on macOS. |
+| **`docker compose up`** | Real Postgres, Redis, and artifact storage running in containers, plus Docker containers for the gateway and your agent. | Standard- and Full-level runtimes on macOS; exercising the real credential code path; integration CI. |
 
-Tier 0 is the fastest way to see your runtime in context -- it exercises the production code path with zero external dependencies. Tiers 1 and 2 are faster *iteration loops* for contributors modifying core Lenny components.
+`lenny up` is the fastest path to seeing your runtime in context -- it runs the same code as production with nothing else to set up. `make run` and `docker compose up` exist mainly so contributors modifying core Lenny components get a tighter iteration loop.
 
 ---
 
-## Tier 0: `lenny up` --- Full Platform, Single Binary
+## `lenny up` -- the whole platform, one binary
 
 ```bash
 lenny up
 ```
 
-Starts the complete platform in-process: embedded k3s, Postgres, Redis, a KMS shim, an OIDC provider, the gateway, `lenny-ops`, the controllers, and the full reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; subsequent runs start in seconds.
+Starts everything in-process: an embedded Kubernetes (k3s), Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the full reference runtime catalog. The first run downloads k3s to `~/.lenny/k3s/`; every run after that starts in seconds.
 
 **What you need:** the `lenny` binary. Nothing else.
 
-**Best for:**
-- Evaluating Lenny against your own workloads
-- Validating a runtime against the same code path used in production
-- End-to-end demos (including the web playground at `https://localhost:8443/playground`)
-- First-time exploration before cluster deployment
+**Use it for:**
 
-### Using Your Own Runtime
+- Trying Lenny out with your own workloads
+- Testing a runtime against the same code path production uses
+- End-to-end demos, including the web playground at `https://localhost:8443/playground`
+- Exploring before you deploy to a cluster
 
-Build your runtime image and register it against the live Tier 0 gateway:
+### Using your own runtime
+
+Build your image and register it against the running gateway:
 
 ```bash
 docker build -t my-agent:dev .
 lenny runtime publish my-agent --image my-agent:dev
-lenny session new --runtime=my-agent --attach "Hello"
+lenny session start --runtime my-agent --message "Hello"
 ```
 
-Or scaffold a runtime from scratch:
+Or scaffold one from scratch:
 
 ```bash
 lenny runtime init my-agent --language go --template coding
 cd my-agent && make image && lenny runtime publish my-agent --image my-agent:dev
 ```
 
-### Teardown
+### Shutting it down
 
 ```bash
-lenny down             # stop components, keep state in ~/.lenny/
-lenny down --purge     # also remove ~/.lenny/ for a fresh start
+lenny down             # stop everything; keep state in ~/.lenny/
+lenny down --purge     # also wipe ~/.lenny/ for a fresh start
 ```
 
-### Production warning
+### Not for production
 
-Every `lenny up` prints a non-suppressible banner: `"Tier 0 embedded mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`, and any attempt to expose the gateway outside localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+Every `lenny up` prints a banner you can't suppress: "Local mode. NOT for production use. Credentials, master keys, and identities are insecure." The embedded identity provider refuses any audience claim that isn't `dev.local`, and any attempt to expose the gateway beyond localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
 
 ---
 
-## Tier 1: `make run` --- Zero-Dependency Local Mode
+## `make run` -- zero dependencies, for gateway contributors
 
 ```bash
 make run
 ```
 
-A single binary entry point that embeds all required state:
+A single binary that embeds everything the gateway would normally talk to:
 
-| Component | Replacement |
-|-----------|-------------|
+| Component | What it's replaced with |
+|-----------|-------------------------|
 | Postgres | Embedded SQLite |
 | Redis | In-memory caches |
-| MinIO | Local filesystem directory (`./lenny-data/`) |
-| Kubernetes | Controller-sim (manages a single agent process) |
-| mTLS | Disabled (plain HTTP) |
+| Artifact storage | A local directory (`./lenny-data/`) |
+| Kubernetes | A lightweight in-process controller that spawns one agent process |
+| mTLS | Disabled -- plain HTTP |
 
-**What starts:** Gateway + controller-sim + a single agent container, all running as goroutines in one process.
+**What starts:** the gateway, the in-process controller, and a single agent, all as goroutines inside one process.
 
-**What you need:** Go toolchain. Nothing else.
+**What you need:** the Go toolchain.
 
-**Best for:**
-- Runtime adapter authors testing their binary against the gateway contract
-- First-time contributors getting oriented
-- Quick demos and evaluations
-- Agent binary authors iterating locally
+**Use it for:**
 
-### Using Your Own Runtime Binary
+- Iterating on runtime code against the gateway's contract
+- Getting oriented as a first-time Lenny contributor
+- Quick demos
+- Fast local iteration on an agent binary
+
+### Using your own agent binary
 
 ```bash
 make run LENNY_AGENT_BINARY=/path/to/my-agent-binary
 ```
 
-The controller-sim spawns the specified binary as a single agent container. The binary must implement the stdin/stdout JSON Lines protocol. No runtime registration is required in Tier 1 --- the binary is used directly.
+The in-process controller spawns your binary directly. It has to speak the stdin/stdout JSON-lines contract. There's no runtime registration step -- the binary is used as-is.
 
-### Default Runtime
+### The default runtime
 
-Without `LENNY_AGENT_BINARY`, `make run` uses the built-in echo runtime. This is a deterministic runtime that echoes messages back, allowing you to test platform mechanics (session lifecycle, workspace materialization) without providing any API keys or LLM credentials.
+Without `LENNY_AGENT_BINARY`, `make run` uses a built-in echo runtime. It replays deterministic responses, which is enough to exercise session lifecycle, workspace preparation, heartbeats, and shutdown without needing any LLM credentials.
 
-### Smoke Test
+### Smoke test
 
 ```bash
 make test-smoke
 ```
 
-Creates a session with the echo runtime, sends a prompt, verifies a response, and exits. Validates the entire pipeline (gateway, controller-sim, runtime adapter, agent binary) in under 10 seconds.
+Creates a session with the echo runtime, sends a prompt, checks the response, and exits. Validates the whole pipeline end-to-end in under 10 seconds.
 
 ### Observability
 
-Tier 1 outputs traces to stdout and exposes Prometheus metrics on `:9090/metrics`.
+Traces go to stdout; Prometheus metrics are exposed on `:9090/metrics`.
 
-### macOS Support
+### macOS
 
-`make run` supports macOS for **Minimum-tier runtimes only** (stdin/stdout binary protocol). Standard and Full tier runtimes require abstract Unix sockets (`@` prefix), which are a Linux-only feature. If you are developing a Standard or Full tier runtime on macOS, use Tier 2 (`docker compose up`) instead.
+`make run` works on macOS for **Basic-level runtimes** -- those that only use stdin/stdout. Standard and Full runtimes need Linux abstract Unix sockets, which macOS doesn't have, so use `docker compose up` for those.
 
 ---
 
-## Tier 2: `docker compose up` --- Full Local Stack
+## `docker compose up` -- a production-like local stack
 
 ```bash
 docker compose up
 ```
 
-Production-like local environment with real infrastructure dependencies:
+A production-like local environment, with real storage dependencies:
 
-| Component | What Runs |
-|-----------|-----------|
-| Gateway | Single replica, no HPA |
-| Controller | Controller-sim managing a single Docker container |
-| Postgres | Lightweight container |
-| Redis | Lightweight container |
-| MinIO | Single container for artifact storage |
-| Agent pod | Docker container with runtime adapter + agent binary |
+| Component | What's running |
+|-----------|----------------|
+| Gateway | Single replica, no autoscaling |
+| Controller | Lightweight controller managing one Docker container |
+| Postgres | Small container |
+| Redis | Small container |
+| Artifact storage | Single container (MinIO) |
+| Agent pod | Docker container with the sidecar and your agent binary |
 
 **What you need:** Docker and Docker Compose.
 
-**Best for:**
-- Lenny core developers iterating on gateway/controller logic
-- Integration testing against real storage backends
-- CI integration tests
-- Production-like local environment validation
+**Use it for:**
 
-### Using Your Own Runtime
+- Iterating on gateway or controller logic with real storage backends
+- Testing against production-like infrastructure
+- Running integration tests in CI
+
+### Using your own runtime
 
 ```bash
 # 1. Build your runtime image
 docker build -t my-agent:dev .
 
-# 2. Start the stack (after it is up, register via admin API)
+# 2. Start the stack (then register via the admin API once it's up)
 docker compose up -d
 
 # 3. Register the runtime
@@ -160,15 +162,15 @@ curl -X POST http://localhost:8080/v1/admin/runtimes \
   -H "Content-Type: application/json" \
   -d '{"name": "my-agent", "type": "agent", "image": "my-agent:dev"}'
 
-# 4. Start a session using your runtime
+# 4. Start a session with your runtime
 curl -X POST http://localhost:8080/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"runtimeName": "my-agent", "tenantId": "default"}'
 ```
 
-Alternatively, add your runtime to the bootstrap seed file (`lenny-data/seed.yaml`) and restart. The controller-sim picks up registered runtimes on the next pool warm cycle. The seed file is applied idempotently on every `docker compose up`.
+Alternatively, add the runtime to the bootstrap seed file (`lenny-data/seed.yaml`) and restart. The controller picks up registered runtimes on the next warm cycle, and the seed file is applied idempotently on every `docker compose up`.
 
-### Smoke Test
+### Smoke test
 
 ```bash
 docker compose run smoke-test
@@ -176,44 +178,46 @@ docker compose run smoke-test
 
 ### Observability
 
-Enable optional observability containers with the `observability` profile:
+Turn on the optional observability containers with the `observability` profile:
 
 ```bash
 docker compose --profile observability up
 ```
 
-This adds:
-- **Prometheus** --- metrics scraping
-- **Grafana** --- pre-built Lenny dashboard
-- **Jaeger** --- distributed tracing
+That adds:
 
-Access Grafana at `http://localhost:3000` and Jaeger at `http://localhost:16686`.
+- **Prometheus** for metrics
+- **Grafana** with a pre-built Lenny dashboard
+- **Jaeger** for distributed tracing
+
+Grafana is at `http://localhost:3000`, Jaeger at `http://localhost:16686`.
 
 ---
 
-## TLS and Credentials
+## TLS and credentials
 
-### Plain HTTP (Default)
+### Plain HTTP by default
 
-By default, Tier 2 transmits all traffic over plain HTTP between the gateway and agent containers. **Do not configure real LLM credentials in docker-compose unless TLS is enabled.**
+With `docker compose up`, traffic between the gateway and agent containers goes over plain HTTP. **Don't configure real LLM credentials in this mode -- turn on TLS first.**
 
-### Credential-Testing Profile
+### Credential testing
 
-When testing with real LLM provider credentials or exercising the mTLS code path:
+When you want to test real LLM credentials or the mTLS code path:
 
 ```bash
 make compose-tls
 # Equivalent to: docker compose --profile credentials up
 ```
 
-This profile:
-- Sets `LENNY_DEV_TLS=true` automatically
-- Generates self-signed mTLS certificates on first run (stored in `./lenny-data/certs/`)
+That profile:
+
+- Sets `LENNY_DEV_TLS=true`
+- Generates self-signed mTLS certificates on the first run (in `./lenny-data/certs/`)
 - Encrypts all gateway-to-agent traffic
 
-### Self-Signed Certificate Trust Setup
+### Trusting the self-signed CA
 
-When `LENNY_DEV_TLS=true` is active, configure your API clients to trust the self-signed CA:
+When `LENNY_DEV_TLS=true` is on, configure your clients to trust the self-signed CA:
 
 **macOS:**
 ```bash
@@ -238,37 +242,36 @@ Certificates are regenerated if deleted; no manual key management is required.
 
 ---
 
-## Hot Reload Workflow
+## Hot reload
 
-### Minimum Tier (stdin/stdout only)
+### Basic-level runtimes (stdin/stdout only)
 
-1. Edit your runtime source code.
-2. Rebuild your binary.
-3. Stop and restart `make run`:
+1. Edit your runtime.
+2. Rebuild the binary.
+3. Stop `make run` (Ctrl+C) and start it again:
 
 ```bash
-# Terminal 1: stop the running instance (Ctrl+C), then:
 make run LENNY_AGENT_BINARY=./my-agent
 ```
 
-The controller-sim restarts with your updated binary immediately. Session state is not preserved across restarts (this is development mode).
+The in-process controller starts with your updated binary right away. Session state doesn't survive a restart -- this is development mode.
 
-### Standard/Full Tier (Docker)
+### Standard and Full runtimes (Docker)
 
-1. Edit your runtime source code.
-2. Rebuild your container image:
+1. Edit your runtime.
+2. Rebuild the container image:
 
 ```bash
 docker build -t my-agent:dev .
 ```
 
-3. Restart only the agent container:
+3. Restart just the agent container:
 
 ```bash
 docker compose restart agent
 ```
 
-The gateway and infrastructure containers continue running. The controller-sim detects the agent restart and re-warms the pool.
+The gateway and backing containers keep running. The controller notices the agent restarted and re-warms the pool.
 
 For faster iteration, mount your binary as a volume:
 
@@ -280,67 +283,63 @@ services:
       - ./build/my-agent:/usr/local/bin/my-agent
 ```
 
-Then rebuild and copy the binary into `./build/` without rebuilding the Docker image.
+Then rebuild and copy the binary into `./build/` without rebuilding the image.
 
 ---
 
 ## Debugging
 
-### Inspecting Adapter-to-Binary Messages
+### Seeing what the sidecar sends your binary
 
-**Tier 1:** All adapter-to-binary messages are logged to stdout with a `[adapter→binary]` prefix when `LENNY_LOG_LEVEL=debug` is set:
+**`make run`:** every message between the sidecar and your binary is logged to stdout with a `[adapter→binary]` prefix when `LENNY_LOG_LEVEL=debug` is set:
 
 ```bash
 LENNY_LOG_LEVEL=debug make run LENNY_AGENT_BINARY=./my-agent
 ```
 
-**Tier 2:** View adapter logs for the agent container:
+**`docker compose`:** read the sidecar's logs off the agent container:
 
 ```bash
 docker compose logs -f agent
 ```
 
-The adapter logs every message sent to stdin and received from stdout at `DEBUG` level.
+At DEBUG level the sidecar logs every line it sends to stdin and every line it reads from stdout.
 
-### Inspecting Gateway Logs
+### Gateway logs
 
-**Tier 1:** Gateway logs appear on the same stdout (prefixed with `[gateway]`).
+**`make run`:** they go to the same stdout, prefixed with `[gateway]`.
 
-**Tier 2:**
+**`docker compose`:**
 
 ```bash
 docker compose logs -f gateway
 ```
 
-### Inspecting the Adapter Manifest
+### Reading the sidecar's manifest
 
-The adapter manifest is written before your binary starts. In Tier 2, you can inspect it inside the agent container:
+The sidecar writes its manifest before your binary starts. With `docker compose`, you can read it inside the agent container:
 
 ```bash
 docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 ```
 
-### Common Issues
+### Common issues
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Session hangs after your binary writes a response | stdout not flushed | Add explicit flush after every `write` (see language-specific guidance in the Adapter Contract) |
-| Binary receives SIGTERM after 10s | Heartbeat not acknowledged | Add a `heartbeat` handler that immediately writes `heartbeat_ack` |
-| `tool_result` never arrives | `tool_call` has an invalid tool name | Use only `read_file`, `write_file`, `list_dir`, `delete_file` at Minimum tier |
-| MCP connection refused (Standard tier) | Running on macOS with `make run` | Use `docker compose up` instead --- abstract Unix sockets require Linux |
-| MCP nonce rejected | Stale manifest read | Re-read `/run/lenny/adapter-manifest.json` at startup (nonce is regenerated per task) |
+| Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the Adapter Contract) |
+| Your binary gets SIGTERM after 10 seconds | Heartbeat wasn't acknowledged | Handle `heartbeat` by immediately writing `heartbeat_ack` |
+| `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
+| MCP connection refused (Standard level) | You're on macOS with `make run` | Use `docker compose up` -- abstract Unix sockets only exist on Linux |
+| MCP nonce rejected | You cached the manifest too early | Re-read `/run/lenny/adapter-manifest.json` at startup -- the nonce is regenerated per task |
 
 ---
 
-## Testing Tools and Endpoints
+## Health checks and quick commands
 
-### Health Check
+### Health check
 
 ```bash
-# Tier 1
-curl http://localhost:8080/healthz
-
-# Tier 2
 curl http://localhost:8080/healthz
 ```
 
@@ -366,7 +365,7 @@ curl -X POST http://localhost:8080/v1/sessions/{session_id}/messages \
 curl http://localhost:8080/v1/runtimes
 ```
 
-### Admin API (Tier 2)
+### Admin API (docker compose)
 
 ```bash
 # List pools
@@ -378,36 +377,37 @@ curl http://localhost:8080/v1/admin/pools/echo-pool
 
 ---
 
-## Environment Variables
+## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LENNY_DEV_MODE` | `true` (set automatically) | Enables dev mode security relaxations. Required for TLS bypass. |
-| `LENNY_DEV_TLS` | `false` | Enables self-signed mTLS certificates. Requires `LENNY_DEV_MODE=true`. |
-| `LENNY_AGENT_BINARY` | (built-in echo) | Path to your agent binary (Tier 1 only). |
-| `LENNY_AGENT_RUNTIME` | `echo` | Runtime name to use (Tier 2 only). |
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `LENNY_DEV_MODE` | `true` (set automatically) | Turns on dev-mode relaxations. Required if you want to run without TLS. |
+| `LENNY_DEV_TLS` | `false` | Turns on self-signed mTLS certificates. Requires `LENNY_DEV_MODE=true`. |
+| `LENNY_AGENT_BINARY` | (built-in echo) | Path to your agent binary. Applies only to `make run`. |
+| `LENNY_AGENT_RUNTIME` | `echo` | Which runtime to use. Applies only to `docker compose`. |
 | `LENNY_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error`. |
-| `LENNY_PORT` | `8080` | Gateway HTTP listen port. |
-| `LENNY_DATA_DIR` | `./lenny-data/` | Local data directory for SQLite, artifacts, and certificates. |
+| `LENNY_PORT` | `8080` | Gateway HTTP port. |
+| `LENNY_DATA_DIR` | `./lenny-data/` | Local directory for SQLite, artifacts, and certificates. |
 
-### Dev Mode Guard Rails
+### Dev-mode guardrails
 
-Dev mode relaxes security defaults for local convenience, but hard guard rails prevent accidental use outside development:
+Dev mode relaxes security defaults so you can iterate locally, but guardrails keep it from leaking into production:
 
-1. **Hard startup assertion:** The gateway refuses to start with TLS disabled unless `LENNY_DEV_MODE=true` is explicitly set.
-2. **Prominent warning:** When dev mode is active, the gateway logs a warning on startup and every 60 seconds: `"WARNING: TLS disabled --- dev mode active. Do not use in production."`
-3. **Unified gate:** `LENNY_DEV_MODE` is the single gate for all security relaxations. No individual security feature can be disabled independently.
+1. **Hard startup assertion.** The gateway refuses to start with TLS off unless `LENNY_DEV_MODE=true` is set explicitly.
+2. **Loud warning.** When dev mode is on, the gateway logs `"WARNING: TLS disabled -- dev mode active. Do not use in production."` on startup and every 60 seconds.
+3. **One switch for everything.** `LENNY_DEV_MODE` gates every security relaxation. You can't disable individual security features one at a time.
 
 ---
 
-## Zero-Credential Mode
+## Working without LLM credentials
 
-Both tiers can operate without LLM provider credentials by using the built-in echo/mock runtime. This is the default in Tier 1 and selectable in Tier 2 via `LENNY_AGENT_RUNTIME=echo`.
+You can run either `make run` or `docker compose up` without any LLM credentials by using the built-in echo runtime. It's the default in `make run` and selectable in `docker compose` via `LENNY_AGENT_RUNTIME=echo`.
 
-The echo runtime replays deterministic responses, allowing you to test:
+The echo runtime plays back deterministic responses, which is enough to test:
+
 - Session lifecycle (create, attach, complete, terminate)
-- Workspace materialization (file upload, finalization)
+- Workspace preparation (file upload, finalization)
 - Heartbeat and shutdown handling
 - Response delivery
 
-The echo runtime cannot invoke MCP tools. Delegation flow testing requires the `delegation-echo` test runtime, which executes scripted tool call sequences including `lenny/delegate_task`.
+The echo runtime can't call MCP tools. If you're testing delegation, use the `delegation-echo` test runtime instead -- it runs scripted tool-call sequences that include `lenny/delegate_task`.

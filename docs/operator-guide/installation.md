@@ -7,128 +7,129 @@ nav_order: 1
 
 # Installation
 
-This page covers end-to-end installation of Lenny on a Kubernetes cluster, from infrastructure prerequisites through post-install verification.
+This page walks you through installing Lenny on a Kubernetes cluster, from the prerequisites through verifying the install worked.
 
-Lenny supports three installation paths. Pick one based on the scenario:
+There are three ways to install. Pick based on what you're doing:
 
-| Path | When to use | Starting point |
-|------|-------------|----------------|
-| **Tier 0: `lenny up`** | Evaluation, developer laptops, demos, smoke testing. Single binary, embedded k3s, same code path as production. Never production. | [`lenny up` quickstart](#tier-0-lenny-up) |
-| **`lenny-ctl install` wizard** | New production installs. Interactive detection + question flow; generates a composed `values.yaml` and runs `helm install`, bootstrap, and a smoke test. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
-| **Direct Helm** | IaC / GitOps. Hand-write `values.yaml` or compose an answer-file base with tier overrides. | [Helm Chart Installation](#helm-chart-installation) |
+| Path | Use it for | Starting point |
+|------|------------|----------------|
+| **`lenny up`** | Evaluation, developer laptops, demos, smoke-testing a new runtime before you touch a real cluster. Runs the entire platform as a single binary. Never for production. | [`lenny up` quickstart](#lenny-up-for-local-evaluation) |
+| **`lenny-ctl install` wizard** | New production installs. Detects your cluster, asks a small set of questions, then runs Helm and bootstrap for you. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
+| **Direct Helm** | GitOps or infrastructure-as-code setups. Hand-write `values.yaml` (or start from an answer-file base) and run Helm yourself. | [Helm chart installation](#helm-chart-installation) |
 
-All three paths exercise the same chart, the same preflight, and the same bootstrap. The wizard is a convenience layer over the third.
+All three paths use the same chart, the same preflight checks, and the same bootstrap. The wizard is a friendlier layer over Helm.
 
 ---
 
-## Tier 0: `lenny up`
+## `lenny up` for local evaluation
+{: #lenny-up-for-local-evaluation }
 
-For evaluation and developer laptops, the single `lenny` binary runs the full platform in-process:
+For evaluation and developer laptops, the `lenny` binary runs the entire platform in-process:
 
 ```bash
 lenny up
 ```
 
-On first run it downloads k3s to `~/.lenny/k3s/`, starts embedded Postgres, Redis, a KMS shim, an OIDC provider, the gateway, `lenny-ops`, the controllers, and the entire reference runtime catalog. The warm pool controller pre-warms pods; `lenny session new --runtime=chat --attach "hello"` is ready in under 60 seconds.
+On first run it downloads k3s to `~/.lenny/k3s/` and starts the whole stack -- embedded Kubernetes, Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The pool controller warms up pods, and `lenny session start --runtime chat --message "hello"` is ready in under a minute.
 
-Tier 0 is gated by a non-suppressible banner stating that credentials, the KMS master key, and identities are insecure. The embedded OIDC provider refuses any audience claim not matching `dev.local`, and the gateway rejects externally-issued tokens. Any attempt to bind the gateway outside localhost fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+`lenny up` prints a banner you can't suppress: credentials, master key, and identities are insecure, and it's not for production. The built-in identity provider rejects any audience claim other than `dev.local`, and trying to expose the gateway beyond localhost fails with `EMBEDDED_MODE_LOCAL_ONLY`.
 
-Use Tier 0 to understand the platform, to demo it to stakeholders, or to smoke-test a new runtime before pushing it to a real cluster. Do not use Tier 0 in production.
+Use it to explore the platform, demo it, or smoke-test a new runtime before you ship it to a real cluster.
 
 Teardown:
 
 ```bash
-lenny down          # preserves ~/.lenny/
-lenny down --purge  # deletes everything for a fresh start
+lenny down          # stop everything, keep ~/.lenny/
+lenny down --purge  # stop everything and wipe ~/.lenny/
 ```
 
 ---
 
-## Interactive Installer (`lenny-ctl install`)
+## Interactive installer (`lenny-ctl install`)
 
-For production installs, the interactive wizard orchestrates detection, question rendering, values composition, preflight, `helm install`, bootstrap, and a smoke test against the `chat` reference runtime:
+For production installs, the interactive wizard handles detection, questions, composing `values.yaml`, running preflight, invoking `helm install`, bootstrap, and a final smoke test against the `chat` runtime:
 
 ```bash
 lenny-ctl install
 ```
 
-The wizard runs in five phases:
+It runs in five phases:
 
-1. **Detection** -- probes the target cluster for capabilities (CNI, RuntimeClass availability, admission controllers, cert-manager, Prometheus Operator, StorageClass options, cloud provider). Results seed default answers and rule out questions that do not apply.
-2. **Questions** -- a small, targeted set (typically ~10 prompts) covering environment (production / staging / dev), cluster type (EKS / GKE / AKS / on-prem / k3s), backend services (managed RDS / self-hosted Postgres / cloud pooler), capacity tier, isolation profile, auth mode, and the handful of tenant/runtime/pool bootstrap entries.
-3. **Preview** -- renders the composed `values.yaml` and diffs it against any existing install. Nothing is applied yet.
+1. **Detection** -- probes the cluster: CNI, `RuntimeClass` availability, admission controllers, cert-manager, Prometheus Operator, storage classes, cloud provider. The results seed default answers and skip questions that don't apply.
+2. **Questions** -- around 10 prompts: environment (production / staging / dev), cluster type (EKS / GKE / AKS / on-prem / k3s), database and cache options (managed or self-hosted), deployment size, isolation profile, auth setup, and a few tenant/runtime/pool seed entries.
+3. **Preview** -- shows the composed `values.yaml` and diffs it against any existing install. Nothing is applied yet.
 4. **Preflight + install** -- runs `lenny-ctl preflight`, then `helm install` (or `helm upgrade`), then `lenny-ctl bootstrap --from-values`.
-5. **Smoke test** -- creates an MCP session against the `chat` reference runtime and verifies the full round trip.
+5. **Smoke test** -- creates a session against the `chat` reference runtime and confirms the full round trip works.
 
 ### Answer files
 
-Every interactive session can be captured to an answer file:
+Any interactive session can be saved to an answer file:
 
 ```bash
 lenny-ctl install --save-answers ./answers.yaml
 ```
 
-The saved file is plain YAML -- the wizard's Go structs serialized. Replay it non-interactively in CI/IaC:
+The saved file is plain YAML. Replay it non-interactively in CI:
 
 ```bash
 lenny-ctl install --non-interactive --answers ./answers.yaml
 ```
 
-The Lenny chart also ships **answer-file bases** for common scenarios (e.g., `answers/eks-small-team.yaml`, `answers/gke-tier2.yaml`, `answers/laptop.yaml`). Operators who prefer hand-written values can skip the wizard entirely and run `helm install -f answers/<base>.yaml -f values-tierN.yaml -f overrides.yaml`. Both paths are first-class.
+The chart also ships answer-file bases for common scenarios -- `answers/eks-small-team.yaml`, `answers/gke-growth.yaml`, `answers/laptop.yaml`, and others. If you'd rather hand-write values, skip the wizard entirely and run `helm install -f answers/<base>.yaml -f values-<size>.yaml -f overrides.yaml`. Both paths are supported equally.
 
 ### Upgrades
 
-Upgrades replay the answer file against the existing install:
+Upgrades replay the answer file against the existing release:
 
 ```bash
 lenny-ctl upgrade --answers ./answers.yaml
 ```
 
-This runs preflight, diffs the composed values against the live release, and invokes `helm upgrade` on approval.
+That runs preflight, diffs the composed values against the live release, and invokes `helm upgrade` once you approve.
 
-### Airgap mode
+### Airgapped clusters
 
-`lenny-ctl install --offline` skips cluster-reachability probes in the detection phase. Preflight still runs against the target cluster -- only detection is affected.
+`lenny-ctl install --offline` skips the cluster-reachability probes during detection. Preflight still runs against the target cluster; only detection is affected.
 
 ---
 
 ## Cluster Prerequisites
 
-### Required Components
+### Required components
 
-| Component | Version | Purpose |
+| Component | Version | What Lenny uses it for |
 |---|---|---|
-| Kubernetes | 1.28+ | Platform runtime; must support RuntimeClass, NetworkPolicy, Server-Side Apply |
-| Helm | 3.12+ | Primary installation and upgrade mechanism |
-| cert-manager | 1.12+ | Automated mTLS certificate provisioning and renewal for gateway-to-pod communication |
-| Container runtime | containerd 1.7+ | Base container runtime; must support RuntimeClass selection |
-| CNI plugin | Calico, Cilium, or cloud-native CNI + Calico policy-only mode | Must support NetworkPolicy enforcement including egress rules. On managed K8s (EKS, AKS, GKE), the recommended approach is the cloud provider's native CNI augmented with Calico in policy-only mode |
-| PostgreSQL | 14+ | Session state, audit logs, billing events, credential pools, token storage |
-| Redis | 7.0+ | Coordination leases, quota counters, pub/sub, routing cache; TLS + AUTH required |
-| Object storage | MinIO / S3 / GCS / Azure Blob | Workspace snapshots, checkpoints, uploaded artifacts |
+| Kubernetes | 1.28+ | The platform itself. Lenny relies on `RuntimeClass`, `NetworkPolicy`, and Server-Side Apply being available. |
+| Helm | 3.12+ | Installing and upgrading the chart. |
+| cert-manager | 1.12+ | Issues and rotates the internal certificates the gateway and its controllers use to talk to each other. |
+| Container runtime | containerd 1.7+ | Starts the session pods. Must be able to select different runtimes per pod (`RuntimeClass`). |
+| CNI plugin | Calico, Cilium, or a cloud-native CNI with Calico in policy-only mode | Enforces the default-deny network policies that keep pods isolated. On EKS, AKS, and GKE, the usual pattern is the cloud provider's own CNI plus Calico in policy-only mode. |
+| PostgreSQL | 14+ | Stores session state, audit logs, billing events, credential pools, and tokens. |
+| Redis | 7.0+ | Short-lived coordination state -- leases, quota counters, routing cache, and pub/sub between gateway replicas. Requires TLS and a password. |
+| Object storage | MinIO, S3, GCS, or Azure Blob | Holds workspace snapshots, checkpoints, and anything uploaded from a session. |
 
-### Optional Components
+### Optional components
 
-| Component | Purpose | When Needed |
+| Component | Why you'd add it | When it's needed |
 |---|---|---|
-| gVisor (runsc) | Sandboxed isolation profile -- kernel-level isolation via userspace syscall interception | **Recommended for all production workloads**. Default isolation profile. |
-| Kata Containers | MicroVM isolation profile -- full VM boundary per pod | High-risk workloads, semi-trusted code, multi-tenant with cross-tenant task reuse |
-| OPA Gatekeeper or Kyverno | RuntimeClass-aware admission policies | **Required for production** -- enforces Pod Security Standards per RuntimeClass |
-| External Secrets Operator | Synchronize credentials from AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager | Tier 3 deployments with hundreds of credentials per pool |
-| KEDA | ScaledObject-based HPA with direct Prometheus query (bypasses Prometheus Adapter cache) | Alternative to Prometheus Adapter for more responsive autoscaling |
-| Prometheus + Grafana | Metrics collection and dashboarding | Required for observability (see [Observability](observability.html)) |
-| External LLM routing proxy | Route proxy-mode traffic through a shared LLM gateway (LiteLLM, Portkey, cloud-managed) for broader provider catalog, custom routing intelligence, or shared spend reporting | Optional. Not needed when the native Go translator built into the gateway covers your provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [external LLM proxy](external-llm-proxy.md). |
-| krew (for operators) | kubectl plugin manager; needed to install `kubectl-lenny` | Optional convenience for operators who prefer `kubectl lenny` over the standalone `lenny-ctl` binary. See [krew installation](krew-install.md). |
+| gVisor (`runsc`) | Runs each pod inside a user-space kernel that intercepts system calls, so a compromised agent can't reach the host kernel. This is the default isolation profile. | Recommended for all production workloads. |
+| Kata Containers | Runs each pod in a full lightweight VM, for the strongest isolation Lenny supports. | High-risk workloads, partially trusted code, or multi-tenant clusters where pods may be reused across tenants. |
+| OPA Gatekeeper or Kyverno | Admission policies that keep untrusted pods on the right sandboxing profile and prevent accidental privilege escalation. | Required for production. |
+| External Secrets Operator | Syncs LLM keys and connector secrets from an external vault -- AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager. | Large deployments with hundreds of credentials per pool, or when your secrets already live in an external vault. |
+| KEDA | Scales deployments off a direct Prometheus query, bypassing the Prometheus Adapter cache for faster reactions to load. | Optional alternative to the Prometheus Adapter. |
+| Prometheus + Grafana | Metrics collection and dashboards. | Required for observability (see [Observability](observability.html)). |
+| External LLM routing proxy | Sends the gateway's outbound LLM traffic through a shared gateway like LiteLLM or Portkey -- useful for a broader provider catalog, custom routing rules, or shared spend reporting. | Optional. The gateway already talks directly to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI; you only need this if you want a different provider or centralised cost tracking. See [external LLM proxy](external-llm-proxy.md). |
+| krew | `kubectl` plugin manager, used to install `kubectl-lenny`. | Optional convenience for operators who'd rather run `kubectl lenny ...` than the standalone `lenny-ctl` binary. See [krew installation](krew-install.md). |
 
-### Infrastructure Sizing Quick Reference
+### Infrastructure sizing quick reference
 
-| Tier | Concurrent Sessions | Gateway Replicas | Postgres | Redis | MinIO |
+| Deployment size | Concurrent sessions | Gateway replicas | Postgres | Redis | MinIO |
 |---|---|---|---|---|---|
-| Tier 1 (Starter) | 100 | 2-3 | 2 vCPU / 4 GB | 2 GB | Single node |
-| Tier 2 (Growth) | 1,000 | 5-10 | 4 vCPU / 16 GB | 8 GB | 4-node erasure coded |
-| Tier 3 (Scale) | 10,000 | 25-50 | 8 vCPU / 32 GB | 16 GB | 8-node erasure coded |
+| Starter | 100 | 2-3 | 2 vCPU / 4 GB | 2 GB | Single node |
+| Growth | 1,000 | 5-10 | 4 vCPU / 16 GB | 8 GB | 4-node erasure coded |
+| Scale | 10,000 | 25-50 | 8 vCPU / 32 GB | 16 GB | 8-node erasure coded |
 
-See [Scaling](scaling.html) for detailed per-tier sizing guidance.
+See [Scaling](scaling.html) for detailed sizing guidance.
 
 ---
 
@@ -219,7 +220,7 @@ minio:
 # Gateway
 gateway:
   replicas: 2
-  maxSessionsPerReplica: 50  # Tier 1 provisional; calibrate via ramp test
+  maxSessionsPerReplica: 50  # Starter-size default; calibrate via a ramp test
 
 # Bootstrap seed -- creates Day-1 resources
 bootstrap:
@@ -417,34 +418,33 @@ kubectl describe resourcequota -n lenny-agents
 kubectl describe limitrange -n lenny-agents
 ```
 
-### Expected Healthy State
+### What a healthy deployment looks like
 
-- All gateway replicas are Running and Ready
-- `lenny-ops` has 1-2 replicas Running with one holding the leader Lease
-- Token Service has 2+ replicas Running
-- Warm Pool Controller has 2+ replicas (one active leader)
-- PoolScalingController has 2+ replicas (one active leader)
-- Warm pool pods are reaching `idle` state within expected startup time
-- No `PoolConfigDrift`, `WarmPoolBootstrapping`, or `LenniOpsSelfHealthDegraded` alerts firing
-- `lenny_warmpool_idle_pods` gauge shows expected warm pod count per pool
+- All gateway replicas are Running and Ready.
+- The management plane (`lenny-ops`) has one or two replicas Running, one of them holding the leader lease.
+- The token service has two or more replicas Running.
+- The controllers responsible for warming pools and scaling them have at least two replicas each, one leader per controller.
+- The warm pool pods reach the `idle` state within their expected startup time.
+- No drift, warm-pool-bootstrapping, or management-plane self-health alerts are firing.
+- `lenny_warmpool_idle_pods` reports the warm pod count you configured, per pool.
 
-### Structured diagnostics via `lenny-ctl doctor`
+### Getting a one-shot health report with `lenny-ctl doctor`
 
-For a one-shot health assessment, run:
+For a full health check in one command:
 
 ```bash
 lenny-ctl doctor
 ```
 
-This probes every subsystem via the `lenny-ops` diagnostic endpoints and renders a structured report of healthy / degraded / failing components. It does not make changes.
+`doctor` probes every subsystem through the management plane's diagnostic endpoints and prints a structured report of what's healthy, what's degraded, and what's broken. It doesn't change anything.
 
-For common classes of misconfiguration (missing ResourceQuota, PSS labels out of date, ServiceMonitor missing required `app.kubernetes.io/instance` label, preflight trigger absent on external Postgres pooler, etc.), run with `--fix`:
+A lot of what `doctor` finds is fixable automatically -- a missing resource quota, stale pod-security labels on a namespace, a service monitor missing a required label, a missing tenant-guard trigger on an external Postgres pooler. To have `doctor` apply those fixes, run:
 
 ```bash
 lenny-ctl doctor --fix
 ```
 
-The command executes idempotent remediations, each guarded by a per-finding guardrail. Every fix is recorded in the audit log with the operator identity and the before/after state. Use `--dry-run` to preview fixes without applying them.
+Each fix is idempotent, guarded so it can't make things worse, and recorded in the audit log with your identity and the before/after state. `--dry-run` previews the fixes without applying them.
 
 ---
 
@@ -454,40 +454,40 @@ For production deployments, cloud-managed services are recommended over self-man
 
 ### AWS
 
-| Service | Lenny Component | Configuration |
+| Service | What Lenny uses it for | Recommended configuration |
 |---|---|---|
-| Amazon RDS (PostgreSQL) | SessionStore, TokenStore, EventStore | Multi-AZ, `db.r6g.xlarge` (Tier 2), envelope encryption via AWS KMS |
-| Amazon ElastiCache (Redis) | LeaseStore, QuotaStore, routing cache | Cluster mode, TLS in-transit, AUTH token |
-| Amazon S3 | ArtifactStore | Versioning enabled, lifecycle rules for noncurrent version expiry |
-| AWS KMS | Envelope encryption | For etcd Secret encryption and Token Service DEK wrapping |
+| Amazon RDS (PostgreSQL) | Session state, tokens, audit log | Multi-AZ, `db.r6g.xlarge` at Growth size, envelope encryption via AWS KMS |
+| Amazon ElastiCache (Redis) | Leases, quota counters, routing cache | Cluster mode, TLS in-transit, AUTH token |
+| Amazon S3 | Workspace artifacts and checkpoints | Versioning on, lifecycle rules to expire non-current versions |
+| AWS KMS | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
 | Amazon RDS Proxy | Connection pooling | Use instead of self-managed PgBouncer; set `postgres.connectionPooler: external` |
 
 ### GCP
 
-| Service | Lenny Component | Configuration |
+| Service | What Lenny uses it for | Recommended configuration |
 |---|---|---|
-| Cloud SQL (PostgreSQL) | SessionStore, TokenStore, EventStore | HA, `db-custom-4-16384` (Tier 2), CMEK via Cloud KMS |
-| Memorystore (Redis) | LeaseStore, QuotaStore, routing cache | Standard tier (HA), TLS, AUTH |
-| Google Cloud Storage | ArtifactStore | Versioning enabled, lifecycle rules |
-| Cloud KMS | Envelope encryption | For Token Service DEK wrapping |
+| Cloud SQL (PostgreSQL) | Session state, tokens, audit log | HA, `db-custom-4-16384` at Growth size, CMEK via Cloud KMS |
+| Memorystore (Redis) | Leases, quota counters, routing cache | Standard tier (HA), TLS, AUTH |
+| Google Cloud Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle rules |
+| Cloud KMS | Envelope encryption of data-encryption keys | Used for wrapping the gateway's data-encryption keys |
 | Cloud SQL Auth Proxy | Connection pooling | Use instead of PgBouncer; set `postgres.connectionPooler: external` |
 
 ### Azure
 
-| Service | Lenny Component | Configuration |
+| Service | What Lenny uses it for | Recommended configuration |
 |---|---|---|
-| Azure Database for PostgreSQL | SessionStore, TokenStore, EventStore | Flexible server with HA, `Standard_D4s_v3` (Tier 2) |
-| Azure Cache for Redis | LeaseStore, QuotaStore, routing cache | Premium tier (HA), TLS, access keys |
-| Azure Blob Storage | ArtifactStore | Versioning enabled, lifecycle management rules |
-| Azure Key Vault | Envelope encryption | For etcd Secret encryption and Token Service DEK wrapping |
+| Azure Database for PostgreSQL | Session state, tokens, audit log | Flexible server with HA, `Standard_D4s_v3` at Growth size |
+| Azure Cache for Redis | Leases, quota counters, routing cache | Premium tier (HA), TLS, access keys |
+| Azure Blob Storage | Workspace artifacts and checkpoints | Versioning on, lifecycle management rules |
+| Azure Key Vault | Envelope encryption of cluster secrets and data-encryption keys | Used for etcd secret encryption and for wrapping the gateway's data-encryption keys |
 
-### Cloud-Managed Pooler Considerations
+### When using a cloud-managed database proxy
 
-When using a cloud-managed connection proxy (RDS Proxy, Cloud SQL Auth Proxy, Azure PgBouncer), the `__unset__` sentinel defense cannot be configured via `connect_query`. You **must** set:
+Cloud-managed connection proxies (RDS Proxy, Cloud SQL Auth Proxy, Azure PgBouncer) don't let Lenny inject its own `connect_query` to guard against stale tenant context on reused connections. If you're using one of these, set:
 
 ```yaml
 postgres:
   connectionPooler: external
 ```
 
-This triggers the Lenny schema migration to create the `lenny_tenant_guard` per-transaction validation trigger as an alternative RLS defense. The gateway will refuse to start if `connectionPooler: external` is set but the trigger is absent.
+That tells the schema migration to install a per-transaction trigger (`lenny_tenant_guard`) inside Postgres, which enforces the same tenant-scoping invariant from the database side. The gateway refuses to start if `connectionPooler: external` is set but the trigger is missing, so you'll notice the misconfiguration immediately.

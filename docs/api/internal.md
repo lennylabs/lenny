@@ -47,15 +47,17 @@ All gateway-to-pod communication is protected by mutual TLS (mTLS).
 | Gateway replicas | 24h | DNS: `lenny-gateway.lenny-system.svc` | cert-manager auto-renewal at 2/3 lifetime |
 | Agent pods | 4h | SPIFFE URI: `spiffe://<trust-domain>/agent/{pool}/{pod-name}` | cert-manager auto-renewal; pod restart if renewal fails |
 
+Each pod is issued a SPIFFE identity at startup -- a cryptographic identity encoded as a URI in the pod's TLS certificate -- so the gateway can tell one pod apart from another and reject requests that try to impersonate a different pod.
+
 ### Identity verification
 
-- The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection.
+- The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection. A mismatch means the pod cannot prove it is the pod the gateway expected, and the connection is refused.
 - Each gateway replica gets a **distinct certificate** so compromise of one replica can be detected and revoked independently.
 - Pods cannot forge or extend session JWTs. The gateway validates JWT signatures on every pod-to-gateway request.
 
 ### Trust domain
 
-The SPIFFE trust domain is configurable via `global.spiffeTrustDomain` Helm value (default: `lenny`). Deployers **must** override this in any environment where multiple Lenny instances share the same Kubernetes cluster and CA.
+The SPIFFE trust domain (the namespace under which pod identities are issued) is configurable via the `global.spiffeTrustDomain` Helm value (default: `lenny`). Deployers **must** override this in any environment where multiple Lenny instances share the same Kubernetes cluster and CA, so that identities from one Lenny instance cannot be confused with identities from another.
 
 ---
 
@@ -203,7 +205,7 @@ Triggers a workspace snapshot for session recovery.
 message CheckpointRequest {
   string session_id = 1;
   string checkpoint_id = 2;  // gateway-assigned unique ID
-  string consistency = 3;    // "best-effort" (Standard) or "consistent" (Full)
+  string consistency = 3;    // "best-effort" (Standard level) or "consistent" (Full level)
 }
 ```
 
@@ -219,9 +221,9 @@ message CheckpointResponse {
 }
 ```
 
-For `consistency: "consistent"` (Full tier), the adapter first sends a `checkpoint_request` on the lifecycle channel, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [Lifecycle channel messages](#lifecycle-channel-messages) below.
+For `consistency: "consistent"` (Full integration level), the adapter first sends a `checkpoint_request` on the lifecycle channel, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [Lifecycle channel messages](#lifecycle-channel-messages) below.
 
-For `consistency: "best-effort"` (Standard tier), the adapter takes the snapshot immediately without pausing the runtime. Minor workspace inconsistencies are possible.
+For `consistency: "best-effort"` (Standard integration level), the adapter takes the snapshot immediately without pausing the runtime. Minor workspace inconsistencies are possible.
 
 #### UploadFiles
 
@@ -307,10 +309,10 @@ The gateway uses `Watch` to monitor pod health continuously and `Check` for poin
 
 ---
 
-## Lifecycle channel messages (Full tier only)
+## Lifecycle channel messages (Full integration level only)
 {: #lifecycle-channel-messages }
 
-Full-tier runtimes open a **lifecycle channel** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The lifecycle channel runs alongside the stdin/stdout binary protocol and the MCP connections.
+Runtimes that implement the Full integration level open a **lifecycle channel** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The lifecycle channel runs alongside the stdin/stdout binary protocol and the MCP connections.
 
 ### Channel setup
 
@@ -442,9 +444,9 @@ The runtime must exit within `deadlineMs`.
 If the `Attach` stream is interrupted during an active session:
 
 1. The gateway detects the stream break via heartbeat timeout.
-2. For Full-tier sessions with checkpoint support, the gateway may attempt to resume on the same pod (if the pod is still healthy) by opening a new `Attach` stream.
+2. For Full-level sessions with checkpoint support, the gateway may attempt to resume on the same pod (if the pod is still healthy) by opening a new `Attach` stream.
 3. If the pod is unhealthy, the gateway claims a new pod, restores from the last checkpoint, and starts a new session.
-4. For Minimum/Standard-tier sessions without checkpoint support, pod failure results in session failure.
+4. For Basic- and Standard-level sessions without checkpoint support, pod failure results in session failure.
 
 ---
 
@@ -527,7 +529,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `2` | Protocol error (could not parse messages) |
 | `137` | SIGKILL (pod not reused) |
 
-For the complete binary protocol specification, including `OutputPart` format, `MessageEnvelope` schema, and tier-specific behavior, see the technical design document Section 15.4.
+For the complete binary protocol specification, including `OutputPart` format, `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4.
 
 ---
 

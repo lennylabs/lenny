@@ -148,7 +148,7 @@ Integration tests run against real (embedded or containerized) stores:
 
 The runtime adapter contract has a dedicated compliance test suite:
 
-- **`RegisterAdapterUnderTest`** compliance suite validates that an adapter correctly implements the Minimum, Standard, or Full tier contract.
+- **`RegisterAdapterUnderTest`** compliance suite validates that an adapter correctly implements the Basic, Standard, or Full integration-level contract.
 - All error classes (`VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED`) are exercised with canonical triggering inputs.
 - For each error class, the test asserts identical `code`, `category`, and `retryable` values.
 
@@ -165,22 +165,22 @@ The adapter translates between Lenny's control protocol and your agent binary's 
 - Session start/stop lifecycle
 - Workspace change notifications
 - Credential delivery and rotation
-- Checkpoint coordination (Full tier)
+- Checkpoint coordination (Full integration level)
 - Streaming I/O relay (stdin/stdout or gRPC)
 
 ### Getting started
 
-1. **Read the [Runtime Author Roadmap](../runtime-author-guide/)** for a guided reading path organized by integration tier.
+1. **Read the [Runtime Author Roadmap](../runtime-author-guide/)** for a guided reading path organized by integration level.
 2. **Copy the echo runtime sample** as your starting point.
 3. **Use `make run`** to test locally without Kubernetes.
 4. **Run the compliance suite** (`RegisterAdapterUnderTest`) to validate your adapter.
 
-### Tiers of integration
+### Integration levels
 
-| Tier         | Interface               | What you implement                                                                          | What the platform provides                                                             |
+| Level         | Interface               | What you implement                                                                          | What the platform provides                                                             |
 | :----------- | :---------------------- | :------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------- |
-| **Minimum**  | stdin/stdout JSON Lines          | Read messages from stdin, write output to stdout. ~50 lines of code.                        | Basic session lifecycle, workspace delivery, credential injection (environment variables).   |
-| **Standard** | stdin/stdout + MCP (Unix socket) | Minimum + platform MCP tools (delegation, discovery, elicitation, output), connector tool access. | All of Minimum, plus platform MCP server on Unix socket, mid-session uploads.                     |
+| **Basic**    | stdin/stdout JSON Lines          | Read messages from stdin, write output to stdout. ~50 lines of code.                        | Basic session lifecycle, workspace delivery, credential injection (environment variables).   |
+| **Standard** | stdin/stdout + MCP (Unix socket) | Basic + platform tool server over MCP (delegation, discovery, elicitation, output), connector tool access. | All of Basic, plus a platform tool server on a Unix socket and mid-session uploads.                     |
 | **Full**     | stdin/stdout + MCP (Unix socket) | All of Standard, plus lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse).  | Full platform integration including SDK-warm, checkpoint/restore, credential rotation. |
 
 ---

@@ -8,7 +8,7 @@ nav_order: 3
 
 # TypeScript Runtime SDK
 
-This page presents a complete file summarizer runtime in TypeScript. It implements the Minimum tier, reads workspace files via adapter-local tools, and produces summaries. The full source is ~200 lines including comments.
+This page presents a complete file summarizer runtime in TypeScript. It implements the Basic integration level, reads workspace files via adapter-local tools, and produces summaries. The full source is ~200 lines including comments.
 
 ---
 
@@ -18,7 +18,7 @@ This page presents a complete file summarizer runtime in TypeScript. It implemen
 /**
  * file-summarizer: A Lenny runtime that reads workspace files and produces summaries.
  *
- * Integration tier: Minimum
+ * Integration level: Basic
  *   - Reads JSON Lines from stdin
  *   - Handles "message" by reading workspace files and summarizing them
  *   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
@@ -340,7 +340,7 @@ Node.js stdout is line-buffered when connected to a pipe. `process.stdout.write(
 }
 ```
 
-No runtime dependencies for Minimum tier.
+No runtime dependencies for the Basic level.
 
 ---
 
@@ -398,10 +398,10 @@ cd examples/runtimes/file-summarizer-ts
 npm install
 npm run build
 
-# Run locally (Tier 1)
+# Run locally with `make run` (in-process, no Docker)
 make run LENNY_AGENT_BINARY="node examples/runtimes/file-summarizer-ts/dist/main.js"
 
-# Run with Docker (Tier 2)
+# Run locally with `docker compose up`
 docker build -t file-summarizer-ts:dev \
   -f examples/runtimes/file-summarizer-ts/Dockerfile .
 docker compose up
@@ -412,7 +412,7 @@ docker compose up
 ## Register the Runtime
 
 ```bash
-# Tier 2: Register via admin API
+# Register via admin API
 curl -X POST http://localhost:8080/v1/admin/runtimes \
   -H "Content-Type: application/json" \
   -d '{
@@ -430,7 +430,7 @@ curl -X POST http://localhost:8080/v1/sessions \
 
 ---
 
-## Upgrading to Standard Tier
+## Upgrading to Standard level
 
 ### 1. Add MCP Client Dependency
 
@@ -466,7 +466,7 @@ function readManifest(): AdapterManifest {
 }
 ```
 
-### 3. Connect to the Platform MCP Server
+### 3. Connect to Lenny's local tool server
 
 ```typescript
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -515,7 +515,7 @@ async function delegateReview(
 
 ### 5. Async Main Loop
 
-Standard tier with MCP requires an async event loop. The readline interface already works with Node.js event loop:
+The Standard level with MCP requires an async event loop. The readline interface already works with Node.js event loop:
 
 ```typescript
 async function asyncMain(): Promise<void> {
@@ -535,4 +535,4 @@ async function asyncMain(): Promise<void> {
 
 ### 6. macOS Note
 
-Standard tier requires abstract Unix sockets, which are Linux-only. Use `docker compose up` (Tier 2) on macOS.
+The Standard level requires abstract Unix sockets, which are Linux-only. Use `docker compose up` on macOS.

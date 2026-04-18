@@ -7,14 +7,14 @@ nav_order: 1
 
 # Authentication
 
-Lenny uses **OIDC/OAuth 2.1** for client authentication. All API requests must include a valid bearer token. This page covers how to obtain tokens, register LLM provider credentials, and handle token lifecycle.
+Lenny uses **OIDC/OAuth 2.1** (OpenID Connect, layered on OAuth 2.1) for client authentication. Clients obtain a bearer token from your identity provider and include it on every API request. This page covers how to obtain tokens, register LLM provider credentials, and handle token lifecycle.
 
 ---
 
 ## Authentication Flow Overview
 
 ```
-Client                         OIDC Provider                    Lenny Gateway
+Client                     Identity Provider                    Lenny Gateway
   │                                 │                                │
   │──── Authorization Request ─────>│                                │
   │<─── Authorization Code ─────────│                                │
@@ -35,7 +35,7 @@ Lenny supports two OAuth 2.1 grant types:
 
 For browser-based applications and interactive CLIs:
 
-1. Redirect the user to the OIDC provider's authorization endpoint
+1. Redirect the user to the identity provider's authorization endpoint
 2. Receive the authorization code on your callback URL
 3. Exchange the code for tokens at the token endpoint
 4. Use the access token as a bearer token in API requests
@@ -44,7 +44,7 @@ For browser-based applications and interactive CLIs:
 
 For CI/CD pipelines, service accounts, and server-to-server integration:
 
-1. Register a client with your OIDC provider
+1. Register a client with your identity provider
 2. Exchange `client_id` and `client_secret` directly for an access token
 3. Use the access token as a bearer token in API requests
 
@@ -61,12 +61,12 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 The gateway validates the token signature, checks expiry, and extracts:
 
 - `user_id` -- the authenticated user
-- `tenant_id` -- the tenant context (extracted from the OIDC claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
+- `tenant_id` -- the tenant context (extracted from the identity-provider claim configured via `auth.tenantIdClaim`, default: `tenant_id`)
 - Role claims (e.g., `lenny_role`) -- determines authorization level
 
 ### Tenant Context
 
-In multi-tenant deployments, every request is scoped to a tenant. The tenant is extracted from the OIDC token:
+In multi-tenant deployments, every request is scoped to a tenant. The tenant is extracted from the identity token:
 
 | Condition | Behavior |
 |---|---|
@@ -79,13 +79,13 @@ There is no silent fallback to a default tenant in multi-tenant mode.
 
 ### Token Refresh and Expiry
 
-Access tokens have a limited lifetime (configured by your OIDC provider, typically 1 hour). When a token expires:
+Access tokens have a limited lifetime (configured by your identity provider, typically 1 hour). When a token expires:
 
 - The gateway returns `401 UNAUTHORIZED`
 - Your application should use the refresh token to obtain a new access token
 - Retry the failed request with the new token
 
-Best practice: refresh proactively before expiry. Most OIDC providers include an `expires_in` field in the token response.
+Best practice: refresh proactively before expiry. Most identity providers include an `expires_in` field in the token response.
 
 ### Token Rotation and Exchange (`/v1/oauth/token`)
 
@@ -270,15 +270,15 @@ Credentials reach agent pods in one of two ways:
 
 The delivery mode is configured per credential pool by the deployer. In regulated environments, consider requiring explicit admin approval for pools configured with `deliveryMode: direct`.
 
-### SPIFFE-Bound Lease Tokens
+### Pod-bound Lease Tokens
 
-In multi-tenant deployments, proxy-mode lease tokens are bound to the issuing pod's SPIFFE identity. On every LLM proxy request, the gateway verifies that the requesting pod's SPIFFE URI matches the URI recorded at credential assignment time. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH`, preventing cross-pod credential replay. This binding is enforced server-side -- no protocol change is required on the pod side.
+In multi-tenant deployments, proxy-mode lease tokens are cryptographically bound to the pod that requested them. Each pod has a unique cryptographic identity issued at pod startup (implemented as a SPIFFE identity), and on every LLM proxy request the gateway checks that the requesting pod's identity matches the one recorded when the credential was assigned. A mismatch is rejected with `LEASE_SPIFFE_MISMATCH`, so a lease token lifted from one pod cannot be replayed by another. This binding is enforced on the gateway side -- no protocol change is required on the pod side.
 
 ---
 
-## RBAC Roles
+## Roles and Permissions (RBAC)
 
-Lenny defines five built-in roles:
+Lenny uses role-based access control (RBAC) to decide what an authenticated user can do. Five built-in roles are defined:
 
 | Role | Access Level |
 |---|---|
@@ -288,7 +288,7 @@ Lenny defines five built-in roles:
 | `billing-viewer` | Usage and metering data for own tenant |
 | `user` | Create and manage own sessions |
 
-Roles are conveyed via OIDC claims (e.g., a `lenny_role` claim) or via platform-managed user-to-role mappings. When both are present, the platform-managed mapping takes precedence.
+Roles are conveyed via identity-provider claims (e.g., a `lenny_role` claim) or via platform-managed user-to-role mappings. When both are present, the platform-managed mapping takes precedence.
 
 ---
 
@@ -298,7 +298,7 @@ Roles are conveyed via OIDC claims (e.g., a `lenny_role` claim) or via platform-
 
 ```bash
 # Step 1: Get an access token via client credentials grant
-TOKEN=$(curl -s -X POST https://your-oidc-provider.com/oauth/token \
+TOKEN=$(curl -s -X POST https://your-identity-provider.com/oauth/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=client_credentials" \
   -d "client_id=YOUR_CLIENT_ID" \
@@ -331,7 +331,7 @@ import httpx
 
 # Client credentials flow
 token_response = httpx.post(
-    "https://your-oidc-provider.com/oauth/token",
+    "https://your-identity-provider.com/oauth/token",
     data={
         "grant_type": "client_credentials",
         "client_id": "YOUR_CLIENT_ID",
@@ -366,7 +366,7 @@ client.post("/v1/credentials", json={
 ```typescript
 // Client credentials flow
 const tokenResponse = await fetch(
-  "https://your-oidc-provider.com/oauth/token",
+  "https://your-identity-provider.com/oauth/token",
   {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

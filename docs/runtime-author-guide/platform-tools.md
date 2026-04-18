@@ -7,13 +7,13 @@ nav_order: 6
 
 # Platform MCP Tools
 
-The platform MCP server exposes 11 tools to agent runtimes at Standard and Full tier. These tools are available via the abstract Unix socket specified in the adapter manifest (`platformMcpServer.socket`). You connect to this server using an MCP client library and present the `mcpNonce` from the manifest during the `initialize` handshake.
+Lenny's local tool server exposes 11 tools to agent runtimes at the Standard and Full levels. These tools are available via the abstract Unix socket specified in the adapter manifest (`platformMcpServer.socket`). You connect to this server using an MCP client library and present the `mcpNonce` from the manifest during the `initialize` handshake.
 
 ---
 
 ## Connection Setup
 
-Before calling any platform tool, connect to the platform MCP server:
+Before calling any platform tool, connect to Lenny's local tool server:
 
 1. Read `/run/lenny/adapter-manifest.json`.
 2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`.
@@ -265,7 +265,7 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 
 ### `lenny/request_input`
 
-Block until the parent or client provides a response. This is the mechanism for blocking until client input arrives (Standard tier or higher).
+Block until the parent or client provides a response. This is the mechanism for blocking until client input arrives (Standard level or higher).
 
 **Parameters:**
 
@@ -404,9 +404,9 @@ Return the task hierarchy with states. No input parameters required.
 
 ---
 
-## Tool Availability by Tier
+## Tool Availability by Integration Level
 
-| Tool | Minimum | Standard | Full |
+| Tool | Basic | Standard | Full |
 |------|---------|----------|------|
 | `lenny/delegate_task` | -- | Yes | Yes |
 | `lenny/await_children` | -- | Yes | Yes |
@@ -420,4 +420,4 @@ Return the task hierarchy with states. No input parameters required.
 | `lenny/memory_query` | -- | Yes | Yes |
 | `lenny/get_task_tree` | -- | Yes | Yes |
 
-All platform MCP tools require Standard tier or higher. Minimum-tier runtimes use only the stdin/stdout protocol and adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`).
+All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`).

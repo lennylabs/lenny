@@ -8,7 +8,7 @@ nav_order: 1
 
 # Go Runtime SDK
 
-This page presents a complete file summarizer runtime in Go. It implements the Minimum tier, reads workspace files via adapter-local tools, and produces summaries. The full source is ~200 lines including comments.
+This page presents a complete file summarizer runtime in Go. It implements the Basic integration level, reads workspace files via adapter-local tools, and produces summaries. The full source is ~200 lines including comments.
 
 ---
 
@@ -17,7 +17,7 @@ This page presents a complete file summarizer runtime in Go. It implements the M
 ```go
 // file-summarizer: A Lenny runtime that reads workspace files and produces summaries.
 //
-// Integration tier: Minimum
+// Integration level: Basic
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by reading workspace files and summarizing them
 //   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
@@ -57,7 +57,7 @@ type InboundMessage struct {
 }
 
 // OutputPart is Lenny's internal content model.
-// At Minimum tier, only "type" and "inline" are required.
+// At the Basic level, only "type" and "inline" are required.
 type OutputPart struct {
 	Type   string `json:"type"`
 	Inline string `json:"inline,omitempty"`
@@ -378,10 +378,10 @@ Multi-stage build produces a ~3MB static binary.
 cd examples/runtimes/file-summarizer-go
 go build -o file-summarizer .
 
-# Run locally (Tier 1)
+# Run locally with `make run` (in-process, no Docker)
 make run LENNY_AGENT_BINARY=examples/runtimes/file-summarizer-go/file-summarizer
 
-# Run with Docker (Tier 2)
+# Run locally with `docker compose up`
 docker build -t file-summarizer:dev -f examples/runtimes/file-summarizer-go/Dockerfile .
 docker compose up
 ```
@@ -391,7 +391,7 @@ docker compose up
 ## Register the Runtime
 
 ```bash
-# Tier 2: Register via admin API
+# Register via admin API
 curl -X POST http://localhost:8080/v1/admin/runtimes \
   -H "Content-Type: application/json" \
   -d '{
@@ -409,9 +409,9 @@ curl -X POST http://localhost:8080/v1/sessions \
 
 ---
 
-## Upgrading to Standard Tier
+## Upgrading to Standard level
 
-To add MCP tools (delegation, output streaming, memory), upgrade to Standard tier:
+To add MCP tools (delegation, output streaming, memory), upgrade to the Standard integration level:
 
 ### 1. Add MCP Client Dependency
 
@@ -446,7 +446,7 @@ func readManifest() (*AdapterManifest, error) {
 }
 ```
 
-### 3. Connect to the Platform MCP Server
+### 3. Connect to Lenny's local tool server
 
 ```go
 import "github.com/mark3labs/mcp-go/client"
@@ -496,4 +496,4 @@ func delegateReview(c *client.Client, code string) (string, error) {
 
 ### 5. macOS Note
 
-Standard tier requires abstract Unix sockets, which are Linux-only. Use `docker compose up` (Tier 2) on macOS.
+The Standard level requires abstract Unix sockets, which are Linux-only. Use `docker compose up` on macOS.

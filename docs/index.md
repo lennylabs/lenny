@@ -7,69 +7,77 @@ permalink: /
 
 # Lenny
 
-**Kubernetes-native, runtime-agnostic agent session platform.**
+**Run interactive AI agents in isolated sandboxes on your own Kubernetes cluster.**
 
-Lenny gives your AI agents on-demand, pre-warmed, isolated cloud instances --
-without locking you into a single framework, protocol, or cloud.
-Deploy it on your own cluster, plug in any agent runtime, and expose sessions
-through the protocols your clients already speak.
+Lenny gives every agent session its own locked-down pod. Your agent -- whether it's Claude Code, a LangGraph graph, or a custom binary -- runs with a fresh workspace, leased credentials, and a tight network perimeter. Clients talk to a single gateway that speaks the protocols you probably already use: REST, MCP, the OpenAI Chat Completions API, and the Open Responses API.
+
+Lenny is self-hosted. There is no managed service, no telemetry pipe to a vendor, and no data leaving the cluster you operate.
 
 ---
 
-## Why Lenny?
+## What you get out of the box
 
-{: .fs-5 }
+**Run it on your laptop in one command.** `lenny up` is a single binary that starts an embedded Kubernetes cluster, the gateway, the management plane, and a catalog of ready-to-use agent runtimes. First boot takes about a minute; subsequent starts are seconds. It is the same code that runs in production -- no simulator.
 
-| | |
+**A catalog of agents that work immediately.** Every install includes nine pre-registered runtimes: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`. You can use them as-is, fork them, or register your own alongside.
+
+**Bring your own agent in ~50 lines.** The minimum integration is a program that reads JSON from stdin and writes JSON to stdout. If you want more -- tool access, delegation, memory, clean interrupts, zero-downtime credential rotation -- there are higher integration levels that add them incrementally. Official SDKs for Go, Python, and TypeScript take care of the wire format.
+
+**Scaffolding and publishing built in.** `lenny runtime init my-agent --language go --template coding` emits a working repo. `lenny runtime publish` pushes the image and registers it against a gateway in one step.
+
+**One gateway, four protocols.** Your clients can use whichever they already have code for:
+
+| Protocol | Use it for |
 |:--|:--|
-| **Runtime-agnostic adapter contract** | Integrate any agent framework -- LangChain, CrewAI, AutoGen, a plain shell script -- through a thin gRPC adapter. Scaffold a new runtime with `lenny runtime init` and first-party SDKs in Go, Python, and TypeScript. |
-| **Reference runtime catalog** | Ships with working agents out of the box: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`. Usable on day one; copy them as templates for your own. |
-| **Security by default** | Pods run non-root, all capabilities dropped, read-only rootfs, default-deny networking. No standing credentials -- only short-lived leases via a KMS-backed Token Service. Gateway-mediated file delivery. Deployer-selectable isolation: gVisor, Kata microVM, or runc. |
-| **Recursive delegation** | Agents spawn child sessions with per-hop budget, scope narrowing, isolation monotonicity, content policy inheritance, and cycle detection. The platform enforces the hierarchy; runtimes stay simple. |
-| **Self-hosted, K8s-native** | CRDs, controllers, Helm chart, and an answer-file installer wizard. No SaaS dependency. Runs wherever Kubernetes runs. Evaluate it in under a minute with `lenny up`. |
-| **Multi-protocol gateway** | A single gateway speaks **REST**, **MCP** (including Tasks and Elicitation), **OpenAI Chat Completions**, and **Open Responses**. Clients connect with the SDK they already have. A native in-process LLM translator serves `anthropic_direct`, `aws_bedrock`, `vertex_ai`, and `azure_openai` without a sidecar. |
-| **Agent-operable platform** | A mandatory `lenny-ops` control plane exposes structured diagnostics, runbooks, backup/restore, drift detection, and bundled alerting rules. `lenny-ctl doctor --fix` auto-remediates the common classes of misconfiguration. |
-| **Enterprise controls** | Multi-tenancy with row-level security, RBAC, audit logging with hash-chain integrity, budget enforcement, GDPR erasure, legal holds, and data residency. OIDC and RFC 8693 token exchange via `POST /v1/oauth/token`. |
-| **Ecosystem-composable** | Expose every session as an MCP server. Chain Lenny instances, connect to external tool servers, or nest sessions inside larger pipelines. An embedded web playground ships with every installation for zero-install evaluation. |
+| REST | CI/CD, automation, admin dashboards, any HTTP client |
+| MCP (Streamable HTTP) | Interactive streaming, multi-agent delegation, MCP hosts (Claude Desktop, Cursor) |
+| OpenAI Chat Completions | Existing OpenAI SDK code -- change the base URL, keep the rest |
+| Open Responses / OpenAI Responses | Any Responses-API client |
+
+**Talks to the LLM for you.** The gateway routes requests to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI directly -- no extra proxy process to run. Agents receive short-lived lease tokens; raw API keys stay in the gateway's memory and never reach the pod. For other providers (dozens, not four), route through an external LLM proxy like LiteLLM or Portkey alongside.
+
+**Pick your isolation level per pool.** You can run first-party code under plain containers (`runc`) when you trust it, sandbox untrusted code under gVisor (the default), or put high-risk workloads in a microVM with Kata Containers. All three are selected as Kubernetes `RuntimeClass` on the pool.
+
+**Agents can delegate to other agents.** A parent agent can spawn a child agent, pass work, enforce a token budget, narrow permissions, and collect the result. The gateway tracks the tree, blocks cycles, and ensures a child cannot become less isolated than its parent.
+
+**Installable with a wizard.** `lenny-ctl install` inspects your cluster, asks about ten targeted questions, composes a Helm values file, previews the diff, runs the install, and smoke-tests it. The answer file is reusable -- you can replay installs in CI.
+
+**Built to be operated.** A dedicated management plane (`lenny-ops`) ships with every install. It exposes structured diagnostic endpoints, runbooks, backup and restore APIs, and drift detection -- so an on-call engineer (or an on-call AI agent) can investigate without scraping `kubectl` output. `lenny-ctl doctor --fix` closes the loop for common misconfigurations automatically.
+
+**Monitoring is wired up.** Bundled Prometheus alerting rules and OpenSLO definitions drop into any standard observability stack. There's a Grafana dashboard for core health signals.
+
+**A browser-based playground.** Every install serves a web UI at `/playground` that drives sessions through the same public API any client SDK uses. Demo a runtime without writing code. Turn it off in production with one Helm flag.
+
+**Multi-tenant from the start.** Postgres row-level security partitions every query by tenant. A tamper-evident audit log records every state change. Per-tenant quotas, RBAC roles, and signed JWT-based authentication are all configurable.
+
+**Compliance controls, not compliance theater.** GDPR-style erasure that returns a cryptographic receipt. Legal holds. Configurable retention windows compatible with SOC 2, HIPAA, and FedRAMP control sets. Data residency policy that pins sessions to specific regions.
+
+Every capability on this page is specified in [`spec/`](https://github.com/lenny-dev/lenny/tree/main/spec) and covered by the integration test suite. Nothing here is aspirational.
 
 ---
 
-## Where do I start?
-
-Pick the card that matches your role.
+## Pick your entry point
 
 <div class="grid-cards" markdown="1">
 
 <div class="card" markdown="1">
 
-### Deploy Lenny on your cluster
-{: .text-purple-300 }
+### Evaluate Lenny
+{: .text-yellow-300 }
 
-You run Kubernetes in production and want to offer managed agent sessions to
-your teams.
+Decide if it fits. Start with `lenny up` and the comparison guide.
 
-[Operator Guide](/lenny/operator-guide/){: .btn .btn-purple }
-
-</div>
-
-<div class="card" markdown="1">
-
-### Build a runtime adapter
-{: .text-blue-300 }
-
-You maintain an agent framework and want it to run inside Lenny pods.
-
-[Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-blue }
+[Quickstart](/lenny/getting-started/){: .btn .btn-outline }
+[About](/lenny/about/){: .btn }
 
 </div>
 
 <div class="card" markdown="1">
 
-### Build an application
+### Build a client application
 {: .text-green-300 }
 
-You are writing a product that consumes agent sessions over MCP, OpenAI, or
-REST.
+You call Lenny from an app, a script, or an MCP host.
 
 [Client Guide](/lenny/client-guide/){: .btn .btn-green }
 
@@ -77,13 +85,45 @@ REST.
 
 <div class="card" markdown="1">
 
-### Evaluate Lenny
-{: .text-yellow-300 }
+### Build a runtime
+{: .text-blue-300 }
 
-You are comparing Lenny against E2B, Daytona, Runloop, Temporal, or building
-your own.
+You are bringing your own agent binary or adapter.
 
-[About](/lenny/about/){: .btn }
+[Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-blue }
+
+</div>
+
+<div class="card" markdown="1">
+
+### Operate Lenny on a cluster
+{: .text-purple-300 }
+
+You install, configure, and scale the platform.
+
+[Operator Guide](/lenny/operator-guide/){: .btn .btn-purple }
+
+</div>
+
+<div class="card" markdown="1">
+
+### Keep Lenny running
+{: .text-purple-300 }
+
+You are on-call. `lenny-ops`, doctor, runbooks, alerts.
+
+[Agent Operability](/lenny/operator-guide/agent-operability){: .btn .btn-purple }
+
+</div>
+
+<div class="card" markdown="1">
+
+### Review security and compliance
+{: .text-red-300 }
+
+You assess Lenny for isolation, audit, and regulatory fit.
+
+[Security](/lenny/operator-guide/security){: .btn }
 
 </div>
 
@@ -100,87 +140,16 @@ your own.
 
 ---
 
-## Feature highlights
+## Design commitments
 
-{: .fs-4 }
+A few deliberate stances shape the rest of the platform. These aren't on a roadmap -- they're invariants enforced by the code and the integration tests.
 
-**`lenny up` -- evaluate in 60 seconds**
-:   A single binary boots an embedded k3s, Postgres, Redis, KMS shim, OIDC
-    provider, gateway, `lenny-ops`, and the entire reference runtime catalog
-    in-process. No Docker, no cluster setup. Same code path as production --
-    not a simulator. Tear down with `lenny down`.
-
-**Reference runtime catalog**
-:   Out of the box: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`,
-    `langgraph`, `mastra`, `openai-assistants`, `crewai`. Coding agents ship
-    with pre-installed `git`, `ripgrep`, language toolchains, and
-    gVisor-enforced isolation. Copy any of them as a template.
-
-**Installer wizard + answer files**
-:   `lenny-ctl install` detects cluster capabilities, asks ~10 targeted
-    questions, previews a composed `values.yaml`, runs preflight, invokes
-    `helm install`, seeds bootstrap, and runs a smoke test. Capture the
-    answers once with `--save-answers`, replay in CI with
-    `--non-interactive`.
-
-**Runtime Author SDKs + scaffolding**
-:   First-party SDKs for Go (`github.com/lenny-io/runtime-sdk-go`), Python
-    (`lenny-runtime`), and TypeScript (`@lenny-io/runtime-sdk`) wrap the
-    stdin/stdout JSON Lines protocol, abstract-Unix-socket MCP, and lifecycle
-    channel. `lenny runtime init <name> --language <go|python|typescript>
-    --template <chat|coding|minimal>` emits a complete repo skeleton.
-
-**Pre-warmed pod pools**
-:   Pods boot in advance and sit idle. When a session starts, the gateway
-    assigns an already-running pod and materialises the workspace into it.
-    Cold-start latency drops to single-digit seconds.
-
-**Secure by default**
-:   Pods run non-root with all capabilities dropped, read-only root filesystem,
-    and default-deny network policies. No standing credentials -- only
-    short-lived leases. Gateway-mediated file delivery ensures pods never
-    fetch external data directly. mTLS between gateway and pods. LLM API keys
-    stay in gateway memory; the native Go translator rewrites upstream
-    requests without a sidecar.
-
-**Agent operability -- `lenny-ops` + `doctor --fix`**
-:   A mandatory `lenny-ops` control plane hosts structured diagnostic
-    endpoints (`/v1/admin/diagnostics/*`), operational runbooks, audit log
-    queries, backup/restore API, drift detection, MCP Management server, and
-    bundled Prometheus alerting rules. `lenny-ctl doctor --fix` closes the
-    loop by auto-remediating common misconfigurations.
-
-**MCP Tasks + Elicitation**
-:   Long-running work is modelled as resumable tasks. When an agent needs
-    human input it sends an elicitation request through the gateway; the client
-    replies at its own pace. No polling, no webhooks -- just the MCP
-    Streamable HTTP transport.
-
-**Recursive delegation with budget and scope controls**
-:   A parent session can spawn child sessions, each with a capped token budget,
-    a scoped tool allowlist, and an independent isolation boundary. The
-    platform tracks the tree and enforces limits at every level.
-
-**Deployer-selectable isolation**
-:   Choose the sandbox strength per workload: **runc** for trusted first-party
-    code, **gVisor** for moderate isolation, or **Kata Containers** for
-    full-VM boundaries. Switch tiers with a single field in the pool
-    definition.
-
-**Web Playground**
-:   Every installation serves a minimal SPA at `/playground` for zero-install
-    evaluation. Speaks the same public MCP surface as any client SDK (no
-    private endpoints), gated by OIDC / API key / dev-mode per the
-    `playground.authMode` Helm value.
-
-**OpenSLO export**
-:   SLO definitions ship as OpenSLO v1 manifests in addition to Prometheus
-    alerting rules. Import them into an SLO platform of your choice.
-
-**Multi-tenancy with row-level security**
-:   Every API object is scoped to an organisation and project. Postgres
-    row-level security policies guarantee that one tenant's data is invisible
-    to another, even if application code has a bug.
+1. **Every external request goes through the gateway.** Pods are never addressable from outside the cluster. That makes the gateway the single place to enforce authentication, rate limits, quotas, delegation budgets, and audit -- you have one perimeter to harden.
+2. **Pod disks are scratch space.** The durable state of a session -- transcript, artifacts, checkpoints -- lives in Postgres, Redis, and object storage. A pod can die without losing the session; the platform resumes it on a new pod from its last checkpoint.
+3. **No standing credentials inside the pod.** Credentials are leased per session, scoped to what that session needs, and can rotate without restarting the agent. Workspaces have no shared mounts; files arrive through the gateway.
+4. **Pods are warm when you need them.** The warm pool controller keeps idle pods ready so a new session doesn't pay for container boot. The only thing on the hot path is materializing the workspace and starting your agent -- typically a few seconds.
+5. **Lenny is platform plumbing, not AI behavior.** It doesn't score evaluations, extract memories, or classify content. It provides well-defined hooks where you plug in the tools you already use for those jobs -- or swap them without rewriting the rest.
+6. **Built for machine operators too.** Every state a human operator might check is also available as a structured endpoint, so an AI on-call can investigate and remediate without learning `kubectl`.
 
 ---
 

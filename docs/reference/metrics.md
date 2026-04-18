@@ -27,9 +27,9 @@ Complete reference for all Prometheus metrics emitted by Lenny platform componen
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_gateway_active_sessions` | Gauge | `service_instance_id` | Number of sessions coordinated by this gateway replica. Postgres-backed count; lags real goroutine pressure. | `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling signal only -- NOT an HPA trigger). |
 | `lenny_gateway_active_streams` | Gauge | `service_instance_id` | In-flight streaming connections per replica. | Secondary HPA metric. |
-| `lenny_gateway_request_queue_depth` | Gauge | `service_instance_id` | Requests queued awaiting a handler goroutine. Reflects instantaneous back-pressure. | **Primary HPA scale-out trigger.** Target `averageValue: 10` (Tier 2). |
-| `lenny_gateway_gc_pause_p99_ms` | Gauge | `service_instance_id` | Process-level P99 GC pause per replica. Sustained >50 ms signals shared-process boundary pressure. | `Tier3GCPressureHigh` alert; LLM Proxy extraction decision. |
-| `lenny_gateway_gc_pause_fleet_p99_ms` | Gauge | -- | 99th-percentile GC pause aggregated across all active gateway replicas. Computed as `max(lenny_gateway_gc_pause_p99_ms)` over all instances. | `Tier3GCPressureHigh` alert; Tier 3 aggregate health indicator. |
+| `lenny_gateway_request_queue_depth` | Gauge | `service_instance_id` | Requests queued awaiting a handler goroutine. Reflects instantaneous back-pressure. | **Primary Horizontal Pod Autoscaler (HPA) scale-out trigger.** Target `averageValue: 10` at Growth size. |
+| `lenny_gateway_gc_pause_p99_ms` | Gauge | `service_instance_id` | Process-level P99 GC pause per replica. Sustained >50 ms signals shared-process boundary pressure. | `Tier3GCPressureHigh` alert; signal that the LLM routing subsystem should be extracted. |
+| `lenny_gateway_gc_pause_fleet_p99_ms` | Gauge | -- | 99th-percentile GC pause aggregated across all active gateway replicas. Computed as `max(lenny_gateway_gc_pause_p99_ms)` over all instances. | `Tier3GCPressureHigh` alert; aggregate health indicator for Scale-size deployments. |
 | `lenny_gateway_rejection_rate` | Gauge | `service_instance_id` | Requests rejected with 429/503 per second per replica. | Leading HPA scale-out indicator. |
 
 ### HPA metric roles
@@ -87,13 +87,13 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 
 ### LLM translator metrics
 
-Emitted by the gateway when `deliveryMode: proxy` pools are active. Translation runs in-process inside the gateway binary (no sidecar); see [Security](../operator-guide/security.md#llm-proxy) for the trust boundary and [external LLM proxy](../operator-guide/external-llm-proxy.md) for deployer integrations with third-party routing gateways.
+Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway talks to LLM providers on behalf of agent pods, so pods never hold real API keys — the keys live only in the gateway process's memory, and credential rotation is zero-downtime. See [Security](../operator-guide/security.md#llm-proxy) for the trust boundary and [external LLM proxy](../operator-guide/external-llm-proxy.md) for deployer integrations with third-party routing gateways.
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_gateway_llm_proxy_request_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | End-to-end time from LLM Proxy subsystem receipt to response completion, including in-process translation and upstream provider latency. | -- |
-| `lenny_gateway_llm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect`, `direction`: `request`, `response` | Wall-clock time spent inside the native Go translator converting between the dialect exposed to the runtime and the upstream provider's wire format, per request or response leg. Upstream network time is excluded; this histogram measures translator CPU only. Subcomponent of `lenny_gateway_llm_proxy_request_duration_seconds`. | -- |
-| `lenny_gateway_llm_translation_errors_total` | Counter | `pool`, `provider`, `error_type`: `unsupported_field`, `schema_mismatch`, `auth_failed`, `timeout`, `streaming_interrupted`, `upstream_4xx`, `upstream_5xx` | Translator failures by category. `schema_mismatch` covers both incoming pod-request validation and upstream response-shape drift. `upstream_5xx` feeds the LLM Proxy subsystem circuit breaker; `auth_failed` triggers the Fallback Flow. | `LLMTranslationSchemaDrift` (Warning). |
+| `lenny_gateway_llm_proxy_request_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | End-to-end time from the gateway's LLM routing subsystem receiving the request to response completion, including in-process translation and upstream provider latency. | -- |
+| `lenny_gateway_llm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect`, `direction`: `request`, `response` | Wall-clock time the gateway spends converting between the dialect exposed to the runtime and the upstream provider's wire format, per request or response leg. Upstream network time is excluded; this histogram measures translator CPU only. Subcomponent of `lenny_gateway_llm_proxy_request_duration_seconds`. | -- |
+| `lenny_gateway_llm_translation_errors_total` | Counter | `pool`, `provider`, `error_type`: `unsupported_field`, `schema_mismatch`, `auth_failed`, `timeout`, `streaming_interrupted`, `upstream_4xx`, `upstream_5xx` | Translator failures by category. `schema_mismatch` covers both incoming pod-request validation and upstream response-shape drift. `upstream_5xx` feeds the LLM routing subsystem's circuit breaker; `auth_failed` triggers the Fallback Flow. | `LLMTranslationSchemaDrift` (Warning). |
 | `lenny_gateway_llm_upstream_egress_anomaly_total` | Counter | -- | Outbound connection attempts observed from the gateway pod to destinations outside the `allow-gateway-egress-llm-upstream` NetworkPolicy allowlist. Detected via eBPF connection tracking where available, or via NetworkPolicy drop counters as a fallback. The source is transparent to the operator; the metric is always present. | `LLMUpstreamEgressAnomaly` (Critical). |
 | `lenny_gateway_max_sessions_per_replica` | Gauge | `delivery_mode`: `proxy`, `direct` | Maximum concurrent sessions this replica can serve under the given delivery mode. Computed at startup from Helm `maxSessionsPerReplica` (direct) or `maxSessionsPerReplicaProxyMode` (proxy). Operators compute the proxy-vs-direct ratio for capacity planning. | -- |
 
@@ -407,7 +407,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 |:------|:-----------------------|:---------|
 | `WarmPoolExhausted` | `lenny_warmpool_idle_pods == 0` for any pool for > 60s | Critical |
 | `PostgresReplicationLag` | Sync replica lag > 1s for > 30s | Critical |
-| `GatewayNoHealthyReplicas` | Healthy replicas below tier minimum for > 30s | Critical |
+| `GatewayNoHealthyReplicas` | Healthy replicas below the deployment size's configured minimum for > 30s | Critical |
 | `SessionStoreUnavailable` | Postgres primary unreachable for > 15s | Critical |
 | `CheckpointStorageUnavailable` | Checkpoint upload to MinIO failed after all retries; Postgres fallback attempted | Critical |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Critical |
@@ -440,7 +440,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `CredentialPoolLow` | Available credentials < 20% of pool size | Warning |
 | `GatewayActiveStreamsHigh` | Active streams > 80% of configured max | Warning |
 | `GatewaySessionBudgetNearExhaustion` | Sessions/maxSessionsPerReplica > 90% for > 60s | Warning |
-| `Tier3GCPressureHigh` | Fleet P99 GC pause > 50 ms for > 5 min (Tier 3 only) | Warning |
+| `Tier3GCPressureHigh` | Fleet P99 GC pause > 50 ms for > 5 min (Scale-size deployments only) | Warning |
 | `CheckpointStale` | `lenny_checkpoint_stale_sessions > 0` for > 60s | Warning |
 | `CheckpointDurationHigh` | P95 checkpoint duration exceeds 2.5s over 5-min window | Warning |
 | `RateLimitDegraded` | Rate limiting in fail-open mode | Warning |
@@ -461,7 +461,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
-| `TenantDeletionOverdue` | Deletion exceeds 80% of tier SLA | Warning |
+| `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
 | `PoolBootstrapMode` | Pool in bootstrap mode > 72 hours | Warning |
 | `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` sustained > 5 min | Warning |

@@ -22,9 +22,9 @@ The `OpenAICompletionsAdapter` provides **drop-in compatibility** with the OpenA
 
 The adapter translates between OpenAI's Chat Completions wire format and Lenny's internal session lifecycle. Each completions request creates a Lenny session, runs it to completion (or streams output), and returns the result in standard OpenAI format.
 
-**Authentication.** All requests must carry `Authorization: Bearer <access-token>`. Obtain the initial token from your OIDC provider; rotate it via the canonical [`/v1/oauth/token`](./admin.md#post-v1oauthtoken) RFC 8693 endpoint.
+**Authentication.** All requests must carry `Authorization: Bearer <access-token>`. Obtain the initial token from your identity provider (OIDC); rotate it via the canonical [`/v1/oauth/token`](./admin.md#post-v1oauthtoken) RFC 8693 endpoint.
 
-**Upstream provider credentials.** When the chosen runtime is configured for proxy-mode credential delivery, the upstream LLM call flows: runtime → Lenny's LLM Proxy subsystem → in-process native Go translator → upstream provider (Anthropic, Bedrock, Vertex, Azure OpenAI). Your provider API key never reaches the agent pod and is never written to disk -- it lives only in the gateway process's in-memory Token Service cache. See [LLM Proxy security](../operator-guide/security.md#llm-proxy).
+**Upstream provider credentials.** When the chosen runtime is configured for proxy-mode credential delivery, the gateway talks to LLM providers (Anthropic, Bedrock, Vertex, Azure OpenAI) on behalf of the agent pod. The pod calls the gateway with only a short-lived lease token; the gateway rewrites the request with the real provider credentials before forwarding. Your provider API key never reaches the agent pod and is never written to disk -- it lives only in the gateway process's in-memory cache, so credential rotation is zero-downtime. See [LLM Proxy security](../operator-guide/security.md#llm-proxy).
 
 ---
 

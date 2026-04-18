@@ -7,7 +7,7 @@ nav_order: 2
 
 # Configuration
 
-This page provides a deep dive into the `values.yaml` configuration surface, covering every major section: gateway tuning, runtime registration, pool configuration, credential pools, delegation policies, and per-tier operational defaults.
+This page provides a deep dive into the `values.yaml` configuration surface, covering every major section: gateway tuning, runtime registration, pool configuration, credential pools, delegation policies, and operational defaults that vary by deployment size.
 
 ---
 
@@ -53,16 +53,16 @@ gateway:
   periodicCheckpointJitterFraction: 0.2    # Jitter to prevent checkpoint storms
 ```
 
-### Per-Tier `maxSessionsPerReplica`
+### `maxSessionsPerReplica` by Deployment Size
 
 These values are **provisional first-principles estimates** and must be replaced with empirically calibrated measurements from the Phase 2 benchmark harness.
 
-| Tier | Provisional Value | HPA Target Utilization | Notes |
+| Size | Provisional Value | HPA Target Utilization | Notes |
 |---|---|---|---|
-| Tier 1 (Starter) | 50 | 80% | Derived from 100 max sessions / 2 replicas |
-| Tier 2 (Growth) | 200 | 80% | Derived from 1,000 max sessions / 5 replicas |
-| Tier 3 (Scale) | 400 | 80% | Requires LLM Proxy subsystem extraction |
-| Tier 4 (Platform) | 400 | 80% | Same per-replica; scale-out via replica count |
+| Starter | 50 | 80% | Derived from 100 max sessions / 2 replicas |
+| Growth | 200 | 80% | Derived from 1,000 max sessions / 5 replicas |
+| Scale | 400 | 80% | Requires the gateway's LLM routing subsystem to have been extracted |
+| Platform | 400 | 80% | Same per-replica; scale-out via replica count |
 
 **Calibration methodology:** Use the ramp test described in [Scaling](scaling.html) to determine the empirical saturation point and set `maxSessionsPerReplica` to that value minus 20% headroom.
 
@@ -364,7 +364,7 @@ credentialPools:
         poolRef: bedrock-fallback
 ```
 
-**`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The gateway's native Go translator handles upstream provider translation in-process — the agent pod speaks the declared dialect regardless of the actual upstream provider. For providers outside the native translator's v1 set, or for deployers who want to route through a shared team gateway, see [external LLM proxy](external-llm-proxy.md).
+**`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The gateway handles upstream provider translation inside its own process — the agent pod speaks the declared dialect regardless of which upstream provider the gateway ultimately calls. For providers outside the gateway's built-in set, or for deployers who want to route through a shared team gateway, see [external LLM proxy](external-llm-proxy.md).
 
 ### Delivery Modes
 
@@ -430,7 +430,7 @@ capacityPlanning:
   sessionIdleFraction: 0.30
 ```
 
-**These must be updated before relying on any formula-derived sizing output.** The PoolScalingController logs a warning if defaults are in use for Tier 2 or Tier 3 deployments.
+**These must be updated before relying on any formula-derived sizing output.** The PoolScalingController logs a warning if defaults are in use for Growth or Scale-size deployments.
 
 ---
 
@@ -442,7 +442,7 @@ capacityPlanning:
 postgres:
   connectionString: "postgres://lenny:password@pgbouncer:5432/lenny"
   connectionPooler: pgbouncer           # pgbouncer | external
-  writeCeilingIops: 600                 # Per-tier write ceiling for alerts
+  writeCeilingIops: 600                 # Write ceiling for alerts; set according to your deployment size
   readReplicaConnectionString: ""       # Optional read replica endpoint
 ```
 
@@ -494,11 +494,11 @@ agentNamespaces:
 
 ---
 
-## Per-Tier Configuration Profiles
+## Configuration Profiles by Deployment Size
 
-The following table summarizes key configuration differences across deployment tiers:
+The following table summarizes key configuration differences across deployment sizes:
 
-| Setting | Tier 1 | Tier 2 | Tier 3 |
+| Setting | Starter | Growth | Scale |
 |---|---|---|---|
 | `gateway.replicas` (min / max) | 2 / 4 | 3 / 10 | 5 / 30 |
 | `gateway.maxSessionsPerReplica` | 50 | 200 | 400 |
@@ -618,7 +618,7 @@ Lenny provides a structured billing event stream for integration with external b
 ```yaml
 billing:
   retentionDays: 395                   # Default: 395 days (~13 months)
-  redisStreamMaxLen: 50000             # Per-tier: 50,000 (T1/T2), 72,000 (T3)
+  redisStreamMaxLen: 50000             # By deployment size: 50,000 (Starter/Growth), 72,000 (Scale)
   dualControlThreshold: 0             # Default: 0 (all corrections require dual-control)
   flushIntervalMs: 500
 ```
