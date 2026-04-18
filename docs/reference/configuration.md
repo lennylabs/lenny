@@ -52,20 +52,15 @@ Configurable thresholds for subsystem extraction decisions. All values are provi
 | `gateway.extractionThresholds.mcpFabric.p99OrchestrationLatencyMs` | int | 2000 | P99 orchestration latency threshold (ms). |
 | `gateway.extractionThresholds.llmProxy.activeConnections` | int | 2000 | Active upstream LLM connection threshold. |
 
-### LLM Proxy (LiteLLM sidecar)
+### LLM Proxy
 
-LiteLLM runs as a sidecar container co-located with each gateway replica. The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic requests and forwards to the sidecar on loopback.
+The gateway's LLM Proxy subsystem terminates runtime-facing OpenAI/Anthropic requests and translates them to the upstream provider's wire format using an in-process Go translator (no sidecar). For deployers who want to route through a shared external LLM gateway (LiteLLM, Portkey, cloud-managed), see [external LLM proxy](../operator-guide/external-llm-proxy.md).
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `gateway.llmProxy.litellm.enabled` | bool | `true` | Deploy the LiteLLM sidecar. When disabled, only direct-mode (runtime-managed credentials) is supported. | -- |
-| `gateway.llmProxy.litellm.image` | string | `lenny/litellm-hardened:<lenny-version>` | Container image for the LiteLLM sidecar. Lenny ships a hardened wrapper image pinned to the main Lenny release. | Valid image reference. |
-| `gateway.llmProxy.litellm.port` | int | 4000 | Loopback port inside the gateway pod on which the sidecar listens. | 1024-65535. |
-| `gateway.llmProxy.litellm.configMap` | string | `lenny-litellm-config` | Name of the ConfigMap containing `config.yaml` for LiteLLM (model list, provider credentials, routing rules). | Must reference an existing ConfigMap. |
-| `gateway.llmProxy.litellm.resources.cpu` | string | `"100m"` (request), `"500m"` (limit) | CPU request/limit for the sidecar container. | Valid Kubernetes resource quantity. |
-| `gateway.llmProxy.litellm.resources.memory` | string | `"128Mi"` (request), `"512Mi"` (limit) | Memory request/limit for the sidecar container. | Valid Kubernetes resource quantity. |
 | `gateway.llmProxy.proxyDialects` | string[] | `["openai", "anthropic"]` | Proxy dialects enabled for runtime-facing endpoints. Must cover every `Runtime.credentialCapabilities.proxyDialect` in use. | Subset of `openai`, `anthropic`. |
-| `gateway.llmProxy.upstreamTLSVerify` | bool | `true` | Verify upstream provider TLS certificates (applies to LiteLLM's connection to OpenAI/Anthropic/Bedrock/etc). | -- |
+| `gateway.llmProxy.anthropicVersion` | string | (latest stable as of each Lenny release) | Default `anthropic-version` header value the translator injects when the runtime does not supply one. | Valid Anthropic API version string. |
+| `gateway.llmProxy.upstreamTLSVerify` | bool | `true` | Verify upstream provider TLS certificates on outbound calls from the gateway process. | -- |
 
 ---
 

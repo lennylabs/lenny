@@ -211,30 +211,27 @@ This immediately:
 
 ## LLM Proxy
 
-### Architecture (two components)
+### Architecture
 
-The LLM Proxy is structured as two cooperating components in the gateway pod:
+The LLM Proxy is a single in-process component inside the gateway binary — the LLM Proxy subsystem (the gateway's fourth internal subsystem boundary). It validates the lease token, verifies SPIFFE binding, runs the `PreLLMRequest` / `PostLLMResponse` interceptor chain, invokes the native Go translator to convert between the agent pod's dialect (OpenAI or Anthropic, per the pool's `proxyDialect`) and the upstream provider's wire format, injects the real upstream API key from the Token Service's in-memory credential cache, forwards to the upstream provider, and extracts authoritative token usage from the response. There is no sidecar container, no loopback listener, and no shared-secret auth — translation happens inside the same process.
 
-1. **Lenny proxy subsystem** -- the gateway's fourth internal subsystem boundary. Validates the lease token, verifies SPIFFE binding, runs the `PreLLMRequest` / `PostLLMResponse` interceptor chain, extracts authoritative token usage from the upstream response. Speaks OpenAI- or Anthropic-compatible HTTP to the agent pod (per the pool's `proxyDialect`).
-2. **LiteLLM sidecar** -- a [LiteLLM](https://github.com/BerriAI/litellm) container running alongside the gateway. Holds the real upstream provider credentials (read from a gateway-populated tmpfs file). Translates OpenAI/Anthropic requests to the upstream provider's native wire format, injects the real API key, forwards to the upstream. Never exposed outside the gateway pod's loopback.
-
-See [LiteLLM sidecar](litellm-sidecar.md) for configuration details.
+**See also:** [`external-llm-proxy.md`](external-llm-proxy.md) for deployers who want to route traffic through an external LLM gateway (LiteLLM, Portkey, cloud-managed) as the upstream.
 
 ### Security posture
 
-- **Real API keys live only in the gateway pod's LiteLLM sidecar memory.** They never enter the agent pod's environment, memory, filesystem, or network path.
+- **Real API keys live only in the gateway process's in-memory Token Service cache.** They are never written to disk, never placed on tmpfs, and never entered into the agent pod's environment, memory, filesystem, or network path.
 - **Agent-pod wire format is provider-agnostic.** Runtimes use standard OpenAI or Anthropic SDKs; the upstream provider can change without any runtime code change.
-- **LiteLLM is part of the gateway's trust envelope.** It does not have an independent SPIFFE identity; outbound provider connections use the gateway pod's network identity.
-- **Loopback authentication.** The Lenny proxy subsystem and LiteLLM authenticate with a shared secret (`litellm_master_key`) generated at gateway startup. Traffic never leaves the pod-local loopback.
-- **Lease revocation enforced at Lenny, not LiteLLM.** Expired/revoked leases are rejected by the Lenny subsystem before reaching LiteLLM.
+- **The translator is part of the gateway's trust envelope.** It has no independent SPIFFE identity; outbound provider connections use the gateway pod's network identity.
+- **Credential rotation is zero-downtime.** The Token Service cache is refreshed atomically on lease rotation; the next outbound call reads the new key. No reload signal, no file replacement, no SIGHUP.
+- **Lease revocation enforced before the translator runs.** Expired/revoked leases are rejected by the LLM Proxy subsystem's lease check before any upstream call is attempted.
 
 ### Network Isolation
 
-Only pods in pools with `deliveryMode: proxy` can reach the Lenny proxy port (8443). The NetworkPolicy `allow-pod-egress-llm-proxy` is applied selectively using the `lenny.dev/delivery-mode: proxy` label.
+Only pods in pools with `deliveryMode: proxy` can reach the Lenny proxy port (8443). The NetworkPolicy `allow-pod-egress-llm-proxy` is applied selectively using the `lenny.dev/delivery-mode: proxy` label. The gateway pod's own egress to upstream providers is governed by `allow-gateway-egress-llm-upstream` (see [§13.2](../../spec/13_security-model.md#132-network-isolation) NET-046).
 
 ### Token Counting
 
-In proxy mode, the Lenny proxy subsystem extracts `input_tokens` and `output_tokens` directly from the upstream LLM response metadata forwarded by LiteLLM. These upstream-extracted counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
+In proxy mode, the LLM Proxy subsystem's native translator extracts `input_tokens` and `output_tokens` directly from the upstream LLM response metadata. These upstream-extracted counts are **authoritative** -- `ReportUsage` calls from pods are ignored, preventing malicious runtimes from underreporting.
 
 ---
 

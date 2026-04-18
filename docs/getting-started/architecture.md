@@ -146,15 +146,14 @@ Orchestrates recursive delegation and manages the virtual MCP interfaces that pa
 
 #### LLM Proxy subsystem
 
-A credential-injecting reverse proxy for LLM provider traffic. The gateway terminates runtime-facing requests in one of two dialects (`openai` or `anthropic`, matching the runtime's `credentialCapabilities.proxyDialect`) and forwards the request to a **LiteLLM sidecar** co-located with the gateway replica. When an agent pod needs to call an LLM provider:
+A credential-injecting reverse proxy for LLM provider traffic. The gateway terminates runtime-facing requests in one of two dialects (`openai` or `anthropic`, matching the runtime's `credentialCapabilities.proxyDialect`) and translates them to the upstream provider's wire format using a **native Go translator** inside the gateway binary (no sidecar, no loopback hop). When an agent pod needs to call an LLM provider:
 
 1. The pod sends the request to the gateway's LLM Proxy (using only a lease token, not the real API key) on either `/v1/chat/completions` (OpenAI dialect) or `/v1/messages` (Anthropic dialect).
 2. The LLM Proxy validates the lease token against the session's active credential lease, applies interceptors, and performs quota accounting.
-3. The LLM Proxy injects the real API key (retrieved from the Credential Pool Store) and hands the request to the LiteLLM sidecar over loopback.
-4. The LiteLLM sidecar translates to the upstream provider wire format (Anthropic, Bedrock, Vertex, OpenAI-compatible, etc.) and streams the response back.
-5. The LLM Proxy strips credentials from the response and relays it to the pod.
+3. The native translator converts the request into the upstream provider's wire format (Anthropic, Bedrock, Vertex, Azure OpenAI), reads the real API key from the Token Service's in-memory credential cache, and forwards over TLS.
+4. The translator converts the upstream response back into the runtime's dialect, extracts authoritative token usage, runs `PostLLMResponse` interceptors, and relays the response to the pod.
 
-The sidecar is shipped as the hardened wrapper image `lenny/litellm-hardened:<lenny-version>`, pinned to the main Lenny release. This architecture means pods never hold actual LLM API keys, and upstream provider credentials are injected only inside the LiteLLM sidecar -- they never reach the agent pod. The LLM Proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level failures.
+This architecture means pods never hold actual LLM API keys, and upstream provider credentials never leave the gateway process's memory -- they are never written to disk, tmpfs, or any other container's address space. Credential rotation is zero-downtime: the cache is refreshed atomically and the next outbound call picks up the new key with no reload signal. The LLM Proxy tracks active upstream connections per replica and has its own circuit breaker for provider-level failures. Deployers who want a broader provider catalog, custom routing intelligence, or shared spend accounting can deploy an external LLM routing proxy and configure it as an upstream -- see [external LLM proxy](../operator-guide/external-llm-proxy.md).
 
 ---
 

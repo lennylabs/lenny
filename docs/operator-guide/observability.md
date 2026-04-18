@@ -138,8 +138,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
 | `TokenStoreUnavailable` | `/v1/oauth/token` 5xx rate with `error_type="token_store_unavailable"` sustained > 5 min | Token Service database backpressure; check Postgres, Token Service pods |
-| `LiteLLMRouteAnomaly` | Non-allowlisted route hit observed on LiteLLM sidecar | Potential sidecar compromise; isolate replica, audit recent config pushes |
-| `LiteLLMEgressAnomaly` | Outbound connection to non-allowlisted upstream detected | Investigate SPIFFE boundary, NetworkPolicy coverage |
+| `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate SPIFFE boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 
 ### Warning Alerts
@@ -155,6 +154,8 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `PoolConfigDrift` | CRD config doesn't match Postgres > 60s | Check PoolScalingController |
 | `WarmPoolReplenishmentFailing` | Warmup failures > 1/min for > 5 min | Check image pulls, setup commands |
 | `CircuitBreakerActive` | Any breaker open > 5 min | Review affected subsystem |
+| `LLMTranslationLatencyHigh` | P95 `lenny_gateway_llm_translation_duration_seconds` > 100 ms sustained 5 min | Investigate native translator regression or payload-size change |
+| `LLMTranslationSchemaDrift` | `lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}` rate > 0 sustained 5 min | Investigate runtime/SDK request drift or upstream provider response schema change |
 | `StorageQuotaHigh` | Tenant storage > 80% of quota | Cleanup or increase quota |
 | `CredentialProactiveRenewalExhausted` | All proactive renewal retries exhausted before expiry | Session falls through to standard fallback flow |
 | `GatewayActiveStreamsHigh` | Active streams per replica > 80% of configured max | Approaching stream proxy capacity; review scaling |
@@ -166,7 +167,6 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `ControllerWorkQueueDepthHigh` | Work queue depth > 50% of configured max for > 2 min | Controller reconciliation backlog; check CPU throttling |
 | `RuntimeUpgradeStuck` | Upgrade state machine in non-terminal state > `phaseTimeoutSeconds` | Pool image upgrade not progressing; investigate |
 | `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` for > 5 min | CloudEvents publishing backpressure; check EventBus transport and `eventBus.publishQueueDepth` |
-| `LiteLLMUnexpectedRestart` | Sidecar restarts excluding `config_reload` over 15m > 0 | LiteLLM sidecar crash-looping; check memory limits, upstream provider connectivity |
 | `PgAuditSinkDeliveryFailed` | pgaudit events failing to deliver to configured sink | pgaudit forwarding broken; see [OCSF audit guide](audit-ocsf.md) |
 
 ---

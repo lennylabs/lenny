@@ -364,7 +364,7 @@ credentialPools:
         poolRef: bedrock-fallback
 ```
 
-**`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The LiteLLM sidecar (see [LiteLLM sidecar](litellm-sidecar.md)) handles upstream provider translation -- the agent pod speaks the declared dialect regardless of the actual upstream provider.
+**`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The gateway's native Go translator handles upstream provider translation in-process — the agent pod speaks the declared dialect regardless of the actual upstream provider. For providers outside the native translator's v1 set, or for deployers who want to route through a shared team gateway, see [external LLM proxy](external-llm-proxy.md).
 
 ### Delivery Modes
 

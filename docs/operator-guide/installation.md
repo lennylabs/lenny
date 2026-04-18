@@ -36,7 +36,7 @@ This page covers end-to-end installation of Lenny on a Kubernetes cluster, from 
 | External Secrets Operator | Synchronize credentials from AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager | Tier 3 deployments with hundreds of credentials per pool |
 | KEDA | ScaledObject-based HPA with direct Prometheus query (bypasses Prometheus Adapter cache) | Alternative to Prometheus Adapter for more responsive autoscaling |
 | Prometheus + Grafana | Metrics collection and dashboarding | Required for observability (see [Observability](observability.html)) |
-| LiteLLM sidecar | Upstream provider wire translation for proxy-mode credential pools | **Required when using `deliveryMode: proxy` on any CredentialPool**. Configured via `llmProxy.litellm.*` Helm values; runs as a sidecar container in the gateway pod. See [LiteLLM sidecar](litellm-sidecar.md). |
+| External LLM routing proxy | Route proxy-mode traffic through a shared LLM gateway (LiteLLM, Portkey, cloud-managed) for broader provider catalog, custom routing intelligence, or shared spend reporting | Optional. Not needed when the native Go translator built into the gateway covers your provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [external LLM proxy](external-llm-proxy.md). |
 | krew (for operators) | kubectl plugin manager; needed to install `kubectl-lenny` | Optional convenience for operators who prefer `kubectl lenny` over the standalone `lenny-ctl` binary. See [krew installation](krew-install.md). |
 
 ### Infrastructure Sizing Quick Reference

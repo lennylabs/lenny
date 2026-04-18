@@ -85,18 +85,17 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 | `lenny_llm_proxy_upstream_goroutines` | Gauge | -- | Goroutines handling upstream LLM streams. | -- |
 | `lenny_llm_proxy_p99_ttfb_ms` | Histogram | -- | P99 time-to-first-byte for upstream LLM requests. | -- |
 
-### LiteLLM sidecar metrics
+### LLM translator metrics
 
-Emitted by the gateway when `deliveryMode: proxy` pools are active; the sidecar hardening contract is in [Security](../operator-guide/security.md#llm-proxy) and [LiteLLM sidecar](../operator-guide/litellm-sidecar.md).
+Emitted by the gateway when `deliveryMode: proxy` pools are active. Translation runs in-process inside the gateway binary (no sidecar); see [Security](../operator-guide/security.md#llm-proxy) for the trust boundary and [external LLM proxy](../operator-guide/external-llm-proxy.md) for deployer integrations with third-party routing gateways.
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_gateway_llm_proxy_request_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | End-to-end time from Lenny proxy receipt to response completion, including LiteLLM forwarding and upstream provider latency. | Proxy-mode translation overhead SLO. |
-| `lenny_gateway_litellm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | Time spent inside the LiteLLM sidecar translating and forwarding — request body translation + upstream call + response translation. Upstream provider's network latency is included; it is NOT subtracted because the sidecar cannot observe upstream wire timing independently of its own processing. Used as the numerator for the proxy-mode translation-overhead SLO ratio. | Go-rewrite trigger signal (c); proxy-mode SLO. |
-| `lenny_gateway_litellm_route_anomaly_total` | Counter | -- | Requests to LiteLLM routes outside the allowlist (`/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/health`). Steady-state zero; any non-zero rate is a potential compromise signal. | `LiteLLMRouteAnomaly` (Critical). |
-| `lenny_gateway_litellm_egress_anomaly_total` | Counter | -- | Outbound connection attempts observed from the gateway pod to destinations outside the `allow-gateway-egress-llm-upstream` NetworkPolicy allowlist. Detected via eBPF connection tracking where available, or via NetworkPolicy drop counters as a fallback. The source is transparent to the operator; the metric is always present. | `LiteLLMEgressAnomaly` (Critical). |
-| `lenny_gateway_litellm_process_restart_total` | Counter | `error_type`: `oom`, `crash`, `config_reload` | Sidecar process restarts during active sessions. | `LiteLLMUnexpectedRestart` (Warning). |
-| `lenny_gateway_max_sessions_per_replica` | Gauge | `delivery_mode`: `proxy`, `direct` | Maximum concurrent sessions this replica can serve under the given delivery mode. Computed at startup from Helm `maxSessionsPerReplica` (direct) or `maxSessionsPerReplicaProxyMode` (proxy). | Go-rewrite trigger signal (d); Phase 13.5 measurement. |
+| `lenny_gateway_llm_proxy_request_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect` | End-to-end time from LLM Proxy subsystem receipt to response completion, including in-process translation and upstream provider latency. | -- |
+| `lenny_gateway_llm_translation_duration_seconds` | Histogram | `pool`, `provider`, `proxy_dialect`, `direction`: `request`, `response` | Wall-clock time spent inside the native Go translator converting between the dialect exposed to the runtime and the upstream provider's wire format, per request or response leg. Upstream network time is excluded; this histogram measures translator CPU only. Subcomponent of `lenny_gateway_llm_proxy_request_duration_seconds`. | -- |
+| `lenny_gateway_llm_translation_errors_total` | Counter | `pool`, `provider`, `error_type`: `unsupported_field`, `schema_mismatch`, `auth_failed`, `timeout`, `streaming_interrupted`, `upstream_4xx`, `upstream_5xx` | Translator failures by category. `schema_mismatch` covers both incoming pod-request validation and upstream response-shape drift. `upstream_5xx` feeds the LLM Proxy subsystem circuit breaker; `auth_failed` triggers the Fallback Flow. | `LLMTranslationSchemaDrift` (Warning). |
+| `lenny_gateway_llm_upstream_egress_anomaly_total` | Counter | -- | Outbound connection attempts observed from the gateway pod to destinations outside the `allow-gateway-egress-llm-upstream` NetworkPolicy allowlist. Detected via eBPF connection tracking where available, or via NetworkPolicy drop counters as a fallback. The source is transparent to the operator; the metric is always present. | `LLMUpstreamEgressAnomaly` (Critical). |
+| `lenny_gateway_max_sessions_per_replica` | Gauge | `delivery_mode`: `proxy`, `direct` | Maximum concurrent sessions this replica can serve under the given delivery mode. Computed at startup from Helm `maxSessionsPerReplica` (direct) or `maxSessionsPerReplicaProxyMode` (proxy). Operators compute the proxy-vs-direct ratio for capacity planning. | -- |
 
 ---
 
@@ -430,8 +429,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `DelegationBudgetKeysExpired` | `BUDGET_KEYS_EXPIRED` returned by Lua script | Critical |
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
 | `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[5m]) > 0.1` sustained > 5 min | Critical |
-| `LiteLLMRouteAnomaly` | `rate(lenny_gateway_litellm_route_anomaly_total[1m]) > 0` | Critical |
-| `LiteLLMEgressAnomaly` | `rate(lenny_gateway_litellm_egress_anomaly_total[1m]) > 0` | Critical |
+| `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |
 
 ### Warning alerts
 
@@ -451,6 +449,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `DelegationBudgetNearExhaustion` | Budget utilization > 90% for any tree | Warning |
 | `PodClaimQueueSaturated` | Queue depth > 25% of `minWarm` with idle pods available for > 30s | Warning |
 | `GatewaySubsystemCircuitOpen` | Any subsystem circuit breaker open for > 60s | Warning |
+| `LLMTranslationLatencyHigh` | `histogram_quantile(0.95, rate(lenny_gateway_llm_translation_duration_seconds_bucket[5m])) > 0.1` sustained > 5 min | Warning |
+| `LLMTranslationSchemaDrift` | `rate(lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}[5m]) > 0` sustained > 5 min | Warning |
 | `PoolConfigDrift` | Postgres/CRD generation mismatch for > 60s | Warning |
 | `WarmPoolReplenishmentSlow` | P95 startup duration > 2x baseline for > 5 min | Warning |
 | `WarmPoolReplenishmentFailing` | Warmup failure rate > 1/min for > 5 min | Warning |
@@ -465,7 +465,6 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
 | `PoolBootstrapMode` | Pool in bootstrap mode > 72 hours | Warning |
 | `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` sustained > 5 min | Warning |
-| `LiteLLMUnexpectedRestart` | `rate(lenny_gateway_litellm_process_restart_total{error_type!="config_reload"}[15m]) > 0` | Warning |
 
 ### SLO burn-rate alerts
 

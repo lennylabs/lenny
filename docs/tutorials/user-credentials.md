@@ -70,7 +70,7 @@ curl -s -X POST http://localhost:8080/v1/sessions \
   }' | jq .
 ```
 
-The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway's LLM Proxy subsystem hands the request to a co-located **LiteLLM sidecar** (`lenny/litellm-hardened:<lenny-version>`) which translates to the upstream provider wire format. Your API key is injected inside the sidecar and never leaves the gateway pod. See [LiteLLM sidecar](../operator-guide/litellm-sidecar.md) for how it is deployed.
+The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests transparently -- the agent pod never sees the raw key. Under the hood, the gateway's LLM Proxy subsystem routes the request through an **in-process native Go translator**, which reads your API key from the gateway process's in-memory Token Service cache and translates to the upstream provider's wire format. Your API key never leaves the gateway process's memory. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
 
 You can verify which credential source was used by checking the session metadata:
 
