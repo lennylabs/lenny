@@ -12,6 +12,8 @@ description: Lenny is a Kubernetes-native, runtime-agnostic platform for running
 
 Lenny gives every agent session its own locked-down pod. Your agent -- whether it's Claude Code, a LangGraph graph, or a custom binary -- runs with a fresh workspace, leased credentials, and a tight network perimeter. Clients talk to a single gateway that speaks the protocols you probably already use: REST, MCP, the OpenAI Chat Completions API, and the Open Responses API.
 
+Agents can also delegate to other agents. The gateway enforces the budget, scope, and isolation bounds at every hop -- so multi-agent systems don't rely on the runtime to police itself.
+
 Lenny is self-hosted. There is no managed service and no telemetry sent to an external vendor; data stays inside the cluster you operate.
 
 {: .note }

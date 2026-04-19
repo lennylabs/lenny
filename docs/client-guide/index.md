@@ -12,6 +12,8 @@ For developers integrating Lenny into an application, a script, a CI pipeline, a
 
 The gateway exposes everything a client needs (creating and ending sessions, sending and streaming messages, uploading workspaces, downloading artifacts, delegating to child agents) over four interchangeable protocols. Pick whichever one fits the code you already have.
 
+When a session delegates to a child, the guardrails — budget, scope, isolation — are enforced by the gateway, not by the agent code. As a client, you see the task tree and aggregated usage without having to trust the runtime.
+
 ---
 
 ## Pick how you want to drive a session

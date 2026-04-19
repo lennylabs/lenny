@@ -2,7 +2,7 @@
 
 Lenny is a **Kubernetes-native, runtime-agnostic agent session platform** that provides on-demand, pre-warmed, isolated cloud agent instances to clients. It is not tied to any single agent runtime — it defines a standard contract that any compliant pod binary can implement.
 
-The platform solves a specific problem: teams need cloud-hosted agent sessions (e.g., Claude Code, custom agents) that start fast, run in isolation, support long-lived interactive workflows, and can delegate work recursively — all behind a unified gateway that owns lifecycle, policy, security, and MCP-facing behavior.
+The platform solves a specific problem: teams need cloud-hosted agent sessions (e.g., Claude Code, custom agents) that start fast, run in isolation, support long-lived interactive workflows, and can delegate work recursively under platform-enforced budgets, narrowing scope, and monotonic isolation — all behind a unified gateway that owns lifecycle, policy, security, and MCP-facing behavior.
 
 For a concise explanation of where Lenny fits relative to Temporal, Modal, LangGraph, E2B, Fly.io Sprites, and Daytona — including target personas and explicit trade-offs — see **[Section 23](23_competitive-landscape.md) (Competitive Landscape)**, specifically **[Section 23.1](23_competitive-landscape.md#231-why-lenny) (Why Lenny?)**.
 

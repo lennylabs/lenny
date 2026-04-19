@@ -6,6 +6,8 @@ Recursive delegation is a **platform primitive**, not a hardcoded orchestration 
 
 Every pod runs the same orchestration-capable runtime. Whether it acts as a pure worker, a delegating orchestrator, or both is determined by the agent binary.
 
+The gateway enforces three invariants on every delegation hop: the child's token budget is carved from the parent's remaining budget, the child's scope is a subset of the parent's scope, and the child's isolation profile is no weaker than the parent's. A runtime cannot bypass these by cooperating with another runtime — enforcement sits in the gateway and the Token Service, not in the agent code.
+
 ### 8.2 Delegation Mechanism
 
 When a parent pod wants to delegate, it calls the single `lenny/delegate_task` tool on the platform MCP server:

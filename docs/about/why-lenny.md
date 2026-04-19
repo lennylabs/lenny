@@ -25,6 +25,8 @@ nav_order: 1
 
 Lenny is a platform for running interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster. You install it with a Helm chart (or the embedded single-binary stack for laptops and evaluation), and from then on your clients see one gateway: call it to start a session, stream messages in and out, upload files, delegate to child agents, and tear the session down.
 
+Delegation is a first-class primitive, not a convention -- when one agent spawns another, the gateway itself enforces the guardrails rather than trusting the runtime to police the tree.
+
 The agent itself can be anything. If your program can read JSON from standard input and write JSON to standard output, it can run as a Lenny agent -- whether that program is Anthropic's Claude Code CLI, a LangGraph graph, a CrewAI crew, or 50 lines of Go you wrote this morning. Lenny handles the hard infrastructure parts: starting the pod, preparing the workspace, delivering files, leasing credentials, tracking delegation, and recording audit events. Your agent focuses on the conversation.
 
 The platform is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing runtimes. There is no custom scheduler, no external control plane, and no outbound telemetry to a vendor. Data stays inside the cluster you operate.

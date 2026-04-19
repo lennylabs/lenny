@@ -65,6 +65,7 @@ A few consequences of this design:
 - **You don't need a Lenny dependency.** The simplest integration has zero imports from Lenny. If you'd like more ergonomic code, official SDKs are available for Go, Python, and TypeScript (covered below).
 - **You integrate deeper only when you need to.** The basic integration is about 50 lines. More capabilities are available when you want them, without rewriting what you have.
 - **Sessions are isolated by default.** Every session gets its own pod with its own filesystem and network namespace. Depending on the pool's configuration, it can also be sandboxed under gVisor or run in a microVM via Kata Containers. Sessions never share memory or state.
+- **Delegation is backstopped.** When your runtime calls `lenny/delegate_task`, the gateway enforces the child's budget, scope, and isolation bounds. You don't have to trust other runtimes — or your own code — to honor them.
 
 ---
 
