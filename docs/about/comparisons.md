@@ -40,11 +40,14 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | Unchecked box | Read first |
 |:--|:--|
 | Can't run Kubernetes | [Lenny vs Fly.io Sprites](#lenny-vs-flyio-sprites) (hosted) or [Lenny vs Modal](#lenny-vs-modal) |
-| Just need a sandbox | [Lenny vs E2B](#lenny-vs-e2b), then [Lenny vs Daytona](#lenny-vs-daytona) |
+| Just need a sandbox | [Lenny vs E2B](#lenny-vs-e2b), [Lenny vs Daytona](#lenny-vs-daytona), or [Lenny vs Alibaba OpenSandbox](#lenny-vs-alibaba-opensandbox) |
 | Framework-coupled is fine | [Lenny vs LangGraph / LangSmith](#lenny-vs-langgraph--langsmith) |
 | Need durable workflows | [Lenny vs Temporal](#lenny-vs-temporal) |
 | Need GPU in v1 | [Lenny vs Modal](#lenny-vs-modal) |
 | Don't care about delegation | [Lenny vs E2B](#lenny-vs-e2b) or [Lenny vs Daytona](#lenny-vs-daytona) |
+| Computer-use / GUI agents | [Lenny vs Alibaba OpenSandbox](#lenny-vs-alibaba-opensandbox) — Lenny has no GUI path in v1 |
+| Multi-agent research prototyping, not production | [Lenny vs Google Scion](#lenny-vs-google-scion) |
+| Single-developer policy sandbox | [Lenny vs NVIDIA OpenShell](#lenny-vs-nvidia-openshell) |
 
 ---
 
@@ -70,6 +73,28 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | **GPU support**            | Not in v1                                  | Limited                 | Limited                   | No                          | No                       | Yes (primary use case)      | No                              |
 | **Isolation profiles**     | runc / gVisor / Kata                       | Firecracker microVM     | Container                 | Firecracker microVM         | Process-level            | Container                   | Process-level                   |
 | **Semantic cache**         | Pluggable interface on credential pools (Section 4.9) | No                      | No                        | No                          | No                       | No                          | No                              |
+
+---
+
+## 2026 open-source entrants
+
+Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All three ship pre-wired for AI coding workflows: Scion and OpenShell only launch coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode, Copilot); OpenSandbox lists coding agents as its first use case alongside GUI/computer-use, eval, and RL. Lenny is workload-agnostic — any JSON-over-stdio program is a runtime, and its reference catalog spans coding CLIs, chat, and framework adapters (LangGraph, Mastra, CrewAI, OpenAI Assistants). None of the three is a drop-in replacement for Lenny's full scope, but each is the right choice for a specific need. Full narrative comparisons are below; this table is a quick orientation.
+
+| Dimension | Lenny | Google Scion | NVIDIA OpenShell | Alibaba OpenSandbox |
+|:---|:---|:---|:---|:---|
+| **Released** | Design phase (MIT) | April 2026 (Apache 2.0) | GTC 2026 (Apache 2.0) | March 2026 (Apache 2.0) |
+| **Framing** | K8s-native agent session platform | Multi-agent orchestration testbed | Policy-driven sandbox runtime | General sandbox with unified API |
+| **Workload focus** | Workload-agnostic (coding, chat, MCP hosting, framework adapters) | Coding-CLI harnesses + experimental multi-agent research | AI coding (Claude / OpenCode / Codex / Copilot) | Coding, GUI/computer-use, eval, RL (GUI features are the standout) |
+| **Implementation** | Go, gateway + CRDs + controllers | Go CLI over containers | Rust CLI + K3s-in-Docker | Python FastAPI + multi-language SDKs |
+| **Laptop-only start** | Yes (`lenny up` single binary) | Yes (`go install`) | Yes (K3s-in-Docker) | Yes (Docker) |
+| **Isolation** | runc / gVisor / Kata via `RuntimeClass` | Containers + per-agent git worktree | Docker container + YAML policy engine | Docker / K8s / gVisor / Kata / Firecracker |
+| **Multi-agent** | Recursive delegation, gateway-enforced across sessions | Emergent coordination via a shared CLI | No cross-sandbox orchestration (alpha: "single-player mode"); in-session subagent spawning mentioned | Not a platform feature |
+| **Token budgets** | Per-subtree, atomic | Not available | Not available | Not available |
+| **Credentials** | Leased, pod-bound, rotatable | Per-agent separated credentials | "Providers" — env-var injection | `OPEN_SANDBOX_API_KEY` for management-API auth |
+| **Client protocols** | REST + MCP + OpenAI + Open Responses | CLI | CLI | REST + MCP |
+| **Multi-tenancy** | Postgres RLS, RBAC, audit | Not provided | Explicit future work | Design goal for K8s runtime; isolation model undocumented |
+| **Compliance controls** | GDPR erasure, legal holds, audit chain | Not provided | Not provided | Not provided |
+| **Standout feature** | Platform-enforced recursive delegation | Emergent multi-agent coordination | Hot-reloadable YAML policy incl. inference routing | VNC desktops + Chromium + code-server in-sandbox |
 
 ---
 
@@ -222,6 +247,82 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 - **Ecosystem breadth.** LangChain's ecosystem includes hundreds of integrations for LLMs, tools, vector stores, and retrievers.
 - **Python-first.** LangChain's primary SDK is Python, the dominant language for AI/ML development. Lenny's platform is Go with TypeScript and Go client SDKs.
 - **Lower barrier to entry.** For teams already using LangChain, LangGraph is a natural extension with minimal new concepts.
+
+---
+
+## Lenny vs Google Scion
+
+**Scion** is Google's multi-agent orchestration testbed, open-sourced in April 2026 under Apache 2.0. Google describes it as "an experimental multi-agent orchestration testbed designed to manage 'deep agents' running in containers." Pre-built harnesses ship for the major coding CLIs — Claude Code, Gemini CLI, Codex, OpenCode — and each agent gets its own container and git worktree. Agents coordinate by calling a shared CLI (`scion message`), so the model itself decides who to talk to. Ships with a demo project, *Relics of the Athenaeum*, where agents collaborate to solve puzzles. The README flags the project as "early and experimental."
+
+### Where Lenny differs
+
+| Aspect | Lenny | Scion |
+|:---|:---|:---|
+| **Nature of multi-agent** | Recursive delegation is a platform primitive — a parent calls `lenny/delegate_task` and the gateway enforces budget, scope, and isolation at every hop. | Coordination is emergent — agents learn a shared CLI and the model decides how to message peers. No manager/worker roles, no per-hop enforcement. |
+| **Formal runtime contract** | Adapter contract with Basic / Standard / Full integration levels. | No formal adapter contract; "harness-agnostic" means any supported CLI agent plugs in as-is. |
+| **Enforcement surface** | Gateway mediates every client interaction and delegation. | Agents coordinate directly; no central enforcement layer. |
+| **Isolation options** | runc / gVisor / Kata via Kubernetes `RuntimeClass`. | Containers (Docker, Podman, Apple Container) plus a per-agent git worktree. |
+| **Credential management** | Leased, pod-bound, rotatable; gateway mediates LLM provider calls. | Per-agent "separated credentials"; no leasing or gateway mediation. |
+| **Client surface** | REST + MCP + OpenAI + Open Responses. | CLI (`scion message`, tmux sessions). No REST, gRPC, or MCP interface documented. |
+| **Production posture** | Designed for multi-tenant production. | Explicitly experimental — no production integration planned by Google. |
+
+### Where Scion has advantages
+
+- **Emergent-coordination research.** Lets you study how agents self-organize through a shared CLI — Lenny's structured delegation does not attempt this.
+- **Smaller surface to learn.** A single `scion message` primitive plus tmux-based inspection. Lenny's delegation machinery (token budgets, scope narrowing, isolation invariants, gateway interceptors) is more to pick up if the goal is just watching agents talk.
+- **Demo artifact.** *Relics of the Athenaeum* is a ready-made, inspectable multi-agent workload.
+
+Lenny matches Scion on the things that look like advantages at first glance: the `lenny up` embedded single-binary stack provides a comparable laptop-scale start with no outside dependencies, and the reference runtime catalog covers the same coding CLIs (plus `cursor-cli`, `chat`, and four framework adapters).
+
+---
+
+## Lenny vs NVIDIA OpenShell
+
+**OpenShell** is NVIDIA's open-source policy-driven sandbox runtime, released at GTC 2026 under Apache 2.0. It's a Rust CLI that provisions a Docker container running K3s and launches an agent CLI (Claude, OpenCode, Codex, Copilot) inside. Behaviour is governed by a declarative YAML policy covering filesystem, process, network, and inference layers — filesystem and process are locked at sandbox creation, network and inference are hot-reloadable. Credentials are managed as "providers" and injected as environment variables. The project is explicitly alpha: "one developer, one environment, one gateway."
+
+### Where Lenny differs
+
+| Aspect | Lenny | OpenShell |
+|:---|:---|:---|
+| **Scope** | Multi-tenant platform — many sessions, many tenants, recursive delegation. | Single-agent "single-player mode" (alpha). Multi-tenant is explicitly future work. |
+| **Policy model** | 12-phase request interceptor chain on the gateway; content classifiers, budgets, audit events plug in. | 4-layer YAML policy (filesystem/process static, network/inference hot-reloadable). |
+| **Multi-agent** | Recursive delegation is a platform primitive, enforced across sessions at the gateway. | No cross-sandbox orchestration (alpha: "single-player mode"); NVIDIA's blog mentions agents spawning "scoped subagents" inside a single sandbox. |
+| **Deployment** | Kubernetes deployment with CRDs and controllers. | A single Docker container running K3s on the developer's machine, or `--remote user@host` for a remote daemon. |
+| **Credentials** | Leased with per-pod identity; gateway mediates LLM API keys. | "Providers" — credential bundles injected as environment variables at sandbox creation. |
+| **Audit / compliance** | OCSF hash-chained audit log, SIEM forwarding, SOC 2 / HIPAA / FedRAMP retention presets. | `openshell logs` for operational introspection. |
+| **Protocol surface** | REST + MCP + OpenAI + Open Responses. | CLI-driven. |
+
+### Where OpenShell has advantages
+
+- **Policy-first ergonomics.** The declarative YAML with HTTP-method-level network and inference routing is concise and easy to audit. Lenny's equivalent is spread across gRPC interceptors, `ContentPolicy` CRs, and gateway config.
+- **Hot-reloadable network and inference policy.** Dynamic sections can change without recreating the sandbox. Lenny's content policy is revised through a gateway reload.
+- **Low-overhead single-developer setup.** If you need one agent hardened against exfiltration on a laptop, OpenShell is simpler to stand up than a Kubernetes install.
+- **Explicit Privacy Router.** Controls *where inference requests travel* as a first-class policy concept. Lenny's credential-routing interface provides equivalent mechanics, but as a pluggable interface rather than declarative policy.
+
+---
+
+## Lenny vs Alibaba OpenSandbox
+
+**OpenSandbox** is Alibaba's open-source sandbox platform, released March 2026 under Apache 2.0. Its primary surface is a multi-language SDK fleet (Python, Java/Kotlin, JavaScript/TypeScript, C#/.NET, Go) wrapping a Python FastAPI server that manages Docker- or Kubernetes-backed sandboxes. The README lists Coding Agents first among the target use cases, alongside GUI Agents, Agent Evaluation, AI Code Execution, and RL Training. Its standout feature set is first-class support for GUI and computer-use agents: Chromium with VNC and DevTools, code-server for in-sandbox IDEs, and full desktop environments — use cases Lenny does not target in v1.
+
+### Where Lenny differs
+
+| Aspect | Lenny | OpenSandbox |
+|:---|:---|:---|
+| **Primary interface** | Gateway with four client protocols (REST, MCP, OpenAI, Open Responses). | SDK-first; REST API defined via OpenAPI; MCP wrapper for IDE clients. |
+| **Multi-agent** | Recursive delegation with per-hop enforcement. | Not a platform feature; the SDK manages individual sandboxes. |
+| **Multi-tenancy** | Postgres RLS, per-tenant RBAC, audit log. | The K8s runtime is described as "designed for production-grade, multi-tenant environments," but no per-tenant isolation model or RBAC is documented. |
+| **Credentials** | Leased, pool-managed, rotatable; gateway mediates LLM proxy. | `OPEN_SANDBOX_API_KEY` for management-API auth; no per-session leasing or LLM-proxy model documented. |
+| **Token budgets & quotas** | Per-subtree, per-session, per-tenant; Redis-backed atomic accounting. | Not documented. |
+| **Compliance** | GDPR erasure, legal holds, residency, audit chain. | Not documented. |
+| **Runtime contract** | Formal adapter contract with three integration levels. | SDK-as-contract — programs call the `opensandbox` library directly. |
+
+### Where OpenSandbox has advantages
+
+- **GUI / computer-use agents.** First-class VNC desktops, Chromium with DevTools, and code-server (VS Code Web) inside the sandbox make it the better choice today for browser-using and computer-use agents. Lenny v1 does not target this.
+- **SDK breadth.** Official SDKs for Python, Java/Kotlin, JavaScript/TypeScript, C#/.NET, and Go — broader than Lenny's Go + TypeScript client surface.
+- **Simpler data model.** One sandbox = one object with lifecycle + exec + file APIs. Lower cognitive load if you don't need sessions, delegation, or multi-tenancy.
+- **No framework coupling.** Shares Lenny's goal of being framework-independent; easier to drop into an existing Python codebase than a Kubernetes platform.
 
 ---
 
