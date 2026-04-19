@@ -4,6 +4,8 @@
 
 Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a unified gateway. It handles session lifecycle, workspace setup, credential leasing, recursive delegation, policy enforcement, and recovery — so your team can run any AI agents as a shared, on-demand cloud service.
 
+Security runs deeper than the sandbox: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never reach the agent, and every state change lands in a hash-chained audit log.
+
 [Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing) | [Implementation Status](docs/about/status.md)
 
 > **Status: design phase.** The technical specification is complete; implementation is in progress. The documentation describes the v1 surface and is a source of truth for spec-driven development — not yet a working product. Early feedback on the design is very welcome: open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
