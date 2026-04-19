@@ -147,7 +147,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
       "settingSources":   { "type": "array", "items": { "type": "string", "enum": ["project", "user", "global"] }, "description": "Ordered list of settings sources" },
       "streamingMode":    { "type": "boolean", "default": true, "description": "Enable SSE streaming output" },
       "maxTokens":        { "type": "integer", "minimum": 1, "maximum": 200000, "description": "Override max output tokens" },
-      "temperature":      { "type": "number", "minimum": 0, "maximum": 1, "description": "Sampling temperature" },
+      "temperature":      { "type": "number", "minimum": 0, "maximum": 1, "description": "Sampling temperature. Note: the Anthropic Messages API accepts `temperature` in [0, 1]; other first-party runtimes below (openai-assistants, gemini-cli, codex, chat) use [0, 2] per their respective provider APIs." },
       "thinkingBudget":   { "type": "integer", "minimum": 0, "description": "Extended thinking token budget; 0 disables thinking" }
     },
     "additionalProperties": false

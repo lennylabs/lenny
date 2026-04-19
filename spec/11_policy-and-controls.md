@@ -10,6 +10,8 @@
 | Concurrent uploads                   | Per-session, global                     |
 | Upload size                          | Per-file, per-session                   |
 
+**Access-path default policy (`noEnvironmentPolicy`).** Admission of a session that does not name an environment is governed by the tenant's `noEnvironmentPolicy` setting (platform default `deny-all`; see [Section 10.6](10_gateway-internals.md#106-environment-resource-and-rbac-model) for semantics). The platform-level value is a required configuration key: the gateway validates that `noEnvironmentPolicy` is set to either `deny-all` or `allow-all` during startup and refuses to become ready if the key is missing (see the configuration validation table in [Section 10.3](10_gateway-internals.md#103-mtls-pki)). This closes the misconfigured-Helm gap where an omitted value could otherwise leave admission under undefined behavior.
+
 ### 11.2 Budgets and Quotas
 
 | Budget                      | Scope                                                                                      |

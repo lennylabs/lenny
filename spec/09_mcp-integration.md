@@ -159,6 +159,14 @@ type MemoryStore interface {
     Query(ctx, scope MemoryScope, query string, limit int) ([]Memory, error)
     Delete(ctx, scope MemoryScope, ids []string) error
     List(ctx, scope MemoryScope, filter MemoryFilter) ([]Memory, error)
+
+    // Erasure contract — MANDATORY for every MemoryStore implementation.
+    // DeleteByUser removes every memory row keyed to (tenantID, userID) and
+    // returns only after the backend confirms deletion is durable.
+    // DeleteByTenant removes every memory row scoped to tenantID.
+    // Both methods MUST be idempotent (see Section 12.8 erasure job phase field).
+    DeleteByUser(ctx context.Context, tenantID, userID string) error
+    DeleteByTenant(ctx context.Context, tenantID string) error
 }
 
 type MemoryScope struct {
@@ -170,6 +178,8 @@ type MemoryScope struct {
 ```
 
 **Tenant isolation contract.** All `MemoryStore` implementations MUST guarantee that `Write`, `Query`, `Delete`, and `List` operations are strictly scoped to the `TenantID` in the supplied `MemoryScope`. Cross-tenant reads and writes MUST be impossible regardless of application-layer correctness. The interface boundary MUST validate that `MemoryScope.TenantID` is non-empty before dispatching to the underlying implementation — calls with an empty `TenantID` are rejected with an error, never silently defaulted.
+
+**Erasure contract (mandatory).** `DeleteByUser(ctx, tenantID, userID) error` and `DeleteByTenant(ctx, tenantID) error` are **mandatory** interface methods, not optional extension points. They are invoked by the erasure job ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) and must synchronously remove every persisted memory record that matches the supplied scope before returning `nil`. Empty `tenantID` (or empty `userID` in `DeleteByUser`) MUST be rejected with an error — never silently treated as "delete everything". Implementations MUST be idempotent: repeated invocation for the same `(tenantID, userID)` after successful completion returns `nil` without error. Because Go's type system enforces interface satisfaction at compile time, a backend that fails to implement `DeleteByUser` or `DeleteByTenant` will not compile against the `MemoryStore` interface — this is the primary preflight guarantee. The erasure job additionally performs the runtime preflight described in [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) ("MemoryStore erasure preflight") to detect no-op stub implementations that satisfy the signature without performing deletion.
 
 **Default implementation:** Postgres + pgvector. The `memories` table carries a `tenant_id` column with the same RLS policy as all other tenant-scoped tables (see [Section 4.2](04_system-components.md#42-session-manager)): rows are filtered by `current_setting('app.current_tenant', false)`, and every query runs inside a transaction preceded by `SET LOCAL app.current_tenant`. The `connect_query` sentinel and cloud-managed pooler trigger ([Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements)) cover the `memories` table identically to other tenant-scoped tables.
 
