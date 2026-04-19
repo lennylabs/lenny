@@ -104,7 +104,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_session_startup_duration_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from pod claim to session ready (excluding file upload). | `StartupLatencyBurnRate`, `StartupLatencyGVisorBurnRate` alerts. |
-| `lenny_session_time_to_first_token_seconds` | Histogram | `pool`, `runtime_class` | Wall-clock time from session start request to first streaming event emitted to client. | `TTFTBurnRate` alert. |
+| `lenny_session_time_to_first_token_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from session start request to first streaming event emitted to client. | `TTFTBurnRate` alert. |
 | `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when `maxSuspendedPodHoldSeconds` fires and pod is released. | Operational monitoring. |
 | `lenny_session_suspension_checkpoint_failed_total` | Counter | `pool`, `tenant_id` | Increments when checkpoint attempt before pod release fails. | Operational monitoring. |
 | `lenny_session_error_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Session errors by variant. | Experiment rollback triggers. |
