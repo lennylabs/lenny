@@ -15,7 +15,7 @@ Use the MCP API when you need:
 - Elicitation (human-in-the-loop input collection)
 - Integration with MCP-native clients (Claude Desktop, Cursor, Cline, etc.)
 
-For non-interactive operations (CI/CD, admin dashboards, batch workflows), use the [REST API](rest/index.html) instead. Both surfaces share the same session lifecycle and error taxonomy.
+For non-interactive operations (CI/CD, admin dashboards, batch workflows), use the [REST API](rest) instead. Both surfaces share the same session lifecycle and error taxonomy.
 
 ---
 

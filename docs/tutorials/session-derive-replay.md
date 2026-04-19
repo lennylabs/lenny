@@ -36,12 +36,12 @@ UPLOAD_TOKEN=$(curl -s http://localhost:8080/v1/sessions/${SESSION_ID} | jq -r '
 # Upload a file
 echo "package main\nfunc main() { println(\"hello\") }" > /tmp/main.go
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/upload" \
-  -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -F "files=@/tmp/main.go;filename=main.go"
 
 # Finalize and start
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \
@@ -91,7 +91,7 @@ DERIVED_ID=$(echo $DERIVED | jq -r '.session_id')
 DERIVED_TOKEN=$(echo $DERIVED | jq -r '.uploadToken')
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${DERIVED_ID}/finalize" \
-  -H "Authorization: UploadToken ${DERIVED_TOKEN}" \
+  -H "X-Upload-Token: ${DERIVED_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${DERIVED_ID}/start" \

@@ -274,9 +274,9 @@ async def stream_session(
                             data = json.loads("\n".join(data_lines))
 
                             if event_type == "agent_output":
-                                for part in data.get("parts", []):
+                                for part in data.get("output", []):
                                     if part["type"] == "text":
-                                        print(part["text"], end="", flush=True)
+                                        print(part.get("inline", ""), end="", flush=True)
                             elif event_type == "status_change":
                                 print(f"\n[Status: {data['state']}]")
                             elif event_type == "error":
@@ -422,10 +422,10 @@ async def main():
             "POST",
             f"/v1/sessions/{session_id}/messages",
             json={
-                "parts": [
+                "input": [
                     {
                         "type": "text",
-                        "text": "Review the code in example.py. Suggest improvements for error handling and documentation.",
+                        "inline": "Review the code in example.py. Suggest improvements for error handling and documentation.",
                     }
                 ]
             },
@@ -522,7 +522,7 @@ def create_and_run_session(runtime: str, code: str, prompt: str) -> dict:
     response = session.post(f"{LENNY_URL}/v1/sessions/start", json={
         "runtime": runtime,
         "inlineFiles": [{"path": "code.py", "content": code}],
-        "message": {"parts": [{"type": "text", "text": prompt}]},
+        "message": {"input": [{"type": "text", "inline": prompt}]},
     })
     response.raise_for_status()
     data = response.json()

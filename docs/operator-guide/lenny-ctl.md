@@ -25,11 +25,27 @@ See [krew installation](krew-install.md) for kubectl-plugin details. Everything 
 | Flag | Environment Variable | Description |
 |---|---|---|
 | `--api-url` | `LENNY_API_URL` | Gateway API endpoint URL |
+| `--ops-server` | `LENNY_OPS_URL` | `lenny-ops` Ingress URL. Optional — auto-discovered from the gateway's `/v1/admin/platform/version` response |
 | `--token` | `LENNY_API_TOKEN` | Admin authentication token |
 | `--timeout` | -- | Request timeout (default: 30s) |
 | `--output json` | -- | Machine-readable JSON output |
 | `--quiet` | -- | Suppress informational messages |
 | `--insecure-skip-verify` | -- | Skip TLS verification (dev only) |
+
+### Server discovery and routing
+
+`lenny-ctl` talks to two services:
+
+- The **gateway** for every `admin`-prefixed command (all of Sections 24.1-24.14 below). Target: `--api-url` / `LENNY_API_URL`.
+- **`lenny-ops`** for the Section 25 operability commands (`me`, `operations`, `events`, `diagnose`, `runbooks`, `upgrade`, `audit`, `drift`, `backup`, `restore`, `locks`, `escalations`, `logs`, `mcp-management`). Target: `--ops-server` / `LENNY_OPS_URL`, or auto-discovered from the gateway.
+
+Discovery rules:
+
+1. If `--ops-server` (or `LENNY_OPS_URL`) is set, `lenny-ctl` uses it for every ops-hosted call.
+2. Otherwise, `lenny-ctl` calls `GET /v1/admin/platform/version` on the gateway; the response includes an `opsServiceURL` field, which is cached for the invocation.
+3. If auto-discovery fails (gateway unreachable, `opsServiceURL` absent because the cluster is mid-upgrade), `lenny-ctl` falls back to the gateway host under the assumption that gateway-hosted operability endpoints still work, and prints a warning for any ops-exclusive command.
+
+Operators typically only need `--api-url` — `--ops-server` is for air-gapped clusters, split-DNS configurations, or direct-to-ops debugging.
 
 ---
 
@@ -378,3 +394,203 @@ lenny-ctl admin pools list
 # Check credential pools
 lenny-ctl admin credential-pools list
 ```
+
+---
+
+## Session Operations
+
+Session commands route through the **MCP** client SDK, not REST. They exercise the same code path that any other MCP client uses — the CLI embeds the Lenny Go client SDK and opens a full MCP session for the duration of the command. The short form `lenny session` is preferred in developer-facing examples; the long form `lenny-ctl session` is preferred in operator runbooks. Both are identical.
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...` | Create a session against the specified runtime. With `--attach` (default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline. | `user` |
+| `lenny session attach <sessionId>` | Attach to an existing session and stream its output from the current cursor. Supports reconnect-with-cursor. | `user` (owner) |
+| `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | `user` (owner) |
+| `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | `user` (owner) |
+| `lenny session cancel <sessionId>` | Cancel a session cooperatively. | `user` (owner) |
+| `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. The one session command that also works over REST for non-interactive callers. | `user` |
+| `lenny session get <sessionId>` | Fetch a session's current state. | `user` (owner) |
+| `lenny session logs <sessionId> [--since <time>]` | Fetch session transcript from the event store. | `user` (owner) |
+
+`lenny session` commands honor the same `--api-url` / `LENNY_API_URL` discovery rules as admin commands; there is no separate MCP endpoint flag because Lenny's MCP surface is served from the same gateway host under `/mcp`.
+
+---
+
+## Runtime Scaffolding
+
+`lenny runtime init` scaffolds a new runtime repository offline. No API calls are made by the scaffolder itself.
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny runtime init <name> --language {go\|python\|typescript\|binary} --template {chat\|coding\|minimal}` | Generate a new runtime skeleton in `./<name>/`. The `coding` template pre-wires the shared coding-agent workspace plan; `chat` is the minimal non-coding template; `minimal` is a bare Hello World. | none (local) |
+| `lenny runtime validate [<path>]` | Validate a runtime repository against the Runtime Adapter Specification and the `runtime.yaml` contract. Runs in the current directory by default. | none (local) |
+| `lenny runtime publish <name> --image <ref>` | Convenience wrapper for `docker push` and `lenny-ctl admin runtimes register`. Pushes the built image to the configured registry and registers the runtime against the target gateway. Requires `--api-url` and an admin token. | `platform-admin` (for the register step) |
+
+---
+
+## Local Stack
+
+The embedded Tier 0 stack is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+
+| Command | Description |
+|---|---|
+| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "NOT for production use" banner. |
+| `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
+| `lenny status` | Print component health, active session count, and resource usage. |
+| `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |
+| `lenny restart [<component>]` | Restart a single embedded component without tearing down the rest of the stack. |
+
+Invoked as `lenny` (short name) these commands default to the local stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
+
+---
+
+## Installation Wizard
+
+The wizard orchestrates the flow from [Installation](installation): cluster detection → question phase → preview → preflight → `helm install` → bootstrap seed → smoke test. Detection, question rendering, and values composition run locally; the install step delegates to `helm` (invoked as a subprocess) and `lenny-ctl bootstrap`.
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl install` | Interactive installer. Runs cluster detection, asks the question set, previews the composite values file, runs preflight, invokes `helm install`, seeds the bootstrap config, and runs a smoke test against the `chat` reference runtime. | `platform-admin` on the target cluster |
+| `lenny-ctl install --non-interactive --answers <file>` | Run the installer using a pre-captured answer file. Used in CI/IaC. | `platform-admin` |
+| `lenny-ctl install --save-answers <file>` | Run the interactive wizard and save the answer file to `<file>` for replay. Does not run `helm install` when combined with `--dry-run`. | `platform-admin` |
+| `lenny-ctl install --offline` | Skip cluster-reachability probes in the detection phase. Preflight still runs against the target cluster. | `platform-admin` |
+| `lenny-ctl values validate --config <values.yaml>` | Validate a `values.yaml` against the Helm `values.schema.json` published by the chart. Exits 0 on success. | none |
+| `lenny-ctl upgrade --answers <file>` | Replay an answer file against an existing install. Runs preflight, renders the values diff, and invokes `helm upgrade`. | `platform-admin` |
+
+---
+
+## Agent-Operability Commands
+
+These commands target `lenny-ops` (the management plane) rather than the gateway. See [Server discovery and routing](#server-discovery-and-routing) for how `--ops-server` is resolved.
+
+### Identity (`lenny-ctl me`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl me` | Show caller identity, authorization, rate-limits, and platform capabilities | any authenticated role |
+| `lenny-ctl me tools` | List tools the caller can actually invoke | any authenticated role |
+| `lenny-ctl me operations` | Caller's in-flight operations | any authenticated role |
+
+### Operations (`lenny-ctl operations`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl operations list [--actor <sub>] [--kind <csv>] [--status <csv>]` | Unified list of in-flight operations (upgrades, restores, drains, migrations) with canonical Progress Envelope output | `platform-admin` |
+| `lenny-ctl operations get <operationId>` | Full detail of a single operation, including every progress update emitted so far | `platform-admin` |
+
+### Diagnostics (`lenny-ctl diagnose`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl diagnose session <id>` | Structured diagnosis for one session — pod assignment, event timeline, credential lease state, cause chain | `platform-admin` |
+| `lenny-ctl diagnose pool <name>` | Pool health, warm-pod counts, controller reconciliation state, CRD drift | `platform-admin` |
+| `lenny-ctl diagnose credential-pool <name>` | Credential pool health, lease counts, per-credential status | `platform-admin` |
+| `lenny-ctl diagnose connectivity` | Dependency connectivity check (Postgres, Redis, MinIO, KMS, OIDC, providers) | `platform-admin` |
+
+### Events (`lenny-ctl events`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl events tail` | Stream operational events via SSE (CloudEvents v1.0.2 envelopes) | `platform-admin` |
+| `lenny-ctl events list --since <time>` | Poll the event buffer for events since a given time | `platform-admin` |
+| `lenny-ctl events subscriptions list` | List webhook subscriptions | `platform-admin` |
+| `lenny-ctl events subscriptions create --url <url> --types <csv>` | Create a webhook subscription | `platform-admin` |
+| `lenny-ctl events subscriptions delete <id>` | Delete a webhook subscription | `platform-admin` |
+
+### Runbooks (`lenny-ctl runbooks`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl runbooks list` | List all registered runbooks with their triggers | `platform-admin` |
+| `lenny-ctl runbooks list --alert <name>` | Find runbooks keyed to a specific alert | `platform-admin` |
+| `lenny-ctl runbooks get <name>` | Print the full structured runbook (machine-parseable steps) | `platform-admin` |
+
+### Audit (`lenny-ctl audit`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl audit query --since <time> [--tenant <id>] [--filter <field=value>]` | Query audit events with scatter-gather across shards (OCSF v1.1.0 JSON, NDJSON) | `platform-admin` / `tenant-admin` |
+| `lenny-ctl audit get <id>` | Get a single audit event by ID | `platform-admin` |
+| `lenny-ctl audit summary --since <time>` | Aggregate counts (by caller kind, operation ID, severity) | `platform-admin` |
+| `lenny-ctl audit retranslate <id> [--translator-version <semver>]` | Retry OCSF translation on a `retry_pending` or `dead_lettered` row | `platform-admin` |
+| `lenny-ctl audit chain-verify --partition <YYYY-MM>` | Re-hash a partition's records and verify the `prev_hash` chain end-to-end | `platform-admin` |
+| `lenny-ctl audit drop-partition <partition> --force --acknowledge-data-loss` | Force-drop an audit partition held by the SIEM delivery guard — permanently discards any events not yet forwarded | `platform-admin` |
+
+### Drift detection (`lenny-ctl drift`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl drift report [--scope <s>] [--against <live\|target\|both>]` | Structured drift report against the stored desired-state snapshot | `platform-admin` |
+| `lenny-ctl drift validate --desired <file>` | Validate a proposed desired-state file against the stored snapshot | `platform-admin` |
+| `lenny-ctl drift snapshot refresh --desired <file>` | Replace the stored desired-state snapshot | `platform-admin` |
+| `lenny-ctl drift reconcile [--scope <s>] [--confirm]` | Reconcile drifted resources back to desired state (requires `--confirm` to mutate) | `platform-admin` |
+
+### Backup (`lenny-ctl backup`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl backup list` | List available backups with size, age, and provenance | `platform-admin` |
+| `lenny-ctl backup get <id>` | Backup details | `platform-admin` |
+| `lenny-ctl backup create --type <full\|postgres\|config> [--confirm]` | Trigger an on-demand backup | `platform-admin` |
+| `lenny-ctl backup verify <id> [--mode test-restore]` | Verify backup integrity; `--mode test-restore` spins up an ephemeral Postgres and replays | `platform-admin` |
+| `lenny-ctl backup schedule get / set` | Get or set the backup schedule | `platform-admin` |
+| `lenny-ctl backup policy get / set` | Get or set the retention policy | `platform-admin` |
+
+### Restore (`lenny-ctl restore`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl restore safety-check --backup <id>` | Estimate data loss (RPO) from restoring the given backup | `platform-admin` |
+| `lenny-ctl restore preview --backup <id>` | Preview what would be restored, which shards are affected, and the estimated duration | `platform-admin` |
+| `lenny-ctl restore execute --backup <id> --confirm --acknowledge-data-loss` | Execute the restore; both explicit confirmation flags are required | `platform-admin` |
+| `lenny-ctl restore status <id>` | Per-shard restore status | `platform-admin` |
+| `lenny-ctl restore resume <id>` | Resume a partially-completed restore after a transient failure | `platform-admin` |
+
+### Remediation locks (`lenny-ctl locks`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl locks list` | List active remediation locks across `lenny-ops` replicas | `platform-admin` |
+| `lenny-ctl locks acquire --scope <scope> --op <op>` | Acquire a lock explicitly (normally taken automatically by mutating endpoints) | `platform-admin` |
+| `lenny-ctl locks release <id>` | Release a lock held by the caller | `platform-admin` |
+| `lenny-ctl locks steal <id>` | Forcibly steal a lock held by another caller. Audited with the caller identity and a required justification. | `platform-admin` |
+
+### Escalations (`lenny-ctl escalations`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl escalations list` | List pending and recent escalations | `platform-admin` |
+| `lenny-ctl escalations create --severity <sev> --summary <text>` | Raise an escalation (e.g., agent detects a condition it cannot resolve) | `platform-admin` |
+| `lenny-ctl escalations resolve <id>` | Mark an escalation as resolved, with optional resolution notes | `platform-admin` |
+
+### Logs (`lenny-ctl logs`)
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl logs pod <ns> <name>` | Get the pod's container logs via the ops service (no cluster access required) | `platform-admin` |
+| `lenny-ctl logs pod <ns> <name> --tail 100` | Last N lines | `platform-admin` |
+| `lenny-ctl logs pod <ns> <name> --previous` | Previous container's logs (for crash-loop triage) | `platform-admin` |
+
+### Platform upgrade (`lenny-ctl upgrade`)
+
+These orchestrate the platform-upgrade state machine driven by `lenny-ops`. They're distinct from `lenny-ctl admin pools upgrade *` (which upgrades a single pool's image) and from `lenny-ctl upgrade --answers <file>` (which replays the installer's answer file).
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl upgrade check` | Check for a new Lenny release and compatibility with the current install | `platform-admin` |
+| `lenny-ctl upgrade preflight --version <v>` | Validate upgrade safety before starting (preflight + schema-migration dry-run) | `platform-admin` |
+| `lenny-ctl upgrade start --version <v> [--confirm]` | Begin the upgrade state machine | `platform-admin` |
+| `lenny-ctl upgrade proceed` | Advance to the next phase | `platform-admin` |
+| `lenny-ctl upgrade pause` | Pause the upgrade | `platform-admin` |
+| `lenny-ctl upgrade rollback [--confirm]` | Rollback the upgrade | `platform-admin` |
+| `lenny-ctl upgrade status` | Current upgrade state | `platform-admin` |
+| `lenny-ctl upgrade verify` | Post-upgrade health verification | `platform-admin` |
+
+### MCP management (`lenny-ctl mcp-management`)
+
+Direct access to the MCP management surface served under `/mcp/management` on `lenny-ops`. Useful for end-to-end testing and scripting.
+
+| Command | Description | Min Role |
+|---|---|---|
+| `lenny-ctl mcp-management tools list` | List exposed MCP tools (`tools/list`) | `platform-admin` |
+| `lenny-ctl mcp-management tools call <name> --args <json>` | Invoke a tool through MCP (`tools/call`) | `platform-admin` |

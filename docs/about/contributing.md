@@ -197,7 +197,7 @@ The adapter translates between Lenny's control protocol and your agent binary's 
 
 ## ADR process
 
-Architecture Decision Records (ADRs) are stored in `docs/adr/` and track all significant architectural decisions.
+Architecture Decision Records (ADRs) live in [`docs/adr/`]({{ site.baseurl }}/adr/) and track every significant architectural decision — the context that forced it, the alternatives considered, the chosen outcome, and the consequences.
 
 ### When an ADR is required
 
@@ -213,29 +213,9 @@ An ADR is required for changes that:
 
 ### ADR format
 
-```markdown
-# ADR-NNN: Title
+Lenny uses the [MADR 3.0.0](https://adr.github.io/madr/) format. Copy the canonical [template]({{ site.baseurl }}/adr/template.html) into a new file named `NNNN-kebab-case-title.md` using the next free number from the [catalog]({{ site.baseurl }}/adr/); the ADR numbering is permanent.
 
-## Status
-
-Proposed | Accepted | Deprecated | Superseded by ADR-NNN
-
-## Context
-
-What is the issue that we are seeing that is motivating this decision?
-
-## Decision
-
-What is the change that we are proposing and/or doing?
-
-## Alternatives considered
-
-What other approaches did we consider and why did we reject them?
-
-## Consequences
-
-What becomes easier or more difficult to do because of this change?
-```
+See [ADR-0000]({{ site.baseurl }}/adr/0000-use-madr-for-architecture-decisions.html) for the rationale behind the format choice and the authoring workflow.
 
 ### Threshold for community-proposed ADRs
 
@@ -263,7 +243,7 @@ The runtime adapter specification defines the interface contract for v1 adapter 
 | :--------------------- | :---------------------------------------------------------------- |
 | **Issue tracker**      | Bug reports, feature requests, and task tracking.                 |
 | **Discussions forum**  | Design proposals, RFC-style conversations, and general questions. |
-| **ADRs** (`docs/adr/`) | Architectural decision records for significant design changes.    |
+| **ADRs** ([`docs/adr/`]({{ site.baseurl }}/adr/)) | Architectural decision records for significant design changes.    |
 
 ---
 

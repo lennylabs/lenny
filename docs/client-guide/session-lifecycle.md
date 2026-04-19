@@ -219,10 +219,10 @@ Content-Type: application/json
 Authorization: Bearer <token>
 
 {
-  "parts": [
+  "input": [
     {
       "type": "text",
-      "text": "Review the code in main.py and suggest improvements."
+      "inline": "Review the code in main.py and suggest improvements."
     }
   ]
 }
@@ -347,10 +347,10 @@ Authorization: Bearer <token>
     }
   ],
   "message": {
-    "parts": [
+    "input": [
       {
         "type": "text",
-        "text": "Review this code."
+        "inline": "Review this code."
       }
     ]
   },

@@ -27,7 +27,7 @@ Authorization: Bearer <token>
     {"path": "code.py", "content": "def hello(): return 'world'"}
   ],
   "message": {
-    "parts": [{"type": "text", "text": "Review this code."}]
+    "input": [{"type": "text", "inline": "Review this code."}]
   },
   "callbackUrl": "https://my-app.example.com/webhooks/lenny"
 }
@@ -283,7 +283,7 @@ async def create_async_session(code: str, prompt: str) -> str:
                     {"path": "code.py", "content": code}
                 ],
                 "message": {
-                    "parts": [{"type": "text", "text": prompt}]
+                    "input": [{"type": "text", "inline": prompt}]
                 },
                 "callbackUrl": "https://my-app.example.com/webhooks/lenny",
             },

@@ -3,6 +3,7 @@ layout: default
 title: Tutorials
 nav_order: 2
 has_children: true
+description: Self-contained walkthroughs — each with runnable code, expected output, and an explanation of what happens inside Lenny. Grouped by role and by difficulty.
 ---
 
 # Tutorials
@@ -25,9 +26,14 @@ Driving sessions from your own application, script, or MCP host.
 | Tutorial | Difficulty | What you'll do |
 |----------|------------|----------------|
 | [Your First Session](first-session) | Beginner | Create, interact with, and tear down a session using the CLI, Python, and TypeScript |
+| [User Credentials](user-credentials) | Beginner | Attach per-user credentials to a session and scope them safely |
 | [MCP Client Integration](mcp-client-integration) | Intermediate | Plug an MCP host into Lenny's gateway |
 | [OpenAI SDK Integration](openai-sdk-integration) | Intermediate | Point the OpenAI Python and TypeScript SDKs at Lenny |
 | [OAuth Token Exchange](oauth-token-exchange) | Intermediate | Use `POST /v1/oauth/token` to rotate admin tokens and exchange identity-provider tokens for Lenny access tokens |
+| [Using Connectors](using-connectors) | Intermediate | Register and use connectors (GitHub, Jira, Slack, etc.) for gateway-managed OAuth |
+| [Session Derive and Replay](session-derive-replay) | Intermediate | Fork a completed session's workspace, or replay its prompt history against a new runtime version |
+| [Agent Memory](agent-memory) | Intermediate | Persist per-user memory across sessions with the agent-memory service |
+| [Evaluation and Scoring](evaluation-scoring) | Intermediate | Score runs, run A/B replays, and export evaluation datasets |
 | [Recursive Delegation](recursive-delegation) | Advanced | Build parent and child sessions that delegate work through the gateway |
 
 ### If you're writing a runtime
@@ -61,6 +67,7 @@ Running Lenny on a Kubernetes cluster.
 - [`lenny up` Walkthrough](lenny-up-walkthrough): everyone
 - [Web Playground Tour](playground-tour): everyone
 - [Your First Session](first-session): client developers
+- [User Credentials](user-credentials): client developers
 - [Scaffold a Runtime with `lenny runtime init`](scaffold-a-runtime): runtime authors
 - [Install with the `lenny-ctl install` Wizard](installer-wizard): operators
 
@@ -75,6 +82,10 @@ Running Lenny on a Kubernetes cluster.
 - [MCP Client Integration](mcp-client-integration): client developers
 - [OpenAI SDK Integration](openai-sdk-integration): client developers
 - [OAuth Token Exchange](oauth-token-exchange): client developers
+- [Using Connectors](using-connectors): client developers
+- [Session Derive and Replay](session-derive-replay): client developers
+- [Agent Memory](agent-memory): runtime authors and client developers
+- [Evaluation and Scoring](evaluation-scoring): client developers and operators
 
 ### Advanced
 

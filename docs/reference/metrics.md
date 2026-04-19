@@ -401,6 +401,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 
 ## Alert rules
 
+> **These are shipped defaults, not invariants.** Every threshold below (sustain windows, percentages, latency caps, utilization ratios) is rendered into the bundled `PrometheusRule` objects at chart-install time and is tunable via Helm values. Runbooks describe the qualitative direction of each alert; the numeric values in effect at a given deployment are here. Platform design invariants (for example the 5s gateway-clock self-removal bound, the token-store fail-closed behavior, or the Redis `maxmemory-policy: noeviction` requirement) are not in this table — they are called out explicitly in the spec and the runbook that covers them.
+
 ### Critical alerts
 
 | Alert | Expression / Condition | Severity |

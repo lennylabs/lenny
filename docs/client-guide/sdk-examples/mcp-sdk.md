@@ -212,10 +212,10 @@ async function createAndStartSession(
         },
       ],
       message: {
-        parts: [
+        input: [
           {
             type: "text",
-            text: "Review the TypeScript code in example.ts. Suggest improvements for type safety and error handling.",
+            inline: "Review the TypeScript code in example.ts. Suggest improvements for type safety and error handling.",
           },
         ],
       },
@@ -360,10 +360,10 @@ async function sendMessage(
     name: "send_message",
     arguments: {
       sessionId,
-      parts: [
+      input: [
         {
           type: "text",
-          text,
+          inline: text,
         },
       ],
     },
@@ -806,10 +806,10 @@ async function main(): Promise<void> {
           },
         ],
         message: {
-          parts: [
+          input: [
             {
               type: "text",
-              text: "Process each item in data.json and generate a summary report.",
+              inline: "Process each item in data.json and generate a summary report.",
             },
           ],
         },
@@ -850,10 +850,10 @@ async function main(): Promise<void> {
       name: "send_message",
       arguments: {
         sessionId,
-        parts: [
+        input: [
           {
             type: "text",
-            text: "Focus only on items with id < 10 and skip the rest.",
+            inline: "Focus only on items with id < 10 and skip the rest.",
           },
         ],
       },
@@ -1067,10 +1067,10 @@ async def create_and_start_session(
                 },
             ],
             "message": {
-                "parts": [
+                "input": [
                     {
                         "type": "text",
-                        "text": (
+                        "inline": (
                             "Review the Python code in example.py. "
                             "Suggest improvements for error handling "
                             "and documentation."
@@ -1203,7 +1203,7 @@ async def send_message(
         "send_message",
         arguments={
             "sessionId": session_id,
-            "parts": [{"type": "text", "text": text}],
+            "input": [{"type": "text", "inline": text}],
         },
     )
 
@@ -1538,10 +1538,10 @@ async def main() -> None:
                         },
                     ],
                     "message": {
-                        "parts": [
+                        "input": [
                             {
                                 "type": "text",
-                                "text": (
+                                "inline": (
                                     "Process each item in data.json and "
                                     "generate a summary report."
                                 ),
@@ -1573,10 +1573,10 @@ async def main() -> None:
                 "send_message",
                 arguments={
                     "sessionId": session_id,
-                    "parts": [
+                    "input": [
                         {
                             "type": "text",
-                            "text": "Only process items with id < 10.",
+                            "inline": "Only process items with id < 10.",
                         }
                     ],
                 },

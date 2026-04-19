@@ -96,7 +96,7 @@ Once formed, the steering committee is responsible for:
 
 ## Architecture Decision Records (ADRs)
 
-All significant architectural decisions are tracked via ADRs in `docs/adr/`.
+All significant architectural decisions are tracked via ADRs in [`docs/adr/`]({{ site.baseurl }}/adr/). The catalog page lists every ADR with its current status; [ADR-0000]({{ site.baseurl }}/adr/0000-use-madr-for-architecture-decisions.html) documents the format choice and authoring workflow.
 
 ### When an ADR is required
 

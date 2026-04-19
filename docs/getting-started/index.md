@@ -3,6 +3,7 @@ layout: default
 title: Getting Started
 nav_order: 1
 has_children: true
+description: Quickstart, core concepts, and architecture overview — the right entry point whether you're a client developer, operator, or runtime author.
 ---
 
 # Getting Started with Lenny

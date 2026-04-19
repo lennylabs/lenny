@@ -37,26 +37,26 @@ The server responds with an SSE stream. Each event is a newline-delimited frame:
 
 ```
 event: agent_output
-data: {"parts": [{"type": "text", "text": "Analyzing the codebase..."}]}
+data: {"output": [{"type": "text", "inline": "Analyzing the codebase..."}]}
 
 event: tool_use_requested
 data: {"tool_call_id": "tc_001", "tool": "read_file", "args": {"path": "main.py"}}
 
 event: tool_result
-data: {"tool_call_id": "tc_001", "result": {"content": "..."}}
+data: {"tool_call_id": "tc_001", "result": {"content": [{"type": "text", "inline": "..."}]}}
 
 event: status_change
 data: {"state": "running"}
 
 event: session_complete
-data: {"result": {"parts": [{"type": "text", "text": "Review complete."}]}}
+data: {"result": {"output": [{"type": "text", "inline": "Review complete."}]}}
 ```
 
 ### Event Types
 
 | Event | Description |
 |---|---|
-| `agent_output` | Streaming output from the agent. Contains `parts: OutputPart[]`. |
+| `agent_output` | Streaming output from the agent. Contains `output: OutputPart[]`. |
 | `tool_use_requested` | Agent wants to call a tool. Contains `tool_call_id`, `tool`, `args`. |
 | `tool_result` | Result of a tool call. Contains `tool_call_id`, `result`. |
 | `elicitation_request` | Agent or tool needs user input. Contains `elicitation_id`, `schema`, `message`. |
@@ -70,15 +70,21 @@ data: {"result": {"parts": [{"type": "text", "text": "Review complete."}]}}
 
 ### OutputPart Types
 
-The `agent_output` event contains an array of `OutputPart` objects:
+The `agent_output` event's `output` field contains an array of `OutputPart` objects:
 
 | Type | Description |
 |---|---|
-| `text` | Plain text output. Fields: `text` (string). |
-| `blob` | Binary data. Fields: `mimeType` (string), `inline` (base64 string) or `ref` (lenny-blob:// URI). |
-| `structured` | Structured data. Fields: `schema` (string), `data` (object). |
+| `text` | Plain or formatted text. Fields: `type`, `inline` (string), `mimeType` (`text/plain`). |
+| `code` | Source code. Fields: `type`, `inline`, `mimeType`, `annotations.language`. |
+| `reasoning_trace` | Model reasoning/chain-of-thought. Fields: `type`, `inline`. |
+| `citation` | Source citation or reference. Fields: `type`, `inline`, `annotations.source`. |
+| `screenshot` / `image` | Image content. Fields: `type`, `inline` (base64) or `ref` (`lenny-blob://`), `mimeType` (`image/*`). |
+| `diff` | Code diff or patch. Fields: `type`, `inline`, `annotations.language: "diff"`. |
+| `file` | File content (binary or text). Fields: `type`, `inline` or `ref`, `mimeType`. |
+| `execution_result` | Compound output from code execution. Fields: `type`, `parts[]` (each entry is a nested `OutputPart`). |
+| `error` | Error or diagnostic. Fields: `type`, `inline`, `annotations.errorCode` (optional). |
 
-For `blob` parts with a `ref` field, resolve the blob via `GET /v1/blobs/{ref}` (REST adapter only; MCP and other adapters dereference refs internally).
+See the canonical type registry in [spec §15.4.1](../reference/glossary.html) for per-type field contracts, `schemaVersion`, and the `x-<vendor>/<typeName>` namespace convention for third-party types. Parts either embed bytes via `inline` or reference a blob via `ref` — never both (`OUTPUTPART_INLINE_REF_CONFLICT`). For REST clients, resolve `ref` via `GET /v1/blobs/{ref}`; MCP, OpenAI, and A2A adapters dereference refs internally and never expose `lenny-blob://` URIs to external callers.
 
 ---
 
@@ -216,9 +222,9 @@ async def stream_session_output(session_id: str):
 def handle_event(event_type: str, data: dict):
     """Process a streaming event."""
     if event_type == "agent_output":
-        for part in data.get("parts", []):
+        for part in data.get("output", []):
             if part["type"] == "text":
-                print(part["text"], end="", flush=True)
+                print(part.get("inline", ""), end="", flush=True)
     elif event_type == "status_change":
         print(f"\n[Status: {data['state']}]")
     elif event_type == "tool_use_requested":

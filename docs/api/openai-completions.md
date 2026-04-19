@@ -370,7 +370,7 @@ Remove any parameters Lenny does not support:
 Be aware that each request creates a Lenny session:
 - Requests are **not** stateless. Each request allocates a pod, sets up a workspace, and tears it down.
 - Latency is higher than a direct LLM call because of session lifecycle overhead.
-- For conversational use cases with multiple turns, consider using the [MCP API](mcp.html) or [REST API](rest/index.html) instead, which support multi-turn sessions natively.
+- For conversational use cases with multiple turns, consider using the [MCP API](mcp.html) or [REST API](rest) instead, which support multi-turn sessions natively.
 
 ### Step 5: Update error handling
 

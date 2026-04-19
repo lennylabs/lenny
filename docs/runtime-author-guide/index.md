@@ -3,6 +3,7 @@ layout: default
 title: "Runtime Author Guide"
 nav_order: 4
 has_children: true
+description: Build your own agent runtime — the adapter protocol, the three integration levels (Basic, Standard, Full), the Go/Python/TypeScript SDKs, and publishing.
 ---
 
 # Runtime Author Guide

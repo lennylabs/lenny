@@ -3,6 +3,7 @@ layout: default
 title: Home
 nav_order: 0
 permalink: /
+description: Lenny is a Kubernetes-native, runtime-agnostic platform for running interactive AI agent sessions in isolated sandboxes. Self-hosted; no managed service.
 ---
 
 # Lenny

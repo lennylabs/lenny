@@ -175,7 +175,7 @@ bootstrap:
     - name: default-pool
       runtime: echo
       namespace: lenny-agents
-      isolationProfile: runc
+      isolationProfile: standard          # standard (runc) | sandboxed (gVisor) | microvm (Kata)
       executionMode: session
       warmCount:
         min: 2
@@ -198,7 +198,7 @@ bootstrap:
 
 | Decision | This Example | Production Recommendation |
 |----------|-------------|--------------------------|
-| Isolation profile | `runc` | `gvisor` for multi-tenant |
+| Isolation profile | `standard` (runc) | `sandboxed` (gVisor) for multi-tenant |
 | Warm pod count | 2 min, 5 max | Size to expected concurrency |
 | Gateway replicas | 2 | 3+ with PDB |
 | noEnvironmentPolicy | `allow-all` | `deny-all` with environments |
@@ -466,7 +466,7 @@ Expected response:
   "state": "running",
   "sessionIsolationLevel": {
     "executionMode": "session",
-    "isolationProfile": "runc",
+    "isolationProfile": "standard",
     "podReuse": false
   }
 }
@@ -492,7 +492,7 @@ Expected output:
 
 ```
 NAME           RUNTIME   WARM   ACTIVE   MAX    ISOLATION   STATUS
-default-pool   echo      2      0        5      runc        healthy
+default-pool   echo      2      0        5      standard    healthy
 ```
 
 ### Check Pool Warm Status
@@ -509,7 +509,7 @@ Expected output:
 Pool: default-pool
   Runtime:          echo
   Namespace:        lenny-agents
-  Isolation:        runc
+  Isolation:        standard (runc)
   Execution Mode:   session
   Warm Pods:        2 / 2 (min) / 5 (max)
   Active Sessions:  0
@@ -535,7 +535,7 @@ lenny-ctl sessions list \
 |------|-------------|-----------|
 | **TLS** | Enable TLS on the Ingress and between gateway and pods (mTLS) | Helm `tls.*` values |
 | **Authentication** | Configure OIDC provider for client authentication | Helm `auth.oidc.*` values |
-| **Isolation** | Use `gvisor` or `kata` isolation profile for multi-tenant | Pool `isolationProfile` |
+| **Isolation** | Use `sandboxed` (gVisor) or `microvm` (Kata) isolation profile for multi-tenant | Pool `isolationProfile` |
 | **PgBouncer** | Verify `pool_mode=transaction` and `connect_query` sentinel | Section 12.3 |
 | **Redis** | TLS + AUTH required; Sentinel for HA | Section 12.4 |
 | **MinIO** | Server-side encryption enabled; erasure coding for durability | Section 12.5 |

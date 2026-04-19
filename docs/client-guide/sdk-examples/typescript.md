@@ -323,10 +323,9 @@ class LennyClient {
   ): Promise<any> {
     const formData = new FormData();
     for (const file of files) {
-      const blob = new Blob(
-        [typeof file.content === "string" ? file.content : file.content],
-        { type: "application/octet-stream" }
-      );
+      const blob = new Blob([file.content], {
+        type: "application/octet-stream",
+      });
       formData.append("files", blob, file.name);
     }
 
@@ -545,10 +544,10 @@ async function main() {
   console.log("\n7. Sending message...");
   const msg = await client.request("POST", `/v1/sessions/${sessionId}/messages`, {
     body: {
-      parts: [
+      input: [
         {
           type: "text",
-          text: "Review the TypeScript code in example.ts. Suggest type safety improvements.",
+          inline: "Review the TypeScript code in example.ts. Suggest type safety improvements.",
         },
       ],
     },

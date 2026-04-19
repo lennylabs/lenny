@@ -309,6 +309,8 @@ Helm configuration: `audit.retentionPreset: soc2` or `audit.retentionDays: 2190`
 
 ### 16.5 Alerting Rules and SLOs
 
+> **Thresholds in the tables below are shipped defaults, not platform invariants.** Every numeric condition (sustain windows, percentage thresholds, latency caps, utilization ratios) is rendered into the bundled `PrometheusRule` objects at chart-install time and can be tuned by the deployer via Helm values. Runbooks therefore describe the qualitative direction of each alert and point here (and to the operator-guide `docs/reference/metrics.md`) for the numeric value in effect at a given deployment. The **design invariants** — the checks Lenny enforces regardless of deployer configuration, such as the 5s gateway-clock self-removal bound ([Section 13.3](13_security-model.md#133-credential-flow)), the token-store fail-closed behavior, and the `maxmemory-policy: noeviction` requirement for delegation budget keys ([Section 12.5](12_storage-architecture.md#125-redis-architecture)) — are called out explicitly in the text, not in this table. Tightening or loosening the alert thresholds below changes paging behavior only; it does not weaken those invariants.
+
 **Critical alerts (page):**
 
 | Alert                            | Condition                                                                                                                                                                                                                                                                                                   | Severity |

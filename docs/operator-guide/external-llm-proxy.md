@@ -1,3 +1,10 @@
+---
+layout: default
+title: "External LLM Proxy"
+parent: "Operator Guide"
+nav_order: 13
+---
+
 # External LLM Routing Proxy
 
 Lenny's gateway talks to LLM providers on behalf of agent pods. It ships with a built-in translator that converts OpenAI Chat Completions and Anthropic Messages requests into the upstream wire formats for the v1 provider set (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`). See [`../reference/metrics.md`](../reference/metrics.md) for the metrics the translator emits, and [§4.9](../../spec/04_system-components.md#49-credential-leasing-service) of the spec for the subsystem contract.

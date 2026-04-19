@@ -287,6 +287,99 @@ Informational. The adapter forwards status updates to the gateway for client vis
 
 ---
 
+## OutputPart Reference
+
+`OutputPart` is Lenny's internal content model -- the unit of content in inbound `message.input[]`, outbound `response.output[]`, `tool_result.content[]`, and platform-tool `lenny/output` payloads. The gateway translates to and from external protocol shapes (MCP content blocks, OpenAI content, A2A parts) at the edge; your runtime always produces and consumes `OutputPart` directly.
+
+The minimal valid part is `{"type": "text", "inline": "hello"}`. All other fields are optional.
+
+### Envelope
+
+| Field | Type | Default | Purpose |
+|:------|:-----|:--------|:--------|
+| `type` | string | required | A registered type name (see registry below) or a custom `x-<vendor>/<typeName>` |
+| `inline` | string | -- | Literal payload (UTF-8 text or base64-encoded binary). Mutually exclusive with `ref`. |
+| `ref` | string | -- | `lenny-blob://` URI pointing to gateway-staged bytes. Mutually exclusive with `inline`. |
+| `mimeType` | string | type-specific | MIME type of the payload. Defaults to `text/plain` for `type: "text"`. |
+| `id` | string | adapter-generated | Stable part identifier; enables per-part streaming correlation. |
+| `schemaVersion` | integer | `1` | Envelope schema revision; bump only when emitting fields added in a later registry version. |
+| `annotations` | object | -- | Open metadata map (`language`, `role`, `final`, `audience`, etc.). |
+| `parts` | OutputPart[] | -- | Nested parts for compound outputs (e.g., `execution_result`). |
+| `status` | string | `complete` | `streaming` / `complete` / `failed` -- primarily for incremental delivery via `lenny/output`. |
+
+**`inline` vs `ref` -- size policy.** The gateway chooses a representation based on payload size; your runtime may emit either form and let the gateway promote it:
+
+| Size | Representation | Consumer sees |
+|:-----|:---------------|:--------------|
+| ≤ 64 KB | `inline` (UTF-8 or base64) | `inline` populated, `ref` absent |
+| > 64 KB and ≤ 50 MB | Staged to blob store; `ref` set to a `lenny-blob://` URI | `ref` populated, `inline` absent |
+| > 50 MB | Rejected at ingress | `413 OUTPUTPART_TOO_LARGE` |
+
+Setting both `inline` and `ref` on the same part is a validation error (`400 OUTPUTPART_INLINE_REF_CONFLICT`).
+
+### Canonical type registry (v1)
+
+| `type` | Required fields | Purpose |
+|:-------|:----------------|:--------|
+| `text` | `inline` | Plain or formatted text. `mimeType` defaults to `text/plain`. |
+| `code` | `inline`, `annotations.language` | Source-code fragment with a language tag. |
+| `reasoning_trace` | `inline` | Model chain-of-thought or internal reasoning. |
+| `citation` | `inline`, `annotations.source` | Source citation or reference. |
+| `screenshot` | `inline` or `ref`, `mimeType` (`image/*`) | Captured screen image. |
+| `image` | `inline` or `ref`, `mimeType` (`image/*`) | General image content. |
+| `diff` | `inline`, `annotations.language: "diff"` | Unified-format diff or patch. |
+| `file` | `inline` or `ref`, `mimeType` | File produced by the agent. |
+| `execution_result` | `parts[]` (each a full OutputPart) | Compound output from code execution (command + stdout + stderr + chart). |
+| `error` | `inline` | Error or diagnostic message emitted mid-stream. `annotations.errorCode` optional. |
+
+**Custom types.** Any `type` not listed above is treated as a custom type and collapsed to `text` at the adapter boundary, with the original type preserved in `annotations.originalType`. To avoid colliding with future registry entries, all vendor-defined types MUST use a reverse-DNS namespace: `x-<vendor>/<typeName>` (e.g., `x-acme/heatmap`, `x-myorg/audio-transcript`).
+
+**`schemaVersion`.** Omit `schemaVersion` for parts that use only the v1 field set -- the adapter defaults it to `1`. Bump it to a higher value only if you are emitting fields introduced in a later registry version.
+
+**`status` for streaming parts.** When streaming via `lenny/output`, set `status: "streaming"` on in-progress parts (reusing the same `id` across updates) and emit the final update with `status: "complete"`. For parts that failed mid-stream, emit `status: "failed"`.
+
+**Cross-protocol fidelity.** Field-level round-trip fidelity through each external adapter (MCP, OpenAI Chat Completions, Open Responses, REST, A2A) is documented in [Spec §15.4.1 -- Translation Fidelity Matrix](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#1541-adapterbinary-protocol). Runtimes that need lossless round-trip should restrict clients to REST.
+
+### Simplified text shorthand (Basic level)
+
+Basic-level runtimes may emit a `response` with a top-level `text` field instead of a full `output` array:
+
+```json
+{ "type": "response", "text": "The answer is 42." }
+```
+
+The adapter normalizes this to the canonical form `{"type": "response", "output": [{"type": "text", "inline": "The answer is 42."}]}` before forwarding. Use the full form when you have more than one part or need a non-text type.
+
+### Examples
+
+```json
+{ "type": "text", "inline": "Processing 3 files..." }
+
+{ "type": "code", "inline": "fmt.Println(\"hi\")", "annotations": { "language": "go" } }
+
+{ "type": "diff",
+  "inline": "--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,3 @@\n-old\n+new",
+  "annotations": { "language": "diff", "path": "main.go" } }
+
+{ "type": "image",
+  "ref": "lenny-blob://tenant_acme/sess_abc/part_xyz?ttl=3600&enc=aes256gcm",
+  "mimeType": "image/png",
+  "annotations": { "caption": "UI heatmap after fix" } }
+
+{ "type": "execution_result",
+  "parts": [
+    { "type": "code", "inline": "ls -la", "annotations": { "language": "bash" } },
+    { "type": "text", "inline": "total 16\n-rw-r--r--  1 user  group   42 Apr 18 10:00 README.md" }
+  ]
+}
+
+{ "type": "error",
+  "inline": "Tool timed out after 30s",
+  "annotations": { "errorCode": "TOOL_TIMEOUT" } }
+```
+
+---
+
 ### Exit Codes
 
 | Code | Meaning |

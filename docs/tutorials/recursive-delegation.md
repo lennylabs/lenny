@@ -709,27 +709,27 @@ Expected SSE events (in order):
 
 ```
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Discovering available worker agents..."}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Discovering available worker agents..."}]}
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Found 1 worker agent(s)"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Found 1 worker agent(s)"}]}
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Delegating sub-task 1/4: uppercase:hello world"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Delegating sub-task 1/4: uppercase:hello world"}]}
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Delegated sub-task 1 -> task task_child_01"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Delegated sub-task 1 -> task task_child_01"}]}
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Delegating sub-task 2/4: lowercase:SHOUTING"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Delegating sub-task 2/4: lowercase:SHOUTING"}]}
 
 ...
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Waiting for 4 child task(s)..."}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Waiting for 4 child task(s)..."}]}
 
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Completed 4 sub-task(s):\n\n  [1] uppercase:hello world -> HELLO WORLD\n  [2] lowercase:SHOUTING -> shouting\n  [3] reverse:backwards -> sdrawkcab\n  [4] wordcount:count these five words -> 4 words"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Completed 4 sub-task(s):\n\n  [1] uppercase:hello world -> HELLO WORLD\n  [2] lowercase:SHOUTING -> shouting\n  [3] reverse:backwards -> sdrawkcab\n  [4] wordcount:count these five words -> 4 words"}]}
 
 event: session_complete
 data: {"type":"session_complete","result":{...}}
@@ -818,7 +818,7 @@ After the first few children consume the budget, subsequent delegations will fai
 
 ```
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Delegation failed for sub-task 4: BUDGET_EXHAUSTED"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Delegation failed for sub-task 4: BUDGET_EXHAUSTED"}]}
 ```
 
 Check the session's usage to see budget consumption:

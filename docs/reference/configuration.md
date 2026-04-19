@@ -69,7 +69,8 @@ The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `pool.minWarm` | int | Per-pool | Minimum number of idle warm pods to maintain. The PoolScalingController reconciles toward this target. | Must be >= 0. |
-| `pool.runtimeClass` | string | `standard` | Kubernetes RuntimeClass for pods in this pool. One of `standard` (runc), `gvisor`, `kata-microvm`. | Must be a valid RuntimeClass name. |
+| `pool.isolationProfile` | string | `sandboxed` | Isolation profile for pods in this pool. One of `standard` (runc — dev only, requires `allowStandardIsolation: true`), `sandboxed` (gVisor — default), `microvm` (Kata). | Must be one of the three profile names. |
+| `pool.runtimeClass` | string | Derived from `isolationProfile` | Explicit Kubernetes `RuntimeClass` override. Normally leave unset and let `isolationProfile` select the default: `runc` | `gvisor` | `kata`. | Must be a valid `RuntimeClass` name on the cluster. |
 | `pool.resources.cpu` | string | `"250m"` (request), `"2"` (limit) | CPU request and limit for agent containers. | Valid Kubernetes resource quantity. |
 | `pool.resources.memory` | string | `"256Mi"` (request), `"2Gi"` (limit) | Memory request and limit for agent containers. | Valid Kubernetes resource quantity. |
 | `pool.executionMode` | string | `session` | Pod execution mode: `session` (one session per pod), `task` (sequential reuse), `concurrent` (parallel slots). | One of `session`, `task`, `concurrent`. |

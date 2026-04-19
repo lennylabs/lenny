@@ -7,7 +7,9 @@ nav_order: 5
 
 # Security
 
-This page covers mTLS, OIDC/OAuth 2.1, the Token Service, KMS integration, credential leasing, the LLM Proxy, pod security controls, network policies, RBAC, and audit logging.
+This page is the configuration reference for every security-related control in Lenny: mTLS, OIDC/OAuth 2.1, the Token Service, KMS integration, credential leasing, the LLM Proxy, pod security controls, network policies, RBAC, and audit logging.
+
+For the *why* — the design principles behind these controls and how they map to common compliance frameworks — read [Security Principles](security-principles) first. Lenny does not claim any certification; the principles page describes the control primitives Lenny provides and the framework clauses those primitives are designed to support in your deployment.
 
 ---
 

@@ -3,6 +3,7 @@ layout: default
 title: "Operator Guide"
 nav_order: 3
 has_children: true
+description: Installation, configuration, scaling, security hardening, observability, backup/restore, upgrades, multi-tenancy, and the lenny-ctl CLI reference.
 ---
 
 # Operator Guide
@@ -61,17 +62,19 @@ You'll need the following available before you install:
 For a new deployment, work through the pages in this order:
 
 1. [**Installation**](installation.html) -- the three install paths (`lenny up` for local evaluation, `lenny-ctl install` for a guided cluster install, raw Helm for full control), cluster prerequisites, preflight checks, bootstrap, and post-install verification.
-2. [**Configuration**](configuration.html) -- everything you can set in `values.yaml` and answer files, plus registering runtimes, configuring pools, setting up credential pools, and defining delegation policies.
-3. [**Namespace and Isolation**](namespace-and-isolation.html) -- namespace layout, Pod Security Standards, sandbox enforcement, and dedicating nodes to pool workloads.
-4. [**Security**](security.html) -- mTLS, OIDC, the OAuth token-exchange endpoint, credential leasing, KMS integration, network policies, and RBAC.
-5. [**Scaling**](scaling.html) -- sizing guidance by deployment size, autoscaler configuration, warm pool sizing, and capacity calibration.
-6. [**Observability**](observability.html) -- Prometheus metrics, bundled alerting rules, the Prometheus Operator custom resources (`ServiceMonitor`, `PodMonitor`, `PrometheusRule`), OpenSLO export, Grafana dashboards, and log aggregation.
-7. [**Agent Operability**](agent-operability.html) -- the management plane (`lenny-ops`), diagnostic endpoints, the runbook catalog, backup and restore, drift detection, the management MCP server, and the `lenny-ctl doctor --fix` auto-remediation loop.
-8. [**Multi-Tenancy**](multi-tenancy.html) -- the tenant model, Postgres row-level security, per-tenant quotas, and isolation testing.
-9. [**Disaster Recovery**](disaster-recovery.html) -- RPO / RTO targets, HA topology, backup schedule, and restore procedures.
-10. [**Upgrades**](upgrades.html) -- rolling gateway upgrades, pool image upgrades, rollback, and MCP version deprecation.
-11. [**Troubleshooting**](troubleshooting.html) -- common issues, circuit breakers, orphan reconciliation, and emergency procedures.
-12. [**`lenny-ctl` Reference**](lenny-ctl.html) -- the full CLI, including admin commands, `lenny session` (session management over MCP), `lenny runtime init` for scaffolding, `lenny up` for the local stack, and the `lenny-ctl install` wizard.
+2. [**Ingress and TLS**](ingress-and-tls.html) -- the three external Ingresses (gateway, `lenny-ops`, playground), cert-manager and deployer-provided TLS models, internal mTLS between the gateway and pods, and SPIFFE trust-domain setup.
+3. [**Configuration**](configuration.html) -- everything you can set in `values.yaml` and answer files, plus registering runtimes, configuring pools, setting up credential pools, and defining delegation policies.
+4. [**Namespace and Isolation**](namespace-and-isolation.html) -- namespace layout, Pod Security Standards, sandbox enforcement, and dedicating nodes to pool workloads.
+5. [**Security Principles**](security-principles.html) -- the security posture, design principles, control primitives, and mapping from Lenny controls to SOC 2, ISO 27001, HIPAA, FedRAMP, PCI DSS, and GDPR clauses.
+6. [**Security**](security.html) -- configuration reference for mTLS, OIDC, the OAuth token-exchange endpoint, credential leasing, KMS integration, network policies, and RBAC.
+7. [**Scaling**](scaling.html) -- sizing guidance by deployment size, autoscaler configuration, warm pool sizing, and capacity calibration.
+8. [**Observability**](observability.html) -- Prometheus metrics, bundled alerting rules, the Prometheus Operator custom resources (`ServiceMonitor`, `PodMonitor`, `PrometheusRule`), OpenSLO export, Grafana dashboards, and log aggregation.
+9. [**Agent Operability**](agent-operability.html) -- the management plane (`lenny-ops`), diagnostic endpoints, the [runbook catalog]({{ site.baseurl }}/runbooks/), backup and restore, drift detection, the management MCP server, and the `lenny-ctl doctor --fix` auto-remediation loop.
+10. [**Multi-Tenancy**](multi-tenancy.html) -- the tenant model, Postgres row-level security, per-tenant quotas, and isolation testing.
+11. [**Disaster Recovery**](disaster-recovery.html) -- RPO / RTO targets, HA topology, backup schedule, and restore procedures.
+12. [**Upgrades**](upgrades.html) -- rolling gateway upgrades, pool image upgrades, rollback, and MCP version deprecation.
+13. [**Troubleshooting**](troubleshooting.html) -- common issues, circuit breakers, orphan reconciliation, and emergency procedures.
+14. [**`lenny-ctl` Reference**](lenny-ctl.html) -- the full CLI, including admin commands, the `lenny-ops`-targeted operability commands (diagnose, runbooks, events, audit, drift, backup, restore, upgrade), `lenny session` (session management over MCP), `lenny runtime init` for scaffolding, `lenny up` for the local stack, and the `lenny-ctl install` wizard.
 
 If you're inheriting an existing deployment, start with **Agent Operability** (run `lenny-ctl doctor` first) and **Observability** to learn the health signals, then read **Configuration** and **Scaling** to understand the tuning surface.
 
@@ -106,7 +109,7 @@ A quick map of the work, grouped by when you'll do it.
 - Roll upgrades of the gateway and runtime images (`lenny-ctl upgrade --answers <file>` replays a captured answer file).
 - Rotate credentials and KMS keys on your schedule.
 - Manage the tenant lifecycle: creation, quota changes, deletion.
-- Respond to incidents using circuit breakers, the runbook catalog, and emergency procedures.
+- Respond to incidents using circuit breakers, the [runbook catalog]({{ site.baseurl }}/runbooks/), and emergency procedures.
 - Verify disaster recovery periodically through automated restore tests.
 - Audit your security posture and compliance controls.
 

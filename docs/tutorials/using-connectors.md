@@ -112,7 +112,7 @@ Save the `session_id` and `uploadToken` from the response.
 SESSION_ID="sess_01..."
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "Authorization: UploadToken $UPLOAD_TOKEN" \
+  -H "X-Upload-Token: $UPLOAD_TOKEN" \
   -H "Content-Type: application/json" -d '{}' | jq .
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \
@@ -142,7 +142,7 @@ When the agent first calls a GitHub MCP tool, the gateway checks whether the use
 Monitor the SSE stream for the elicitation event:
 
 ```bash
-curl -s -N "http://localhost:8080/v1/sessions/${SESSION_ID}/events" \
+curl -s -N "http://localhost:8080/v1/sessions/${SESSION_ID}/logs" \
   -H "Accept: text/event-stream"
 ```
 
@@ -172,7 +172,7 @@ In the SSE stream you will see events like:
 
 ```
 event: agent_output
-data: {"type":"agent_output","parts":[{"type":"text","inline":"Found 3 open PRs in myorg/myrepo:\n1. #42 - Fix auth module\n2. #43 - Add caching layer\n3. #44 - Update dependencies"}]}
+data: {"type":"agent_output","output":[{"type":"text","inline":"Found 3 open PRs in myorg/myrepo:\n1. #42 - Fix auth module\n2. #43 - Add caching layer\n3. #44 - Update dependencies"}]}
 ```
 
 The gateway logs each connector call for audit. Connector traffic is subject to `PreConnectorRequest` and `PostConnectorResponse` interceptors if configured.

@@ -652,7 +652,7 @@ def test_cross_tenant_artifact_invisible(acme_token, globex_token):
 
     # Upload a file
     requests.post(f"{GATEWAY}/v1/sessions/{session_id}/upload",
-        headers={"Authorization": f"UploadToken {upload_token}"},
+        headers={"X-Upload-Token": upload_token},
         files={"files": ("secret.txt", b"Acme confidential data")})
 
     # Globex tries to download it

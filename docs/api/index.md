@@ -3,6 +3,7 @@ layout: default
 title: API Reference
 nav_order: 6
 has_children: true
+description: Authoritative reference for Lenny's gateway APIs — REST, MCP (Streamable HTTP), OpenAI Chat Completions, Open Responses, Admin, and internal gRPC.
 ---
 
 # API Reference
@@ -15,7 +16,7 @@ The Lenny gateway speaks several different APIs on the same port. Each one is ai
 
 | Surface | Path | Best for |
 |:--------|:-----|:---------|
-| [REST](rest/index.html) | `/v1/` | HTTP clients -- CI/CD, scripts, dashboards, custom integrations. Covers every operation. |
+| [REST](rest) | `/v1/` | HTTP clients -- CI/CD, scripts, dashboards, custom integrations. Covers every operation. |
 | [MCP](mcp.html) | `/mcp` | Interactive streaming, multi-agent delegation, mid-session user prompts, and MCP hosts like Claude Desktop or Cursor. |
 | [OpenAI Chat Completions](openai-completions.html) | `/v1/chat/completions` | Code that already uses the OpenAI SDK. Each Lenny runtime shows up as a model. |
 | [Open Responses](open-responses.html) | `/v1/responses` | The Open Responses specification and the OpenAI Responses API. |
@@ -326,7 +327,7 @@ The OpenAPI spec is the source of truth for the REST API. MCP tool schemas for a
 
 ## Try the API in your browser
 
-The [REST API Reference](rest/index.html) page embeds Swagger UI loaded from the gateway's live OpenAPI spec. Use it to:
+The [API Explorer](rest/index.html) page embeds Swagger UI loaded from the gateway's live OpenAPI spec. Use it to:
 
 - Browse every REST and Admin endpoint
 - See request and response shapes
@@ -339,7 +340,8 @@ The [REST API Reference](rest/index.html) page embeds Swagger UI loaded from the
 
 | Page | What you'll find |
 |:-----|:-----------------|
-| [REST API Reference (Swagger UI)](rest/index.html) | Interactive explorer for every REST endpoint |
+| [REST API Reference](rest) | Endpoint-by-endpoint narrative reference |
+| [API Explorer (Swagger UI)](rest/index.html) | Interactive try-it-in-browser for every REST endpoint |
 | [MCP API Reference](mcp.html) | Connection setup, version negotiation, and the full tool catalog |
 | [OpenAI Chat Completions API](openai-completions.html) | Compatibility layer for the OpenAI SDK |
 | [Open Responses API](open-responses.html) | Open Responses protocol details |

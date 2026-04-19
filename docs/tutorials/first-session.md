@@ -158,11 +158,11 @@ If you created the session with `POST /v1/sessions` (instead of the one-shot `st
 
 ```bash
 curl -sk -X POST "https://localhost:8443/v1/sessions/${SESSION_ID}/upload" \
-  -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -F "files=@/tmp/demo/greeting.txt;filename=greeting.txt"
 
 curl -sk -X POST "https://localhost:8443/v1/sessions/${SESSION_ID}/finalize" \
-  -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 ```
 

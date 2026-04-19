@@ -138,19 +138,19 @@ event: status_change
 data: {"state": "running"}
 
 event: agent_output
-data: {"parts": [{"type": "text", "text": "Delegating code review to child agent..."}]}
+data: {"output": [{"type": "text", "inline": "Delegating code review to child agent..."}]}
 
 event: status_change
 data: {"state": "running", "childId": "sess_child1", "childState": "running"}
 
 event: agent_output
-data: {"parts": [{"type": "text", "text": "Child agent reviewing code..."}]}
+data: {"output": [{"type": "text", "inline": "Child agent reviewing code..."}]}
 
 event: status_change
 data: {"state": "running", "childId": "sess_child1", "childState": "completed"}
 
 event: agent_output
-data: {"parts": [{"type": "text", "text": "Code review complete. 3 issues found."}]}
+data: {"output": [{"type": "text", "inline": "Code review complete. 3 issues found."}]}
 ```
 
 Key events to watch for:
@@ -393,9 +393,9 @@ async def handle_delegation_event(
     data: dict,
 ):
     if event_type == "agent_output":
-        for part in data.get("parts", []):
+        for part in data.get("output", []):
             if part["type"] == "text":
-                print(part["text"], end="", flush=True)
+                print(part.get("inline", ""), end="", flush=True)
 
     elif event_type == "elicitation_request":
         print(f"\n{'='*60}")

@@ -334,6 +334,10 @@ func (c *LennyClient) StreamSession(sessionID string) error {
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
+		// SSE payloads can exceed the default 64 KB bufio scanner buffer
+		// (e.g., agent_output with embedded base64 screenshots). Raise the
+		// token ceiling to 10 MB to prevent silent truncation.
+		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 		var eventType string
 		var dataLines []string
 
@@ -352,16 +356,16 @@ func (c *LennyClient) StreamSession(sessionID string) error {
 
 					switch eventType {
 					case "agent_output":
-						var output struct {
-							Parts []struct {
-								Type string `json:"type"`
-								Text string `json:"text"`
-							} `json:"parts"`
+						var event struct {
+							Output []struct {
+								Type   string `json:"type"`
+								Inline string `json:"inline"`
+							} `json:"output"`
 						}
-						if err := json.Unmarshal([]byte(data), &output); err == nil {
-							for _, part := range output.Parts {
+						if err := json.Unmarshal([]byte(data), &event); err == nil {
+							for _, part := range event.Output {
 								if part.Type == "text" {
-									fmt.Print(part.Text)
+									fmt.Print(part.Inline)
 								}
 							}
 						}
@@ -583,8 +587,8 @@ func main() {
 	fmt.Println("\n7. Sending message...")
 	var msg MessageResponse
 	if err := client.Request("POST", "/v1/sessions/"+session.SessionID+"/messages", map[string]interface{}{
-		"parts": []map[string]string{
-			{"type": "text", "text": "Review the Go code in main.go. Suggest idiomatic improvements."},
+		"input": []map[string]string{
+			{"type": "text", "inline": "Review the Go code in main.go. Suggest idiomatic improvements."},
 		},
 	}, &msg); err != nil {
 		fmt.Fprintf(os.Stderr, "Send message: %v\n", err)

@@ -167,8 +167,8 @@ curl -s -X POST "$LENNY_URL/v1/sessions/$SESSION_ID/messages" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "parts": [
-      {"type": "text", "text": "Review this code and suggest improvements."}
+    "input": [
+      {"type": "text", "inline": "Review this code and suggest improvements."}
     ]
   }' | jq .
 ```
@@ -219,7 +219,7 @@ curl -s -X POST "$LENNY_URL/v1/sessions/start" \
       {"path": "code.py", "content": "def add(a, b): return a + b"}
     ],
     "message": {
-      "parts": [{"type": "text", "text": "Review this function."}]
+      "input": [{"type": "text", "inline": "Review this function."}]
     },
     "callbackUrl": "https://my-app.example.com/webhook"
   }' | jq .
@@ -522,7 +522,7 @@ echo -e "\n5. Sending message..."
 curl -s -X POST "$LENNY/v1/sessions/$SESSION_ID/messages" \
   "${AUTH[@]}" \
   -H "Content-Type: application/json" \
-  -d '{"parts": [{"type": "text", "text": "Review code.py and suggest improvements."}]}' \
+  -d '{"input": [{"type": "text", "inline": "Review code.py and suggest improvements."}]}' \
   | jq '.deliveryReceipt.status'
 
 # 6. Stream output (timeout after 120s)

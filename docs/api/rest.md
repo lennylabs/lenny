@@ -11,7 +11,7 @@ nav_order: 3
 
 The REST API covers all non-interactive operations. It is the primary integration point for CI/CD pipelines, admin dashboards, CLIs, and clients in any language. For interactive streaming sessions, use the [MCP API](mcp.html) instead.
 
-The gateway also serves an interactive OpenAPI explorer at [`/openapi.yaml`](rest/index.html) (Swagger UI).
+For a try-it-in-browser view, the gateway's OpenAPI spec is also rendered in the [API Explorer](rest/index.html) (Swagger UI).
 
 <details open markdown="block">
   <summary>Table of contents</summary>
@@ -223,7 +223,7 @@ Dismiss a pending elicitation. The agent receives a timeout/dismissed signal.
 | Method | Endpoint                           | Description                         |
 | :----- | :--------------------------------- | :---------------------------------- |
 | `GET`  | `/v1/sessions/{id}/artifacts`      | List session artifacts              |
-| `GET`  | `/v1/sessions/{id}/events`         | SSE event stream                    |
+| `GET`  | `/v1/sessions/{id}/logs`           | Session log stream (paginated, SSE) |
 | `GET`  | `/v1/sessions/{id}/setup-output`   | Setup command stdout/stderr         |
 | `GET`  | `/v1/sessions/{id}/webhook-events` | Webhook event history               |
 | `GET`  | `/v1/blobs/{ref}`                  | Resolve a `lenny-blob://` reference |
@@ -238,11 +238,11 @@ List artifacts produced by a session. Paginated.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404).
 
-### GET /v1/sessions/{id}/events
+### GET /v1/sessions/{id}/logs
 
-Open an SSE (Server-Sent Events) stream for real-time session output. Supports reconnection via `Last-Event-ID` header with cursor-based replay within the replay window.
+Session log stream. Returns paginated JSON by default; switches to Server-Sent Events when the client sends `Accept: text/event-stream`. SSE streams support reconnection via the `Last-Event-ID` header with cursor-based replay within the replay window.
 
-**Event types:** `agent_output`, `status_change`, `elicitation`, `tool_use`, `error`, `terminated`.
+**Event types (SSE mode):** `agent_output`, `status_change`, `elicitation`, `tool_use`, `error`, `terminated`.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404).
 

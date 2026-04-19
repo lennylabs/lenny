@@ -36,7 +36,7 @@ SESSION_ID=$(curl -s -X POST http://localhost:8080/v1/sessions \
 # Finalize and start (abbreviated; see first-session tutorial)
 UPLOAD_TOKEN=$(curl -s "http://localhost:8080/v1/sessions/${SESSION_ID}" | jq -r '.uploadToken')
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "Authorization: UploadToken ${UPLOAD_TOKEN}" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \
   -H "Content-Type: application/json" -d '{}'
@@ -95,7 +95,7 @@ NEW_SESSION_ID=$(curl -s -X POST http://localhost:8080/v1/sessions \
 # Finalize and start
 NEW_TOKEN=$(curl -s "http://localhost:8080/v1/sessions/${NEW_SESSION_ID}" | jq -r '.uploadToken')
 curl -s -X POST "http://localhost:8080/v1/sessions/${NEW_SESSION_ID}/finalize" \
-  -H "Authorization: UploadToken ${NEW_TOKEN}" \
+  -H "X-Upload-Token: ${NEW_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 curl -s -X POST "http://localhost:8080/v1/sessions/${NEW_SESSION_ID}/start" \
   -H "Content-Type: application/json" -d '{}'

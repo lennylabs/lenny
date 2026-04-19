@@ -3,6 +3,7 @@ layout: default
 title: "Client Guide"
 nav_order: 5
 has_children: true
+description: Integration guide for application, script, CI, IDE, and MCP-host developers driving Lenny sessions through the gateway.
 ---
 
 # Client Guide
@@ -134,12 +135,13 @@ List what's available and what each can do with `GET /v1/runtimes` or `lenny run
 
 If this is your first pass, read the pages in the order below:
 
-1. [**Authentication**](authentication.html): how to get a token and register credentials
-2. [**Session Lifecycle**](session-lifecycle.html): the state machine every session goes through
-3. [**Streaming**](streaming.html): how to receive live output as the agent produces it
-4. [**Delegation & Tasks**](delegation-and-tasks.html): multi-agent workflows
-5. [**Error Handling**](error-handling.html): error codes, retry strategy, optimistic concurrency
-6. [**Webhooks**](webhooks.html): asynchronous notifications and callbacks
-7. [**Client SDK Examples**](sdk-examples/): runnable code in Python, TypeScript, Go, curl, and the MCP SDK
+1. [**Wire Format**](wire-format.html): the canonical JSON shapes, SSE events, headers, and content types (cite this from your own docs and tests)
+2. [**Authentication**](authentication.html): how to get a token and register credentials
+3. [**Session Lifecycle**](session-lifecycle.html): the state machine every session goes through
+4. [**Streaming**](streaming.html): how to receive live output as the agent produces it
+5. [**Delegation & Tasks**](delegation-and-tasks.html): multi-agent workflows
+6. [**Error Handling**](error-handling.html): error codes, retry strategy, optimistic concurrency
+7. [**Webhooks**](webhooks.html): asynchronous notifications and callbacks
+8. [**Client SDK Examples**](sdk-examples/): runnable code in Python, TypeScript, Go, curl, and the MCP SDK
 
 Each page stands alone: tables of endpoints, code examples, and the responses you should expect. The SDK Examples section has end-to-end scripts that take a session from creation to teardown in every language.
