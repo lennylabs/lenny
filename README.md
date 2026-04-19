@@ -7,6 +7,8 @@ Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a
 [Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing) | [Implementation Status](docs/about/status.md)
 
 > **Status: design phase.** The technical specification is complete; implementation is in progress. The documentation describes the v1 surface and is a source of truth for spec-driven development — not yet a working product. Early feedback on the design is very welcome: open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
+>
+> **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
 
 ---
 
