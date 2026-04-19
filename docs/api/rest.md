@@ -129,7 +129,7 @@ End a session gracefully. Triggers shutdown, workspace seal, artifact export, an
 
 ### DELETE /v1/sessions/{id}
 
-Force-terminate and clean up a session. Equivalent to terminate + cleanup in one call.
+Force-cancel a session and release all resources. Unlike `POST /v1/sessions/{id}/terminate` (which records a graceful, successful `completed` state), `DELETE` always records `cancelled` as the terminal state for audit and billing purposes. Use `/terminate` to signal normal completion; use `DELETE` to abandon a session.
 
 **Valid precondition states:** any non-terminal state.
 **Resulting transition:** `cancelled`.
@@ -328,9 +328,9 @@ User-managed credentials for the "bring your own API key" workflow. See the [Use
 | :------- | :----------------------------- | :--------------------------- |
 | `POST`   | `/v1/credentials`              | Register a user credential   |
 | `GET`    | `/v1/credentials`              | List user credentials        |
-| `PUT`    | `/v1/credentials/{ref}`        | Update (rotate) a credential |
-| `POST`   | `/v1/credentials/{ref}/revoke` | Revoke a credential          |
-| `DELETE` | `/v1/credentials/{ref}`        | Delete a credential          |
+| `PUT`    | `/v1/credentials/{credential_ref}`        | Update (rotate) a credential |
+| `POST`   | `/v1/credentials/{credential_ref}/revoke` | Revoke a credential          |
+| `DELETE` | `/v1/credentials/{credential_ref}`        | Delete a credential          |
 
 ### POST /v1/credentials
 
@@ -352,19 +352,19 @@ List the authenticated user's registered credentials. No secret material is retu
 
 **Key error codes:** `UNAUTHORIZED` (401).
 
-### PUT /v1/credentials/{ref}
+### PUT /v1/credentials/{credential_ref}
 
 Rotate (replace) the secret material for an existing credential. Active leases are immediately rotated.
 
 **Key error codes:** `USER_CREDENTIAL_NOT_FOUND` (404), `UNAUTHORIZED` (401).
 
-### POST /v1/credentials/{ref}/revoke
+### POST /v1/credentials/{credential_ref}/revoke
 
 Revoke a credential and immediately invalidate all active leases backed by it.
 
 **Key error codes:** `USER_CREDENTIAL_NOT_FOUND` (404), `UNAUTHORIZED` (401).
 
-### DELETE /v1/credentials/{ref}
+### DELETE /v1/credentials/{credential_ref}
 
 Remove a registered credential. Active session leases are unaffected (they continue using the credential until the session ends).
 
@@ -455,4 +455,4 @@ All responses include [rate-limit headers](../reference/error-catalog.html#rate-
 
 The REST API and MCP API share a common service layer. Operations available on both surfaces return semantically identical responses. See the [MCP API Reference](mcp.html#restmcp-consistency-contract) for the full consistency contract.
 
-**REST-only operations** (no MCP tool equivalent): `derive`, `replay`, `extend-retention`, and `eval`. These are developer workflow operations typically driven by CI pipelines or human operators, not by agents mid-session.
+**REST-only operations** (no MCP tool equivalent): `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{tool_call_id}/approve`, `tool-use/{tool_call_id}/deny`, `elicitations/{elicitation_id}/respond`, and `elicitations/{elicitation_id}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints have no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — they are surfaced as elicitation exchanges on the session's streaming transport, and responses flow back over that same channel.

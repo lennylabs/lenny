@@ -396,7 +396,7 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 | `lenny session cancel <sessionId>` | Cancel a session cooperatively. | `user` (owner) |
 | `lenny session list [--runtime <name>] [--status <status>]` | List the caller's sessions. The one session command that also works over REST for non-interactive callers. | `user` |
 | `lenny session get <sessionId>` | Fetch a session's current state. | `user` (owner) |
-| `lenny session logs <sessionId> [--since <time>]` | Fetch session transcript from the event store. | `user` (owner) |
+| `lenny session logs <sessionId> [--since <time>]` | Fetch session logs from the event store (paginated, streamable via SSE). | `user` (owner) |
 
 `lenny session` commands honor the same `--api-url` / `LENNY_API_URL` discovery rules as admin commands; there is no separate MCP endpoint flag because Lenny's MCP surface is served from the same gateway host under `/mcp`.
 

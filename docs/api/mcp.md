@@ -998,7 +998,7 @@ CI includes contract tests that call the REST endpoint and every built-in adapte
 
 ### 5. REST-only operations
 
-The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, and `eval`. These are developer workflow operations typically driven by CI pipelines or human operators, not by agents mid-session. MCP clients needing these operations should use the REST API directly.
+The following REST endpoints have **no MCP tool equivalents**: `derive`, `replay`, `extend-retention`, `eval`, `tool-use/{tool_call_id}/approve`, `tool-use/{tool_call_id}/deny`, `elicitations/{elicitation_id}/respond`, and `elicitations/{elicitation_id}/dismiss`. The first four are developer workflow or administrative operations typically driven by CI pipelines or human operators, not by agents mid-session. The tool-use approval and elicitation response endpoints carry no MCP tool equivalents because MCP clients receive and resolve these prompts through the native MCP Elicitation feature — the gateway surfaces pending elicitations and tool-approval requests as MCP elicitation exchanges on the session's streaming transport, and the client's response flows back over that same channel. MCP-first clients needing the REST-only operations should use the REST API directly.
 
 ---
 

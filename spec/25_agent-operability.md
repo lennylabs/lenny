@@ -1466,7 +1466,7 @@ Long-running actions — platform upgrades, restores, backups, backup verificati
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/admin/operations` | Paginated list of operations across all subsystems. Filters: `?actor=`, `?status=`, `?kind=`, `?since=`, `?until=`, `?tenantId=`, `?operationId=`, `?limit=`, `?cursor=`. |
-| `GET` | `/v1/admin/operations/{operationId}` | Single operation with full detail (same schema as a list entry). |
+| `GET` | `/v1/admin/operations/{id}` | Single operation with full detail (same schema as a list entry). |
 
 Read-only. Mutations still go to the owning subsystem (`POST /v1/admin/platform/upgrade/proceed`, `POST /v1/admin/restore/resume`, `DELETE /v1/admin/remediation-locks/{id}`, etc.). The Operations Inventory surfaces the `resources` links on each operation so an agent can reach the mutating endpoints without cross-referencing sections.
 
@@ -2313,7 +2313,7 @@ This proxies to the K8s API's pod log endpoint. The `SessionDiagnosis.RelatedLog
 
 A real-time feed of platform operational events. `lenny-ops` reads from the Redis stream that the gateway writes to (or the gateway's in-memory event buffer when Redis is unavailable) and exposes SSE, polling, and webhook delivery.
 
-**Event envelope.** Every event emitted and delivered by this service — SSE, polling (`GET /v1/admin/events`), and webhook — is a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON record ([§12.6](../spec/12_storage-architecture.md#126-interface-design) envelope contract). The `type` field is `dev.lenny.<short_name>` (e.g., `dev.lenny.alert_fired`, `dev.lenny.platform_upgrade_progressed`, `dev.lenny.operation_progressed`) using the event-type identifiers catalogued in [§16.6](../spec/16_observability.md#166-operational-events-catalog); `source` identifies the emitting component (`//lenny.dev/gateway/{replicaId}` or `//lenny.dev/ops/{replicaId}`); Lenny extensions `lennytenantid`, `lennyoperationid`, and `lennyrootsessionid` carry tenant, operation, and delegation-tree correlation. The event's source-independent identity is the CloudEvents `id` attribute, which matches the `eventKey` described in [§25.3](#253-gateway-side-ops-endpoints) (Event Buffer); the two names refer to the same value (the CloudEvents attribute is authoritative on the wire, the `eventKey` name is used in internal storage prose).
+**Event envelope.** Every event emitted and delivered by this service — SSE, polling (`GET /v1/admin/events`), and webhook — is a [CloudEvents v1.0.2](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md) JSON record ([§12.6](../spec/12_storage-architecture.md#126-interface-design) envelope contract). The `type` field is `dev.lenny.<short_name>` (e.g., `dev.lenny.alert_fired`, `dev.lenny.upgrade_progressed`, `dev.lenny.operation_progressed`) using the event-type identifiers catalogued in [§16.6](../spec/16_observability.md#166-operational-events-catalog); `source` identifies the emitting component (`//lenny.dev/gateway/{replicaId}` or `//lenny.dev/ops/{replicaId}`); Lenny extensions `lennytenantid`, `lennyoperationid`, and `lennyrootsessionid` carry tenant, operation, and delegation-tree correlation. The event's source-independent identity is the CloudEvents `id` attribute, which matches the `eventKey` described in [§25.3](#253-gateway-side-ops-endpoints) (Event Buffer); the two names refer to the same value (the CloudEvents attribute is authoritative on the wire, the `eventKey` name is used in internal storage prose).
 
 **Audit-bearing events.** When an operational event carries an audit record (e.g., `dev.lenny.audit_session_terminated`), `datacontenttype` is `application/ocsf+json` and the CloudEvents `data` field is the [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) record defined in [§11.7](../spec/11_policy-and-controls.md#117-audit-logging) Wire Format. Single-envelope model: CloudEvents is the transport, OCSF is the payload. Nothing is double-wrapped.
 
@@ -2349,7 +2349,7 @@ type EventStreamService interface {
 
 Event types and payload schemas match those defined in Section 25.3 (Event Emission). `alert_fired` event payloads include an optional `runbook` field (string) naming the relevant operational runbook, sourced from the Prometheus alerting rule's `runbook` annotation. See Section 25.7 "Path B" for the discovery flow.
 
-**Emission responsibility.** Both the gateway and `lenny-ops` emit events to the same stream. The gateway emits signals derived from in-process state (`alert_fired`, `alert_resolved`, `pool_state_changed`, `circuit_breaker_*`, `credential_*`, `session_failed`, `backup_completed`/`backup_failed` based on Job watch, `platform_upgrade_available`, `health_status_changed`). `lenny-ops` emits signals it originates itself (`ops_health_status_changed`, `escalation_created`, `remediation_lock_acquired`/`_released`, `drift_detected`, `upgrade_progressed`, `platform_upgrade_*` lifecycle events). Both write to the same Redis stream and the gateway's in-memory ring buffer (via an internal RPC call when `lenny-ops` emits). Consumers don't need to distinguish the source — the event `type` carries the semantic, and `source` in the event envelope (values: `"gateway"` or `"lenny-ops"`) is available for audit-trail tracing.
+**Emission responsibility.** Both the gateway and `lenny-ops` emit events to the same stream. The gateway emits signals derived from in-process state (`alert_fired`, `alert_resolved`, `pool_state_changed`, `circuit_breaker_*`, `credential_*`, `session_failed`, `backup_completed`/`backup_failed` based on Job watch, `platform_upgrade_available`, `health_status_changed`). `lenny-ops` emits signals it originates itself (`ops_health_status_changed`, `escalation_created`, `remediation_lock_acquired`/`_released`, `drift_detected`, `platform_upgrade_*` lifecycle events, `operation_progressed`). Both write to the same Redis stream and the gateway's in-memory ring buffer (via an internal RPC call when `lenny-ops` emits). Consumers don't need to distinguish the source — the event `type` carries the semantic, and `source` in the event envelope (values: `"gateway"` or `"lenny-ops"`) is available for audit-trail tracing.
 
 ### Storage
 
@@ -2367,7 +2367,7 @@ Each event averages ~500 bytes (alert metadata + suggested action + payload). At
 
 **Memory monitoring.** Operators should monitor `lenny_ops_events_stream_length` (gauge, current stream length) and alert if it stays at MAXLEN for more than a few minutes — that indicates events are being evicted faster than consumed, and subscribers may experience gaps. Recommended alert: `lenny_ops_events_stream_length / lenny_ops_events_stream_maxlen > 0.95 for 5m`.
 
-**Eviction and gap behavior.** When events are evicted before a slow subscriber reads them, the subscriber's next request returns `pagination.gapDetected: true` (canonical envelope, Section 25.2). The agent re-reads platform state to recover. Gap rate (`lenny_ops_events_buffer_gaps_total`) should be near zero in healthy operation; persistent gaps suggest the stream is undersized.
+**Eviction and gap behavior.** When events are evicted before a slow subscriber reads them, the subscriber's next request returns `pagination.gapDetected: true` (canonical envelope, Section 25.2). The agent re-reads platform state to recover. Gap rate (`lenny_ops_events_stream_gaps_total`) should be near zero in healthy operation; persistent gaps suggest the stream is undersized.
 
 **Cost trade-off.** Doubling `streamMaxLen` doubles Redis memory but proportionally extends catch-up window. For deployments with very slow watchdogs (cron-scheduled rather than continuous) or unstable networks, larger MAXLEN values are reasonable.
 
@@ -2547,6 +2547,7 @@ Subscriptions and event delivery respect tenant boundaries:
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `lenny_ops_events_stream_length` | Gauge | | Current Redis stream length |
+| `lenny_ops_events_stream_gaps_total` | Counter | | Subscriber requests where the requested stream ID was already evicted (`pagination.gapDetected: true` returned) |
 | `lenny_ops_events_sse_active_connections` | Gauge | | Active SSE connections |
 | `lenny_ops_events_webhook_delivery_total` | Counter | `subscription_id`, `status` | Webhook delivery outcomes |
 | `lenny_ops_events_webhook_delivery_latency_seconds` | Histogram | `subscription_id` | Webhook delivery latency |
@@ -2800,7 +2801,7 @@ Field descriptions:
 lenny-ctl diagnose pool <pool-name>
 ```
 
-<!-- access: api method=GET path=/v1/admin/diagnostics/pools/{pool} -->
+<!-- access: api method=GET path=/v1/admin/diagnostics/pools/{name} -->
 ```
 GET /v1/admin/diagnostics/pools/<pool-name>
 ```
@@ -2824,7 +2825,7 @@ The `<!-- access: ... -->` comment lines are invisible to humans reading the ren
         "title": "Check pool status",
         "paths": [
           {"access": "lenny-ctl", "command": "lenny-ctl diagnose pool <pool-name>"},
-          {"access": "api", "method": "GET", "path": "/v1/admin/diagnostics/pools/{pool}"},
+          {"access": "api", "method": "GET", "path": "/v1/admin/diagnostics/pools/{name}"},
           {"access": "kubectl", "requires": "cluster-access", "commands": ["kubectl get sandboxes ...", "kubectl describe sandbox ..."]}
         ]
       }
@@ -4081,7 +4082,7 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_credential_pool_get` | `GET /v1/admin/credential-pools/{name}` | Get a credential pool's configuration |
 | `lenny_runtime_list` | `GET /v1/admin/runtimes` | List registered runtimes |
 | `lenny_runtime_get` | `GET /v1/admin/runtimes/{name}` | Get a runtime's definition |
-| `lenny_quota_get` | `GET /v1/admin/tenants/{id}/quota` | Get a tenant's quota |
+| `lenny_quota_get` | `GET /v1/admin/tenants/{id}` | Get a tenant's quota (quota fields are embedded in the tenant record; see [§15.1](15_external-api-surface.md#151-rest-api)) |
 
 #### Action Tools (mutating)
 
@@ -4120,12 +4121,11 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_credential_pool_update` | `PUT /v1/admin/credential-pools/{name}` | Update a credential pool |
 | `lenny_credential_pool_delete` | `DELETE /v1/admin/credential-pools/{name}` | Delete a credential pool (destructive; requires `confirm`) |
 | `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential to a pool |
-| `lenny_credential_rotate` | `POST /v1/admin/credential-pools/{name}/credentials/{id}/rotate` | Rotate a credential |
-| `lenny_credential_retire` | `DELETE /v1/admin/credential-pools/{name}/credentials/{id}` | Retire a credential |
+| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation is performed by revoking the old credential and adding a replacement via `lenny_credential_add` — see [§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow. |
 | `lenny_runtime_register` | `POST /v1/admin/runtimes` | Register a runtime |
 | `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
 | `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |
-| `lenny_quota_update` | `PUT /v1/admin/tenants/{id}/quota` | Update a tenant's quota |
+| `lenny_quota_update` | `PUT /v1/admin/tenants/{id}` | Update a tenant's quota (quota fields are part of the tenant record payload; see [§15.1](15_external-api-surface.md#151-rest-api)) |
 
 The tool list above is not exhaustive; every admin-API endpoint with documented RBAC becomes an MCP tool automatically via the build-time OpenAPI → MCP generation (Section 25.12 Scope, and "Admin API MCP Extension" in "Edits Required Outside Section 25"). The canonical inventory is always `/v1/admin/me/authorized-tools` (Section 25.4) for the caller's filtered view, or `/v1/openapi.json` for the full surface.
 

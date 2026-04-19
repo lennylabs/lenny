@@ -28,6 +28,7 @@ The platform MCP server (available to `type: agent` runtimes via the adapter man
 | `lenny/request_input`       | Block until answer arrives (replaces stdout `input_required`) | [§7.2](07_session-lifecycle.md#72-interactive-session-model)    |
 | `lenny/send_message`        | Send a message to any task by taskId                          | [§7.2](07_session-lifecycle.md#72-interactive-session-model)    |
 | `lenny/get_task_tree`       | Return task hierarchy with states                             | [§8.9](08_recursive-delegation.md#89-task-tree)    |
+| `lenny/set_tracing_context` | Propagate the OTel tracing context into the current operation for parent-linked spans across delegation and tool calls | [§16](16_observability.md#16-observability)    |
 
 #### Runtime Discovery
 

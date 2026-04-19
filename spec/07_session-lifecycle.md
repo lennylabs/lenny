@@ -134,7 +134,7 @@ Once a session is attached, the client interacts via a **Lenny session** with bi
 | `state`                | string   | Current state of the child session (`running`, `input_required`, `suspended`, `completed`, `failed`, `cancelled`, `expired`)                                                      |
 | `pending_request_id`   | string?  | If the child is in `input_required` state with a pending elicitation or tool approval directed at the parent, the request ID that the parent must respond to. `null` if none.      |
 | `result`               | object?  | If the child has reached a terminal state (`completed`, `failed`, `cancelled`, `expired`), the child's result object. `null` if the child is still running.                       |
-| `delegation_lease_id`  | string   | The delegation lease ID that governs this child, allowing the parent to correlate with its original `lenny/delegate` call                                                         |
+| `delegation_lease_id`  | string   | The delegation lease ID that governs this child, allowing the parent to correlate with its original `lenny/delegate_task` call                                                    |
 
 The gateway emits `children_reattached` as a single SSE event immediately after `session.resumed` when the resuming session has one or more active children in the delegation tree. If the parent session has no children (or all children reached terminal states before the parent resumed), the event is not emitted. The event is delivered exactly once per parent resume; subsequent child state changes are delivered through the normal streaming event flow.
 
@@ -168,6 +168,12 @@ suspended → failed         (BUDGET_KEYS_EXPIRED detected — see §8.3)
 suspended → resume_pending (involuntary pod failure/eviction while suspended; pod still held)
 resume_pending → resuming              (pod allocated within maxResumeWindowSeconds)
 resume_pending → awaiting_client_action (maxResumeWindowSeconds elapsed, no pod available)
+resuming → running                     (re-attach succeeds on replacement pod; internal-only transient — the API reports the overall transition as resume_pending → running, see [§15.1](15_external-api-surface.md#151-rest-api))
+resuming → failed                      (re-attach fails after retries exhausted)
+awaiting_client_action → resume_pending (client issues POST /v1/sessions/{id}/resume — see [§15.1](15_external-api-surface.md#151-rest-api))
+awaiting_client_action → completed     (client issues POST /v1/sessions/{id}/terminate)
+awaiting_client_action → cancelled     (client issues DELETE /v1/sessions/{id}, or parent cancels)
+awaiting_client_action → expired       (lease/budget/deadline exhausted while awaiting client action)
 ```
 
 `input_required` is a **sub-state of `running`**: the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response. This sub-state is significant for message routing (see delivery paths below) and for external observability (the gateway emits `status_change(state: "input_required")` to the client when the session enters this state, and `status_change(state: "running")` when it exits). Because `input_required` is a sub-state of `running` where the pod is live, all failure transitions defined for `running` also apply to `input_required` — including `resume_pending` on pod crash when retries remain and `failed` when retries are exhausted (these transitions are listed explicitly in the state machine above). The remaining transitions mirror those in the canonical task state machine ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)).

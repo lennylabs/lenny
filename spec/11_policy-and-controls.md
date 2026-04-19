@@ -151,7 +151,7 @@ These corrections are written to the `EventStore` by the gateway like any other 
 3. **Dual-control approval (four-eyes principle):** Corrections whose absolute adjustment value exceeds the deployer-configurable threshold `billing.dualControlThreshold` (default: `0`, meaning **all** operator-initiated corrections require dual-control) must be approved by a second `platform-admin` before they are committed. The workflow:
    - The initiating admin submits the correction request; the `EventStore` records it in a `billing_correction_pending` state with a unique `approval_request_id`.
    - The gateway notifies eligible approvers via the configured notification channel (`billing.approverNotificationWebhook`, if set).
-   - A second `platform-admin` (different identity from the submitter — the gateway rejects self-approval) calls `POST /v1/admin/billing-corrections/{approval_request_id}/approve` or `.../reject`.
+   - A second `platform-admin` (different identity from the submitter — the gateway rejects self-approval) calls `POST /v1/admin/billing-corrections/{id}/approve` or `.../reject`.
    - Only after approval is the `billing_correction` event written to the immutable billing stream with the full monotonic `sequence_number`. Rejected requests remain in `billing_correction_pending` state with `rejected` outcome for audit purposes and are never promoted to the billing stream.
    - Pending approvals expire after `billing.approvalTimeoutSeconds` (default: 86400 = 24 h). Expired requests are moved to `billing_correction_pending` state `expired` and emitted as a `billing.correction_approval_expired` audit event.
    - When `billing.dualControlThreshold` is set to a positive value, corrections at or below the threshold may be committed by the submitting admin without a second approval (single-control path). Corrections above the threshold always require the dual-control path.
@@ -432,7 +432,7 @@ The platform surfaces security signals and provides first-responder primitives; 
 
 **Platform first-responder primitives:**
 
-- **Credential revocation:** `POST /v1/admin/credential-pools/{id}/credentials/{cred_id}/revoke` immediately marks the credential as `revoked` and triggers active-lease propagation. The `CredentialCompromised` alert clears once all active leases are terminated. See [Section 4.9](04_system-components.md#49-credential-leasing-service).
+- **Credential revocation:** `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` immediately marks the credential as `revoked` and triggers active-lease propagation. The `CredentialCompromised` alert clears once all active leases are terminated. See [Section 4.9](04_system-components.md#49-credential-leasing-service).
 - **User invalidation:** `POST /v1/admin/users/{user_id}/invalidate` terminates all active sessions for a user and revokes their tokens, stopping an active attacker's sessions. See [Section 11.4](#114-user-invalidation).
 - **Legal hold:** `POST /v1/admin/legal-hold` suspends retention rotation for any session or artifact implicated in an incident, preserving forensic state. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).
 - **Audit trail:** All admin operations (revocations, holds, invalidations) are written to the append-only audit trail ([Section 11.7](#117-audit-logging)) with operator identity and timestamp, providing a tamper-evident record of responder actions.

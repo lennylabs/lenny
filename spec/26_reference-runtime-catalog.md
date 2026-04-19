@@ -27,7 +27,7 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 
 All reference runtimes are **`type: agent`** ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). No reference runtime is `type: mcp` — MCP servers are deployed via the MCP connector mechanism ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)), not as reference runtimes.
 
-**Tenant access.** Reference runtimes are registered by `lenny-ctl install` (§17.6, §24.20) as platform-global records with no default tenant access grants. Operators grant access per tenant via `POST /v1/admin/runtimes/{name}/tenants/{tenantId}` ([§15.1](15_external-api-surface.md#151-rest-api)) after install. For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs so the developer can invoke them without additional setup.
+**Tenant access.** Reference runtimes are registered by `lenny-ctl install` (§17.6, §24.20) as platform-global records with no default tenant access grants. Operators grant access per tenant via `POST /v1/admin/runtimes/{name}/tenant-access` with body `{"tenantId": "<uuid>"}` ([§15.1](15_external-api-surface.md#151-rest-api)) after install. For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs so the developer can invoke them without additional setup.
 
 ---
 

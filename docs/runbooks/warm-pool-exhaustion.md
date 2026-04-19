@@ -59,7 +59,7 @@ Exact thresholds and evaluation windows for each alert are deployer-configurable
 lenny-ctl diagnose pool <pool-name>
 ```
 
-<!-- access: api method=GET path=/v1/admin/diagnostics/pools/{pool} -->
+<!-- access: api method=GET path=/v1/admin/diagnostics/pools/{name} -->
 ```
 GET /v1/admin/diagnostics/pools/<pool-name>
 ```

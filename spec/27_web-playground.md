@@ -36,7 +36,7 @@ The playground is served by the **gateway** (not `lenny-ops`) at `/playground` o
 | `playground.maxSessionMinutes` | `30` | Hard cap on playground-initiated session duration |
 | `playground.sessionLabels` | `{origin: "playground"}` | Labels applied to playground sessions for audit/accounting |
 
-Default is `false` because the playground surface area is not something every installation wants live. `lenny up` (Tier 0, [§17.4.0](17_deployment-topology.md)) sets `playground.enabled=true` and `playground.authMode=dev`; the installer wizard asks explicitly for production installs.
+Default is `false` because the playground surface area is not something every installation wants live. `lenny up` (Tier 0, [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) sets `playground.enabled=true` and `playground.authMode=dev`; the installer wizard asks explicitly for production installs.
 
 ---
 

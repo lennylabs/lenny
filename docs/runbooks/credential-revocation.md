@@ -75,9 +75,9 @@ lenny-ctl admin credential-pools revoke-credential \
   --pool <pool> --credential <credential-id> --reason "<r>"
 ```
 
-<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials/{id}/revoke -->
+<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials/{credId}/revoke -->
 ```
-POST /v1/admin/credential-pools/<name>/credentials/<id>/revoke
+POST /v1/admin/credential-pools/<name>/credentials/<credId>/revoke
 ```
 
 Effect: no new leases will be issued from this credential. Existing leases remain valid until their TTL expires (minutes to hours, depending on `credentialLeaseTTL`).

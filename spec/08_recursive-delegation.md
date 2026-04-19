@@ -604,7 +604,7 @@ leaseExtension:
 - Existing children are **unaffected** — their leases remain as originally granted
 - Only new children spawned after the extension benefit from the expanded parent budget
 
-**Audit:** Every extension request is logged with: requesting session, requested amounts, approval mode, outcome (approved/denied/capped), approver (gateway-auto or client), granted amount, effective max at time of request, resulting new limits, batch id (groups requests tied to the same elicitation + cool-off period), service_instance_id (the OTel attribute identifying the gateway replica — see [§16.1.1](16_observability.md#161-metrics)), client_ip.
+**Audit:** Every extension request is logged with: requesting session, requested amounts, approval mode, outcome (approved/denied/capped), approver (gateway-auto or client), granted amount, effective max at time of request, resulting new limits, batch id (groups requests tied to the same elicitation + cool-off period), service_instance_id (the OTel attribute identifying the gateway replica — see [§16.1.1](16_observability.md#1611-attribute-naming)), client_ip.
 
 ### 8.7 File Export Model
 
@@ -688,7 +688,7 @@ Lenny defines its own task states independent of any external protocol. External
 
 ```
 submitted → running → completed        (terminal)
-                    → failed            (terminal)
+                    → failed            (terminal — unrecoverable error or pod-crash retries exhausted)
                     → cancelled         (terminal — via lenny/cancel_child or cascade policy)
                     → expired           (terminal — lease/budget/deadline exhausted)
                     → input_required    (reachable via lenny/request_input)
@@ -698,7 +698,6 @@ input_required → running               (request timeout — maxRequestInputWai
 input_required → running               (request cancelled by parent via lenny/cancel_child or equivalent)
 input_required → cancelled             (parent cancels while awaiting input)
 input_required → expired               (deadline reached while awaiting input)
-input_required → resume_pending        (pod crash / gRPC error while awaiting input, retryCount < maxRetries)
 input_required → failed                (pod crash / gRPC error while awaiting input, retries exhausted)
 input_required → failed                (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 ```
@@ -706,6 +705,8 @@ input_required → failed                (BUDGET_KEYS_EXPIRED detected while awa
 `input_required` is a sub-state of `running` where the pod is live; all failure transitions defined for `running` therefore also apply to `input_required`.
 
 Terminal states: `completed`, `failed`, `cancelled`, `expired`.
+
+**Recovery transitions are session-level, not task-level.** When a pod crash or gRPC error occurs with `retryCount < maxRetries`, the underlying session transitions to `resume_pending` — a session-level transient recovery state defined in [§7.2](07_session-lifecycle.md#72-interactive-session-model) and enumerated in the supplementary table below. On successful recovery the task returns to `running` (or `input_required` if it was awaiting input); on retry exhaustion the task transitions to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the supplementary table — the canonical task state set above does not include transient recovery states.
 
 **Protocol mapping:**
 
@@ -727,10 +728,10 @@ Notes: A2A's `unknown` state maps to a gateway-level error (task ID not found or
 
 | Lenny session state        | MCP Tasks surface              | A2A surface (future)           | Notes                                                                                          |
 | -------------------------- | ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `created`                  | `submitted`                    | `submitted`                    | Session exists but pod not yet assigned.                                                       |
-| `ready`                    | `submitted`                    | `submitted`                    | Pod assigned, workspace not yet materialized.                                                  |
-| `starting`                 | `submitted`                    | `submitted`                    | Workspace materializing or setup commands running.                                             |
-| `finalizing`               | `submitted`                    | `submitted`                    | Workspace finalization in progress.                                                            |
+| `created`                  | `submitted`                    | `submitted`                    | Session created; warm pod claimed and credentials assigned, awaiting workspace uploads or finalization (see [§15](15_external-api-surface.md#151-rest-api) for canonical description). |
+| `finalizing`               | `submitted`                    | `submitted`                    | Workspace materialization and setup commands in progress.                                     |
+| `ready`                    | `submitted`                    | `submitted`                    | Setup complete, awaiting `start`.                                                             |
+| `starting`                 | `submitted`                    | `submitted`                    | Agent runtime is launching.                                                                   |
 | `suspended`                | `working` + `metadata.suspended: true` | `working` + `metadata.suspended: true` | Session paused via interrupt; pod still allocated. Adapter injects `suspended` in metadata.    |
 | `resume_pending`           | `working` + `metadata.resuming: true`  | `working` + `metadata.resuming: true`  | Awaiting new pod for recovery. Adapter injects `resuming` in metadata.                         |
 | `awaiting_client_action`   | `input_required`               | `input-required`               | Recovery requires client intervention (e.g., resubmit). Maps naturally to input-required.      |

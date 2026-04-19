@@ -209,7 +209,7 @@ Tool schemas are auto-generated at build time from the canonical OpenAPI documen
 | `lenny_credential_pool_get` | `GET /v1/admin/credential-pools/{name}` | Credential pool detail |
 | `lenny_runtime_list` | `GET /v1/admin/runtimes` | List runtimes |
 | `lenny_runtime_get` | `GET /v1/admin/runtimes/{name}` | Runtime detail |
-| `lenny_quota_get` | `GET /v1/admin/tenants/{id}/quota` | Tenant quota |
+| `lenny_quota_get` | `GET /v1/admin/tenants/{id}` | Tenant quota (quota fields are embedded in the tenant record) |
 
 ### Action tools (mutating)
 
@@ -249,12 +249,11 @@ Every action tool respects the [safety envelope](#the-safety-envelope) below.
 | `lenny_credential_pool_update` | `PUT /v1/admin/credential-pools/{name}` | Update a credential pool |
 | `lenny_credential_pool_delete` | `DELETE /v1/admin/credential-pools/{name}` | Delete a credential pool (destructive) |
 | `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential |
-| `lenny_credential_rotate` | `POST /v1/admin/credential-pools/{name}/credentials/{id}/rotate` | Rotate a credential |
-| `lenny_credential_retire` | `DELETE /v1/admin/credential-pools/{name}/credentials/{id}` | Retire a credential |
+| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation is performed via revoke + add. |
 | `lenny_runtime_register` | `POST /v1/admin/runtimes` | Register a runtime |
 | `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
 | `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |
-| `lenny_quota_update` | `PUT /v1/admin/tenants/{id}/quota` | Update a tenant's quota |
+| `lenny_quota_update` | `PUT /v1/admin/tenants/{id}` | Update a tenant's quota (quota fields are part of the tenant record payload) |
 
 The table above is representative, not exhaustive. Every admin-API endpoint with documented RBAC becomes an MCP tool automatically via the build-time OpenAPI → MCP generation. The authoritative caller-specific list is always `/v1/admin/me/authorized-tools`.
 

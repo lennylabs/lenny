@@ -324,7 +324,7 @@ Authorization: Bearer <token>
 }
 ```
 
-Force-terminates the session and cleans up all resources. Equivalent to terminate + cleanup in one call.
+Force-cancels the session and releases all resources. Unlike `/terminate` (which records a graceful, successful `completed` state), `DELETE` always records a `cancelled` terminal state for audit and billing. Use `/terminate` when the session's work is done; use `DELETE` to abandon a session.
 
 ---
 

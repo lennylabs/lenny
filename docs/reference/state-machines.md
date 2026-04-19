@@ -68,7 +68,9 @@ stateDiagram-v2
         resume_pending to running directly.
     end note
 
-    awaiting_client_action --> running : Client resumes explicitly
+    awaiting_client_action --> resume_pending : Client resumes explicitly
+    awaiting_client_action --> completed : terminate
+    awaiting_client_action --> cancelled : Client or parent cancels
     awaiting_client_action --> expired : maxAwaitingClientActionSeconds elapsed
 
     completed --> [*]
@@ -124,7 +126,9 @@ stateDiagram-v2
 | `suspended` | `failed` | `BUDGET_KEYS_EXPIRED` | Internal |
 | `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |
 | `resume_pending` | `awaiting_client_action` | `maxResumeWindowSeconds` elapsed | Internal timer |
-| `awaiting_client_action` | `running` | Client resumes explicitly | `POST /v1/sessions/{id}/resume` |
+| `awaiting_client_action` | `resume_pending` | Client resumes explicitly (then proceeds to `running` via resume path) | `POST /v1/sessions/{id}/resume` |
+| `awaiting_client_action` | `completed` | Client terminates | `POST /v1/sessions/{id}/terminate` |
+| `awaiting_client_action` | `cancelled` | Client or parent cancels | `DELETE /v1/sessions/{id}` |
 | `awaiting_client_action` | `expired` | `maxAwaitingClientActionSeconds` elapsed | Internal timer |
 
 ---
@@ -245,7 +249,7 @@ stateDiagram-v2
     submitted --> running : Pod assigned, task started
 
     running --> completed : Task finishes
-    running --> failed : Crash, error, or BUDGET_KEYS_EXPIRED
+    running --> failed : Crash, retries exhausted, or BUDGET_KEYS_EXPIRED
     running --> cancelled : Parent cancels or cascade policy
     running --> expired : Lease/budget/deadline exhausted
     running --> input_required : lenny/request_input
@@ -253,7 +257,6 @@ stateDiagram-v2
     input_required --> running : Input provided / timeout / cancelled
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
-    input_required --> resume_pending : Pod crash (retries remain)
     input_required --> failed : Pod crash (retries exhausted) / BUDGET_KEYS_EXPIRED
 
     completed --> [*]
@@ -261,6 +264,8 @@ stateDiagram-v2
     cancelled --> [*]
     expired --> [*]
 ```
+
+Recovery transitions (pod crash with `retryCount < maxRetries`) are handled at the session level: the underlying session enters `resume_pending` and, on successful recovery, the task returns to `running` or `input_required`. On retry exhaustion the task transitions to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the session-level mapping below; the canonical task state set above does not include transient recovery states.
 
 ### Protocol mapping
 

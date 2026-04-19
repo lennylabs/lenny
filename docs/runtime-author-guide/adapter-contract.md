@@ -46,6 +46,8 @@ The adapter writes configuration to `/run/lenny/adapter-manifest.json` before sp
 
 These RPCs are between the gateway and the adapter. Your runtime binary never sees them directly, but understanding them helps you reason about the pod lifecycle.
 
+**Gateway-to-Adapter RPCs:**
+
 | RPC | Description |
 |-----|-------------|
 | `PrepareWorkspace` | Accept streamed files into the staging area (`/workspace/staging`) |
@@ -57,6 +59,8 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `Attach` | Connect client stream to running session |
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
+| `CheckpointBarrier` | Barrier signal during graceful drain; adapter quiesces tool-call dispatch, flushes a best-effort checkpoint, and replies via `CheckpointBarrierAck` |
+| `CoordinatorFence` | Announce new coordination generation on gateway handoff; precondition for any subsequent operational RPC |
 | `ExportPaths` | Package files for delegation, rebased per export spec |
 | `AssignCredentials` | Push per-provider credential map to the runtime before session start |
 | `RotateCredentials` | Push replacement credentials for a specific provider mid-session |
@@ -64,9 +68,15 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `ReportUsage` | Report LLM token counts extracted from provider responses |
 | `Terminate` | Graceful shutdown |
 
+**Adapter-to-Gateway RPCs:**
+
+| RPC | Description |
+|-----|-------------|
+| `ExtendLease` | Request a lease extension when the LLM proxy rejects a call for budget exhaustion. Response status: `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, or `REJECTED`. The adapter MUST NOT retry on `CEILING_REACHED` or `REJECTED`. |
+
 **Checkpoint and Interrupt are mutually exclusive.** The adapter maintains a per-session operation lock. Only one of these operations may execute at a time; the other is queued until the first completes.
 
-**Runtime-to-Gateway events** (sent over the gRPC control channel):
+**Adapter-to-Gateway events** (sent over the gRPC control channel):
 
 | Event | Description |
 |-------|-------------|
@@ -74,6 +84,9 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `AUTH_EXPIRED` | Credential lease expired or was rejected by provider |
 | `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable |
 | `LEASE_REJECTED` | Runtime cannot use the assigned credential |
+| `CheckpointBarrierAck` | Acknowledges a `CheckpointBarrier` after quiescence and checkpoint flush (fields: `barrier_id`, `last_tool_call_id`, `checkpoint_ref`) |
+| `AdapterTerminating` | Self-initiated terminal notification (e.g., coordinator-loss hold timeout); lets the gateway transition the session without waiting for the orphan-session reconciler |
+| `FINAL_USAGE_REPORT` | Final lifecycle-stream message sent before the stream closes, after all in-flight `ReportUsage` calls have been flushed |
 
 ---
 

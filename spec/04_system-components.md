@@ -583,6 +583,8 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 
 **Contract (internal gRPC/HTTP+mTLS API — gateway ↔ adapter):**
 
+*Gateway → Adapter RPCs:*
+
 | RPC                  | Description                                                                                                                                            |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `PrepareWorkspace`   | Accept streamed files into staging area                                                                                                                |
@@ -594,6 +596,8 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 | `Attach`             | Connect client stream to running session                                                                                                               |
 | `Interrupt`          | Interrupt current agent work                                                                                                                           |
 | `Checkpoint`         | Export recoverable session state                                                                                                                       |
+| `CheckpointBarrier`  | Dispatch barrier signal during graceful drain ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)). Carries `coordination_generation` and `barrier_id`. Adapter quiesces tool-call dispatch, flushes a best-effort checkpoint, and replies via `CheckpointBarrierAck` (see events table below). Single wall-clock deadline across all coordinated pods: `checkpointBarrierAckTimeoutSeconds` (default 90s). |
+| `CoordinatorFence`   | Announce new `coordination_generation` to the pod on coordinator handoff ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)). Precondition for any subsequent operational RPC. Deadline: 5s (hard-coded, [Section 11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). Gap detection handled on the adapter side. |
 | `ExportPaths`        | Package files for delegation, rebased per export spec ([Section 8.7](08_recursive-delegation.md#87-file-export-model))                                                                                    |
 | `AssignCredentials`  | Push a per-provider credential map (one lease per authorized provider) to the runtime before session start                                             |
 | `RotateCredentials`  | Push replacement credentials for a specific provider's lease mid-session (fallback/rotation)                                                           |
@@ -601,13 +605,19 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 | `ReportUsage`        | Report LLM token counts extracted from provider responses; gateway increments quota counters and persists to Postgres on the next sync interval (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)) |
 | `Terminate`          | Graceful shutdown                                                                                                                                      |
 
+*Adapter → Gateway RPCs:*
+
+| RPC              | Description                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ExtendLease`    | Request a lease extension when the LLM proxy rejects a call for budget exhaustion ([Section 8.6](08_recursive-delegation.md#86-lease-extension)). Request body carries `extensions.additionalChildren`, `extensions.additionalTokenBudget`, `extensions.additionalMaxAge`, etc. Response status: `GRANTED` \| `PARTIALLY_GRANTED` \| `CEILING_REACHED` \| `REJECTED`. The adapter MUST NOT retry on `CEILING_REACHED` or `REJECTED`. |
+
 **Checkpoint / Interrupt mutual exclusion:** The adapter maintains a per-session operation lock that serializes `Checkpoint` and `Interrupt` RPCs. Only one of these operations may execute at a time; if a second arrives while the first is in progress, it is queued and executed after the first completes. Ordering semantics:
 
 - **Interrupt during checkpoint:** The interrupt is queued until the checkpoint completes (or times out per [Section 4.4](#44-event--checkpoint-store)). After the checkpoint finishes, the queued interrupt is delivered normally. Rationale: a checkpoint in progress has already paused or quiesced the runtime (via SIGSTOP or lifecycle channel `checkpoint_request`); delivering an interrupt in that state is undeliverable (signals cannot reach a SIGSTOPped process) or would violate the quiescence guarantee.
 - **Checkpoint during interrupt:** The checkpoint is queued until the runtime acknowledges the interrupt (via `interrupt_acknowledged` on the lifecycle channel for Full-level, or until the adapter observes the runtime resume output for lower levels). This prevents snapshotting mid-interrupt state.
 - **Queue depth:** At most one operation may be queued. If a second operation of the same type arrives while one is already queued, the second is coalesced (checkpoint) or dropped with a `BUSY` status (interrupt). The gateway retries dropped interrupts with backoff.
 
-**Runtime → Gateway events (sent over the gRPC control channel):**
+**Adapter → Gateway events (sent over the gRPC control channel):**
 
 | Event                  | Description                                                              |
 | ---------------------- | ------------------------------------------------------------------------ |
@@ -615,6 +625,9 @@ Both the WarmPoolController and PoolScalingController interact with the same CRD
 | `AUTH_EXPIRED`         | Credential lease expired or was rejected by provider                     |
 | `PROVIDER_UNAVAILABLE` | Provider endpoint is unreachable                                         |
 | `LEASE_REJECTED`       | Runtime cannot use the assigned credential (incompatible provider, etc.) |
+| `CheckpointBarrierAck` | Acknowledges `CheckpointBarrier` after quiescence and checkpoint flush. Fields: `barrier_id`, `last_tool_call_id`, `checkpoint_ref`. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
+| `AdapterTerminating`   | Adapter's self-initiated terminal notification (e.g., coordinator-loss hold timeout). Fields: `session_id`, `reason` (`coordinator_lost`, etc.). Allows the gateway to transition the session immediately without waiting for the orphan-session reconciler. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
+| `FINAL_USAGE_REPORT`   | Final lifecycle-stream message sent by the child's adapter after all in-flight `ReportUsage` calls have been flushed, just before the stream closes. Gateway waits for this (or stream close, whichever comes first) before running `budget_return.lua`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 
 #### Adapter ↔ Runtime Protocol (Intra-Pod)
 
@@ -1099,7 +1112,7 @@ API keys referenced by `secretRef` are stored as Kubernetes Secrets. The topolog
 
 **Secret-per-credential topology.** Each credential entry in a `CredentialPool` uses a **separate Kubernetes Secret**. For example, a pool with 3 credentials has 3 Secrets: `lenny-system/anthropic-key-1`, `lenny-system/anthropic-key-2`, `lenny-system/anthropic-key-3`. This topology is required (not optional) for the following reasons:
 
-1. **Revocation granularity.** Emergency revocation of a single compromised credential (`POST /v1/admin/credential-pools/{name}/credentials/{id}/revoke`) invalidates only the specific `secretRef` Secret. Shared-Secret topologies would require re-keying all credentials in the pool on a single credential compromise.
+1. **Revocation granularity.** Emergency revocation of a single compromised credential (`POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`) invalidates only the specific `secretRef` Secret. Shared-Secret topologies would require re-keying all credentials in the pool on a single credential compromise.
 2. **RBAC granularity.** The Token Service's ServiceAccount has `get` permission scoped to specific Secret names (via `ResourceNames`), not `get` on all Secrets in `lenny-system`. This prevents a compromised Token Service from reading unrelated Secrets.
 3. **Secret rotation isolation.** Rotating one credential does not touch the Secrets for others in the pool, enabling zero-downtime rotation (new Secret created, pool entry updated, old Secret deleted after lease drain).
 
@@ -1547,7 +1560,7 @@ When a single credential within a pool is suspected compromised (e.g., `key-2` i
 **Revocation endpoint:**
 
 ```
-POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke
+POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke
 ```
 
 Request body (optional):
@@ -1572,20 +1585,20 @@ The operation is synchronous and MUST:
 **Force-rotate all credentials in a pool:**
 
 ```
-POST /v1/admin/credential-pools/{poolId}/revoke
+POST /v1/admin/credential-pools/{name}/revoke
 ```
 
 Revokes all credentials in the pool simultaneously. All active sessions using this pool are rotated to their fallback chain, or terminated with `CREDENTIAL_POOL_EXHAUSTED` if no fallback is available. Use when the entire pool is suspected compromised.
 
 **Credential deny list:** Mirrors the certificate deny-list mechanism from [Section 10.3](10_gateway-internals.md#103-mtls-pki). The deny list is propagated across all gateway replicas via Redis pub/sub. Each entry is keyed by `(poolId, credentialId)` and expires automatically when the last active lease against that credential reaches its natural TTL expiry. The `CredentialPoolStore` persists the `revoked` status durably so newly started gateway replicas rebuild their deny list on startup by querying for credentials in `revoked` state with active-or-recent leases.
 
-**Emergency revocation runbook:** See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (operational runbooks). Steps: (1) identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`); (2) call the revocation endpoint; (3) verify `leasesTerminated` count matches expected active sessions; (4) confirm the `CredentialCompromised` alert clears within 60s (indicating revocation propagation succeeded); (5) add a replacement credential to the pool via `PUT /v1/admin/credential-pools/{poolId}`; (6) rotate the underlying secret (Kubernetes Secret or external secrets manager) before re-enabling the credential ID. **Direct mode additional step:** For pools using `deliveryMode: direct`, step 6 is not optional — it is the only action that prevents continued use of the materialized key by an attacker who already extracted it from a pod. Rotate or delete the key at the provider before re-enabling it; updating only the Kubernetes Secret is insufficient until the provider-side key is also invalidated.
+**Emergency revocation runbook:** See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (operational runbooks). Steps: (1) identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`); (2) call the revocation endpoint; (3) verify `leasesTerminated` count matches expected active sessions; (4) confirm the `CredentialCompromised` alert clears within 60s (indicating revocation propagation succeeded); (5) add a replacement credential to the pool via `PUT /v1/admin/credential-pools/{name}`; (6) rotate the underlying secret (Kubernetes Secret or external secrets manager) before re-enabling the credential ID. **Direct mode additional step:** For pools using `deliveryMode: direct`, step 6 is not optional — it is the only action that prevents continued use of the materialized key by an attacker who already extracted it from a pod. Rotate or delete the key at the provider before re-enabling it; updating only the Kubernetes Secret is insufficient until the provider-side key is also invalidated.
 
 #### Security Boundaries
 
 - Long-lived credentials (API keys, IAM role ARNs, service account keys) live **only** in the Token Service and Kubernetes Secrets
 - Pods receive **materialized short-lived credentials** (scoped tokens, STS sessions) via the `AssignCredentials` RPC, delivered to the agent as a tmpfs-backed file (mode `0400`) — never via environment variables
-- Leases are **revocable** — on user invalidation, or on emergency credential revocation via `POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke`, the gateway immediately terminates affected leases and the runtime loses access. **Caveat (direct mode):** Revocation stops the pod from using the key through Lenny, but the underlying API key continues to exist at the provider until rotated there. For proxy mode, revocation is complete — the key never left the gateway. For direct mode, provider-side key rotation is a mandatory part of the emergency revocation procedure (see "Emergency Credential Revocation" above).
+- Leases are **revocable** — on user invalidation, or on emergency credential revocation via `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`, the gateway immediately terminates affected leases and the runtime loses access. **Caveat (direct mode):** Revocation stops the pod from using the key through Lenny, but the underlying API key continues to exist at the provider until rotated there. For proxy mode, revocation is complete — the key never left the gateway. For direct mode, provider-side key rotation is a mandatory part of the emergency revocation procedure (see "Emergency Credential Revocation" above).
 - Credential material is **never logged** in audit events, transcripts, or agent output — only lease IDs and provider/pool names are logged
 - The `env` blocklist ([Section 14](14_workspace-plan-schema.md), `env` field) rejects keys matching sensitive patterns (e.g., `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`, `*_SECRET_*`) regardless of whether credential leasing is configured. When leasing is enabled, credentials flow through the leasing system rather than environment variables; when leasing is not configured, the blocklist still prevents accidental credential exposure via env vars
 
@@ -1608,7 +1621,7 @@ Credential pools span two planes: the **pool definition** (admin-API-managed, st
 1. **Update the Kubernetes Secret** with the new credential material (e.g., `kubectl create secret generic anthropic-key-1 --from-literal=api-key=sk-ant-new... --dry-run=client -o yaml | kubectl apply -f -`).
 2. The Token Service detects the Secret change via its informer within 30 seconds.
 3. **No pool definition update is required** — the `secretRef` has not changed, only the Secret's content.
-4. New credential leases issued after the Secret update use the new material. Existing active leases continue using the previously materialized credentials until they expire naturally (governed by lease TTL). If immediate rotation of active sessions is required, use the emergency revocation endpoint (`POST /v1/admin/credential-pools/{poolId}/credentials/{credId}/revoke`) to force all active leases to re-acquire credentials with the updated material.
+4. New credential leases issued after the Secret update use the new material. Existing active leases continue using the previously materialized credentials until they expire naturally (governed by lease TTL). If immediate rotation of active sessions is required, use the emergency revocation endpoint (`POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`) to force all active leases to re-acquire credentials with the updated material.
 
 **GitOps pattern.** For teams using GitOps (ArgoCD/Flux) with external secret management:
 
@@ -1640,9 +1653,9 @@ All credential lifecycle events are written to the `EventStore` (Postgres, appen
 | Event | Emitted When | Key Fields |
 | ----- | ------------ | ---------- |
 | `credential.registered` | User registers a new credential via `POST /v1/credentials` | `tenant_id`, `user_id`, `provider`, `credential_ref` |
-| `credential.deleted` | User deletes a credential via `DELETE /v1/credentials/{ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref` |
-| `credential.rotated` | User rotates credential material via `PUT /v1/credentials/{ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `active_leases_rotated` |
-| `credential.user_revoked` | User explicitly revokes their credential via `POST /v1/credentials/{ref}/revoke` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, `active_leases_terminated` |
+| `credential.deleted` | User deletes a credential via `DELETE /v1/credentials/{credential_ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref` |
+| `credential.rotated` | User rotates credential material via `PUT /v1/credentials/{credential_ref}` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `active_leases_rotated` |
+| `credential.user_revoked` | User explicitly revokes their credential via `POST /v1/credentials/{credential_ref}/revoke` | `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, `active_leases_terminated` |
 | `credential.leased` | A credential is assigned to a session at session start | `tenant_id`, `session_id`, `source` (`pool` or `user`), `delivery_mode`, `rotation_mode`. When `source: pool`: `pool_id`, `credential_id`. When `source: user`: `user_id`, `credential_ref`. |
 | `credential.revoked` | A pool credential is emergency-revoked by an operator | `tenant_id`, `pool_id`, `credential_id`, `revoked_by`, `reason`, `active_leases_terminated` |
 | `credential.re_enabled` | A previously revoked pool credential is re-enabled by an operator | `tenant_id`, `pool_id`, `credential_id`, `reason`, `re_enabled_by` |
