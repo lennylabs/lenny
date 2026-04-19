@@ -207,7 +207,7 @@ curl -X POST http://localhost:8080/v1/admin/pools \
 | `maxSize` | Maximum number of pods (scaling ceiling) |
 | `resourceClass` | CPU/memory class for pods |
 | `executionMode` | `session` (one session per pod), `task` (sequential reuse), or `concurrent` |
-| `runtimeClass` | Container isolation: `runc` (default), `gvisor`, or `kata` |
+| `runtimeClass` | Container isolation: `gvisor` (default, `sandboxed` profile), `kata` (`microvm` profile), or `runc` (`standard` profile; requires explicit deployer opt-in with security acknowledgment — no kernel-level isolation) |
 
 ---
 

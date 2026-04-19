@@ -39,7 +39,7 @@ Time-to-first-token (TTFT) SLO is burning. TTFT = time from the session's first 
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_ttft_phase_duration_seconds_bucket[5m]))&groupBy=phase&window=1h
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_time_to_first_token_seconds_bucket[5m]))&groupBy=phase&window=1h
 ```
 
 Phases: `upstream_request`, `upstream_first_byte`, `translate`, `stream_write`.
@@ -98,9 +98,9 @@ If `stream_write` phase is slow, check gateway CPU/memory pressure and client-si
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose slo ttft
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_time_to_first_token_seconds_bucket[5m]))&window=30m
 ```
 
 - TTFT p95 back within the configured SLO target.

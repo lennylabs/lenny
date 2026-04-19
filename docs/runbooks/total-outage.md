@@ -79,7 +79,7 @@ If the Ingress is down but the `lenny-ops` pod is running, reach it via port-for
 kubectl port-forward -n lenny-system svc/lenny-ops 8090:8090
 ```
 
-Then call `/v1/admin/diagnostics/*` against `http://localhost:8090`. `lenny-ctl --server http://localhost:8090 ...` works the same way.
+Then call `/v1/admin/diagnostics/*` against `http://localhost:8090`. `lenny-ctl --ops-server http://localhost:8090 ...` works the same way.
 
 Port-forward access still requires a valid admin token — the bypass is of the network path, not of authentication.
 
@@ -106,12 +106,12 @@ Once either the gateway or `lenny-ops` is up:
 
 ### Step 5 — Post-incident
 
+Record the incident in your organization's incident tracker, and open an escalation against the platform on-call so the timeline is captured against the deployment:
+
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin incidents record \
-  --title "total-outage <short-reason>" \
-  --duration <minutes> \
-  --affected-components gateway,lenny-ops
+lenny-ctl escalations create --severity critical \
+  --summary "total-outage <short-reason>"
 ```
 
 Capture:

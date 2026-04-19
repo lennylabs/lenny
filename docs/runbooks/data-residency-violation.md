@@ -51,10 +51,11 @@ Each event records: tenant, session, source region, destination region, payload 
 
 ### Step 2 — Which policy?
 
-<!-- access: lenny-ctl -->
+Residency policies are defined in Helm values and rendered into a ConfigMap consumed by the validator webhook. Inspect the live policy set:
+
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl admin residency-policies list
-lenny-ctl admin residency-policies get <policy-name>
+kubectl get configmap lenny-residency-policies -n lenny-system -o yaml
 ```
 
 ### Step 3 — Webhook health (if unavailable)
@@ -89,13 +90,9 @@ Follow [admission-webhook-outage](admission-webhook-outage.html). Do **not** app
 
 If the violation was a **false positive** (legitimate traffic blocked):
 
-1. Review the policy definition.
-2. Update via:
-   <!-- access: lenny-ctl -->
-   ```bash
-   lenny-ctl admin residency-policies update <name> -f policy.yaml
-   ```
-3. Verify the policy propagates (the webhook watches for policy changes):
+1. Review the policy definition in your Helm values (`residency.policies.*`).
+2. Update the values file and run `helm upgrade`. The validator webhook watches the rendered ConfigMap and reloads.
+3. Verify the policy propagates:
    <!-- access: api method=GET path=/v1/admin/metrics -->
    ```
    GET /v1/admin/metrics?q=lenny_residency_policy_version&window=5m
@@ -107,9 +104,8 @@ Every residency event creates an audit receipt. Export the relevant window for t
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin audit-events export \
-  --filter 'event_type~"residency.*"' --since <alert_fire_time> \
-  --output residency-incident-<date>.json
+lenny-ctl audit query --since <alert_fire_time> \
+  --filter 'event_type~"residency.*"' --output json > residency-incident-<date>.json
 ```
 
 ## Escalation

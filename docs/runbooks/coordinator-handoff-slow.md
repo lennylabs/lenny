@@ -86,9 +86,9 @@ If handoff latency correlates with overall gateway load, see [gateway-capacity](
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose coordinator
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_coordinator_handoff_duration_seconds_bucket[5m]))&window=30m
 ```
 
 - p95 handoff duration returns to baseline.

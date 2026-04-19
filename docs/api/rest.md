@@ -39,9 +39,12 @@ In `make run` dev mode, authentication is disabled.
 | Method   | Endpoint                      | Description                                |
 | :------- | :---------------------------- | :----------------------------------------- |
 | `POST`   | `/v1/sessions`                | Create a new session                       |
+| `GET`    | `/v1/sessions`                | List sessions (filterable)                 |
 | `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace files                     |
 | `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup           |
 | `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                    |
+| `POST`   | `/v1/sessions/{id}/interrupt` | Interrupt current agent work               |
+| `POST`   | `/v1/sessions/{id}/resume`    | Explicitly resume after retry exhaustion   |
 | `POST`   | `/v1/sessions/{id}/terminate` | Graceful session termination               |
 | `DELETE` | `/v1/sessions/{id}`           | Force cancel and clean up                  |
 | `GET`    | `/v1/sessions/{id}`           | Get session status and metadata            |
@@ -97,6 +100,24 @@ Start the agent runtime. The session must be in `ready` state (workspace finaliz
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
 
+### POST /v1/sessions/{id}/interrupt
+
+Pause a session mid-execution. The pod is held (up to `maxSuspendedPodHoldSeconds`) so the session can be resumed without reallocation.
+
+**Valid precondition states:** `running`.
+**Resulting transition:** `suspended`.
+
+**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+
+### POST /v1/sessions/{id}/resume
+
+Explicitly resume a session after automatic retries have been exhausted (`awaiting_client_action`). To wake a `suspended` session, send a message (optionally with `delivery: "immediate"`) instead.
+
+**Valid precondition states:** `awaiting_client_action` (and `suspended` when released from the pod).
+**Resulting transition:** `resume_pending` then `running`.
+
+**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+
 ### POST /v1/sessions/{id}/terminate
 
 End a session gracefully. Triggers shutdown, workspace seal, artifact export, and pod release.
@@ -122,6 +143,14 @@ Get session status, metadata, runtime, pool, labels, timestamps, and token usage
 **Response includes:** `sessionId`, `status`, `runtime`, `pool`, `labels`, `createdAt`, `startedAt`, `tokenUsage`.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404).
+
+### GET /v1/sessions
+
+List sessions. Results are scoped to the caller's tenant and role.
+
+**Query parameters:** `status` (string), `runtime` (string), `tenant` (string, admin only), `labels` (object), `cursor` (string), `limit` (int).
+
+**Key error codes:** `VALIDATION_ERROR` (400).
 
 ### POST /v1/sessions/{id}/derive
 
@@ -242,7 +271,7 @@ List artifacts produced by a session. Paginated.
 
 Session log stream. Returns paginated JSON by default; switches to Server-Sent Events when the client sends `Accept: text/event-stream`. SSE streams support reconnection via the `Last-Event-ID` header with cursor-based replay within the replay window.
 
-**Event types (SSE mode):** `agent_output`, `status_change`, `elicitation`, `tool_use`, `error`, `terminated`.
+**Event types (SSE mode):** `agent_output`, `tool_use_requested`, `tool_result`, `elicitation_request`, `status_change`, `session.resumed`, `children_reattached`, `session_complete`, `error`, `checkpoint_boundary`, `session_expiring_soon`. See [Session Wire Format](../client-guide/wire-format.html) for full event schemas.
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404).
 
@@ -367,7 +396,7 @@ Submit scored evaluation results for a session. Accepts scores from any authenti
 
 **Rate limits:** Configurable via `evalRateLimit.perSessionPerMinute` (default: 100) and `evalRateLimit.perTenantPerMinute` (default: 10,000) in tenant configuration.
 
-**Key error codes:** `SESSION_NOT_EVAL_ELIGIBLE` (422), `EVAL_QUOTA_EXCEEDED` (429), `EVAL_RATE_LIMITED` (429), `RESOURCE_NOT_FOUND` (404).
+**Key error codes:** `SESSION_NOT_EVAL_ELIGIBLE` (422), `EVAL_QUOTA_EXCEEDED` (429), `RATE_LIMITED` (429), `RESOURCE_NOT_FOUND` (404).
 
 ### POST /v1/sessions/{id}/extend-retention
 

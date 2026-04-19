@@ -71,21 +71,29 @@ Rule of thumb (Spec §17.8):
 
 ### Step 2 — Apply
 
+Set the warm-count floor (HPA target utilization comes from Helm values — see Step 4):
+
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin pools set --pool <name> \
-  --min-warm <N> --max-warm <M> --hpa-target 0.7
+lenny-ctl admin pools set-warm-count --pool <name> --min <N>
 ```
 
 <!-- access: api method=PATCH path=/v1/admin/pools/{name} -->
 ```
 PATCH /v1/admin/pools/<name>
-{"minWarm": <N>, "maxWarm": <M>, "hpaTarget": 0.7}
+{"minWarm": <N>, "maxWarm": <M>}
 ```
 
 ### Step 3 — Exit bootstrap mode
 
-Setting `minWarm` and `maxWarm` explicitly flips `bootstrapMode` to `false`. Confirm:
+Once warm-count is tuned, exit bootstrap mode explicitly:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin pools exit-bootstrap --pool <name>
+```
+
+Confirm:
 
 <!-- access: lenny-ctl -->
 ```bash

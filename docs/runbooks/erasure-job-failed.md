@@ -77,7 +77,7 @@ For transient failures:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin erasure retry <job-name>
+lenny-ctl admin erasure-jobs retry <job-id>
 ```
 
 Or recreate from the CronJob:
@@ -91,33 +91,25 @@ kubectl create job --from=cronjob/lenny-erasure <new-job-name> -n lenny-system
 
 Follow [minio-failure](minio-failure.html). Erasure jobs need working object-store writes to delete artifacts.
 
-### Step 3 — Postgres constraint
+### Step 3 — Clear a legal-hold or restriction
 
-If the error is a foreign-key or referential-integrity violation, inspect the involved tables and run the manual erasure procedure for the specific scope:
-
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin erasure run --tenant <id> --scope <scope> --dry-run
-```
-
-Dry-run prints the DDL/DML statements that would execute. Review, then apply.
-
-### Step 4 — Scope sharding
-
-If the job is OOM or timing out on a large tenant:
+If the job is blocked by a restriction (legal hold, active dispute), inspect the job state and, with a recorded justification, clear the restriction so the controller can retry:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin erasure run --tenant <id> --shard-by <field> --shard <N>
+lenny-ctl admin erasure-jobs get <job-id>
+lenny-ctl admin erasure-jobs clear-restriction <job-id> --justification "<text>"
 ```
 
-Splits the erasure into smaller batches.
+### Step 4 — Postgres constraint or sharding
+
+Erasure is driven by the tenant-deletion controller; there is no operator CLI to invoke ad-hoc erasure runs. If the failure is a Postgres constraint or the scope is too large for a single batch, file a platform-engineering escalation to amend the controller's cascade order or shard configuration. Subsequent retries use the updated controller.
 
 ### Step 5 — Verify completion
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose erasure <job-name>
+lenny-ctl admin erasure-jobs get <job-id>
 ```
 
 - Target objects absent from object store (spot-check).

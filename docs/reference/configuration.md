@@ -27,6 +27,7 @@ Complete reference for all Helm `values.yaml` configuration fields, organized by
 |:------|:-----|:--------|:------------|:-----------|
 | `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by the first-working-slice benchmark harness. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
 | `gateway.maxCreatedStateTimeoutSeconds` | int | 300 | Maximum time a session can remain in `created` state before automatic cleanup. Also governs upload token TTL. | Must be > 0. |
+| `gateway.maxSuspendedPodHoldSeconds` | int | 900 | Platform-wide ceiling on how long a suspended session holds its pod before the gateway releases it. Deployer-set; tenant policy may further restrict. | Must be > 0. |
 
 ### Subsystem concurrency limits
 
@@ -98,7 +99,6 @@ The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming 
 |:------|:-----|:--------|:------------|:-----------|
 | `pool.scalingPolicy.podWarmupSecondsBaseline` | int | 30 | Expected pod warmup duration. Used to compute `WarmPoolReplenishmentSlow` alert threshold (2x this value). | Must be > 0. |
 | `pool.scalingPolicy.sdkConnectTimeoutSeconds` | int | 60 | Maximum time for SDK warm connection establishment before marking pod as failed. | Must be > 0. |
-| `pool.maxSuspendedPodHoldSeconds` | int | 300 | Maximum time a suspended session holds its pod before the gateway releases it. | Must be > 0. |
 | `pool.maxWorkspaceSealDurationSeconds` | int | 300 | Maximum retry window for workspace seal-and-export. | Must be > 0. |
 
 ---
@@ -109,9 +109,10 @@ The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming 
 |:------|:-----|:--------|:------------|:-----------|
 | `runtime.name` | string | Required | Unique name for the runtime. | Non-empty, alphanumeric with hyphens. |
 | `runtime.image` | string | Required | Container image reference (digest recommended for production). | Valid image reference. |
-| `runtime.executionMode` | string | `agent` | Execution mode: `agent` (full session lifecycle) or `mcp` (MCP server). | One of `agent`, `mcp`. |
+| `runtime.type` | string | `agent` | Runtime type: `agent` (participates in Lenny's task lifecycle) or `mcp` (hosts an MCP server; no task lifecycle, no `capabilities`). | One of `agent`, `mcp`. |
+| `runtime.executionMode` | string | `session` | Pod reuse mode: `session` (one session per pod), `task` (sequential task reuse with workspace scrub between tasks — requires deployer acknowledgment), or `concurrent` (multiple concurrent sessions per pod). | One of `session`, `task`, `concurrent`. |
 | `runtime.capabilities` | object | `{}` | Runtime capability declarations. | See capabilities table below. |
-| `runtime.agentInterface` | string | `grpc` | Adapter interface: `grpc` (Standard and Full integration levels) or `stdio` (Basic integration level). | One of `grpc`, `stdio`. |
+| `runtime.agentInterface` | object | `{}` | A2A-style agent card metadata published for clients: `description`, `inputModes`, `outputModes`, `supportsWorkspaceFiles`, `skills`, `examples`. Not a protocol selector. | -- |
 | `runtime.publishedMetadata` | object | `{}` | Metadata published in the runtime registry for client discovery. | -- |
 | `runtime.sdkWarmBlockingPaths` | string[] | `["CLAUDE.md", ".claude/*"]` | Glob patterns for files that trigger SDK-warm demotion. Empty list disables demotion. Uses Go `path.Match` with `**` support. | Valid glob patterns. |
 | `runtime.delegationPolicyRef` | string | `null` | Reference to a named `DelegationPolicy` resource. | Must reference an existing policy if set. |
@@ -123,7 +124,7 @@ The gateway's LLM routing subsystem terminates OpenAI/Anthropic requests coming 
 | `capabilities.preConnect` | bool | `false` | Enable SDK-warm mode. Requires adapter to implement `DemoteSDK` RPC. |
 | `capabilities.midSessionUpload` | bool | `false` | Allow file uploads during active sessions. |
 | `capabilities.checkpoint` | bool | `false` | Support for workspace checkpointing. |
-| `capabilities.injection` | object | `{ supported: true }` | Whether the runtime accepts injected messages. |
+| `capabilities.injection` | object | `{ supported: false }` | Whether the runtime accepts injected (mid-session) messages. When unsupported, the gateway rejects injection attempts at the API level. |
 
 ---
 
@@ -179,7 +180,7 @@ Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`Re
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `eventBus.source` | string | `https://lenny.example.com` | CloudEvents `source` attribute. Should be the deployment's canonical URL. | Valid URI-reference. |
-| `eventBus.typePrefix` | string | `dev.lenny` | Prefix for CloudEvents `type` values. Concrete events append a short name (`dev.lenny.session.created`, `dev.lenny.audit.record`, etc). | Non-empty, reverse-DNS style. |
+| `eventBus.typePrefix` | string | `dev.lenny` | Prefix for CloudEvents `type` values. Concrete events append a short name (`dev.lenny.session_completed`, `dev.lenny.session_state_changed`, `dev.lenny.alert_fired`, etc). | Non-empty, reverse-DNS style. |
 | `eventBus.datacontenttype` | string | `application/json` | CloudEvents `datacontenttype` for payloads on this bus. | Valid MIME type. |
 | `eventBus.redis.channelPrefix` | string | `lenny:events` | Redis pub/sub channel prefix. Per-topic channels are `<prefix>:<topic>`. | Non-empty. |
 | `eventBus.publishQueueDepth` | int | 2048 | In-memory publish buffer. Overflow drops events and increments `lenny_event_bus_publish_dropped_total`. | Must be > 0. |
@@ -336,7 +337,7 @@ Workload profile assumptions used by scaling formulas. Operators must update the
 | `delegation.maxDepth` | int | 10 | Maximum delegation tree depth. Delegations that would exceed this depth are rejected with `BUDGET_EXHAUSTED`. | Must be > 0. |
 | `delegation.maxChildrenTotal` | int | 100 | Maximum total children across the entire delegation tree. | Must be > 0. |
 | `delegation.maxParallelChildren` | int | 10 | Maximum concurrent children per parent session. | Must be > 0. |
-| `delegation.maxTreeMemoryBytes` | int | 104857600 | Memory limit (bytes) for delegation tree metadata tracked in Redis. Prevents runaway trees from consuming excessive coordinator memory. Default: 100 MiB. | Must be > 0. |
+| `delegation.maxTreeMemoryBytes` | int | 2097152 | Memory limit (bytes) for delegation tree metadata tracked on the gateway. Prevents runaway trees from consuming excessive coordinator memory. Default: 2 MiB. | Must be > 0. |
 
 ---
 
@@ -346,7 +347,7 @@ Lenny is not an eval platform. The settings below apply only to the basic `/eval
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
-| `eval.maxEvalsPerSession` | int | 50 | Maximum score records stored per session via `/eval`. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. |
+| `eval.maxEvalsPerSession` | int | 10000 | Maximum score records stored per session via `/eval`. Exceeding this limit returns `EVAL_QUOTA_EXCEEDED`. | Must be > 0. Max: 100000. |
 
 ---
 

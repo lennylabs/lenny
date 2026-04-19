@@ -357,13 +357,13 @@ func (c *LennyClient) StreamSession(sessionID string) error {
 					switch eventType {
 					case "agent_output":
 						var event struct {
-							Output []struct {
+							Parts []struct {
 								Type   string `json:"type"`
 								Inline string `json:"inline"`
-							} `json:"output"`
+							} `json:"parts"`
 						}
 						if err := json.Unmarshal([]byte(data), &event); err == nil {
-							for _, part := range event.Output {
+							for _, part := range event.Parts {
 								if part.Type == "text" {
 									fmt.Print(part.Inline)
 								}

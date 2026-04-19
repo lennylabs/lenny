@@ -13,12 +13,12 @@ description: Install the Lenny CLI, bring up the local stack, run a session agai
 {: .highlight }
 > **Status: planned.** This walkthrough is scheduled for the initial tutorial set. The canonical behavior is defined in the spec sections linked below; until the walkthrough lands, follow the spec or [Your First Session](first-session) for a hands-on introduction.
 
-`lenny up` is the zero-config local bring-up: one command spins up the gateway, Postgres, Redis, and the bundled reference runtimes (`chat`, `claude-code`, `gemini-cli`, `codex`, `cursor-cli`) as a Docker Compose stack, and opens the web playground in your browser.
+`lenny up` is the zero-config local bring-up: one command spins up the gateway, Postgres, Redis, and the bundled reference runtime catalog (`chat`, `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) in a single-binary embedded stack (k3s with embedded Postgres/Redis/KMS/OIDC), and opens the web playground in your browser.
 
 ## What this walkthrough will cover
 
 1. Install the CLI: `brew install lennylabs/tap/lenny` or `go install github.com/lennylabs/lenny/cmd/lenny-ctl@latest`.
-2. Run `lenny up` and watch the stack come up (gateway on `https://localhost:8443`, playground on `https://localhost:8443/ui`).
+2. Run `lenny up` and watch the stack come up (gateway on `https://localhost:8443`, playground on `https://localhost:8443/playground`).
 3. Drive a session against `chat` from the CLI.
 4. Drive a session against `claude-code` with a local workspace.
 5. Open the web playground and repeat the same interaction without code.

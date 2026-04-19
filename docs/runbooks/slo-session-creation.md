@@ -91,10 +91,10 @@ The SLO alert is a symptom. Use the Diagnosis step mapping to reach the subsyste
 
 If `QUOTA_EXCEEDED` is dominant and the denial is against a tenant's expected usage:
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin quotas get --tenant <id>
-lenny-ctl admin quotas set --tenant <id> --concurrent-sessions <new>
+Review the tenant's current limits with `lenny-ctl admin tenants get <id>` and update the quota via the admin tenant-quota API (or update the tenant's Helm values and run `helm upgrade`):
+
+```
+PUT /v1/admin/tenants/<id>/quota
 ```
 
 Validate with the tenant before raising permanently.
@@ -105,9 +105,9 @@ If latency burn is driven by contention at the gateway layer, see [gateway-capac
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose slo session-creation
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_slo_session_creation_success_ratio&window=1h
 ```
 
 - Success rate back within the configured SLO target over the trailing hour.

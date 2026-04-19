@@ -30,7 +30,7 @@ The CLI drives a session by hand. Each command is a thin wrapper over the same A
 ### Step 1: Start the session
 
 ```shell
-lenny session start --runtime chat --message "hello, what is 2 + 2?"
+lenny session new --runtime chat --message "hello, what is 2 + 2?"
 ```
 
 You'll see something like:
@@ -48,7 +48,7 @@ response:   4
 ### Step 2: Continue the conversation
 
 ```shell
-lenny session message $SESSION_ID --message "and 10 times that?"
+lenny session send $SESSION_ID "and 10 times that?"
 ```
 
 ```
@@ -88,7 +88,7 @@ lenny session artifacts $SESSION_ID           # files the session produced
 ### Step 6: Shut it down
 
 ```shell
-lenny session terminate $SESSION_ID
+lenny session cancel $SESSION_ID
 ```
 
 ```

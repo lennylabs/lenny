@@ -83,10 +83,9 @@ Export the incident window from audit tables before anything ages out:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin audit-events export \
+lenny-ctl audit query --since <outage_window_start> \
   --filter 'event_type IN ("session.evicted_lost","session.eviction_start")' \
-  --since <outage_window_start> \
-  --output eviction-loss-<date>.json
+  --output json > eviction-loss-<date>.json
 ```
 
 ### Step 4 — Prepare tenant notification

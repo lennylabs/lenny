@@ -110,7 +110,7 @@ For the complete list including admin endpoints, see the [REST API Reference](..
   "type": "response",
   "output": [
     { "type": "text", "inline": "Found 3 open PRs in myorg/myrepo." },
-    { "type": "citation", "url": "https://github.com/myorg/myrepo/pull/42", "title": "Fix auth module" }
+    { "type": "citation", "inline": "Fix auth module", "annotations": { "source": "https://github.com/myorg/myrepo/pull/42" } }
   ]
 }
 ```
@@ -139,18 +139,18 @@ Canonical discriminated-union types. See Spec §15 for field-level detail.
 
 | `type` | Key fields | Purpose |
 |:-------|:-----------|:--------|
-| `text` | `inline` (string) | Plain-text output. |
-| `code` | `inline` (string), `language` (string) | Source-code fragment with language tag. |
-| `reasoning_trace` | `inline` (string), `visibility` (enum) | Chain-of-thought or internal reasoning. |
-| `citation` | `url`, `title`, `excerpt` | Source attribution. |
-| `screenshot` | `uploadRef` or `dataUrl`, `caption` | Captured screen image. |
-| `image` | `uploadRef` or `dataUrl`, `caption`, `mimeType` | Generic image. |
-| `diff` | `inline` (string), `path` | Unified-format diff. |
-| `file` | `uploadRef`, `path`, `mimeType` | File produced by the agent. |
-| `execution_result` | `tool_call_id`, `status`, `content` (array) | Tool-call result. |
-| `error` | `code`, `category`, `message` | Error emitted mid-stream. |
+| `text` | `inline` (string), `mimeType` (`text/plain`) | Plain-text output. |
+| `code` | `inline` (string), `mimeType`, `annotations.language` | Source-code fragment with language tag. |
+| `reasoning_trace` | `inline` (string) | Chain-of-thought or internal reasoning. |
+| `citation` | `inline` (string), `annotations.source` | Source attribution. |
+| `screenshot` | `inline` (base64) or `ref`, `mimeType` (`image/*`) | Captured screen image. |
+| `image` | `inline` (base64) or `ref`, `mimeType` (`image/*`) | Generic image. |
+| `diff` | `inline` (string), `annotations.language` (`diff`) | Unified-format diff. |
+| `file` | `inline` or `ref`, `mimeType` | File produced by the agent. |
+| `execution_result` | `parts[]` (each part is a full `OutputPart`) | Tool-call result. |
+| `error` | `inline` (human-readable), `annotations.errorCode` (optional) | Error emitted mid-stream. |
 
-Unknown types MUST be preserved and forwarded verbatim by middleware. Clients that can't render a type should display the `type` name and any `inline`/`caption`/`message` string if present.
+Parts with a size above 64 KB are staged to blob storage and delivered with `ref` populated instead of `inline`; parts above 50 MB are rejected at ingress with `413 OUTPUTPART_TOO_LARGE`. Unknown types MUST be preserved and forwarded verbatim by middleware; unprefixed custom types collapse to `text` with `annotations.originalType` set.
 
 ---
 
@@ -175,17 +175,17 @@ The `id` is a cursor you can pass back via `Last-Event-ID` on reconnect.
 
 | `event:` | `data:` payload | Meaning |
 |:---------|:----------------|:--------|
-| `session_started` | `{ "sessionId", "runtime", "pool" }` | Session entered `running`. |
 | `agent_output` | `{ "output": OutputPart[] }` | One or more parts of agent output. |
-| `tool_call` | `{ "tool_call_id", "name", "arguments" }` | Agent called a tool. |
+| `tool_use_requested` | `{ "tool_call_id", "tool", "args" }` | Agent wants to call a tool (if approval required). |
 | `tool_result` | `{ "tool_call_id", "result": { "content": OutputPart[] } }` | Tool call returned. |
-| `elicitation` | `{ "elicitationId", "kind", … }` | Mid-session input request (e.g., OAuth authorization). |
-| `budget_notice` | `{ "level", "usage", "limit" }` | Budget pressure warning. |
-| `delegation_started` | `{ "parentSessionId", "childSessionId" }` | Child session begun. |
-| `delegation_completed` | `{ "parentSessionId", "childSessionId", "status", "usage" }` | Child session terminal. |
-| `session_complete` | `{ "status", "usage", "result": { "output": OutputPart[] } }` | Session reached terminal state. |
-| `error` | `{ "code", "category", "message", "retryable" }` | Fatal or recoverable error. |
-| `log` | `{ "level", "message", "attrs" }` | Structured log line from the runtime. |
+| `elicitation_request` | `{ "elicitation_id", "schema" }` | Agent/tool needs user input. |
+| `status_change` | `{ "state" }` | Session state transition (including `suspended` and `input_required`). |
+| `session.resumed` | `{ "resumeMode", "workspaceLost" }` | Session resumed from checkpoint or minimal state. |
+| `children_reattached` | `{ "children": ReattachedChild[] }` | Parent session resumed with active children. |
+| `session_complete` | `{ "result": { "output": OutputPart[] } }` | Session reached terminal state. |
+| `error` | `{ "code", "message", "transient" }` | Fatal or recoverable error. |
+| `checkpoint_boundary` | `{ "cursor", "events_lost", "reason", "checkpoint_timestamp" }` | Client's last-seen cursor fell outside the replay window. |
+| `session_expiring_soon` | `{ "maxSessionAge", "remainingSeconds" }` | Sent 5 minutes before `maxSessionAge` expires. |
 
 ### 6.3 Example: `agent_output`
 

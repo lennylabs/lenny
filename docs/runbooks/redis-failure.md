@@ -100,7 +100,7 @@ Verify:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose redis
+lenny-ctl diagnose connectivity
 ```
 
 ### Step 2 — Redis is recoverable

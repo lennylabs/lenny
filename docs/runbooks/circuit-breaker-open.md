@@ -96,7 +96,7 @@ Expect sequence: `2` (open) → `1` (half-open) → `0` (closed) within a short 
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose gateway-circuits
+lenny-ctl admin circuit-breakers list
 ```
 
 - All circuits report `0` (closed).

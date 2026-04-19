@@ -105,7 +105,6 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_session_startup_duration_seconds` | Histogram | `pool`, `runtime_class`, `isolation_profile` | Wall-clock time from pod claim to session ready (excluding file upload). | `StartupLatencyBurnRate`, `StartupLatencyGVisorBurnRate` alerts. |
 | `lenny_session_time_to_first_token_seconds` | Histogram | `pool`, `runtime_class` | Wall-clock time from session start request to first streaming event emitted to client. | `TTFTBurnRate` alert. |
-| `lenny_session_last_checkpoint_age_seconds` | Gauge | `pool`, `session_id` | Age of the most recent checkpoint for an active session. | Dashboard monitoring. |
 | `lenny_session_pod_released_during_suspension_total` | Counter | `pool`, `tenant_id` | Increments when `maxSuspendedPodHoldSeconds` fires and pod is released. | Operational monitoring. |
 | `lenny_session_suspension_checkpoint_failed_total` | Counter | `pool`, `tenant_id` | Increments when checkpoint attempt before pod release fails. | Operational monitoring. |
 | `lenny_session_error_total` | Counter | `tenant_id`, `session_type`, `variant_id` | Session errors by variant. | Experiment rollback triggers. |
@@ -207,7 +206,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_delegation_budget_reconstruction_total` | Counter | `outcome` | Budget reconstruction after Redis recovery: `success`, `irrecoverable`. | `DelegationBudgetIrrecoverable` alert. |
 | `lenny_delegation_tree_memory_bytes` | Gauge | `pool`, `tenant_id` | Aggregated in-memory footprint of active delegation trees. | Operational monitoring. |
 | `lenny_delegation_memory_budget_utilization_ratio` | Histogram | `pool`, `tenant_id` | `current_tree_memory_bytes / maxTreeMemoryBytes` sampled at tree completion. | Operational monitoring. |
-| `lenny_delegation_tree_memory_rejection_total` | Counter | `pool`, `tenant_id`, `reason` | Rejections when adding a node would exceed `maxTreeMemoryBytes`. | Operational monitoring. |
+| `lenny_delegation_tree_memory_rejection_total` | Counter | `pool`, `tenant_id`, `error_type` | Rejections when adding a node would exceed `maxTreeMemoryBytes`. `error_type: memory_budget_exhausted`. | Operational monitoring. |
 | `lenny_redis_lua_script_duration_seconds` | Histogram | `script` | Redis Lua execution latency for `budget_reserve` and `budget_return`. P99 > 5 ms indicates contention. | `DelegationLuaScriptLatencyHigh` alert. |
 | `lenny_delegation_parallel_children_high_watermark` | Histogram | `pool`, `tenant_id` | Maximum simultaneous in-flight children per tree at completion. | Fan-out monitoring. |
 | `lenny_delegation_deadlock_detected_total` | Counter | `pool` | Deadlocked subtrees detected. | Operational monitoring. |
@@ -351,7 +350,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_event_bus_publish_total` | Counter | `topic` | Total publishes per topic. | -- |
 | `lenny_event_bus_publish_duration_seconds` | Histogram | `topic` | Time to publish to underlying transport. | -- |
-| `lenny_event_bus_publish_dropped_total` | Counter | `topic`, `error_type` | Publishes dropped because the in-memory queue (`eventBus.publishQueueDepth`) overflowed or the underlying transport rejected the message. Error types: `queue_full`, `transport_error`, `encode_error`. | `EventBusPublishDropped` alert. |
+| `lenny_event_bus_publish_dropped_total` | Counter | `topic`, `error_type` | Events whose durable source transaction committed but whose CloudEvents publish to the EventBus failed. Error types: `backend_unavailable`, `serialization_failed`, `timeout`. | `EventBusPublishDropped` alert. |
 | `lenny_event_bus_handler_duration_seconds` | Histogram | `topic` | Time spent in handler function. | -- |
 | `lenny_event_bus_handler_error_total` | Counter | `topic` | Handler error count. | -- |
 
@@ -380,8 +379,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
-| `lenny_experiment_targeting_webhook_duration_seconds` | Histogram | `provider` | Targeting webhook latency. |
-| `lenny_experiment_targeting_webhook_error_total` | Counter | `provider`, `error_type` | Targeting webhook failures. |
+| `lenny_experiment_targeting_duration_seconds` | Histogram | `provider` | Targeting webhook latency. |
+| `lenny_experiment_targeting_error_total` | Counter | `provider`, `error_type` | Targeting webhook failures. |
 | `lenny_experiment_targeting_circuit_open` | Gauge | `tenant_id`, `provider` | 1 when per-tenant circuit breaker is open. |
 | `lenny_experiment_sticky_cache_invalidations_total` | Counter | `experiment_id`, `transition` | Sticky user assignment cache flushes. |
 | `lenny_eval_score` | Histogram | `tenant_id`, `scorer`, `variant_id` | Eval scores per variant (built-in `/eval` endpoint only). Mean via `rate(sum) / rate(count)`. Deployers whose runtimes use runtime-native eval platforms (LangSmith, Braintrust, etc.) will not have data in this metric and should configure equivalent score-regression alerts in their eval platform. |
@@ -430,7 +429,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Critical |
 | `DelegationBudgetKeysExpired` | `BUDGET_KEYS_EXPIRED` returned by Lua script | Critical |
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
-| `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[5m]) > 0.1` sustained > 5 min | Critical |
+| `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0` sustained > 30s | Critical |
 | `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |
 
 ### Warning alerts

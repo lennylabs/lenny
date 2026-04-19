@@ -99,9 +99,9 @@ For old SDKs with aggressive timeouts: advise clients to upgrade. Lenny's gatewa
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose sdk-connect
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=rate(lenny_sdk_connect_timeout_total[5m])&window=30m
 ```
 
 - Timeout rate returns to baseline.

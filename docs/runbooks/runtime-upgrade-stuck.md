@@ -115,9 +115,10 @@ Then re-create after correcting the spec.
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose runtime-upgrade <name>
+kubectl get runtimeupgrade <name> -o jsonpath='{.status.phase}'
+kubectl get pods -n lenny-system -l app=lenny-runtime -o jsonpath='{.items[*].spec.containers[*].image}'
 ```
 
 - Phase transitions to `Completed`.

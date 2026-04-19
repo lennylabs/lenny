@@ -137,7 +137,7 @@ Either:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose pgbouncer
+lenny-ctl diagnose connectivity
 ```
 
 - `cl_waiting` returns to 0 in `SHOW POOLS;`.

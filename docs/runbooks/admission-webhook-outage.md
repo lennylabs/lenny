@@ -153,12 +153,14 @@ Log the bypass window in the incident record and notify security on-call.
 
 ### Step 5 — Verify recovery
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose admission
+kubectl get endpoints <webhook-service-name> -n lenny-system
+kubectl get validatingwebhookconfiguration lenny-cosign-verify -o yaml | grep failurePolicy
 ```
 
 - Both webhooks return Ready endpoints.
+- `failurePolicy: Fail` restored (bypass window closed).
 - `lenny_warmpool_idle_pods` returns to `minWarm` within the pool's configured replenishment window.
 - `AdmissionWebhookUnavailable` and `CosignWebhookUnavailable` alerts clear.
 

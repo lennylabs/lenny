@@ -5,8 +5,6 @@ parent: "Runbooks"
 triggers:
   - alert: GatewayNoHealthyReplicas
     severity: critical
-  - alert: GatewayReplicasBelowMin
-    severity: warning
 components:
   - gateway
 symptoms:
@@ -33,8 +31,7 @@ One or more gateway pods are crashed or unready. Client-facing REST/MCP streams 
 
 ## Trigger
 
-- `GatewayNoHealthyReplicas` — no gateway pods Ready.
-- `GatewayReplicasBelowMin` — Ready replicas below tier minimum.
+- `GatewayNoHealthyReplicas` — healthy gateway replicas below tier minimum for > 30s.
 - `lenny_gateway_healthy_replicas` drops below tier `minReplicas`.
 - Clients report MCP stream disconnects or REST 503s.
 
@@ -115,9 +112,14 @@ If logs show `token expired` anomalies, the replica may be rejecting valid token
 
 ### Step 5 — Verify recovery
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose gateway
+kubectl get pods -l app=lenny-gateway -n lenny-system
+```
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_gateway_healthy_replicas&window=5m
 ```
 
 - All gateway pods `Ready=True`.

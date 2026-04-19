@@ -103,7 +103,7 @@ Encryption should be enabled; versioning and ILM rules must match the [lifecycle
 1. Inform affected tenants: new session creation is degraded -- workspace finalize will return `INTERNAL_ERROR`.
 2. While MinIO is down:
    - **In-flight sessions continue running.** The pod-local workspace is intact. Only upload/download to the artifact store is blocked.
-   - **Checkpoints fall back to Postgres.** Checkpoint size is bounded by `checkpoint.postgresFallbackMaxBytes` (default 100 MiB). Larger checkpoints fail fast with `CHECKPOINT_TOO_LARGE_FOR_FALLBACK`.
+   - **Eviction checkpoints fall back to Postgres minimal state.** When a preStop checkpoint cannot reach MinIO, the gateway writes a minimal row to `session_eviction_state` containing `conversation_cursor` and a ≤2KB `last_message_context` (truncated if needed). Workspace files are NOT preserved — resumed sessions receive `resumeMode: "conversation_only"` with `workspaceLost: true`.
 3. Restore MinIO following your object-store operational procedures (re-seeding erasure sets, restoring from snapshot, or provider-side failover).
 
 ### Step 3 — Cloud-managed object store
@@ -125,7 +125,7 @@ Verify the post-recovery invariants:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose object-store
+lenny-ctl diagnose connectivity
 ```
 
 - Bucket access works: `mc ls <alias>/lenny-artifacts/workspaces/`.

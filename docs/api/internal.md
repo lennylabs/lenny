@@ -419,10 +419,12 @@ Ordered shutdown signal.
 ```json
 {
   "type": "terminate",
-  "reason": "drain",
+  "reason": "session_complete",
   "deadlineMs": 10000
 }
 ```
+
+Valid `reason` values: `session_complete`, `budget_exhausted`, `eviction`, `operator`. The runtime must exit within `deadlineMs`; the adapter sends SIGTERM on timeout.
 
 The runtime must exit within `deadlineMs`.
 

@@ -106,9 +106,16 @@ kubectl exec deploy/lenny-gateway -- psql "$POSTGRES_DSN" -c \
   "UPDATE schema_migrations SET dirty = false WHERE version = <N>;"
 ```
 
+Then deploy the corrected migration Job and verify status:
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl apply -f migrations/<N>-up.yaml
+```
+
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl migrate up
+lenny-ctl migrate status
 ```
 
 ### Step 2 — Re-run on transient failure
@@ -122,7 +129,7 @@ If the cause is transient (connection timeout, advisory-lock contention with a c
      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query LIKE '%schema_migrations%';"
    ```
 2. Clear the dirty flag as above.
-3. Re-run `lenny-ctl migrate up`.
+3. Re-deploy the migration Job (`kubectl apply -f migrations/<N>-up.yaml`) and verify with `lenny-ctl migrate status`.
 
 ### Step 3 — Down migration (LAST RESORT)
 

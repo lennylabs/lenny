@@ -257,7 +257,7 @@ Create a pool configuration.
   "maxWarm": 10,
   "maxPods": 50,
   "resourceClass": "medium",
-  "isolationProfile": "gvisor",
+  "isolationProfile": "sandboxed",
   "scalePolicy": {
     "scaleUpThreshold": 0.8,
     "scaleDownThreshold": 0.3,
@@ -772,7 +772,7 @@ platform-admin
 
 Apply a seed configuration file (idempotent upsert of runtimes, pools, tenants, etc.). Same schema as `bootstrap` Helm values.
 
-Every invocation emits a `platform.bootstrap_applied` audit event recording: calling identity, seed file SHA-256 hash, resource changes summary, and `dryRun` flag. The audit record follows the OCSF v1.1.0 schema and crosses the EventBus as the `data` field of a CloudEvents v1.0.2 envelope with `type=dev.lenny.audit.record`; see the [CloudEvents catalog](../reference/cloudevents-catalog.md) and [OCSF audit guide](../operator-guide/audit-ocsf.md).
+Every invocation emits a `platform.bootstrap_applied` audit event recording: calling identity, seed file SHA-256 hash, resource changes summary, and `dryRun` flag. The audit record follows the OCSF v1.1.0 schema and crosses the EventBus as the `data` field of a CloudEvents v1.0.2 envelope with `datacontenttype=application/ocsf+json`; see the [CloudEvents catalog](../reference/cloudevents-catalog.md) and [OCSF audit guide](../operator-guide/audit-ocsf.md).
 
 **Dry-run:** Supported (audit event is emitted with `dryRun: true`).
 

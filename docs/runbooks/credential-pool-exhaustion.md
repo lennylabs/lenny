@@ -44,7 +44,7 @@ Exact alert thresholds are deployer-configurable — see [Metrics Reference](../
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools get <pool-name>
+lenny-ctl admin credential-pools get --pool <pool-name>
 ```
 
 <!-- access: api method=GET path=/v1/admin/credential-pools/{name} -->
@@ -91,17 +91,18 @@ A rising trend points at structural undersizing; a sudden spike points at a burs
 
 ### Step 1 — Short-term: extend the cooldown
 
-If provider rate-limiting is the cause, widen the cooldown so credentials don't come back hot:
+If provider rate-limiting is the cause, widen the cooldown so credentials don't come back hot. Apply the new cooldown per credential:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools update <pool> \
+lenny-ctl admin credential-pools update-credential \
+  --pool <pool> --credential <id> \
   --cooldown-on-rate-limit <duration>
 ```
 
-<!-- access: api method=PATCH path=/v1/admin/credential-pools/{name} -->
+<!-- access: api method=PATCH path=/v1/admin/credential-pools/{name}/credentials/{id} -->
 ```
-PATCH /v1/admin/credential-pools/<name>
+PATCH /v1/admin/credential-pools/<name>/credentials/<id>
 {"cooldownOnRateLimit": "<duration>"}
 ```
 
@@ -111,9 +112,8 @@ Add new credentials to the pool. You need a provisioned Kubernetes Secret contai
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools add-credential <pool> \
-  --secret-ref lenny-system/<secret-name> \
-  --max-concurrent-sessions 50
+lenny-ctl admin credential-pools add-credential \
+  --pool <pool> --provider <provider>
 ```
 
 <!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials -->
@@ -122,27 +122,23 @@ POST /v1/admin/credential-pools/<name>/credentials
 {"secretRef": "lenny-system/<secret-name>", "maxConcurrentSessions": 50}
 ```
 
+`secretRef` and `maxConcurrentSessions` are body fields on the admin API; supply them via the API call (or pre-populate them in the pool's Helm values) when the new credential needs non-default settings.
+
 **Expected outcome:** `availableCount` > 0 shortly after the add completes. New sessions succeed.
 
 ### Step 3 — Structural fix: raise per-key concurrency
 
-If the provider tier allows higher per-key concurrency, raise it:
+If the provider tier allows higher per-key concurrency, raise it via the admin API:
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin credential-pools update-credential <pool> <credential-id> \
-  --max-concurrent-sessions 80
+<!-- access: api method=PATCH path=/v1/admin/credential-pools/{name}/credentials/{id} -->
+```
+PATCH /v1/admin/credential-pools/<name>/credentials/<credential-id>
+{"maxConcurrentSessions": 80}
 ```
 
 ### Step 4 — Structural fix: reduce session pressure
 
-Lower per-tenant concurrency via quotas:
-
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin quotas set --tenant <id> \
-  --concurrent-sessions 20
-```
+Per-tenant concurrent-session limits are body fields on the admin tenants API; lower them by patching the tenant record (or the tenant's Helm values) — there is no `lenny-ctl admin quotas` command.
 
 ### Step 5 — If a credential is permanently rate-limited or revoked
 

@@ -111,9 +111,9 @@ If a caller is requesting a feature Lenny doesn't translate:
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose llm-translation
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=rate(lenny_gateway_llm_translation_errors_total[5m])&groupBy=provider&window=30m
 ```
 
 - Translation error rate back within provider-specific baseline.

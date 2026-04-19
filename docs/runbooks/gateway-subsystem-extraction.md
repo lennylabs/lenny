@@ -118,9 +118,14 @@ kubectl rollout status deployment lenny-gateway -n lenny-system --timeout=5m
 
 ### Step 4 — Verify extraction
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose gateway-subsystems
+kubectl get pods -l app=lenny-llm-proxy -n lenny-system
+```
+
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_gateway_gc_pause_seconds&window=15m
 ```
 
 - Extracted subsystem reports healthy status.

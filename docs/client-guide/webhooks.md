@@ -160,10 +160,7 @@ Webhook-only clients cannot respond to elicitations. Elicitations require an act
 
 ## Webhook Secret Configuration
 
-The webhook signature (`X-Lenny-Signature`) uses the format `t=<unix_seconds>,v1=<hex_signature>` where the signature is HMAC-SHA256 over the ASCII bytes of the string `<unix_seconds>.<raw_body_bytes>`: the decimal-string form of `t`, followed by a literal `.` (`0x2E`), followed by the raw request body exactly as received on the wire (no trimming, no re-serialization). There are two ways to configure the shared secret:
-
-- **Per-session:** pass a `callbackSecret` field alongside `callbackUrl` when creating the session. This secret is used exclusively for that session's webhook deliveries.
-- **Tenant-level:** configure a default webhook secret via the admin API at the tenant level. Sessions that specify a `callbackUrl` without a `callbackSecret` use the tenant-level secret.
+The webhook signature (`X-Lenny-Signature`) uses the format `t=<unix_seconds>,v1=<hex_signature>` where the signature is HMAC-SHA256 over the ASCII bytes of the string `<unix_seconds>.<raw_body_bytes>`: the decimal-string form of `t`, followed by a literal `.` (`0x2E`), followed by the raw request body exactly as received on the wire (no trimming, no re-serialization). The shared secret is supplied per session: pass a `callbackSecret` field alongside `callbackUrl` when creating the session. The secret is used exclusively for that session's webhook deliveries and is stored KMS-envelope-encrypted; the plaintext is never returned by any API.
 
 A 5-minute replay window is enforced: receivers MUST reject events where `abs(current_time - t) > 300`. Always verify the `X-Lenny-Signature` header before processing any webhook event.
 
@@ -410,7 +407,7 @@ SESSION_ID=$(curl -s -X POST "$LENNY/v1/sessions/start" \
   -d "{
     \"runtime\": \"claude-worker\",
     \"inlineFiles\": [{\"path\": \"code.py\", \"content\": \"print('hello')\"}],
-    \"message\": {\"parts\": [{\"type\": \"text\", \"text\": \"Review this code.\"}]},
+    \"input\": [{\"type\": \"text\", \"inline\": \"Review this code.\"}],
     \"callbackUrl\": \"$CALLBACK\"
   }" | jq -r '.sessionId')
 

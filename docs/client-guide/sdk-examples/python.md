@@ -274,7 +274,7 @@ async def stream_session(
                             data = json.loads("\n".join(data_lines))
 
                             if event_type == "agent_output":
-                                for part in data.get("output", []):
+                                for part in data.get("parts", []):
                                     if part["type"] == "text":
                                         print(part.get("inline", ""), end="", flush=True)
                             elif event_type == "status_change":

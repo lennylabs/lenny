@@ -90,7 +90,7 @@ Before closing the incident, determine whether the dual failure has a common roo
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose stateful-dependencies
+lenny-ctl diagnose connectivity
 ```
 
 - Both stores reachable and Ready.

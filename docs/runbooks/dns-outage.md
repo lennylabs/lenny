@@ -122,7 +122,7 @@ Answer must include the gateway Service ClusterIP.
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose dns
+lenny-ctl diagnose connectivity
 ```
 
 - All CoreDNS replicas Ready.

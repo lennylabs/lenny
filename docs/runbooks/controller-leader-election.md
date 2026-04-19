@@ -116,9 +116,9 @@ kubectl get lease <lease-name> -n lenny-system -o yaml \
 - `holderIdentity` points at a Ready pod.
 - `renewTime` advances every few seconds.
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose controllers
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_controller_reconcile_rate&groupBy=controller&window=15m
 ```
 
 - All controller Leases fresh (renewed within `leaseDuration`).

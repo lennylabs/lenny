@@ -179,7 +179,7 @@ async function discoverRuntimes(client: Client): Promise<string> {
     console.log("\nAdapter capabilities:");
     console.log(`  Elicitation: ${caps.supportsElicitation}`);
     console.log(`  Delegation:  ${caps.supportsDelegation}`);
-    console.log(`  Interrupts:  ${caps.supportsInterrupts}`);
+    console.log(`  Interrupts:  ${caps.supportsInterrupt}`);
   }
 
   return data.items[0]?.name ?? "claude-worker";
@@ -1031,7 +1031,7 @@ async def discover_runtimes(session: ClientSession) -> str:
         print("\nAdapter capabilities:")
         print(f"  Elicitation: {caps.get('supportsElicitation', False)}")
         print(f"  Delegation:  {caps.get('supportsDelegation', False)}")
-        print(f"  Interrupts:  {caps.get('supportsInterrupts', False)}")
+        print(f"  Interrupts:  {caps.get('supportsInterrupt', False)}")
 
     return data["items"][0]["name"] if data["items"] else "claude-worker"
 
@@ -1723,14 +1723,12 @@ async def safe_tool_call(
 
 | Code | Category | Retryable | Meaning |
 |---|---|---|---|
-| `MCP_VERSION_UNSUPPORTED` | `PERMANENT` | No | Client MCP version too old |
-| `SESSION_NOT_FOUND` | `PERMANENT` | No | Invalid session ID |
+| `MCP_VERSION_UNSUPPORTED` | `PERMANENT` | No | Client MCP version not supported |
+| `RESOURCE_NOT_FOUND` | `PERMANENT` | No | Invalid session ID or other resource not visible to caller |
 | `INVALID_STATE_TRANSITION` | `PERMANENT` | No | Operation not valid in current state |
 | `QUOTA_EXCEEDED` | `POLICY` | No | Tenant quota reached |
-| `RATE_LIMITED` | `TRANSIENT` | Yes | Too many requests |
-| `POD_SCHEDULING_TIMEOUT` | `TRANSIENT` | Yes | Pod pool temporarily unavailable |
+| `RATE_LIMITED` | `POLICY` | Yes | Request rate limit exceeded |
 | `UPSTREAM_ERROR` | `UPSTREAM` | Yes | External dependency failure |
-| `LEASE_EXPIRED` | `POLICY` | No | Session lease expired |
 
 See [Error Handling](../error-handling.html) for the complete error code catalog and retry strategies.
 

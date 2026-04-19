@@ -82,7 +82,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | Metric | Type | Description |
 |---|---|---|
 | `lenny_credential_lease_assignments_total` | Counter | By provider, pool, source |
-| `lenny_credential_rotations_total` | Counter | By reason |
+| `lenny_credential_rotations_total` | Counter | By `error_type` (rate_limit, auth_expired, provider_unavailable) |
 | `lenny_credential_pool_utilization` | Gauge | Active leases / total credentials |
 | `lenny_credential_pool_health` | Gauge | Credentials in cooldown |
 
@@ -137,7 +137,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `DataResidencyViolationAttempt` | Storage write or delegation rejected for region mismatch | Investigate misconfiguration or code-path bypass |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
-| `TokenStoreUnavailable` | `/v1/oauth/token` 5xx rate with `error_type="token_store_unavailable"` sustained > 5 min | Token Service database backpressure; check Postgres, Token Service pods |
+| `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation, delegation minting, and credential leasing all fail until Postgres primary recovers |
 | `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 
@@ -220,9 +220,10 @@ slo:
 Lenny uses OpenTelemetry with tail-based sampling:
 
 ```yaml
+global:
+  traceSamplingRate: 0.10   # 10% normal; 100% for errors/slow requests
 observability:
   otlpEndpoint: "http://otel-collector:4317"
-  traceSamplingRate: 0.10   # 10% normal; 100% for errors/slow requests
 ```
 
 ### Sampling Rules
@@ -278,15 +279,16 @@ All components emit structured JSON logs with correlation fields. Field names fo
 
 ```json
 {
+  "ts": "2026-04-09T10:30:00Z",
   "level": "INFO",
   "msg": "Session created",
+  "component": "gateway",
   "session_id": "sess_abc123",
   "tenant_id": "default",
   "k8s.pod.name": "lenny-gateway-7d5f6b-9h2xz",
   "service.instance.id": "gateway-replica-3",
   "trace_id": "4bf92f3577b34da6",
-  "span_id": "00f067aa0ba902b7",
-  "timestamp": "2026-04-09T10:30:00Z"
+  "span_id": "00f067aa0ba902b7"
 }
 ```
 
@@ -312,7 +314,7 @@ Configure an external log aggregation stack (ELK, Loki, CloudWatch) for long-ter
 
 ### Audit events and EventBus envelopes
 
-Audit events leave the Postgres hot tier as **OCSF v1.1.0** records (see [OCSF audit guide](audit-ocsf.md) for the field mapping). When an audit record crosses the EventBus, it is carried as the `data` field of a **CloudEvents v1.0.2** envelope with `type=dev.lenny.audit.record`. SIEM forwarders consuming from the EventBus should unwrap the CloudEvents envelope first; consumers reading directly from the Postgres audit tables see the OCSF record without any additional wrapping. Full event type catalog: [CloudEvents catalog](../reference/cloudevents-catalog.md).
+Audit events leave the Postgres hot tier as **OCSF v1.1.0** records (see [OCSF audit guide](audit-ocsf.md) for the field mapping). When an audit record crosses the EventBus, it is carried as the `data` field of a **CloudEvents v1.0.2** envelope with `datacontenttype=application/ocsf+json` and a `type` identifying the specific audit event (e.g. `dev.lenny.audit_session_terminated`). SIEM forwarders consuming from the EventBus should unwrap the CloudEvents envelope first; consumers reading directly from the Postgres audit tables see the OCSF record without any additional wrapping. Full event type catalog: [CloudEvents catalog](../reference/cloudevents-catalog.md).
 
 ---
 
@@ -338,7 +340,7 @@ The Helm chart includes pre-built Grafana dashboards (enable with `docker compos
 
 - Pool utilization (active leases / total)
 - Credential health scores
-- Rotation frequency by reason
+- Rotation frequency by `error_type`
 - Emergency revocation events
 
 ### Delegation Dashboard

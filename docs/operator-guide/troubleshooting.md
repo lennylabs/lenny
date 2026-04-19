@@ -376,7 +376,7 @@ If the SIEM forwarder is stalled and audit partitions are being held:
 # Check held partitions (look for AuditPartitionDropBlocked alerts)
 
 # Force-drop a partition (acknowledges data loss)
-lenny-ctl admin audit drop-partition --force <partition-name>
+lenny-ctl audit drop-partition <partition-name> --force --acknowledge-data-loss
 ```
 
 ---

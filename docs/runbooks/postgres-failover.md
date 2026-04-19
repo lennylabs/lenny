@@ -119,7 +119,7 @@ After the new primary is serving:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose postgres
+lenny-ctl diagnose connectivity
 ```
 
 Checks:

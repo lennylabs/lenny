@@ -84,9 +84,9 @@ If `checkpoint_stale_loss` is present, sessions lost state on eviction because t
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose slo session-availability
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_session_availability_ratio&window=1h
 ```
 
 - Availability back within the configured SLO target over trailing hour.

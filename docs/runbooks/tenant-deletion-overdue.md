@@ -68,33 +68,41 @@ Inspect `residualResources[]` — specific buckets, tables, or leases still pres
 
 ## Remediation
 
-### Step 1 — Resume the failed phase
+### Step 1 — Restart the deletion controller
+
+The tenant-deletion controller drives phases to completion and retries on transient failures. If the controller itself is wedged, restart it so it resumes from the last persisted phase checkpoint:
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl rollout restart deployment lenny-tenant-deletion-controller -n lenny-system
+kubectl rollout status deployment lenny-tenant-deletion-controller -n lenny-system --timeout=2m
+```
+
+Re-check tenant state:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin tenants resume-deletion <id>
+lenny-ctl admin tenants get <id>
 ```
-
-<!-- access: api method=POST path=/v1/admin/tenants/{id}/deletion/resume -->
-```
-POST /v1/admin/tenants/<id>/deletion/resume
-```
-
-The deletion controller retries from the last checkpoint.
 
 ### Step 2 — Follow the underlying runbook
 
-If the resume surfaces the same error, follow the runbook linked in Step 2 of Diagnosis.
+If the controller continues to surface the same error, follow the runbook linked in Step 2 of Diagnosis. The deletion controller will retry automatically once the upstream dependency recovers.
 
-### Step 3 — Manual per-phase cleanup
+### Step 3 — Legal-hold or contractual override
 
-If automated resumption cannot complete, run per-phase manually via `lenny-ctl admin tenants delete --phase <phase>`. Each phase is idempotent. Always run the phases in the documented order — skipping `sessions_terminated` before `artifacts_deleted` can leave orphan writes.
+If a legal hold or residual constraint is blocking completion and the decision has been made to override it, use the force-delete path, which requires a justification recorded to the audit log:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin tenants force-delete <id> --justification "<text>"
+```
 
 ### Step 4 — Verify completion
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose tenant-deletion <id>
+lenny-ctl admin tenants get <id>
 ```
 
 - `status: completed`.

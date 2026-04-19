@@ -108,18 +108,18 @@ stateDiagram-v2
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
 | `running` | `failed` | Crash, unrecoverable error, retries exhausted | Internal |
-| `running` | `cancelled` | Cancel request | `POST /v1/sessions/{id}/cancel` |
+| `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
 | `running` | `resume_pending` | Pod crash with retries remaining | Internal |
-| `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{id}/respond` |
+| `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond` |
 | `input_required` | `cancelled` | Parent cancels | Internal |
 | `input_required` | `expired` | Deadline reached | Internal timer |
 | `input_required` | `resume_pending` | Pod crash with retries remaining | Internal |
 | `input_required` | `failed` | Pod crash, retries exhausted | Internal |
 | `suspended` | `running` | Resume (pod still held) | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
-| `suspended` | `resume_pending` | Resume (pod released) or pod failure | `POST /v1/sessions/{id}/resume` |
+| `suspended` | `resume_pending` | Resume or `delivery:immediate` message (pod released), or pod failure | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
 | `suspended` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
-| `suspended` | `cancelled` | Cancel | `POST /v1/sessions/{id}/cancel` |
+| `suspended` | `cancelled` | Cancel | `DELETE /v1/sessions/{id}` |
 | `suspended` | `expired` | `perChildMaxAge` wall-clock expiry | Internal timer |
 | `suspended` | `failed` | `BUDGET_KEYS_EXPIRED` | Internal |
 | `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |

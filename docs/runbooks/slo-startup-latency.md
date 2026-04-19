@@ -103,9 +103,9 @@ gVisor startup is heavier by construction. If the SLO target is not tier-appropr
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose slo startup-latency
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=histogram_quantile(0.95, rate(lenny_session_startup_duration_seconds_bucket[5m]))&groupBy=tier&window=30m
 ```
 
 - p95 startup within the tier target.

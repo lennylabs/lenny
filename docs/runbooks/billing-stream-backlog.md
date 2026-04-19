@@ -108,20 +108,13 @@ If the billing sink (Stripe, custom ledger, etc.) is unavailable:
 
 ### Step 4 — Entries nearing TTL
 
-If `BillingStreamEntryAgeHigh` is firing and draining won't complete before TTL:
-
-1. Export the stream tail to Postgres as a durable reconciliation source:
-   <!-- access: lenny-ctl -->
-   ```bash
-   lenny-ctl admin billing snapshot --output postgres
-   ```
-2. This exports billing events to an append-only table for post-incident reconciliation.
+If `BillingStreamEntryAgeHigh` is firing and draining won't complete before TTL, coordinate with the billing platform owner to capture the stream tail before loss. Reconciliation is performed post-incident from `audit_log`; there is no operator CLI to snapshot the stream.
 
 ### Step 5 — Verify recovery
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose billing
+lenny-ctl diagnose connectivity
 ```
 
 - Stream depth trending toward baseline.

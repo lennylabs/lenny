@@ -78,23 +78,11 @@ The budget key TTL is designed to cap the lifetime of a delegation tree. Expiry 
 1. Confirm Redis health; if unhealthy, see [redis-failure](redis-failure.html).
 2. Decide with the tree owner (tenant) whether to:
    - **Retire the tree.** Call `/v1/delegations/{tree}/close` — safe if the tree is idle.
-   - **Extend the budget.** Reset the budget and refresh the key TTL:
-     <!-- access: lenny-ctl -->
-     ```bash
-     lenny-ctl admin delegation budgets reset <tree-id> \
-       --new-total <tokens> --new-ttl 24h
-     ```
+   - **Extend the budget.** Adjust `delegation.budgets.*` (per-tenant `total`, `ttl`) in the tenant's Helm values and run `helm upgrade`. The controller picks up the new budget and refreshes the key TTL on the next delegation mint.
 
 ### Step 2 — Near-exhaustion
 
-If exhaustion is imminent but expected:
-
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin delegation budgets increase <tree-id> --by <tokens>
-```
-
-Requires explicit operator intent — budgets are contracts with the client.
+If exhaustion is imminent but expected, raise the tree's allowance by updating `delegation.budgets.<tenant>.total` in the tenant's Helm values and running `helm upgrade`. Budgets are contracts with the client; changes require explicit operator intent recorded in source control.
 
 ### Step 3 — Redis pressure
 
@@ -109,9 +97,9 @@ If keys are expiring unexpectedly due to Redis `maxmemory` eviction:
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose delegation-budgets
+<!-- access: api method=GET path=/v1/admin/delegation-trees -->
+```
+GET /v1/admin/delegation-trees?treeId=<id>
 ```
 
 - Tree reports `budgetRemaining > 0` and `keyTtlRemainingSeconds > 0`.

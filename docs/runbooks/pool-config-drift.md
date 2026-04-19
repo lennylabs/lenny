@@ -84,28 +84,38 @@ kubectl rollout status deployment lenny-warm-pool-controller -n lenny-system --t
 
 A fresh controller re-lists CRDs and forces reconciliation.
 
-### Step 2 — Force reconcile
+### Step 2 — Inspect sync status, then force reconcile
+
+Inspect the current drift before reconciling:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin pools reconcile <pool-name>
+lenny-ctl admin pools sync-status --pool <pool-name>
 ```
 
-<!-- access: api method=POST path=/v1/admin/pools/{name}/reconcile -->
+Once you have decided to remediate:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl drift reconcile --scope pool:<pool-name> --confirm
 ```
-POST /v1/admin/pools/<name>/reconcile
+
+<!-- access: api method=POST path=/v1/admin/drift/reconcile -->
+```
+POST /v1/admin/drift/reconcile
+{"scope": "pool:<pool-name>"}
 ```
 
 ### Step 3 — Decide which side is authoritative
 
 If Postgres and CRD disagree on the same field and you cannot tell which is correct:
 
-- **Postgres is authoritative for runtime-settable fields** (via admin API). Re-apply those to the CRD.
-- **Helm values are authoritative for chart-owned fields** (imageDigest, baseTemplate). Re-run `helm upgrade`.
+- **Postgres is authoritative for runtime-settable fields** (via admin API). The drift reconciler in Step 2 propagates these to the CRD.
+- **Helm values are authoritative for chart-owned fields** (imageDigest, baseTemplate). Re-run `helm upgrade`, then re-run the drift reconciler:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin pools sync <pool-name> --from <postgres|crd>
+lenny-ctl drift reconcile --scope pool:<pool-name> --confirm
 ```
 
 ### Step 4 — Verify

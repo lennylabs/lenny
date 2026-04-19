@@ -134,7 +134,7 @@ kubectl logs -l app=lenny-warm-pool-controller --since=30m | grep -E "leader|thr
 
 Typical causes:
 
-- **Leader-election gap.** Confirm `lenny_controller_leader_election_gap_seconds` during the window. If it crossed the configured alert threshold, see [controller-leader-election](controller-leader-election.html).
+- **Leader-election gap.** Confirm `lenny_controller_leader_lease_renewal_age_seconds` during the window. If it crossed the configured alert threshold, see [controller-leader-election](controller-leader-election.html).
 - **API-server throttling.** Check `lenny_controller_api_throttle_total`. Look at the kube-apiserver audit log for 429s.
 - **Panic in cleanup.** Grep for `panic:` in controller logs; file an incident.
 

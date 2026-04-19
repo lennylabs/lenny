@@ -103,9 +103,9 @@ If uploader credentials were revoked, rotate and confirm the uploader ServiceAcc
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose workspace-seal
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_workspace_seal_duration_seconds&window=15m
 ```
 
 - No sessions in `sealing` past the max duration.

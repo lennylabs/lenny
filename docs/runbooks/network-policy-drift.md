@@ -106,9 +106,9 @@ Expected: both succeed.
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose network-policies
+kubectl get networkpolicy -n lenny-system -o yaml | grep -A2 ipBlock
 ```
 
 - Installed CIDRs match current cluster CIDRs.

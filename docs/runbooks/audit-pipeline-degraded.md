@@ -136,7 +136,7 @@ Replay-buffer utilization approaching 100 % indicates drops will accelerate — 
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose audit
+lenny-ctl audit summary --since <alert_fire_time>
 ```
 
 - `ocsf_translation_state=retry_pending` row count drops toward 0.

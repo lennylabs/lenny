@@ -17,11 +17,11 @@ The web playground is the gateway's built-in UI for creating and driving session
 
 ## What this tour will cover
 
-1. Open the playground at `https://localhost:8443/ui` after `lenny up`.
+1. Open the playground at `https://localhost:8443/playground` after `lenny up`.
 2. Sign in (dev-mode bypass on local; OIDC on production).
 3. Pick a runtime from the catalog and see its capability matrix.
 4. Drag-and-drop a workspace, or skip workspace upload entirely.
-5. Send a message; watch `agent_output`, `tool_call`, and `tool_result` events stream in.
+5. Send a message; watch `agent_output`, `tool_use_requested`, and `tool_result` events stream in.
 6. Inspect artifacts — files the agent produced, along with diffs and screenshots.
 7. Follow a delegation tree into child sessions and back.
 8. Export the full transcript or replay against a different runtime version.

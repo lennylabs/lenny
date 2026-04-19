@@ -113,9 +113,9 @@ If a single subsystem (e.g., MCP fabric) is the bottleneck, see [gateway-subsyst
 
 ### Step 6 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose gateway-capacity
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_gateway_active_streams_ratio&window=15m
 ```
 
 - Active streams ratio back within the alert's warning threshold.

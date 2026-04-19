@@ -257,20 +257,6 @@ lenny-ctl preflight --config values.yaml \
 
 ---
 
-## Audit Partition Management
-
-| Command | Description | Min Role |
-|---|---|---|
-| `lenny-ctl admin audit drop-partition --force` | Drop an audit partition that is past retention TTL but blocked by SIEM forwarder backlog | `platform-admin` |
-| `lenny-ctl admin audit query --tenant <id> --since <ts> [--filter <field=value>]` | Query OCSF audit records from the hot tier. Output is OCSF v1.1.0 JSON; combine with `jq` to extract specific fields. | `platform-admin` / `tenant-admin` |
-| `lenny-ctl admin audit chain-verify --partition <YYYY-MM>` | Re-hash a partition's records and verify the `prev_hash` chain end-to-end. Reports any tamper or gap with row IDs. | `platform-admin` |
-
-### Output format
-
-Audit query output follows the OCSF v1.1.0 wire format documented in the [OCSF audit guide](audit-ocsf.md). Records are NDJSON, one OCSF record per line, unwrapped (no CloudEvents envelope -- the CLI reads directly from the Postgres hot tier).
-
----
-
 ## Session Investigation
 
 | Command | Description | Min Role |

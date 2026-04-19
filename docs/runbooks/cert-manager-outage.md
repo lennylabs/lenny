@@ -137,7 +137,7 @@ This triggers a forced re-issuance. Do not bypass the webhook by setting `failur
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get certificate -n lenny-system
+kubectl get certificates -A
 kubectl get certificaterequests -n lenny-system --sort-by=.metadata.creationTimestamp | tail
 ```
 
@@ -146,10 +146,10 @@ kubectl get certificaterequests -n lenny-system --sort-by=.metadata.creationTime
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose cert-manager
+lenny-ctl diagnose connectivity
 ```
 
-Verifies the chain end-to-end: cert-manager pods healthy, all Lenny Certificates ready, no expiring certs inside the `certManager.warningWindow` (default 24h), admission webhook serving certs valid.
+Confirms the gateway reaches its dependencies with the refreshed certificate chain. Spot-check that no Lenny Certificate is inside the `certManager.warningWindow` (default 24h) and that admission-webhook serving certs are valid.
 
 Warm pool replenishment resumes automatically once new pods can be issued certs; confirm:
 

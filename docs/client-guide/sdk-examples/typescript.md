@@ -406,7 +406,7 @@ class LennyClient {
                   case "agent_output":
                     for (const part of data.parts ?? []) {
                       if (part.type === "text") {
-                        process.stdout.write(part.text);
+                        process.stdout.write(part.inline);
                       }
                     }
                     break;

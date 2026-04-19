@@ -84,9 +84,12 @@ helm template lenny lennylabs/lenny -f values.yaml --show-only templates/postgre
 
 ### Step 3 — Verify
 
-<!-- access: lenny-ctl -->
+<!-- access: kubectl requires=cluster-access -->
 ```bash
-lenny-ctl diagnose audit-grants
+kubectl exec deploy/lenny-gateway -- psql "$POSTGRES_DSN" -c "
+  SELECT grantee, table_name, privilege_type
+  FROM information_schema.role_table_grants
+  WHERE table_name LIKE 'audit_%' AND privilege_type IN ('UPDATE','DELETE');"
 ```
 
 - No UPDATE or DELETE privileges on audit tables for any non-`postgres` role.

@@ -124,9 +124,9 @@ If a NetworkPolicy blocks the destination, update its CIDR list — see [network
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose llm-egress
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=rate(lenny_llm_egress_anomalies_total[5m])&window=30m
 ```
 
 - Anomaly rate returns to 0.

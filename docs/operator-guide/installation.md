@@ -30,7 +30,7 @@ For evaluation and developer laptops, the `lenny` binary runs the entire platfor
 lenny up
 ```
 
-On first run it downloads k3s to `~/.lenny/k3s/` and starts the whole stack -- embedded Kubernetes, Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The pool controller warms up pods, and `lenny session start --runtime chat --message "hello"` is ready in under a minute.
+On first run it downloads k3s to `~/.lenny/k3s/` and starts the whole stack -- embedded Kubernetes, Postgres, Redis, a development key-management shim, an identity provider, the gateway, the management plane, the controllers, and the reference runtime catalog. The pool controller warms up pods, and `lenny session new --runtime chat --message "hello"` is ready in under a minute.
 
 `lenny up` prints a banner you can't suppress: credentials, master key, and identities are insecure, and it's not for production. The built-in identity provider rejects any audience claim other than `dev.local`, and trying to expose the gateway beyond localhost fails with `EMBEDDED_MODE_LOCAL_ONLY`.
 

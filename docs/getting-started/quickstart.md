@@ -49,7 +49,7 @@ and identities are insecure.
     cursor-cli, langgraph, mastra, openai-assistants, crewai
 [✓] playground available at https://localhost:8443/playground
 
-Ready in 47s. Try: lenny session start --runtime chat --message "hello"
+Ready in 47s. Try: lenny session new --runtime chat --message "hello"
 ```
 
 The warning banner is deliberate: the embedded stack uses stub credentials and is meant for development and evaluation, not production. It cannot be suppressed.
@@ -63,7 +63,7 @@ The warning banner is deliberate: the embedded stack uses stub credentials and i
 Start a session with the built-in `chat` runtime. It's a plain LLM chat, no tools -- the simplest useful agent. No API keys needed; the embedded stack ships with a mock provider that returns deterministic replies.
 
 ```bash
-lenny session start --runtime chat --message "What is Lenny?"
+lenny session new --runtime chat --message "What is Lenny?"
 ```
 
 Output (streamed):
@@ -85,7 +85,7 @@ Behind the scenes, `lenny session` is a thin CLI over the same public API every 
 Send a follow-up message:
 
 ```bash
-lenny session message ses_01HN0J... --message "Give me three bullet points on delegation."
+lenny session send ses_01HN0J... "Give me three bullet points on delegation."
 ```
 
 Stream the live log feed from the session in a second terminal:
@@ -105,7 +105,7 @@ The runtime catalog includes four coding agents: `claude-code`, `gemini-cli`, `c
 Point one at a local repository:
 
 ```bash
-lenny session start --runtime claude-code --workspace ./my-repo \
+lenny session new --runtime claude-code --workspace ./my-repo \
   --message "Read the README and summarize the architecture."
 ```
 
@@ -141,7 +141,7 @@ Check platform state:
 ```bash
 lenny status                                # overall health and active sessions
 lenny-ctl admin pools list                  # warm pool state
-lenny-ctl admin diagnostics connectivity    # end-to-end dependency check
+lenny-ctl diagnose connectivity             # end-to-end dependency check
 ```
 
 When you're done:

@@ -113,7 +113,7 @@ Follow [audit-pipeline-degraded](audit-pipeline-degraded.html) Step 2 to drain t
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose token-store
+lenny-ctl diagnose connectivity
 ```
 
 - `/v1/oauth/token` returns 200 for a test tenant.

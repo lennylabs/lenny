@@ -69,20 +69,11 @@ Median response latency by client tells you which clients are slow.
 If a specific client's users are not responding:
 
 1. Contact the client operator — this is usually a UI or notification bug on their side.
-2. If the client has a default auto-timeout, confirm it's configured sensibly:
-   <!-- access: lenny-ctl -->
-   ```bash
-   lenny-ctl admin elicitations defaults get
-   ```
+2. If the client has a default auto-timeout, confirm it's configured sensibly via the tenant's Helm values (`elicitation.timeoutThreshold`) or the tenant record on the admin tenants API.
 
 ### Step 2 — Age-out stale elicitations
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin elicitations cancel --filter 'ageSeconds>$(lenny-ctl admin config get elicitation.timeoutThreshold --seconds)' --reason client_timeout
-```
-
-Marks aged-out elicitations as timed out so dependent sessions can fail fast or retry.
+Stale elicitations age out via the configured timeout threshold — there is no ad-hoc CLI cancel. Lower `elicitation.timeoutThreshold` in Helm values and run `helm upgrade` if the backlog is driven by excessively long default timeouts; otherwise the next scheduled aging pass will clear them.
 
 ### Step 3 — Surge protection
 
@@ -93,9 +84,9 @@ If the backlog is a legitimate traffic spike:
 
 ### Step 4 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose elicitations
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_elicitation_pending&window=15m
 ```
 
 - Pending count returns to baseline.

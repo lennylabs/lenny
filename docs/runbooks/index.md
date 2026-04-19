@@ -195,7 +195,7 @@ Every escalation MUST include:
 5. **Blast radius.** Which tenants, pools, or sessions are affected, and the estimated error rate or user impact.
 6. **Correlation IDs.** Any `X-Lenny-Operation-ID` from attempted remediations and the tenant / session / pool IDs involved.
 
-The agent-operability surface ([Agent Operability](../operator-guide/agent-operability.html)) generates a pre-filled escalation payload when you call `lenny-ctl escalate create` -- it gathers the items above from recent diagnostics, events, and your most recent remediation operations.
+The agent-operability surface ([Agent Operability](../operator-guide/agent-operability.html)) generates a pre-filled escalation payload when you call `lenny-ctl escalations create` -- it gathers the items above from recent diagnostics, events, and your most recent remediation operations.
 
 ---
 

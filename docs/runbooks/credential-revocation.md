@@ -42,7 +42,7 @@ Emergency or planned rotation of a compromised or deprecated provider credential
 <!-- access: lenny-ctl -->
 ```bash
 lenny-ctl admin credential-pools list
-lenny-ctl admin credential-pools get <pool>
+lenny-ctl admin credential-pools get --pool <pool>
 ```
 
 <!-- access: api method=GET path=/v1/admin/credential-pools/{name} -->
@@ -67,16 +67,17 @@ If the trigger is a security alert, get the raw provider evidence — revocation
 
 ## Remediation
 
-### Step 1 — Disable the credential
+### Step 1 — Revoke the credential
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools disable-credential <pool> <credential-id>
+lenny-ctl admin credential-pools revoke-credential \
+  --pool <pool> --credential <credential-id> --reason "<r>"
 ```
 
-<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials/{id}/disable -->
+<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials/{id}/revoke -->
 ```
-POST /v1/admin/credential-pools/<name>/credentials/<id>/disable
+POST /v1/admin/credential-pools/<name>/credentials/<id>/revoke
 ```
 
 Effect: no new leases will be issued from this credential. Existing leases remain valid until their TTL expires (minutes to hours, depending on `credentialLeaseTTL`).
@@ -115,16 +116,18 @@ Or, if you're using external-secrets-operator / sealed-secrets, update the upstr
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools add-credential <pool> \
-  --secret-ref lenny-system/<secret-name> \
-  --max-concurrent-sessions 50
+lenny-ctl admin credential-pools add-credential \
+  --pool <pool> --provider <provider>
 ```
+
+`--secret-ref` and `--max-concurrent-sessions` are body fields on the admin API; set them via the API call or in the pool's Helm values when the rotated credential must carry non-default settings.
 
 Remove the old `credential-id` if the rotation is permanent:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin credential-pools remove-credential <pool> <old-credential-id>
+lenny-ctl admin credential-pools remove-credential \
+  --pool <pool> --credential <old-credential-id>
 ```
 
 ### Step 6 — Propagation verification
@@ -151,7 +154,7 @@ All credential state transitions are written to `audit_log`. Confirm the revocat
 
 <!-- access: api method=GET path=/v1/admin/audit-events -->
 ```
-GET /v1/admin/audit-events?event_type=credential.disabled&since=1h
+GET /v1/admin/audit-events?event_type=credential.revoked&since=1h
 GET /v1/admin/audit-events?event_type=credential.added&since=1h
 ```
 

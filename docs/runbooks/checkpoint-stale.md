@@ -80,14 +80,23 @@ Unusually large checkpoints slow everything down; trace back to the session or p
 
 If MinIO latency is the cause, follow [minio-failure](minio-failure.html).
 
-### Step 2 — Trigger fresh checkpoints
+### Step 2 — Inspect and recover individual stale sessions
+
+For each session surfaced in Diagnosis Step 1, inspect its state and last checkpoint:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin sessions checkpoint --filter "lastCheckpointAgeSeconds>$(lenny-ctl admin config get checkpoint.stalenessThreshold --seconds)"
+lenny-ctl admin sessions get <id>
 ```
 
-Forces a checkpoint across all stale sessions. Watch `lenny_checkpoint_stale_sessions` drop to 0.
+If the session is unrecoverable (runtime pod gone, workspace materialization stuck), force-terminate so the tenant can create a fresh session from the last durable checkpoint:
+
+<!-- access: lenny-ctl -->
+```bash
+lenny-ctl admin sessions force-terminate <id>
+```
+
+Watch `lenny_checkpoint_stale_sessions` drop to 0 as the backlog clears.
 
 ### Step 3 — Large-checkpoint tenants
 
@@ -110,7 +119,7 @@ If a tenant consistently produces checkpoints larger than the pool's configured 
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose checkpoint
+lenny-ctl admin sessions get <id>
 ```
 
 - `lenny_checkpoint_stale_sessions` = 0.

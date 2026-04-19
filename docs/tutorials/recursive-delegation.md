@@ -635,7 +635,7 @@ curl -s -X POST http://localhost:8080/v1/admin/pools \
     "name": "worker-pool",
     "runtime": "text-worker",
     "namespace": "lenny-agents",
-    "isolationProfile": "runc",
+    "isolationProfile": "sandboxed",
     "warmCount": {"min": 3, "max": 10}
   }' | jq .
 
@@ -647,7 +647,7 @@ curl -s -X POST http://localhost:8080/v1/admin/pools \
     "name": "coordinator-pool",
     "runtime": "text-coordinator",
     "namespace": "lenny-agents",
-    "isolationProfile": "runc",
+    "isolationProfile": "sandboxed",
     "warmCount": {"min": 1, "max": 3}
   }' | jq .
 ```
@@ -689,7 +689,7 @@ Expected response:
   "state": "running",
   "sessionIsolationLevel": {
     "executionMode": "session",
-    "isolationProfile": "runc",
+    "isolationProfile": "sandboxed",
     "podReuse": false
   }
 }
@@ -855,13 +855,13 @@ Children always receive a strictly narrower scope than their parent. This is enf
 | `maxDepth: 3` | `maxDepth: 2` (decremented) |
 | `maxTokenBudget: 100000` | `maxTokenBudget: 10000` (sliced) |
 | `maxChildrenTotal: 10` | `maxChildrenTotal: 5` (reduced) |
-| `isolationProfile: gvisor` | Must be `gvisor` or `microvm` (never weaker) |
+| `minIsolationProfile: sandboxed` | Must be `sandboxed` or `microvm` (never weaker) |
 
 If a coordinator tries to delegate with a less restrictive isolation profile, the gateway rejects it:
 
 ```
-ISOLATION_MONOTONICITY_VIOLATED: child isolation profile 'runc' is less
-restrictive than parent profile 'gvisor'
+ISOLATION_MONOTONICITY_VIOLATED: child isolation profile 'standard' is less
+restrictive than parent profile 'sandboxed'
 ```
 
 Similarly, the delegation policy is always intersected; children cannot have broader permissions than their parent.

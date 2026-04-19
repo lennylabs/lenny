@@ -127,7 +127,7 @@ Verify the webhook service exists and has Ready endpoints. If not, follow [admis
 <!-- access: lenny-ctl -->
 ```bash
 lenny-ctl preflight --config values.yaml
-lenny-ctl diagnose control-plane
+lenny-ctl diagnose connectivity
 ```
 
 - Preflight passes.

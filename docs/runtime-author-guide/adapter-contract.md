@@ -285,6 +285,14 @@ Must be sent in response to every inbound `heartbeat`. No other fields.
 
 Informational. The adapter forwards status updates to the gateway for client visibility. Not required at any integration level.
 
+#### `set_tracing_context` --- Propagate Tracing Identifiers
+
+```json
+{ "type": "set_tracing_context", "context": { "langsmith_run_id": "run_abc123" } }
+```
+
+Registers tracing identifiers that the adapter attaches to all subsequent `lenny/delegate_task` gRPC requests. Available at all levels. Validation rules are enforced by the gateway when the delegation request arrives.
+
 ---
 
 ## OutputPart Reference

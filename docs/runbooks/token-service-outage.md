@@ -133,7 +133,7 @@ helm template lenny lennylabs/lenny -f values.yaml | \
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl diagnose token-service
+lenny-ctl diagnose connectivity
 ```
 
 - Token Service pods `Ready=True`.

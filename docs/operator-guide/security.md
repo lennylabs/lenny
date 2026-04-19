@@ -20,8 +20,12 @@ All communication between gateway replicas and agent pods uses mutual TLS (mTLS)
 ### Certificate Lifecycle
 
 - **Issuer:** cert-manager `ClusterIssuer` creates per-pod certificates
-- **Certificate TTL:** Configurable per pool (recommended: 24h for production)
-- **Renewal:** cert-manager auto-renews certificates before expiry
+- **Certificate TTL (per component):**
+  - Gateway replicas: 24h
+  - Agent pods: 4h
+  - Controller: 24h
+  - Token Service: 24h
+- **Renewal:** cert-manager auto-renews certificates at 2/3 lifetime
 - **Idle pod replacement:** The WarmPoolController proactively replaces any idle pod whose certificate will expire within 30 minutes
 
 ### Gateway mTLS Identity
@@ -33,7 +37,7 @@ Each gateway replica has a **distinct mTLS identity**:
 
 ### SPIFFE Trust Domain
 
-SPIFFE (Secure Production Identity Framework for Everyone) is the identity framework Lenny uses to give each pod a verifiable cryptographic identity. Deployers **MUST** override `global.spiffeTrustDomain` (default: `lenny.local`) for shared-cluster deployments to prevent cross-deployment pod impersonation. Each Lenny deployment sharing a cluster must use a unique trust domain. Additionally, set `global.saTokenAudience` to a deployment-specific value.
+SPIFFE (Secure Production Identity Framework for Everyone) is the identity framework Lenny uses to give each pod a verifiable cryptographic identity. Deployers **MUST** override `global.spiffeTrustDomain` (default: `lenny`) for shared-cluster deployments to prevent cross-deployment pod impersonation. Each Lenny deployment sharing a cluster must use a unique trust domain. Additionally, set `global.saTokenAudience` to a deployment-specific value (default: `lenny-gateway-default`).
 
 ```yaml
 global:
@@ -132,11 +136,12 @@ Lenny uses envelope encryption for sensitive data:
 
 ### Supported KMS Providers
 
-| Cloud | KMS Service | Purpose |
-|---|---|---|
-| AWS | AWS KMS | DEK wrapping, etcd Secret encryption |
-| GCP | Cloud KMS | DEK wrapping |
-| Azure | Azure Key Vault | DEK wrapping, etcd Secret encryption |
+| Backend | Purpose |
+|---|---|
+| AWS KMS | JWT signing, DEK wrapping, etcd Secret encryption (EKS) |
+| GCP Cloud KMS | JWT signing, DEK wrapping, etcd Secret encryption (GKE) |
+| HashiCorp Vault Transit | JWT signing, DEK wrapping |
+| Azure Key Vault | etcd Secret encryption (AKS) |
 
 ### What Gets Encrypted
 
@@ -176,11 +181,13 @@ credentialPools:
 4. Gateway forwards to the upstream LLM provider
 5. **Key never enters the pod**
 
-**Direct mode** (single-tenant/dev only):
+**Direct mode** (default for single-tenant; permitted in multi-tenant only with `sandboxed` or `microvm` isolation):
 
 1. Gateway writes the API key to `/run/lenny/credentials.json` on the pod
 2. Pod contacts the LLM provider directly
 3. Credential file is removed on session end or between tasks
+
+The combination of `deliveryMode: direct` + `isolationProfile: standard` (runc) is **blocked by admission control** in multi-tenant mode — a container escape under runc would expose materialized credential material across tenants. Pool registration returns `DirectModeStandardIsolationMultiTenantRejected`.
 
 ### Credential Lifecycle
 
@@ -325,9 +332,14 @@ spec:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8       # Pod CIDR
-              - 172.16.0.0/12    # Service CIDR
+              - 10.0.0.0/8          # Pod CIDR
+              - 172.16.0.0/12       # Service CIDR
+              - 169.254.169.254/32  # IMDS (AWS/GCP/Azure IPv4)
+              - fd00:ec2::254/128   # IMDS (AWS IPv6)
+              - 100.100.100.200/32  # IMDS (Alibaba Cloud)
 ```
+
+`egressProfile: internet` requires a `sandboxed` or `microvm` isolation profile — pool admission rejects the combination with `standard` (runc).
 
 The `NetworkPolicyCIDRDrift` critical alert fires when the configured exclusion CIDRs no longer match actual cluster CIDRs.
 
@@ -348,9 +360,11 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | Role | Scope | Capabilities |
 |---|---|---|
-| `platform-admin` | Cluster-wide | Full admin API access, cross-tenant reads, credential management |
-| `tenant-admin` | Per-tenant | Tenant configuration, user management, runtime access (own tenant only) |
-| `user` | Per-tenant | Session creation, workspace access (subject to environment membership) |
+| `platform-admin` | Cluster-wide | Full admin API access across all tenants; manage runtimes, pools, global configuration |
+| `tenant-admin` | Per-tenant | Full access scoped to own tenant; user management, quotas, credential pools, legal holds |
+| `tenant-viewer` | Per-tenant | Read-only access to own tenant's sessions, runtimes, pools, usage, configuration |
+| `billing-viewer` | Per-tenant | Read-only access to usage and metering data for own tenant; no session content |
+| `user` | Per-tenant | Create and manage own sessions; no access to other users' sessions without explicit grant |
 
 ### Kubernetes RBAC
 
@@ -468,8 +482,10 @@ Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layer
 ### Initiating Erasure
 
 ```bash
-# Initiate user-level erasure
-lenny-ctl admin erasure run --user-id <user-id>
+# Initiate user-level erasure (returns a job ID)
+curl -X POST \
+  -H "Authorization: Bearer $LENNY_API_TOKEN" \
+  "$LENNY_API_URL/v1/admin/users/<user-id>/erase"
 
 # Check erasure job status
 lenny-ctl admin erasure-jobs get <job-id>

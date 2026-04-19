@@ -111,11 +111,11 @@ kubectl describe pod <pod-name> -n <agent-ns> | grep -A3 "Events:"
 kubectl get secret -n <agent-ns> <image-pull-secret> -o yaml
 ```
 
-Rotate the pull secret or fix the image tag, then roll the pool:
+Rotate the pull secret or fix the image tag, then start a rolling upgrade with the corrected image digest:
 
 <!-- access: lenny-ctl -->
 ```bash
-lenny-ctl admin pools roll --pool <pool>
+lenny-ctl admin pools upgrade start --pool <pool> --new-image <digest>
 ```
 
 ### Step 3b — Demand exceeds supply

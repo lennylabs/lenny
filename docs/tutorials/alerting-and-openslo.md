@@ -20,7 +20,7 @@ Lenny ships a single source of truth for its alerting rules (`pkg/alerting/rules
 1. Pick your monitoring format: set `monitoring.format: prometheusrule` (default, requires Prometheus Operator) or `monitoring.format: configmap` in Helm values.
 2. Run `helm upgrade --reuse-values --set monitoring.format=prometheusrule`; confirm the `PrometheusRule` CRD is created.
 3. Import the bundled rules into your existing Prometheus/Alertmanager stack.
-4. Tour the catalog: `StartupLatencyBurnRate`, `TTFTBurnRate`, `PoolExhaustionWarning`, `CredentialPoolDrain`, and the full catalog from Spec §16.5.
+4. Tour the catalog: `StartupLatencyBurnRate`, `TTFTBurnRate`, `WarmPoolExhausted`, `WarmPoolLow`, `CredentialPoolExhausted`, `CredentialPoolLow`, and the full catalog from Spec §16.5.
 5. Export SLOs with `lenny-ctl slo export --format openslo > lenny-slos.yaml`.
 6. Apply the OpenSLO manifests to your SLO tool of choice (Nobl9, OpenSLO spec-compatible tools).
 7. Validate with `lenny-ctl slo validate --config lenny-slos.yaml`.

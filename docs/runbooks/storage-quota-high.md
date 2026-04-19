@@ -37,16 +37,16 @@ A tenant's artifact storage has crossed the warning threshold of their allocated
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=lenny_tenant_artifact_bytes_total / lenny_tenant_artifact_quota_bytes&groupBy=tenant_id&window=15m
+GET /v1/admin/metrics?q=lenny_storage_quota_bytes_used&groupBy=tenant_id&window=15m
 ```
 
-Returns utilization ratio per tenant.
+Returns used bytes per tenant. Divide by each tenant's configured `storageQuotaBytes` (from tenant config) to get a utilization ratio.
 
 ### Step 2 — Growth rate
 
 <!-- access: api method=GET path=/v1/admin/metrics -->
 ```
-GET /v1/admin/metrics?q=rate(lenny_tenant_artifact_bytes_total[1h])&groupBy=tenant_id&window=24h
+GET /v1/admin/metrics?q=deriv(lenny_storage_quota_bytes_used[1h])&groupBy=tenant_id&window=24h
 ```
 
 High growth rate × current utilization tells you how soon they'll hit quota.
@@ -100,24 +100,21 @@ Do NOT delete tenant data without explicit tenant consent. Propose a retention p
 
 If the growth is legitimate:
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl admin quotas set --tenant <id> --artifact-storage-bytes <new>
-```
+Quota changes are applied via the admin tenant-quota API (or by updating the tenant's Helm values and running `helm upgrade`):
 
-<!-- access: api method=PATCH path=/v1/admin/quotas/{tenant_id} -->
+<!-- access: api method=PUT path=/v1/admin/tenants/{tenant_id}/quota -->
 ```
-PATCH /v1/admin/quotas/<tenant_id>
-{"artifactStorageBytes": <new>}
+PUT /v1/admin/tenants/<tenant_id>/quota
+{"storageQuotaBytes": <new>}
 ```
 
 Coordinate with finance ops if the quota raise has a cost implication.
 
 ### Step 5 — Verify
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose storage-quota --tenant <id>
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_storage_quota_bytes_used&filter=tenant_id:<id>&window=15m
 ```
 
 - Utilization back within the alert's warning threshold.

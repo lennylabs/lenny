@@ -5,7 +5,7 @@ parent: "Runbooks"
 triggers:
   - alert: GatewayClockDrift
     severity: warning
-  - alert: GatewayClockDriftCritical
+  - alert: GatewayClockDrift
     severity: critical
 components:
   - gateway
@@ -32,8 +32,8 @@ A gateway replica's clock has drifted beyond tolerance. At the warning threshold
 
 ## Trigger
 
-- `GatewayClockDrift` (warning) — `abs(lenny_time_drift_seconds)` exceeds the configured warning threshold.
-- `GatewayClockDriftCritical` — `abs(lenny_time_drift_seconds)` exceeds the configured critical threshold.
+- `GatewayClockDrift` (warning) — `abs(lenny_time_drift_seconds) > 0.5`.
+- `GatewayClockDrift` (critical) — `abs(lenny_time_drift_seconds) > 2.0`.
 - Replica self-removal at `abs(lenny_time_drift_seconds) ≥ 5.0` (design invariant).
 - Unexpected `subject_token_expired` / `actor_token_expired` rejections on a specific replica.
 
@@ -130,9 +130,9 @@ At drift ≥ 5s, the replica removes itself from Service endpoints. This is the 
 
 ### Step 5 — Verify recovery
 
-<!-- access: lenny-ctl -->
-```bash
-lenny-ctl diagnose gateway-clock
+<!-- access: api method=GET path=/v1/admin/metrics -->
+```
+GET /v1/admin/metrics?q=lenny_time_drift_seconds&groupBy=pod&window=15m
 ```
 
 - All replicas report `lenny_time_drift_seconds` back within the configured warning threshold.
