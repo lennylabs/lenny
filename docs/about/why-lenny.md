@@ -29,6 +29,8 @@ Delegation is a first-class primitive, not a convention -- when one agent spawns
 
 The agent itself can be anything. If your program can read JSON from standard input and write JSON to standard output, it can run as a Lenny agent -- whether that program is Anthropic's Claude Code CLI, a LangGraph graph, a CrewAI crew, or 50 lines of Go you wrote this morning. Lenny handles the hard infrastructure parts: starting the pod, preparing the workspace, delivering files, leasing credentials, tracking delegation, and recording audit events. Your agent focuses on the conversation.
 
+Security is baked into the defaults, not a configuration layer on top: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never leave its memory, and every state change lands in a hash-chained audit log.
+
 The platform is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing runtimes. There is no custom scheduler, no external control plane, and no outbound telemetry to a vendor. Data stays inside the cluster you operate.
 
 ---

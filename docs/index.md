@@ -14,6 +14,8 @@ Lenny gives every agent session its own locked-down pod. Your agent -- whether i
 
 Agents can also delegate to other agents. The gateway enforces the budget, scope, and isolation bounds at every hop -- so multi-agent systems don't rely on the runtime to police itself.
 
+Security runs deeper than the sandbox: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never reach the agent, and every state change lands in a hash-chained audit log.
+
 Lenny is self-hosted. There is no managed service and no telemetry sent to an external vendor; data stays inside the cluster you operate.
 
 {: .note }
