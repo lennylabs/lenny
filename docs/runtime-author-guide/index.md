@@ -23,6 +23,20 @@ If you're deploying Lenny to a cluster, calling its API from an application, or 
 
 ---
 
+## Shortcuts by starting point
+
+Before you read the whole guide, pick the shortcut that matches what you're building:
+
+| If you're… | Do this |
+|:---|:---|
+| **Wrapping an existing CLI** (a Claude Code-style coding agent, a shell tool you want to sandbox) | Fork one of the four reference CLI wrappers — `claude-code`, `gemini-cli`, `codex`, `cursor-cli`. They share a Dockerfile skeleton, workspace layout, and sandbox profile; only the image, credential, and launch command differ. Read [Pod Lifecycle](lifecycle.md), run the [compliance suite](testing.md) against your image, then follow [Publishing](publishing.md). |
+| **Wrapping an existing framework** (LangGraph, Mastra, CrewAI, OpenAI Assistants) | Fork the corresponding reference runtime — `langgraph`, `mastra`, `crewai`, `openai-assistants`. These are Full-integration adapters so you get checkpoints, interrupts, and credential rotation without writing them. Validate with the [compliance suite](testing.md) before publishing. |
+| **Building a net-new agent** | Scaffold with `lenny runtime init my-agent --language <go|python|typescript> --template <minimal|chat|coding>`, read the [Echo Runtime Sample](echo-runtime.md), then continue with the full reading order below. |
+| **Writing a specialized worker** (no LLM calls — file processing, code analysis) | Scaffold with `--template minimal` and stay at the Basic integration level. About 50 lines. |
+| **Just want to understand the wire format** | Read the [Echo Runtime Sample](echo-runtime.md) and [Adapter Contract](adapter-contract.md). |
+
+---
+
 ## What "runtime" means in Lenny
 
 A runtime is a program that reads JSON lines from standard input and writes JSON lines to standard output. That's the whole contract.

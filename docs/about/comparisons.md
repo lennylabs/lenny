@@ -18,6 +18,34 @@ Side-by-side analysis of Lenny against other platforms in the agent infrastructu
 {:toc}
 </details>
 
+{: .note }
+> **Status: design phase.** This page compares Lenny's v1 target surface against shipping competitors. See [Implementation Status](status) for what's wired up in Lenny today.
+
+---
+
+## Decide in 30 seconds
+
+Pick Lenny when **all** of the following apply; otherwise jump to the detailed comparisons below.
+
+- [ ] You can run Kubernetes (and want the data and keys to stay inside the cluster you operate).
+- [ ] You need **more than a sandbox** — session lifecycle, streaming, delegation with per-hop budgets, credential leasing, audit.
+- [ ] You want a **runtime-agnostic** contract so different teams can bring their own agents/frameworks behind one gateway.
+- [ ] You need enterprise controls out of the box: multi-tenancy, RBAC, audit log, GDPR-style erasure, data residency.
+- [ ] You do **not** need GPU workloads in v1.
+
+If two or more boxes are unchecked, read the specific alternative below — you likely want something more specialized (E2B/Daytona for pure sandbox, Temporal for durable workflows, Modal for GPU, LangGraph for framework-coupled orchestration).
+
+**Triage by what's unchecked.** If you only skim one section:
+
+| Unchecked box | Read first |
+|:--|:--|
+| Can't run Kubernetes | [Lenny vs Fly.io Sprites](#lenny-vs-flyio-sprites) (hosted) or [Lenny vs Modal](#lenny-vs-modal) |
+| Just need a sandbox | [Lenny vs E2B](#lenny-vs-e2b), then [Lenny vs Daytona](#lenny-vs-daytona) |
+| Framework-coupled is fine | [Lenny vs LangGraph / LangSmith](#lenny-vs-langgraph--langsmith) |
+| Need durable workflows | [Lenny vs Temporal](#lenny-vs-temporal) |
+| Need GPU in v1 | [Lenny vs Modal](#lenny-vs-modal) |
+| Don't care about delegation | [Lenny vs E2B](#lenny-vs-e2b) or [Lenny vs Daytona](#lenny-vs-daytona) |
+
 ---
 
 ## Comparison table

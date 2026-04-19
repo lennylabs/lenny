@@ -16,6 +16,9 @@ nav_order: 1
 {:toc}
 </details>
 
+{: .note }
+> **Status: design phase.** These docs describe the v1 target surface. See [Implementation Status](status) for what's wired up today.
+
 ---
 
 ## What Lenny is

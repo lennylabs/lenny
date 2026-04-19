@@ -7,6 +7,9 @@ nav_order: 9
 
 # Multi-Tenancy
 
+{: .note }
+> **Reviewing Lenny for security or compliance? Start at [Security Principles](security-principles) §1.8 and §3.** This page is the configuration reference for the tenant model: RLS policies, PgBouncer sentinel, per-tenant quotas, resource scoping, and the integration test suite proving isolation.
+
 This page covers the tenant model, PostgreSQL Row-Level Security, PgBouncer sentinel defense, single-tenant vs. multi-tenant modes, per-tenant quotas, resource scoping, and integration testing.
 
 ---

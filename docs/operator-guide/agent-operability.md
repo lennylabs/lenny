@@ -12,6 +12,22 @@ Lenny is designed to be operable by AI agents as well as humans. Human on-call a
 
 ---
 
+## When you're paged, start here
+
+| If the page is about… | Go to |
+|:---|:---|
+| **A firing alert — what do I do?** | [Runbook catalog]({{ site.baseurl }}/runbooks/) — every bundled alert has a bound runbook |
+| **Triage and first steps** | [Troubleshooting](troubleshooting) |
+| **What's `lenny-ctl doctor` saying?** | [`lenny-ctl` reference](lenny-ctl) |
+| **Emergency: revoke a credential, trip a breaker, reconcile orphans** | [Emergency procedures](troubleshooting#emergency-procedures) |
+| **Full outage or data-loss situation** | [Disaster recovery](disaster-recovery) |
+| **Looking up an alert's meaning** | [Metrics reference](../reference/metrics) |
+| **Looking up an event type** | [CloudEvents catalog](../reference/cloudevents-catalog) |
+| **Looking up a state or error** | [State-machine reference](../reference/state-machines), [Error catalog](../reference/error-catalog) |
+| **Dashboards and the SLO burn-rate view** | [Observability](observability) |
+
+---
+
 ## The operational loop
 
 Every operator runs the same six-step loop, whether human or agent:
@@ -24,22 +40,6 @@ Every operator runs the same six-step loop, whether human or agent:
 6. **Verify** -- confirmation that the action had the intended effect.
 
 Every step in every runbook can be performed by an API call, and every signal on a dashboard is available as structured data.
-
----
-
-## Entry points
-
-| Concern | Start here |
-|---|---|
-| Pager received, incident triage | [Troubleshooting](troubleshooting) |
-| Metrics, alerts, dashboards | [Observability](observability) |
-| `lenny-ctl doctor`, `admin diagnostics` | [`lenny-ctl` reference](lenny-ctl) |
-| Recover from outage | [Disaster recovery](disaster-recovery) |
-| Credential revocation, circuit breakers, orphan reconciliation | [Emergency procedures](troubleshooting#emergency-procedures) |
-| Alert catalog | [Metrics reference](../reference/metrics) |
-| Operational event types | [CloudEvents catalog](../reference/cloudevents-catalog) |
-| State machines | [State-machine reference](../reference/state-machines) |
-| Error codes | [Error catalog](../reference/error-catalog) |
 
 ---
 

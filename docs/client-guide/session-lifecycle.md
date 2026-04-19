@@ -82,6 +82,9 @@ While in `input_required`, all session timers (including `maxSessionAge`) contin
 
 ## Step-by-Step Lifecycle
 
+{: .note }
+> **Happy path in one line:** `create` → (optionally upload files) → `finalize` → (reaches `ready`) → `start` → (reaches `running`) → send messages → `terminate` (or agent finishes). Every step below is an explicit API call; you cannot skip straight to `running`, and messages sent before `running` return `TARGET_NOT_READY`.
+
 ### a. Create Session
 
 ```

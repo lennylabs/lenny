@@ -127,7 +127,7 @@ You are on-call. `lenny-ops`, doctor, runbooks, alerts.
 
 You assess Lenny for isolation, audit, and regulatory fit.
 
-[Security](/lenny/operator-guide/security){: .btn }
+[Security Principles](/lenny/operator-guide/security-principles){: .btn }
 
 </div>
 

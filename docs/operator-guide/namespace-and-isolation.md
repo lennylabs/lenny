@@ -7,6 +7,9 @@ nav_order: 3
 
 # Namespace and Isolation
 
+{: .note }
+> **Reviewing Lenny for security or compliance? Start at [Security Principles](security-principles) §1.7 and §2.** This page is the operator-facing configuration reference for the three isolation profiles (`standard`/`sandboxed`/`microvm`), PSS enforcement, RuntimeClass admission, node dedication, and monotonicity enforcement.
+
 This page covers namespace layout, Pod Security Standards enforcement, RuntimeClass-aware admission policies, node isolation for Kata (microvm) workloads, and ResourceQuota/LimitRange governance.
 
 ---

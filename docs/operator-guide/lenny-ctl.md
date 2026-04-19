@@ -9,6 +9,49 @@ nav_order: 11
 
 `lenny-ctl` is the official CLI for Lenny platform operators. It is a thin client over the Admin API with near-zero business logic -- every operation maps to an Admin API call.
 
+## Most common commands
+
+If you're already familiar with `lenny-ctl`, this is what you'll reach for most:
+
+**Daily operations**
+
+| Task | Command |
+|:-----|:--------|
+| Check platform health end-to-end | `lenny-ctl doctor` |
+| Auto-remediate common misconfigurations | `lenny-ctl doctor --fix` |
+| Install on a new cluster (wizard) | `lenny-ctl install` |
+| Replay a captured install on another cluster | `lenny-ctl install --answers <file>` |
+| Upgrade using a captured answer file | `lenny-ctl upgrade --answers <file>` |
+| List warm pools and their state | `lenny-ctl admin pools list` |
+| Drain a pool for maintenance | `lenny-ctl admin pools drain <pool>` |
+| Run a specific diagnostic | `lenny-ctl diagnose <check>` |
+| List available runbooks | `lenny-ctl runbooks list` |
+| Run a runbook (machine-readable) | `lenny-ctl runbooks run <id> --output json` |
+| Tail recent audit events for a session | `lenny-ctl audit events --session <id>` |
+| Compare deployed state against declared | `lenny-ctl drift diff` |
+| Take an on-demand backup | `lenny-ctl backup create` |
+| Restore from a backup | `lenny-ctl restore --from <snapshot>` |
+| Start the embedded local stack | `lenny up` |
+| Stop the embedded local stack | `lenny down` |
+| Open a session | `lenny session new --runtime <name>` |
+
+**Emergency / incident response**
+
+| Task | Command |
+|:-----|:--------|
+| Revoke a compromised credential | `lenny-ctl admin credential-pools revoke-credential --pool <p> --credential <id> --reason "<why>"` |
+| Force-terminate a runaway session | `lenny-ctl admin sessions terminate <session-id> --reason "<why>"` |
+| Open a circuit breaker for a failing dependency | `lenny-ctl admin circuit-breakers open <subsystem>` |
+| Close a circuit breaker after recovery | `lenny-ctl admin circuit-breakers close <subsystem>` |
+| Reconcile orphaned sandboxes | `lenny-ctl admin sandboxes reconcile` |
+| Raise a human escalation with pre-filled context | `lenny-ctl escalations create --alert <name> --step <n>` |
+| Acquire a remediation lock to coordinate concurrent fixes | `lenny-ctl locks acquire <resource>` |
+| Verify audit chain integrity | `lenny-ctl audit verify --since <ts>` |
+
+Every command on this page accepts `--output json` for machine-readable output and supports the [global flags](#global-flags).
+
+---
+
 ## Installation
 
 The CLI ships in two interchangeable forms with identical flags, arguments, and output:

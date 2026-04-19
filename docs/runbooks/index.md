@@ -214,29 +214,22 @@ New runbooks belong in `docs/runbooks/`, follow the naming convention `<symptom-
 
 ---
 
-## Index of runbooks
+## Full runbook catalog (by component)
 
-Alphabetical. See the catalog above to pick one by alert or component.
+Prefer the alert → runbook map above at page-time; this section exists to browse the full set by area when you don't know the alert name yet. Alphabetical inside each group.
 
-- [admission-webhook-outage](admission-webhook-outage.html)
-- [audit-grant-drift](audit-grant-drift.html)
-- [audit-pipeline-degraded](audit-pipeline-degraded.html)
-- [billing-stream-backlog](billing-stream-backlog.html)
-- [cert-manager-outage](cert-manager-outage.html)
+**Session data plane — warm pools, pods, pool scaling**
 - [checkpoint-stale](checkpoint-stale.html)
+- [pool-bootstrap-mode](pool-bootstrap-mode.html)
+- [pool-config-drift](pool-config-drift.html)
+- [sdk-connect-timeout](sdk-connect-timeout.html)
+- [session-eviction-loss](session-eviction-loss.html)
+- [warm-pool-exhaustion](warm-pool-exhaustion.html)
+
+**Gateway — ingress, routing, capacity, subsystems**
 - [circuit-breaker-open](circuit-breaker-open.html)
-- [controller-leader-election](controller-leader-election.html)
 - [coordinator-handoff-slow](coordinator-handoff-slow.html)
-- [credential-pool-exhaustion](credential-pool-exhaustion.html)
-- [credential-revocation](credential-revocation.html)
-- [crd-upgrade](crd-upgrade.html)
-- [data-residency-violation](data-residency-violation.html)
-- [delegation-budget-recovery](delegation-budget-recovery.html)
-- [dns-outage](dns-outage.html)
-- [dual-store-unavailable](dual-store-unavailable.html)
 - [elicitation-backlog](elicitation-backlog.html)
-- [erasure-job-failed](erasure-job-failed.html)
-- [etcd-operations](etcd-operations.html)
 - [gateway-capacity](gateway-capacity.html)
 - [gateway-clock-drift](gateway-clock-drift.html)
 - [gateway-rate-limit-storm](gateway-rate-limit-storm.html)
@@ -244,26 +237,48 @@ Alphabetical. See the catalog above to pick one by alert or component.
 - [gateway-subsystem-extraction](gateway-subsystem-extraction.html)
 - [llm-egress-anomaly](llm-egress-anomaly.html)
 - [llm-translation-degraded](llm-translation-degraded.html)
+- [workspace-seal-stuck](workspace-seal-stuck.html)
+
+**Credentials and tokens**
+- [credential-pool-exhaustion](credential-pool-exhaustion.html)
+- [credential-revocation](credential-revocation.html)
+- [token-service-outage](token-service-outage.html)
+- [token-store-unavailable](token-store-unavailable.html)
+
+**Stateful dependencies — Postgres, Redis, object store, DNS, cert-manager**
+- [cert-manager-outage](cert-manager-outage.html)
+- [delegation-budget-recovery](delegation-budget-recovery.html)
+- [dns-outage](dns-outage.html)
+- [dual-store-unavailable](dual-store-unavailable.html)
+- [etcd-operations](etcd-operations.html)
 - [minio-failure](minio-failure.html)
-- [network-policy-drift](network-policy-drift.html)
 - [pgbouncer-saturation](pgbouncer-saturation.html)
-- [pool-bootstrap-mode](pool-bootstrap-mode.html)
-- [pool-config-drift](pool-config-drift.html)
 - [postgres-failover](postgres-failover.html)
 - [redis-failure](redis-failure.html)
+- [storage-quota-high](storage-quota-high.html)
+
+**Controllers, admission, upgrades**
+- [admission-webhook-outage](admission-webhook-outage.html)
+- [controller-leader-election](controller-leader-election.html)
+- [crd-upgrade](crd-upgrade.html)
+- [network-policy-drift](network-policy-drift.html)
 - [runtime-upgrade-stuck](runtime-upgrade-stuck.html)
 - [schema-migration-failure](schema-migration-failure.html)
-- [sdk-connect-timeout](sdk-connect-timeout.html)
-- [session-eviction-loss](session-eviction-loss.html)
+- [stuck-finalizer](stuck-finalizer.html)
+
+**Audit, billing, compliance**
+- [audit-grant-drift](audit-grant-drift.html)
+- [audit-pipeline-degraded](audit-pipeline-degraded.html)
+- [billing-stream-backlog](billing-stream-backlog.html)
+- [data-residency-violation](data-residency-violation.html)
+- [erasure-job-failed](erasure-job-failed.html)
+- [tenant-deletion-overdue](tenant-deletion-overdue.html)
+
+**SLO burn-rate**
 - [slo-session-availability](slo-session-availability.html)
 - [slo-session-creation](slo-session-creation.html)
 - [slo-startup-latency](slo-startup-latency.html)
 - [slo-ttft](slo-ttft.html)
-- [storage-quota-high](storage-quota-high.html)
-- [stuck-finalizer](stuck-finalizer.html)
-- [tenant-deletion-overdue](tenant-deletion-overdue.html)
-- [token-service-outage](token-service-outage.html)
-- [token-store-unavailable](token-store-unavailable.html)
+
+**Full outage / multi-layer**
 - [total-outage](total-outage.html)
-- [warm-pool-exhaustion](warm-pool-exhaustion.html)
-- [workspace-seal-stuck](workspace-seal-stuck.html)

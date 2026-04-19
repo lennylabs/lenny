@@ -7,6 +7,17 @@ nav_order: 5
 
 # Security
 
+{: .note }
+> **Reviewing Lenny for security or compliance? Start at [Security Principles](security-principles).** That page describes the design posture and the mapping from Lenny primitives to SOC 2, ISO 27001, HIPAA, FedRAMP, PCI DSS, and GDPR clauses. This page is the **configuration reference** operators use to turn those controls on.
+
+> **Reviewer shortcuts by framework.** If you're evidencing a specific framework, these sections are usually where the material lives:
+>
+> - **SOC 2 (CC6/CC7):** [RBAC](#rbac-model) · [Audit Logging](#audit-logging) · [Credential Leasing](#credential-leasing) · [Network Policies](#network-policies)
+> - **HIPAA (§164.312):** [KMS Integration](#kms-integration) · [mTLS](#mtls-gateway-to-pod) · [Audit Logging](#audit-logging) · [GDPR Erasure](#gdpr-erasure) (tier deadlines)
+> - **FedRAMP / NIST 800-53:** [Data Classification](#data-classification) · [Network Policies](#network-policies) (IMDS blocking) · [Cosign Image Verification](#cosign-image-verification) · [Audit Logging](#audit-logging)
+> - **PCI DSS v4.0:** [Credential Leasing](#credential-leasing) · [RBAC](#rbac-model) · [Network Policies](#network-policies) · [mTLS](#mtls-gateway-to-pod)
+> - **GDPR:** [GDPR Erasure](#gdpr-erasure) · [Data Classification](#data-classification) · [Audit Logging](#audit-logging)
+
 This page is the configuration reference for every security-related control in Lenny: mTLS, OIDC/OAuth 2.1, the Token Service, KMS integration, credential leasing, the LLM Proxy, pod security controls, network policies, RBAC, and audit logging.
 
 For the *why* — the design principles behind these controls and how they map to common compliance frameworks — read [Security Principles](security-principles) first. Lenny does not claim any certification; the principles page describes the control primitives Lenny provides and the framework clauses those primitives are designed to support in your deployment.

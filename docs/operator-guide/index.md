@@ -10,6 +10,9 @@ description: Installation, configuration, scaling, security hardening, observabi
 
 The reference for running Lenny. It covers the first install through steady-state operations -- configuration, scaling, security hardening, observability, backups and restores, upgrades, multi-tenancy, troubleshooting, and the `lenny-ctl` CLI.
 
+{: .note }
+> **Security or compliance reviewer?** You don't need the full Operator Guide. Start at [Security Principles](security-principles.html), then read [Namespace and Isolation](namespace-and-isolation.html), [Security](security.html) (configuration reference), [Audit (OCSF)](audit-ocsf.html), and [Multi-Tenancy](multi-tenancy.html). You can skip Installation, Scaling, Observability, Upgrades, and Disaster Recovery unless your certification requires capacity or continuity evidence.
+
 ---
 
 ## Who this guide is for
@@ -57,26 +60,49 @@ You'll need the following available before you install:
 
 ---
 
-## Recommended reading order
+## Reading paths
 
-For a new deployment, work through the pages in this order:
+You don't need to read every page top to bottom. Pick the path that matches where you are.
 
-1. [**Installation**](installation.html) -- the three install paths (`lenny up` for local evaluation, `lenny-ctl install` for a guided cluster install, raw Helm for full control), cluster prerequisites, preflight checks, bootstrap, and post-install verification.
-2. [**Ingress and TLS**](ingress-and-tls.html) -- the three external Ingresses (gateway, `lenny-ops`, playground), cert-manager and deployer-provided TLS models, internal mTLS between the gateway and pods, and SPIFFE trust-domain setup.
-3. [**Configuration**](configuration.html) -- everything you can set in `values.yaml` and answer files, plus registering runtimes, configuring pools, setting up credential pools, and defining delegation policies.
-4. [**Namespace and Isolation**](namespace-and-isolation.html) -- namespace layout, Pod Security Standards, sandbox enforcement, and dedicating nodes to pool workloads.
-5. [**Security Principles**](security-principles.html) -- the security posture, design principles, control primitives, and mapping from Lenny controls to SOC 2, ISO 27001, HIPAA, FedRAMP, PCI DSS, and GDPR clauses.
-6. [**Security**](security.html) -- configuration reference for mTLS, OIDC, the OAuth token-exchange endpoint, credential leasing, KMS integration, network policies, and RBAC.
-7. [**Scaling**](scaling.html) -- sizing guidance by deployment size, autoscaler configuration, warm pool sizing, and capacity calibration.
-8. [**Observability**](observability.html) -- Prometheus metrics, bundled alerting rules, the Prometheus Operator custom resources (`ServiceMonitor`, `PodMonitor`, `PrometheusRule`), OpenSLO export, Grafana dashboards, and log aggregation.
-9. [**Agent Operability**](agent-operability.html) -- the management plane (`lenny-ops`), diagnostic endpoints, the [runbook catalog]({{ site.baseurl }}/runbooks/), backup and restore, drift detection, the management MCP server, and the `lenny-ctl doctor --fix` auto-remediation loop.
-10. [**Multi-Tenancy**](multi-tenancy.html) -- the tenant model, Postgres row-level security, per-tenant quotas, and isolation testing.
-11. [**Disaster Recovery**](disaster-recovery.html) -- RPO / RTO targets, HA topology, backup schedule, and restore procedures.
-12. [**Upgrades**](upgrades.html) -- rolling gateway upgrades, pool image upgrades, rollback, and MCP version deprecation.
-13. [**Troubleshooting**](troubleshooting.html) -- common issues, circuit breakers, orphan reconciliation, and emergency procedures.
-14. [**`lenny-ctl` Reference**](lenny-ctl.html) -- the full CLI, including admin commands, the `lenny-ops`-targeted operability commands (diagnose, runbooks, events, audit, drift, backup, restore, upgrade), `lenny session` (session management over MCP), `lenny runtime init` for scaffolding, `lenny up` for the local stack, and the `lenny-ctl install` wizard.
+### Day 0 — install it
 
-If you're inheriting an existing deployment, start with **Agent Operability** (run `lenny-ctl doctor` first) and **Observability** to learn the health signals, then read **Configuration** and **Scaling** to understand the tuning surface.
+You're standing up a new deployment and want to reach "session completes end-to-end" as fast as possible.
+
+1. [**Installation**](installation.html) — the three install paths (`lenny up`, `lenny-ctl install`, raw Helm), prerequisites, preflight, bootstrap, post-install verification.
+2. [**Ingress and TLS**](ingress-and-tls.html) — the three external Ingresses, cert-manager, internal mTLS, SPIFFE trust-domain setup.
+3. [**Configuration**](configuration.html) — `values.yaml`, answer files, registering runtimes, configuring pools and credential pools, delegation policies.
+4. [**Namespace and Isolation**](namespace-and-isolation.html) — namespace layout, Pod Security Standards, sandbox enforcement, dedicating nodes.
+5. Run `lenny-ctl doctor` — confirms the install is healthy; `--fix` auto-remediates known misconfigurations.
+
+Output of Day 0: a cluster you can point a client at.
+
+### Day 1 — make it your first production service
+
+You have a working install. Now harden it, wire observability, decide on auth and tenancy.
+
+6. [**Security Principles**](security-principles.html) — the posture and the control map (skim this even if you're not the security reviewer — it explains what the next page is for).
+7. [**Security**](security.html) — configuration reference for mTLS, OIDC, Token Service, KMS, credential leasing, RBAC.
+8. [**Observability**](observability.html) — Prometheus metrics, bundled alerting rules, the Prometheus Operator CRs, OpenSLO export, Grafana dashboards. Read this before Scaling — you'll use the signals it surfaces to pick the right autoscaler targets.
+9. [**Scaling**](scaling.html) — sizing by deployment size, autoscaler configuration, warm pool sizing, capacity calibration.
+10. [**Multi-Tenancy**](multi-tenancy.html) — RLS, per-tenant quotas, isolation testing — needed before you open the platform to more than one team.
+
+Output of Day 1: a deployment that's ready to carry real traffic and that your SRE and security teams can evidence.
+
+### Day 2 — keep it running
+
+Steady-state operations and the incident path. This section also covers you if you inherited a deployment someone else built.
+
+11. [**Agent Operability**](agent-operability.html) — the management plane (`lenny-ops`), diagnostic endpoints, [runbooks]({{ site.baseurl }}/runbooks/), drift detection, backup/restore, `lenny-ctl doctor --fix`.
+12. [**Disaster Recovery**](disaster-recovery.html) — RPO / RTO targets, HA topology, backup schedule, restore procedures.
+13. [**Upgrades**](upgrades.html) — rolling gateway upgrades, pool image upgrades, rollback, MCP version deprecation.
+14. [**Troubleshooting**](troubleshooting.html) — common issues, circuit breakers, orphan reconciliation, emergency procedures.
+15. [**`lenny-ctl` Reference**](lenny-ctl.html) — the full CLI. Bookmark this; you'll live in it.
+
+Output of Day 2: you know where every health signal, runbook, and remediation command lives — before you need them.
+
+### Inheriting a deployment someone else built?
+
+Jump to **Agent Operability** and run `lenny-ctl doctor` first, then **Observability** to learn the health signals, then **Configuration** and **Scaling** to understand the tuning surface.
 
 ---
 

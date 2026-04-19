@@ -7,6 +7,9 @@ nav_order: 15
 
 # Audit Logging and the OCSF Wire Format
 
+{: .note }
+> **Reviewing Lenny for security or compliance? Start at [Security Principles](security-principles) §1.6 and §3.** This page is the wire-format reference: OCSF v1.1.0 field mapping, hash-chain integrity, SIEM delivery configuration, and verifier guidance.
+
 Lenny persists audit records in Postgres with a hash-chained append-only schema (see [Security](security.md#audit-logging)). Every record that leaves the Postgres hot tier — to an external SIEM, a pgaudit sink, a webhook subscriber, or an agent-operability audit query — is serialized as an [OCSF (Open Cybersecurity Schema Framework) v1.1.0](https://schema.ocsf.io/1.1.0/) JSON record. OCSF is the single wire format. There is no alternative format and no per-deployer format switch.
 
 ---

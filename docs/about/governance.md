@@ -198,3 +198,14 @@ During early development, releases follow an as-needed cadence driven by milesto
 | `ROADMAP.md` | Repository root | Published. Short-horizon priorities; full sequence lives in `spec/18_build-sequence.md`. |
 | `CHANGELOG.md` | Repository root | Starts at first tagged release. |
 | ADRs | `docs/adr/` | Ongoing. New decisions recorded as they are made. |
+
+---
+
+## Next steps
+
+You're at the end of the **About** section. Depending on where you've landed:
+
+- **Decided Lenny fits your use case?** Run the [Quickstart](../getting-started/quickstart.html) — `lenny up` starts the embedded stack in about a minute.
+- **Planning a cluster deployment?** Go to the [Operator Guide](../operator-guide/) for the Day 0/1/2 reading path.
+- **Reviewing for security or compliance?** Go to [Security Principles](../operator-guide/security-principles.html) and the reviewer shortcut inside the Operator Guide.
+- **Want to contribute?** See [Contributing](contributing.html) for the current ways to plug in (issues, discussions, spec feedback, ADRs).
