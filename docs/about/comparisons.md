@@ -20,6 +20,8 @@ Side-by-side analysis of Lenny against other platforms in the agent infrastructu
 
 {: .note }
 > **Status: design phase.** This page compares Lenny's v1 target surface against shipping competitors. See [Implementation Status](status) for what's wired up in Lenny today.
+>
+> **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
 
 ---
 
