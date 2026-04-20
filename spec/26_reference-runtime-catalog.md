@@ -108,7 +108,7 @@ The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` dir
 **Credential-lease scopes (shared).** Every coding-agent runtime declares lease scopes for its LLM provider. The scope naming follows [§4.9](04_system-components.md#49-credential-leasing-service):
 
 - `llm.provider.<name>.inference` — required; issued by the credential leasing service for the pool-configured provider identity; attached as a header the LLM proxy injects on the runtime's behalf (proxy mode) or as an env var (direct mode).
-- `vcs.github.read` / `vcs.github.write` — optional; only issued when the client's `WorkspacePlan.sources[]` contains a `gitClone` entry targeting a private repo. The gateway's credential router resolves the scope from the tenant's configured GitHub credential pool. The runtime never sees the raw token; `git` inside the pod uses a credential helper that calls the gateway's token endpoint.
+- `vcs.<provider>.read` / `vcs.<provider>.write` — optional; only issued when the client's `WorkspacePlan.sources[]` contains a `gitClone` entry targeting a private repo. The gateway's credential router resolves the scope against the tenant's VCS credential pool for the URL's host (matched via the pool's `hostPatterns`; see [§14](14_workspace-plan-schema.md)). V1 ships `github` as the only built-in VCS provider (`vcs.github.read` / `vcs.github.write`); deployers may register additional providers (GitLab, Bitbucket, Gitea, self-hosted) via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service). The runtime never sees the raw token; `git` inside the pod uses a credential helper that calls the gateway's token endpoint. The lease is bound to the originating session ID for audit traceability.
 
 Runtimes that need additional provider scopes (e.g., Vertex for Gemini, Azure OpenAI for Codex variants) declare them in their individual entries below.
 
@@ -199,7 +199,7 @@ labels:
 | Scope                              | When issued                                             | Consumer                                                   |
 |------------------------------------|---------------------------------------------------------|------------------------------------------------------------|
 | `llm.provider.anthropic.inference` | Always (or one of `aws.bedrock.anthropic.inference` / `gcp.vertex.anthropic.inference` if the pool's `supportedProviders` selects those). | LLM proxy — injected into outbound Anthropic API calls; the `claude` CLI inside the pod sees only the proxy endpoint. |
-| `vcs.github.read` / `vcs.github.write` | When `WorkspacePlan.sources[]` contains a `gitClone` pointing at a private GitHub repo. | `git` credential helper inside the pod; short-lived token scoped to the single repo. |
+| `vcs.<provider>.read` / `vcs.<provider>.write` | When `WorkspacePlan.sources[]` contains a `gitClone` pointing at a private repo. `<provider>` is resolved from the URL's host against the tenant's VCS credential pools (see [§14](14_workspace-plan-schema.md) and [§4.9](04_system-components.md#49-credential-leasing-service)). V1 ships `github` as the built-in provider. | `git` credential helper inside the pod; short-lived token scoped to the single repo. |
 
 The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-upload scopes) — Claude Code is inference-only.
 

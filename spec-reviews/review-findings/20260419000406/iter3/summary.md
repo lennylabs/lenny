@@ -609,12 +609,16 @@ Label referenced in multiple alert expressions; not listed in label-convention t
 
 **Recommendation:** Add the label with tier-1/2/3 value set.
 
+**Status:** Fixed — Added `deployment_tier` to the "Other domain labels" inline enumeration in §16.1.1 (line 232) and appended a sentence documenting the value set (`tier1`/`tier2`/`tier3`, matching the capacity tiers in §17.8), the source (`global.deploymentTier` Helm value), and the scrape-time attachment mechanism (Prometheus `external_labels` on the job, or the equivalent OpenTelemetry resource attribute). Cross-referenced the two call sites (`Tier3GCPressureHigh` alert in §16.5 and OpenSLO export in §16.10) so operators can trace where the label flows.
+
 ### OBS-019. `lenny_gateway_request_queue_depth` referenced but not registered [Medium]
 **Section:** 16.1 + 10.x
 
 Metric used in prose; no §16.1 row.
 
 **Recommendation:** Add the metric with description, labels, source.
+
+**Status:** Fixed — Added a §16.1 row for `lenny_gateway_request_queue_depth` (Gauge, labeled by `service_instance_id`) between the `lenny_gateway_active_streams` and `lenny_gateway_rejection_rate` rows to keep the HPA-adjacent gateway metrics grouped. The description captures what the prose call sites (§4.1 SCL-026 metric-role table, §10.1 HPA scaling paragraphs) require: instantaneous per-replica count of requests queued awaiting a handler goroutine, emitted by the edge gateway and scraped from `/metrics`, surfaced to the HPA via Prometheus Adapter or KEDA as the primary scale-out trigger with `averageValue: 10` at Tier 2. Cross-references to §4.1, §10.1, and §17.8.2 preserve traceability to the existing prose.
 
 ### OBS-020. `lenny_controller_leader_lease_renewal_age_seconds` label name unspecified [Low]
 **Section:** 16.1
@@ -641,12 +645,15 @@ Reconciler replays the erasure journal from before the restore point — but leg
 
 **Recommendation:** Reconcile against the current legal-hold ledger in addition to the erasure journal; block erasure replays if ledger state is older than restore point.
 
+**Status:** Fixed — §12.8 "Post-restore reconciler" now has a new phase 2 "Legal-hold ledger freshness gate" that consults the current legal-hold ledger (live `legal_hold` column on `sessions`/`artifacts` + `legal_hold.set`/`legal_hold.cleared` audit events) and computes a `ledgerLatestWriteAt` watermark; if the watermark is `<= backupTakenAt` the reconciler blocks replay with a `gdpr.backup_reconcile_blocked` critical audit event, increments `lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}`, fires the new `BackupReconcileBlocked` critical alert, and exits `RESTORE_ERASURE_RECONCILE_FAILED` so the gateway is not restarted. Phase 3 also re-queries the current ledger per subject and suppresses replay for any subject under an active hold whose `legal_hold.set` post-dates the receipt (`gdpr.erasure_reconciled_suppressed_by_hold` event). The new `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` admin endpoint lets a `platform-admin` attest to ledger currency with justification to clear the block on retry. Parallel consistency edits landed in §25.11 step 6, the §25.11 Endpoints table, the `RESTORE_ERASURE_RECONCILE_FAILED` description, the §25.11 alerting / audit-events tables, the §25.13 bundled-alerts table, the §16.5 alert catalogue, the §16.7 audit-events canonical list, the §16.8 metric enumeration, the §15 agent-operability endpoint index, and the §25.12 MCP tool inventory + §25.14 `lenny-ctl` extensions.
+
 ### CMP-047. OCSF dead-letter rows retain raw canonical PII past user erasure [Medium]
 **Section:** 19.4
 
 Dead-letter storage for un-ingestable OCSF events persists for 14 days; user erasure cascades don't touch it.
 
 **Recommendation:** Include dead-letter table in erasure cascade; emit `erasure.deadletter_redacted` receipt.
+**Status:** Fixed — `DeleteByUser` sequence in §12.8 now includes a dedicated "OCSF dead-letter PII redaction" step that rewrites `payload`/`payload_canonical_json`, nulls `user_id`, and preserves hash-chain metadata for `audit_log` rows with `ocsf_translation_state = 'dead_lettered'`; step 13 explicitly excludes dead-lettered rows from deletion so forensics survive. New `gdpr.erasure_deadletter_redacted` receipt added to §16.7 catalogue (payload: `audit_event_id`, `tenant_id`, `original_event_type`, `original_error_class`, `redacted_at`, `pre_redaction_prev_hash`). §11.7 dead-letter handling narrative cross-references the erasure rule and states that retranslation of a redacted row is rejected with `410 DEADLETTER_REDACTED`. Erasure-scope table row for `EventStore (audit)` updated to reflect the redact-not-delete treatment. Note: the finding's "§19.4" section reference did not match the spec structure (§19 is `resolved-decisions.md`); the actual fix landed in §11.7 (OCSF dead-letter narrative) and §12.8 (erasure cascade), with the catalogue entry in §16.7.
 
 ### CMP-048. ArtifactStore (MinIO) not covered by backup pipeline [Medium]
 **Section:** 20.4
@@ -654,6 +661,8 @@ Dead-letter storage for un-ingestable OCSF events persists for 14 days; user era
 Backup encompasses Postgres + Redis AOF + credential vault snapshot; MinIO is excluded. Restore-time GDPR + residency claims are incomplete if workspace artifacts are absent.
 
 **Recommendation:** Add MinIO snapshot to backup pipeline (native backup or bucket replication); cross-document in §20.4.
+
+**Status:** Fixed — Added an "ArtifactStore Backup (MinIO workspace bucket replication)" subsection to §25.11 (agent-operability backup-and-restore API) covering: continuous asynchronous bucket replication to an off-cluster destination as the mechanism; the Helm-values block (`minio.artifactBackup.*`) with per-region structure that inherits the `backups.regions` residency rules; tier-specific RPO/RTO targets (15m replication-lag RPO at Tier 2/3, RTO matching Postgres because target-promotion is a Helm-values change); the restore procedure (promote the replication target, validate against `artifact_store` rows, clean orphans via the existing §12.5 GC path, reverse-replicate to re-establish DR); the consistency rule between Postgres restore point and replication-lag horizon (orphan rows are handled idempotently by the existing GC guard — no new reconciler — and `POST /v1/admin/restore/preview` surfaces `artifactReplicationLagSeconds` / `estimatedOrphanArtifactRows` so operators can choose a restore point `<= now() - lag`); symmetry with tenant crypto-shredding via replicated SSE-KMS headers; and sampled-HEAD test-restore integration that feeds the existing `lenny_restore_test_success` gate. Added `MinIOArtifactReplicationLagHigh` and `MinIOArtifactReplicationFailed` alerts to §16.5, registered `lenny_minio_replication_lag_seconds`, `lenny_minio_replication_failed_total`, `lenny_restore_artifact_missing_total`, `lenny_restore_test_artifact_success_rate`, and `lenny_restore_test_artifact_missing_total` in §16.1 and §16.8, separated Postgres RPO from ArtifactStore RPO in the §25.11 RTO/RPO Targets by Tier table, and rewrote the §17.3 Backup Schedule bullet to reference the continuous-replication approach. Note: the finding's "§20.4" section reference does not match current spec structure (§20 is the (resolved) open-questions file and contains no backup content); the actual backup-pipeline specification lives in §25.11 with cross-references from §12.5, §12.8, and §17.3, all of which were updated where relevant.
 
 ---
 
@@ -686,12 +695,16 @@ Regression from iter2 CRD-005 fix — metric added without canonical prefix.
 
 **Recommendation:** Rename to `lenny_credential_rotation_inflight_ceiling_hit_total`.
 
+**Status:** Fixed — metric renamed to `lenny_credential_rotation_inflight_ceiling_hit_total` at all three call sites: §16.1 metrics table row, §16.5 `OutstandingInflightAtRotationCeiling` alert expression, and §4.7 Revocation-triggered rotation ceiling description. Canonical `lenny_` prefix now matches iter2 convention for all platform metrics.
+
 ### CRD-007. `rotationTrigger: scheduled_renewal` contradicts canonical `proactive_renewal` [Medium]
 **Section:** 4.9
 
 New value introduced in one place; canonical enum uses `proactive_renewal` elsewhere.
 
 **Recommendation:** Replace `scheduled_renewal` with `proactive_renewal`.
+
+**Status:** Fixed — the lone occurrence of `scheduled_renewal` at `spec/04_system-components.md` line 795 (§4.7 Revocation-triggered rotation ceiling) renamed to `proactive_renewal`, matching the canonical enum value already used at lines 1385 (§4.9 Proactive Lease Renewal) and 1675 (§4.9.2 `credential.renewed` audit event). No other spec files or sections referenced `scheduled_renewal`. The ceiling carve-out now reads "The ceiling does NOT apply to scheduled rotations (e.g., `rotationTrigger: proactive_renewal`)", resolving the ambiguity about whether the 300 s cap applies to the documented proactive-renewal path.
 
 ### CRD-008. `rotationTrigger: fault_driven_rate_limited` not defined in §4.9 fallback flow enum [Low]
 **Section:** 4.9
@@ -706,6 +719,8 @@ Missing enum row.
 Pool creation and update paths still retain the original CRD-004 gap — operator can create a pool whose credential reference lacks RBAC.
 
 **Recommendation:** Extend live-probe to create/update; surface `CREDENTIAL_SECRET_RBAC_MISSING`.
+
+**Status:** Fixed — §4.9 Admin-time RBAC live-probe paragraph generalized to cover all three write paths (`POST /v1/admin/credential-pools`, `POST /v1/admin/credential-pools/{name}/credentials`, `PUT /v1/admin/credential-pools/{name}/credentials/{credId}`), with the pool-creation path iterating the full `credentials[].secretRef` list and returning all missing Secrets in one response; §15.1 `CREDENTIAL_SECRET_RBAC_MISSING` row updated to enumerate the three endpoints and switch `details.resourceName` to a plural `details.resourceNames` array. Bootstrap-seeded pools remain exempt (RBAC rendered atomically).
 
 ### CRD-010. 300 s revocation-triggered rotation ceiling emits metric but no audit event [Low]
 **Section:** 4.9
@@ -732,12 +747,16 @@ Error surfaces at runtime; operators have no documented recovery path.
 
 **Recommendation:** Generalise to host-agnostic; enumerate supported auth providers.
 
+**Status:** Fixed — generalised `auth.leaseScope` to the host-agnostic pattern `vcs.<provider>.{read|write}` in §14 with v1 shipping `github` as the only built-in VCS provider (extensible via the custom `CredentialProvider` interface in §4.9 for GitLab/Bitbucket/Gitea/self-hosted). Added a `hostPatterns` field on VCS credential pools in §4.9 (with a YAML example) so the gateway deterministically binds `gitClone.url` host → pool → `<provider>` segment at session creation. Added two new 400 error codes in §15 (`GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`) covering zero-match and multi-match cases. Updated both mentions in §26.2 to match.
+
 ### CNT-006. `uploadArchive` format list mismatch between §14 and §7.4 [Medium — real error]
 **Section:** 14 + 7.4
 
 §14 lists `{tar.gz, zip}`; §7.4 lists `{tar.gz, tar.zst, zip}`.
 
 **Recommendation:** Reconcile; add `tar.zst` to both or remove from §7.4.
+
+**Status:** Fixed — aligned §7.4 to §14's canonical enumeration. §14 is the schema of record (`uploadArchive.format` = `tar`, `tar.gz`, `zip`); §7.4 previously listed `{tar.gz, tar.bz2, zip}` (the finding's specific format names were approximate — the actual extra format was `tar.bz2`, not `tar.zst` — but the mismatch it describes was real). Replaced §7.4's list with `tar`, `tar.gz`, `zip` and added an inline cross-reference to the §14 enumeration so the two sections cannot drift again. `tar.bz2` was not referenced anywhere else in the spec, so removal is safe.
 
 ### CNT-007. `gitClone.auth` paragraph does not bind credential-pool identity to session [Minor — clarity]
 **Section:** 14.x
@@ -764,12 +783,16 @@ Spec says "partial manifests" but doesn't say whether MinIO stores one multipart
 
 **Recommendation:** Specify separate objects with indexed names (`partial-{n}.tar.gz`) and a manifest pointing to them.
 
+**Status:** Fixed — rewrote the §10.1 "Partial manifest on checkpoint timeout" paragraph to adopt a **chunked-object storage model**: separate, independently committed MinIO objects named `/{tenant_id}/checkpoints/{session_id}/partial/{checkpoint_id}/partial-{n}.tar.gz` (zero-padded 5-digit monotonic index), each uploaded via single-part `PutObject` (not S3 multipart `UploadPart`). The manifest now records `checkpoint_id`, `chunk_count`, `chunk_size_bytes`, `chunk_encoding`, and `partial_object_key_prefix` — the full per-object key list is derived from prefix + index and not materialised. Reassembly on resume is defined as a contiguity-checked `ListObjectsV2` under the prefix followed by in-order concat + `tar -x` (tar's EOF handling discards the inevitable truncated trailing member). The replacement explicitly justifies why chunked objects beat S3 multipart (stable per-object addressability without `UploadId`, deterministic concat, `DeleteObject`-only cleanup) and propagates the model into §4.4 (both the Checkpoint Atomicity exception paragraph and the Partial checkpoint manifest cleanup paragraph now reference `partial_object_key_prefix` + per-key `DeleteObject` and explicitly state that `AbortMultipartUpload` is not used on this path) and §12.5 (GC backstop switched from the ambiguous "AbortMultipartUpload or DeleteObject" dual-path to pure `DeleteObject` per chunk under the prefix). §4.4 "MinIO object key logging for manual recovery" updated so the emitted `committed_minio_keys` now unambiguously refers to `partial-{n}.tar.gz` chunk objects and the operator-recovery procedure references the §10.1 concat-in-index-order reassembly. Added `partialChunkSizeBytes` (16 MiB default) to the §17.8.1 operational-defaults table for a complete configuration surface.
+
 ### CPS-005. Partial-manifest truncation lies on arbitrary byte offset, not tar-member boundary [Medium]
 **Section:** 10.x
 
 Recovery produces corrupt tars.
 
 **Recommendation:** Align truncation to the last completed tar-member offset; record offset in the manifest.
+
+**Status:** Fixed — rejected the "align to tar-member boundary" recommendation in favor of the simpler, more general concat-and-stream model (per-chunk member alignment is unnecessary once reassembly is a single concatenated pipeline). Added a new "Chunk boundaries do not align with tar members" paragraph to §10.1 stating explicitly that the adapter slices one continuous `tar`/`tar.gz` stream at arbitrary `partialChunkSizeBytes` offsets, tar member headers/payloads and gzip deflate blocks **will** straddle chunk boundaries, no per-chunk member offsets are recorded in the manifest, and individual chunks are never decompressed or parsed as tar in isolation. Rewrote the "Reassembly on resume" paragraph to (a) make explicit that chunk bodies are concatenated into a single byte stream fed end-to-end into one decompress→untar pipeline (`gzip -dc | tar -x` for `tar.gz`, `tar -x` for `tar`) with no decompressor/extractor reset between chunks, (b) enumerate contiguity failure modes in step 1 as atomic aborts before any body is fetched (missing index, out-of-order, unexpected extra), (c) document in a new step 4 that extraction targets a staging directory (`/workspace/current.partial`) and is atomically renamed onto `/workspace/current` only on success — any non-terminal failure (chunk `GetObject` error, mid-stream gzip CRC/format error, mid-stream tar header parse error) deletes the staging dir in its entirety and falls back to the last successful full checkpoint, so partially-extracted files never become visible. Final-chunk truncation continues to rely on tar's standard end-of-archive handling (incomplete header / short read at final member is silently discarded). No changes needed to §4.4 or §12.5 — both reference §10.1 for the reassembly model and the updated narrative is consistent with their existing text.
 
 ### CPS-006. Partial-manifest resume path lacks coordinator_generation guard against split-brain [Low]
 **Section:** 10.x
@@ -802,12 +825,16 @@ Phase 3.5 still names only 3 of 8 webhooks + 0 of 4 policy manifests.
 
 **Recommendation:** Update Phase 3.5 deliverables to enumerate all 12 items from §17.2; cross-reference.
 
+**Status:** Fixed — `spec/18_build-sequence.md` Phase 3.5 row now enumerates items 1–5, 7, 9, and 12 from the [Section 17.2](17_deployment-topology.md#172-namespace-layout) admission-plane enumeration (Restricted PSS for runc, RuntimeClass-relaxed PSS for gVisor/Kata, `POD_SPEC_HOST_SHARING_FORBIDDEN`, label-based namespace targeting, `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`) with an explicit forward-reference noting that items 6 (`lenny-direct-mode-isolation` → Phase 5.8), 8 (`lenny-data-residency-validator` → Phase 13), 10 (`lenny-t4-node-isolation` → Phase 13), and 11 (`lenny-drain-readiness` → Phase 8) are deployed in the later phase where their gated feature lands, per BLD-007/008/009. HA requirements (`replicas: 2` + `podDisruptionBudget.minAvailable: 1` + `lenny.dev/component: admission-webhook` label) are called out with a cross-reference to §17.2.
+
 ### BLD-006. Phase 4.5 bootstrap seed missing `global.noEnvironmentPolicy` after iter2 TNT fix [High]
 **Section:** 18.4
 
 Iter2 TNT-002 fix added the Helm value; build-sequence's bootstrap inventory did not update.
 
 **Recommendation:** Add the value to Phase 4.5's required Helm values list.
+
+**Status:** Fixed — `spec/18_build-sequence.md` Phase 4.5 row now carries an explicit "Required Helm values (bootstrap inventory)" clause naming `global.noEnvironmentPolicy` with its `deny-all` default, cross-references to [§17.6](../../../../spec/17_deployment-topology.md#176-packaging-and-installation) and the [§10.3](../../../../spec/10_gateway-internals.md#103-mtls-pki) startup-configuration validation, the `LENNY_CONFIG_MISSING{config_key=noEnvironmentPolicy, scope=platform}` fatal-startup contract, and a Phase 4.5 CI gate that both (a) verifies default-chart install produces a Ready gateway and (b) verifies stripping the value causes the gateway to refuse to become Ready.
 
 ### BLD-007. Phase 5.8 LLM Proxy deliverables reference `lenny-direct-mode-isolation` as existing, but Phase 3.5 hasn't deployed it [Medium]
 **Section:** 18.4
@@ -816,12 +843,16 @@ Phase sequencing: 3.5 must deploy the webhook before 5.8 relies on it.
 
 **Recommendation:** Move `lenny-direct-mode-isolation` into Phase 3.5 or split into 3.5a/3.5b.
 
+**Status:** Fixed — `spec/18_build-sequence.md` Phase 5.8 deliverable (9) was rewritten from a passive "webhook blocks ..." reference into an explicit **deploy** action: Phase 5.8 now owns the first-deploy of `lenny-direct-mode-isolation` (item 6 of the [§17.2](../../../../spec/17_deployment-topology.md#172-namespace-layout) enumeration) as the counterpart to Phase 3.5's explicit deferral (BLD-005 already pinned item 6 to "Phase 5.8 where the gated feature lands"). The deliverable now names the uniform HA contract the webhook must ship with — `replicas: 2`, `podDisruptionBudget.minAvailable: 1`, `failurePolicy: Fail`, the `lenny.dev/component: admission-webhook` pod label, and the `DirectModeIsolationWebhookUnavailable` alert wiring per [§16.5](../../../../spec/16_observability.md#165-alerting-rules-and-slos) — and calls out that both the `lenny-preflight` enumeration check and the `admission_webhook_inventory_test.go` integration suite must recognise the webhook as present once the phase completes. The rule-set the webhook enforces is now stated inline (rejects `(a) direct + standard` and `(b) proxy + spiffeBinding: disabled` under `tenancy.mode: multi`), matching the SEC-006 expansion in [§17.2](../../../../spec/17_deployment-topology.md#172-namespace-layout) item 6 so Phase 5.8 and §17.2 no longer disagree on scope. Chose explicit-deploy-in-5.8 over splitting Phase 3.5: the webhook gates a feature that does not exist until 5.8, so deploying it in 3.5 would either add a feature flag Lenny does not otherwise carry or ship a webhook with no rule it can enforce against live traffic.
+
 ### BLD-008. Phase 13 compliance work does not enumerate `lenny-data-residency-validator` / `lenny-t4-node-isolation` deployments [Medium]
 **Section:** 18.4
 
 These webhooks are §13-new and need a deployment phase.
 
 **Recommendation:** Add both to Phase 13 deliverables.
+
+**Status:** Fixed — Phase 13 row in `spec/18_build-sequence.md` now explicitly owns first-deploy of items 8 (`lenny-data-residency-validator`) and 10 (`lenny-t4-node-isolation`) from the §17.2 admission-plane enumeration, with the uniform HA contract (`replicas: 2`, `podDisruptionBudget.minAvailable: 1`, `failurePolicy: Fail`, `lenny.dev/component: admission-webhook` pod label) plus the `DataResidencyWebhookUnavailable` / `T4NodeIsolationWebhookUnavailable` alerts wired per §16.5, and `lenny-preflight` + `admission_webhook_inventory_test.go` recognition — mirroring the Phase 3.5 (BLD-005) and Phase 5.8 (BLD-007) deployment contracts.
 
 ### BLD-009. Phase 8 checkpoint/resume work does not enumerate `lenny-drain-readiness` deployment [Low]
 **Section:** 18.4
@@ -848,6 +879,8 @@ Iter2 FLR-002 fix set `minAvailable: 2` + Tier 1 `minReplicas: 2` → node drain
 
 **Recommendation:** Use `maxUnavailable: 1` for Tier 1 instead, or raise Tier 1 `minReplicas` to 3.
 
+**Status:** Already Fixed — Resolved as a side-effect of the PRF-005 fix, which replaced the tier-conditional `minAvailable` with a flat `maxUnavailable: 1` PDB at every tier. Tier 1 (`minReplicas: 2`) can now drain 1 pod at a time without blocking, and rolling updates progress normally.
+
 ### FLR-007. Gateway PDB formula `ceil(replicas/2)` not expressible as PDB YAML [Medium]
 **Section:** 17.5
 
@@ -855,12 +888,16 @@ PodDisruptionBudget allows integer or percentage; dynamic formulas aren't native
 
 **Recommendation:** Express as `minAvailable: 50%` (K8s rounds up) and document the semantics.
 
+**Status:** Already Fixed — Resolved as a side-effect of the PRF-005 fix. The PDB is now specified as `maxUnavailable: 1` (a valid PDB field), eliminating the unrepresentable `ceil(replicas/2)` formula from the spec.
+
 ### FLR-008. preStop cache population gap on coordinator handoff [Medium]
 **Section:** 10.8
 
 Iter2 FLR-004 fix says "use cached value if Postgres unreachable" — but handoff to a new coordinator means an empty cache.
 
 **Recommendation:** Prime cache on coordinator assume-leader; document cold-start behaviour.
+
+**Status:** Fixed — Extended step 0 of the coordinator handoff protocol (§10.1) to SELECT `last_checkpoint_workspace_bytes` alongside `tenant_id`/`coordination_generation` and prime the in-replica cache before the replica begins coordinating the session. Added a "Cold-start behaviour after rolling updates" paragraph explaining the bounded per-session priming latency window, and added an "Observability — preStop tier selection source" paragraph introducing `lenny_prestop_cap_selection_total` (labels `pool`, `source`: `postgres` | `cache_hit` | `cache_miss_max_tier`). Registered the new metric in §16.1 next to the CheckpointBarrier metrics and added the `PreStopCapFallbackRateHigh` warning alert in §16.5 (fires when the `cache_miss_max_tier` share exceeds 5% of a replica's preStop selections over 15 minutes).
 
 ### FLR-009. `InboxDrainFailure` alert rule text not evaluable PromQL [Low]
 **Section:** 16.5
@@ -899,6 +936,8 @@ Query parameter accepted; response shape unspecified.
 
 **Recommendation:** Define a `BreakdownResponse` schema with typed aggregations.
 
+**Status:** Fixed — Added `BreakdownResponse` schema definition in §10.7 (`spec/10_gateway-internals.md`) immediately after the default Results API response example. The new block specifies: (a) response replaces `scorers` with a `breakdowns` array when `breakdown_by` is present; (b) each bucket is a self-contained sub-aggregate with typed `bucket_value` (`uint32` for `delegation_depth`, `bool` for `inherited`/`submitted_after_conclusion`); (c) per-bucket `scorers`/`dimensions` structures mirror the default response; (d) top-level and per-variant `breakdown_by` echoes; (e) variant `sample_count` equals the sum across its buckets; (f) zero-row buckets omitted; (g) ascending bucket ordering; (h) blinding and per-dimension aggregation rules apply per-bucket. Included a JSON example for `breakdown_by=delegation_depth` and noted boolean-bucket behavior for the other two breakdown fields. Also updated the query-parameter table row to cross-reference the new schema.
+
 ### EXP-007. Variant count still unbounded [Low]
 **Section:** 22.x
 
@@ -920,6 +959,8 @@ When pod isolation profile doesn't match variant's target, request silently fall
 
 **Recommendation:** Fail closed with `VARIANT_ISOLATION_UNAVAILABLE` instead of silent fallthrough.
 
+**Status:** Fixed — Rewrote the ExperimentRouter isolation-monotonicity-check paragraph in `spec/10_gateway-internals.md` §10.7 so that an isolation mismatch rejects session creation with `VARIANT_ISOLATION_UNAVAILABLE` (HTTP 422) rather than silently routing the session to the base runtime; the `experiment.isolation_mismatch` warning event is still emitted alongside the rejection, and the paragraph now records the rationale (control-bucket contamination) and operator remediation. Added the `VARIANT_ISOLATION_UNAVAILABLE` row to the `spec/15_external-api-surface.md` §15.1 error catalog with `POLICY` category, 422 status, structured `details` fields (`experimentId`, `variantId`, `sessionMinIsolation`, `variantPoolIsolation`), and `Not retryable as-is` guidance.
+
 ---
 
 ## 22. Documentation (DOC)
@@ -931,6 +972,8 @@ Anchor broken.
 
 **Recommendation:** Fix heading or anchor reference.
 
+**Status:** Fixed — line 278 in `06_warm-pod-model.md` used the intra-file link `[§7.3](#73-retry-and-resume)`, but §7.3 lives in `07_session-lifecycle.md`. Converted to the cross-file form `[§7.3](07_session-lifecycle.md#73-retry-and-resume)` used by the other two references on lines 213 and 221.
+
 ### DOC-009. Cross-file anchor `16_observability.md#167-audit-event-catalogue` does not exist [Medium]
 **Section:** 16
 
@@ -938,12 +981,16 @@ No such heading.
 
 **Recommendation:** Rename §16.7 to include "Audit Event Catalogue" or fix the reference to the actual heading.
 
+**Status:** Fixed — updated the single call site in `11_policy-and-controls.md` §11.6 line 302 to point at the actual heading slug `#167-section-25-audit-events`. Chose this over renaming the heading because DOC-011 tracks that rename separately, and renaming here would conflict with the other fix.
+
 ### DOC-010. Two broken `06/12` anchors in admission-policies enumeration [Medium]
 **Section:** 13
 
 Links to `#6-warm-pod-model` / `#12-data` fail.
 
 **Recommendation:** Fix anchors to resolve.
+
+**Status:** Fixed — the broken anchors live in the admission-policies enumeration in `17_deployment-topology.md` §17.2 (DOC.md:46 in the detail file clarifies the locations). Line 51 changed `#64-resource-limits-and-isolation` → `#64-pod-filesystem-layout` (the actual §6.4 heading is "Pod Filesystem Layout", which contains the T4 isolation rules). Line 52 changed `#125-minio-object-storage` → `#125-artifact-store` (actual §12.5 heading). Also fixed the same `#64-resource-limits-and-isolation` regression in `18_build-sequence.md` line 63.
 
 ### DOC-011. Headings "16.7 Section 25 Audit Events" / "16.8 Section 25 Metrics" still confusing [Low]
 **Section:** 16
@@ -970,6 +1017,8 @@ TOC miss.
 
 **Recommendation:** Use FIFO everywhere; `LPUSH` / `RPOP` or `RPUSH` / `LPOP`. Pick one set and propagate.
 
+**Status:** Fixed — aligned §12.4's durable-inbox key row in `12_storage-architecture.md` to the §7.2 command set, replacing `LPUSH`/`LREM`/`LRANGE` with `RPUSH`/`LPOP`/`LREM`/`LRANGE` and appending an explicit `(FIFO — see §7.2)` annotation. Chose to edit §12.4 (single table cell) rather than §7.2 (five interlocking references including Lua size-bound, LTRIM TTL trim, and FIFO crash recovery) as the minimal-edit path; grep confirms both sites and all FIFO prose are now consistent, and no LIFO references exist.
+
 ### MSG-008. `message_expired` reason codes diverge across three drain paths [Medium]
 **Section:** 7.2
 
@@ -977,12 +1026,16 @@ Three prose passages use subtly different reason strings.
 
 **Recommendation:** Standardise on `message_expired` everywhere.
 
+**Status:** Fixed — collapsed the three divergent reason strings (`target_ttl_exceeded`, `target_terminated`, `session_terminal`) into a canonical two-value enum: `dlq_ttl_expired` (pre-terminal DLQ TTL elapsed) and `target_terminated` (target reached a terminal state covering both inbox-drain-on-terminal and DLQ-drain-on-terminal paths). Updated §7.2 line 321 to emit `dlq_ttl_expired` instead of `target_ttl_exceeded`, updated §7.2 `awaiting_client_action` bullet's "DLQ drain on terminal transition" to emit `target_terminated` instead of `session_terminal`, and added a canonical `message_expired` `reason` enum table to §15.4.1 (alongside the `delivery_receipt` schema) with a MUST-NOT-emit-synonyms clause that names the deprecated strings. §7.2 line 317 (inbox-drain-on-terminal) already used `target_terminated` and was left unchanged.
+
 ### MSG-009. Metrics referenced by inbox prose not declared in §16.1 [Medium]
 **Section:** 16.1
 
 Several `lenny_inbox_*` metrics only exist in prose.
 
 **Recommendation:** Add to §16.1 registry.
+
+**Status:** Fixed — added two rows to the §16.1 metrics table directly after `lenny_inbox_drain_failure_total` so all inbox metrics are grouped: `lenny_inbox_duplicate_suppressed_total` (counter, labeled by `pool` + `runtime_class`, with an explicit `session_id`-excluded note citing §16.1.1 high-cardinality rules) and `lenny_inbox_redis_unavailable_total` (counter, labeled by `pool` + `tenant_id`). Added a paired `DurableInboxRedisUnavailable` warning alert to §16.5 (triggers on `rate(lenny_inbox_redis_unavailable_total[5m]) > 0` sustained for 2 minutes) with a note that deployers already paging on a cluster-wide `RedisUnavailable` MAY suppress it. Both metrics now satisfy the §16.1 completeness rule established by OBS-007/008/009 and cross-link back to §7.2.
 
 ### MSG-010. Pre-receipt rejections enumerated only in §15 catalog, not reconciled in §15.4.1 [Low]
 **Section:** 15.4.1
@@ -1002,6 +1055,8 @@ AdmissionController says "AuthEvaluator runs first"; AuthEvaluator docs say "Adm
 
 **Recommendation:** Canonicalize: AdmissionController → AuthEvaluator → ConnectorEvaluator; update both prose blocks.
 
+**Status:** Fixed — Canonicalized the admission chain ordering as `AuthEvaluator` (`PreAuth`, priority 100) → `AdmissionController` (pre-chain gate) → `PostAuth` / `PreDelegation` interceptor chains. The §11.6 callout previously said "runs before `AuthEvaluator`" (spec/11_policy-and-controls.md line 300); it now says "runs after `AuthEvaluator` completes at `PreAuth` and before the `PostAuth` and `PreDelegation` interceptor chains run", matches §4.8, and explicitly spells out why the gate runs after authentication (so the audit payload carries `caller_sub`/`caller_tenant_id` as §16.7 already specifies). The §4.8 callout (spec/04_system-components.md line 952) was tightened to state the same ordering explicitly rather than implying it.
+
 ### POL-016. Broken anchor in POL-014 audit-catalog cross-reference [Low]
 **Section:** 13
 
@@ -1016,6 +1071,8 @@ Storm scenario can flood the audit pipeline.
 
 **Recommendation:** Sample 1:100 for this event during storm; suppress individually with aggregated `circuit_breaker_storm` summary event every 60 s.
 
+**Status:** Fixed — Added a "Sampling under breaker storms" paragraph to §11.6 (spec/11_policy-and-controls.md after line 302) that mirrors the `token.exchange_rate_limited` discipline in §13.3: the first rejection per `(tenant_id, circuit_name, caller_sub)` per rolling 10-second window per replica writes a full audit row; subsequent rejections increment `lenny_circuit_breaker_rejections_suppressed_total` without writing individual rows. The recommendation's "1:100 + 60-second summary event" was not adopted verbatim because the iter3 reviewer note (POL-017 body in `spec-reviews/.../iter3/POL.md`) explicitly asks for parity with the §13.3 sampling pattern, which is per-caller/per-window elision rather than a ratio + summary event; using the existing pattern keeps the same correlation discipline (`limit_tier` label vocabulary shared across metric / audit payload / suppression counter) and avoids introducing a one-off `circuit_breaker_storm` event type. The §11.6 "Observability" paragraph now declares `lenny_circuit_breaker_rejections_total` and `lenny_circuit_breaker_rejections_suppressed_total`; both metrics are also added to the §16.1 Circuit Breaker (Global) section and surfaced in the `CircuitBreakerActive` alert body (§16.5) so on-call can size the rejection storm against a tripped breaker. The §16.7 `admission.circuit_breaker_rejected` payload was extended with `limit_tier` and `replica_service_instance_id` to match the sampling vocabulary and per-replica locality.
+
 ---
 
 ## 25. Extensions / Session state machine (EXM)
@@ -1027,12 +1084,16 @@ Used as a state; no semantic.
 
 **Recommendation:** Define or remove.
 
+**Status:** Fixed — Removed the undefined token from §6.2 (`spec/06_warm-pod-model.md` line 133). The `task_cleanup → sdk_connecting` success transition now reads "scrub succeeds" verbatim; the "scrub_warning within budget" case is already handled by the separate `task_cleanup → sdk_connecting [scrub_warning]` transition on line 134 (which references `onCleanupFailure: warn` and `maxScrubFailures not reached` — both defined in §5.2), so no new state taxonomy was needed. Chose removal over definition because introducing `warn_within_budget` as a third scrub outcome would have fragmented the existing two-outcome vocabulary (`succeeded` vs. `scrub_warning`) already documented in §5.2 and the "preConnect re-warm on scrub_warning" note.
+
 ### EXM-008. `node not draining` precondition introduced but undefined [Medium]
 **Section:** 7.x
 
 No formal definition.
 
 **Recommendation:** Tie to node annotation `node.kubernetes.io/unschedulable == false`.
+
+**Status:** Fixed — Replaced "node not draining" on the `task_cleanup → sdk_connecting` transition in §6.2 (`spec/06_warm-pod-model.md` line 133) with the concrete phrase "host node is schedulable", and added a new "Host-node schedulability precondition" paragraph after the `leaked` slot semantics note (line 160). The definition ties the precondition to the Kubernetes Node object's `.spec.unschedulable == false` (equivalently the `node.kubernetes.io/unschedulable` taint applied on cordon/drain), specifies that the gateway evaluates the condition via its Node informer cache at the `task_cleanup` transition moment (not during SDK re-warm), and documents the fallback behavior (pod transitions to `draining` if the host node is unschedulable, avoiding imminent-eviction re-warm). Scope is limited to preConnect pools, where the invariant applies; non-preConnect pools are explicitly called out as unaffected at `task_cleanup` time.
 
 ### EXM-009. `cancelled → task_cleanup` transition skips retirement-check semantics [Low]
 **Section:** 7.x

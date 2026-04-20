@@ -3708,7 +3708,7 @@ In-flight reconciliations appear in the Operations Inventory (Section 25.4) with
 
 ## 25.11 Backup and Restore API
 
-APIs for managing platform backups, extending the disaster recovery procedures in Section 17.3. `lenny-ops` creates K8s Jobs for backup/restore operations and tracks their status in Postgres.
+APIs for managing platform backups, extending the disaster recovery procedures in Section 17.3. `lenny-ops` creates K8s Jobs for backup/restore operations and tracks their status in Postgres. The backup pipeline has two surfaces: a **Postgres/config archive pipeline** (described below through the Backup Execution section — covers Postgres shards, platform configuration, CRDs, and optional secrets, packaged into a `pg_dump`-style tar archive in MinIO) and a **continuous ArtifactStore replication pipeline** (MinIO workspace bucket replicated to an off-cluster destination — see ArtifactStore Backup below). Restore of a disaster-struck deployment requires both surfaces: Postgres rows reference ArtifactStore object keys, so restoring Postgres alone against a missing ArtifactStore produces unusable sessions.
 
 ### Endpoints
 
@@ -3728,6 +3728,7 @@ APIs for managing platform backups, extending the disaster recovery procedures i
 | `GET` | `/v1/admin/restore/safety-check` | Compare a backup against current state to estimate data loss. Params: `?backupId=`. |
 | `GET` | `/v1/admin/restore/{id}/status` | Per-shard status of an in-flight or completed restore (for monitoring and failure diagnosis). |
 | `POST` | `/v1/admin/restore/resume` | Resume a partially-completed restore. Params: `?restoreId=`. Caller must hold the original `restore:platform` lock. |
+| `POST` | `/v1/admin/restore/{id}/confirm-legal-hold-ledger` | Confirm that the current legal-hold ledger is authoritative after a `gdpr.backup_reconcile_blocked` stall (ledger restored in lockstep). Body: `{"justification": "<text>"}`. Requires `platform-admin`; operator identity and justification are recorded in the audit trail. Resumes the erasure reconciler on next retry. See [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Post-restore reconciler". |
 
 ### Go Interface
 
@@ -3865,6 +3866,58 @@ The Helm chart renders a suggested MinIO bucket policy that:
 
 Operators deploying on cloud object stores (S3, GCS, Azure Blob) should apply equivalent policies at the cloud provider level.
 
+#### ArtifactStore Backup (MinIO workspace bucket replication)
+
+The backup Job described above covers Postgres, platform configuration, CRDs, and (optionally) secrets — but the archive it produces does not include the **ArtifactStore** bucket (workspace snapshots, checkpoints, uploaded files, session transcripts, and eviction-context objects — see [§12.5](12_storage-architecture.md#125-artifact-store) and the erasure-scope table in [§12.8](12_storage-architecture.md#128-compliance-interfaces)). Postgres rows reference ArtifactStore objects by key; if a disaster restores only Postgres, those keys point to objects that no longer exist, breaking workspace reconstruction, checkpoint resume, transcript retrieval, and compliance-relevant object access (legal hold, erasure receipt attachments). ArtifactStore is therefore a first-class element of the backup pipeline, implemented as **bucket replication to an off-cluster destination** rather than a `pg_dump`-style archive.
+
+**Replication mechanism.** The ArtifactStore bucket is replicated continuously to a deployer-configured off-cluster destination (a second MinIO cluster, AWS S3, GCS, or Azure Blob — any S3-compatible endpoint). Replication is configured on the existing MinIO deployment via the Helm values block — no new operator, CRD, or service is introduced. For self-managed MinIO this uses MinIO's native bucket replication (`mc replicate add` equivalent, configured via the `minio.artifactBackup` Helm values); for cloud object stores the equivalent is provider-native cross-region or cross-account replication (S3 Replication Configuration, GCS Storage Transfer, Azure Blob object replication), configured on the provider at install time. Replication covers object PUT, object DELETE (so that erasure deletes propagate to the replication target), and — when the source bucket has versioning enabled — version history. Object-level server-side encryption (SSE-KMS per `storage.artifactStore.kmsKeyId`) is preserved at the destination.
+
+**Required Helm values.**
+
+```yaml
+minio:
+  artifactBackup:
+    enabled: true                          # Tier 2/3 default: true; Tier 1 (dev): false
+    target:
+      endpoint: ""                         # off-cluster S3-compatible endpoint (e.g.,
+                                           # "https://artifact-backup.lenny-dr:9000" or
+                                           # "https://s3.us-east-2.amazonaws.com")
+      bucket: ""                           # destination bucket name
+      accessCredentialSecret: ""           # K8s Secret with {accessKey, secretKey}
+      kmsKeyId: ""                         # KMS key on the destination side; must reside in
+                                           # the same jurisdiction when dataResidencyRegion
+                                           # is set (see §12.8 Backup pipeline residency)
+    versioning: true                       # source-bucket versioning required so that delete
+                                           # markers replicate without destroying prior versions
+    replicationLagRpoSeconds: 900          # Tier 2 default; Tier 3: 900 (15 min). Alert fires
+                                           # when lag exceeds this. Aligned with §25.11 RPO table.
+```
+
+In the per-region data-residency topology, `minio.artifactBackup.target` is declared **per region** under `minio.regions.<region>.artifactBackup.target.*`, mirroring the per-region structure of `backups.regions` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). A region that has any tenant with `dataResidencyRegion` set MUST have `minio.regions.<region>.artifactBackup.target.*` fully declared; `lenny-ops` validates at startup and rejects the configuration with `CONFIG_INVALID: minio.regions.<region>.artifactBackup.target incomplete` when missing. Cross-region artifact replication is prohibited — a region's ArtifactStore bucket may only replicate to a destination that itself resides in the same jurisdiction.
+
+**RPO/RTO targets.** The ArtifactStore backup inherits the same tier-parameterized RPO/RTO envelope as the Postgres pipeline (RTO/RPO Targets by Tier table above) with the following tier-specific RPO values reflecting replication lag rather than backup frequency:
+
+| Tier | Replication mode | RPO target (artifact loss window) | RTO target (restore-to-primary) |
+|------|------------------|----------------------------------|--------------------------------|
+| 1 (dev) | optional (off by default) | n/a | best-effort |
+| 2 (staging) | continuous async | 15m | 30m (same as Postgres RTO) |
+| 3 (prod) | continuous async | 15m | 15m (same as Postgres RTO) |
+
+**Replication lag** is monitored as `lenny_minio_replication_lag_seconds` (gauge, labeled by `region` when per-region is in use). The `MinIOArtifactReplicationLagHigh` alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)) fires at **Warning** when lag exceeds `minio.artifactBackup.replicationLagRpoSeconds` and at **Critical** when lag exceeds 4× the RPO — signalling that artifacts written in the most recent window are at risk of being lost in a full-site disaster. A second counter, `lenny_minio_replication_failed_total`, tracks object-level replication failures (permission, network, destination-full); `MinIOArtifactReplicationFailed` fires on any non-zero rate.
+
+**Restore procedure.** On primary-site loss, the ArtifactStore is restored by promoting the replication target to primary:
+
+1. Operator points the gateway's `storage.artifactStore.endpoint` (or `minio.regions.<region>.artifactStoreEndpoint`) at the replication target via a Helm-values change and applies the chart.
+2. `lenny-ops` validates the target's bucket inventory against the restored `artifact_store` Postgres rows (sampled, not exhaustive) and reports the count of `artifact_store` rows whose MinIO object is absent at the target (`lenny_restore_artifact_missing_total`).
+3. Rows whose objects are absent are cleaned up by the **existing GC path** ([§12.5](12_storage-architecture.md#125-artifact-store) GC job): the GC job's `WHERE deleted_at IS NULL` guard and MinIO delete-on-absent semantics already handle dangling pointers as idempotent no-ops, so a restored-from-replication ArtifactStore converges without a dedicated reconciler. Sessions whose workspace snapshot is missing transition to `failed` on next resume attempt with error `WORKSPACE_SNAPSHOT_MISSING`; the gateway surfaces this to clients via the existing session-state API ([§15.1](15_external-api-surface.md#151-rest-api)).
+4. Once the operator confirms the replication target is the authoritative primary, they reverse the replication direction (target → new standby) to re-establish DR posture.
+
+**Consistency rule — Postgres restore vs. ArtifactStore replication lag.** Because replication is asynchronous, a Postgres restore that pre-dates the most recent replicated artifact is trivially consistent (artifacts referenced by restored rows exist at the target). The reverse case — a Postgres restore point **newer** than the replication-target horizon — produces rows whose `artifact_store.id` points to objects not yet replicated. The existing **GC job** ([§12.5](12_storage-architecture.md#125-artifact-store)) observes these as orphan rows on next sweep and transitions them to `deleted` via the standard `WHERE deleted_at IS NULL` guard; there is no separate artifact reconciler and no new failure mode introduced. Operators who want to minimize the orphan count MUST choose a Postgres restore point whose `completed_at <= now() - lenny_minio_replication_lag_seconds` at restore time; the `POST /v1/admin/restore/preview` response includes `artifactReplicationLagSeconds` and `estimatedOrphanArtifactRows` drawn from the current replication-lag gauge so the operator can make an informed choice. The GDPR erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Backups in erasure scope) runs against the restored database state and enumerates `DeleteByUser` / `DeleteByTenant` receipts independently of ArtifactStore replication lag — any deletion the reconciler replays against MinIO is idempotent (delete-on-absent is a no-op) and propagates to the replication target via the standard replication path.
+
+**ArtifactStore backups and tenant crypto-shredding.** When `backups.encryption.perTenantWrapKeys: true` is used for Postgres archives, the ArtifactStore's equivalent is **per-tenant SSE-KMS keys** ([§12.5](12_storage-architecture.md#125-artifact-store) T4 per-tenant KMS key lifecycle) — `DeleteByTenant` destroys the tenant's KMS key, rendering every tenant artifact in both the primary bucket **and the replication target** cryptographically unrecoverable. No additional configuration is required on the replication target beyond replicating the SSE-KMS header (native behavior for MinIO replication and provider-native S3/GCS replication). Crypto-shredding of the Postgres archive and crypto-shredding of the ArtifactStore therefore remain symmetric after a full-site disaster.
+
+**Test restore.** The monthly test-restore Job (see Test Restore below) covers ArtifactStore as well: it exercises a sampled read from the replication target (HEAD on N randomly selected object keys drawn from the restored `artifact_store` rows, where N is configured via `backups.verification.artifactSampleSize`, default 100), asserts that ≥ 99% of samples exist at the target, and emits `lenny_restore_test_artifact_success_rate` (gauge) and `lenny_restore_test_artifact_missing_total` (counter). A sampled success rate < 99% sets `lenny_restore_test_success = 0` (the existing test-restore gate [§16.1](16_observability.md#161-metrics)) so the existing restore-test monitoring picks up ArtifactStore failures alongside Postgres failures; no new alert is introduced.
+
 #### Backup Progress
 
 `GET /v1/admin/backups/{id}` includes the canonical `progress` envelope (Section 25.2) while `status IN ('running', 'verifying')`. For `running` backups: `percent` = `bytesWritten / bytesEstimated` (size-based), `etaMethod: "linear_extrapolation"`, `rateMetric: {"name": "bytes_per_second", "value": ...}`. For `verifying` backups: `percent` = `bytesScanned / archiveSize`, `etaMethod: "linear_extrapolation"`. The `operation_progressed` event fires on percent thresholds (10/25/50/75/90/95/99).
@@ -3912,7 +3965,7 @@ The restore process:
 3. **Pre-restore backup.** Creates a full backup tagged `type: "pre-restore"` to MinIO. This backup is retained for 7 days by default (configurable via `backups.retention.preRestoreRetainDays`) and is automatically deleted when the restore completes successfully (see Pre-Restore Backup Lifecycle below). Failed restores keep the pre-restore backup for the full retention window for post-mortem recovery.
 4. **Create the restore K8s Job.** Runs `pg_restore` against each shard. The Job has the same security profile as backup Jobs but with write access on the target shards. Per-shard progress is recorded in `ops_restore_state` (see Failure and Recovery below).
 5. **Emit events.** `restore_started` on kick-off; per-shard `restore_shard_completed` events as each shard finishes; `restore_completed` (all shards) or `restore_failed` (any shard fails) on exit.
-6. **GDPR erasure reconciler.** Between `restore_completed` and the gateway restart, `lenny-ops` runs the post-restore erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope"). The reconciler scans the restored `audit_log` for rows matching `event_type LIKE 'gdpr.%'` with the receipt's `completed_at > ops_backups.completed_at` (the `backupTakenAt` boundary), replays `DeleteByUser(user_id)` / `DeleteByTenant(tenant_id)` for each enumerated subject against the restored databases in dependency order, and emits a single `gdpr.backup_reconcile_completed` audit event with the reconciled subjects. `gdpr.*` receipts survive restore under `audit.gdprRetentionDays` (7y default), which always exceeds the 90-day maximum `backups.retention.retainDays`. The reconciler executes as a dedicated K8s Job with the same security profile as the restore Job. **Ready-gating:** the gateway MUST NOT be restarted or marked Ready until the reconciler reports success. On reconciler failure (individual replay failure, Postgres unavailability mid-reconcile, or enumeration error), the restore is aborted with `RESTORE_ERASURE_RECONCILE_FAILED`, `ops_restore_state.status` is set to `"failed"`, the `restore_failed` event is emitted with `failure_phase: "erasure_reconcile"`, the `restore:platform` remediation lock remains held, and step 7 is skipped — the gateway is not restarted because serving a partial reconcile would resurrect erased personal data.
+6. **GDPR erasure reconciler.** Between `restore_completed` and the gateway restart, `lenny-ops` runs the post-restore erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope"). The reconciler scans the restored `audit_log` for rows matching `event_type LIKE 'gdpr.%'` with the receipt's `completed_at > ops_backups.completed_at` (the `backupTakenAt` boundary); before replay it runs the **legal-hold ledger freshness gate** (§12.8 phase 2) — it consults the current legal-hold ledger (not the backup-time snapshot) and blocks replay with `gdpr.backup_reconcile_blocked` if the ledger's most recent write timestamp is `<= backupTakenAt` (i.e., the ledger itself is stale because it was restored in lockstep), since the reconciler cannot then prove that a post-backup hold does not veto an enumerated erasure or that a post-backup hold release does not expand which artifacts the replay must delete. When the ledger is fresh, the reconciler replays `DeleteByUser(user_id)` / `DeleteByTenant(tenant_id)` for each enumerated subject (suppressing replay for any subject under an active hold whose `legal_hold.set` post-dates the receipt) against the restored databases in dependency order, and emits a single `gdpr.backup_reconcile_completed` audit event with the reconciled and suppressed subjects. `gdpr.*` receipts survive restore under `audit.gdprRetentionDays` (7y default), which always exceeds the 90-day maximum `backups.retention.retainDays`. The reconciler executes as a dedicated K8s Job with the same security profile as the restore Job. **Ready-gating:** the gateway MUST NOT be restarted or marked Ready until the reconciler reports success. On reconciler failure (individual replay failure, Postgres unavailability mid-reconcile, enumeration error, or the legal-hold ledger freshness gate blocking with `gdpr.backup_reconcile_blocked`), the restore is aborted with `RESTORE_ERASURE_RECONCILE_FAILED`, `ops_restore_state.status` is set to `"failed"`, the `restore_failed` event is emitted with `failure_phase: "erasure_reconcile"` (carrying `block_reason: "legal_hold_ledger_stale"` when the ledger gate fired), the `restore:platform` remediation lock remains held, and step 7 is skipped — the gateway is not restarted because serving a partial reconcile would either resurrect erased personal data or destroy legally-held data. Ledger-stale blocks clear only when an operator confirms ledger currency via `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` (`platform-admin`, audited).
 7. **Gateway restart.** On successful reconciler completion, `lenny-ops` patches the gateway Deployment's annotations to trigger a rolling restart (so the gateway picks up restored schema/config). Agents monitoring `platform_upgrade_*` events can observe this. **Not** triggered on failure — a partial-restore platform (including a restore that completed its shards but failed the reconciler) should not be served until the operator decides on recovery.
 8. **Lock release on success.** After the gateway rolling restart in step 7 has completed (`status.updatedReplicas == status.replicas`), `lenny-ops` releases the `restore:platform` remediation lock automatically. From that point, subsequent `restore/execute` calls are unblocked. The pre-restore backup becomes eligible for deletion (per Pre-Restore Backup Lifecycle below). On **failure** (restore itself, or the erasure reconciler), the lock is NOT auto-released — see Restore Failure and Recovery.
 
@@ -4009,15 +4062,15 @@ For human operators or agents performing a restore, the recommended workflow:
 
 #### RTO/RPO Targets by Tier
 
-These are targets the operator should aim for; actual values depend on backup frequency, verification cadence, and platform size:
+These are targets the operator should aim for; actual values depend on backup frequency, verification cadence, and platform size. The **ArtifactStore RPO** is the MinIO replication-lag horizon described in ArtifactStore Backup above — replication is continuous-async, so the RPO is expressed as a lag threshold rather than a backup interval.
 
-| Tier | Recommended full backup frequency | Recommended verification | RPO target | RTO target |
-|------|----------------------------------|--------------------------|-----------|-----------|
-| 1 (dev) | daily | on-demand | 24h | best-effort |
-| 2 (staging) | daily | weekly | 6h | 30m |
-| 3 (prod) | daily + 6h Postgres snapshots | daily integrity, monthly test restore | 15m | 15m |
+| Tier | Recommended full backup frequency | Recommended verification | Postgres RPO target | ArtifactStore RPO target | RTO target |
+|------|----------------------------------|--------------------------|-----------|-----------|-----------|
+| 1 (dev) | daily | on-demand | 24h | n/a (replication optional) | best-effort |
+| 2 (staging) | daily | weekly | 6h | 15m (replication lag) | 30m |
+| 3 (prod) | daily + 6h Postgres snapshots | daily integrity, monthly test restore | 15m | 15m (replication lag) | 15m |
 
-The verification recommendation is stronger at higher tiers because backups that are never verified can silently rot (corrupted archives, schema drift, credential changes invalidating access).
+The verification recommendation is stronger at higher tiers because backups that are never verified can silently rot (corrupted archives, schema drift, credential changes invalidating access). ArtifactStore verification uses the sampled-HEAD test-restore path (see ArtifactStore Backup above) because a full object-by-object scan is impractical at production bucket scale; the 99%-success floor is the test-restore gate.
 
 #### Test Restore
 
@@ -4085,6 +4138,7 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `BackupOverdue` | `lenny_backup_last_successful_timestamp{type="full"}` older than 48h | Warning |
 | `BackupFailed` | `lenny_backup_total{status="failed"}` incremented | Warning |
 | `BackupStorageHigh` | Total backup storage in MinIO > 80% of quota | Warning |
+| `BackupReconcileBlocked` | `lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}` incremented. Post-restore GDPR erasure reconciler blocked because the legal-hold ledger was restored in lockstep with the rest of the data and cannot be trusted to reflect post-backup hold transitions. Operator must confirm ledger currency via `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` before the gateway is restarted. See [§12.8](12_storage-architecture.md#128-compliance-interfaces) post-restore reconciler. | Critical |
 
 ### Error Codes
 
@@ -4098,13 +4152,13 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `RESTORE_ACKNOWLEDGE_REQUIRED` | `POLICY` | 400 | `confirm: true` supplied but `acknowledgeDataLoss: true` is missing; safety check returned `safe: false`. |
 | `RESTORE_LOCK_REQUIRED` | `POLICY` | 409 | `restore/resume` called but the caller does not hold the `restore:platform` lock; re-acquire and retry. |
 | `RESTORE_NOT_FOUND` | `PERMANENT` | 404 | Restore ID not found in `ops_restore_state`. |
-| `RESTORE_ERASURE_RECONCILE_FAILED` | `PERMANENT` | 500 | Post-restore GDPR erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope") failed to replay one or more receipts against the restored databases. Restore is aborted without gateway restart; the `restore:platform` lock is retained. Operators must investigate the reconciler failure (typically via `GET /v1/admin/restore/{id}/status`) and resolve before retrying. |
+| `RESTORE_ERASURE_RECONCILE_FAILED` | `PERMANENT` | 500 | Post-restore GDPR erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope") failed. Covers: individual replay failure, Postgres unavailability mid-reconcile, enumeration error, and the legal-hold ledger freshness gate blocking replay (`gdpr.backup_reconcile_blocked`, reason `legal_hold_ledger_stale` — the legal-hold ledger was restored in lockstep with the rest of the data and its most recent write timestamp is `<= backupTakenAt`, so the reconciler cannot prove the hold-vs-erase ordering is correct). Restore is aborted without gateway restart; the `restore:platform` lock is retained. Operators must investigate the reconciler failure (typically via `GET /v1/admin/restore/{id}/status`) and resolve before retrying — for ledger-stale blocks, confirm ledger currency via `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` once out-of-band evidence establishes that no post-backup hold transitions are being silently overridden. |
 | `BACKUP_STORAGE_UNREACHABLE` | `TRANSIENT` | 503 | MinIO unreachable |
 | `BACKUP_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A shard's resolved `dataResidencyRegion` has no corresponding `backups.regions.<region>` entry, or the region's MinIO endpoint / KMS key is unreachable. Fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE`; emits `DataResidencyViolationAttempt` audit event ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). |
 
 ### Audit Events
 
-`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, `gdpr.backup_reconcile_completed` (§12.8 Backups in erasure scope — written by the post-restore reconciler between `restore_completed` and the gateway restart), `DataResidencyViolationAttempt` (§12.8 Backup pipeline residency — emitted on `BACKUP_REGION_UNRESOLVABLE` with `operation: "backup"`).
+`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, `gdpr.backup_reconcile_completed` (§12.8 Backups in erasure scope — written by the post-restore reconciler between `restore_completed` and the gateway restart), `gdpr.backup_reconcile_blocked` (§12.8 post-restore reconciler phase 2 — emitted when the legal-hold ledger freshness gate blocks replay because `ledgerLatestWriteAt <= backupTakenAt`), `gdpr.erasure_reconciled_suppressed_by_hold` (§12.8 post-restore reconciler phase 3 — emitted per subject when an active legal hold post-dates the enumerated receipt and the replay is suppressed), `legal_hold.ledger_confirmed_current_at` (§12.8 post-restore reconciler — written when an operator confirms ledger currency via `/restore/{id}/confirm-legal-hold-ledger`), `DataResidencyViolationAttempt` (§12.8 Backup pipeline residency — emitted on `BACKUP_REGION_UNRESOLVABLE` with `operation: "backup"`).
 
 ---
 
@@ -4204,6 +4258,7 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_restore_preview` | `POST /v1/admin/restore/preview` | Preview restore impact |
 | `lenny_restore_execute` | `POST /v1/admin/restore/execute` | Execute restore (requires confirm) |
 | `lenny_restore_resume` | `POST /v1/admin/restore/resume` | Resume a partially-completed restore |
+| `lenny_restore_confirm_legal_hold_ledger` | `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` | Confirm legal-hold ledger currency after a `gdpr.backup_reconcile_blocked` stall |
 | `lenny_drift_validate` | `POST /v1/admin/drift/validate` | Validate a caller-supplied desired state against the stored snapshot |
 | `lenny_drift_snapshot_refresh` | `POST /v1/admin/drift/snapshot/refresh` | Replace the stored desired-state snapshot |
 | `lenny_lock_acquire` | `POST /v1/admin/remediation-locks` | Acquire a remediation lock |
@@ -4714,6 +4769,7 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | `lenny-ctl restore execute --backup <id> --confirm --acknowledge-data-loss` | `POST /v1/admin/restore/execute` | Execute restore |
 | `lenny-ctl restore status <id>` | `GET /v1/admin/restore/{id}/status` | Per-shard restore status |
 | `lenny-ctl restore resume <id>` | `POST /v1/admin/restore/resume` | Resume partially-completed restore |
+| `lenny-ctl restore confirm-legal-hold-ledger <id> --justification <text>` | `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` | Confirm legal-hold ledger currency after a `BackupReconcileBlocked` alert; clears the reconciler block so the restore can resume |
 
 ### Upgrade Commands
 
