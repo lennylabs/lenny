@@ -157,7 +157,195 @@ type OutboundChannel interface {
 
 The gateway provides a **`BaseAdapter`** struct with no-op implementations of all optional methods. Adapters that embed `BaseAdapter` satisfy the full interface and only override lifecycle hooks they need — existing adapters (MCP, OpenAI Completions, Open Responses) require no changes. `BaseAdapter.OutboundCapabilities()` returns a zero-value `OutboundCapabilitySet` (all false). `BaseAdapter.OpenOutboundChannel()` returns a no-op channel that discards all events.
 
-**Gateway outbound dispatch.** When a session event fires, the gateway iterates all adapters that have an active `OutboundChannel` for the session (tracked in an adapter-keyed map per session). For each channel, it calls `Send` with the event. Channels that return a non-nil error are closed and removed from the map. Adapters choose their own delivery semantics inside `Send` — buffered HTTP POST, SSE frame write, or silent drop with a metric increment. The gateway does not impose a delivery order guarantee across adapters.
+#### Shared Adapter Types
+
+The following Go types are referenced by the `ExternalProtocolAdapter` interface and the `OutboundChannel` contract above. They are normative: every gateway-supplied value passed to an adapter MUST conform to these shapes, and every third-party adapter registered via the admin API tier ([Section 15](#15-external-api-surface), "Three tiers of pluggability") MUST accept them without additional fields expected. All enum-typed fields are closed sets — values outside the declared constants are gateway-internal bugs, not adapter-extension points.
+
+```go
+// SessionMetadata is passed to OnSessionCreated with the immutable details
+// of a newly-created session. It is derived from CreateSessionRequest plus
+// gateway-determined fields (SessionID, negotiated protocol version). All
+// fields are populated by the gateway before OnSessionCreated is invoked;
+// adapters MUST treat SessionMetadata as read-only.
+type SessionMetadata struct {
+    // TenantID is the tenant that owns this session. Matches the tenant
+    // resolved from the caller's credentials at session-create time.
+    TenantID string
+
+    // SessionID is the gateway-assigned ULID (`sess_` prefix) that names
+    // this session across all subsequent lifecycle hooks, audit events,
+    // and storage records. Stable for the session's lifetime.
+    SessionID string
+
+    // RuntimeName is the runtime this session was dispatched to — matches
+    // an entry in the runtime registry ([Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
+    RuntimeName string
+
+    // DelegationDepth is the 0-based depth of this session in its delegation
+    // tree: 0 for a root session, 1 for a direct child created via
+    // `lenny/delegate_task`, and so on. Matches the `delegationDepth` field
+    // on `MessageEnvelope` for messages originating from this session.
+    DelegationDepth int
+
+    // CallerIdentity is the authenticated identity that created the session
+    // (JWT `sub` and associated principal attributes). Schema defined in
+    // [Section 13](13_security-model.md).
+    CallerIdentity CallerIdentity
+
+    // NegotiatedProtocolVersion is the protocol version the adapter and
+    // gateway agreed upon at session-create time (e.g., the negotiated MCP
+    // spec version for MCPAdapter-created sessions). Empty string for
+    // adapters that do not perform explicit version negotiation.
+    NegotiatedProtocolVersion string
+}
+
+// SessionEvent is the outbound event envelope pushed via OutboundChannel.Send.
+// Kind is drawn from the closed enum documented in "SessionEvent Kind Registry"
+// below; adapters MUST NOT attempt to interpret unrecognized kind values.
+// Payload sub-schema is determined by Kind (see the kind registry for the
+// per-kind mapping).
+type SessionEvent struct {
+    // Kind is the closed-enum event category (see SessionEvent Kind Registry).
+    Kind SessionEventKind
+
+    // SeqNum is a monotonic per-session sequence number assigned by the
+    // gateway at event-dispatch time. Adapters MAY use SeqNum to detect
+    // gaps when delivering over lossy transports (e.g., webhook retries).
+    SeqNum uint64
+
+    // Payload is the kind-specific event body. The sub-schema is determined
+    // by Kind — consult the SessionEvent Kind Registry for the mapping.
+    Payload json.RawMessage
+
+    // Timestamp is the gateway-assigned wall-clock time the event was
+    // materialized. Adapters that surface timestamps to clients SHOULD
+    // pass this value through verbatim rather than regenerating it at
+    // send time, so that the timestamp reflects the event, not the delivery.
+    Timestamp time.Time
+}
+
+// SessionEventKind is the closed enum of event categories the gateway may
+// dispatch to an OutboundChannel. Adapters declare the subset they handle
+// via OutboundCapabilitySet.SupportedEventKinds; the gateway MUST filter
+// events by that declaration before calling Send (see dispatch-filter rule
+// in "SessionEvent Kind Registry" below).
+type SessionEventKind string
+
+const (
+    SessionEventStateChange  SessionEventKind = "state_change"
+    SessionEventOutput       SessionEventKind = "output"
+    SessionEventElicitation  SessionEventKind = "elicitation"
+    SessionEventToolUse      SessionEventKind = "tool_use"
+    SessionEventError        SessionEventKind = "error"
+    SessionEventTerminated   SessionEventKind = "terminated"
+)
+
+// TerminationReason is the closed-enum reason passed to OnSessionTerminated
+// and returned by Runtime SDK Handler.OnTerminate ([Section 15.7](#157-runtime-author-sdks)).
+// The Code field MUST be one of the TerminationCode constants below;
+// Detail is free-form human-readable text for operator debugging and
+// MUST NOT contain secrets (credentials, tokens, PII) — the gateway emits
+// Detail into audit logs verbatim.
+type TerminationReason struct {
+    // Code is the closed-enum termination category.
+    Code TerminationCode
+
+    // Detail is a human-readable description suitable for operator
+    // surfaces (logs, admin UI). MUST NOT contain secrets. MAY be empty.
+    Detail string
+}
+
+// TerminationCode is the closed enum of terminal-state causes. Third-party
+// adapters translating to their native protocol's terminal state MUST map
+// each code to an appropriate protocol-level value (see §21.1 for the
+// A2AAdapter mapping). Values outside this set are gateway-internal bugs.
+type TerminationCode string
+
+const (
+    // TerminationCompleted — the runtime finished normally and emitted a
+    // final response. Maps to the "success" terminal state in all protocols.
+    TerminationCompleted TerminationCode = "completed"
+
+    // TerminationFailed — the runtime exited abnormally (non-zero exit,
+    // panic, unrecoverable error). Maps to the "failure" terminal state.
+    TerminationFailed TerminationCode = "failed"
+
+    // TerminationCancelled — the session was cancelled by the caller
+    // (DELETE /v1/sessions/{id} or equivalent). Maps to the protocol's
+    // "cancelled" state (A2A `canceled`, MCP task cancellation, etc.).
+    TerminationCancelled TerminationCode = "cancelled"
+
+    // TerminationExpired — the session exceeded `maxSessionAgeSeconds`
+    // ([Section 11](11_policy-and-controls.md)) or the delegation lease
+    // `perChildMaxAge`.
+    TerminationExpired TerminationCode = "expired"
+
+    // TerminationDrained — the gateway or pod was drained for a planned
+    // operation (node drain, rolling upgrade) and could not resume the
+    // session within the drain deadline. Distinct from `failed` so
+    // operators can correlate terminations with planned maintenance.
+    TerminationDrained TerminationCode = "drained"
+)
+
+// AuthorizedRuntime is the element type in the slice passed to HandleDiscovery.
+// It mirrors the shape returned by `GET /v1/runtimes` ([Section 15.1](#151-rest-api)),
+// filtered to runtimes the caller is authorized to see per the visibility
+// rules in [Section 11](11_policy-and-controls.md).
+// `PublishedMetadata` entries are also visibility-filtered — entries the
+// caller cannot see are omitted before the slice is handed to the adapter,
+// so adapters MUST NOT attempt additional authorization checks on the
+// metadata list.
+type AuthorizedRuntime struct {
+    // Name is the runtime identifier (matches `runtime.yaml` `name` field).
+    Name string
+
+    // AgentInterface is the runtime's declared agent interface descriptor
+    // ([Section 5.1 `agentInterface` Field](05_runtime-registry-and-pool-model.md#agentinterface-field)),
+    // used by adapters to auto-generate discovery formats (A2A agent cards,
+    // MCP `list_runtimes` response, REST runtime summaries). Empty string
+    // for `type: mcp` runtimes, which do not carry an `agentInterface`.
+    AgentInterface string
+
+    // McpEndpoint is the dedicated MCP endpoint URL for `type: mcp`
+    // runtimes (format: `/mcp/runtimes/{name}`). Empty string for
+    // `type: agent` runtimes.
+    McpEndpoint string
+
+    // AdapterCapabilities reflects the capabilities of the adapter currently
+    // serving the discovery request, NOT per-runtime capabilities.
+    // Duplicated here so adapters can embed the capability block inline in
+    // their native discovery format without additional lookups.
+    AdapterCapabilities AdapterCapabilities
+
+    // PublishedMetadata carries the visibility-filtered set of
+    // `publishedMetadata` entries for this runtime
+    // ([Section 5.1 `publishedMetadata` Field](05_runtime-registry-and-pool-model.md#publishedmetadata-field)).
+    // Each ref is an opaque handle; adapters retrieve the materialized
+    // card via the gateway's metadata-fetch API as needed.
+    PublishedMetadata []PublishedMetadataRef
+}
+```
+
+#### SessionEvent Kind Registry
+
+The `SessionEventKind` enum above is **closed** — the gateway will never dispatch a kind value not listed below, and third-party adapters MUST NOT rely on receiving unknown kinds through `OutboundChannel.Send`. The registry below is authoritative for the gateway outbound dispatcher (see "Gateway outbound dispatch" paragraph further down in this section); additions require a `SessionEvent` schema version bump and a corresponding update to `AdapterCapabilities` / `OutboundCapabilitySet` documentation.
+
+| Kind            | Constant                  | `SessionEvent.Payload` schema                                                                                                                         | Fires when                                                                                                                  |
+| --------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `state_change`  | `SessionEventStateChange` | `{ "from": "<state>", "to": "<state>", "subState": "<input_required\|suspended\|...>?" }` — states and sub-states enumerated in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). | The session transitions between top-level states or between `running` sub-states (`input_required`, `suspended`, etc.). One event per transition. |
+| `output`        | `SessionEventOutput`      | `OutputPart[]` — the canonical output array defined in the `OutputPart` schema (see "Internal `OutputPart` Format" below).                           | The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent` (or is batched per adapter-declared policy). |
+| `elicitation`   | `SessionEventElicitation` | `MessageEnvelope` with `type: "message"` carrying the `lenny/request_elicitation` payload ([Section 9.2](09_mcp-integration.md#92-elicitation-chain)); adapters that also surface `lenny/request_input` MAY carry it under this kind. | The runtime calls `lenny/request_elicitation` or `lenny/request_input` and the elicitation chain surfaces the request to the adapter. |
+| `tool_use`      | `SessionEventToolUse`     | `{ "toolCallId": "...", "tool": "...", "arguments": {...}, "phase": "requested\|approved\|denied\|completed", "result": OutputPart[]? }` — the adapter-facing projection of the `lenny/tool_call` lifecycle ([Section 9](09_mcp-integration.md)). | A tool call enters a new lifecycle phase (requested, approved/denied, completed). One event per phase transition.            |
+| `error`         | `SessionEventError`       | `{ "code": "<ErrorCode>", "category": "TRANSIENT\|PERMANENT\|POLICY\|UPSTREAM", "message": "...", "retryable": bool, "details": {...}? }` — the shared error taxonomy from [Section 15.2.1](#1521-restmcp-consistency-contract) item 3. | A non-terminal error surfaces mid-session (validation, policy, upstream degradation) that the adapter should reflect to the client. |
+| `terminated`    | `SessionEventTerminated`  | `TerminationReason` (Go struct serialized as `{"code": "...", "detail": "..."}`).                                                                     | The session enters a terminal state (`completed`, `failed`, `cancelled`, `expired`, `drained`). Exactly one event per session. |
+
+**Dispatch-filter rule (normative).** Adapters declare the subset of kinds they handle via `OutboundCapabilitySet.SupportedEventKinds`. The gateway outbound dispatcher MUST filter events by each adapter's declared `SupportedEventKinds` before invoking `OutboundChannel.Send` — adapters whose declaration omits a kind MUST NOT receive events of that kind. A `SessionEvent` delivered in violation of this rule is a gateway bug; adapters MAY drop such events silently and SHOULD emit an `unexpected_event_kind` metric for operator investigation. Adapters MUST NOT extend their behavior to depend on events they did not declare — declaration is the authoritative contract.
+
+**`state_change` sub-state coverage.** The `state_change` kind is the only mechanism by which adapters learn about `running` sub-states (`input_required`, `suspended`). Adapters that omit `state_change` from `SupportedEventKinds` forfeit visibility into these sub-states — they will only observe top-level state transitions (indirectly, via `terminated` for terminal states). Adapters requiring fine-grained lifecycle surfacing (A2A `input-required` tracking, pause/resume surfaces) MUST declare `state_change`.
+
+**Capability-consistency invariant with elicitation policy.** An adapter that declares `OutboundCapabilitySet.SupportedEventKinds` including `elicitation` MUST also return `AdapterCapabilities.SupportsElicitation: true`. Conversely, adapters that impose `elicitationDepthPolicy: block_all` at session creation (notably `A2AAdapter`, [Section 21.1](21_planned-post-v1.md#21-planned--post-v1)) MUST NOT include `elicitation` in `SupportedEventKinds` — the session will never generate an elicitation event for such adapters, and declaring the kind would mislead clients. The `A2AAdapter`'s four-kind declaration (`state_change`, `output`, `error`, `terminated`) satisfies this invariant by construction.
+
+**Gateway outbound dispatch.** When a session event fires, the gateway iterates all adapters that have an active `OutboundChannel` for the session (tracked in an adapter-keyed map per session). For each channel — after filtering by the dispatch-filter rule above — it calls `Send` with the event. Channels that return a non-nil error are closed and removed from the map. Adapters choose their own delivery semantics inside `Send` — buffered HTTP POST, SSE frame write, or silent drop with a metric increment. The gateway does not impose a delivery order guarantee across adapters.
 
 **`HandleDiscovery` is required on all adapters.** Every adapter translates Lenny's policy-scoped runtime list into its protocol's native discovery format. Each adapter **must** include its own `AdapterCapabilities` as an `adapterCapabilities` annotation in its discovery output so that consumers know which protocol-level capabilities (elicitation, delegation, interrupts, session continuity) the active adapter provides. The gateway calls `Capabilities()` on the serving adapter and passes the result to `HandleDiscovery` as an additional parameter alongside the runtime list; adapters embed the capability fields in their native discovery format (e.g., a top-level `adapterCapabilities` object in REST and `list_runtimes` responses, or a `capabilities` node in A2A agent cards). At minimum, `supportsElicitation` must be surfaced — callers must not start elicitation-dependent workflows against an adapter that returns `supportsElicitation: false`.
 
@@ -311,7 +499,8 @@ Internal-only states (from the pod state machine in [Section 6.2](06_warm-pod-mo
   "targetRuntime": "<runtime-name>",
   "targetPool": "<pool-name (optional)>",
   "replayMode": "prompt_history | workspace_derive",
-  "evalRef": "<eval-id (optional)>"
+  "evalRef": "<eval-id (optional)>",
+  "allowIsolationDowngrade": false
 }
 ```
 
@@ -322,6 +511,7 @@ Internal-only states (from the pod state machine in [Section 6.2](06_warm-pod-mo
 - **`targetRuntime`** (required): The runtime name to replay against. Must be a registered runtime with the same `executionMode` as the source session. A different `executionMode` returns `400 INCOMPATIBLE_RUNTIME`.
 - **`targetPool`** (optional): If omitted, the gateway selects the default pool for `targetRuntime`. Must be a pool backed by `targetRuntime`.
 - **`evalRef`** (optional): If provided, links the replayed session to an experiment or eval set. The `evalRef` is recorded in the new session's metadata and can be used to filter `GET /v1/sessions` by eval context.
+- **`allowIsolationDowngrade`** (optional, default `false`, SEC-001): When `replayMode: workspace_derive`, the target pool's `sessionIsolationLevel.isolationProfile` MUST be at least as restrictive as the source session's (`standard` < `sandboxed` < `microvm`, matching [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) delegation monotonicity). A weaker target pool is rejected with `ISOLATION_MONOTONICITY_VIOLATED` (HTTP 422) unless this flag is set to `true`. Setting the flag requires the caller to hold the `platform-admin` role; non-admin callers receive `403 FORBIDDEN`. When the override is used, the gateway emits a `derive.isolation_downgrade` audit event (shared with `POST /v1/sessions/{id}/derive`) capturing source/target isolation profiles and the authorizing admin identity. The flag has no effect when `replayMode: prompt_history` because that mode inherits the source session's pool unless `targetPool` is explicitly supplied — any `targetPool` override in `prompt_history` mode is also subject to the monotonicity rule and the same `allowIsolationDowngrade` flag.
 
 **Preconditions:** Source session must be in a terminal state (`completed`, `failed`, `cancelled`, `expired`) with a resolvable workspace snapshot. Non-terminal source sessions return `409 REPLAY_ON_LIVE_SESSION`.
 
@@ -420,7 +610,7 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `PUT`    | `/v1/admin/experiments/{name}`                                  | Update an experiment (requires `If-Match`)                                                                                                                                                                                                                                                                                 |
 | `PATCH`  | `/v1/admin/experiments/{name}`                                  | Partial update of an experiment — canonical endpoint for status transitions (`active`, `paused`, `concluded`). Uses JSON Merge Patch. Requires `If-Match`. See [Section 10.7](10_gateway-internals.md#107-experiment-primitives).                                                                                                                                               |
 | `DELETE` | `/v1/admin/experiments/{name}`                                  | Delete an experiment                                                                                                                                                                                                                                                                                                       |
-| `GET`    | `/v1/admin/experiments/{name}/results`                          | Experiment results by variant. Returns per-variant session counts and eval score aggregates collected via `POST /v1/sessions/{id}/eval`. Requires `platform-admin` or `tenant-admin` role. See [Section 10.7](10_gateway-internals.md#107-experiment-primitives).                                                                                           |
+| `GET`    | `/v1/admin/experiments/{name}/results`                          | Experiment results by variant. Returns per-variant session counts and eval score aggregates collected via `POST /v1/sessions/{id}/eval`. Requires `platform-admin` or `tenant-admin` role. Optional query parameters (EXP-002): `delegation_depth` (uint32), `inherited` (bool), `exclude_post_conclusion` (bool), `breakdown_by` (`delegation_depth \| inherited \| submitted_after_conclusion`) — see [Section 10.7](10_gateway-internals.md#107-experiment-primitives) "Results API query parameters" for filter semantics and performance trade-offs.                                                                                           |
 | `POST`   | `/v1/admin/external-adapters`                                   | Register an external protocol adapter                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/external-adapters`                                   | List all external protocol adapters                                                                                                                                                                                                                                                                                        |
 | `GET`    | `/v1/admin/external-adapters/{name}`                            | Get a specific external adapter                                                                                                                                                                                                                                                                                            |
@@ -554,6 +744,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `QUOTA_EXCEEDED`            | `POLICY`    | 429         | Tenant or user quota exceeded                                                                                                                                                                                                                            |
 | `RATE_LIMITED`              | `POLICY`    | 429         | Request rate limit exceeded                                                                                                                                                                                                                              |
 | `CREDENTIAL_POOL_EXHAUSTED` | `POLICY`    | 503         | No available credentials in the assigned pool                                                                                                                                                                                                            |
+| `CREDENTIAL_SECRET_RBAC_MISSING` | `PERMANENT` | 400    | Admin credential-add rejected because the Token Service ServiceAccount lacks `get` permission on the referenced Secret. `details.resourceName` names the missing Secret and `details.rbacPatch` contains the required RBAC patch command (equivalent to `lenny-ctl admin credential-pools add-credential`'s emitted patch). Apply the grant and retry. See [Section 4.9](04_system-components.md#49-credential-leasing-service) (Admin-time RBAC live-probe).                                                                                                |
 | `USER_CREDENTIAL_NOT_FOUND` | `PERMANENT` | 404         | No pre-registered credential found for user and provider. Register a credential via `POST /v1/credentials` or configure pool fallback.                                                                                                                   |
 | `RUNTIME_UNAVAILABLE`       | `TRANSIENT` | 503         | No healthy pods available for the requested runtime                                                                                                                                                                                                      |
 | `POD_CRASH`                 | `TRANSIENT` | 502         | The session pod terminated unexpectedly                                                                                                                                                                                                                  |
@@ -606,6 +797,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `DERIVE_ON_LIVE_SESSION`      | `PERMANENT` | 409         | `POST /v1/sessions/{id}/derive` rejected because the source session is not in a terminal state and `allowStale: true` was not set in the request body. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `DERIVE_LOCK_CONTENTION`      | `POLICY`    | 429         | `POST /v1/sessions/{id}/derive` rejected because too many concurrent derive operations are in progress for this session. Retry with exponential backoff. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `DERIVE_SNAPSHOT_UNAVAILABLE` | `TRANSIENT` | 503         | `POST /v1/sessions/{id}/derive` failed because the referenced workspace snapshot object was not found in object storage (e.g., deleted by a GC bug or premature TTL expiry). Retrying immediately is unlikely to help; the caller should wait and retry or derive from a different source state. `details.snapshotRef` includes the missing object path. See [Section 15.1](#151-rest-api) (derive semantics). |
+| `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 422         | `POST /v1/sessions/{id}/derive` or `POST /v1/sessions/{id}/replay` (with `replayMode: workspace_derive`) rejected because the target pool's `sessionIsolationLevel.isolationProfile` is weaker than the source session's (`standard` < `sandboxed` < `microvm`). Matches the delegation monotonicity rule in [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). `details.sourceIsolationProfile`, `details.targetIsolationProfile`, and `details.targetPool` are included. Overridable by `platform-admin` callers via `allowIsolationDowngrade: true` in the request body — this path emits a `derive.isolation_downgrade` audit event. See [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics and [Section 15.1](#151-rest-api) replay semantics. |
 | `REGION_CONSTRAINT_VIOLATED`  | `POLICY`    | 403         | Request rejected because the resolved storage region does not satisfy the session's `dataResidencyRegion` constraint. `details.requiredRegion` and `details.resolvedRegion` are included. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
 | `REGION_CONSTRAINT_UNRESOLVABLE` | `PERMANENT` | 422      | Session creation rejected because no storage or pool configuration can satisfy the requested `dataResidencyRegion`. `details.region` identifies the unresolvable constraint. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
 | `REGION_UNAVAILABLE`          | `TRANSIENT` | 503         | The storage region required by the session's data residency constraint is temporarily unavailable. Retry when the region recovers. `details.region` identifies the affected region. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
@@ -617,7 +809,9 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION` | `POLICY` | 403  | Delegation rejected because the child lease names a different `contentPolicy.interceptorRef` than the parent without retaining the parent's reference. A child lease may not substitute the parent's named interceptor with an unrelated one. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 | `DELEGATION_POLICY_WEAKENING` | `POLICY`    | 403         | Delegation rejected because the child lease's `maxDelegationPolicy` would expand the effective delegation authority beyond the parent's effective `maxDelegationPolicy`. A child's `maxDelegationPolicy` must be at least as restrictive as the parent's. `details.parentPolicy` (the parent's effective `maxDelegationPolicy`, or `null` if uncapped) and `details.childPolicy` (the child's requested value) are included. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 | `COMPLIANCE_SIEM_REQUIRED`    | `POLICY`    | 422         | Tenant creation or update rejected because the tenant's `complianceProfile` requires a SIEM endpoint (`audit.siem.endpoint`) to be configured, but it is not set. See [Section 11.7](11_policy-and-controls.md#117-audit-logging). |
+| `CLASSIFICATION_CONTROL_VIOLATION` | `POLICY` | 422         | Storage-tier classification control rejection. Emitted when a T4 tenant's online KMS availability probe fails on `PUT /v1/admin/tenants/{id}` (tenant-scoped KMS key unreachable), when a T4 artifact write cannot proceed because the `tenant:{tenant_id}` KMS key is unavailable at write time, or when a write's effective tier does not match the configured store (e.g., T4 data directed to a store without envelope encryption). `details.tenantId`, `details.tier`, and `details.reason` (e.g., `kms_probe_failed`, `kms_unavailable`, `tier_store_mismatch`) are included. Not retryable at the API layer — the operator must restore KMS key availability or correct the storage-tier configuration before retrying. See [Section 12.5](12_storage-architecture.md#125-artifact-store) and [Section 12.9](12_storage-architecture.md#129-data-classification). |
 | `BUDGET_EXHAUSTED`            | `POLICY`    | 429         | Delegation or lease extension rejected because the remaining token budget or tree-size budget is insufficient. `details.limitType` is `token_budget`, `tree_size`, or `tree_memory` (distinguishing the exhausted resource). `TOKEN_BUDGET_EXHAUSTED` and `TREE_SIZE_EXCEEDED` are internal Lua script result codes; the wire error code is always `BUDGET_EXHAUSTED`. Not retryable without a budget extension. See Sections 8.3, 8.6. |
+| `EXTENSION_COOL_OFF_ACTIVE`   | `POLICY`    | 403         | Lease-extension request auto-rejected because the requesting subtree is in a rejection cool-off window following a user-denied extension elicitation. `details.subtreeId` identifies the denied subtree and `details.coolOffExpiresAt` is the UTC timestamp at which the cool-off window ends. Not retryable until cool-off expires; operators may clear the denial early via `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial`. See [Section 8.6](08_recursive-delegation.md#86-lease-extension). |
 | `OUTPUTPART_INLINE_REF_CONFLICT` | `PERMANENT` | 400      | An `OutputPart` has both `inline` and `ref` fields set, which are mutually exclusive. Set exactly one field: `inline` for direct byte embedding or `ref` for external blob storage reference. See [Section 15.4.1](#1541-adapterbinary-protocol). |
 | `INVALID_DELIVERY_VALUE`      | `PERMANENT` | 400         | A message delivery envelope contains an unrecognized `delivery` field value. Valid values are `queued` and `immediate`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `SDK_DEMOTION_NOT_SUPPORTED`  | `PERMANENT` | 422         | Session creation failed because the pool uses SDK-warm mode (`preConnect: true`) and the adapter does not implement the `DemoteSDK` RPC. The workspace includes files from `sdkWarmBlockingPaths` that require demotion, but demotion is unavailable. Runtime authors must implement `DemoteSDK` before declaring `preConnect: true`. See [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like). |
@@ -630,7 +824,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `TARGET_NOT_READY`            | `TRANSIENT` | 409         | Inter-session message rejected because the target session is in a pre-running state (`created`, `ready`, `starting`, `finalizing`) and has no inbox. Retry after the session transitions to `running`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `CROSS_TENANT_MESSAGE_DENIED` | `POLICY`    | 403         | Inter-session message rejected because the sender and target sessions belong to different tenants. Cross-tenant messaging is unconditionally prohibited. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `TENANT_SUSPENDED`            | `POLICY`    | 403         | Tenant is suspended. New session creation and message injection are rejected. The suspension is recorded in the audit trail. Wait for tenant resumption or contact administrators. See [Section 15.1](#151-rest-api) (`POST /v1/admin/tenants/{id}/suspend`). |
-| `INVALID_CALLBACK_URL`        | `PERMANENT` | 400         | A caller-supplied push-notification callback URL failed SSRF validation at registration time. Applies to the A2A adapter's `pushNotification.url` field on `POST /a2a/{runtime}/tasks`, rejected at `OpenOutboundChannel` before the subscription is stored. The URL must be HTTPS, must resolve to a public (non-private/non-link-local/non-loopback) IP under DNS pinning, must not target cloud metadata hostnames, and must match the optional domain allowlist when configured. `details.reason` describes the specific validation failure (e.g., `scheme_not_https`, `private_ip`, `metadata_host`, `domain_not_allowlisted`). Distinct from `WEBHOOK_VALIDATION_FAILED` ([Section 25.5](25_agent-operability.md#255-event-stream)), which applies to `lenny-ops` event-subscription webhooks. Not retryable — the caller must supply a conformant URL. See [Section 21.1](21_planned-post-v1.md) (A2A outbound push) and [Section 14](14_workspace-plan-schema.md) (SSRF validation rules). |
+| `INVALID_CALLBACK_URL`        | `PERMANENT` | 400         | A caller-supplied push-notification callback URL failed SSRF validation at registration time. Applies to the A2A adapter's `pushNotification.url` field on `POST /a2a/{runtime}/tasks`, rejected at `OpenOutboundChannel` before the subscription is stored. The URL must be HTTPS, must resolve to a public (non-private/non-link-local/non-loopback) IP under DNS pinning, must not target cloud metadata hostnames, and must match the optional domain allowlist when configured. `details.reason` describes the specific validation failure (e.g., `scheme_not_https`, `private_ip`, `metadata_host`, `domain_not_allowlisted`). Distinct from `WEBHOOK_VALIDATION_FAILED` ([Section 25.5](25_agent-operability.md#255-operational-event-stream)), which applies to `lenny-ops` event-subscription webhooks. Not retryable — the caller must supply a conformant URL. See [Section 21.1](21_planned-post-v1.md) (A2A outbound push) and [Section 14](14_workspace-plan-schema.md) (SSRF validation rules). |
 
 **Validation error format.** When `code` is `VALIDATION_ERROR`, the `details` field contains a `fields` array describing each validation failure:
 
@@ -1095,13 +1289,15 @@ The adapter normalizes this to the canonical form `{"type": "response", "output"
 
 **Optional SDK helper `from_mcp_content(blocks)`** converts MCP content blocks to `OutputPart` arrays for runtime authors who want to produce output using familiar MCP formats. Availability:
 
-- **Go:** Ships in the `github.com/lennylabs/lenny-sdk-go/outputpart` package (Phase 2 deliverable). Import the package and call `outputpart.FromMCPContent(blocks)`.
+- **Go:** Ships in the `github.com/lennylabs/runtime-sdk-go/outputpart` sub-package of the Runtime Author SDK ([§15.7](#157-runtime-author-sdks)) (Phase 2 deliverable). Import the package and call `outputpart.FromMCPContent(blocks)`.
 - **Other languages:** Not yet published as a library. Use the mapping table above to implement the conversion inline — the logic is a straightforward switch on `content.type`. A copy-paste reference implementation is distributed alongside the runtime adapter specification artifacts ([Section 15.4](#154-runtime-adapter-specification)).
 - **No SDK required:** Runtimes can construct `OutputPart` objects directly without any Lenny SDK dependency. The SDK helper is a convenience only.
 
 #### Translation Fidelity Matrix
 
-Each `ExternalProtocolAdapter` translates between `OutputPart` and its wire format. The following matrix documents field-level fidelity for each built-in adapter. Round-trip through adapters that mark a field as **`[lossy]`** or **`[dropped]`** is not reversible — callers that require full fidelity should use the REST adapter or persist `OutputPart` directly.
+Each `ExternalProtocolAdapter` translates between `OutputPart` and its wire format. The following matrix documents field-level fidelity for each built-in adapter, plus the REST surface, plus the Post-V1 A2A adapter for forward planning. Round-trip through adapters that mark a field as **`[lossy]`** or **`[dropped]`** is not reversible — callers that require full fidelity should use the REST adapter or persist `OutputPart` directly.
+
+> **Closed-enum contract.** Fidelity classifications below apply only to `OutputPart` fields. Adapter-facing types that carry closed enums — `SessionEventKind`, `TerminationCode`, and the dispatch-filter rule bound to `OutboundCapabilitySet.SupportedEventKinds` — are **not** subject to fidelity degradation: the gateway dispatcher filters by enum membership before calling `Send`, and adapters MUST map each enum value to a well-defined protocol-level state (see "Shared Adapter Types" and "SessionEvent Kind Registry" above). A lossy translation of a closed-enum value in a wire format is an adapter implementation bug, not a modeled degradation.
 
 **Fidelity tag legend:**
 
@@ -1511,7 +1707,7 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 
 Standard-level runtimes connect to the adapter's local MCP servers as a standard MCP client. The following details apply:
 
-- **Transport.** All intra-pod MCP servers use **abstract Unix sockets** exclusively (names listed in the adapter manifest, e.g., `@lenny-platform-mcp`, `@lenny-connector-github`). There is no stdio transport for intra-pod MCP — stdio is reserved for the binary protocol between the adapter and the runtime. **Platform compatibility note:** Abstract Unix sockets (names beginning with `@`) are a Linux kernel feature and are **not supported on macOS**. Standard- and Full-level runtime development therefore requires a Linux environment. The recommended approach for macOS developers is to use `docker compose up` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Tier 2), which runs the adapter inside a Linux container. `make run` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Tier 1) supports macOS for Basic-level runtimes only, since Basic level uses the stdin/stdout binary protocol exclusively and does not open any Unix sockets.
+- **Transport.** All intra-pod MCP servers use **abstract Unix sockets** exclusively (names listed in the adapter manifest, e.g., `@lenny-platform-mcp`, `@lenny-connector-github`). There is no stdio transport for intra-pod MCP — stdio is reserved for the binary protocol between the adapter and the runtime. **Platform compatibility note:** Abstract Unix sockets (names beginning with `@`) are a Linux kernel feature and are **not supported on macOS**. Standard- and Full-level runtime development therefore requires a Linux environment. The recommended approach for macOS developers is to use `docker compose up` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Compose Mode), which runs the adapter inside a Linux container. `make run` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Source Mode) supports macOS for Basic-level runtimes only, since Basic level uses the stdin/stdout binary protocol exclusively and does not open any Unix sockets.
 - **Protocol version.** The adapter's local MCP servers speak **MCP 2025-03-26** (the platform's target MCP spec version; see [Section 15.2](#152-mcp-api) for version negotiation details). The local servers also accept **MCP 2024-11-05** for backward compatibility. Intra-pod MCP version support follows the same rolling two-version policy as the gateway ([Section 15.5](#155-api-versioning-and-stability) item 2): the oldest accepted version enters a 6-month deprecation window when a new MCP spec version is adopted, and removal applies only to new connection negotiations (active sessions on the deprecated version are not forcibly terminated).
 - **Client libraries.** Runtime authors should use an existing MCP client library for their language (e.g., `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript/Node.js, `mcp` for Python). These libraries work against the adapter's local servers with one Lenny-specific addition: the runtime must send the manifest nonce as the first message of the MCP `initialize` handshake (see Authentication below).
 - **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed in Part A of this section (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
@@ -1603,12 +1799,14 @@ Pseudocode (Basic-level):
         switch msg.type:
             case "message":
                 seq += 1
+                // Basic-level shorthand — the adapter normalizes this to the
+                // canonical OutputPart form before forwarding. Use the full
+                // `output: [{type: "text", inline: "..."}]` form only when
+                // structured output (multiple parts, non-text types,
+                // annotations) is required.
                 write_line(stdout, json({
                     "type": "response",
-                    "output": [{
-                        "type": "text",
-                        "inline": "echo [seq={seq}]: {msg.input[0].inline}"
-                    }]
+                    "text": "echo [seq={seq}]: {msg.input[0].inline}"
                 }))
                 flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
             case "heartbeat":
@@ -1794,7 +1992,7 @@ Runtime-author information is distributed across this specification. The followi
 3. **[Section 15.4.2](#1542-rpc-lifecycle-state-machine)** — RPC Lifecycle State Machine. Read for context: the adapter (not your binary) owns this state machine. Knowing it helps you understand when your binary will start receiving messages (`ACTIVE`), and that `shutdown` arrives only during `DRAINING` — your binary never drives these transitions.
 4. **[Section 15.4.3](#1543-runtime-integration-levels)** — Runtime Integration Levels. Level definitions and the capability comparison matrix — confirms what Basic-level runtimes can skip.
 5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/current/`, `/tmp/`, `/artifacts/`).
-6. **[Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)** — Local Development Mode (`lenny-dev`). Use `make run` for zero-dependency local testing against the gateway contract.
+6. **[Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)** — Local Development Mode (`lenny-dev`). Use `lenny up` (Embedded Mode, the primary path for runtime authors — exercises the real Kubernetes code path via the embedded stack and registers your runtime through the production admin API) or `make run` (Source Mode, for platform contributors who need to modify the gateway or controller source alongside their runtime).
 
 **Standard-level (add MCP integration):**
 
@@ -1810,6 +2008,36 @@ Runtime-author information is distributed across this specification. The followi
 13. **[Section 13.1](13_security-model.md#131-pod-security)–13.2** — Pod Security and Network Isolation. Security constraints your runtime operates under (seccomp, gVisor, egress rules).
 14. **[Section 14](14_workspace-plan-schema.md)** — Workspace Plan Schema. How workspace sources are declared and materialized before your binary starts.
 15. **[Section 15.5](#155-api-versioning-and-stability)** — API Versioning and Stability. Versioning guarantees for the adapter protocol.
+16. **[Section 15.4.6](#1546-conformance-test-suite)** — Conformance Test Suite. How `lenny runtime validate` exercises your runtime against the level it claims.
+
+#### 15.4.6 Conformance Test Suite
+
+Every runtime repository — first-party reference runtimes in [§26](26_reference-runtime-catalog.md) and third-party runtimes alike — declares an **integration level** (Basic, Standard, or Full) and is exercised by a conformance test suite that verifies the claims specific to that level. "Conformance level" in runtime metadata and [§26.1](26_reference-runtime-catalog.md#261-catalog-overview) is defined as equal to the **Integration Level** from [§15.4.3](#1543-runtime-integration-levels) — Basic, Standard, or Full. There is no separate conformance taxonomy.
+
+**Entry point.** `lenny runtime validate [<path>]` ([§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)) is the canonical entry point. It reads `runtime.yaml` to discover the claimed integration level and executes the corresponding test categories below against a locally-built image or binary. The command exits `0` on a full pass and non-zero with a structured failure report otherwise. CI for first-party reference runtimes ([§26.1](26_reference-runtime-catalog.md#261-catalog-overview)) invokes `lenny runtime validate` on every push and fails the release if any test category regresses.
+
+**Test categories by integration level.** Each higher level inherits every test category from the levels below it.
+
+| Integration level | Test category | What it asserts |
+|---|---|---|
+| **Basic** | **stdin/stdout protocol framing** | The binary reads newline-delimited JSON from stdin and writes newline-delimited JSON to stdout; every outbound message is flushed before the next `read_line` call ([§15.4.1](#1541-adapterbinary-protocol) stdout flushing requirement); unknown inbound `type` values are ignored rather than aborting. |
+| **Basic** | **`message` / `response` round-trip** | A canonical `{type: "message", input: [...]}` produces a structurally valid `{type: "response", ...}` — either full form with `output: OutputPart[]` or Basic-level shorthand `{"type": "response", "text": "..."}`. The response matches `schemas/lenny-adapter-jsonl.schema.json`. |
+| **Basic** | **heartbeat ack** | Within 10 s of receiving `{type: "heartbeat"}`, the binary writes `{type: "heartbeat_ack"}` to stdout. Failure to ack within the window triggers the adapter's unresponsive-agent escalation ([§4.7](04_system-components.md#47-runtime-adapter)). |
+| **Basic** | **shutdown within `deadline_ms`** | On `{type: "shutdown", "deadline_ms": N}`, the binary exits cleanly before the deadline elapses (tested with `N = 5000`). Failing this test means the adapter will SIGKILL the process in production, losing any unflushed output. |
+| **Basic** | **`OutputPart` schema compliance** | Every `OutputPart` produced by the runtime validates against `schemas/outputpart.schema.json`, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| **Standard** | **MCP nonce handshake** | On startup, the runtime reads `/run/lenny/adapter-manifest.json`, connects to the platform MCP server, and presents `_lennyNonce` in the `initialize` params. The adapter's fake MCP server rejects any tool call without a valid nonce to verify enforcement. |
+| **Standard** | **platform MCP tool invocation** | The runtime successfully calls at least `lenny/output` and `lenny/request_input` via the MCP client. Responses are processed and forwarded through the stdin/stdout channel where applicable. |
+| **Standard** | **connector MCP server reachability** | If `manifest.connectorServers` is non-empty, the runtime connects to each with the same nonce and completes the `initialize` handshake. Test uses two fake connector servers. |
+| **Standard** | **`tool_call` / `tool_result` correlation** | Adapter-local `tool_call` emissions carry a unique `id` and the corresponding `tool_result` is read from stdin before the runtime emits its final `response`. |
+| **Full** | **lifecycle channel opening** | The runtime connects to the lifecycle channel advertised in the manifest (`@lenny-lifecycle` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| **Full** | **checkpoint quiesce/resume** | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. Verified via fake-adapter fixture that times the quiesce window. |
+| **Full** | **interrupt acknowledgement** | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
+| **Full** | **credential rotation handling** | If the runtime declares `credential_rotation` support, it successfully re-reads refreshed credentials from the manifest or env on `credential_rotated` and continues to service the next message without restart. |
+| **Full** | **deadline signal handling** | On `deadline_signal`, the runtime writes a final `response` (possibly with `error.code: "DEADLINE_EXCEEDED"`) and exits cleanly before the deadline elapses. |
+
+**How the suite is packaged.** The conformance fixtures (fake adapter, fake MCP server, fake connector servers, sample manifests, reference manifest JSON Schemas) ship inside the `lenny` binary as assets of the `lenny runtime validate` subcommand. No additional download is required. The fixtures are versioned with the Runtime Adapter Specification ([§15.4](#154-runtime-adapter-specification)); each Lenny release pins the fixture version that its `lenny runtime validate` executes against. Third-party runtime authors can pin a specific `lenny-ctl` version to stabilize the conformance surface, and can run `lenny runtime validate --report <path>` to emit a machine-readable JSON report for inclusion in release artifacts.
+
+**Failure categorization.** Each test failure is classified as one of: `schema_violation` (message or `OutputPart` did not match the published JSON Schema), `timeout` (ack/shutdown/deadline exceeded), `missing_capability` (runtime claims a level whose required categories are not exercised), or `unexpected_error` (the runtime wrote to stderr or exited non-zero outside a tested failure path). The report lists each failing category with the classification and a reproduction command.
 
 ### 15.5 API Versioning and Stability
 
@@ -1860,6 +2088,15 @@ Community contributors and integrators need clear guarantees about which APIs ar
 ### 15.6 Client SDKs
 
 Lenny provides official client SDKs for **Go** and **TypeScript/JavaScript** as part of the v1 deliverables. SDKs encapsulate session lifecycle management, MCP streaming with automatic reconnect-with-cursor, file upload multipart handling, webhook signature verification, and error handling with retries — logic that is complex and error-prone to re-implement from the protocol specs alone.
+
+**Package names and publication.**
+
+| Language | Package | Repository |
+|---|---|---|
+| Go | `github.com/lennylabs/client-sdk-go` | `github.com/lennylabs/client-sdk-go` |
+| TypeScript / JavaScript | `@lennylabs/client-sdk` (npm) | `github.com/lennylabs/client-sdk-ts` |
+
+These Client SDK packages are distinct from the Runtime Author SDK packages listed in [§15.7](#157-runtime-author-sdks) (`runtime-sdk-go`, `lenny-runtime`, `@lennylabs/runtime-sdk`). Never mix them: Client SDKs target callers of a running Lenny deployment; Runtime Author SDKs target code that runs inside an agent pod.
 
 SDKs are generated from the OpenAPI spec (REST) and MCP tool schemas, with hand-written streaming and reconnect logic layered on top. Community SDKs for other languages can build on the published OpenAPI spec and the MCP protocol specification.
 

@@ -941,7 +941,28 @@ backups:
   encryption:
     atRest: true                         # SSE on MinIO PutObject
     minioServerSide: "SSE-S3"            # "SSE-S3" | "SSE-KMS"
-    kmsKeyId: ""                         # required when SSE-KMS
+    kmsKeyId: ""                         # required when SSE-KMS in single-region mode;
+                                         # overridden per-region when backups.regions is non-empty
+    perTenantWrapKeys: false             # enable per-tenant crypto-shredding: each tenant's
+                                         # dump is encrypted with a tenant-scoped wrap key that
+                                         # DeleteByTenant destroys (alternative to reconciler for
+                                         # tenant-level erasure only; see §12.8 Backups in erasure scope)
+  regions: {}                            # per-region backup endpoints — REQUIRED when any tenant
+                                         # has dataResidencyRegion set; mirrors storage.regions.
+                                         # Example:
+                                         #   eu-west-1:
+                                         #     minioEndpoint: "https://minio.eu-west-1.internal:9000"
+                                         #     kmsKeyId: "arn:aws:kms:eu-west-1:...:key/..."
+                                         #     accessCredentialSecret: "lenny-backup-minio-eu-west-1"
+                                         #   us-east-1:
+                                         #     minioEndpoint: "https://minio.us-east-1.internal:9000"
+                                         #     kmsKeyId: "arn:aws:kms:us-east-1:...:key/..."
+                                         #     accessCredentialSecret: "lenny-backup-minio-us-east-1"
+                                         # See §12.8 Backup pipeline residency.
+  erasureReconciler:
+    enabled: true                        # post-restore GDPR erasure reconciler; disable only if
+                                         # retention.retainDays ≤ GDPR erasure SLA (72h T3 / 1h T4).
+                                         # See §12.8 Backups in erasure scope.
   contentPolicy:
     includeSensitiveTables: false        # excludes secrets.* tables by default
     excludeTables: []                    # additional tables to exclude beyond defaults
@@ -1098,9 +1119,16 @@ ingress:
 podSelector: { matchLabels: { app: lenny-ops } }
 policyTypes: [Egress]
 egress:
-  # Gateway (ClusterIP and headless)
+  # Gateway (ClusterIP and headless) — cross-namespace: lenny-ops runs in its own
+  # namespace, gateway runs in lenny-system. Both podSelector and namespaceSelector
+  # MUST be present; omitting namespaceSelector would (incorrectly) restrict the rule
+  # to same-namespace gateway pods that do not exist (NET-050). Selector uses the
+  # canonical lenny.dev/component label, not the legacy `app:` key (NET-047).
   - to:
-      - podSelector: { matchLabels: { app: lenny-gateway } }
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: lenny-system }
+        podSelector:
+          matchLabels: { lenny.dev/component: gateway }
     ports: [{ protocol: TCP, port: 8080 }]
   # Postgres
   - to: [{ namespaceSelector: { matchLabels: { name: { storage.namespace } } } }]
@@ -3743,14 +3771,14 @@ The Job pod has:
 - **NetworkPolicy:** egress permitted to Postgres Service, MinIO Service, and K8s API only. No other egress.
 
 **Full backup** flow inside the Job:
-1. Runs `pg_dump` against each Postgres shard (with `--format=custom` for efficient compression). By default, sensitive tables (configured via `backups.contentPolicy.excludeTables` and including `secrets.*`, `credential_pools.raw_secret` columns) are excluded via `--exclude-table-data=...`; these are expected to be restored from a separate secrets backup or re-seeded from SSM/Vault.
+1. Runs `pg_dump` against each Postgres shard (with `--format=custom` for efficient compression). By default, sensitive tables (configured via `backups.contentPolicy.excludeTables` and including `secrets.*`, `credential_pools.raw_secret` columns) are excluded via `--exclude-table-data=...`; these are expected to be restored from a separate secrets backup or re-seeded from SSM/Vault. **Per-region dispatch:** when `backups.regions` is non-empty (required in any deployment where a tenant has `dataResidencyRegion` set, see [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"), `lenny-ops` resolves each shard's region via the same `StorageRouter` resolution used at runtime and runs **one `pg_dump` per region** against that region's shards only — there is no global aggregated dump. Each per-region invocation uses that region's Postgres endpoint, its MinIO endpoint (`backups.regions.<region>.minioEndpoint`), its KMS key (`backups.regions.<region>.kmsKeyId`), and its access-credential Secret (`backups.regions.<region>.accessCredentialSecret`). A shard whose resolved region has no `backups.regions.<region>` entry, or whose region endpoint/KMS is unreachable, aborts the backup with `BACKUP_REGION_UNRESOLVABLE` and emits a `DataResidencyViolationAttempt` audit event (counter `lenny_data_residency_violation_total`).
 2. Exports platform configuration (runtimes, pools, tenants, quotas) as JSON.
 3. Exports CRD manifests from the K8s API.
 4. Packages everything into a tar archive.
-5. Encrypts the archive **client-side** with AES-256-GCM using a data key wrapped by the KMS key configured in `backups.encryption.kmsKeyId` (if set). Without KMS (not recommended for production), client-side encryption is skipped and server-side SSE-S3 encryption is used on the MinIO upload.
+5. Encrypts the archive **client-side** with AES-256-GCM using a data key wrapped by the KMS key configured in `backups.encryption.kmsKeyId` (single-region) or `backups.regions.<region>.kmsKeyId` (per-region) if set. Without KMS (not recommended for production), client-side encryption is skipped and server-side SSE-S3 encryption is used on the MinIO upload. When `backups.encryption.perTenantWrapKeys: true`, each tenant's dump segment is encrypted under a tenant-scoped wrap key so that `DeleteByTenant` can crypto-shred the archive segment by destroying the wrap key (see [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope").
 6. Computes SHA-256 checksum of the encrypted archive.
-7. Uploads to MinIO at `backups/{type}/{id}/{timestamp}.tar.gz.enc` with server-side encryption (SSE-S3 or SSE-KMS per `backups.encryption.minioServerSide`).
-8. Updates the `ops_backups` row with size, checksum, encryption metadata, and `status: "completed"`.
+7. Uploads to MinIO at `backups/{type}/{id}/{timestamp}.tar.gz.enc` with server-side encryption (SSE-S3 or SSE-KMS per `backups.encryption.minioServerSide`). In the per-region path, the object is written to the region's bucket (never a global/default bucket).
+8. Updates the `ops_backups` row with size, checksum, encryption metadata, and `status: "completed"`. In the per-region path, `components` lists one entry per region covered so verification, retention, and restore all operate per-region.
 
 **Postgres-only backup** runs step 1 (and encryption/upload steps 5–7) only. **Config-only backup** runs steps 2–3 (and encryption/upload) only.
 
@@ -3830,14 +3858,15 @@ The restore process:
 3. **Pre-restore backup.** Creates a full backup tagged `type: "pre-restore"` to MinIO. This backup is retained for 7 days by default (configurable via `backups.retention.preRestoreRetainDays`) and is automatically deleted when the restore completes successfully (see Pre-Restore Backup Lifecycle below). Failed restores keep the pre-restore backup for the full retention window for post-mortem recovery.
 4. **Create the restore K8s Job.** Runs `pg_restore` against each shard. The Job has the same security profile as backup Jobs but with write access on the target shards. Per-shard progress is recorded in `ops_restore_state` (see Failure and Recovery below).
 5. **Emit events.** `restore_started` on kick-off; per-shard `restore_shard_completed` events as each shard finishes; `restore_completed` (all shards) or `restore_failed` (any shard fails) on exit.
-6. **Gateway restart.** On successful completion, `lenny-ops` patches the gateway Deployment's annotations to trigger a rolling restart (so the gateway picks up restored schema/config). Agents monitoring `platform_upgrade_*` events can observe this. **Not** triggered on failure — a partial-restore platform should not be served until the operator decides on recovery.
-7. **Lock release on success.** After the gateway rolling restart in step 6 has completed (`status.updatedReplicas == status.replicas`), `lenny-ops` releases the `restore:platform` remediation lock automatically. From that point, subsequent `restore/execute` calls are unblocked. The pre-restore backup becomes eligible for deletion (per Pre-Restore Backup Lifecycle below). On **failure**, the lock is NOT auto-released — see Restore Failure and Recovery.
+6. **GDPR erasure reconciler.** Between `restore_completed` and the gateway restart, `lenny-ops` runs the post-restore erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope"). The reconciler scans the restored `audit_log` for rows matching `event_type LIKE 'gdpr.%'` with the receipt's `completed_at > ops_backups.completed_at` (the `backupTakenAt` boundary), replays `DeleteByUser(user_id)` / `DeleteByTenant(tenant_id)` for each enumerated subject against the restored databases in dependency order, and emits a single `gdpr.backup_reconcile_completed` audit event with the reconciled subjects. `gdpr.*` receipts survive restore under `audit.gdprRetentionDays` (7y default), which always exceeds the 90-day maximum `backups.retention.retainDays`. The reconciler executes as a dedicated K8s Job with the same security profile as the restore Job. **Ready-gating:** the gateway MUST NOT be restarted or marked Ready until the reconciler reports success. On reconciler failure (individual replay failure, Postgres unavailability mid-reconcile, or enumeration error), the restore is aborted with `RESTORE_ERASURE_RECONCILE_FAILED`, `ops_restore_state.status` is set to `"failed"`, the `restore_failed` event is emitted with `failure_phase: "erasure_reconcile"`, the `restore:platform` remediation lock remains held, and step 7 is skipped — the gateway is not restarted because serving a partial reconcile would resurrect erased personal data.
+7. **Gateway restart.** On successful reconciler completion, `lenny-ops` patches the gateway Deployment's annotations to trigger a rolling restart (so the gateway picks up restored schema/config). Agents monitoring `platform_upgrade_*` events can observe this. **Not** triggered on failure — a partial-restore platform (including a restore that completed its shards but failed the reconciler) should not be served until the operator decides on recovery.
+8. **Lock release on success.** After the gateway rolling restart in step 7 has completed (`status.updatedReplicas == status.replicas`), `lenny-ops` releases the `restore:platform` remediation lock automatically. From that point, subsequent `restore/execute` calls are unblocked. The pre-restore backup becomes eligible for deletion (per Pre-Restore Backup Lifecycle below). On **failure** (restore itself, or the erasure reconciler), the lock is NOT auto-released — see Restore Failure and Recovery.
 
 #### Pre-Restore Backup Lifecycle
 
 Pre-restore backups are managed by a single deletion path to avoid races between immediate-deletion and the daily retention cron:
 
-- **On successful restore completion (step 7),** `lenny-ops` updates the pre-restore backup's `ops_backups` row in Postgres: `status: "expired", expires_at: now()`. It does NOT delete the MinIO object directly.
+- **On successful restore completion (step 8, after the GDPR erasure reconciler has succeeded and the gateway has rolled),** `lenny-ops` updates the pre-restore backup's `ops_backups` row in Postgres: `status: "expired", expires_at: now()`. It does NOT delete the MinIO object directly.
 - **The retention enforcement Job** (which already deletes expired backups from both MinIO and Postgres atomically) handles the actual MinIO `DeleteObject` and the Postgres row removal in a coordinated sequence (see Section 25.11 Retention Enforcement). The retention Job runs after every backup AND on the daily 03:30 UTC cron, so an expired pre-restore backup is cleaned up within minutes typically.
 - **The retention Job is leader-elected** (runs only on the leader `lenny-ops` replica) so concurrent runs across replicas are not possible.
 - This single-deletion-path design ensures the pre-restore backup is never partially deleted (Postgres row gone but MinIO object lingering, or vice versa).
@@ -4015,11 +4044,13 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `RESTORE_ACKNOWLEDGE_REQUIRED` | `POLICY` | 400 | `confirm: true` supplied but `acknowledgeDataLoss: true` is missing; safety check returned `safe: false`. |
 | `RESTORE_LOCK_REQUIRED` | `POLICY` | 409 | `restore/resume` called but the caller does not hold the `restore:platform` lock; re-acquire and retry. |
 | `RESTORE_NOT_FOUND` | `PERMANENT` | 404 | Restore ID not found in `ops_restore_state`. |
+| `RESTORE_ERASURE_RECONCILE_FAILED` | `PERMANENT` | 500 | Post-restore GDPR erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope") failed to replay one or more receipts against the restored databases. Restore is aborted without gateway restart; the `restore:platform` lock is retained. Operators must investigate the reconciler failure (typically via `GET /v1/admin/restore/{id}/status`) and resolve before retrying. |
 | `BACKUP_STORAGE_UNREACHABLE` | `TRANSIENT` | 503 | MinIO unreachable |
+| `BACKUP_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A shard's resolved `dataResidencyRegion` has no corresponding `backups.regions.<region>` entry, or the region's MinIO endpoint / KMS key is unreachable. Fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE`; emits `DataResidencyViolationAttempt` audit event ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). |
 
 ### Audit Events
 
-`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`.
+`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, `gdpr.backup_reconcile_completed` (§12.8 Backups in erasure scope — written by the post-restore reconciler between `restore_completed` and the gateway restart), `DataResidencyViolationAttempt` (§12.8 Backup pipeline residency — emitted on `BACKUP_REGION_UNRESOLVABLE` with `operation: "backup"`).
 
 ---
 

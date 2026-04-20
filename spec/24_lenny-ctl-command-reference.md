@@ -11,10 +11,10 @@ Every command requires `LENNY_API_URL` (or `--api-url` flag) and a valid admin t
 
 1. **`lenny-ctl preflight`** operates in two modes — standalone (reads `values.yaml` directly and probes infrastructure without a running gateway) and API-backed (delegates to `POST /v1/admin/preflight` on a running gateway). In standalone mode it embeds the preflight check logic locally because preflight must run before the platform is deployed.
 2. **`lenny-ctl install`** ([§24.20](#2420-installation-wizard)) carries the interactive installer's question engine and values-rendering logic locally; it calls `helm` and then `lenny-ctl bootstrap` internally.
-3. **`lenny up` / `lenny down` / `lenny status`** ([§24.19](#2419-local-stack)) manage the Tier 0 embedded single-binary stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) and run the gateway, controllers, embedded Postgres/Redis, and k3s in-process. These are local-only commands; they do not call any remote API.
+3. **`lenny up` / `lenny down` / `lenny status`** ([§24.19](#2419-local-stack)) manage the Embedded Mode single-binary stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) and run the gateway, controllers, embedded Postgres/Redis, and k3s in-process. These are local-only commands; they do not call any remote API.
 4. **`lenny runtime init`** ([§24.18](#2418-runtime-scaffolding)) is an offline scaffolder that emits a new runtime repository skeleton.
 
-**One binary, two names.** The binary ships as both `lenny` (short name, Tier 0 ergonomics) and `lenny-ctl` (long name, operator context). Both names support every subcommand; the docs use the short form in local/developer contexts and the long form in operator contexts. See [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) for the binary-vs-symlink layout.
+**One binary, two names.** The binary ships as both `lenny` (short name, Embedded Mode ergonomics) and `lenny-ctl` (long name, operator context). Both names support every subcommand; the docs use the short form in local/developer contexts and the long form in operator contexts. See [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) for the binary-vs-symlink layout.
 
 ### 24.0 Packaging and Installation
 
@@ -226,22 +226,24 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 | Command | Description | Min Role |
 |---------|-------------|----------|
 | `lenny runtime init <name> --language {go\|python\|typescript\|binary} --template {chat\|coding\|minimal}` | Generate a new runtime skeleton in `./<name>/`. The `coding` template pre-wires the shared coding-agent workspace plan from [§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes); `chat` is the minimal non-coding template; `minimal` is a bare Hello World. | none (local) |
-| `lenny runtime validate [<path>]` | Validate a runtime repository against the Runtime Adapter Specification ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)) and the `runtime.yaml` contract. Runs in the current directory by default. | none (local) |
+| `lenny runtime validate [<path>]` | Validate a runtime repository against the Runtime Adapter Specification ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)) and the `runtime.yaml` contract. Runs in the current directory by default. Serves as the `lenny runtime validate` entry point for the Conformance Test Suite ([§15.4.6](15_external-api-surface.md#1546-conformance-test-suite)). | none (local) |
 | `lenny runtime publish <name> --image <ref>` | Convenience wrapper for `docker push` and `lenny-ctl admin runtimes register` that pushes the built image to the configured registry and registers the runtime against the target gateway. Requires `--api-url` and an admin token. | `platform-admin` (for the register step) |
+
+**Basic-level skeleton emitted by `--language binary --template minimal`.** The `binary`/`minimal` combination deliberately emits a Basic-level-compliant skeleton with **no SDK imports** — the generated `main` file contains only the stdin/stdout JSON Lines loop from [§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) (read line → parse JSON → switch on `type` → write response + flush). No `github.com/lennylabs/runtime-sdk-go`, no `lenny-runtime` Python package, no `@lennylabs/runtime-sdk` dependency appears in the generated Dockerfile or manifest. This preserves the Basic-level "zero Lenny knowledge" promise from [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) for authors who prefer to implement the protocol directly. Authors who want SDK conveniences (typed handlers, lifecycle channel helpers, credential-lease refresh loop) instead choose `--language {go|python|typescript}` with any template, which emits the Standard- or Full-level SDK-based skeleton.
 
 ### 24.19 Local Stack
 
-The Tier 0 embedded stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) is managed entirely through these local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+The Embedded Mode stack ([§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) is managed entirely through these local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
 
 | Command | Description |
 |---------|-------------|
-| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "Tier 0 — NOT for production use" banner. |
+| `lenny up` | Start the embedded k3s / Postgres / Redis / KMS / OIDC / gateway / controllers / reference runtimes stack. Idempotent. Prints the local gateway URL and the non-suppressible "Embedded Mode — NOT for production use" banner. |
 | `lenny down [--purge]` | Gracefully terminate all embedded components. `--purge` additionally deletes `~/.lenny/`. |
 | `lenny status` | Print component health, active session count, and resource usage. |
 | `lenny logs [<component>] [--follow]` | Tail merged logs, or filter to one of `gateway`, `controller`, `ops`, `postgres`, `redis`, `kms`, `oidc`, `runtime-<name>`. |
 | `lenny restart [<component>]` | Restart a single embedded component without tearing down the rest of the stack. |
 
-When invoked as `lenny` (short name) these commands default to the Tier 0 stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
+When invoked as `lenny` (short name) these commands default to the Embedded Mode stack; invoked as `lenny-ctl <same-command>` they behave identically but are documented under the operator-tool framing.
 
 ### 24.20 Installation Wizard
 

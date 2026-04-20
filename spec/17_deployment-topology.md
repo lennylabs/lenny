@@ -4,7 +4,7 @@
 
 | Component               | K8s Resource                              | Notes                                                                                                                                                      |
 | ----------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gateway                 | Deployment + Service + Ingress            | HPA, PDB, multi-zone, topology spread. Single-container pod — the LLM Proxy subsystem and its native Go translator run inside the gateway binary ([§4.9](04_system-components.md#49-credential-leasing-service) Native translator). No sidecar, no separate container, no intra-pod loopback listener. |
+| Gateway                 | Deployment + Service + Ingress            | HPA, multi-zone, topology spread. **PodDisruptionBudget**: `minAvailable: 2` at Tier 1/2, `minAvailable: ceil(replicas/2)` at Tier 3. **Rolling update strategy**: `maxUnavailable: 1, maxSurge: 25%`. Rationale: the gateway preStop hook ([§10.1](10_gateway-internals.md#101-horizontal-scaling) preStop stage 2 and the CheckpointBarrier fan-out at line 130) fans out CheckpointBarrier to up to 400 pods per replica. With the Kubernetes default `maxUnavailable: 25%` at Tier 3 (~20 replicas), up to 5 replicas drain concurrently = up to 2,000 simultaneous MinIO checkpoint uploads, exceeding the [§10.1](10_gateway-internals.md#101-horizontal-scaling) per-replica budget and the [§17.8.2](#1782-capacity-tier-reference) MinIO throughput budget. `maxUnavailable: 1` caps the fan-out to one replica's 400-pod quota at a time. Single-container pod — the LLM Proxy subsystem and its native Go translator run inside the gateway binary ([§4.9](04_system-components.md#49-credential-leasing-service) Native translator). No sidecar, no separate container, no intra-pod loopback listener. |
 | Token Service | Deployment + Service + PDB                | 2+ replicas, stateless; separate SA with KMS access; PDB `minAvailable: 1`                                                                                 |
 | Warm Pool Controller    | Deployment (2+ replicas, leader election) | Manages pod lifecycle via `PoolManager` interface (default implementation: `kubernetes-sigs/agent-sandbox` CRDs)                                           |
 | PoolScalingController   | Deployment (2+ replicas, leader election) | Reconciles pool config from Postgres into CRDs; manages scaling intelligence                                                                               |
@@ -37,7 +37,26 @@ lenny-agents-kata/    # Kata pods (separate node pool with dedicated hardware)
 
 This approach preserves the same security properties (non-root UID, all capabilities dropped, read-only root filesystem, gateway-mediated file delivery) via admission policy controllers rather than the built-in PSS enforce mode, while applying the strictest possible constraints per RuntimeClass.
 
-**Admission policy manifests** (OPA/Gatekeeper ConstraintTemplates or Kyverno ClusterPolicies) are included in the Helm chart under `templates/admission-policies/` and deployed as part of the chart install. These policies include: (1) full Restricted PSS enforcement for runc pods, (2) RuntimeClass-specific relaxed enforcement for gVisor and Kata pods, (3) the `POD_SPEC_HOST_SHARING_FORBIDDEN` validation policy that rejects pods in agent namespaces with any of `shareProcessNamespace: true`, `hostPID: true`, `hostNetwork: true`, or `hostIPC: true` (see [Section 13.1](13_security-model.md#131-pod-security)), (4) label-based namespace targeting via `.Values.agentNamespaces`, and (5) the `lenny-label-immutability` ValidatingAdmissionWebhook that enforces immutability of the `lenny.dev/managed: "true"`, `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels, permitting them to be set only by the warm pool controller ServiceAccount at pod creation and denying any post-creation mutation (see NET-003 note in [Section 13.2](13_security-model.md#132-network-isolation)). An **integration test suite** (`tests/integration/admission_policy_test.go`) verifies that controller-generated pod specs for each RuntimeClass pass the deployed admission policies, preventing policy/spec drift from causing warm pool deadlock.
+**Admission policy manifests** (OPA/Gatekeeper ConstraintTemplates or Kyverno ClusterPolicies, plus Lenny-authored `ValidatingAdmissionWebhook` resources) are included in the Helm chart under `templates/admission-policies/` and deployed as part of the chart install. This directory is the canonical enumeration for every admission gate shipped by Lenny; Helm-chart authors must cross-check this list against the rendered manifests. The full set of policies and webhooks rendered under `templates/admission-policies/` is:
+
+1. **Full Restricted PSS enforcement for runc pods** (OPA/Gatekeeper ConstraintTemplate or Kyverno ClusterPolicy).
+2. **RuntimeClass-specific relaxed enforcement for gVisor and Kata pods** (see the split-enforcement rationale above).
+3. **`POD_SPEC_HOST_SHARING_FORBIDDEN`** validation policy that rejects pods in agent namespaces with any of `shareProcessNamespace: true`, `hostPID: true`, `hostNetwork: true`, or `hostIPC: true` (see [Section 13.1](13_security-model.md#131-pod-security)).
+4. **Label-based namespace targeting** via `.Values.agentNamespaces` (ensures the above policies scope to Lenny-managed agent namespaces only).
+5. **`lenny-label-immutability`** `ValidatingAdmissionWebhook` — enforces immutability of the `lenny.dev/managed: "true"`, `lenny.dev/delivery-mode`, and `lenny.dev/egress-profile` labels on agent pods, plus the `lenny.dev/tenant-id` transition rules (see NET-003 in [Section 13.2](13_security-model.md#132-network-isolation) and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+6. **`lenny-direct-mode-isolation`** `ValidatingAdmissionWebhook` — rejects pods whose pool configuration combines `deliveryMode: direct` with `isolationProfile: standard` in multi-tenant mode (see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) and [Section 13.2](13_security-model.md#132-network-isolation)).
+7. **`lenny-sandboxclaim-guard`** `ValidatingAdmissionWebhook` — double-claim prevention and tenant-scope enforcement on `SandboxClaim` PATCH/PUT operations (see [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+8. **`lenny-data-residency-validator`** `ValidatingAdmissionWebhook` — enforces `dataResidencyRegion` constraints on tenant-scoped CRDs (see [Section 12.8](12_storage-architecture.md#128-compliance-interfaces)).
+9. **`lenny-pool-config-validator`** `ValidatingAdmissionWebhook` — applies the semantic budget rules ([§10.1](10_gateway-internals.md#101-horizontal-scaling) tiered-cap + BarrierAck budget and BarrierAck floor) to every `SandboxTemplate.spec`/`SandboxWarmPool.spec` write and additionally applies the `userInfo`-based authorization-denial rule to manual writes (see [Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)).
+10. **`lenny-t4-node-isolation`** `ValidatingAdmissionWebhook` — enforces T4 dedicated-node placement (see [Section 6.4](06_warm-pod-model.md#64-resource-limits-and-isolation)).
+11. **`lenny-drain-readiness`** `ValidatingAdmissionWebhook` — pre-drain MinIO health check before pod eviction (see [Section 12.5](12_storage-architecture.md#125-minio-object-storage) and NET-037 in [Section 13.2](13_security-model.md#132-network-isolation)).
+12. **`lenny-crd-conversion`** CRD conversion webhook — rendered from the same template directory (`templates/admission-policies/conversion-webhook.yaml`) and co-managed with the admission webhooks for lifecycle purposes; see [Section 15](15_external-api-surface.md) and [Section 10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy) for the upgrade procedure. Unlike the `Validating` webhooks above, this is a `CustomResourceDefinition.spec.conversion.webhook` endpoint, but it shares the same HA and preflight requirements.
+
+**High-availability requirement applies to every entry above.** The `replicas: 2` + `podDisruptionBudget.minAvailable: 1` HA requirement stated in the "Admission webhook failure mode" paragraph below applies uniformly to **every** webhook and CRD conversion webhook enumerated in this list — not only to the RuntimeClass-aware admission policy webhook. The Helm chart configures `replicas: 2` and `podDisruptionBudget.minAvailable: 1` on the Deployment backing each webhook Service (`lenny-label-immutability`, `lenny-direct-mode-isolation`, `lenny-sandboxclaim-guard`, `lenny-data-residency-validator`, `lenny-pool-config-validator`, `lenny-t4-node-isolation`, `lenny-drain-readiness`, `lenny-crd-conversion`). All fail-closed webhooks (`failurePolicy: Fail`) — which includes every webhook in the list above — must maintain the 99.9% availability SLO; an availability drop below this threshold triggers the per-webhook unavailability alerts enumerated in [Section 16.5](16_observability.md#165-alerting-rules-and-slos) (`SandboxClaimGuardUnavailable`, `DataResidencyWebhookUnavailable`, `PoolConfigValidatorUnavailable`, and the common `AdmissionWebhookUnavailable`).
+
+**Preflight enumeration check (`lenny-preflight`).** The `lenny-preflight` Job ([§17.9](#179-deployment-answer-files) — `Checks performed`) enumerates the deployed `ValidatingWebhookConfiguration` and `CustomResourceDefinition.spec.conversion.webhook` resources in the target cluster and verifies that the full expected set is present before allowing the install or upgrade to proceed. The expected set is hard-coded against the enumeration above (`lenny-label-immutability`, `lenny-direct-mode-isolation`, `lenny-sandboxclaim-guard`, `lenny-data-residency-validator`, `lenny-pool-config-validator`, `lenny-t4-node-isolation`, `lenny-drain-readiness`, and the `lenny-crd-conversion` conversion webhook for each Lenny CRD). The check is **fail-closed**: any missing webhook causes the Job to fail with `"expected ValidatingWebhookConfiguration '<name>' not found; chart-rendered webhook is missing — re-render with the current chart or run 'helm template' and diff against the expected set"`. This prevents a Helm chart author from shipping an incomplete chart that silently omits one of the fail-closed webhooks whose absence would go undetected at runtime.
+
+An **integration test suite** (`tests/integration/admission_policy_test.go`) verifies that controller-generated pod specs for each RuntimeClass pass the deployed admission policies, preventing policy/spec drift from causing warm pool deadlock. A companion suite (`tests/integration/admission_webhook_inventory_test.go`) verifies that every webhook enumerated in the list above is rendered by `helm template` against the default values — preventing regression in the chart's webhook inventory.
 
 **Admission webhook failure mode:** All RuntimeClass-aware admission policy webhooks (OPA/Gatekeeper `ConstraintTemplate` admission controller or Kyverno admission controller) **must** be configured with `failurePolicy: Fail`. If the admission controller webhook is unavailable, pod admission is denied (fail-closed). This prevents pods from being scheduled without security constraints during webhook outages. The Helm chart configures `failurePolicy: Fail` on all admission policy `ValidatingWebhookConfiguration` objects. The admission controller deployment **must** maintain a minimum availability SLO of 99.9% (measured over a rolling 30-day window); the Helm chart deploys the admission controller with `replicas: 2` (configurable via `.Values.admissionController.replicas`) and `podDisruptionBudget.minAvailable: 1` to preserve availability during voluntary disruptions. Alert `AdmissionWebhookUnavailable` fires when the webhook has been unreachable for more than 30 seconds. Note: namespace-level PSS `enforce` cannot serve as a defense-in-depth fallback here because it cannot distinguish RuntimeClasses — gVisor and Kata pods would be incorrectly rejected (see rationale above). The `failurePolicy: Fail` + high-availability SLO combination is the primary mechanism ensuring pods cannot be admitted without security constraints during a webhook outage.
 
@@ -95,9 +114,9 @@ The `lenny-preflight` Job validates that both `ResourceQuota` and `LimitRange` e
 
 ### 17.4 Local Development Mode (`lenny-dev`)
 
-For local use Lenny provides a **three-tier local mode**. Tier 0 is the primary path for deployers evaluating or using Lenny on a workstation; Tier 1 and Tier 2 are developer-oriented paths for contributors working on Lenny itself or authoring runtime adapters.
+For local use Lenny provides **three local-dev modes**. Embedded Mode is the primary path for deployers evaluating or using Lenny on a workstation; Source Mode and Compose Mode are developer-oriented paths for contributors working on Lenny itself or authoring runtime adapters. These local-dev mode names (Embedded / Source / Compose) are distinct from the **capacity tiers** (Tier 1 / Tier 2 / Tier 3) defined in [§17.8.2](#1782-capacity-tier-reference); the two labels name orthogonal axes and never collide.
 
-#### Tier 0: `lenny up` — Single-binary embedded stack
+#### Embedded Mode: `lenny up` — Single-binary embedded stack
 
 ```
 lenny up                                  # Brings up a full Lenny stack on localhost
@@ -119,7 +138,7 @@ A single statically-linked binary — `lenny` — embeds every dependency needed
 | Object storage | Local filesystem (`~/.lenny/artifacts/`)                         | Same artifact-store interface as MinIO/S3                                  |
 | TLS            | Self-signed certs rotated per `lenny up` (valid for 24h)         | Gateway listens on `https://localhost:8443` and `http://localhost:8080`     |
 
-**Same platform code path as production.** Tier 0 uses the production gateway, controllers, CRDs, and storage interfaces. Only the driver selection differs: `mode=embedded` is signaled by a platform flag that the storage, KMS, and identity interfaces consume to pick their embedded backends. There are no tier-dependent code splits in business logic.
+**Same platform code path as production.** Embedded Mode uses the production gateway, controllers, CRDs, and storage interfaces. Only the driver selection differs: `mode=embedded` is signaled by a platform flag that the storage, KMS, and identity interfaces consume to pick their embedded backends. There are no mode-dependent code splits in business logic.
 
 **Reference runtimes pre-installed.** `lenny up` installs all reference runtimes from [Section 26](26_reference-runtime-catalog.md) as platform-global records and auto-grants access to the `default` tenant so the developer can invoke any of them without further configuration. Container images are pulled lazily on first session start for each runtime; subsequent sessions reuse the cached image. The warm pool defaults are overridden to `warmCount: 0` (cold-start on first use) to keep resource usage low on laptops.
 
@@ -133,22 +152,22 @@ A single statically-linked binary — `lenny` — embeds every dependency needed
 | `lenny logs [<component>]` | Tails merged logs or filters to one component (`gateway`, `controller`, `ops`, `postgres`, etc.).          |
 | `lenny session ...`   | Session CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)); targets the local stack. |
 
-**Production warning banner.** On every `lenny up` the binary prints a prominent, non-suppressible banner: `"Tier 0 embedded mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`; the gateway rejects externally-issued tokens. Any attempt to expose the gateway outside localhost (e.g., by binding `0.0.0.0`) fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
+**Production warning banner.** On every `lenny up` the binary prints a prominent, non-suppressible banner: `"Embedded Mode. NOT for production use. Credentials, KMS master key, and identities are insecure."` The embedded OIDC provider refuses any audience claim not matching `dev.local`; the gateway rejects externally-issued tokens. Any attempt to expose the gateway outside localhost (e.g., by binding `0.0.0.0`) fails closed with `EMBEDDED_MODE_LOCAL_ONLY`.
 
 **State and resets.**
 
 - `~/.lenny/` is the sole state directory. `lenny down --purge` removes it.
-- Upgrades: `lenny up` on a newer binary runs the standard schema migration path ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) against the embedded Postgres. Rollback is **not** supported in Tier 0 — the user is expected to `lenny down --purge` and start fresh if they need to revert.
+- Upgrades: `lenny up` on a newer binary runs the standard schema migration path ([§10.5](10_gateway-internals.md#105-upgrade-and-rollback-strategy)) against the embedded Postgres. Rollback is **not** supported in Embedded Mode — the user is expected to `lenny down --purge` and start fresh if they need to revert.
 
-**Binary-vs-symlink.** The `lenny` binary is the same executable as `lenny-ctl` ([§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference)) installed under a short name. When invoked as `lenny`, the binary defaults to the Tier 0 ergonomics (local stack, no `--api-url` required); when invoked as `lenny-ctl`, it targets a remote gateway (`--api-url` required). Every command is available under both names; docs use the short form in local/developer contexts and the long form in operator contexts.
+**Binary-vs-symlink.** The `lenny` binary is the same executable as `lenny-ctl` ([§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference)) installed under a short name. When invoked as `lenny`, the binary defaults to Embedded Mode ergonomics (local stack, no `--api-url` required); when invoked as `lenny-ctl`, it targets a remote gateway (`--api-url` required). Every command is available under both names; docs use the short form in local/developer contexts and the long form in operator contexts.
 
-#### Tier 1: `make run` — Zero-dependency developer mode
+#### Source Mode: `make run` — Zero-dependency developer mode
 
 ```
 make run   # Starts: gateway + controller-sim + single agent container (single binary)
 ```
 
-A developer-oriented local entry point for **contributing to the Lenny platform itself**. Unlike Tier 0 (which uses the released `lenny` binary and embedded k3s), Tier 1 runs the Lenny source tree directly without Kubernetes:
+A developer-oriented local entry point for **contributing to the Lenny platform itself**. Unlike Embedded Mode (which uses the released `lenny` binary and embedded k3s), Source Mode runs the Lenny source tree directly without Kubernetes:
 
 - **Embedded SQLite** replaces Postgres for session and metadata storage
 - **In-memory caches** replace Redis for pub/sub and ephemeral state
@@ -162,9 +181,9 @@ No Postgres, Redis, MinIO, Kubernetes, or Docker required. Suitable for:
 - First-time contributors getting oriented with the codebase
 - CI test jobs that need the full platform surface without cluster provisioning
 
-Deployers evaluating Lenny as an end user should prefer Tier 0 (`lenny up`) — it exercises the real Kubernetes code path and installs reference runtimes.
+Deployers evaluating Lenny as an end user should prefer Embedded Mode (`lenny up`) — it exercises the real Kubernetes code path and installs reference runtimes.
 
-#### Tier 2: `docker compose up` — Full local stack
+#### Compose Mode: `docker compose up` — Full local stack
 
 ```
 docker compose up   # Starts: gateway, controller-sim, single agent pod, Postgres, Redis, MinIO
@@ -178,7 +197,7 @@ Production-like local environment with real infrastructure dependencies:
 - MinIO: single container for artifact storage
 - Agent pod: single Docker container with runtime adapter + agent binary
 
-> **Warning — plain HTTP and real credentials.** The default Tier 2 profile transmits all traffic — including LLM provider API keys injected via credential pools — over plain HTTP between the gateway and agent containers. **Do not configure real LLM credentials in docker-compose unless TLS is enabled** (see credential-testing profile below). This applies to both interactive development and CI environments that run integration tests with real API keys.
+> **Warning — plain HTTP and real credentials.** The default Compose Mode profile transmits all traffic — including LLM provider API keys injected via credential pools — over plain HTTP between the gateway and agent containers. **Do not configure real LLM credentials in docker-compose unless TLS is enabled** (see credential-testing profile below). This applies to both interactive development and CI environments that run integration tests with real API keys.
 
 Suitable for:
 
@@ -209,11 +228,11 @@ The certificates are regenerated if deleted; no manual key management is require
 
 #### Observability in dev mode
 
-Tier 2 (`docker compose up`) includes optional observability containers: Prometheus (metrics scraping), Grafana (pre-built Lenny dashboard), and Jaeger (distributed tracing). Enable with `docker compose --profile observability up`. Tier 1 (`make run`) outputs traces to stdout and exposes Prometheus metrics on `:9090/metrics`.
+Compose Mode (`docker compose up`) includes optional observability containers: Prometheus (metrics scraping), Grafana (pre-built Lenny dashboard), and Jaeger (distributed tracing). Enable with `docker compose --profile observability up`. Source Mode (`make run`) outputs traces to stdout and exposes Prometheus metrics on `:9090/metrics`.
 
 #### Zero-credential mode
 
-In both tiers, the gateway can operate without LLM provider credentials by using a **built-in echo/mock agent runtime** that does not require an LLM provider. The echo runtime replays deterministic responses, allowing contributors to test platform mechanics (session lifecycle, workspace materialization) without providing any API keys. This is the default runtime in Tier 1 and can be selected explicitly in Tier 2 via `LENNY_AGENT_RUNTIME=echo`. Note: the echo runtime cannot invoke MCP tools; delegation flow testing requires the `delegation-echo` test runtime introduced in Phase 9 ([Section 18](18_build-sequence.md)), which executes scripted tool call sequences including `lenny/delegate_task`.
+In both Source Mode and Compose Mode, the gateway can operate without LLM provider credentials by using a **built-in echo/mock agent runtime** that does not require an LLM provider. The echo runtime replays deterministic responses, allowing contributors to test platform mechanics (session lifecycle, workspace materialization) without providing any API keys. This is the default runtime in Source Mode and can be selected explicitly in Compose Mode via `LENNY_AGENT_RUNTIME=echo`. Note: the echo runtime cannot invoke MCP tools; delegation flow testing requires the `delegation-echo` test runtime introduced in Phase 9 ([Section 18](18_build-sequence.md)), which executes scripted tool call sequences including `lenny/delegate_task`.
 
 #### Dev mode guard rails
 
@@ -223,25 +242,60 @@ Dev mode relaxes security defaults (TLS, JWT signing) for local convenience, but
 2. **Prominent startup warning:** When `LENNY_DEV_MODE=true` is set, the gateway logs at `WARN` level on every startup: `"WARNING: TLS disabled — dev mode active. Do not use in production."` The warning is repeated every 60 seconds while the process is running.
 3. **Unified security-relaxation gate:** The `LENNY_DEV_MODE` flag is the single gate for all security relaxations in dev mode, including TLS bypass, JWT signing bypass, and any future relaxations. No individual security feature can be disabled independently without this flag.
 
-Setting `LENNY_DEV_TLS=true` (requires `LENNY_DEV_MODE=true`) enables self-signed mTLS certificates that are auto-generated on first run. This is **required when testing with real LLM credentials** in Tier 2 (use the `credentials` docker-compose profile, which sets this automatically) and is also useful for adapter authors testing certificate validation, rotation, and error handling without a full cert-manager setup. See "Credential-testing profile" and "Self-signed certificate trust setup" above for details.
+Setting `LENNY_DEV_TLS=true` (requires `LENNY_DEV_MODE=true`) enables self-signed mTLS certificates that are auto-generated on first run. This is **required when testing with real LLM credentials** in Compose Mode (use the `credentials` docker-compose profile, which sets this automatically) and is also useful for adapter authors testing certificate validation, rotation, and error handling without a full cert-manager setup. See "Credential-testing profile" and "Self-signed certificate trust setup" above for details.
 
 #### Smoke test
 
-Both dev mode tiers include a built-in smoke test: `make test-smoke` (Tier 1) or `docker compose run smoke-test` (Tier 2) creates a session with the echo runtime, sends a prompt, verifies a response, and exits. This validates the entire pipeline (gateway, controller-sim, runtime adapter, agent binary) in under 10 seconds.
+Both Source Mode and Compose Mode include a built-in smoke test: `make test-smoke` (Source Mode) or `docker compose run smoke-test` (Compose Mode) creates a session with the echo runtime, sends a prompt, verifies a response, and exits. This validates the entire pipeline (gateway, controller-sim, runtime adapter, agent binary) in under 10 seconds.
 
 #### Plugging in a custom runtime
 
-After reading the echo runtime sample ([Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)), runtime authors can substitute their own binary in either dev tier:
+After reading the echo runtime sample ([Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)), runtime authors can substitute their own binary in any local-dev mode. **Embedded Mode is the recommended primary path for runtime authors** — it exercises the real Kubernetes code path and the production gateway/controllers against the embedded stack, so a runtime that passes Embedded Mode registration is the closest local approximation to how it will behave in a real cluster.
 
-**Tier 1 (`make run`) — override the agent binary path:**
+**Embedded Mode (`lenny up`) — register against the embedded gateway (primary path):**
+
+```bash
+# 1. Bring up the embedded stack (if not already running)
+lenny up
+
+# 2. Build your runtime image into the embedded cluster's image store
+docker build -t my-agent:dev .
+lenny image import my-agent:dev     # Loads the image into the embedded k3s containerd store
+
+# 3. Register the runtime via lenny-ctl against the embedded gateway
+cat > runtime.yaml <<'EOF'
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: my-agent
+spec:
+  type: agent
+  image: my-agent:dev
+  integrationLevel: basic
+EOF
+lenny-ctl runtime register --file runtime.yaml
+
+# 4. The embedded gateway's CRD controller picks up the runtime automatically;
+#    the pool warms a pod on next session start.
+
+# 5. Test with POST /v1/sessions via curl or the bundled Go/TS client SDK
+curl -k -X POST https://localhost:8443/v1/sessions \
+  -H "Authorization: Bearer $(lenny token print)" \
+  -H "Content-Type: application/json" \
+  -d '{"runtime": "my-agent", "input": [{"type": "text", "inline": "hello"}]}'
+```
+
+No rebuild of the Lenny platform is required — `lenny up` runs the released `lenny` binary, and `lenny-ctl runtime register` is the same admin API used in production clusters. Basic-level runtimes can stop here; Standard- and Full-level authors proceed to the MCP and lifecycle channel samples in [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime).
+
+**Source Mode (`make run`) — override the agent binary path (platform contributor path):**
 
 ```
 make run LENNY_AGENT_BINARY=/path/to/my-agent-binary
 ```
 
-The controller-sim spawns the specified binary as a single agent container. The binary must implement the stdin/stdout JSON Lines protocol ([Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)). No runtime registration is required in Tier 1 — the binary is used directly.
+Use Source Mode when you need to modify the gateway or controller source alongside your runtime. The controller-sim spawns the specified binary as a single agent container. The binary must implement the stdin/stdout JSON Lines protocol ([Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)). No runtime registration is required in Source Mode — the binary is used directly.
 
-**Tier 2 (`docker compose up`) — register a custom runtime and point to your binary:**
+**Compose Mode (`docker compose up`) — register a custom runtime and point to your binary:**
 
 ```bash
 # 1. Build your runtime image
@@ -258,7 +312,7 @@ LENNY_AGENT_RUNTIME=my-agent docker compose up
 
 Alternatively, add your runtime to the bootstrap seed file (`lenny-data/seed.yaml`) and restart. The controller-sim picks up the registered runtime on next pool warm cycle. The seed file is applied idempotently on every `docker compose up`.
 
-> **macOS note:** `make run` (Tier 1) supports macOS for Basic-level runtimes (stdin/stdout binary protocol only). Standard- and Full-level runtimes require abstract Unix sockets (`@` prefix names), which are **Linux-only** — macOS does not support abstract sockets. If you are developing a Standard- or Full-level runtime on macOS, use `docker compose up` (Tier 2) instead, which runs the adapter inside a Linux container. See [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) for level definitions.
+> **macOS note:** `make run` (Source Mode) supports macOS for Basic-level runtimes (stdin/stdout binary protocol only). Standard- and Full-level runtimes require abstract Unix sockets (`@` prefix names), which are **Linux-only** — macOS does not support abstract sockets. If you are developing a Standard- or Full-level runtime on macOS, use `docker compose up` (Compose Mode) instead, which runs the adapter inside a Linux container. See [Section 15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) for level definitions.
 
 ### 17.5 Cloud Portability
 
@@ -278,6 +332,7 @@ The design avoids baking in cloud-specific assumptions:
 Key Helm values:
 
 - `global.devMode` — enables `LENNY_DEV_MODE` for local development
+- `global.noEnvironmentPolicy` — platform-wide default for tenant RBAC `noEnvironmentPolicy` (valid values: `deny-all` or `allow-all`). **Required — no runtime default.** The gateway treats this Helm value as the sole source of the platform default; it does not infer `deny-all` on its own. An omitted value causes the gateway to refuse to become Ready at startup with `LENNY_CONFIG_MISSING{config_key=noEnvironmentPolicy, scope=platform}` at `FATAL` level (see [Section 10.3](10_gateway-internals.md#103-mtls-pki) startup-configuration validation). The chart's default `values.yaml` ships this set to `deny-all`; operators must leave it set (either at the default or explicitly overridden to `allow-all`) — stripping the value is a misconfiguration that fails closed at startup rather than silently running with undefined semantics. Tenant-level overrides via the admin API (`PUT /v1/admin/tenants/{id}/rbac-config`) take precedence over this platform default on a per-tenant basis. See the security warning in [Section 10.6](10_gateway-internals.md#106-environment-resource-and-rbac-model) before setting `allow-all` platform-wide in multi-tenant deployments.
 - `gateway.replicas` — gateway replica count
 - `pools` — array of warm pool configurations (runtime, size, resource limits)
 - `agentNamespaces[].resourceQuota` — per-namespace ResourceQuota overrides (pods, CPU, memory caps)
@@ -418,6 +473,7 @@ bootstrap:
 | Node disk encryption (warning)        | When `LENNY_ENV=production`: emit a non-blocking preflight warning that node-level disk encryption cannot be verified programmatically.                                                                                                                                                      | `WARNING: Node-level disk encryption (LUKS/dm-crypt or cloud-provider encrypted volumes) is required for production deployments (Section 6.4) but cannot be verified by Lenny — it depends on the underlying node pool configuration. Verify manually: AWS (EBS encryption on launch template), GCP (CMEK or default encryption on boot/scratch disks), Azure (SSE on managed disks). For T4 workloads, use Kata or gVisor isolation profiles with encrypted scratch volumes.`                                                                                           |
 | T4 node isolation webhook             | Verify that the `lenny-t4-node-isolation` `ValidatingWebhookConfiguration` exists and that its `caBundle` field is non-empty. When any pool references a T4 Runtime and the webhook is absent or misconfigured, T4 pods may be admitted to shared nodes.                                   | `lenny-t4-node-isolation ValidatingWebhookConfiguration not found or caBundle empty; required for T4 dedicated-node enforcement (Section 6.4)`                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Drain-readiness webhook               | Verify that the `lenny-drain-readiness` `ValidatingWebhookConfiguration` exists and that its `caBundle` field is non-empty. When the webhook is absent or misconfigured, node drains will not check MinIO health before pod eviction.                                                        | `lenny-drain-readiness ValidatingWebhookConfiguration not found or caBundle empty; required for pre-drain MinIO health check (Section 12.5)`                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Admission webhook inventory           | Enumerate deployed `ValidatingWebhookConfiguration` resources and `CustomResourceDefinition.spec.conversion.webhook` endpoints in the cluster. Verify the full expected set is present: `lenny-label-immutability`, `lenny-direct-mode-isolation`, `lenny-sandboxclaim-guard`, `lenny-data-residency-validator`, `lenny-pool-config-validator`, `lenny-t4-node-isolation`, `lenny-drain-readiness`, and the `lenny-crd-conversion` conversion webhook for each Lenny CRD. For each present `ValidatingWebhookConfiguration`, additionally verify `failurePolicy: Fail` and a non-empty `caBundle`. Fail-closed: any missing entry aborts the install. This prevents chart-author omissions (a webhook dropped from `templates/admission-policies/`) from shipping silently and producing fail-open gaps at runtime. See [§17.2](#172-namespace-layout). | `expected ValidatingWebhookConfiguration '<name>' not found; chart-rendered webhook is missing — re-render with the current chart or run 'helm template' and diff against the expected set (Section 17.2 admission-policies enumeration)` / `ValidatingWebhookConfiguration '<name>' has failurePolicy='<value>'; expected 'Fail' for fail-closed behavior` |
 | SIEM endpoint (warning)               | When `LENNY_ENV=production` and `audit.siem.endpoint` is not set: emit a non-blocking preflight warning.                                                                                                                                                                                     | `WARNING: audit.siem.endpoint is not configured. Audit logs will be stored in Postgres only. A database superuser can bypass INSERT-only grants. This deployment does not meet compliance-grade audit integrity requirements (SOC2 CC7.2, FedRAMP AU-9, HIPAA §164.312(b)). Configure audit.siem.endpoint before using for regulated workloads (Section 11.7).`                                                                                                                                                                                                          |
 | Prometheus reachability               | Verify a Prometheus-compatible endpoint is reachable at `ops.prometheus.url`. Tier-specific severity: INFO at Tier 1, WARN at Tier 2/3. Non-blocking unless `monitoring.acknowledgeNoPrometheus: true` is set ([§25.4](25_agent-operability.md#254-the-lenny-ops-service)).                                                                                                                                                  | `Prometheus endpoint '<url>' unreachable — lenny-ops will fall back to per-replica fan-out for metrics. Set monitoring.acknowledgeNoPrometheus=true to silence, or configure a Prometheus instance.`                                                                                                                                                                                                                                                                                                                                                                             |
 | `lenny-ops-sa` RBAC                   | Verify that the `lenny-ops-sa` ServiceAccount has the RBAC permissions documented in [§25.4](25_agent-operability.md#254-the-lenny-ops-service). Uses `kubectl auth can-i` against each rule in the canonical RBAC table (Lease coordination, Deployment patches, CRD reads, ConfigMap reads, Secret reads for backup credentials, Job create/watch). | `ServiceAccount lenny-ops-sa is missing required permissions: <rules>. Re-render the chart or apply the Role/ClusterRole templates in deploy/helm/lenny/templates/ops/rbac.yaml`                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -430,7 +486,7 @@ bootstrap:
 - **Exit code 1:** One or more checks failed — Helm aborts. The Job logs each failed check with the failure message and a reference to the relevant spec section.
 - **Warnings (non-blocking):** Checks that detect suboptimal but functional configurations (e.g., MinIO without erasure coding, Redis Sentinel with fewer than 3 sentinels, absent SIEM endpoint) log warnings but do not block installation.
 - **`--skip-preflight`:** Deployers can disable preflight validation by setting `preflight.enabled: false` in Helm values. This is intended for air-gapped or constrained environments where the Job cannot reach all backends at install time. A warning is logged: `"Preflight validation skipped — infrastructure misconfigurations may cause runtime failures."`
-- **Dev mode:** When `global.devMode: true`, the preflight Job skips checks for MinIO encryption, cert-manager, CNI NetworkPolicy support, and PgBouncer (since dev mode uses embedded stores). Only Postgres and Redis connectivity are validated in Tier 2; Tier 1 (`make run`) skips preflight entirely.
+- **Dev mode:** When `global.devMode: true`, the preflight Job skips checks for MinIO encryption, cert-manager, CNI NetworkPolicy support, and PgBouncer (since dev mode uses embedded stores). Only Postgres and Redis connectivity are validated in Compose Mode; Source Mode (`make run`) skips preflight entirely.
 - **Timeout:** The Job has a `activeDeadlineSeconds: 120`. If infrastructure is slow to respond, the deployer can increase this via `preflight.timeoutSeconds` in Helm values.
 - **Idempotent:** Safe to re-run on `helm upgrade` — all checks are read-only (except the ephemeral NetworkPolicy create/delete test, which cleans up after itself).
 
@@ -440,7 +496,7 @@ bootstrap:
 
 **GitOps:** The Helm chart supports `helm template` rendering for ArgoCD/Flux integration. For GitOps workflows, the bootstrap seed values are committed alongside other Helm values and applied on every sync (idempotent by design).
 
-**Day 0 installation walkthrough — empty cluster to first echo session.** The following is the minimum sequential procedure for a functional Lenny installation. It assumes Kubernetes ≥ 1.27, cert-manager, a CNI with NetworkPolicy support, Postgres ≥ 14, Redis (TLS + AUTH), and MinIO are already provisioned. For local development, use `make run` instead ([Section 17.4](#174-local-development-mode-lenny-dev)) — this walkthrough covers production-style Tier 2 installs.
+**Day 0 installation walkthrough — empty cluster to first echo session.** The following is the minimum sequential procedure for a functional Lenny installation. It assumes Kubernetes ≥ 1.27, cert-manager, a CNI with NetworkPolicy support, Postgres ≥ 14, Redis (TLS + AUTH), and MinIO are already provisioned. For local development, use `make run` instead ([Section 17.4](#174-local-development-mode-lenny-dev)) — this walkthrough covers production-style **capacity-Tier 2** installs.
 
 1. **Install CRDs.** CRDs must be applied before the Helm chart:
    ```
@@ -588,6 +644,8 @@ For operators who do not want to hand-write a full `values.yaml`, `lenny-ctl ins
    | Reference runtimes to install (multi-select)      | All of §26 selected by default; deployer can deselect to minimize image-pull footprint             |
 
    Each question displays a one-line help string explaining the field and a reference to the relevant spec section. Questions are skipped when their answer is unambiguous from detection (e.g., if only one ClusterIssuer is Ready, no TLS strategy prompt is shown).
+
+   > **Note — independent axes.** `Target environment` (`local` | `dev` | `prod`) and `Capacity tier` (`tier1` | `tier2` | `tier3`) are orthogonal dimensions. Target environment drives alert thresholds, log verbosity, and TLS strictness; capacity tier drives replica counts, warm-pool sizing, and controller rate limiters ([§17.8.2](#1782-capacity-tier-reference)). They compose freely — a `local` environment can run `tier1` sizing, a `prod` environment can run `tier2` or `tier3`, etc. Neither of these labels overlaps with the local-dev modes of [§17.4](#174-local-development-mode-lenny-dev) (Embedded / Source / Compose Mode), which name how the platform is run on a workstation rather than how it is sized or deployed.
 
 3. **Preview phase.** The wizard renders the resulting composite values file — an answer-file base plus a tier preset plus the per-question overrides — to stdout (or `--output-values path.yaml` to write to disk). The operator reviews the file before proceeding.
 
@@ -863,15 +921,18 @@ minReplicas >= ceil(burst_arrival_rate * 60 / sessions_per_replica)
 
 **Warm pool sizing:**
 
-| Parameter                          | Tier 1 | Tier 2 | Tier 3 |
-| ---------------------------------- | ------ | ------ | ------ |
-| Expected claim rate                | 0.5/s  | 5/s    | 30/s   |
-| Recommended minWarm (per hot pool) | 20     | 175    | 1050   |
-| Hot pools                          | 1–2    | 3–5    | 5–10   |
-| Pool safety factor (agent-type)    | 1.5    | 1.5    | 1.2    |
-| Pool safety factor (mcp-type)      | 2.0    | 2.0    | 1.5    |
+| Parameter                                      | Tier 1 | Tier 2 | Tier 3 |
+| ---------------------------------------------- | ------ | ------ | ------ |
+| Expected claim rate                            | 0.5/s  | 5/s    | 30/s   |
+| Raw demand estimate (no safety margin)         | 20     | 175    | 1,050  |
+| Production `minWarm` (with tier safety factor) | 27     | 263    | 1,260  |
+| Hot pools                                      | 1–2    | 3–5    | 5–10   |
+| Pool safety factor (agent-type)                | 1.5    | 1.5    | 1.2    |
+| Pool safety factor (mcp-type)                  | 2.0    | 2.0    | 1.5    |
 
-> **Note -- no safety margin applied:** The recommended `minWarm` values above use `safety_factor = 1.0` (no safety margin) to provide baseline starting points for initial deployment and capacity planning. These baselines have **zero headroom** above the raw demand estimate during controller failover -- a single claim above the expected rate during the 35-second failover window exhausts the pool. **For production deployments**, operators MUST apply the per-tier `safety_factor` from the table above: Tier 1/2 with 1.5 yields `ceil(0.5 * 1.5 * 35) = 27` / `ceil(5 * 1.5 * 35) = 263`; Tier 3 with 1.2 yields `ceil(30 * 1.2 * 35) = 1,260`. Use the safety-factor-adjusted values as the production `minWarm`.
+> **Note -- raw vs. production `minWarm`:** The "Raw demand estimate" row uses `safety_factor = 1.0` (no safety margin) to expose the bare-floor demand number for capacity-planning intuition. These raw values have **zero headroom** above demand during controller failover -- a single claim above the expected rate during the 35-second failover window exhausts the pool. **Production deployments MUST use the "Production `minWarm`" row**, which applies the per-tier agent-type `safety_factor` from the rows below: Tier 1 with 1.5 yields `ceil(0.5 * 1.5 * 35) = 27`; Tier 2 with 1.5 yields `ceil(5 * 1.5 * 35) = 263`; Tier 3 with 1.2 yields `ceil(30 * 1.2 * 35) = 1,260`. The `minWarm` value set via Helm (`poolScaling.minWarm`) or the admin API SHOULD be the production row unless an operator has a validated reason to run without the safety margin.
+
+> **Normative `safety_factor` source of truth:** The per-tier `safety_factor` values in this table (Tier 1/2: 1.5 agent / 2.0 mcp; Tier 3: 1.2 agent / 1.5 mcp) are the **normative per-tier values**. [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration) line "`safety_factor` defaults to 1.5 for agent-type pools, 2.0 for mcp-type pools" documents the **Tier 1/2 defaults only**; Tier 3 deployments override those defaults to 1.2 / 1.5 respectively because per-pool demand is larger, allowing a thinner fractional buffer to achieve the same absolute headroom. The PoolScalingController SHOULD apply the Tier 3 override automatically when `capacityPlanning.tier: 3` is configured; otherwise operators must set `poolScaling.safetyFactor` explicitly.
 
 Formula: `minWarm >= claim_rate * safety_factor * (failover_seconds + pod_startup_seconds) + burst_p99_claims * pod_warmup_seconds`. The `safety_factor` column in the table above (1.5 for Tier 1/2, 1.2 for Tier 3) scales the steady-state term to provide a buffer above the raw demand estimate (see [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration) for the full formula with `safety_factor`). The first term covers sustained demand during failover; the burst term (see [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration)) reserves headroom for demand spikes that outpace pool refill. **Use `failover_seconds = 25` (worst-case crash scenario: `leaseDuration + renewDeadline = 15s + 10s`).** With 25s failover + 10s startup = 35s window; burst term adds headroom proportional to warmup latency and observed burst intensity. Note: clean shutdown (rolling update) reduces failover to near-zero via voluntary lease release, but sizing must cover the crash case.
 
@@ -1189,7 +1250,7 @@ The chart ships with the following curated answer files under `deploy/helm/lenny
 | Answer file | Dimensions fixed | Typical layering |
 |---|---|---|
 | `answers/laptop.yaml` | cluster=`laptop`, backends=`embedded`, environment=`local`, tier=`tier1` | Used as-is; equivalent to `lenny up` ([§17.4](#174-local-development-mode-lenny-dev)) |
-| `answers/docker-compose.yaml` | cluster=n/a, backends=`self-managed` (containerized), environment=`dev` | Layered with `values-tier1.yaml` for Tier 2 dev ([§17.4](#174-local-development-mode-lenny-dev)) |
+| `answers/docker-compose.yaml` | cluster=n/a, backends=`self-managed` (containerized), environment=`dev` | Layered with `values-tier1.yaml` (capacity) for Compose-Mode dev installs ([§17.4](#174-local-development-mode-lenny-dev)) |
 | `answers/eks-small-team.yaml` | cluster=`eks`, backends=`cloud-managed` (RDS + ElastiCache + S3), environment=`prod`, tier=`tier1` | Layered with `values-tier1.yaml` or `values-tier2.yaml` depending on load |
 | `answers/eks-production.yaml` | cluster=`eks`, backends=`cloud-managed`, environment=`prod`, tier=`tier2` (Tier 3 capable) | Layered with `values-tier2.yaml` or `values-tier3.yaml` |
 | `answers/gke-production.yaml` | cluster=`gke`, backends=`cloud-managed` (CloudSQL + Memorystore + GCS), environment=`prod` | Layered with `values-tierN.yaml` |
@@ -1356,19 +1417,19 @@ objectStorage:
   bucket: "lenny-artifacts"
 ```
 
-#### 17.9.6 Embedded Backends (Tier 0)
+#### 17.9.6 Embedded Backends (Embedded Mode)
 
-Answer file `answers/laptop.yaml` selects backends=`embedded`, the mode used by `lenny up` ([§17.4](#174-local-development-mode-lenny-dev) Tier 0): embedded Postgres (single-node bundle), in-process Redis, local-disk artifact storage, embedded k3s. This mode requires zero external cloud or cluster dependencies and is the primary path for laptop-scale evaluation of Lenny. Tier 1 (`make run`) and Tier 2 (`docker compose up`) are developer-oriented paths for contributors, documented in [§17.4](#174-local-development-mode-lenny-dev).
+Answer file `answers/laptop.yaml` selects backends=`embedded`, the mode used by `lenny up` ([§17.4](#174-local-development-mode-lenny-dev) Embedded Mode): embedded Postgres (single-node bundle), in-process Redis, local-disk artifact storage, embedded k3s. This mode requires zero external cloud or cluster dependencies and is the primary path for laptop-scale evaluation of Lenny. Source Mode (`make run`) and Compose Mode (`docker compose up`) are developer-oriented paths for contributors, documented in [§17.4](#174-local-development-mode-lenny-dev).
 
 #### 17.9.7 Backend-Invariant Requirements
 
 Regardless of backend selection (`cloud-managed`, `self-managed`, or `embedded`), the following requirements apply uniformly:
 
 - **Transaction-mode pooling** for Postgres connections (RLS compatibility)
-- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements). The embedded-Postgres Tier 0 mode ships the trigger pre-installed.
-- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004). Tier 0 embedded Redis runs loopback-only and is exempt from AUTH/TLS.
+- **RLS checkout defense:** Either `connect_query` sentinel (self-managed PgBouncer) **or** per-transaction tenant validation trigger (cloud-managed poolers without `connect_query` support) — exactly one must be active per deployment; see [Section 12.3](12_storage-architecture.md#123-postgres-ha-requirements). The embedded-Postgres Embedded Mode ships the trigger pre-installed.
+- **Redis AUTH + TLS** (no plaintext connections, no unauthenticated access): Redis is deployed with `tls-auth-clients yes` and plaintext port disabled (`port 0`); PgBouncer is deployed with `client_tls_sslmode = require`. See [Section 10.3](10_gateway-internals.md#103-mtls-pki) for the full server-side enforcement requirements, startup TLS probe, and integration test requirements (NET-004). Embedded Mode Redis runs loopback-only and is exempt from AUTH/TLS.
 - **Tenant key prefix** (`t:{tenant_id}:`) enforced at the Redis wrapper layer
-- **S3-compatible API** for object storage (all cloud and self-managed providers above satisfy this; the Tier 0 local-disk driver implements the same `ArtifactStore` interface)
-- **Encryption at rest** for all persistent stores (exempt in Tier 0 embedded mode, which prints the non-suppressible production-warning banner documented in [§17.4](#174-local-development-mode-lenny-dev))
+- **S3-compatible API** for object storage (all cloud and self-managed providers above satisfy this; the Embedded Mode local-disk driver implements the same `ArtifactStore` interface)
+- **Encryption at rest** for all persistent stores (exempt in Embedded Mode, which prints the non-suppressible production-warning banner documented in [§17.4](#174-local-development-mode-lenny-dev))
 - **Interface contracts** ([Section 12.6](12_storage-architecture.md#126-interface-design)) are identical across backends — the gateway does not branch on backend selection
 

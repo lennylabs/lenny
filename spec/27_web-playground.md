@@ -35,9 +35,11 @@ The playground is served by the **gateway** (not `lenny-ops`) at `/playground` o
 | `playground.allowedRuntimes` | `["*"]` | Glob list of runtime IDs visible in the playground runtime picker |
 | `playground.maxSessionMinutes` | `30` | Hard cap on playground-initiated session duration |
 | `playground.maxIdleTimeSeconds` | `300` | Hard override of the runtime's `maxIdleTimeSeconds` for playground-initiated sessions (bounded `60 ≤ v ≤ runtime's maxIdleTimeSeconds`). See [§27.6](#276-session-lifecycle-and-cleanup). |
+| `playground.oidcSessionTtlSeconds` | `3600` | Lifetime of the server-side playground session record and the `lenny_playground_session` cookie. See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
+| `playground.bearerTtlSeconds` | `900` | TTL of MCP bearer tokens minted by `POST /v1/playground/token` (bounded `60 ≤ ttl ≤ 3600`). See [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange). |
 | `playground.sessionLabels` | `{origin: "playground"}` | Labels applied to playground sessions for audit/accounting |
 
-Default is `false` because the playground surface area is not something every installation wants live. `lenny up` (Tier 0, [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) sets `playground.enabled=true` and `playground.authMode=dev`; the installer wizard asks explicitly for production installs.
+Default is `false` because the playground surface area is not something every installation wants live. `lenny up` (Embedded Mode, [§17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)) sets `playground.enabled=true` and `playground.authMode=dev`; the installer wizard asks explicitly for production installs.
 
 ---
 
@@ -49,13 +51,20 @@ The playground never bypasses gateway auth. A user hitting `/playground` is rout
 - `playground.authMode=apiKey`: the playground renders an API-key entry form and stores the key in `sessionStorage` only (not `localStorage`, never cookies). The key is sent to the gateway on every request.
 - `playground.authMode=dev`: no auth; only permitted when `global.devMode=true` (rejected at Helm-validate otherwise).
 
-All playground sessions carry the `origin=playground` label; policy authors ([§11](11_policy-and-controls.md)) can apply stricter rules by matching this label.
+**Mode-agnostic `origin: "playground"` JWT claim.** The `origin: "playground"` claim is minted on **every** session-capability JWT produced for a request that originates from a `/playground/*` route, regardless of `authMode`. This claim — not `authMode` — is the authoritative signal that drives the tighter idle-timeout override ([§27.6](#276-session-lifecycle-and-cleanup)), the `playground.maxSessionMinutes` duration cap ([§27.6](#276-session-lifecycle-and-cleanup)), the `origin=playground` dashboard slice ([§27.8](#278-metrics)), and any policy rules that match on it ([§11](11_policy-and-controls.md)). The mint point differs per mode:
+- **`oidc`:** claim is attached by the cookie-to-bearer exchange in [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange) (bearer minted by `POST /v1/playground/token`).
+- **`apiKey`:** after the `/playground/*` handler validates the user-supplied API key, it invokes the standard session-JWT mint with the `origin: "playground"` claim attached. The attachment is driven by the request's ingress route (`/playground/*`), not by the key material.
+- **`dev`:** the `/playground/*` handler issues a dev HMAC-signed session JWT ([§10.2](10_gateway-internals.md#102-authentication) dev-mode signer) with the `origin: "playground"` claim attached. Non-playground dev-mode tokens do not carry the claim.
+
+In all three modes the claim is stamped by the `/playground/*` ingress path, so the downstream enforcement points in [§27.6](#276-session-lifecycle-and-cleanup) and [§27.8](#278-metrics) work uniformly. All playground sessions additionally carry the `origin=playground` label on the session record; policy authors ([§11](11_policy-and-controls.md)) can apply stricter rules by matching either the JWT claim or the label.
 
 ---
 
 #### 27.3.1 OIDC cookie-to-MCP-bearer exchange
 
 This subsection specifies the complete flow that turns a browser OIDC session into the bearer tokens the playground uses on the MCP WebSocket. The design keeps the browser-side HttpOnly cookie strictly separate from the bearer token that rides the WebSocket: the cookie never leaves the `/playground/` path, and the bearer token never reaches the browser's persistent storage.
+
+This subsection is **OIDC-mode-specific**: the cookie, login, and exchange endpoints below exist only when `playground.authMode=oidc`. The **`origin: "playground"` JWT claim** that downstream sections key on is, however, **mode-agnostic** — it is stamped on session-capability JWTs produced for any `/playground/*`-originated request regardless of `authMode`. See [§27.3](#273-authentication) ("Mode-agnostic `origin: "playground"` JWT claim") for the per-mode mint points covering `apiKey` and `dev`.
 
 **1. Login and cookie issuance (`playground.authMode=oidc` only).**
 
@@ -141,10 +150,10 @@ The only playground-specific endpoints are the cookie-auth gatekeepers documente
 
 Playground-initiated sessions follow the standard session lifecycle ([§7](07_session-lifecycle.md)) with these deltas:
 
-- Hard duration cap set to `min(sandboxTemplate.spec.maxSessionMinutes, playground.maxSessionMinutes)`.
-- **Idle-timeout override.** Playground-initiated sessions MUST NOT remain idle for longer than `playground.maxIdleTimeSeconds` (default: `300` / 5 min). The gateway enforces this value as a **hard override** of the runtime's `maxIdleTimeSeconds` ([§6.2](06_warm-pod-model.md#62-session-lifecycle-state-machine-and-timers)) whenever the session was established through the playground bearer-exchange path (detected via the `origin: "playground"` JWT claim minted in [§27.3.1](#2731-oidc-cookie-to-mcp-bearer-exchange)). The effective idle cap is therefore `min(runtime.limits.maxIdleTimeSeconds, playground.maxIdleTimeSeconds)` — the override never relaxes a stricter runtime limit, only tightens a looser one. This caps the reclamation window after the best-effort cancel below fails to deliver.
+- **Hard duration cap.** `min(sandboxTemplate.spec.maxSessionMinutes, playground.maxSessionMinutes)`. Enforcement binds whenever the session-capability JWT carries the `origin: "playground"` claim ([§27.3](#273-authentication)), so the cap applies uniformly to `oidc`, `apiKey`, and `dev` playground sessions.
+- **Idle-timeout override.** Playground-initiated sessions MUST NOT remain idle for longer than `playground.maxIdleTimeSeconds` (default: `300` / 5 min). The gateway enforces this value as a **hard override** of the runtime's `maxIdleTimeSeconds` ([§7.2](07_session-lifecycle.md#72-interactive-session-model)) whenever the session was established through a `/playground/*` ingress path — detected via the `origin: "playground"` JWT claim, which [§27.3](#273-authentication) stamps on session-capability JWTs for all three auth modes (`oidc`, `apiKey`, `dev`), not only OIDC. The effective idle cap is therefore `min(runtime.limits.maxIdleTimeSeconds, playground.maxIdleTimeSeconds)` — the override never relaxes a stricter runtime limit, only tightens a looser one. This caps the reclamation window after the best-effort cancel below fails to deliver.
 - On browser close / navigation away, the client sends `session.cancel` with reason `playground_client_closed`. Gateway treats this as a best-effort hint; a dropped WebSocket that cannot send the frame falls back to the idle-timeout path described above, which — because of the override — fires within 5 min (default) rather than the runtime default of 10 min.
-- Sessions are labeled with `origin=playground` and the authenticated principal for audit queries ([§25.9](25_agent-operability.md#259-audit-log-query-api)).
+- Sessions are labeled with `origin=playground` and the authenticated principal for audit queries ([§25.9](25_agent-operability.md#259-audit-log-query-api)). The label is applied for every `/playground/*`-originated session regardless of `authMode`, matching the JWT-claim coverage above.
 
 ---
 
@@ -160,10 +169,14 @@ Content-Security-Policy: default-src 'self';
   style-src 'self' 'unsafe-inline';
   connect-src 'self' wss://<gateway-host>;
   img-src 'self' data:;
+  object-src 'none';
+  media-src 'none';
   frame-ancestors 'none';
   base-uri 'self';
   form-action 'self'
 ```
+
+`object-src 'none'` and `media-src 'none'` are explicit (rather than inherited from `default-src 'self'`) because several CSP-evaluator tools and some browser versions treat absent directives permissively when the page lacks `<object>` / `<video>` / `<audio>` elements by design — making the posture explicit avoids ambiguity and documents intent.
 
 `frame-ancestors 'none'` prevents clickjacking. The gateway also sets `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` on all playground responses.
 
