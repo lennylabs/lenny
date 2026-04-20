@@ -1,0 +1,39 @@
+# Policy Engine & Admission Control Review Findings — Iteration 2
+
+## Summary
+
+One real issue found: the `AdmissionController` built-in evaluator has a spec-level ordering requirement (§11.6) but no declared priority or phase in §4.8's built-in priority table, leaving its position in the interceptor chain ambiguous. All other iter2 focus areas check out: the DEL-002 fix (§8.3 interceptor lifecycle rules) and TNT-001 fix (§10.3/§11.1 `noEnvironmentPolicy` startup validation) are internally consistent with §11's policy chain and with each other; budget propagation (parent→child), Redis-real-time vs. Postgres-periodic quota timing, fail-open bounds (per-replica, per-user, per-tenant, cumulative timer, hard cap), and the §11.3 timeout table are complete and consistent across referenced sections.
+
+---
+
+### POL-014 `AdmissionController` not placed in interceptor priority chain [Medium]
+
+**Finding.** §11.6 ("AdmissionController evaluation") specifies a hard ordering requirement: "The gateway evaluates all active (open) circuit breakers at the start of every session-creation and delegation admission check, **before quota and policy evaluation**." §4.8 lists `AdmissionController` among the "Built-in policy engine components" (line 922: "`AdmissionController` | Queue/reject/prioritize, circuit breakers") but does **not** include it in the built-in priority table (§4.8 lines 934–941), which enumerates only `AuthEvaluator` (100), `QuotaEvaluator` (200), `DelegationPolicyEvaluator` (250), `ExperimentRouter` (300), `GuardrailsInterceptor` (400), `RetryPolicyEvaluator` (600). Nor is any phase assigned to `AdmissionController`.
+
+Three downstream consistency problems result:
+
+1. **Priority reservation contradiction.** §4.8 reserves priorities 1–100 for "built-in security-critical interceptors" (line 983) and says external interceptors must be > 100. To run "before quota" (QuotaEvaluator @ 200) as §11.6 prescribes, `AdmissionController` must occupy priority 101–199 (assuming it is an in-chain interceptor) or priority ≤ 100 (if it is security-critical). The spec picks neither. If 101–199, it collides with the external-interceptor range; an external interceptor at, say, priority 150 could interpose between circuit-breaker evaluation and quota evaluation — which is not the §11.6 intent. If ≤ 100, §11.6's "before quota" becomes trivial but the security-critical reservation's rationale ("running before authentication completes") does not fit a circuit-breaker check that needs authenticated tenant/runtime context.
+2. **Phase ambiguity.** §4.8's chain model is explicitly per-phase: "Each phase runs its own interceptor chain independently." Circuit-breaker evaluation is described as gating session creation and delegation, which maps to `PostAuth` (session creation) and `PreDelegation` (delegation). Neither phase lists `AdmissionController` in the built-in tables at §4.8 line 1023 onward. A reader cannot determine whether circuit breakers fire in one phase chain or in both, nor whether they precede or follow `AuthEvaluator` within `PostAuth`.
+3. **Short-circuit semantics unspecified.** §4.8's short-circuit rule ("If any interceptor returns `REJECT`, the chain short-circuits immediately — no subsequent interceptors are invoked") governs interceptor-chain REJECTs. §11.6 says a circuit breaker produces `CIRCUIT_BREAKER_OPEN` (HTTP 503, `retryable: false`). It is unclear whether this rejection flows through the same short-circuit audit-payload mechanism (the audit record captures payload at point-of-rejection with preceding MODIFYs applied) or whether circuit breakers are an out-of-chain pre-filter that bypasses the interceptor-audit contract entirely.
+
+**Recommendation.** Pick one of two resolutions and make it normative:
+
+- **Option A (in-chain):** Add `AdmissionController` to the §4.8 built-in priority table at a declared priority (e.g., 150, with phase binding to `PostAuth` and `PreDelegation`), and carve out that priority from the external-interceptor reservation (e.g., "priorities 150 and 160 are additionally reserved for built-in `AdmissionController` and any future admission-tier built-ins"). Confirm that the `AdmissionController` REJECT produces the same interceptor-audit payload semantics as other chain REJECTs.
+- **Option B (out-of-chain pre-filter):** Clarify in both §4.8 and §11.6 that circuit-breaker evaluation is a pre-chain gate performed before the `PostAuth` / `PreDelegation` interceptor chain runs, and is not itself an interceptor. Add a note to §4.8 that `AdmissionController` is named as a policy-engine component for taxonomy but is not registered in the priority chain; its REJECT path emits a distinct audit event type (e.g., `admission.circuit_breaker_rejected`) rather than an `interceptor.rejected` event.
+
+Either option is acceptable; the spec must not leave the placement implicit because deployers wiring external interceptors at priorities 101–199 will legitimately wonder whether their interceptor runs before or after the circuit-breaker evaluation, and the answer determines whether a `fail-open` MODIFY interceptor could change request fields the circuit breaker reads.
+
+---
+
+### Verification notes (no findings)
+
+- **DEL-002 fix (§8.3 interceptor lifecycle rules, lines 159–166) vs §11 policy chain.** The six lifecycle rules (no snapshot/caching, detection via admin API + config-reload bus, per-invocation application, non-retroactive, oscillation-safe, deletion guard) are consistent with §4.8's "interceptor registry is read per invocation" model and with §11.7 audit events `interceptor.fail_policy_weakened` / `interceptor.fail_policy_strengthened`. §11.2.1 billing event stream lists both events at line 65–66. No contradiction.
+- **TNT-001 fix (§11.1 line 13 ↔ §10.3 lines 267–276).** Both sections agree: `noEnvironmentPolicy` must be explicitly set to `deny-all` or `allow-all` at platform scope; missing value causes `LENNY_CONFIG_MISSING` structured log at FATAL and readiness-probe false (non-zero exit → CrashLoopBackOff). §11.1 describes the platform-default as `deny-all` while §10.3 requires explicit value — this is internally consistent because the Helm chart default provides `deny-all`, and stripping the chart default surfaces the configuration gap as a startup failure rather than undefined runtime behavior.
+- **Budget propagation child vs parent.** §11.2 "Children inherit strictly narrower budgets" + §8.3 atomic `budget_reserve.lua` (tokens, tree-size, children-total, parallel-children, tree-memory in one script) + Postgres checkpoint to `delegation_tree_budget` + MAX-rule reconstruction on Redis recovery. Coherent.
+- **Redis real-time vs Postgres periodic.** §11.2 specifies Redis fast-path, Postgres checkpoint at `quotaSyncIntervalSeconds` (default 30s, min 10s), final reconciliation on session completion, MAX rule on recovery. Consistent with §12.4.
+- **Redis fail-open bounds.** §11.2 + §12.4 lines 220–224 define the full bound stack: `rateLimitFailOpenMaxSeconds` (60s), per-replica ceiling `tenant_limit / max(cached_replica_count, 1)`, `per_replica_hard_cap` default `tenant_limit / 2`, `per_user_failopen_ceiling = min(tenant_limit × userFailOpenFraction, per_replica_hard_cap)`, and cumulative timer `quotaFailOpenCumulativeMaxSeconds` (default 300s in rolling 1h). Persisted across replica restart via `/run/lenny/failopen-cumulative.json`. Complete.
+- **Timeout table completeness (§11.3).** All interceptor phases with distinct default timeouts (external default 500ms, PreLLM/PostLLM 100ms, connector 200ms) are listed. `interceptorFailOpenMaxConsecutive` (10 failures / 5-min window) is a counter threshold, not a timeout, and is reasonably omitted from this table. All quota/rate-limit/fail-open windows and delegation recovery timers are present. No missing completion-critical timeout.
+
+---
+
+Word count: ~780.
