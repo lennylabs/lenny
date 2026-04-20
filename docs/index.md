@@ -10,15 +10,24 @@ description: Lenny is a Kubernetes-native, runtime-agnostic platform for running
 
 **Run interactive AI agents in isolated sandboxes on your own Kubernetes cluster.**
 
-Lenny gives every agent session its own locked-down pod. Your agent -- whether it's Claude Code, a LangGraph graph, or a custom binary -- runs with a fresh workspace, leased credentials, and a tight network perimeter. Clients talk to a single gateway that speaks the protocols you probably already use: REST, MCP, the OpenAI Chat Completions API, and the Open Responses API.
+Lenny is a platform for running interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster.
 
-Agents can also delegate to other agents. The gateway enforces the budget, scope, and isolation bounds at every hop -- so multi-agent systems don't rely on the runtime to police itself.
+The platform is runtime-agnostic. Any agent harness that implements a basic JSON-over-stdin/stdout protocol can run under it, and a catalog of ready-to-use runtimes ships out of the box — Claude Code, Gemini CLI, Codex, LangGraph, CrewAI, and others. You can fork any of them or register your own alongside.
 
-Security runs deeper than the sandbox: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never reach the agent, and every state change lands in a hash-chained audit log.
+Agents run in one of three modes, chosen to fit the isolation–throughput trade-off. The default, `session` mode, gives each session its own locked-down pod with a fresh workspace, leased credentials, and a tight network perimeter. When throughput matters more than per-session isolation, `task` mode reuses a pod across sequential tasks with a workspace scrub between them, and `concurrent` mode handles several tasks at once inside a single pod.
 
-Lenny is self-hosted. There is no managed service and no telemetry sent to an external vendor; data stays inside the cluster you operate.
+In Lenny, agents can delegate work to other agents, recursively. Lenny tracks the delegation tree and enforces budget, scope, and isolation at every hop, so multi-agent systems don't depend on any runtime to police itself.
+
+Pods run non-root with dropped Linux capabilities, a read-only root filesystem, and default-deny network policies; no standing credentials are mounted — agents receive short-lived leases scoped to the session — and every state change is written to a hash-chained audit log. Beyond those defaults, operators can route LLM calls through the gateway so provider API keys never reach the pod, configure the pool's sandbox runtime (runc, gVisor, or Kata Containers), and plug guardrail and content-policy interceptors into the gateway's request path.
+
+Clients can interact with Lenny agents over different protocols: REST, MCP, the OpenAI Chat Completions API, and Open Responses API. Any of them can start
+sessions, stream messages, upload files, trigger delegation, and tear sessions down.
+
+Underneath, Lenny is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing  
+runtimes. There's no custom scheduler, no external control plane, and no outbound telemetry to a vendor — data stays inside the cluster you operate.
 
 {: .note }
+
 > **Status: design phase.** The specification is complete and drives implementation under a spec- and test-driven workflow. These docs describe the v1 surface; see [Implementation Status](about/status) for what's wired up today. Design feedback is welcome right now — open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
 >
 > **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
@@ -37,12 +46,12 @@ Lenny is self-hosted. There is no managed service and no telemetry sent to an ex
 
 **One gateway, four protocols.** Your clients can use whichever they already have code for:
 
-| Protocol | Use it for |
-|:--|:--|
-| REST | CI/CD, automation, admin dashboards, any HTTP client |
-| MCP (Streamable HTTP) | Interactive streaming, multi-agent delegation, MCP hosts (Claude Desktop, Cursor) |
-| OpenAI Chat Completions | Existing OpenAI SDK code -- change the base URL, keep the rest |
-| Open Responses / OpenAI Responses | Any Responses-API client |
+| Protocol                          | Use it for                                                                        |
+| :-------------------------------- | :-------------------------------------------------------------------------------- |
+| REST                              | CI/CD, automation, admin dashboards, any HTTP client                              |
+| MCP (Streamable HTTP)             | Interactive streaming, multi-agent delegation, MCP hosts (Claude Desktop, Cursor) |
+| OpenAI Chat Completions           | Existing OpenAI SDK code -- change the base URL, keep the rest                    |
+| Open Responses / OpenAI Responses | Any Responses-API client                                                          |
 
 **LLM provider routing in the gateway.** The gateway routes requests to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI directly, with no additional proxy process to run. Agents receive short-lived lease tokens; raw API keys stay in the gateway's memory and never reach the pod. For other providers, route through an external LLM proxy such as LiteLLM or Portkey alongside the built-in routing.
 
@@ -73,6 +82,7 @@ Every capability on this page is specified in [`spec/`](https://github.com/lenny
 <div class="card" markdown="1">
 
 ### Evaluate Lenny
+
 {: .text-yellow-300 }
 
 Decide if it fits. Start with `lenny up` and the comparison guide.
@@ -85,6 +95,7 @@ Decide if it fits. Start with `lenny up` and the comparison guide.
 <div class="card" markdown="1">
 
 ### Build a client application
+
 {: .text-green-300 }
 
 You call Lenny from an app, a script, or an MCP host.
@@ -96,6 +107,7 @@ You call Lenny from an app, a script, or an MCP host.
 <div class="card" markdown="1">
 
 ### Build a runtime
+
 {: .text-blue-300 }
 
 You are bringing your own agent binary or adapter.
@@ -107,6 +119,7 @@ You are bringing your own agent binary or adapter.
 <div class="card" markdown="1">
 
 ### Operate Lenny on a cluster
+
 {: .text-purple-300 }
 
 You install, configure, and scale the platform.
@@ -118,6 +131,7 @@ You install, configure, and scale the platform.
 <div class="card" markdown="1">
 
 ### Keep Lenny running
+
 {: .text-purple-300 }
 
 You are on-call. `lenny-ops`, doctor, runbooks, alerts.
@@ -129,6 +143,7 @@ You are on-call. `lenny-ops`, doctor, runbooks, alerts.
 <div class="card" markdown="1">
 
 ### Review security and compliance
+
 {: .text-red-300 }
 
 You assess Lenny for isolation, audit, and regulatory fit.

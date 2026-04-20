@@ -4,8 +4,6 @@
 
 Lenny manages pools of pre-warmed, isolated AI agent pods on Kubernetes behind a unified gateway. It handles session lifecycle, workspace setup, credential leasing, recursive delegation, policy enforcement, and recovery — so your team can run any AI agents as a shared, on-demand cloud service.
 
-Security runs deeper than the sandbox: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never reach the agent, and every state change lands in a hash-chained audit log.
-
 [Documentation](docs/) | [Quickstart](#quickstart) | [Contributing](#contributing) | [Implementation Status](docs/about/status.md)
 
 > **Status: design phase.** The technical specification is complete; implementation is in progress. The documentation describes the v1 surface and is a source of truth for spec-driven development — not yet a working product. Early feedback on the design is very welcome: open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
@@ -129,14 +127,14 @@ Every capability above is specified in [`spec/`](spec/) and covered by the integ
     └─────────┘    └───────────┘    └───────────┘
 ```
 
-| Component                 | Role                                                                                                                                                                       |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Component                 | Role                                                                                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Gateway**               | Only externally-facing component. Auth, protocol adaptation, session routing, credential leasing, delegation, variant routing, policy enforcement. Scales horizontally. |
-| **Warm Pool Controller**  | Kubernetes controller managing `agent-sandbox` CRDs. Keeps pods pre-warmed, handles claim/release/drain.                                                                   |
-| **PoolScalingController** | Scaling intelligence and variant pool sizing. Reconciles pool config from Postgres into CRDs.                                                                              |
-| **Token Service**         | Separate process with its own KMS access. Manages OAuth tokens for external tools and LLM provider credentials.                                                            |
-| **Runtime Adapter**       | Sidecar in each pod. Bridges between the gateway (gRPC) and the agent binary (stdin/stdout JSON Lines).                                                                    |
-| **Agent Binary**          | Your code. Runs inside the pod, does the actual work.                                                                                                                      |
+| **Warm Pool Controller**  | Kubernetes controller managing `agent-sandbox` CRDs. Keeps pods pre-warmed, handles claim/release/drain.                                                                |
+| **PoolScalingController** | Scaling intelligence and variant pool sizing. Reconciles pool config from Postgres into CRDs.                                                                           |
+| **Token Service**         | Separate process with its own KMS access. Manages OAuth tokens for external tools and LLM provider credentials.                                                         |
+| **Runtime Adapter**       | Sidecar in each pod. Bridges between the gateway (gRPC) and the agent binary (stdin/stdout JSON Lines).                                                                 |
+| **Agent Binary**          | Your code. Runs inside the pod, does the actual work.                                                                                                                   |
 
 ---
 

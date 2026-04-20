@@ -17,6 +17,7 @@ nav_order: 1
 </details>
 
 {: .note }
+
 > **Status: design phase.** These docs describe the v1 target surface. See [Implementation Status](status) for what's wired up today.
 >
 > **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
@@ -25,15 +26,21 @@ nav_order: 1
 
 ## What Lenny is
 
-Lenny is a platform for running interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster. You install it with a Helm chart (or the embedded single-binary stack for laptops and evaluation), and from then on your clients see one gateway: call it to start a session, stream messages in and out, upload files, delegate to child agents, and tear the session down.
+Lenny is a platform for running interactive AI agent sessions in isolated sandboxes on your own Kubernetes cluster.
 
-Delegation is a first-class primitive, not a convention -- when one agent spawns another, the gateway itself enforces the guardrails rather than trusting the runtime to police the tree.
+The platform is runtime-agnostic. Any agent harness that implements a basic JSON-over-stdin/stdout protocol can run under it, and a catalog of ready-to-use runtimes ships out of the box — Claude Code, Gemini CLI, Codex, LangGraph, CrewAI, and others. You can fork any of them or register your own alongside.
 
-The agent itself can be anything. If your program can read JSON from standard input and write JSON to standard output, it can run as a Lenny agent -- whether that program is Anthropic's Claude Code CLI, a LangGraph graph, a CrewAI crew, or 50 lines of Go you wrote this morning. Lenny handles the hard infrastructure parts: starting the pod, preparing the workspace, delivering files, leasing credentials, tracking delegation, and recording audit events. Your agent focuses on the conversation.
+Agents run in one of three modes, chosen to fit the isolation–throughput trade-off. The default, `session` mode, gives each session its own locked-down pod with a fresh workspace, leased credentials, and a tight network perimeter. When throughput matters more than per-session isolation, `task` mode reuses a pod across sequential tasks with a workspace scrub between them, and `concurrent` mode handles several tasks at once inside a single pod.
 
-Security is baked into the defaults, not a configuration layer on top: pods carry no standing credentials, the gateway brokers every LLM call so provider API keys never leave its memory, and every state change lands in a hash-chained audit log.
+In Lenny, agents can delegate work to other agents, recursively. Lenny tracks the delegation tree and enforces budget, scope, and isolation at every hop, so multi-agent systems don't depend on any runtime to police itself.
 
-The platform is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing runtimes. There is no custom scheduler, no external control plane, and no outbound telemetry to a vendor. Data stays inside the cluster you operate.
+Pods run non-root with dropped Linux capabilities, a read-only root filesystem, and default-deny network policies; no standing credentials are mounted — agents receive short-lived leases scoped to the session — and every state change is written to a hash-chained audit log. Beyond those defaults, operators can route LLM calls through the gateway so provider API keys never reach the pod, configure the pool's sandbox runtime (runc, gVisor, or Kata Containers), and plug guardrail and content-policy interceptors into the gateway's request path.
+
+Clients can interact with Lenny agents over different protocols: REST, MCP, the OpenAI Chat Completions API, and Open Responses API. Any of them can start
+sessions, stream messages, upload files, trigger delegation, and tear sessions down.
+
+Underneath, Lenny is built on standard Kubernetes building blocks: custom resources, controllers, network policies, autoscalers, and sandboxing  
+runtimes. There's no custom scheduler, no external control plane, and no outbound telemetry to a vendor — data stays inside the cluster you operate.
 
 ---
 
@@ -70,11 +77,11 @@ All client traffic enters through the gateway. Pods are never reachable from out
 
 There are three levels of integration. You pick the level that matches what your agent needs; you can move up later.
 
-| Level | What it is | Effort | What it adds |
-|:--|:--|:--|:--|
-| **Basic** | Your program reads JSON lines from stdin, writes JSON lines to stdout | ~50 lines, no Lenny dependency | Session lifecycle, text in and out, reading and writing files in the workspace |
-| **Standard** | Basic, plus the agent connects to Lenny's local tool server over a Unix socket | ~150-200 lines plus an MCP client library | Delegation to other agents, asking the user for input mid-run, persistent memory, access to connectors like GitHub or Jira |
-| **Full** | Standard, plus a second socket for lifecycle signals | ~300-400 lines | Graceful checkpoints, clean interrupt handling, rotating credentials without restarting the agent, advance notice before a deadline, reusing the pod for sequential tasks |
+| Level        | What it is                                                                     | Effort                                    | What it adds                                                                                                                                                              |
+| :----------- | :----------------------------------------------------------------------------- | :---------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Basic**    | Your program reads JSON lines from stdin, writes JSON lines to stdout          | ~50 lines, no Lenny dependency            | Session lifecycle, text in and out, reading and writing files in the workspace                                                                                            |
+| **Standard** | Basic, plus the agent connects to Lenny's local tool server over a Unix socket | ~150-200 lines plus an MCP client library | Delegation to other agents, asking the user for input mid-run, persistent memory, access to connectors like GitHub or Jira                                                |
+| **Full**     | Standard, plus a second socket for lifecycle signals                           | ~300-400 lines                            | Graceful checkpoints, clean interrupt handling, rotating credentials without restarting the agent, advance notice before a deadline, reusing the pod for sequential tasks |
 
 Official SDKs for Go, Python, and TypeScript handle the wire format so you don't have to. If you prefer, you can implement the protocol directly -- the SDKs are thin conveniences, not lock-in.
 
@@ -87,11 +94,11 @@ There are two kinds of runtime:
 
 Agent runtimes can be scheduled three ways:
 
-| Mode | Pod usage | Isolation guarantee | Typical use |
-|:--|:--|:--|:--|
-| `session` | One session owns the pod end-to-end | Strongest -- no reuse between sessions | Coding agents, long-running interactive work (default) |
-| `task` | Pod runs one task, workspace is scrubbed, next task reuses the pod | Best-effort scrub between tasks | High-throughput batch when the runtime supports Full integration |
-| `concurrent` | One pod handles multiple tasks at once | Process-level only | Lightweight, stateless handlers |
+| Mode         | Pod usage                                                          | Isolation guarantee                    | Typical use                                                      |
+| :----------- | :----------------------------------------------------------------- | :------------------------------------- | :--------------------------------------------------------------- |
+| `session`    | One session owns the pod end-to-end                                | Strongest -- no reuse between sessions | Coding agents, long-running interactive work (default)           |
+| `task`       | Pod runs one task, workspace is scrubbed, next task reuses the pod | Best-effort scrub between tasks        | High-throughput batch when the runtime supports Full integration |
+| `concurrent` | One pod handles multiple tasks at once                             | Process-level only                     | Lightweight, stateless handlers                                  |
 
 `task` and `concurrent` modes relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgment to enable them and refuses unsafe combinations (for example, `task` mode with a Basic-integration runtime).
 
