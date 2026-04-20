@@ -884,11 +884,19 @@ ops:
     subscriptionCacheTTLSeconds: 60      # periodic refresh interval for the subscription cache
     generationBasedInvalidation: true    # invalidate cache entries immediately on CRUD
     allowHTTP: false                     # require HTTPS callbacks; HTTP is rejected
-    blockedCIDRs:                        # additional CIDR blocks to reject in SSRF check
+    blockedCIDRs:                        # application-layer SSRF check — defense in depth on top of
+                                         # the `lenny-ops-egress` NetworkPolicy (§25.4) and the
+                                         # gateway `allow-gateway-egress-llm-upstream` NetworkPolicy
+                                         # (§13.2). Default list mirrors `egressCIDRs.excludePrivate`
+                                         # so that NetworkPolicy and app-layer share one block list
+                                         # at install time (NET-057); deployers SHOULD extend both
+                                         # together if additional internal ranges must be blocked.
       - "10.0.0.0/8"
       - "172.16.0.0/12"
       - "192.168.0.0/16"
       - "169.254.0.0/16"
+      - "fc00::/7"
+      - "fe80::/10"
     domainAllowlist: []                  # if non-empty, callbacks must match a suffix in this list
     deliveryRetentionDays: 7             # ops_event_deliveries retention; tier presets override
     deliveryTrackingMode: "full"         # "full" | "metric-only" | "failures-only"
@@ -1131,29 +1139,52 @@ egress:
           matchLabels: { lenny.dev/component: gateway }
     ports: [{ protocol: TCP, port: 8080 }]
   # Postgres
-  - to: [{ namespaceSelector: { matchLabels: { name: { storage.namespace } } } }]
+  # Namespace selector uses `kubernetes.io/metadata.name` — the immutable label auto-populated
+  # by the K8s API server on namespace creation. Matches §13.2 normative guidance (NET-054):
+  # custom label keys like `name:` are mutable and not guaranteed, so an attacker with
+  # namespace-update rights could apply the key to an attacker-controlled namespace to
+  # gain ingress; a legitimate deployer whose storage namespace lacks the custom key would
+  # silently match zero namespaces.
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
     ports: [{ protocol: TCP, port: 5432 }]
-  # Redis
-  - to: [{ namespaceSelector: { matchLabels: { name: { storage.namespace } } } }]
-    ports: [{ protocol: TCP, port: 6379 }]
-  # MinIO / S3-compatible
-  - to: [{ namespaceSelector: { matchLabels: { name: { storage.namespace } } } }]
-    ports: [{ protocol: TCP, port: 9000 }]
+  # Redis (TLS — plaintext port 6379 disabled per §12.4 / §10.7)
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
+    ports: [{ protocol: TCP, port: 6380 }]
+  # MinIO / S3-compatible (TLS — port follows §13.2 normative MinIO listener per NET-053)
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
+    ports: [{ protocol: TCP, port: 9443 }]
   # Prometheus
-  - to: [{ namespaceSelector: { matchLabels: { name: { monitoring.namespace } } } }]
+  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { monitoring.namespace } } } }]
     ports: [{ protocol: TCP, port: 9090 }]
-  # K8s API
-  - to: [{ namespaceSelector: {} }]
+  # K8s API — scoped to the kube-apiserver Service ClusterIP range via ipBlock, matching
+  # the §13.2 NET-040 idiom used by every other lenny-system component's kube-apiserver
+  # egress rule. An empty `namespaceSelector: {}` (previous shape) matches every namespace
+  # in the cluster and would permit TCP 443 egress to any pod listening on 443 — agent,
+  # monitoring, tenant, third-party operator namespaces — which defeats the containment
+  # model (NET-055). Using `ipBlock` with `{{ .Values.kubeApiServerCIDR }}` scopes the rule
+  # to the `kubernetes.default` Service ClusterIP range and works uniformly on self-hosted
+  # and managed Kubernetes (GKE/EKS/AKS) where the apiserver is reached via an in-cluster
+  # ClusterIP rather than as a labelled pod. `namespaceSelector: {}` is a forbidden idiom
+  # in the Lenny chart; the `lenny-preflight` Job rejects any Lenny-rendered NetworkPolicy
+  # rule combining an empty `namespaceSelector` with a non-loopback port.
+  - to: [{ ipBlock: { cidr: "{{ .Values.kubeApiServerCIDR }}" } }]
     ports: [{ protocol: TCP, port: 443 }]
   # DNS
   - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
     ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
-  # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks)
-  - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+  # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks).
+  # `except` is rendered from the shared `egressCIDRs.excludePrivate` Helm value; every entry MUST
+  # also appear in the `except` block of the gateway `allow-gateway-egress-llm-upstream` rule (§13.2).
+  # Both surfaces face the same SSRF threat model (tenant-influenced URLs — webhook targets here;
+  # LLM base URLs, connector callbacks, and interceptor endpoints on the gateway side) and share one
+  # normative private-range block list per NET-057. `lenny-preflight` fails the install if any
+  # `excludePrivate` entry is missing from either rule. (The rules are not required to be set-equal
+  # overall: gateway additionally excludes cluster pod/service CIDR and IMDS addresses.)
+  - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10] } }]
     ports: [{ protocol: TCP, port: 443 }]
 ```
 
-The internet egress for webhooks excludes private/link-local CIDRs at the network layer in addition to the application-layer SSRF checks. Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway).
+The internet egress for webhooks excludes RFC1918, IPv4 link-local, IPv6 ULA, and IPv6 link-local CIDRs at the network layer in addition to the application-layer SSRF checks. Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway). The `except` block is the same list rendered into the gateway `allow-gateway-egress-llm-upstream` NetworkPolicy (§13.2) via the shared `egressCIDRs.excludePrivate` Helm value — see the §13.2 normative note under `allow-gateway-egress-llm-upstream` for the SSRF symmetry guarantee and the `lenny-preflight` check that enforces it (NET-057).
 
 **Cross-namespace deployments.** When `lenny-system` and `lenny-agents` are separate namespaces (for tenant workload isolation), no NetworkPolicy change is required — `lenny-ops` only talks to gateway and storage, both of which live in `lenny-system`. The agent pods themselves never reach `lenny-ops`.
 
@@ -1198,17 +1229,40 @@ podSelector: { matchLabels: { app: lenny-backup } }
 policyTypes: [Ingress, Egress]
 ingress: []  # Jobs accept no incoming traffic
 egress:
-  - to: [{ podSelector: { matchLabels: { app: postgres } } }]
+  # Postgres and MinIO — cross-namespace by default (backup Jobs run in
+  # `{{ .Release.Namespace }}`; storage runs in `{{ .Values.storage.namespace }}`).
+  # Both `namespaceSelector` and `podSelector` MUST be present: a `to:` clause with
+  # only a `podSelector` is interpreted by K8s NetworkPolicy as "same namespace as
+  # source pod", which accidentally works when storage co-locates with the Job but
+  # silently matches zero pods in any deployment where storage lives elsewhere
+  # (NET-056). The `namespaceSelector` uses the immutable `kubernetes.io/metadata.name`
+  # key auto-populated by the API server — mirrors `lenny-ops-egress` (NET-054) and
+  # §13.2 normative guidance. For cloud-managed data stores (RDS, Cloud SQL, S3, GCS,
+  # Azure Blob) or per-region backup endpoints (CMP-045), the chart replaces these
+  # rules with `ipBlock: { cidr: "<endpoint-CIDR>" }` entries resolved at render time;
+  # `lenny-preflight` validates every configured backup endpoint is covered by the
+  # rendered policy.
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { storage.namespace } }
+        podSelector:
+          matchLabels: { app: postgres }
     ports: [{ protocol: TCP, port: 5432 }]
-  - to: [{ podSelector: { matchLabels: { app: minio } } }]
-    ports: [{ protocol: TCP, port: 9000 }]
-  - to: [{ namespaceSelector: {} }]
-    ports: [{ protocol: TCP, port: 443 }]  # K8s API (for CRD reads)
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { storage.namespace } }
+        podSelector:
+          matchLabels: { app: minio }
+    ports: [{ protocol: TCP, port: 9443 }]  # TLS — matches §13.2 MinIO listener (NET-053)
+  # K8s API (CRD reads) — ipBlock-scoped to the kube-apiserver Service ClusterIP range
+  # per §13.2 NET-040; empty `namespaceSelector: {}` is forbidden (NET-055).
+  - to: [{ ipBlock: { cidr: "{{ .Values.kubeApiServerCIDR }}" } }]
+    ports: [{ protocol: TCP, port: 443 }]
   - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
     ports: [{ protocol: UDP, port: 53 }]
 ```
 
-Jobs in remote-storage configurations (S3, etc.) require an additional egress rule for the storage endpoint.
+Jobs in remote-storage configurations (cloud-managed Postgres, S3-backed object storage, per-region MinIO endpoints outside the cluster) replace the Postgres/MinIO rules above with `ipBlock` egress entries resolved to concrete CIDRs at chart-render time; `lenny-preflight` fails the install if any configured backup endpoint is not covered by the rendered NetworkPolicy.
 
 #### CNI / Service Mesh Compatibility
 
@@ -1636,7 +1690,7 @@ In-memory-only operations (Tier-3 escalations, in-memory locks on the calling re
 
 #### Authorization
 
-- `tenant-admin` sees only operations where `started_by` is themselves OR `tenantId` (if present on the operation) matches their tenant.
+- `tenant-admin` sees only operations where (a) `started_by` is themselves, OR (b) the operation carries a `tenantId` field AND its value matches the caller's tenant. Platform-scoped operations (no `tenantId` field — `platform_upgrade`, platform-level `restore`/`backup`, drift reconciliation, etc.) are visible **only** when `started_by` matches the caller; a tenant-admin never sees platform-scoped operations started by other principals. This mirrors the event-subscription semantics for platform-scoped events (Section 25.5).
 - `platform-admin` sees all operations.
 - `actor=*` requires `platform-admin`.
 

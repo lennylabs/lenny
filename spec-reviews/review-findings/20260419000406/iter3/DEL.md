@@ -23,6 +23,8 @@ Carried over from iter2 DEL-007 — verified unfixed. The `maxOrphanTasksPerTena
 ---
 
 ### DEL-009 `DELEGATION_PARENT_REVOKED` and `DELEGATION_AUDIT_CONTENTION` not catalogued in §15.1 [High]
+**Status:** Fixed — Added both rows to §15.1 error catalog in `15_external-api-surface.md` immediately after `DELEGATION_CYCLE_DETECTED`. `DELEGATION_PARENT_REVOKED` catalogued as `PERMANENT`/409 (non-retryable, aligns with other `409 Conflict` rows like `REPLAY_ON_LIVE_SESSION` and `DERIVE_ON_LIVE_SESSION` where current state precludes the operation) with `details.parentSessionId` and `details.revocationReason` and cross-links to §8.2 and §13.3. `DELEGATION_AUDIT_CONTENTION` catalogued as `TRANSIENT`/503 (retryable with `Retry-After`) with `details.tenantId` and `details.retryAfterSeconds`, cross-link to §8.2 and §11.7, and explicit note that clients must retry the entire `lenny/delegate_task` call (not just the token exchange).
+
 **Files:** `08_recursive-delegation.md` §8.2 (lines 61, 63); `15_external-api-surface.md` §15.1 error catalog (~ lines 740-828)
 
 Section 8.2's iter2 hardening of the delegation token-exchange flow introduced two wire-level error codes returned by `lenny/delegate_task`:

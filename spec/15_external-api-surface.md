@@ -80,9 +80,12 @@ type OutboundCapabilitySet struct {
 
     // SupportedEventKinds lists the SessionEvent kinds the adapter is prepared
     // to push. An empty slice means no events are pushed even if PushNotifications
-    // is true. Well-known kinds: "state_change", "output", "elicitation",
-    // "tool_use", "error", "terminated".
-    SupportedEventKinds []string
+    // is true. Values MUST be drawn from the closed SessionEventKind enum defined
+    // below (SessionEventStateChange, SessionEventOutput, SessionEventElicitation,
+    // SessionEventToolUse, SessionEventError, SessionEventTerminated); the
+    // gateway filters dispatch by this declaration (see dispatch-filter rule in
+    // "SessionEvent Kind Registry").
+    SupportedEventKinds []SessionEventKind
 
     // MaxConcurrentSubscriptions is the maximum number of simultaneous
     // OutboundChannel instances the adapter supports per session. 0 = unlimited.
@@ -132,7 +135,22 @@ type OutboundChannel interface {
 //      `lenny_outbound_channel_buffer_drop_total` counter (labeled by `adapter`,
 //      `session_id`). Send MUST return nil even on eviction — buffer overflow is
 //      a degradation signal, not a fatal error, so the gateway does not close the
-//      channel on drop.
+//      channel on drop. To preserve the subscriber's ability to reason about
+//      event continuity, the channel MUST surface the drop to the subscriber by
+//      emitting a single `gap_detected` protocol-level frame
+//      (`{"lastSeenSeq": N, "nextSeq": M}`, reusing the shape defined in
+//      [Section 10.4](10_gateway-internals.md#104-gateway-reliability)) before
+//      the next successfully-delivered event, where `N` is the `SeqNum` of the
+//      last event that reached the subscriber prior to the eviction window and
+//      `M` is the `SeqNum` of the next event actually delivered. Consecutive
+//      evictions before the next successful delivery collapse into a single
+//      `gap_detected` frame covering the combined range. The adapter carries
+//      this frame over its native protocol using the same out-of-band channel
+//      it uses for replay-buffer gaps (e.g., the `MCPAdapter` emits the frame
+//      on the SSE stream without a `SeqNum`; webhook adapters include it as a
+//      distinguished envelope kind alongside the next event delivery). The
+//      frame is not a `SessionEvent`, carries no `SeqNum`, and is not part of
+//      the `SessionEventKind` closed enum.
 //
 //   2. Bounded-error policy (REQUIRED for connection-coupled adapters — SSE, long-poll):
 //      The channel attempts a non-blocking write to the underlying transport.
@@ -188,8 +206,8 @@ type SessionMetadata struct {
     DelegationDepth int
 
     // CallerIdentity is the authenticated identity that created the session
-    // (JWT `sub` and associated principal attributes). Schema defined in
-    // [Section 13](13_security-model.md).
+    // (JWT `sub` and associated principal attributes). Derived from the
+    // Lenny JWT claim structure in [Section 13](13_security-model.md).
     CallerIdentity CallerIdentity
 
     // NegotiatedProtocolVersion is the protocol version the adapter and
@@ -197,6 +215,63 @@ type SessionMetadata struct {
     // spec version for MCPAdapter-created sessions). Empty string for
     // adapters that do not perform explicit version negotiation.
     NegotiatedProtocolVersion string
+}
+
+// CallerIdentity is the projection of the authenticated caller's JWT claims
+// that the gateway exposes to adapters. It is derived from the Lenny JWT
+// claim structure ([Section 13.3](13_security-model.md#133-credential-flow))
+// at session-create time and is immutable for the session's lifetime.
+// Adapters MUST treat CallerIdentity as read-only and MUST NOT attempt to
+// re-validate or re-resolve claims — the gateway has already validated the
+// token and applied scope-narrowing / tenant-scope enforcement before
+// populating this struct.
+type CallerIdentity struct {
+    // Sub is the authenticated subject identifier (JWT `sub` claim). Opaque
+    // string scoped to the issuing IdP; adapters MAY surface it in audit
+    // or discovery responses but MUST NOT parse it.
+    Sub string
+
+    // CallerType is the closed-enum caller category from the JWT
+    // `caller_type` claim ([Section 25.1](25_agent-operability.md#251-design-philosophy-and-agent-model)):
+    // "human", "service", or "agent". Values outside this set are
+    // gateway-internal bugs.
+    CallerType string
+
+    // Scope is the space-separated scope set granted to the token
+    // (JWT `scope` claim). Adapters MAY consult it to gate surface-specific
+    // features (e.g., operability scopes) but MUST NOT attempt to broaden
+    // scope from the adapter side — scope narrowing is enforced at token
+    // issuance only.
+    Scope string
+
+    // Act carries the RFC 8693 `act` claim when the session was created via
+    // a delegation child token ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+    // Nil for root sessions. When non-nil, adapters that surface delegation
+    // provenance (e.g., A2A `delegator` agent card field) SHOULD render
+    // Act.Sub as the delegating actor.
+    Act *ActorClaim
+}
+
+// ActorClaim is the RFC 8693 `act` claim projection exposed to adapters. It
+// identifies the session's delegating actor. Fields mirror the JWT `act`
+// claim one-for-one.
+type ActorClaim struct {
+    // Sub is the delegating actor's JWT `sub`.
+    Sub string
+
+    // TenantID is the delegating actor's tenant scope. Invariant:
+    // ActorClaim.TenantID == SessionMetadata.TenantID (cross-tenant
+    // delegation is forbidden — see [Section 13.3](13_security-model.md#133-credential-flow)).
+    TenantID string
+
+    // SessionID is the parent session's ID. Empty for actors that are not
+    // themselves Lenny sessions (e.g., external service principals).
+    SessionID string
+
+    // DelegationDepth is the parent's delegation depth; the current
+    // session's depth (SessionMetadata.DelegationDepth) equals this value
+    // plus one.
+    DelegationDepth int
 }
 
 // SessionEvent is the outbound event envelope pushed via OutboundChannel.Send.
@@ -210,7 +285,15 @@ type SessionEvent struct {
 
     // SeqNum is a monotonic per-session sequence number assigned by the
     // gateway at event-dispatch time. Adapters MAY use SeqNum to detect
-    // gaps when delivering over lossy transports (e.g., webhook retries).
+    // gaps when delivering over lossy transports (e.g., webhook retries)
+    // and MUST forward it into their native protocol's event envelope so
+    // that clients can use it to resume after a stream drop — the
+    // `MCPAdapter` surfaces SeqNum as the SSE `id:` line on the Streamable
+    // HTTP transport and honors a client-supplied `resumeFromSeq` on
+    // `attach_session` to replay buffered events (see
+    // [Section 10.4](10_gateway-internals.md#104-gateway-reliability)
+    // event replay buffer and [Section 15.2](#152-mcp-api)
+    // `attach_session`).
     SeqNum uint64
 
     // Payload is the kind-specific event body. The sub-schema is determined
@@ -324,6 +407,54 @@ type AuthorizedRuntime struct {
     // card via the gateway's metadata-fetch API as needed.
     PublishedMetadata []PublishedMetadataRef
 }
+
+// PublishedMetadataRef is an opaque handle to one `publishedMetadata` entry
+// registered on a runtime ([Section 5.1 `publishedMetadata` Field](05_runtime-registry-and-pool-model.md#publishedmetadata-field)).
+// Adapters receive refs — not materialized content — because metadata
+// values may be large (A2A agent cards, OpenAPI specs) and because the
+// gateway owns the opaque-pass-through storage contract. To surface a ref
+// in a native discovery format, adapters issue an HTTP GET against URI,
+// which resolves to `GET /v1/runtimes/{name}/meta/{key}` for public entries
+// or `GET /internal/runtimes/{name}/meta/{key}` for tenant/internal entries
+// (see the REST surface in [Section 15.1](#151-rest-api)). The gateway
+// applies the same visibility filtering at serve time, so following a URI
+// the adapter was handed will always succeed for the caller whose identity
+// produced the slice.
+type PublishedMetadataRef struct {
+    // Key is the registration key of the entry (matches the `key` field in
+    // the runtime's `publishedMetadata` YAML list). Adapters MAY use Key to
+    // select a specific entry (e.g., `"agent-card"`) when composing their
+    // native discovery format.
+    Key string
+
+    // ContentType is the IANA media type of the materialized value
+    // (matches the `contentType` field in `publishedMetadata` YAML, e.g.,
+    // `"application/json"`). Adapters SHOULD honor it when forwarding the
+    // fetched body to downstream consumers.
+    ContentType string
+
+    // Visibility is the closed-enum visibility class of the entry:
+    // "public", "tenant", or "internal". Values outside this set are
+    // gateway-internal bugs. Adapters MUST NOT surface refs with
+    // Visibility == "internal" or "tenant" on unauthenticated endpoints
+    // (e.g., A2A `/.well-known/agent.json`); the gateway's visibility
+    // filter already excludes refs the caller cannot see, but adapters
+    // that cache refs across requests MUST re-check Visibility before
+    // serving a cached ref to a different caller.
+    Visibility string
+
+    // URI is the absolute fetch URL the adapter uses to retrieve the
+    // materialized value. It is stable for the lifetime of the entry and
+    // MAY be embedded verbatim in discovery responses (e.g., an A2A agent
+    // card's `agentCardUrl` field) when Visibility == "public".
+    URI string
+
+    // ETag is the current value's entity tag (RFC 7232). Adapters MAY
+    // issue conditional fetches (`If-None-Match`) to avoid re-downloading
+    // unchanged content. Empty string if the gateway has not yet computed
+    // an ETag for the entry.
+    ETag string
+}
 ```
 
 #### SessionEvent Kind Registry
@@ -367,7 +498,7 @@ The `SessionEventKind` enum above is **closed** — the gateway will never dispa
 
 `OpenResponsesAdapter` covers both Open Responses-compliant clients and OpenAI Responses API clients. OpenAI's Responses API is a proper superset of Open Responses; the difference is OpenAI's proprietary hosted tools, which Lenny doesn't implement.
 
-**`type: mcp` runtime dedicated endpoints:** Each enabled `type: mcp` runtime gets a dedicated MCP endpoint at `/mcp/runtimes/{runtime-name}`. Standard MCP capability negotiation. Not aggregated. An implicit session record is created per connection for audit and billing. Discovery: `GET /v1/runtimes` and `list_runtimes` return `mcpEndpoint` and `mcpCapabilities.tools` preview for `type: mcp` runtimes.
+**`type: mcp` runtime dedicated endpoints:** Each enabled `type: mcp` runtime gets a dedicated MCP endpoint at `/mcp/runtimes/{runtime-name}`. Standard MCP capability negotiation. Not aggregated. An implicit session record is created per connection for audit and billing. Discovery: `GET /v1/runtimes` and `list_runtimes` return the `mcpEndpoint` field on the `AuthorizedRuntime` schema ([Shared Adapter Types](#shared-adapter-types)) for `type: mcp` runtimes; a `mcp-capabilities` `publishedMetadata` entry ([Section 5.1](05_runtime-registry-and-pool-model.md#publishedmetadata-field)) carries the tools preview and is fetched via `GET /v1/runtimes/{name}/meta/{key}`.
 
 ### 15.1 REST API
 
@@ -462,7 +593,7 @@ Internal-only states (from the pod state machine in [Section 6.2](06_warm-pod-mo
 
 | Method | Endpoint                         | Description                                                                                                                                           |
 | ------ | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/runtimes`                   | List registered runtimes with full `agentInterface`, `mcpEndpoint`, `mcpCapabilities`, `adapterCapabilities`, capabilities, and labels. Identity-filtered and policy-scoped. |
+| `GET`  | `/v1/runtimes`                   | List registered runtimes. Each item follows the `AuthorizedRuntime` schema ([Shared Adapter Types](#shared-adapter-types)): `name`, `agentInterface`, `mcpEndpoint`, `adapterCapabilities`, and `publishedMetadata` refs. Identity-filtered and policy-scoped. Per-runtime extras (labels, capability previews, agent cards) are surfaced as `publishedMetadata` entries ([Section 5.1](05_runtime-registry-and-pool-model.md#publishedmetadata-field)) and fetched via `GET /v1/runtimes/{name}/meta/{key}`. |
 | `GET`  | `/v1/runtimes/{name}/meta/{key}` | Get published metadata for a runtime (visibility-controlled)                                                                                          |
 | `GET`  | `/.well-known/agent.json`        | **Post-V1 (A2A).** Aggregated A2A agent card discovery endpoint. Returns JSON array of all public `agent-card` entries (**intentional Lenny extension** — the A2A spec requires a single `AgentCard` object; see [Section 21.1](21_planned-post-v1.md) for rationale and per-runtime standard-compliant endpoints). No auth. |
 | `GET`  | `/a2a/runtimes/{name}/.well-known/agent.json` | **Post-V1 (A2A).** Per-runtime A2A agent card endpoint. Returns a single `AgentCard` object conforming to the A2A spec (§3). Standard A2A clients that expect a single object SHOULD use this endpoint. No auth. See [Section 21.1](21_planned-post-v1.md). |
@@ -511,7 +642,7 @@ Internal-only states (from the pod state machine in [Section 6.2](06_warm-pod-mo
 - **`targetRuntime`** (required): The runtime name to replay against. Must be a registered runtime with the same `executionMode` as the source session. A different `executionMode` returns `400 INCOMPATIBLE_RUNTIME`.
 - **`targetPool`** (optional): If omitted, the gateway selects the default pool for `targetRuntime`. Must be a pool backed by `targetRuntime`.
 - **`evalRef`** (optional): If provided, links the replayed session to an experiment or eval set. The `evalRef` is recorded in the new session's metadata and can be used to filter `GET /v1/sessions` by eval context.
-- **`allowIsolationDowngrade`** (optional, default `false`, SEC-001): When `replayMode: workspace_derive`, the target pool's `sessionIsolationLevel.isolationProfile` MUST be at least as restrictive as the source session's (`standard` < `sandboxed` < `microvm`, matching [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) delegation monotonicity). A weaker target pool is rejected with `ISOLATION_MONOTONICITY_VIOLATED` (HTTP 422) unless this flag is set to `true`. Setting the flag requires the caller to hold the `platform-admin` role; non-admin callers receive `403 FORBIDDEN`. When the override is used, the gateway emits a `derive.isolation_downgrade` audit event (shared with `POST /v1/sessions/{id}/derive`) capturing source/target isolation profiles and the authorizing admin identity. The flag has no effect when `replayMode: prompt_history` because that mode inherits the source session's pool unless `targetPool` is explicitly supplied — any `targetPool` override in `prompt_history` mode is also subject to the monotonicity rule and the same `allowIsolationDowngrade` flag.
+- **`allowIsolationDowngrade`** (optional, default `false`, SEC-001): The monotonicity rule applies whenever the replay targets a pool whose `sessionIsolationLevel.isolationProfile` differs from the source session's: the target pool's profile MUST be at least as restrictive as the source session's (`standard` < `sandboxed` < `microvm`, matching [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) delegation monotonicity). A weaker target pool is rejected with `ISOLATION_MONOTONICITY_VIOLATED` (HTTP 422) unless this flag is set to `true`. Setting the flag requires the caller to hold the `platform-admin` role; non-admin callers receive `403 FORBIDDEN`. When the override is used, the gateway emits a `derive.isolation_downgrade` audit event (shared with `POST /v1/sessions/{id}/derive`) capturing source/target isolation profiles and the authorizing admin identity. The rule applies to both replay modes, as follows: for `replayMode: workspace_derive`, the monotonicity check runs against the resolved `targetPool` (or the default pool for `targetRuntime` when `targetPool` is omitted). For `replayMode: prompt_history` without an explicit `targetPool`, the replay reuses the source session's pool, the monotonicity check is trivially satisfied, and the flag is a no-op. For `replayMode: prompt_history` with an explicit `targetPool`, the monotonicity rule and `allowIsolationDowngrade` flag apply identically to `workspace_derive` — same error code, same admin-role check, same audit event.
 
 **Preconditions:** Source session must be in a terminal state (`completed`, `failed`, `cancelled`, `expired`) with a resolvable workspace snapshot. Non-terminal source sessions return `409 REPLAY_ON_LIVE_SESSION`.
 
@@ -753,6 +884,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `TARGET_TERMINAL`           | `PERMANENT` | 409         | Target task or session is in a terminal state                                                                                                                                                                                                            |
 | `INJECTION_REJECTED`        | `POLICY`    | 403         | Message injection rejected (runtime has `injection.supported: false`)                                                                                                                                                                                    |
 | `SCOPE_DENIED`              | `POLICY`    | 403         | Inter-session message rejected because the sender's effective `messagingScope` does not permit messaging the target session. Returned as the `error` reason in a `delivery_receipt` event. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model).                                                                                                                         |
+| `TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE` | `POLICY` | 403 | `lenny/delegate_task` rejected because the requested `messagingScope: siblings` is incompatible with the lease's `treeVisibility` (`self-only` or `parent-and-self`). Sibling messaging requires `treeVisibility: full` so that children can discover one another via `lenny/get_task_tree`. `details.messagingScope`, `details.treeVisibility`, and `details.requiredTreeVisibility` (`"full"`) are included. Not retryable as-is — the caller must either upgrade `treeVisibility` to `full` or narrow `messagingScope` to `direct` or tighter. See [Section 8.5](08_recursive-delegation.md#85-delegation-tools) and [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `MCP_VERSION_UNSUPPORTED`   | `PERMANENT` | 400         | Client MCP version is not supported                                                                                                                                                                                                                      |
 | `IMAGE_RESOLUTION_FAILED`   | `PERMANENT` | 422         | Container image reference is invalid or could not be resolved. `details.image` contains the unresolvable reference; `details.reason` describes the failure (e.g., `invalid_digest`, `tag_not_found`, `registry_unreachable`).                            |
 | `RESERVED_IDENTIFIER`       | `PERMANENT` | 422         | A field value uses a platform-reserved identifier (e.g., variant `id: "control"`). `details.field` identifies the offending field; `details.value` is the reserved value that was rejected.                                                              |
@@ -760,6 +892,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `SEED_CONFLICT`             | `PERMANENT` | 409         | A bootstrap/seed upsert conflicts with an existing resource in a non-idempotent way and `--force-update` was not set. `details.resource` identifies the conflicting resource by type and name; `details.conflictingFields` lists the fields that differ. |
 | `INTERCEPTOR_TIMEOUT`       | `TRANSIENT` | 503         | An external interceptor did not respond within its configured timeout. `details.interceptor_ref`, `details.phase`, and `details.timeout_ms` are included. Returned when `failPolicy: fail-closed`; suppressed (request proceeds) when `failPolicy: fail-open`. Distinct from `LLM_REQUEST_REJECTED` (which indicates a deliberate REJECT decision, not a timeout). See [Section 4.8](04_system-components.md#48-gateway-policy-engine). |
 | `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION` | `POLICY` | 400 | An external interceptor returned `MODIFY` with changes to immutable fields (e.g., `user_id`, `tenant_id`). `details.interceptor_ref`, `details.phase`, and `details.violated_fields` are included. The modification is rejected and the original payload is preserved. See [Section 4.8](04_system-components.md#48-gateway-policy-engine). |
+| `INTERCEPTOR_WEAKENING_COOLDOWN` | `TRANSIENT` | 503 | A `delegate_task` or `lenny/send_message` call was rejected because its effective `DelegationPolicy` references an interceptor whose `failPolicy` was recently weakened (`fail-closed → fail-open`) and the `gateway.interceptorWeakeningCooldownSeconds` cooldown window has not yet elapsed. `details.interceptor_ref`, `details.transition_ts`, `details.cooldown_remaining_seconds`, and `details.affected_policy` are included. Callers may retry after `cooldown_remaining_seconds`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) (Interceptor configuration lifecycle, rule 5). |
 | `LLM_REQUEST_REJECTED`      | `PERMANENT` | 403         | LLM request rejected by `PreLLMRequest` interceptor. `details.reason` contains the interceptor's rejection reason. Proxy mode only ([Section 4.8](04_system-components.md#48-gateway-policy-engine)).                                                                                                      |
 | `LLM_RESPONSE_REJECTED`     | `PERMANENT` | 502         | LLM response rejected by `PostLLMResponse` interceptor. `details.reason` contains the interceptor's rejection reason. Proxy mode only ([Section 4.8](04_system-components.md#48-gateway-policy-engine)).                                                                                                    |
 | `CONNECTOR_REQUEST_REJECTED` | `PERMANENT` | 403         | Connector tool call rejected by `PreConnectorRequest` interceptor. `details.reason` contains the interceptor's rejection reason ([Section 4.8](04_system-components.md#48-gateway-policy-engine)).                                                                                                           |
@@ -768,7 +901,6 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `WARM_POOL_EXHAUSTED`       | `TRANSIENT` | 503         | No idle pods are available in the warm pool after exhausting both the API-server claim path and the Postgres fallback. Client should retry with exponential backoff. See [Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle).                                                                  |
 | `INVALID_INTERCEPTOR_PRIORITY` | `PERMANENT` | 422      | External interceptor registration specifies `priority ≤ 100`, which is reserved for built-in security-critical interceptors. Set `priority > 100`. See [Section 4.8](04_system-components.md#48-gateway-policy-engine).                                                                                     |
 | `INVALID_INTERCEPTOR_PHASE` | `PERMANENT` | 422         | External interceptor registration includes the `PreAuth` phase, which is exclusively reserved for built-in interceptors. Remove `PreAuth` from the phase set. See [Section 4.8](04_system-components.md#48-gateway-policy-engine).                                                                          |
-| `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 403       | Delegation rejected because the target pool's isolation profile is less restrictive than the calling session's `minIsolationProfile`. `details.parentIsolation` and `details.targetIsolation` identify the conflicting profiles. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease).       |
 | `CREDENTIAL_PROVIDER_MISMATCH`    | `POLICY`  | 422       | Cross-environment delegation with `credentialPropagation: inherit` rejected because the parent's credential pool providers and the child runtime's `supportedProviders` have no intersection. Use `credentialPropagation: independent` for cross-environment delegations where the runtimes use different providers. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 | `DEADLOCK_TIMEOUT`          | `TRANSIENT` | 504         | A delegated subtree deadlock was not resolved within `maxDeadlockWaitSeconds`. The deepest blocked tasks have been failed. The root task may retry after breaking the deadlock. See [Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema).                                                         |
 | `SESSION_NOT_EVAL_ELIGIBLE` | `PERMANENT` | 422         | Eval submission rejected because the target session is in a terminal state (`cancelled` or `expired`) that is not eligible for eval storage. See [Section 10.7](10_gateway-internals.md#107-experiment-primitives).                                                                                 |
@@ -784,6 +916,8 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `CIRCUIT_BREAKER_OPEN`      | `POLICY`    | 503         | Session creation or delegation rejected because an operator-declared circuit breaker is active. `details.circuit_name`, `details.reason`, and `details.opened_at` are included. Not `retryable` — the client should wait for the circuit breaker to be closed by an operator before retrying. See [Section 11.6](11_policy-and-controls.md#116-circuit-breakers). |
 | `POOL_DRAINING`             | `TRANSIENT` | 503         | Session creation rejected because the target pool is in `draining` state and is no longer accepting new sessions. `Retry-After` header indicates estimated drain completion. `details.pool` and `details.estimatedDrainSeconds` are included. See [Section 15.1](#151-rest-api) (pool drain). |
 | `DELEGATION_CYCLE_DETECTED` | `PERMANENT` | 400         | Delegation rejected because the target's resolved `(runtime_name, pool_name)` identity tuple appears in the caller's delegation lineage, which would create a circular wait. `details.cycleRuntimeName` and `details.cyclePoolName` identify the offending identity. Not retryable — the caller must choose a different target. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism). |
+| `DELEGATION_PARENT_REVOKED` | `PERMANENT` | 409         | `lenny/delegate_task` rejected because the parent session's token was rotated or revoked between the call and the internal child-token exchange, so the actor_token's `jti` resolves to a revoked entry in the revocation cache. No child token is issued and no child pod is allocated. Also returned to any concurrent `lenny/delegate_task` calls pending on a parent that is the subject of a recursive revocation. `details.parentSessionId` and `details.revocationReason` (e.g., `token_rotated`, `recursive_revocation`) are included. Not retryable — the caller must re-authenticate or the parent session has been terminated. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) (actor-token freshness) and [Section 13.3](13_security-model.md#133-credential-flow) (token rotation and revocation). |
+| `DELEGATION_AUDIT_CONTENTION` | `TRANSIENT` | 503         | `lenny/delegate_task` rejected because the per-tenant audit advisory lock could not be acquired within `audit.lock.acquireTimeoutMs` during the child-token exchange's audit write, after the gateway exhausted `audit.lock.maxRetries` internal retries. The exchange fails closed: no child token is issued and no child pod is allocated. Retryable with backoff; the `Retry-After` header indicates the recommended wait. The parent agent MUST retry the entire `lenny/delegate_task` call (not just the token exchange step) so that policy evaluation, cycle detection, interceptors, and the actor-token freshness check all re-run on retry. `details.tenantId` and `details.retryAfterSeconds` are included. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) (retry semantics on audit contention) and [Section 11.7](11_policy-and-controls.md#117-audit-logging). |
 | `OUTPUTPART_TOO_LARGE`      | `PERMANENT` | 413         | An `OutputPart` payload exceeds the per-part size limit (50 MB). The part was rejected at ingress. `details.partIndex`, `details.sizeBytes`, and `details.limitBytes` are included. See [Section 15.4.1](#1541-adapterbinary-protocol). |
 | `REQUEST_INPUT_TIMEOUT`     | `TRANSIENT` | 504         | A `lenny/request_input` call blocked longer than `maxRequestInputWaitSeconds` without receiving a response. Delivered as a tool-call error to the blocking runtime. `details.requestId` and `details.timeoutSeconds` are included. See [Section 11.3](11_policy-and-controls.md#113-timeouts-and-cancellation). |
 | `ERASURE_IN_PROGRESS`       | `POLICY`    | 403         | Session creation rejected because the target `user_id` has a pending GDPR erasure job and `processing_restricted: true` is set. `details.userId` and `details.jobId` are included. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
@@ -797,7 +931,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `DERIVE_ON_LIVE_SESSION`      | `PERMANENT` | 409         | `POST /v1/sessions/{id}/derive` rejected because the source session is not in a terminal state and `allowStale: true` was not set in the request body. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `DERIVE_LOCK_CONTENTION`      | `POLICY`    | 429         | `POST /v1/sessions/{id}/derive` rejected because too many concurrent derive operations are in progress for this session. Retry with exponential backoff. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `DERIVE_SNAPSHOT_UNAVAILABLE` | `TRANSIENT` | 503         | `POST /v1/sessions/{id}/derive` failed because the referenced workspace snapshot object was not found in object storage (e.g., deleted by a GC bug or premature TTL expiry). Retrying immediately is unlikely to help; the caller should wait and retry or derive from a different source state. `details.snapshotRef` includes the missing object path. See [Section 15.1](#151-rest-api) (derive semantics). |
-| `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 422         | `POST /v1/sessions/{id}/derive` or `POST /v1/sessions/{id}/replay` (with `replayMode: workspace_derive`) rejected because the target pool's `sessionIsolationLevel.isolationProfile` is weaker than the source session's (`standard` < `sandboxed` < `microvm`). Matches the delegation monotonicity rule in [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). `details.sourceIsolationProfile`, `details.targetIsolationProfile`, and `details.targetPool` are included. Overridable by `platform-admin` callers via `allowIsolationDowngrade: true` in the request body — this path emits a `derive.isolation_downgrade` audit event. See [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics and [Section 15.1](#151-rest-api) replay semantics. |
+| `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 422         | Request rejected because the target pool's `sessionIsolationLevel.isolationProfile` is weaker than the source (parent or derive/replay source) session's (`standard` < `sandboxed` < `microvm`). Applies uniformly to `delegate_task` (calling session's `minIsolationProfile`), `POST /v1/sessions/{id}/derive`, and `POST /v1/sessions/{id}/replay` with `replayMode: workspace_derive`. `details.sourceIsolationProfile`, `details.targetIsolationProfile`, and `details.targetPool` are included (delegation responses may use the legacy `details.parentIsolation` / `details.targetIsolation` keys as aliases). On derive/replay only, overridable by `platform-admin` callers via `allowIsolationDowngrade: true` in the request body — this path emits a `derive.isolation_downgrade` audit event. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) delegation monotonicity, [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics, and [Section 15.1](#151-rest-api) replay semantics. |
 | `REGION_CONSTRAINT_VIOLATED`  | `POLICY`    | 403         | Request rejected because the resolved storage region does not satisfy the session's `dataResidencyRegion` constraint. `details.requiredRegion` and `details.resolvedRegion` are included. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
 | `REGION_CONSTRAINT_UNRESOLVABLE` | `PERMANENT` | 422      | Session creation rejected because no storage or pool configuration can satisfy the requested `dataResidencyRegion`. `details.region` identifies the unresolvable constraint. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
 | `REGION_UNAVAILABLE`          | `TRANSIENT` | 503         | The storage region required by the session's data residency constraint is temporarily unavailable. Retry when the region recovers. `details.region` identifies the affected region. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
@@ -1016,7 +1150,7 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 | `upload_files`             | Upload workspace files                                         |
 | `finalize_workspace`       | Seal workspace, run setup                                      |
 | `start_session`            | Start the agent runtime                                        |
-| `attach_session`           | Attach to a running session (returns streaming task)           |
+| `attach_session`           | Attach to a running session (returns streaming task). Accepts optional `resumeFromSeq: uint64` to replay buffered events with `SeqNum > resumeFromSeq` before streaming new ones (see "Event-stream resume" below).           |
 | `send_message`             | Send a message to a session (unified — replaces `send_prompt`) |
 | `interrupt_session`        | Interrupt current agent work                                   |
 | `get_session_status`       | Query session state (including `suspended`)                    |
@@ -1054,6 +1188,10 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 - Elicitation (for user prompts, auth flows)
 - Streamable HTTP transport
 
+**Event-stream resume.** Every `SessionEvent` frame the `MCPAdapter` writes to the client carries its `SeqNum` as the SSE `id:` line on the Streamable HTTP transport, parallel to the ops-event stream in [Section 25.5](25_agent-operability.md#255-operational-event-stream). `attach_session` accepts an optional `resumeFromSeq: uint64` parameter; when supplied, the gateway replays buffered events with `SeqNum > resumeFromSeq` before switching to live delivery. The gateway maintains a per-session event replay buffer sized by `gateway.sessionEventReplayBufferDepth` ([Section 10.4](10_gateway-internals.md#104-gateway-reliability)); clients MAY also rely on the SSE `Last-Event-ID` header as an equivalent, implicit `resumeFromSeq` on plain reconnects. When the requested sequence has been evicted from the buffer, the adapter emits a single protocol-level `gap_detected` frame carrying `{"lastSeenSeq": <resumeFromSeq>, "nextSeq": <oldestRetainedSeq>}` before resuming live delivery, so clients can surface a gap warning rather than silently losing events; this frame is a stream-control signal, not a `SessionEvent`, and is not part of the `SessionEventKind` closed enum above. Clients that did not observe any prior events (first attach) SHOULD omit `resumeFromSeq`.
+
+**Stream keepalive.** To prevent idle-stream termination by intermediaries (Cloudflare, ELBs, and other L7 proxies commonly enforce 30–60s idle timeouts), the `MCPAdapter` writes an SSE comment line `:keepalive\n\n` on the Streamable HTTP response whenever no `SessionEvent` frame has been written for `20` seconds. The interval is fixed by the protocol contract so clients can derive a reliable liveness timeout without configuration; it is not tunable per connection. Comment lines are invisible to conforming SSE parsers (`EventSource` implementations ignore lines beginning with `:`) and carry no `id:` — they do not affect `SeqNum`, `Last-Event-ID` tracking, or the `gap_detected` contract. Clients SHOULD treat the absence of any byte (event or keepalive) for more than `60` seconds as a broken connection, close the stream, and reattach via `attach_session` with `resumeFromSeq` set to the last `SeqNum` they observed (or rely on the SSE built-in reconnect with `Last-Event-ID`); the event replay buffer and `gap_detected` frame handle any events emitted during the disconnect window exactly as on any other reconnect path.
+
 #### 15.2.1 REST/MCP Consistency Contract
 
 The REST API ([Section 15.1](#151-rest-api)) and MCP tools ([Section 15.2](#152-mcp-api)) intentionally overlap for operations like session creation, status queries, and artifact retrieval. Five rules govern this overlap:
@@ -1089,6 +1227,7 @@ The REST API ([Section 15.1](#151-rest-api)) and MCP tools ([Section 15.2](#152-
    - All error classes: `VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED` — each exercised with a canonical triggering input. For each, the test asserts identical `code`, `category`, and `retryable` values.
    - All state transition sequences: at minimum the sequences `create→running→completed`, `create→running→interrupted→resumed→completed`, and `create→running→terminated`.
    - Pagination: multi-page artifact list traversal asserting cursor behavior and total result set identity.
+   - Event-stream resume: after a forced stream disconnect, a subsequent `attach_session` with `resumeFromSeq` (or SSE `Last-Event-ID`) returns all events with `SeqNum > resumeFromSeq` in order; when the requested sequence is beyond the replay buffer ([§10.4](10_gateway-internals.md#104-gateway-reliability)), a single `gap_detected` protocol-level frame precedes the oldest retained event.
 
    Third-party adapters that do not pass this full matrix **must not be enabled in production**. The `POST /v1/admin/external-adapters` registration endpoint enforces this gate: a new adapter is created in `status: pending_validation` and will not receive traffic until `POST /v1/admin/external-adapters/{name}/validate` is called and returns a passing result. `POST /v1/admin/external-adapters/{name}/validate` runs the `RegisterAdapterUnderTest` suite in a sandboxed environment against the registered adapter and transitions the adapter to `status: active` on success or `status: validation_failed` (with per-test failure details) on failure. Adapters in `pending_validation` or `validation_failed` status are excluded from all traffic routing. This makes compliance testable without out-of-band coordination, and makes the production gate machine-enforceable rather than a documentation requirement.
 

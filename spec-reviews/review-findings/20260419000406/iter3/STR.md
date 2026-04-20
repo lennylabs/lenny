@@ -6,7 +6,17 @@ New findings below concern gaps that existed pre-iter2 and survived iter2 — i.
 
 ---
 
-### STR-007 `SessionEvent.SeqNum` has no client-facing resume path — clients lose events on stream drop [High]
+### STR-007 `SessionEvent.SeqNum` has no client-facing resume path — clients lose events on stream drop [High] — **Status: Fixed**
+
+**Resolution.** Iter3 plumbed `SeqNum` through the MCP client-facing stream end-to-end:
+- `SessionEvent.SeqNum` docstring updated (§15) to require adapters to forward it into the native protocol envelope; `MCPAdapter` surfaces it as the SSE `id:` line.
+- `attach_session` row in §15.2 gained an optional `resumeFromSeq: uint64` parameter, plus a new "Event-stream resume" paragraph describing the replay semantic (including the implicit `Last-Event-ID` equivalence on SSE reconnects).
+- §10.4 Gateway Reliability gained an "Event replay buffer" bullet defining the per-session ring buffer (`gateway.sessionEventReplayBufferDepth`, default 512, range 64–4096), the eviction-case `gap_detected` protocol frame, and the coordinator-handoff discard-and-gap path.
+- §7.2 streaming events table is followed by a new "Event ordering and resume" paragraph documenting the client-replay semantic and calling out `children_reattached` / `session.resumed` coverage.
+- §15.2.1 `RegisterAdapterUnderTest` matrix adds an "Event-stream resume" assertion.
+- `gap_detected` is documented as a stream-control frame, not a `SessionEvent` — the `SessionEventKind` closed enum is unchanged.
+
+
 **Files:** `/Users/joan/projects/lenny/spec/15_external-api-surface.md` (§15, lines 202–214, 329–348, 1019 `attach_session`), `/Users/joan/projects/lenny/spec/07_session-lifecycle.md` (§7.2 streaming events table, lines 117–141), `/Users/joan/projects/lenny/spec/10_gateway-internals.md` (§10.4 lines 290–296 "reconnect/reattaches")
 
 Iter2 added a monotonic per-session `SeqNum` on `SessionEvent` (§15 line 211) with the documented purpose: "Adapters MAY use SeqNum to detect gaps when delivering over lossy transports (e.g., webhook retries)." This is the correct primitive, but the spec only wires it **adapter-side** — i.e., for gateway→external-protocol-adapter dispatch and for the adapter's own downstream consumers (A2A webhooks, §21.1). There is no corresponding client-facing mechanism on the MCP `attach_session` streaming path, the primary session-streaming surface.
