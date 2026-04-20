@@ -40,9 +40,9 @@ The build sequence itself is directional. Surface ordering and timing will shift
 
 | Surface | Status | Notes |
 |:--------|:-------|:------|
-| Tier 0 — `lenny up` embedded stack | Not started | Single binary: embedded k3s, Postgres, Redis, KMS, OIDC, object storage. Same binaries as production, only external dependencies swapped. Reference runtimes pre-installed. |
-| Tier 1 — `make run` contributor mode | Not started | SQLite + in-memory + local FS; gateway, controller-sim, and echo runtime run as goroutines in one process. |
-| Tier 2 — `docker compose up` | Not started | Production-like local stack with real Postgres, Redis, MinIO. Integration testing and TLS exercise. |
+| Embedded Mode — `lenny up` single-binary stack | Not started | Single binary: embedded k3s, Postgres, Redis, KMS, OIDC, object storage. Same binaries as production, only external dependencies swapped. Reference runtimes pre-installed. |
+| Source Mode — `make run` contributor mode | Not started | SQLite + in-memory + local FS; gateway, controller-sim, and echo runtime run as goroutines in one process. |
+| Compose Mode — `docker compose up` | Not started | Production-like local stack with real Postgres, Redis, MinIO. Integration testing and TLS exercise. |
 
 ### Core runtime
 

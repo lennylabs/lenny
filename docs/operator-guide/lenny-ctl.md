@@ -459,7 +459,7 @@ Session commands route through the **MCP** client SDK, not REST. They exercise t
 
 ## Local Stack
 
-The embedded Tier 0 stack is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
+The Embedded Mode stack (`lenny up`) is managed entirely through local-only commands. They do not require a remote `LENNY_API_URL` — the embedded gateway binds to `https://localhost:8443` by default.
 
 | Command | Description |
 |---|---|
