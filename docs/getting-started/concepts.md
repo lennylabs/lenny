@@ -62,7 +62,7 @@ stateDiagram-v2
 
 **created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session but the agent binary has not started. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
 
-**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any setup commands defined on the runtime (such as `npm ci` or `pip install`) execute during this phase, bounded by `setupPolicy.timeoutSeconds`.
+**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace *content* — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
 
 **ready** -- Workspace materialization and setup commands have completed successfully. The session is ready for the agent binary to start.
 
@@ -331,13 +331,66 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 **Staging:** When a client uploads files, they are streamed through the gateway into the pod's staging area (`/workspace/staging`). Files are staged but not yet visible to the runtime.
 
-**Materialization:** When the client calls `FinalizeWorkspace`, the staging area is validated and atomically moved to `/workspace/current`. Setup commands (if any) execute at this point. The workspace is now the runtime's working directory.
+**Materialization:** When the client calls `FinalizeWorkspace`, all declarative [workspace sources](#workspace-sources) are materialized into `/workspace/current` (client uploads flow through `/workspace/staging` for atomicity). Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
 
 **Runtime operation:** The agent reads and writes files in `/workspace/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
 
 **Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence: the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it is best-effort.
 
 **Sealing:** When the session completes, the workspace is exported to durable storage as a sealed, immutable snapshot. This snapshot is the session's final artifact and can be used to derive new sessions.
+
+### Workspace sources
+
+A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. Each source is materialized by the gateway at session creation time, before the agent runtime starts. V1 ships five source types:
+
+| Source | Purpose |
+|--------|---------|
+| `inlineFile` | Write a small file whose content is embedded directly in the request (e.g., `CLAUDE.md`, `.claude/settings.json`). |
+| `uploadFile` | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`. |
+| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive into the workspace. |
+| `mkdir` | Create an empty directory (useful for output collection). |
+| `gitClone` | Clone a Git repository at a specified ref (branch, tag, or commit SHA). |
+
+`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. V1 accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA at session creation and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
+
+```json
+{
+  "type": "gitClone",
+  "url": "https://github.com/acme/app.git",
+  "ref": "main",
+  "depth": 1,
+  "auth": { "mode": "credential-lease", "leaseScope": "vcs.github.read" }
+}
+```
+
+For the full schema — including `depth`, `submodules`, per-provider auth, and error codes — see the [WorkspacePlan reference](../reference/workspace-plan.md).
+
+### Setup commands
+
+After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/current` as the working directory, during the session's `finalizing` state. Setup completes (or fails) before the agent binary starts.
+
+Setup commands are strictly scoped by the runtime's `setupCommandPolicy`:
+
+- **Prefix-matched allowlist.** `npm ci` permits `npm ci --no-audit` but not `npm install`.
+- **Exec mode** (`shell: false`): commands run as an argv list, not `sh -c`, so shell metacharacters do not expand.
+- **Bounded timeouts.** `workspacePlan.setupCommands[].timeoutSeconds` bounds a single command; `setupPolicy.timeoutSeconds` on the runtime caps the whole phase.
+- **No ambient network.** Pods have no outbound network during setup by default. Commands that need the internet (for example, a package mirror) require a pool egress profile that explicitly allows it.
+- **Non-root, read-only root filesystem.** Commands can write only to the workspace, `/tmp`, and session-scoped paths.
+
+**Setup commands are not the right place to clone a repository.** Because the pod has no network by default and `git` would have to be separately allowlisted, repository content belongs in a [`gitClone` source](#workspace-sources), not in `setupCommands`. The split is deliberate: sources describe *what should be in the workspace*; setup commands describe *what to do once it's there*.
+
+A typical runtime's setup policy:
+
+```yaml
+setupCommandPolicy:
+  mode: allowlist
+  shell: false
+  allowlist: [npm ci, pip install, make, chmod]
+  maxCommands: 10
+setupPolicy:
+  timeoutSeconds: 300
+  onTimeout: fail
+```
 
 ### Gateway-mediated file delivery
 
