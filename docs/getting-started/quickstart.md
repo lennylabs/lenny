@@ -17,10 +17,10 @@ This is the recommended starting point for anyone evaluating Lenny. If you're go
 
 ## Prerequisites
 
-| Requirement | Version | Notes |
-|------------|---------|-------|
-| **Lenny CLI** | latest | `brew install lennylabs/tap/lenny`, or download a single binary from the [releases page](https://github.com/lennylabs/lenny/releases) |
-| **macOS or Linux** | anything recent | Windows works through WSL2 |
+| Requirement        | Version         | Notes                                                                                                                                 |
+| ------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Lenny CLI**      | latest          | `brew install lennylabs/tap/lenny`, or download a single binary from the [releases page](https://github.com/lennylabs/lenny/releases) |
+| **macOS or Linux** | anything recent | Windows works through WSL2                                                                                                            |
 
 That's it. The first `lenny up` downloads its dependencies into `~/.lenny/` and takes about a minute. Every subsequent start is a few seconds.
 
@@ -184,6 +184,8 @@ A few properties you saw in action, which apply equally to a production install:
 ---
 
 ## Next steps
+
+Start with [Core Concepts](concepts.html) to learn the basics about Lenny.
 
 ### If you're building an agent
 
