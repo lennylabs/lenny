@@ -32,6 +32,15 @@ Complete reference for all Prometheus metrics emitted by Lenny platform componen
 | `lenny_gateway_gc_pause_fleet_p99_ms` | Gauge | -- | 99th-percentile GC pause aggregated across all active gateway replicas. Computed as `max(lenny_gateway_gc_pause_p99_ms)` over all instances. | `Tier3GCPressureHigh` alert; aggregate health indicator for Scale-size deployments. |
 | `lenny_gateway_rejection_rate` | Gauge | `service_instance_id` | Requests rejected with 429/503 per second per replica. | Leading HPA scale-out indicator. |
 
+### Gateway drain and preStop metrics
+
+| Metric | Type | Labels | Description | Used by |
+|:-------|:-----|:-------|:------------|:--------|
+| `lenny_prestop_cap_selection_total` | Counter | `pool`, `service_instance_id`, `source`: `postgres`, `postgres_null`, `cache_hit`, `cache_miss_max_tier` | Emitted once per preStop Stage 2 tier selection. Distinguishes whether the tiered cap was selected from Postgres with a non-null value (`postgres`), Postgres returning `NULL` for a fresh session with the 90s conservative fallback (`postgres_null`), the in-replica cache (`cache_hit`), or Postgres unreachable with 90s fallback (`cache_miss_max_tier`). | `PreStopCapFallbackRateHigh` alert (evaluates the combined `postgres_null + cache_miss_max_tier` share per-replica). |
+| `lenny_prestop_barrier_target_source_total` | Counter | `pool`, `source`: `postgres`, `cache_fallback` | Emitted once per preStop `CheckpointBarrier` fan-out invocation. Distinguishes whether the barrier-target set was sourced from the Postgres `coordination_lease` table (steady-state) or from the in-memory lease cache (Postgres read failure). | Operational monitoring (correlates with `DualStoreUnavailable`). |
+| `lenny_circuit_breaker_cache_stale_seconds` | Gauge | -- | Wall seconds since the AdmissionController's in-process circuit-breaker cache was last successfully refreshed from Redis; 0 under healthy steady-state polling; monotonically increasing when Redis is unreachable. | `CircuitBreakerStale` alert. |
+| `lenny_circuit_breaker_cache_stale_serves_total` | Counter | `outcome`: `rejected` \| `admitted` | Every admission decision served against a cache not refreshed within the 5s poll interval. `outcome="admitted"` is the security-salient case. | `CircuitBreakerStale` alert (alert body includes rate by outcome). |
+
 ### HPA metric roles
 
 | Metric | Role | Where used |
@@ -58,8 +67,8 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 | Metric | Type | Labels | Description | Extraction threshold |
 |:-------|:-----|:-------|:------------|:---------------------|
 | `lenny_stream_proxy_queue_depth` | Gauge | `pool` | Stream proxy queue depth. | >500 sustained for >=5 min. |
-| `lenny_stream_proxy_goroutines` | Gauge | `pool` | Active goroutines in the stream proxy. | -- |
-| `lenny_stream_proxy_p99_attach_latency_ms` | Histogram | `pool` | P99 latency for session attach operations. | >800 ms sustained for >=5 min. |
+| `lenny_stream_proxy_goroutines` | Gauge | `service_instance_id` | Active goroutines in the stream proxy. | -- |
+| `lenny_stream_proxy_p99_attach_latency_seconds` | Gauge | `pool` | Pre-computed P99 latency for session attach operations. | >0.8 s (800 ms) sustained for >=5 min. |
 
 ### Upload Handler extraction-threshold metrics
 
@@ -67,23 +76,23 @@ Each gateway subsystem (Stream Proxy, Upload Handler, MCP Fabric, LLM Proxy) emi
 |:-------|:-----|:-------|:------------|:---------------------|
 | `lenny_upload_handler_active_uploads` | Gauge | `pool` | Currently active upload operations. | >200 concurrent sustained. |
 | `lenny_upload_handler_queue_depth` | Gauge | `pool` | Upload handler queue depth. | -- |
-| `lenny_upload_handler_p99_latency_ms` | Histogram | `pool` | P99 upload latency. | -- |
+| `lenny_upload_handler_p99_latency_seconds` | Gauge | `pool` | Pre-computed P99 upload latency. | -- |
 
 ### MCP Fabric extraction-threshold metrics
 
 | Metric | Type | Labels | Description | Extraction threshold |
 |:-------|:-----|:-------|:------------|:---------------------|
 | `lenny_mcp_fabric_active_delegations` | Gauge | `pool` | Currently active delegation operations. | >1,000 concurrent sustained. |
-| `lenny_mcp_fabric_goroutines` | Gauge | `pool` | Active goroutines in the MCP Fabric. | -- |
-| `lenny_mcp_fabric_p99_orchestration_latency_ms` | Histogram | `pool` | P99 delegation orchestration latency. | >2,000 ms sustained. |
+| `lenny_mcp_fabric_goroutines` | Gauge | `service_instance_id` | Active goroutines in the MCP Fabric. | -- |
+| `lenny_mcp_fabric_p99_orchestration_latency_seconds` | Gauge | `pool` | Pre-computed P99 delegation orchestration latency. | >2.0 s (2,000 ms) sustained. |
 
 ### LLM Proxy extraction-threshold metrics
 
 | Metric | Type | Labels | Description | Extraction threshold |
 |:-------|:-----|:-------|:------------|:---------------------|
-| `lenny_llm_proxy_active_connections` | Gauge | -- | Active upstream LLM connections. Also available as `lenny_gateway_llm_proxy_active_connections`. | >2,000 sustained or >60% of `maxConcurrent`. |
-| `lenny_llm_proxy_upstream_goroutines` | Gauge | -- | Goroutines handling upstream LLM streams. | -- |
-| `lenny_llm_proxy_p99_ttfb_ms` | Histogram | -- | P99 time-to-first-byte for upstream LLM requests. | -- |
+| `lenny_gateway_llm_proxy_active_connections` | Gauge | -- | Active upstream LLM connections held by the gateway's LLM routing subsystem. This is the canonical metric name used by the Tier 3 extraction-readiness ratio. | >2,000 sustained or >60% of `maxConcurrent`. |
+| `lenny_llm_proxy_upstream_goroutines` | Gauge | `service_instance_id` | Goroutines handling upstream LLM streams. | -- |
+| `lenny_llm_proxy_p99_ttfb_seconds` | Gauge | `pool`, `provider` | Pre-computed P99 time-to-first-byte for upstream LLM requests. | -- |
 
 ### LLM translator metrics
 
@@ -179,6 +188,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_token_service_circuit_state` | Gauge | -- | Token Service circuit breaker: 0=closed, 1=half-open, 2=open. | `TokenServiceUnavailable` alert. |
 | `lenny_token_service_secret_reloads_total` | Counter | `secret_name`, `outcome` | Secret reload outcomes: `success`, `not_found`, `parse_error`. | Operational monitoring. |
 | `lenny_oauth_token_5xx_total` | Counter | `tenant_id`, `error_type` | `/v1/oauth/token` responses that returned 5xx. Error types: `token_store_unavailable`, `internal_error`, `crypto_error`. | `TokenStoreUnavailable` alert. |
+| `lenny_credential_rotation_inflight_ceiling_hit_total` | Counter | `pool`, `trigger` | Increments when the 300-second in-flight gate ceiling is hit for any rotation whose `trigger != proactive_renewal` and the adapter is forced to send `credentials_rotated` regardless of outstanding in-flight LLM requests. Non-zero values indicate a compromised or buggy runtime that failed to emit `llm_request_completed` within the ceiling. | `OutstandingInflightAtRotationCeiling` alert. |
 
 ### Credential pool metrics
 
@@ -319,6 +329,8 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_pgaudit_grant_events_total` | Counter | `statement_type` | pgaudit events forwarded to sink: `GRANT`, `REVOKE`, `DDL`. | `PgAuditSinkDeliveryFailed` alert. |
 | `lenny_mcp_deprecated_version_active_sessions` | Gauge | -- | Sessions on deprecated MCP protocol versions. | Deprecation monitoring. |
 | `lenny_circuit_breaker_open` | Gauge | `circuit_name` | 1 when breaker is open, 0 when closed. | `CircuitBreakerActive` alert. |
+| `lenny_audit_redaction_receipt_missing_total` | Counter | -- | Rows classified `chainIntegrity=redacted_gdpr` where the corresponding signed `RedactionReceipt` is absent, signature-invalid, or the `(original_hash, new_hash)` pair does not match the observed chain rewrite. Steady-state value is zero. | `AuditRedactionReceiptMissing` alert. |
+| `lenny_playground_dev_tenant_not_seeded_total` | Counter | -- | `/playground/*` requests rejected with `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` because the `authMode=dev` configured `devTenantId` was not yet present in Postgres. Should be non-zero only during the post-install bootstrap window. | Operational monitoring. |
 
 ---
 
@@ -336,7 +348,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `billing_write_ahead_buffer_utilization` | Gauge | `tenant_id` | Ratio of in-memory buffer used to `billingFlushMaxPending`. | `BillingWriteAheadBufferHigh` alert. |
+| `lenny_billing_write_ahead_buffer_utilization` | Gauge | `tenant_id` | Ratio of in-memory buffer used to `billingFlushMaxPending`. | `BillingWriteAheadBufferHigh` alert. |
 | `lenny_billing_redis_stream_depth` | Gauge | `tenant_id` | Billing events staged in Redis awaiting Postgres flush. | `BillingStreamBackpressure` alert. |
 | `lenny_billing_correction_pending_total` | Gauge | `state` | Correction approval queue: `pending`, `approved`, `rejected`, `expired`. | `BillingCorrectionApprovalBacklog` alert. |
 
@@ -383,6 +395,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `lenny_experiment_targeting_error_total` | Counter | `provider`, `error_type` | Targeting webhook failures. |
 | `lenny_experiment_targeting_circuit_open` | Gauge | `tenant_id`, `provider` | 1 when per-tenant circuit breaker is open. |
 | `lenny_experiment_sticky_cache_invalidations_total` | Counter | `experiment_id`, `transition` | Sticky user assignment cache flushes. |
+| `lenny_experiment_isolation_rejections_total` | Counter | `tenant_id`, `experiment_id`, `variant_id` | Incremented each time the `ExperimentRouter` fails closed because the variant pool's `isolationProfile` is weaker than the session's `minIsolationProfile`. Paired with the `experiment.isolation_mismatch` event so operators can detect rejection-population bias without log scraping. Returns `VARIANT_ISOLATION_UNAVAILABLE` to the caller. |
 | `lenny_eval_score` | Histogram | `tenant_id`, `scorer`, `variant_id` | Eval scores per variant (built-in `/eval` endpoint only). Mean via `rate(sum) / rate(count)`. Deployers whose runtimes use runtime-native eval platforms (LangSmith, Braintrust, etc.) will not have data in this metric and should configure equivalent score-regression alerts in their eval platform. |
 
 ---
@@ -431,6 +444,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `BillingStreamEntryAgeHigh` | Oldest billing stream entry exceeds 80% of TTL | Critical |
 | `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0` sustained > 30s | Critical |
 | `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |
+| `ArtifactReplicationResidencyViolation` | `rate(lenny_minio_replication_residency_violation_total[5m]) > 0` — ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch, missing tag, DNS rebinding, or failed destination tag-probe. Replication for the affected region is suspended. | Critical |
+| `AuditRedactionReceiptMissing` | `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0` — a row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt`. | Critical |
 
 ### Warning alerts
 
@@ -466,6 +481,15 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
 | `PoolBootstrapMode` | Pool in bootstrap mode > 72 hours | Warning |
 | `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` sustained > 5 min | Warning |
+| `GatewayQueueDepthHigh` | `max by (subsystem) (lenny_gateway_{subsystem}_queue_depth)` exceeds tier-scaled threshold (Tier 1 = 50, Tier 2 = 200, Tier 3 = 800) sustained > 5 min | Warning |
+| `GatewayLatencyHigh` | P95 of `lenny_gateway_{subsystem}_request_duration_seconds` exceeds tier-scaled threshold (Tier 1 = 2.0s, Tier 2 = 1.0s, Tier 3 = 0.5s) sustained > 10 min | Warning |
+| `PodStateMirrorStale` | `max by (pool) (lenny_agent_pod_state_mirror_lag_seconds) > 60` sustained > 60s | Warning |
+| `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted — `platform-admin` invoked user erase with `acknowledgeHoldOverride: true` | Warning |
+| `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted — `platform-admin` invoked tenant force-delete with `acknowledgeHoldOverride: true` | Warning |
+| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented — the 300s in-flight gate ceiling was hit on a non-proactive rotation | Warning |
+| `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s-conservative-fallback selections (`source="postgres_null"` + `source="cache_miss_max_tier"`) exceeds 5% over 15 min | Warning |
+| `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable; node drains skip MinIO health check | Warning |
+| `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any gateway replica; admission decisions are being served against stale state | Warning |
 
 ### SLO burn-rate alerts
 

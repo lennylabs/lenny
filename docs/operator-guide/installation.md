@@ -292,6 +292,10 @@ The preflight Job runs automatically during `helm install` and `helm upgrade`. I
 | kube-apiserver CIDR | Validates the configured CIDR contains the actual apiserver IP |
 | Internet egress CIDRs | Validates exclusion CIDRs match actual cluster CIDRs |
 | etcd encryption | Non-blocking warning if encryption cannot be verified |
+| Admission webhook inventory | Verifies that the expected set of `ValidatingWebhookConfiguration` resources and CRD conversion webhooks are installed. The expected set is composed at render time from the three feature flags `features.llmProxy`, `features.drainReadiness`, `features.compliance` (see [Feature-gated chart inventory](#feature-gated-webhooks)); each present webhook must have `failurePolicy: Fail` and a non-empty `caBundle`. |
+| Drain-readiness webhook | When `features.drainReadiness: true`: verifies `lenny-drain-readiness` webhook exists and has a non-empty `caBundle`. |
+| T4 node isolation webhook | When `features.compliance: true`: verifies `lenny-t4-node-isolation` webhook exists and has a non-empty `caBundle`. |
+| Playground apiKey mode warning | Non-blocking `WARNING` when `playground.enabled: true`, `playground.authMode: apiKey`, `global.devMode: false`, and `playground.acknowledgeApiKeyMode: false` — operator must explicitly acknowledge the bearer-paste phishing surface tradeoff. |
 
 ### Running Preflight Manually
 
@@ -321,6 +325,18 @@ preflight:
   enabled: false  # Skips preflight; logs warning
   # timeoutSeconds: 120  # Default timeout for preflight Job
 ```
+
+### Feature-gated webhooks
+
+Lenny's validating/conversion admission webhooks are grouped into a baseline set that is always rendered, plus three optional webhooks gated by Helm `features.*` flags. The preflight Job computes its expected webhook set from the same flags, so a slice install (e.g., Phase 3.5 with all flags `false`) passes cleanly without requiring webhooks that have not yet been rolled out.
+
+| Helm value | Default | Gated webhooks |
+|:-----------|:--------|:---------------|
+| `features.llmProxy` | `false` | `lenny-direct-mode-isolation` |
+| `features.drainReadiness` | `false` | `lenny-drain-readiness` |
+| `features.compliance` | `false` | `lenny-data-residency-validator`, `lenny-t4-node-isolation` |
+
+The baseline set (always expected) is `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, and the CRD conversion webhook. Flipping a feature flag from `true` to `false` after the corresponding phase has been reached is an unsupported downgrade — the per-webhook unavailability alerts and runtime enforcement paths depend on the webhook's continued presence.
 
 ---
 

@@ -33,6 +33,19 @@ sdkWarmBlockingPaths:  # glob patterns; demotion triggered if any uploaded file 
 
 **`capabilities.injection`** declares whether the runtime supports mid-session message delivery. Default: `supported: false`. Gateway rejects injection attempts against unsupported sessions at the API level before they reach the adapter.
 
+**`integrationLevel`** — optional enum, one of `basic`, `standard`, `full`. Author-declared intent about which level of the Runtime Adapter Specification ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)) the runtime binary implements. Only meaningful on `type: agent` runtimes — must not be set on `type: mcp` (gateway rejects with `INVALID_RUNTIME: integrationLevel is only valid on type: agent runtimes`). Default when absent: `basic`. Ordering: `basic < standard < full`.
+
+The field is consumed by three users:
+
+1. **`lenny runtime validate`** ([§15.4.6](15_external-api-surface.md#1546-conformance-test-suite)) reads the declared value from `runtime.yaml` to select the conformance test categories to execute (each higher level inherits every test category from the levels below it). The validator additionally probes the running runtime image for its **observed** level (does it open the lifecycle channel? does it present a valid MCP nonce handshake?) and compares observed against declared.
+2. **Admission at registration** — the gateway records the declared value alongside the Runtime definition and emits a `runtime.integrationLevel.declared` audit field. At the point where the runtime actually registers a pool and the adapter completes its first `lifecycle_capabilities` / `lifecycle_support` exchange ([§4.7](04_system-components.md#47-runtime-adapter)), the gateway compares the declared level against the observed level from the handshake:
+   - `observed < declared` — gateway rejects the first session assignment with `RUNTIME_LEVEL_UNDERPERFORMS` and logs a structured error. The runtime has claimed more than it delivers; continuing would silently degrade features callers expect (checkpoint, clean interrupt, credential rotation).
+   - `observed > declared` — gateway accepts the registration and emits a `runtime.integrationLevel.underdeclared` warning so the author can raise the declared level in a future release.
+   - `observed == declared` — gateway accepts without annotation.
+3. **Tooling hints** — the declared level feeds the `Level` column in the reference runtime catalog ([§26.1](26_reference-runtime-catalog.md#261-catalog-overview)), README badges produced by `lenny runtime init` ([§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), and the `integrationLevel` field exposed in runtime listing APIs.
+
+The `lifecycle_support` handshake from [§4.7](04_system-components.md#47-runtime-adapter) remains the **runtime source of truth** — a runtime with no lifecycle channel is observationally Basic (or Standard, if it still opens MCP) regardless of what `runtime.yaml` declares, and the gateway treats it accordingly for capability selection (credential rotation strategy, checkpoint strategy, interrupt delivery). The declared `integrationLevel` is an author-side commitment that tooling and admission use to catch drift between claim and behaviour; it never grants features the runtime does not actually implement.
+
 **Capabilities are customizable per tenant**, with the platform defaults as described above.
 
 **Labels are required from v1** — primary mechanism for environment `runtimeSelector` and `connectorSelector` matching (see [Section 10.6](10_gateway-internals.md#106-environment-resource-and-rbac-model)).
@@ -43,6 +56,7 @@ sdkWarmBlockingPaths:  # glob patterns; demotion triggered if any uploaded file 
 name: langgraph-runtime
 image: registry.example.com/langgraph:latest
 type: agent
+integrationLevel: full # basic | standard | full — optional; defaults to basic
 capabilities:
   interaction: one_shot # one_shot | multi_turn
   injection:
@@ -152,7 +166,7 @@ minPlatformVersion: "1.4.0" # optional; gateway rejects registration if platform
 
 #### Inheritance Rules
 
-**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
+**Never overridable on derived runtime:** `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, `integrationLevel`. (`allowStandardIsolation` is a pool configuration flag ([Section 5.3](#53-isolation-profiles)), not a Runtime definition field — it is not subject to inheritance.)
 
 **Independently configurable on derived runtime:** Pool settings, `workspaceDefaults`, `setupCommands`, `setupPolicy.timeoutSeconds` (gateway takes maximum of base and derived), `agentInterface`, `delegationPolicyRef` (restrict only), `publishedMetadata`, `labels`, `taskPolicy`.
 
@@ -172,6 +186,7 @@ When the gateway resolves a derived runtime, it applies the following per-field 
 | `allowedResourceClasses` | **Prohibited** — derived may not set | Must be a subset of base; pool config constrains further |
 | `capabilities.interaction` | **Prohibited** — derived may not set | |
 | `capabilities.injection` | **Prohibited** — derived may not set | |
+| `integrationLevel` | **Inherited** — derived may not set | Level is a property of the runtime binary image, which is inherited; derived runtimes cannot re-declare a different level. Gateway rejects registration with `INVALID_DERIVED_RUNTIME: integrationLevel is prohibited on derived runtimes` if present. |
 | `supportedProviders` | **Override** — derived value replaces base if set; otherwise base value applies | Derived may restrict but not expand beyond base |
 | `credentialCapabilities` | **Override** — derived value replaces base if set | |
 | `limits` | **Override** — derived value replaces base if set; otherwise base value applies | |
@@ -476,7 +491,7 @@ concurrentWorkspacePolicy:
   cleanupTimeoutSeconds: 60 # per-slot cleanup timeout is max(cleanupTimeoutSeconds / maxConcurrent, 5); must be ≥ maxConcurrent × 5
 ```
 
-If `acknowledgeProcessLevelIsolation` is absent or `false`, the pool controller rejects the pool definition at validation time with a descriptive error referencing this section and listing the specific isolation properties the deployer is accepting: shared process namespace, shared `/tmp`, shared cgroup memory, and shared network stack between concurrent slots. The rejection message additionally enumerates network-level side-channels inherent to the shared network namespace: (a) cross-slot network traffic observation via raw sockets, (b) port binding conflicts between slots, (c) DNS resolver cache poisoning where one slot's DNS queries populate cached entries visible to other slots, and (d) network activity timing patterns observable across slots. To mitigate raw socket sniffing, the agent container's `securityContext` MUST drop `CAP_NET_RAW` (the `SandboxWarmPool` CRD validation webhook rejects concurrent-workspace pool definitions where the pod template grants `CAP_NET_RAW`). Deployers requiring network isolation between concurrent tasks should use `executionMode: session` instead.
+If `acknowledgeProcessLevelIsolation` is absent or `false`, the pool controller rejects the pool definition at validation time with a descriptive error referencing this section and listing the specific isolation properties the deployer is accepting: shared process namespace, shared `/tmp`, shared cgroup memory, shared network stack, and **shared credential-file group-read access** (each slot's `/run/lenny/slots/{slotId}/credentials.json` is readable by every slot's agent process via the shared `lenny-cred-readers` supplementary group — see [§13.1](13_security-model.md)) between concurrent slots. The rejection message additionally enumerates network-level side-channels inherent to the shared network namespace: (a) cross-slot network traffic observation via raw sockets, (b) port binding conflicts between slots, (c) DNS resolver cache poisoning where one slot's DNS queries populate cached entries visible to other slots, and (d) network activity timing patterns observable across slots. To mitigate raw socket sniffing, the agent container's `securityContext` MUST drop `CAP_NET_RAW` (the `SandboxWarmPool` CRD validation webhook rejects concurrent-workspace pool definitions where the pod template grants `CAP_NET_RAW`). Deployers requiring network isolation or credential-lease isolation between concurrent tasks should use `executionMode: session` instead.
 
 **Tenant pinning (concurrent-workspace).** Concurrent-workspace pods are pinned to a single tenant for their entire lifetime — the same constraint as task-mode pods (see tenant pinning above), but with a stronger rationale: concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack *simultaneously*, so cross-tenant data leakage vectors are strictly worse than task mode's sequential reuse. The gateway MUST NOT assign a concurrent-workspace slot to a tenant different from the pod's first assignment. Enforcement reuses the same two-layer mechanism as task mode: (1) the gateway records `tenantId` on first slot assignment and rejects subsequent slot assignments with a mismatched `tenantId`, and (2) the `lenny-tenant-label-immutability` `ValidatingAdmissionWebhook` prevents mutation of the `lenny.dev/tenant-id` label on the pod. Cross-tenant slot sharing is never permitted in concurrent-workspace mode — there is no `allowCrossTenantReuse` equivalent, because simultaneous process-level cotenancy has no isolation boundary (unlike task mode's microvm option where a VM boundary exists). The pool controller explicitly rejects any concurrent-workspace pool definition where `allowCrossTenantReuse: true` is set at any level (pool-level or within `concurrentWorkspacePolicy`) at validation time with error: `"allowCrossTenantReuse: true is not permitted for concurrent-workspace pools; cross-tenant slot sharing has no isolation boundary in concurrent-workspace mode"`.
 
@@ -535,7 +550,7 @@ The default PoolScalingController formula ([Section 4.6.2](04_system-components.
 **Adjusted formula (non-experiment pools):**
 
 ```
-target_minWarm = ceil(base_demand_p95 × safety_factor × (failover_seconds + pod_startup_seconds) / mode_factor
+target_minWarm = ceil(base_demand_p95 × safety_factor × (failover_seconds + pod_warmup_seconds) / mode_factor
                       + burst_p99_claims × pod_warmup_seconds / burst_mode_factor)
 ```
 
@@ -547,7 +562,7 @@ The steady-state term (first) is divided by `mode_factor` because pod reuse (tas
 - **`task`**: `burst_mode_factor = 1.0` — task pods process tasks sequentially (one at a time), so each pod absorbs exactly one burst arrival regardless of how many tasks it will eventually serve over its lifetime.
 - **`concurrent`**: `burst_mode_factor = maxConcurrent` — each pod has `maxConcurrent` slots that can accept simultaneous arrivals.
 
-The `(failover_seconds + pod_startup_seconds)` factor in the first term converts the claim rate (claims/second) to a pod count, consistent with the base formula in [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration).
+The `(failover_seconds + pod_warmup_seconds)` factor in the first term converts the claim rate (claims/second) to a pod count, consistent with the base formula in [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration). `pod_warmup_seconds` is the pod creation-to-ready time for the pool (pod-warm baseline ≈ 10s, SDK-warm 30–90s; see [Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration) terminology note).
 
 **Caveats:**
 

@@ -140,6 +140,8 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation, delegation minting, and credential leasing all fail until Postgres primary recovers |
 | `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
+| `ArtifactReplicationResidencyViolation` | ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch or cross-border transfer attempt | Replication for the affected region is suspended; fix jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` |
+| `AuditRedactionReceiptMissing` | Row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt` | Investigate orphaned GDPR redaction vs. genuine tamper; escalate as compliance incident if no receipt |
 
 ### Warning Alerts
 
@@ -168,6 +170,15 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `RuntimeUpgradeStuck` | Upgrade state machine in non-terminal state > `phaseTimeoutSeconds` | Pool image upgrade not progressing; investigate |
 | `EventBusPublishDropped` | `rate(lenny_event_bus_publish_dropped_total[5m]) > 0` for > 5 min | CloudEvents publishing backpressure; check EventBus transport and `eventBus.publishQueueDepth` |
 | `PgAuditSinkDeliveryFailed` | pgaudit events failing to deliver to configured sink | pgaudit forwarding broken; see [OCSF audit guide](audit-ocsf.md) |
+| `GatewayQueueDepthHigh` | Any gateway subsystem queue depth exceeds tier-scaled threshold (50/200/800) sustained > 5 min | Subsystem is admitting work faster than it drains; precedes `GatewaySubsystemCircuitOpen` |
+| `GatewayLatencyHigh` | P95 gateway subsystem request duration exceeds tier-scaled threshold (2.0s / 1.0s / 0.5s) sustained > 10 min | Degraded end-to-end performance in the subsystem; may precede circuit-breaker trips |
+| `PodStateMirrorStale` | `lenny_agent_pod_state_mirror_lag_seconds > 60` sustained > 60s | WarmPoolController is not writing state transitions; Postgres-backed pod claim fallback is disabled for any pool whose lag exceeds `podClaimFallbackMaxMirrorLagSeconds` |
+| `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted | `platform-admin` bypassed DeleteByUser legal-hold preflight with `acknowledgeHoldOverride: true`; compliance review required |
+| `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted | `platform-admin` bypassed tenant-delete Phase 3.5 legal-hold gate; Phase 3.5 re-encrypted held evidence to escrow; compliance review required |
+| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented | 300s in-flight gate ceiling hit during a non-proactive rotation; runtime may have failed to emit `llm_request_completed` |
+| `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s conservative-fallback selections exceeds 5% over 15 min | Indicates preStop Stage 2 regularly falling through to the conservative cap; correlate with Postgres outage or cold handoff cache |
+| `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable | Node drains will not check MinIO health before pod eviction |
+| `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any replica | AdmissionController's circuit-breaker cache has not refreshed from Redis; admission decisions served against stale state; correlate with Redis unreachability |
 
 ---
 

@@ -3,9 +3,9 @@
 This appendix catalogs the **reference runtimes** shipped by the Lenny project as first-party, maintained Runtime definitions. Each entry is a complete, working runtime that a deployer can install and use for real workloads without additional coding. They serve two purposes:
 
 1. **Day-one utility** — an operator running `lenny up` has functioning agents to work with, not just `echo`. The coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`) cover the most common developer use case directly; the framework runtimes cover popular agent frameworks so teams can adopt Lenny without rewriting their agents.
-2. **Authoring reference** — each runtime is a worked example of the adapter contract ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)), the `runtimeOptions` schema ([§14](14_workspace-plan-schema.md)), credential-lease scoping ([§4.9](04_system-components.md#49-credential-leasing-service)), and workspace materialization ([§14](14_workspace-plan-schema.md)). Teams building Standard- or Full-level runtimes SHOULD start from the scaffolder (`lenny-ctl runtime init`, [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), which copies one of these as a template. Basic-level runtimes MAY implement the stdin/stdout protocol directly without any SDK — see [§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) for the minimal echo-runtime example and [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding) for the `--language binary --template minimal` scaffolder output, which emits a Basic-level-compliant skeleton with no SDK imports.
+2. **Authoring reference** — each runtime is a worked example of the adapter contract ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)), the `runtimeOptions` schema ([§14](14_workspace-plan-schema.md)), credential-lease scoping ([§4.9](04_system-components.md#49-credential-leasing-service)), and workspace materialization ([§14](14_workspace-plan-schema.md)). Teams building Standard- or Full-level runtimes SHOULD start from the scaffolder (`lenny-ctl runtime init`, [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), which emits one of three templates (`chat`, `coding`, `minimal`). The `coding` template shares the workspace conventions from [§26.2](#262-shared-patterns-for-coding-agent-runtimes) used by `claude-code`, `gemini-cli`, `codex`, and `cursor-cli`; the `chat` template shares the conventions from the `chat` reference runtime ([§26.7](#267-chat)). There is no per-reference-runtime template. Basic-level runtimes MAY implement the stdin/stdout protocol directly without any SDK — see [§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime) for the minimal echo-runtime example and [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding) for the `--language binary --template minimal` scaffolder output, which emits a Basic-level-compliant skeleton with no SDK imports.
 
-**Ownership and lifecycle.** Reference runtimes live in first-party repositories under `github.com/lennylabs/runtime-<name>`. Each ships a Dockerfile, adapter implementation, `Runtime` YAML, conformance test suite ([§15.4.6](15_external-api-surface.md#1546-conformance-test-suite)), and CI that publishes OCI images to the canonical Lenny registry. Reference runtimes claim a **conformance level** in their README — defined as equal to the Integration Level from [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) (Basic, Standard, or Full); CI fails the release if conformance tests for the claimed level regress.
+**Ownership and lifecycle.** Reference runtimes live in first-party repositories under `github.com/lennylabs/runtime-<name>`. Each ships a Dockerfile, adapter implementation, `Runtime` YAML, conformance test suite ([§15.4.6](15_external-api-surface.md#1546-conformance-test-suite)), and CI that publishes OCI images to the canonical Lenny registry. Reference runtimes declare a **conformance level** — defined as equal to the Integration Level from [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) (Basic, Standard, or Full) — in the `integrationLevel` field of `runtime.yaml` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)) and also mirror it in the repository README badge; CI fails the release if conformance tests for the declared level regress, and `lenny runtime validate` flags declared-vs-observed drift per [§15.4.6](15_external-api-surface.md#1546-conformance-test-suite).
 
 **Distinction from bundled runtimes.** The `echo` runtime ([§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)) is a conformance exemplar embedded in the platform repo. Reference runtimes are first-party but live in separate repos with independent release cadences, since they track upstream framework/CLI changes.
 
@@ -65,6 +65,14 @@ capabilities:
 
 `preConnect: false` is the default for every coding-agent runtime — SDK-warm mode is an optimization that operators can enable per pool for latency-sensitive deployments but is not on by default (see [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) demotion semantics).
 
+**`integrationLevel`.**
+
+```yaml
+integrationLevel: full
+```
+
+All four coding-agent runtimes declare `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), matching their `Level: Full` row in the §26.1 catalog table. Full level is required because these runtimes rely on the lifecycle channel for clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions.
+
 **Common `limits`.**
 
 ```yaml
@@ -108,7 +116,7 @@ The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` dir
 **Credential-lease scopes (shared).** Every coding-agent runtime declares lease scopes for its LLM provider. The scope naming follows [§4.9](04_system-components.md#49-credential-leasing-service):
 
 - `llm.provider.<name>.inference` — required; issued by the credential leasing service for the pool-configured provider identity; attached as a header the LLM proxy injects on the runtime's behalf (proxy mode) or as an env var (direct mode).
-- `vcs.<provider>.read` / `vcs.<provider>.write` — optional; only issued when the client's `WorkspacePlan.sources[]` contains a `gitClone` entry targeting a private repo. The gateway's credential router resolves the scope against the tenant's VCS credential pool for the URL's host (matched via the pool's `hostPatterns`; see [§14](14_workspace-plan-schema.md)). V1 ships `github` as the only built-in VCS provider (`vcs.github.read` / `vcs.github.write`); deployers may register additional providers (GitLab, Bitbucket, Gitea, self-hosted) via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service). The runtime never sees the raw token; `git` inside the pod uses a credential helper that calls the gateway's token endpoint. The lease is bound to the originating session ID for audit traceability.
+- `vcs.<provider>.read` / `vcs.<provider>.write` — optional; only issued when the client's `WorkspacePlan.sources[]` contains a `gitClone` entry targeting a private repo. `gitClone.url` is HTTPS-only in v1 (SSH URL forms are deferred post-V1; see [§14](14_workspace-plan-schema.md) `gitClone.url` restrictions and [§21.9](21_planned-post-v1.md#21-planned--post-v1)). The gateway's credential router resolves the scope against the tenant's VCS credential pool for the HTTPS URL's host (matched via the pool's `hostPatterns`; see [§14](14_workspace-plan-schema.md)). V1 ships `github` as the only built-in VCS provider (`vcs.github.read` / `vcs.github.write`); deployers may register additional providers (GitLab, Bitbucket, Gitea, self-hosted) via the custom `CredentialProvider` interface in [§4.9](04_system-components.md#49-credential-leasing-service). The runtime never sees the raw token; `git` inside the pod uses an HTTPS credential helper that calls the gateway's token endpoint. The lease is bound to the originating session ID for audit traceability.
 
 Runtimes that need additional provider scopes (e.g., Vertex for Gemini, Azure OpenAI for Codex variants) declare them in their individual entries below.
 
@@ -138,6 +146,7 @@ Anthropic's Claude Code CLI running inside a Lenny-managed sandbox.
 name: claude-code
 image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
 type: agent
+integrationLevel: full
 capabilities:
   interaction: multi_turn
   injection:
@@ -310,6 +319,7 @@ A minimal general-purpose "talk to an LLM" runtime. No tools, no workspace files
 name: chat
 image: ghcr.io/lennylabs/runtime-chat:1.0.0
 type: agent
+integrationLevel: full
 capabilities:
   interaction: multi_turn
   injection: { supported: true, modes: [immediate] }
@@ -362,6 +372,7 @@ LangGraph (Python) agent runtime. Framework-specific: the runtime loads a LangGr
 
 **Key characteristics:**
 
+- `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - `isolationProfile: sandboxed` (Python runs arbitrary user code via the loaded graph).
 - `capabilities.interaction: multi_turn`; `injection: { supported: true, modes: [immediate, queued] }`.
 - `runtimeOptionsSchema` already in [§14](14_workspace-plan-schema.md) — `graphModule` (required), `checkpointBackend`, `recursionLimit`, `configSchema`.
@@ -391,6 +402,7 @@ Mastra (TypeScript) agent framework runtime.
 
 **Key characteristics:**
 
+- `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - `isolationProfile: sandboxed`.
 - `capabilities.interaction: multi_turn`; `injection: { supported: true, modes: [immediate, queued] }`.
 - `runtimeOptionsSchema` at `https://schemas.lenny.dev/runtime-options/mastra/v1.json` — loads a Mastra agent definition by module path.
@@ -420,6 +432,7 @@ Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle
 
 **Key characteristics:**
 
+- `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - `isolationProfile: sandboxed`.
 - `capabilities.interaction: multi_turn`; `injection: { supported: true, modes: [immediate] }`.
 - `runtimeOptionsSchema` updates the existing §14 `openai-agents` schema: `assistantId` (required), `model` (optional override), `temperature`, `responseFormat`, `parallelToolCalls`. The schema name in §14 is renamed from `openai-agents` to `openai-assistants` for consistency — see §14 diff (task #3).
@@ -448,6 +461,7 @@ CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/del
 
 **Key characteristics:**
 
+- `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - `isolationProfile: sandboxed` (Python framework; executes arbitrary user code).
 - `capabilities.interaction: multi_turn`; `injection: { supported: true, modes: [immediate, queued] }`.
 - `runtimeOptionsSchema` at `https://schemas.lenny.dev/runtime-options/crewai/v1.json` — `crewModule` (required, Python dotted path to the `Crew` object), `process` (`sequential` | `hierarchical`), `verbose`.

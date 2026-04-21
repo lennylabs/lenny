@@ -144,6 +144,7 @@
   - [24.17 Session Operations](24_lenny-ctl-command-reference.md#2417-session-operations)
   - [24.18 Runtime Scaffolding](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)
   - [24.19 Local Stack](24_lenny-ctl-command-reference.md#2419-local-stack)
+    - [24.19.1 Image Management](24_lenny-ctl-command-reference.md#24191-image-management)
   - [24.20 Installation Wizard](24_lenny-ctl-command-reference.md#2420-installation-wizard)
 - [25. Agent Operability](25_agent-operability.md)
   - [25.1 Design Philosophy and Agent Model](25_agent-operability.md#251-design-philosophy-and-agent-model)

@@ -28,6 +28,7 @@ Complete reference for all Helm `values.yaml` configuration fields, organized by
 | `gateway.maxSessionsPerReplica` | int | 50 (Starter), 200 (Growth), 400 (Scale/Platform) | Maximum concurrent sessions per gateway replica. Used for `GatewaySessionBudgetNearExhaustion` alert (capacity ceiling, not an HPA trigger). Values are provisional -- must be calibrated by the first-working-slice benchmark harness. The Scale-size value (400) assumes the gateway's LLM routing subsystem has been extracted to a dedicated service. | Must be > 0. |
 | `gateway.maxCreatedStateTimeoutSeconds` | int | 300 | Maximum time a session can remain in `created` state before automatic cleanup. Also governs upload token TTL. | Must be > 0. |
 | `gateway.maxSuspendedPodHoldSeconds` | int | 900 | Platform-wide ceiling on how long a suspended session holds its pod before the gateway releases it. Deployer-set; tenant policy may further restrict. | Must be > 0. |
+| `gateway.partialRecoveryThresholdFraction` | float | 0.5 | Fraction of expected manifest entries that must be recovered during partial-manifest recovery before the gateway declares recovery successful. Values below this fraction leave the gateway in degraded mode and emit `lenny_gateway_partial_recovery_below_threshold_total`. | 0.0-1.0. |
 
 ### Subsystem concurrency limits
 
@@ -377,6 +378,39 @@ Lenny routes external variant-assignment lookups through the OpenFeature Go SDK 
 | `lennyOps.remediationLocks.defaultTTLSeconds` | int | 900 | Default TTL for remediation locks (scaling changes, cordon, pod quarantine). Prevents locks from surviving a crashed operator agent. | Must be > 0. |
 | `lennyOps.remediationLocks.maxTTLSeconds` | int | 3600 | Absolute ceiling for remediation-lock TTL. | Must be >= `defaultTTLSeconds`. |
 | `lennyOps.scopes.requireExplicit` | bool | `true` | Require scoped tokens (minted via `/v1/oauth/token`) rather than tenant-level OIDC tokens for write operations. | -- |
+
+---
+
+## Web Playground configuration
+
+The web playground is an optional browser-based UI for testing runtimes. It is gated behind `playground.enabled` and is `false` by default. See [§27 Web Playground](../developer-guide/web-playground.md) for protocol details.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `playground.enabled` | bool | `false` | When `false`, `/playground/*` returns `404` and the asset bundle is unmounted. | -- |
+| `playground.authMode` | string | `oidc` | Authentication mode for the playground UI. One of `oidc` (redirect to OIDC provider), `apiKey` (user pastes a standard gateway bearer token), or `dev` (no auth; dev-mode only). | One of `oidc`, `apiKey`, `dev`. |
+| `playground.devTenantId` | string | `default` | Tenant bound to the dev HMAC JWT `tenant_id` claim when `authMode=dev`. Format-gated at startup; tenant existence is Ready-gated per-request, returning a transient `503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED` while `lenny-bootstrap` is still running. | Must match `^[a-zA-Z0-9_-]{1,128}$`. |
+| `playground.allowedRuntimes` | string[] | `["*"]` | Glob list of runtime IDs visible in the playground runtime picker. | Valid glob patterns. |
+| `playground.maxSessionMinutes` | int | 30 | Hard cap on playground-initiated session duration. | Must be > 0. |
+| `playground.maxIdleTimeSeconds` | int | 300 | Hard override of the runtime's `maxIdleTimeSeconds` for playground-initiated sessions. | `60 <= v <= runtime.maxIdleTimeSeconds`. |
+| `playground.oidcSessionTtlSeconds` | int | 3600 | Lifetime of the server-side playground session record and the `lenny_playground_session` cookie. | Must be > 0. |
+| `playground.bearerTtlSeconds` | int | 900 | TTL of MCP bearer tokens minted by `POST /v1/playground/token`. | `60 <= ttl <= 3600`. |
+| `playground.sessionLabels` | map[string]string | `{origin: "playground"}` | Labels applied to playground sessions for audit and accounting. | -- |
+| `playground.acknowledgeApiKeyMode` | bool | `false` | Set `true` to acknowledge the `apiKey`-mode paste-form phishing surface. When `playground.enabled=true`, `playground.authMode=apiKey`, and `global.devMode=false`, `lenny-preflight` emits a non-blocking `WARNING` unless this value is `true`. Acknowledgement is install-time only; the gateway does not gate startup on it. | -- |
+
+---
+
+## Feature flags
+
+Feature-gated Helm values control which admission webhooks and subsystem templates are rendered. These are tied to the build-sequence phases (see [§18 Build Sequence](../../spec/18_build-sequence.md)): `false` omits the webhook/subsystem from the render AND excludes it from the `lenny-preflight` expected-set enumeration. Flipping a flag from `true` to `false` after a phase has been reached is an invalid downgrade.
+
+| Field | Type | Default | Description | Gates | First-deploy phase |
+|:------|:-----|:--------|:------------|:------|:-------------------|
+| `features.llmProxy` | bool | `false` | Enable the gateway's LLM routing subsystem (direct-mode isolation). | `lenny-direct-mode-isolation` admission webhook | Phase 5.8 |
+| `features.drainReadiness` | bool | `false` | Enable pre-drain MinIO health check before pod eviction. | `lenny-drain-readiness` admission webhook | Phase 8 |
+| `features.compliance` | bool | `false` | Enable data residency and T4 node isolation validators for regulated-tenant workloads. | `lenny-data-residency-validator`, `lenny-t4-node-isolation` admission webhooks | Phase 13 |
+
+Four webhooks are unconditionally rendered and always expected regardless of flag state: `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, and the `lenny-crd-conversion` conversion webhook. These form the Phase 3.5 baseline.
 
 ---
 

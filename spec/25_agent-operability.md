@@ -104,6 +104,14 @@ Scopes are enforced in three places:
 
 Scopes do not replace tenancy — a `tenant-admin` caller is still constrained to its tenant regardless of scope. Scopes restrict *actions*; tenancy restricts *resources*. Both are enforced independently.
 
+**Playground-allowed scope set.** The `/playground/*` mint paths ([§10.2 "Playground mint invariants"](10_gateway-internals.md#102-authentication)) narrow every minted session-capability JWT's `scope` to `intersection(subject_token.scope, playground_allowed_scope)` — never the union. For v1, `playground_allowed_scope` is pinned to:
+
+```
+{tools:sessions:*, tools:me:read, tools:runtimes:read, tools:pools:read, tools:operations:read, tools:events:read}
+```
+
+This covers chat session management (the playground's primary purpose) plus read-only runtime/pool/operations/events introspection (needed for the playground's runtime picker and status panels). It deliberately omits write scopes on `runtime`, `pool`, `credential_pool`, `quota`, `config`, `upgrade`, `backup`, `restore`, and `experiment` — the playground never needs to mutate platform configuration, so no capability to do so is minted even if the pasted subject token would otherwise permit it. Operators who need to exercise write-scope tools against the platform should use `lenny-ctl` or a dedicated client with a direct OIDC/service-account token, not the playground.
+
 **Standards note.** The claim name (`scope`), format (space-separated string), and colon-separated domain:action syntax follow OAuth 2.0 conventions so that off-the-shelf OIDC libraries can parse, sign, and inspect tokens without custom claim mappers. Deployers using any OIDC provider (Dex, Keycloak, Okta, Azure AD, AWS Cognito, etc.) can configure scopes through the provider's standard "scopes" UI — no Lenny-specific claim plumbing required.
 
 ### Agent Identity and Correlation
@@ -460,7 +468,7 @@ type SuggestedAction struct {
 }
 ```
 
-**When one canonical response exists** (e.g., `PostgresUnreachable`, `MinioUnreachable`, `CertExpiryImminent`): the response has a single `suggestedAction` field holding one `SuggestedAction`. `Confidence` and `Risk` are omitted (the action is the singular correct response).
+**When one canonical response exists** (e.g., `SessionStoreUnavailable`, `MinioUnreachable`, `CertExpiryImminent`): the response has a single `suggestedAction` field holding one `SuggestedAction`. `Confidence` and `Risk` are omitted (the action is the singular correct response).
 
 **When multiple reasonable responses exist** (typically capacity/throttling alerts like `WarmPoolExhausted`, `CredentialPoolExhausted`, `CircuitBreakerOpen`): the response has a `suggestedActions` array containing ordered `SuggestedAction` entries, each with populated `Confidence` and `Risk`. The array is ordered by descending confidence. Agents pick based on their policy — the highest-confidence option is usually right, but alternatives exist for context (e.g., scale the pool vs. investigate the upstream cause).
 
@@ -492,12 +500,12 @@ Example for `WarmPoolExhausted`:
 }
 ```
 
-Example for `PostgresUnreachable` (singular):
+Example for `SessionStoreUnavailable` (singular):
 
 ```json
 {
   "status": "unhealthy",
-  "issue": "POSTGRES_UNREACHABLE",
+  "issue": "SESSION_STORE_UNAVAILABLE",
   "suggestedAction": {
     "action": "RUN_POSTGRES_FAILOVER",
     "endpoint": null,
@@ -1138,23 +1146,60 @@ egress:
         podSelector:
           matchLabels: { lenny.dev/component: gateway }
     ports: [{ protocol: TCP, port: 8080 }]
-  # Postgres
+  # Postgres (via PgBouncer — `lenny-ops` does not bypass the pooler; direct `app: postgres`
+  # access is reserved for `lenny-backup-job`). Both `namespaceSelector` AND `podSelector`
+  # MUST be present (NET-061): omitting the `podSelector` is interpreted by K8s as
+  # "any pod in the namespace," which means every other workload in `{ storage.namespace }`
+  # listening on TCP 5432 (stray debug containers, co-located subcharts, webhook pods that
+  # happen to share the namespace when storage co-locates with `lenny-system`) becomes
+  # reachable from a compromised operability pod, defeating the containment model. The
+  # canonical `lenny.dev/component: pgbouncer` label matches the §13.2 PgBouncer row
+  # (NET-047/NET-050); when `{ storage.namespace }` hosts a non-Lenny Postgres proxy
+  # (cloud-managed or external), the chart replaces this rule with an `ipBlock` egress
+  # entry resolved at render time, mirroring `lenny-backup-job`'s cloud-managed substitution.
   # Namespace selector uses `kubernetes.io/metadata.name` — the immutable label auto-populated
   # by the K8s API server on namespace creation. Matches §13.2 normative guidance (NET-054):
   # custom label keys like `name:` are mutable and not guaranteed, so an attacker with
   # namespace-update rights could apply the key to an attacker-controlled namespace to
   # gain ingress; a legitimate deployer whose storage namespace lacks the custom key would
   # silently match zero namespaces.
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { storage.namespace } }
+        podSelector:
+          matchLabels: { lenny.dev/component: pgbouncer }
     ports: [{ protocol: TCP, port: 5432 }]
-  # Redis (TLS — plaintext port 6379 disabled per §12.4 / §10.7)
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
+  # Redis (TLS — plaintext port 6379 disabled per §12.4 / §10.7). Both selectors are
+  # required (NET-061); `app: redis` matches the self-managed Redis chart convention
+  # (parallels the `app: postgres` / `app: minio` selectors used in `lenny-backup-job`).
+  # Cloud-managed Redis (ElastiCache, Memorystore, Azure Cache) causes the chart to
+  # substitute an `ipBlock` egress rule resolved at render time.
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { storage.namespace } }
+        podSelector:
+          matchLabels: { app: redis }
     ports: [{ protocol: TCP, port: 6380 }]
-  # MinIO / S3-compatible (TLS — port follows §13.2 normative MinIO listener per NET-053)
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { storage.namespace } } } }]
+  # MinIO / S3-compatible (TLS — port follows §13.2 normative MinIO listener per NET-053).
+  # Both selectors required (NET-061); `lenny.dev/component: minio` matches the §13.2 MinIO
+  # row (NET-047/NET-050). Cloud-managed object storage (S3, GCS, Azure Blob) causes the
+  # chart to substitute an `ipBlock` egress rule resolved at render time.
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { storage.namespace } }
+        podSelector:
+          matchLabels: { lenny.dev/component: minio }
     ports: [{ protocol: TCP, port: 9443 }]
-  # Prometheus
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: { monitoring.namespace } } } }]
+  # Prometheus. Both selectors required (NET-061); `app: prometheus` matches the standard
+  # kube-prometheus-stack / prometheus-community chart pod label (Prometheus is deployer-
+  # supplied, not Lenny-rendered, so there is no `lenny.dev/component` key to use). When
+  # Prometheus runs as a StatefulSet with custom labels, operators override via the
+  # `{{ .Values.monitoring.prometheusPodLabel }}` Helm value (default `app: prometheus`).
+  - to:
+      - namespaceSelector:
+          matchLabels: { kubernetes.io/metadata.name: { monitoring.namespace } }
+        podSelector:
+          matchLabels: { app: prometheus }
     ports: [{ protocol: TCP, port: 9090 }]
   # K8s API — scoped to the kube-apiserver Service ClusterIP range via ipBlock, matching
   # the §13.2 NET-040 idiom used by every other lenny-system component's kube-apiserver
@@ -1169,22 +1214,76 @@ egress:
   # rule combining an empty `namespaceSelector` with a non-loopback port.
   - to: [{ ipBlock: { cidr: "{{ .Values.kubeApiServerCIDR }}" } }]
     ports: [{ protocol: TCP, port: 443 }]
-  # DNS
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+  # DNS — both `namespaceSelector` (kube-system) AND `podSelector` (canonical
+  # CoreDNS label `k8s-app: kube-dns`) are required per NET-067. kube-system
+  # hosts many system pods (CoreDNS, metrics-server, kube-proxy, cloud-provider
+  # controllers, CSI drivers); a namespace-only selector would permit UDP/53
+  # and TCP/53 egress to every one of them (and to any future custom DNS/relay
+  # pod an operator co-locates in kube-system). `lenny-preflight` (Section 17.6)
+  # rejects any Lenny-rendered NetworkPolicy DNS rule whose peer omits a
+  # destination `podSelector`.
+  - to:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+        podSelector: { matchLabels: { k8s-app: kube-dns } }
     ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
   # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks).
-  # `except` is rendered from the shared `egressCIDRs.excludePrivate` Helm value; every entry MUST
-  # also appear in the `except` block of the gateway `allow-gateway-egress-llm-upstream` rule (§13.2).
-  # Both surfaces face the same SSRF threat model (tenant-influenced URLs — webhook targets here;
-  # LLM base URLs, connector callbacks, and interceptor endpoints on the gateway side) and share one
-  # normative private-range block list per NET-057. `lenny-preflight` fails the install if any
-  # `excludePrivate` entry is missing from either rule. (The rules are not required to be set-equal
-  # overall: gateway additionally excludes cluster pod/service CIDR and IMDS addresses.)
-  - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10] } }]
+  # Two parallel `ipBlock` peers are emitted — one per address family — because
+  # Kubernetes NetworkPolicy requires every `except` entry to share the address
+  # family of its enclosing `cidr`; mixing IPv4 and IPv6 is rejected by strict
+  # CNIs and silently drops entries under lenient CNIs (NET-062). The chart
+  # partitions `egressCIDRs.excludePrivate` and the cluster pod/service CIDRs
+  # by address family at render time.
+  # The `except` block carries three categories, rendered from shared Helm values:
+  #   1. Cluster-internal CIDRs — `egressCIDRs.excludeClusterPodCIDR` and
+  #      `excludeClusterServiceCIDR` (IPv4) plus the v6 variants when set —
+  #      mirroring the gateway `allow-gateway-egress-llm-upstream` rule (§13.2)
+  #      so that a webhook URL resolving to a cluster pod IP or Service ClusterIP
+  #      cannot be used to dial gateway/controller/token-service pods directly
+  #      (NET-065). On clusters using CGNAT-range pod CIDRs (`100.64.0.0/10`,
+  #      the default on several managed Kubernetes providers) or custom
+  #      non-RFC1918 pod CIDRs, `excludePrivate` alone is insufficient — the
+  #      cluster CIDRs are outside RFC1918 and would otherwise be reachable.
+  #      The cluster-CIDR discovery, preflight validation, and continuous drift
+  #      detection are the same mechanisms documented for the `internet` egress
+  #      profile under NET-022 in §13.2 (lenny-preflight reads node
+  #      `spec.podCIDR` aggregation and the `kubernetes` Service ClusterIP range;
+  #      WarmPoolController re-reads every 5 minutes and fires
+  #      `NetworkPolicyCIDRDrift`). `lenny-preflight` fails the install if the
+  #      discovered cluster pod/service CIDRs are not in the rendered `except`
+  #      block of `lenny-ops-egress`.
+  #   2. Private/link-local ranges — rendered from the shared
+  #      `egressCIDRs.excludePrivate` Helm value (NET-057). Every entry MUST
+  #      also appear in the same-family `except` block of the gateway
+  #      `allow-gateway-egress-llm-upstream` rule (§13.2). Both surfaces face
+  #      the same SSRF threat model (tenant-influenced URLs — webhook targets
+  #      here; LLM base URLs, connector callbacks, and interceptor endpoints
+  #      on the gateway side) and share one normative private-range block list.
+  #      `lenny-preflight` fails the install if any `excludePrivate` entry is
+  #      missing from either rule.
+  #   3. IMDS addresses — `egressCIDRs.excludeIMDS` (NET-044), mirroring the
+  #      gateway rule so that a webhook URL cannot dial cloud instance metadata.
+  # The two rules (gateway LLM-upstream and ops-egress webhook) are set-equal
+  # on categories (1)-(3): the two `lenny-system` surfaces that initiate
+  # outbound HTTPS to tenant-influenced URLs share one SSRF boundary.
+  - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [
+        "{{ .Values.egressCIDRs.excludeClusterPodCIDR }}",
+        "{{ .Values.egressCIDRs.excludeClusterServiceCIDR }}",
+        10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16,
+        169.254.169.254/32, 100.100.100.200/32
+      ] } }]
+    ports: [{ protocol: TCP, port: 443 }]
+  - to: [{ ipBlock: { cidr: ::/0, except: [
+        # v6 cluster CIDRs rendered only on dual-stack clusters (see §13.2).
+        {{- with .Values.egressCIDRs.excludeClusterPodCIDRv6 }} "{{ . }}", {{- end }}
+        {{- with .Values.egressCIDRs.excludeClusterServiceCIDRv6 }} "{{ . }}", {{- end }}
+        fc00::/7, fe80::/10, fd00:ec2::254/128
+      ] } }]
     ports: [{ protocol: TCP, port: 443 }]
 ```
 
-The internet egress for webhooks excludes RFC1918, IPv4 link-local, IPv6 ULA, and IPv6 link-local CIDRs at the network layer in addition to the application-layer SSRF checks. Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway). The `except` block is the same list rendered into the gateway `allow-gateway-egress-llm-upstream` NetworkPolicy (§13.2) via the shared `egressCIDRs.excludePrivate` Helm value — see the §13.2 normative note under `allow-gateway-egress-llm-upstream` for the SSRF symmetry guarantee and the `lenny-preflight` check that enforces it (NET-057).
+The internet egress for webhooks excludes cluster pod/service CIDRs, RFC1918, IPv4 link-local, IPv6 ULA, IPv6 link-local, and IMDS addresses at the network layer in addition to the application-layer SSRF checks. The two parallel `ipBlock` peers (one per address family) are required by the Kubernetes NetworkPolicy schema, which constrains every `except` entry to the enclosing `cidr`'s address family; the chart partitions the shared `egressCIDRs.excludePrivate`, `egressCIDRs.excludeIMDS`, and cluster pod/service CIDR values at render time (NET-062). Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway). The `except` block is the same list rendered into the gateway `allow-gateway-egress-llm-upstream` NetworkPolicy (§13.2) via the shared `egressCIDRs.excludePrivate`, `excludeClusterPodCIDR`/`excludeClusterServiceCIDR`, and `excludeIMDS` Helm values — see the §13.2 normative note under `allow-gateway-egress-llm-upstream` for the SSRF symmetry guarantee and the `lenny-preflight` check that enforces it (NET-057, NET-065). The cluster-CIDR exclusion closes an SSRF gap specific to CGNAT-range pod CIDRs (`100.64.0.0/10`, the default on several managed Kubernetes providers) and custom non-RFC1918 pod CIDRs, where `excludePrivate` alone would permit an operability-plane pod — through a tenant-influenced webhook target URL resolving to an in-cluster pod IP — to dial gateway, controller, or token-service pod IPs directly on their service ports (NET-065). Cluster-CIDR discovery and drift detection re-use the NET-022 mechanism documented in §13.2 (preflight reads the cluster's actual pod/service CIDRs; WarmPoolController re-reads every 5 minutes and fires `NetworkPolicyCIDRDrift` on change); the `lenny-preflight` Job extends the NET-022 `except`-block audit to cover the `lenny-ops-egress` webhook rule as well, failing the install if either cluster CIDR is absent from the rendered `except` list.
+
+> **Normative operability-plane selector requirement (NET-061).** Any Lenny-rendered NetworkPolicy that originates from the operability plane (`lenny-ops` Deployment pods, `lenny-backup` Job pods, or any future operability-plane workload) and targets a storage, monitoring, or in-cluster platform-component destination MUST pair a `namespaceSelector` (keyed on the immutable `kubernetes.io/metadata.name` label per NET-054) with a `podSelector` on the destination pod's canonical label (`lenny.dev/component: <component>` for Lenny-rendered platform components per NET-047/NET-050, or the documented `app: <component>` key for storage/monitoring workloads rendered by upstream subcharts — `app: redis`, `app: prometheus` — matching the idiom established by `lenny-backup-job`). A `to:` clause that carries only a `namespaceSelector` permits egress to every pod in the destination namespace on the listed ports: in any deployment where storage or monitoring co-locates with `lenny-system` (including the default single-namespace install), this exposes gateway, token-service, controller, admission-webhook, and CoreDNS pods to the operability plane on Postgres/Redis/MinIO/Prometheus-shaped ports, defeating the containment boundary that §13.2's default-deny plus per-component allow-lists establish. This requirement is the operability-plane analogue of the `lenny-backup-job` two-selector rule (NET-056) and extends the NET-047/NET-050 selector-consistency audit. The `lenny-preflight` Job enforces it via the `ops-egress-selector-parity` check: it enumerates every `to:` clause in `lenny-ops-egress` and `lenny-backup-job` (and any future operability-plane NetworkPolicy registered in the chart's `operabilityEgressPolicies` list) and fails the install/upgrade if a storage/monitoring/platform-component destination clause omits the `podSelector`, if the `podSelector` uses a non-canonical label key for a Lenny-rendered platform component (Exception: the `app:` key is permitted for storage/monitoring destinations rendered by upstream subcharts — `app: redis`, `app: prometheus` — or where the operability plane's own identity is the selector target, per §13.2 line 201), or if the resolved selector matches zero pods for a component expected to be running given the rendered Helm values. The preflight deliberately fails the install rather than warning because a silently over-broad `lenny-ops-egress` rule is strictly more dangerous than a missing one — it grants access that will not be revoked until a future policy edit is deployed.
 
 **Cross-namespace deployments.** When `lenny-system` and `lenny-agents` are separate namespaces (for tenant workload isolation), no NetworkPolicy change is required — `lenny-ops` only talks to gateway and storage, both of which live in `lenny-system`. The agent pods themselves never reach `lenny-ops`.
 
@@ -1258,8 +1357,24 @@ egress:
   # per §13.2 NET-040; empty `namespaceSelector: {}` is forbidden (NET-055).
   - to: [{ ipBlock: { cidr: "{{ .Values.kubeApiServerCIDR }}" } }]
     ports: [{ protocol: TCP, port: 443 }]
-  - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
-    ports: [{ protocol: UDP, port: 53 }]
+  # DNS — both UDP/53 and TCP/53 MUST be allowed. Per RFC 7766, resolvers fall
+  # back to TCP/53 when a UDP response is truncated (TC bit set); backup Jobs
+  # resolve object-storage endpoints (MinIO, S3, GCS, Azure Blob) whose DNS
+  # responses frequently exceed 512 bytes (multi-record A/AAAA sets, long CNAME
+  # chains). Omitting TCP/53 produces non-deterministic backup failures that
+  # correlate with DNS record size rather than backup logic (NET-066). Both
+  # `namespaceSelector` (kube-system) AND `podSelector` (canonical CoreDNS
+  # label `k8s-app: kube-dns`) are required per NET-067 — a namespace-only
+  # selector would permit TCP/53 and UDP/53 egress to every pod in kube-system
+  # (metrics-server, kube-proxy, CSI drivers, cloud-provider controllers).
+  # This matches the `lenny-ops-egress` DNS rule above and the §13.2 agent-pod
+  # DNS rule; `lenny-preflight` (Section 17.6) fails the install if any
+  # Lenny-rendered NetworkPolicy DNS rule lists UDP/53 without the TCP/53
+  # companion OR omits a destination `podSelector`.
+  - to:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+        podSelector: { matchLabels: { k8s-app: kube-dns } }
+    ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
 ```
 
 Jobs in remote-storage configurations (cloud-managed Postgres, S3-backed object storage, per-region MinIO endpoints outside the cluster) replace the Postgres/MinIO rules above with `ipBlock` egress entries resolved to concrete CIDRs at chart-render time; `lenny-preflight` fails the install if any configured backup endpoint is not covered by the rendered NetworkPolicy.
@@ -3497,7 +3612,7 @@ If the release channel is unreachable: `upgrade-check` returns cached data with 
 
 Structured query access to the audit trail (Section 11.7). Enables agents to investigate incidents without direct database access.
 
-**Wire format.** All endpoints in this subsection return audit records as [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) JSON objects per the Wire Format in [§11.7](11_policy-and-controls.md#117-audit-logging). The `items[]` array in paginated responses is an array of OCSF records. Lenny's chain-integrity fields (`chainIntegrity`, `prev_hash`) are surfaced via the OCSF `unmapped.lenny_chain.*` extension on each record. A scope-restricted `?format=raw-canonical` query parameter returns the Lenny-internal canonical tuple (pre-OCSF) for chain auditors who need to verify the hash chain against the exact bytes Postgres hashed over; this requires the `audit:raw-canonical:read` scope. The response envelope carries `ocsfVersion` ("1.1.0") and `chainIntegrityReport` ({verified, broken, gap_suspected, rechained_post_outage}) as top-level fields outside `items[]`.
+**Wire format.** All endpoints in this subsection return audit records as [OCSF v1.1.0](https://schema.ocsf.io/1.1.0/) JSON objects per the Wire Format in [§11.7](11_policy-and-controls.md#117-audit-logging). The `items[]` array in paginated responses is an array of OCSF records. Lenny's chain-integrity fields (`chainIntegrity`, `prev_hash`) are surfaced via the OCSF `unmapped.lenny_chain.*` extension on each record. A scope-restricted `?format=raw-canonical` query parameter returns the Lenny-internal canonical tuple (pre-OCSF) for chain auditors who need to verify the hash chain against the exact bytes Postgres hashed over; this requires the `audit:raw-canonical:read` scope. The response envelope carries `ocsfVersion` ("1.1.0") and `chainIntegrityReport` ({verified, broken, gap_suspected, rechained_post_outage, redacted_gdpr}) as top-level fields outside `items[]`.
 
 ### Endpoints
 
@@ -3507,6 +3622,7 @@ Structured query access to the audit trail (Section 11.7). Enables agents to inv
 | `GET` | `/v1/admin/audit-events/{id}` | Single event with full payload |
 | `GET` | `/v1/admin/audit-events/summary` | Aggregate counts by type/actor/resource over a time window. Params: `?since=`, `?until=`, `?groupBy=eventType|actorId|resourceType` |
 | `POST` | `/v1/admin/audit-events/{id}/retranslate` | Re-run OCSF translation on a single audit row after a translator version bump or a schema-gap fix. Body: `{"translatorVersion": "<semver>" }` (optional; defaults to the active translator). Only rows with `ocsf_translation_state IN ('retry_pending', 'dead_lettered')` are eligible; other rows return `409 ocsf_translation_not_retryable`. On success the row transitions back to `pending` and is picked up by the next translator sweep; the response returns the updated row state and the receiving translator version. Requires `audit:retranslate` scope. Audited as `audit.ocsf_retranslate_requested`. |
+| `POST` | `/v1/admin/audit-events/{id}/republish` | Re-queue a single audit row for CloudEvents re-publication after the [§12.6](12_storage-architecture.md#126-interface-design) EventBus retranscribe worker has terminally abandoned it (state `failed`, `retry_count >= eventBus.maxRetryAttempts`). The endpoint resets `retry_count = 0` and `eventbus_publish_state = 'pending'` so the next retranscribe sweep picks the row up. Only rows with `eventbus_publish_state = 'failed'` are eligible; rows in `published` return `409 ALREADY_PUBLISHED`, rows in `pending`/`retry_pending` return `409 ALREADY_PUBLISHED` with `details.currentState` so an operator can distinguish in-flight from completed. A missing `id` returns `404 NOT_FOUND`. Requires `audit:republish` scope — a caller lacking the scope receives `403 FORBIDDEN` (scope taxonomy: `tools:audit:republish`, [§15.2](15_external-api-surface.md#152-mcp-endpoints)). Audited as `eventbus.republish_requested` (payload: `event_id`, `prior_state`, `prior_retry_count`, `requester_sub`, `tenant_id`, `topic`). Parity with `audit.ocsf_retranslate_requested` above. |
 | `POST` | `/v1/admin/audit-partitions/{partition}/drop` | Force-drop an audit partition whose retention TTL has expired but whose `AuditPartitionDropBlocked` alert is active because the SIEM forwarder has not advanced past the partition's last event. Requires the `?force=true` query parameter AND a request body `{"acknowledgeDataLoss": true, "partition": "<partition-name>"}` (the `partition` field must match the path and is an anti-footgun cross-check). Irreversibly drops the Postgres partition; events not yet delivered to the SIEM are permanently lost. Requires `audit:partition:drop` scope. Audited as `audit.partition_drop_forced` with the last observed SIEM high-water mark and the partition's (oldest, newest) event timestamps. |
 
 ### Implementation
@@ -3515,8 +3631,9 @@ Reads from the existing `audit_log` table (Section 11.7) via `StoreRouter.AuditS
 
 **Chain integrity.** Each event in the response includes a `chainIntegrity` field:
 - `verified` — hash matches its predecessor's hash; tamper-free.
-- `broken` — hash does NOT match predecessor; tampering or data corruption.
+- `broken` — hash does NOT match predecessor; tampering or data corruption (and no `RedactionReceipt` is present to authorize the discontinuity).
 - `unchecked` — verification wasn't performed (e.g., cross-shard boundary where hashes are per-shard).
+- `redacted_gdpr` — row was rewritten in place by the [§12.8](12_storage-architecture.md#128-compliance-interfaces) `DeleteByUser` OCSF dead-letter PII redaction step under GDPR Article 17. The discontinuity is authorized and accompanied by a signed `RedactionReceipt` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) schema) pinning the rewrite to a specific erasure job, legal basis, and redactor identity. External verifiers accept `redacted_gdpr` as a valid discontinuity only after verifying the receipt's signature and matching its `(original_hash, new_hash)` pair to the observed chain rewrite boundary; otherwise they MUST classify the row as `broken` and fire the `AuditRedactionReceiptMissing` alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)).
 
 **Chain gap detection.** `chainIntegrity` also detects **temporal gaps** caused by degraded-mode writes (not just tampering):
 
@@ -3578,6 +3695,17 @@ When only some audit shards are reachable (partial-shard outage), the endpoint r
 | `AUDIT_QUERY_TOO_BROAD` | `POLICY` | 400 | Query would scan too many rows; narrow time range or add filters. |
 | `AUDIT_STORE_UNAVAILABLE` | `TRANSIENT` | 503 | Postgres unreachable; no cache. |
 | `AUDIT_PARTIAL_RESULTS` | `TRANSIENT` | 207 | Some audit shards were unreachable; response contains reachable-shard data only. |
+
+### Downstream SIEM Scope Boundary (GDPR Erasure)
+
+Lenny's cryptographic control extends only to the data it persists — `audit_log`, `audit_redaction_receipts`, and every other Lenny-managed store. Copies that external processors have already ingested from Lenny's OCSF egress (the SIEM forwarder, the pgaudit sink consumer, every subscribed webhook, and any downstream data lake fed by those sinks) are outside Lenny's control:
+
+- When the `DeleteByUser` erasure job redacts an OCSF dead-lettered row ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 14), Lenny rewrites the row in its own Postgres shard and emits the paired `gdpr.erasure_deadletter_redacted` (in-tree receipt) and `gdpr.erasure_deadletter_downstream_notified` (OCSF class 5001 Entity Management, `activity_id: 4 Delete`) events. The downstream notification is Lenny's fulfillment of GDPR Art. 17(2) "reasonable steps to inform other processors holding the data".
+- Lenny **cannot** reach into the SIEM to delete the previously-ingested class 2004 translation-failure receipt, its `unmapped.lenny.raw_canonical_b64` payload, or any derived indexes, backups, or SIEM-side dead-letters built from it. The SIEM operator is the processor responsible for acting on the `gdpr.erasure_deadletter_downstream_notified` event — typically by running a retention-policy or targeted-delete workflow against the matching `audit_event_id` / `original_hash` within their system.
+- Deployers MUST document downstream SIEM erasure responsibility in their GDPR data-processing agreement with the SIEM vendor (or their internal SIEM team). The default posture is that `gdpr.erasure_deadletter_downstream_notified` is an **action-required** signal for the SIEM operator, not an informational one; ignoring it leaves pre-redaction canonical PII reachable in the SIEM past Lenny's erasure SLA.
+- Offline or air-gapped copies (e-discovery exports, quarterly SIEM backups, legal-hold snapshots) are out of Lenny's scope by the same rationale. Deployers who require hard-time-bounded erasure across these media MUST configure the SIEM operator's own retention and deletion workflow to honor `gdpr.erasure_deadletter_downstream_notified` — Lenny cannot discover or act on offline copies.
+
+The `gdpr.erasure_deadletter_downstream_notified` event itself is written to Lenny's audit trail under `audit.gdprRetentionDays` (7-year default) and is queryable via `GET /v1/admin/audit-events?eventType=gdpr.erasure_deadletter_downstream_notified` so compliance teams can produce an auditor-ready record of every downstream notification Lenny emitted.
 
 ### Audit Events
 
@@ -3729,6 +3857,8 @@ APIs for managing platform backups, extending the disaster recovery procedures i
 | `GET` | `/v1/admin/restore/{id}/status` | Per-shard status of an in-flight or completed restore (for monitoring and failure diagnosis). |
 | `POST` | `/v1/admin/restore/resume` | Resume a partially-completed restore. Params: `?restoreId=`. Caller must hold the original `restore:platform` lock. |
 | `POST` | `/v1/admin/restore/{id}/confirm-legal-hold-ledger` | Confirm that the current legal-hold ledger is authoritative after a `gdpr.backup_reconcile_blocked` stall (ledger restored in lockstep). Body: `{"justification": "<text>"}`. Requires `platform-admin`; operator identity and justification are recorded in the audit trail. Resumes the erasure reconciler on next retry. See [§12.8](12_storage-architecture.md#128-compliance-interfaces) "Post-restore reconciler". |
+| `POST` | `/v1/admin/artifact-replication/{region}/resume` | Resume ArtifactStore replication for a region that was suspended by the runtime residency preflight ([§25.11](#2511-backup-and-restore-api) "Runtime residency preflight"). Body: `{"justification": "<text>"}`. Requires `platform-admin`; operator identity and justification are recorded in the audit trail. Preflight re-runs synchronously on invocation — if the jurisdiction-tag mismatch is still present, the resume is rejected with `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` and replication remains suspended. On success, emits `artifact_replication.resumed` audit event carrying `region`, `operator_sub`, `justification`, `resumed_at`, and `destination_jurisdiction_tag` (confirming the post-fix tag value). |
+| `GET` | `/v1/admin/artifact-replication/{region}/status` | Return the current replication state for a region: `status` (`active` \| `suspended_residency_violation` \| `suspended_operator`), `last_preflight_at`, `last_preflight_result`, `destination_endpoint`, `destination_bucket`, `destination_jurisdiction_tag`, `replication_lag_seconds`, and `suspended_since` (when applicable). Used by agents to detect and triage residency-driven suspensions before `ArtifactReplicationResidencyViolation` alerts escalate. |
 
 ### Go Interface
 
@@ -3891,9 +4021,20 @@ minio:
                                            # markers replicate without destroying prior versions
     replicationLagRpoSeconds: 900          # Tier 2 default; Tier 3: 900 (15 min). Alert fires
                                            # when lag exceeds this. Aligned with §25.11 RPO table.
+    residencyCheckIntervalSeconds: 300     # Runtime residency-preflight tick in seconds (min 60,
+                                           # max 3600). Also runs before every replication batch;
+                                           # tick only applies to long idle gaps between batches.
+                                           # Mirrors the BACKUP_REGION_UNRESOLVABLE cadence.
+    residencyAuditSamplingWindowSeconds: 3600  # Positive-audit sampling window for
+                                           # artifact.cross_region_replication_verified events
+                                           # (first event per (region, destination) per window).
 ```
 
 In the per-region data-residency topology, `minio.artifactBackup.target` is declared **per region** under `minio.regions.<region>.artifactBackup.target.*`, mirroring the per-region structure of `backups.regions` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). A region that has any tenant with `dataResidencyRegion` set MUST have `minio.regions.<region>.artifactBackup.target.*` fully declared; `lenny-ops` validates at startup and rejects the configuration with `CONFIG_INVALID: minio.regions.<region>.artifactBackup.target incomplete` when missing. Cross-region artifact replication is prohibited — a region's ArtifactStore bucket may only replicate to a destination that itself resides in the same jurisdiction.
+
+**Runtime residency preflight (fail-closed).** Startup-time validation of `minio.regions.<region>.artifactBackup.target.*` is necessary but not sufficient: a late Helm reconfiguration, DNS rebinding of the destination endpoint, region-tag drift in the target MinIO cluster's metadata, or an operator mis-edit during an incident can silently redirect replication across a jurisdiction boundary without any restart of `lenny-ops`. The ArtifactStore replication path therefore runs a **runtime residency preflight** that mirrors the `BACKUP_REGION_UNRESOLVABLE` fail-closed pattern used for Postgres backups ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). Cadence: the preflight runs **before every replication batch** submitted to the destination and, independently, on a **periodic tick every `minio.artifactBackup.residencyCheckIntervalSeconds`** (default 300s / 5 min) so that long idle gaps between batches cannot hide a silent redirection. On each run, the preflight (a) resolves the source region (`storage.regions.<region>`) and the configured destination (`minio.regions.<region>.artifactBackup.target`), (b) issues a jurisdiction-tag probe against the destination — an `s3:GetBucketTagging` (or provider equivalent) on the destination bucket — and reads the mandatory `lenny.dev/jurisdiction-region` tag that operators MUST set on any MinIO / S3 / GCS / Azure destination bucket participating in Lenny replication, (c) compares the returned jurisdiction tag to the source region's `dataResidencyRegion`, and (d) re-verifies that the destination endpoint resolves (via DNS lookup on the configured hostname) to an IP range declared in the same region under `backups.regions.<region>.allowedDestinationCidrs` (when that Helm value is set — optional, used as a second-layer DNS-rebinding guard). If any of (b), (c), or (d) fails — tag missing, tag value not equal to the source region, DNS rebinding outside the allowlisted CIDRs, or the probe itself failing — the preflight **halts replication for the affected source region**: the region's replication configuration on the source MinIO cluster is placed into a suspended state (`mc replicate disable` on self-managed MinIO, equivalent on provider-native replication), `lenny-ops` records the suspension in `ops_artifact_replication_state` with `status: "suspended_residency_violation"`, the tenant-facing error code `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` is returned on any admin API that queries replication health for that region, a `DataResidencyViolationAttempt` audit event is emitted (critical severity, same counter `lenny_data_residency_violation_total` that runtime `StorageRouter` writes and Postgres backups already increment, labeled `operation: "artifact_replication"`), and a dedicated counter `lenny_minio_replication_residency_violation_total` (labeled by `region`) is incremented. The `ArtifactReplicationResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)) fires on any non-zero increment. Replication remains suspended until an operator resolves the jurisdiction mismatch (correct the Helm values, restore the destination tag, or re-provision the destination bucket in the correct region) and invokes `POST /v1/admin/artifact-replication/{region}/resume` (requires `platform-admin`, audited with operator identity and justification). There is no silent retry and no automatic resume — a residency mismatch is treated as a hard compliance fault, not a transient failure to route around. Replication-lag alerts (`MinIOArtifactReplicationLagHigh`) will naturally begin firing while replication is suspended, but they are not the primary signal — `ArtifactReplicationResidencyViolation` is. The runtime preflight is a second-layer control that complements (does not replace) the startup-time `CONFIG_INVALID` check: startup rejects configurations that are malformed or incomplete at load; the runtime preflight rejects configurations that were valid at load time but have drifted or been tampered with since.
+
+**Cross-region replication audit (residency at write time).** On every successful preflight (i.e., every batch-replication round whose residency check passed), `lenny-ops` emits an `artifact.cross_region_replication_verified` audit event (`INFO` severity, sampled — the first event per `(region, destination_endpoint)` per `minio.artifactBackup.residencyAuditSamplingWindowSeconds` window, default 3600s) carrying `source_region`, `source_data_residency_region`, `destination_endpoint`, `destination_bucket`, `destination_jurisdiction_tag` (the tag value read in step (b) above), `verified_at`, and `batch_object_count` (objects submitted to replication in the batch). This ensures chain-of-custody for cross-region replication records the jurisdiction tag **at the write-time of each batch**, not only at the startup config-load time — so a later audit of "was this replication round compliant?" has a signed attestation of the destination's advertised jurisdiction on that specific batch rather than a bare endpoint URL that could have been silently redirected. The event is written under the source tenant for tenant-scoped replication configurations and under the platform tenant for region-scoped configurations that aggregate multiple tenants. A mismatch turns this positive audit event into the `DataResidencyViolationAttempt` critical event described above and suspends replication as documented.
 
 **RPO/RTO targets.** The ArtifactStore backup inherits the same tier-parameterized RPO/RTO envelope as the Postgres pipeline (RTO/RPO Targets by Tier table above) with the following tier-specific RPO values reflecting replication lag rather than backup frequency:
 
@@ -4155,10 +4296,11 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `RESTORE_ERASURE_RECONCILE_FAILED` | `PERMANENT` | 500 | Post-restore GDPR erasure reconciler ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backups in erasure scope") failed. Covers: individual replay failure, Postgres unavailability mid-reconcile, enumeration error, and the legal-hold ledger freshness gate blocking replay (`gdpr.backup_reconcile_blocked`, reason `legal_hold_ledger_stale` — the legal-hold ledger was restored in lockstep with the rest of the data and its most recent write timestamp is `<= backupTakenAt`, so the reconciler cannot prove the hold-vs-erase ordering is correct). Restore is aborted without gateway restart; the `restore:platform` lock is retained. Operators must investigate the reconciler failure (typically via `GET /v1/admin/restore/{id}/status`) and resolve before retrying — for ledger-stale blocks, confirm ledger currency via `POST /v1/admin/restore/{id}/confirm-legal-hold-ledger` once out-of-band evidence establishes that no post-backup hold transitions are being silently overridden. |
 | `BACKUP_STORAGE_UNREACHABLE` | `TRANSIENT` | 503 | MinIO unreachable |
 | `BACKUP_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A shard's resolved `dataResidencyRegion` has no corresponding `backups.regions.<region>` entry, or the region's MinIO endpoint / KMS key is unreachable. Fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE`; emits `DataResidencyViolationAttempt` audit event ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). |
+| `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | The ArtifactStore replication runtime residency preflight ([§25.11](#2511-backup-and-restore-api) "Runtime residency preflight") observed a jurisdiction-tag mismatch between the source region's `dataResidencyRegion` and the destination bucket's advertised `lenny.dev/jurisdiction-region` tag, a missing tag, a DNS rebinding outside `backups.regions.<region>.allowedDestinationCidrs` (when set), or a failed tag-probe against the destination. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the continuous-replication surface. Replication for the affected region is suspended and does not auto-resume; operator must fix the jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` (`platform-admin`, audited). Emits `DataResidencyViolationAttempt` audit event (`operation: "artifact_replication"`) and increments `lenny_minio_replication_residency_violation_total`; raises the `ArtifactReplicationResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). |
 
 ### Audit Events
 
-`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, `gdpr.backup_reconcile_completed` (§12.8 Backups in erasure scope — written by the post-restore reconciler between `restore_completed` and the gateway restart), `gdpr.backup_reconcile_blocked` (§12.8 post-restore reconciler phase 2 — emitted when the legal-hold ledger freshness gate blocks replay because `ledgerLatestWriteAt <= backupTakenAt`), `gdpr.erasure_reconciled_suppressed_by_hold` (§12.8 post-restore reconciler phase 3 — emitted per subject when an active legal hold post-dates the enumerated receipt and the replay is suppressed), `legal_hold.ledger_confirmed_current_at` (§12.8 post-restore reconciler — written when an operator confirms ledger currency via `/restore/{id}/confirm-legal-hold-ledger`), `DataResidencyViolationAttempt` (§12.8 Backup pipeline residency — emitted on `BACKUP_REGION_UNRESOLVABLE` with `operation: "backup"`).
+`backup.created`, `backup.completed`, `backup.failed`, `backup.verified`, `backup.deleted_by_retention`, `backup.schedule_updated`, `backup.policy_updated`, `restore.preview_generated`, `restore.started`, `restore.shard_completed`, `restore.resumed`, `restore.completed`, `restore.failed`, `gdpr.backup_reconcile_completed` (§12.8 Backups in erasure scope — written by the post-restore reconciler between `restore_completed` and the gateway restart), `gdpr.backup_reconcile_blocked` (§12.8 post-restore reconciler phase 2 — emitted when the legal-hold ledger freshness gate blocks replay because `ledgerLatestWriteAt <= backupTakenAt`), `gdpr.erasure_reconciled_suppressed_by_hold` (§12.8 post-restore reconciler phase 3 — emitted per subject when an active legal hold post-dates the enumerated receipt and the replay is suppressed), `legal_hold.ledger_confirmed_current_at` (§12.8 post-restore reconciler — written when an operator confirms ledger currency via `/restore/{id}/confirm-legal-hold-ledger`), `DataResidencyViolationAttempt` (§12.8 Backup pipeline residency — emitted on `BACKUP_REGION_UNRESOLVABLE` with `operation: "backup"`, and on `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` with `operation: "artifact_replication"` — see §25.11 Runtime residency preflight), `artifact.cross_region_replication_verified` (§25.11 Cross-region replication audit — per-batch positive residency attestation with `destination_jurisdiction_tag`, `destination_endpoint`, `source_data_residency_region`, and `batch_object_count`; sampled per `minio.artifactBackup.residencyAuditSamplingWindowSeconds`), `artifact_replication.resumed` (§25.11 Runtime residency preflight — written when an operator resumes suspended replication via `POST /v1/admin/artifact-replication/{region}/resume`; payload carries `region`, `operator_sub`, `justification`, `resumed_at`, `destination_jurisdiction_tag`).
 
 ---
 
@@ -4272,7 +4414,8 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_tenant_update` | `PUT /v1/admin/tenants/{id}` | Update a tenant |
 | `lenny_tenant_suspend` | `POST /v1/admin/tenants/{id}/suspend` | Suspend a tenant |
 | `lenny_tenant_resume` | `POST /v1/admin/tenants/{id}/resume` | Resume a suspended tenant |
-| `lenny_tenant_delete` | `DELETE /v1/admin/tenants/{id}` | Delete a tenant (destructive; requires `confirm`) |
+| `lenny_tenant_delete` | `DELETE /v1/admin/tenants/{id}` | Delete a tenant (destructive; requires `confirm`). Blocked by active legal holds — see `lenny_tenant_force_delete` for the override path. |
+| `lenny_tenant_force_delete` | `POST /v1/admin/tenants/{id}/force-delete` | Force-delete a tenant despite active legal holds. Requires `acknowledgeHoldOverride: true` plus non-empty `justification`; without the override, or when omitted, tenant-delete is rejected with `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` ([§15.4](15_external-api-surface.md#154-error-codes)) if holds exist. Triggers the Phase 3.5 legal-hold segregation step ([§12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle) which re-encrypts held evidence under the platform `legal_hold_escrow_kek` and migrates it to the legal-hold escrow bucket before Phase 4 / 4a tenant KMS destruction. Audited as `gdpr.legal_hold_overridden_tenant` and raises `LegalHoldOverrideUsedTenant` ([§16.5](16_observability.md#165-alerting-rules-and-slos)). |
 | `lenny_pool_create` | `POST /v1/admin/pools` | Create a warm pool |
 | `lenny_pool_update` | `PUT /v1/admin/pools/{name}` | Update a pool's configuration |
 | `lenny_pool_delete` | `DELETE /v1/admin/pools/{name}` | Delete a pool (destructive; requires `confirm`) |
@@ -4537,8 +4680,8 @@ Most thresholds are universal — they encode platform invariants that don't dep
 
 | Category | Examples | Defaults |
 |---|---|---|
-| **Universal** | `WarmPoolExhausted`, `PostgresUnreachable`, `RedisUnreachable`, `CertExpiryImminent`, `BackupOverdue`, `PlatformUpgradeStuck` | Fixed values (e.g., warm pool == 0 for >60s). Same at any scale. |
-| **Tier-dependent** | `GatewayQueueDepthHigh`, `GatewayLatencyHigh`, `WarmPoolReplenishmentLag`, `CredentialPoolUtilizationHigh` | Defaults set by tier preset; tighter thresholds at higher tiers (stricter SLAs). |
+| **Universal** | `WarmPoolExhausted`, `SessionStoreUnavailable`, `DualStoreUnavailable`, `CertExpiryImminent`, `BackupOverdue`, `PlatformUpgradeStuck` | Fixed values (e.g., warm pool == 0 for >60s). Same at any scale. |
+| **Tier-dependent** | `GatewayQueueDepthHigh`, `GatewayLatencyHigh`, `WarmPoolReplenishmentSlow`, `CredentialPoolLow` | Defaults set by tier preset; tighter thresholds at higher tiers (stricter SLAs). |
 | **Workload-specific** | Per-tenant quota rejection rates, per-provider credential rate limits | No meaningful default; operator must tune. Alerts disabled by default and enabled via Helm values when the operator has data to set them. |
 
 Tier-dependent thresholds are exposed as Helm values with tier-aware defaults set in the tier preset files (`values-tier1.yaml`, `values-tier2.yaml`, `values-tier3.yaml`):
@@ -4555,7 +4698,7 @@ monitoring:
       p99Seconds: 2.0
       duration: "5m"
       severity: "warning"
-    warmPoolReplenishmentLag:
+    warmPoolReplenishmentSlow:
       ratioBelow: 0.5      # replenishment rate < 50% of claim rate
       duration: "10m"
       severity: "warning"
@@ -4571,7 +4714,7 @@ monitoring:
       p99Seconds: 1.0
       duration: "2m"
       severity: "warning"
-    warmPoolReplenishmentLag:
+    warmPoolReplenishmentSlow:
       ratioBelow: 0.7
       duration: "5m"
       severity: "critical"
@@ -4743,6 +4886,7 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 | `lenny-ctl audit get <id>` | `GET /v1/admin/audit-events/{id}` | Get a single audit event |
 | `lenny-ctl audit summary --since <time>` | `GET /v1/admin/audit-events/summary` | Aggregate counts |
 | `lenny-ctl audit retranslate <id> [--translator-version <semver>]` | `POST /v1/admin/audit-events/{id}/retranslate` | Retry OCSF translation on a single `retry_pending` or `dead_lettered` row (e.g., after a translator schema-gap fix) |
+| `lenny-ctl audit republish <id>` | `POST /v1/admin/audit-events/{id}/republish` | Re-queue a single `eventbus_publish_state='failed'` row for the EventBus retranscribe worker (resets `retry_count` and state to `pending`); used after `EventBusPublishFinalFailure` |
 | `lenny-ctl audit drop-partition <partition> --force --acknowledge-data-loss` | `POST /v1/admin/audit-partitions/{partition}/drop` | Force-drop an audit partition held by the SIEM delivery guard; permanently discards any events not yet forwarded to the SIEM |
 
 ### Drift Commands

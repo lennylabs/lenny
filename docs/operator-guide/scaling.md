@@ -216,13 +216,13 @@ When a pool's `minWarm > 0` and there are zero idle pods, the pool enters `PoolW
 The ramp test determines the empirical saturation point for `maxSessionsPerReplica`:
 
 1. **Ramp test.** Drive a single gateway replica from 0 to `maxSessionsPerReplica x 1.5` concurrent sessions in 10% increments. At each step record:
-   - `lenny_stream_proxy_p99_attach_latency_ms`
+   - `lenny_stream_proxy_p99_attach_latency_seconds`
    - `lenny_stream_proxy_queue_depth`
    - `lenny_gateway_gc_pause_p99_ms`
    - RSS (resident set size)
 
 2. **Saturation point.** Identify the session count at which:
-   - `lenny_stream_proxy_p99_attach_latency_ms` first exceeds 800 ms, OR
+   - `lenny_stream_proxy_p99_attach_latency_seconds` first exceeds 0.8 s (800 ms), OR
    - `lenny_stream_proxy_queue_depth` first exceeds 500
 
 3. **Budget setting.** Set `maxSessionsPerReplica` to the saturation point minus 20% headroom.
@@ -241,10 +241,10 @@ The gateway's four internal subsystems can be extracted to dedicated services wh
 
 | Subsystem | Key Metrics | Indicative Threshold (provisional) |
 |---|---|---|
-| **Stream Proxy** | `queue_depth`, `goroutines`, `p99_attach_latency_ms` | Queue depth > 500 or p99 > 800 ms sustained > 5 min |
-| **Upload Handler** | `active_uploads`, `queue_depth`, `p99_latency_ms` | Active uploads > 200 concurrent sustained |
-| **MCP Fabric** | `active_delegations`, `goroutines`, `p99_orchestration_latency_ms` | Active delegations > 1,000 or p99 > 2,000 ms |
-| **LLM Proxy** | `active_connections`, `upstream_goroutines`, `p99_ttfb_ms` | Active connections > 2,000 or exceeding 60% of maxConcurrent |
+| **Stream Proxy** | `queue_depth`, `goroutines`, `p99_attach_latency_seconds` | Queue depth > 500 or p99 > 0.8 s (800 ms) sustained > 5 min |
+| **Upload Handler** | `active_uploads`, `queue_depth`, `p99_latency_seconds` | Active uploads > 200 concurrent sustained |
+| **MCP Fabric** | `active_delegations`, `goroutines`, `p99_orchestration_latency_seconds` | Active delegations > 1,000 or p99 > 2.0 s (2,000 ms) |
+| **LLM Proxy** | `active_connections`, `upstream_goroutines`, `p99_ttfb_seconds` | Active connections > 2,000 or exceeding 60% of maxConcurrent |
 
 ### LLM Proxy-to-Session Ratio Guidance
 
@@ -295,7 +295,7 @@ gateway:
 ### Growth to Scale
 
 - **Prerequisites:**
-  1. Pre-hardening load tests confirm LLM Proxy extraction has occurred OR `llm_proxy_active_connections / active_sessions` is sustainably below 0.3:1
+  1. Pre-hardening load tests confirm LLM Proxy extraction has occurred OR `lenny_gateway_llm_proxy_active_connections / lenny_gateway_active_sessions` is sustainably below 0.3:1
   2. `gc_pause_p99_ms` remains below 50 ms at Growth-size peak load
 - Increase gateway replicas to 5-30
 - Scale Postgres to 8 vCPU / 32 GB
