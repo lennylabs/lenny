@@ -508,7 +508,34 @@ When a runtime needs to call an LLM (Anthropic, AWS Bedrock, Vertex AI, Azure Op
    - **Proxy mode (default):** The pod receives only a lease token. All LLM traffic flows through the gateway's LLM Proxy subsystem, which injects the real API key. The pod never sees the actual credential.
    - **Direct mode:** The pod receives the actual credential (short-lived STS token, access token, etc.) and calls the LLM provider directly. Used when proxy latency is unacceptable or when the provider requires direct client connections.
 4. Leases have a TTL (provider-dependent, e.g., 1 hour for `anthropic_direct`, 15 minutes for `aws_bedrock`). The gateway handles automatic renewal.
-5. When a credential is rate-limited, the gateway can fail over to a different credential in the pool, or rotate it mid-session (runtimes integrated at the Full level can swap in place without restarting).
+5. When a credential fails (rate-limit, auth expiry, provider unavailable) or approaches its TTL, the gateway rotates the lease — see [Fallback and rotation](#fallback-and-rotation) below.
+
+### Fallback and rotation
+
+A credential can change during a session for two distinct reasons; Lenny handles them separately.
+
+**Fallback rotation** — triggered by _failure_. When the runtime reports a rate-limit (HTTP 429), auth expiry, or upstream provider-unavailable error, the gateway:
+
+1. Marks the current credential as degraded and starts its cooldown (`cooldownOnRateLimit`, default 60s — the credential is excluded from new assignments until cooldown elapses).
+2. Walks the fallback chain for that provider, configured as `credentialPolicy.providerPools.{provider}.fallback.order`. The chain can include alternate credentials in the same pool, alternate pools (useful for cross-region failover), or a user-supplied credential if the session opted in.
+3. Issues a replacement lease scoped to the failing provider only. Other providers used by the same session are untouched.
+4. Increments the session's `rotationCount`. If `rotationCount` reaches `maxRotationsPerSession` (default: 3), the session terminates with `CREDENTIAL_FALLBACK_EXHAUSTED` instead of rotating indefinitely.
+
+**Proactive renewal** — triggered by _TTL_. The gateway keeps a min-heap of active leases ordered by `renewBefore` and issues replacement leases before the current one expires. Proactive renewals do not consume the `maxRotationsPerSession` budget. If renewal itself fails (retries exhausted), the session falls through to the fallback path, which does consume the budget.
+
+Both kinds of rotation deliver the new lease via the `RotateCredentials` RPC. What the runtime does with it depends on its [integration level](#integration-levels):
+
+- **Full:** the adapter waits for any in-flight LLM request to drain (complete or error out), then sends a `credentials_rotated` message on the lifecycle channel. The runtime rebinds its provider in place, replies `credentials_acknowledged`, and the session continues without interruption. Subsequent LLM requests use the new credential.
+- **Basic / Standard:** the session is checkpointed and restarted on a new pod. Basic runtimes that do not participate in checkpointing lose their in-flight context.
+
+### Pool exhaustion
+
+A pool can be exhausted in two distinct ways, each with a distinct error:
+
+- **At session creation:** no eligible credential is available in the policy-selected pool (all at `maxConcurrentSessions`, all in cooldown, or none match the request's hints). The gateway returns `CREDENTIAL_POOL_EXHAUSTED`; clients retry after the pool drains.
+- **Mid-session:** every credential in the fallback chain has been tried, or the session has already consumed `maxRotationsPerSession`. The session terminates with `CREDENTIAL_FALLBACK_EXHAUSTED`.
+
+Operators diagnose exhaustion via pool-status counters (`availableCount`, `leasedCount`, `coolingDownCount`, `disabledCount`) and the `lenny_credential_provider_rate_limit_total` / `lenny_gateway_credential_fallback_exhausted_total` metrics. The [credential-pool-exhaustion runbook](../runbooks/credential-pool-exhaustion.md) covers remediation — adding credentials, raising per-key concurrency, extending cooldown, or reducing session pressure.
 
 ### Connector credentials
 
@@ -547,15 +574,15 @@ sequenceDiagram
 
 The credential pool supports multiple assignment strategies:
 
-- **`least-loaded`**: Assigns the credential with the fewest active sessions.
-- **`round-robin`**: Rotates through credentials sequentially.
-- **`sticky-until-failure`**: Reuses the same credential for a user until it is rate-limited or fails.
+- **`least-loaded`** (default): Assigns the credential with the fewest active sessions. Balances load across keys that share the same quota.
+- **`round-robin`**: Rotates through credentials sequentially. Useful when each key has its own per-tier rate limit and you want even distribution.
+- **`sticky-until-failure`**: Reuses the same credential for a given user until it is rate-limited or fails. Reduces churn for per-user rate-limit accounting and improves provider-side cache locality.
 
 Each credential has a `maxConcurrentSessions` limit and a configurable `cooldownOnRateLimit` duration. When a credential hits a rate limit, it enters a cooldown period during which it is not assigned to new sessions.
 
 ### Credential routing
 
-The `CredentialRouter` interface supports cost-aware, latency-based, and intent-based routing across LLM providers. Deployers pass `hints` (model, cost_tier, region) through the interface to select a credential for each request.
+The `CredentialRouter` interface is the pluggable extension point that the gateway calls at session creation and at every rotation. The default implementation applies the pool's `assignmentStrategy` to the candidate credentials; custom implementations can consume `hints` (model, cost_tier, region) to route cost-aware, latency-based, or intent-based — for example, small models to a cheaper pool and large models to a premium pool, or EU traffic to EU-region credentials.
 
 ---
 
