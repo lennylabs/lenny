@@ -43,12 +43,12 @@ You can turn the playground off in production (one Helm flag) or restrict it to 
 
 When you're ready to embed Lenny in code, pick whichever protocol matches what you already have:
 
-| Protocol | Path | Use it when |
-|:--|:--|:--|
-| **REST** | `/v1/...` | Automation, CI/CD, admin dashboards, or any language without a Lenny SDK. Covers everything. |
-| **MCP (Streamable HTTP)** | `/mcp` | Interactive streaming, delegating to child agents, mid-session user prompts, and MCP hosts like Claude Desktop or Cursor. |
-| **OpenAI Chat Completions** | `/v1/chat/completions` | You already use the OpenAI SDK. Change the `base_url`, keep the rest. |
-| **Open Responses** | `/v1/responses` | You're using an Open Responses or OpenAI Responses API client. |
+| Protocol                    | Path                   | Use it when                                                                                                               |
+| :-------------------------- | :--------------------- | :------------------------------------------------------------------------------------------------------------------------ |
+| **REST**                    | `/v1/...`              | Automation, CI/CD, admin dashboards, or any language without a Lenny SDK. Covers everything.                              |
+| **MCP (Streamable HTTP)**   | `/mcp`                 | Interactive streaming, delegating to child agents, mid-session user prompts, and MCP hosts like Claude Desktop or Cursor. |
+| **OpenAI Chat Completions** | `/v1/chat/completions` | You already use the OpenAI SDK. Change the `base_url`, keep the rest.                                                     |
+| **Open Responses**          | `/v1/responses`        | You're using an Open Responses or OpenAI Responses API client.                                                            |
 
 The OpenAPI description is served at `GET /openapi.yaml`. The MCP endpoint supports the 2025-03-26 and 2024-11-05 protocol versions.
 
@@ -89,16 +89,16 @@ Accepts the OpenAI Responses API wire format and supports clients that target th
 
 ## Which protocol should I pick?
 
-| If you're... | Use | Because |
-|---|---|---|
-| Scripting a CI job | **REST** | Simple HTTP, easy to test, no streaming machinery required |
-| Building an admin dashboard | **REST** | Full CRUD with pagination and filtering |
-| Using a language without an SDK | **REST** | Works with `curl`, `httpx`, `fetch`, `net/http`, anything |
-| Building an interactive UI with live output | **MCP** | Bidirectional streaming is built into the protocol |
-| Building a multi-agent system | **MCP** | Delegation and task tracking are part of the protocol |
-| Asking the user questions mid-session | **MCP** | Mid-session prompts are part of the protocol |
-| Already using the OpenAI SDK | **OpenAI Chat Completions** | Change one URL, done |
-| Using an Open Responses / OpenAI Responses client | **Open Responses** | Standards-compliant |
+| If you're...                                      | Use                         | Because                                                    |
+| ------------------------------------------------- | --------------------------- | ---------------------------------------------------------- |
+| Scripting a CI job                                | **REST**                    | Simple HTTP, easy to test, no streaming machinery required |
+| Building an admin dashboard                       | **REST**                    | Full CRUD with pagination and filtering                    |
+| Using a language without an SDK                   | **REST**                    | Works with `curl`, `httpx`, `fetch`, `net/http`, anything  |
+| Building an interactive UI with live output       | **MCP**                     | Bidirectional streaming is built into the protocol         |
+| Building a multi-agent system                     | **MCP**                     | Delegation and task tracking are part of the protocol      |
+| Asking the user questions mid-session             | **MCP**                     | Mid-session prompts are part of the protocol               |
+| Already using the OpenAI SDK                      | **OpenAI Chat Completions** | Change one URL, done                                       |
+| Using an Open Responses / OpenAI Responses client | **Open Responses**          | Standards-compliant                                        |
 
 For most applications, REST + the log streaming endpoint (`GET /v1/sessions/{id}/logs` with `Accept: text/event-stream`) is the simplest combination. Reach for MCP when you need delegation, mid-session prompts, or live bidirectional I/O.
 
@@ -117,17 +117,17 @@ For a guided walkthrough, see the [`lenny up` walkthrough](../tutorials/lenny-up
 
 Every installation comes with these pre-registered:
 
-| Runtime | What it is |
-|:--|:--|
-| `chat` | A minimal LLM chat. Useful for smoke tests and the tutorial path. |
-| `claude-code` | Anthropic's Claude Code CLI, running in a sandboxed workspace. |
-| `gemini-cli` | Google's Gemini CLI, running in a sandboxed workspace. |
-| `codex` | OpenAI's Codex CLI, running in a sandboxed workspace. |
-| `cursor-cli` | Cursor's CLI, running in a sandboxed workspace. |
-| `langgraph` | A LangGraph graph runner. |
-| `mastra` | A Mastra agent runner. |
-| `openai-assistants` | An OpenAI Assistants adapter. |
-| `crewai` | A CrewAI crew runner. |
+| Runtime             | What it is                                                        |
+| :------------------ | :---------------------------------------------------------------- |
+| `chat`              | A minimal LLM chat. Useful for smoke tests and the tutorial path. |
+| `claude-code`       | Anthropic's Claude Code CLI, running in a sandboxed workspace.    |
+| `gemini-cli`        | Google's Gemini CLI, running in a sandboxed workspace.            |
+| `codex`             | OpenAI's Codex CLI, running in a sandboxed workspace.             |
+| `cursor-cli`        | Cursor's CLI, running in a sandboxed workspace.                   |
+| `langgraph`         | A LangGraph graph runner.                                         |
+| `mastra`            | A Mastra agent runner.                                            |
+| `openai-assistants` | An OpenAI Assistants adapter.                                     |
+| `crewai`            | A CrewAI crew runner.                                             |
 
 List what's available and what each can do with `GET /v1/runtimes` or `lenny runtime list`.
 
@@ -137,13 +137,13 @@ List what's available and what each can do with `GET /v1/runtimes` or `lenny run
 
 Narrative first, reference after. If this is your first pass, read the pages in the order below:
 
-1. [**Authentication**](authentication.html) — how to get a token and register credentials. Before you can open a session, you need a validated identity.
-2. [**Session Lifecycle**](session-lifecycle.html) — the state machine every session goes through. Understand this before you write retry logic or look at error codes.
-3. [**Streaming**](streaming.html) — how to receive live output as the agent produces it.
-4. [**Client SDK Examples**](sdk-examples/) — end-to-end runnable scripts in Python, TypeScript, Go, curl, and the MCP SDK. For most people, this is where to stop reading and start writing code.
+1. [**Wire Format**](wire-format.html) — the canonical JSON shapes, SSE events, headers, and content types. Cite this from your own docs and tests; reach for it when the SDKs don't cover an edge case.
+2. [**Authentication**](authentication.html) — how to get a token and register credentials. Before you can open a session, you need a validated identity.
+3. [**Session Lifecycle**](session-lifecycle.html) — the state machine every session goes through. Understand this before you write retry logic or look at error codes.
+4. [**Streaming**](streaming.html) — how to receive live output as the agent produces it.
 5. [**Delegation & Tasks**](delegation-and-tasks.html) — multi-agent workflows. Only needed if your agents spawn children.
 6. [**Error Handling**](error-handling.html) — error codes, retry strategy, optimistic concurrency.
 7. [**Webhooks**](webhooks.html) — asynchronous notifications and callbacks.
-8. [**Wire Format**](wire-format.html) — the canonical JSON shapes, SSE events, headers, and content types. Cite this from your own docs and tests; reach for it when the SDKs don't cover an edge case.
+8. [**Client SDK Examples**](sdk-examples/) — end-to-end runnable scripts in Python, TypeScript, Go, curl, and the MCP SDK. For most people, this is where to stop reading and start writing code.
 
 Each page stands alone: tables of endpoints, code examples, and the responses you should expect.
