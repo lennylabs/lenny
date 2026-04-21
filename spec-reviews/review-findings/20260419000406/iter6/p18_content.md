@@ -78,6 +78,8 @@ Iter5 flagged this as a Low polish item deferrable to post-convergence. §14.1 l
 
 ### CNT-020. `resolvedCommitSha` request/response schema asymmetry undocumented [Medium]
 
+**Status: Fixed** — Added a "Schema encoding of the request/response asymmetry" paragraph in `spec/14_workspace-plan-schema.md:102` documenting that the published JSON Schema declares `resolvedCommitSha` with `readOnly: true` on the `gitClone` variant; gateway pre-check runs before JSON Schema validation to emit `WORKSPACE_PLAN_INVALID` with `details.reason = "gateway_written_field"`; `readOnly: true` is informational on the response path.
+
 **Section:** 14 (line 102 `gitClone.ref` resolution note), 14.1 (lines 311 Published JSON Schema, 334 Per-variant field strictness / `additionalProperties: false`), 15.1 (line 597 `GET /v1/sessions/{id}` response).
 
 The iter5 CNT-015 fix declares `resolvedCommitSha` a "read-only, gateway-written field" with two distinct behaviours:
@@ -127,6 +129,8 @@ Severity **Low** — the client-observable behaviour is identical (same HTTP 400
 
 ### CNT-023. §14.1 `oneOf` + open-fallthrough branching description is not valid JSON Schema 2020-12 semantics [Medium]
 
+**Status: Fixed** — Rewrote `spec/14_workspace-plan-schema.md:334` to replace the `oneOf`-with-open-fallthrough description with the idiomatic JSON Schema 2020-12 `allOf` + `if`/`then` construction (one `if`/`then` pair per known variant matching on the `type` discriminator). Unknown-`type` entries fall through without matching any `if` condition.
+
 **Section:** 14.1 (line 334 Per-variant field strictness; last sentence describing the `oneOf` / `if`-`then` / fallthrough construct).
 
 §14.1 line 334 ends: "the `sources[]` item schema uses a JSON Schema 2020-12 `oneOf` over the known variants with `if`/`then` branching on `type`, and an open fallthrough branch for unknown-`type` entries (which the consumer then skips per 'Unknown `source.type` handling' above)."
@@ -146,6 +150,8 @@ This is Medium severity because: (a) §14.1 is the spec-of-record for the publis
 > Clients extending the schema with vendor-specific fields MUST register a new `type` value (exercising the open-string discriminator) rather than attaching extra fields to a built-in type. Concretely, the `sources[]` item schema uses a JSON Schema 2020-12 `allOf` containing one `if`/`then` pair per known variant: each pair's `if` matches on the `type` discriminator (e.g., `{ "properties": { "type": { "const": "inlineFile" } } }`) and the matching `then` applies the variant-specific property set, `required` list, and `additionalProperties: false` rule. Unknown-`type` entries fall through every `if` condition without matching, so no per-variant constraint applies, and the consumer's "skip entry + emit `workspace_plan_unknown_source_type` warning" behaviour (see "Unknown `source.type` handling" above) runs at the application layer after schema validation succeeds. This allOf + if/then construction is the idiomatic JSON Schema 2020-12 pattern for discriminated-union with open-string discriminator; a `oneOf` over the known variants plus an open fallthrough would fail for known-`type` entries that match both the typed branch and the fallthrough.
 
 ### CNT-024. `WORKSPACE_PLAN_INVALID` error code referenced in §14 but absent from §15.1 error catalog [Medium]
+
+**Status: Fixed** — Added `WORKSPACE_PLAN_INVALID` (`PERMANENT`/400) row to the §15.1 error catalog in `spec/15_external-api-surface.md:977` and mirrored to `docs/reference/error-catalog.md`. Row documents `details.field`, the sub-code enumeration (`invalid_mode_format`, `setuid_setgid_prohibited`, `sticky_on_file_prohibited`, `gateway_written_field`, `invalid_schema_version`, ...), and the contrast with `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`.
 
 **Section:** 14 (lines 93, 101, 102, 334), 14.1 (lines 315, 316), 15.1 (lines 1019–1078 error catalog).
 

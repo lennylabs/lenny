@@ -45,6 +45,8 @@ Both stores are queried at gateway startup, scoped to active leases. There is no
 
 ### CRD-020. `lenny_credential_revoked_with_active_leases` gauge cannot reflect user-scoped revocation propagation failures; `CredentialCompromised` alert is blind to user-credential deny-list lag [High]
 
+**Status: Fixed** — Added parallel gauge `lenny_user_credential_revoked_with_active_leases{tenant_id, provider}` to `spec/16_observability.md` §16.1 and `docs/reference/metrics.md`; extended `CredentialCompromised` alert in §16.5 with a second clause covering user revocations; updated §4.9 emergency revocation runbook and `docs/runbooks/credential-revocation.md` to include the user path.
+
 **Section:** `spec/16_observability.md` §16.1 line 58 (`lenny_credential_revoked_with_active_leases` gauge), §16.5 line 409 (`CredentialCompromised` alert); `spec/04_system-components.md` §4.9 line 1658–1661 (deny-list tagged union), line 1348 (user revoke handler), line 1674 (emergency revocation runbook — "confirm the `CredentialCompromised` alert clears within 60s")
 
 The iter5 CRD-015 fix introduced the user-shaped deny-list entry `{source: "user", tenantId, credentialRef}` and made user-credential proxy-mode revocation a first-class path. The companion metric and alert that the pool path relies on to detect revocation-propagation failures, however, were not updated to cover the user shape:
@@ -62,6 +64,8 @@ Severity rationale — High (matching iter5 CRD-015 High anchor). CRD-015 was Hi
 **Recommendation:** Either (a) generalize `lenny_credential_revoked_with_active_leases` to carry a `source` label (`pool` or `user`) and leave the `pool` label empty for user-source rows (Prometheus cardinality budget unaffected since `source` is a 2-value dimension), or (b) add a parallel gauge `lenny_user_credential_revoked_with_active_leases` labeled by `provider` only (user revocations are bounded per-tenant-per-provider at 1, so the cardinality remains `tenants × providers` — within budget). Update the `CredentialCompromised` alert expression to include the new source dimension: `max by (source, pool, provider) (lenny_credential_revoked_with_active_leases) > 0` or `max by (provider) (lenny_user_credential_revoked_with_active_leases) > 0` in a second clause. Update §4.9 line 1674's emergency-revocation runbook to add a user-credential step, or add a new line 1348 inline runbook fragment that references the alert confirmation step for the user path. Update `docs/runbooks/credential-revocation.md` (currently pool-only) to include a "user-credential revocation" subsection describing the alert-confirmation procedure.
 
 ### CRD-021. `docs/runbooks/credential-revocation.md` covers only pool-credential revocation; user-credential revoke path (`POST /v1/credentials/{credential_ref}/revoke`) has no operator runbook [Medium]
+
+**Status: Fixed** — Added "User-scoped credentials" section (steps U1–U5) to `docs/runbooks/credential-revocation.md` covering identification, revocation via `POST /v1/credentials/{credential_ref}/revoke`, provider-side rotation, re-registration, and audit verification. Cross-references the new `lenny_user_credential_revoked_with_active_leases` gauge and `TestUserCredentialRevocationDenyListProxy` test.
 
 **Section:** `docs/runbooks/credential-revocation.md`; `spec/04_system-components.md` §4.9 line 1348 user revoke endpoint, line 1674 emergency revocation runbook; `spec/17_deployment-topology.md` §17.7 line 766 (runbook pointer)
 

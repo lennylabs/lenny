@@ -36,10 +36,10 @@ Every agent pod starts with a NetworkPolicy that denies all ingress and egress b
 
 ### 1.3 Credentials are leased, never embedded
 
-Agent pods never receive raw LLM provider API keys, connector OAuth tokens, or long-lived secrets. Instead, the gateway:
+Agent pods never receive raw, long-lived LLM provider API keys, connector OAuth tokens, or other long-lived secrets. Instead, the gateway:
 
 1. Resolves the right credential at session claim time via the Token Service.
-2. Proxies all provider traffic from the gateway (LLM Proxy), injecting the credential server-side.
+2. Delivers the credential to the pod per the pool's `deliveryMode`: in **proxy** mode (default) provider traffic flows through the gateway's LLM Proxy and the credential is injected server-side so it never enters the pod; in **direct** mode the gateway materializes a short-lived, lease-scoped credential onto the pod for runtimes that call the provider directly. `deliveryMode: direct` combined with `isolationProfile: standard` is blocked by admission control in multi-tenant deployments.
 3. Revokes the lease as soon as the session ends.
 
 Compromising a pod yields no usable long-term credential material.
@@ -86,7 +86,7 @@ Each primitive below has a canonical configuration surface on the [Security](sec
 | **Token Service** | Stateless credential lifecycle manager; KMS-backed; per-replica mTLS. | [Security — Token Service](security#token-service) |
 | **KMS envelope encryption** | AWS KMS / GCP KMS / Azure Key Vault / HashiCorp Vault; application-layer crypto for T3/T4 data. | [Security — KMS Integration](security#kms-integration) |
 | **Credential leasing** | Per-session / per-task / per-slot leases; emergency revocation API. | [Security — Credential Leasing](security#credential-leasing) |
-| **LLM Proxy** | Outbound provider traffic flows from the gateway, not from pods. | [Security — LLM Proxy](security#llm-proxy) |
+| **LLM Proxy** | For proxy-mode pools (the default), outbound provider traffic flows from the gateway, not from pods. Direct-mode pools bypass this subsystem and call the provider from the pod with a short-lived materialized credential. | [Security — LLM Proxy](security#llm-proxy) |
 | **Pod security controls** | PSS Restricted, non-root, read-only rootfs, dropped capabilities, adapter-agent boundary. | [Security — Pod Security Controls](security#pod-security-controls) |
 | **Default-deny NetworkPolicies** | Foundation policy denies everything; allowed paths added explicitly. | [Security — Network Policies](security#network-policies) |
 | **IMDS blocking** | Cloud metadata endpoints (169.254.169.254, etc.) blocked in all agent namespaces. | [Security — IMDS Blocking](security#imds-blocking) |

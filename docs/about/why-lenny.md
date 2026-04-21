@@ -112,7 +112,7 @@ You choose how hard the pod boundary is, per pool:
 - **`gVisor`** -- a user-space kernel that intercepts system calls. This is the default, and is appropriate for arbitrary untrusted agents.
 - **`Kata Containers`** -- a full microVM. Use it for high-risk workloads or strict multi-tenant isolation.
 
-LLM API keys live only in the gateway's memory. When an agent needs to call a model, the gateway rewrites the request and forwards it to the provider; the agent sees an opaque lease token. The gateway has built-in support for Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI. For other providers, route through an external LLM proxy like LiteLLM or Portkey alongside the built-in one.
+For pools using `deliveryMode: proxy` (the default), LLM API keys live only in the gateway's memory: when an agent calls a model, the gateway rewrites the request and forwards it to the provider; the agent sees only an opaque lease token. The gateway has built-in support for Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI. For other providers, route through an external LLM proxy like LiteLLM or Portkey alongside the built-in one. Pools using `deliveryMode: direct` deliver a short-lived, lease-scoped credential to the pod so runtimes that must call the provider themselves can do so without the gateway on the request path.
 
 ### Delegation is enforced at the gateway
 

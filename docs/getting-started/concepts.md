@@ -253,7 +253,7 @@ The gateway binary is internally partitioned into four subsystem boundaries. The
 
 **MCP Fabric** -- Orchestrates recursive delegation, maintains virtual child MCP interfaces, and manages elicitation chain forwarding. When an agent delegates to another agent, the MCP Fabric creates a virtual MCP server that the parent interacts with, while the actual child session runs in a separate pod.
 
-**LLM Proxy** -- A credential-injecting reverse proxy for LLM provider traffic. When a pod needs to call an LLM, the request passes through this proxy, which validates the credential lease, injects the real API key, and forwards the request to the upstream provider. Pods never hold actual API keys.
+**LLM Proxy** -- A credential-injecting reverse proxy for LLM provider traffic. For pools configured with `deliveryMode: proxy` (the default), the pod's LLM request passes through this subsystem, which validates the credential lease, injects the real API key, and forwards to the upstream provider -- so the pod never holds the actual API key. Pools configured with `deliveryMode: direct` bypass this subsystem: the materialized credential is delivered to the pod and the runtime calls the provider itself (see [Credentials](#credentials)).
 
 Each subsystem has its own goroutine pool, concurrency limits, metrics, and circuit breaker. A saturated Upload Handler cannot consume goroutines needed by the Stream Proxy. If the LLM Proxy's upstream connections stall, the Stream Proxy and MCP Fabric continue serving normally.
 

@@ -125,7 +125,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `SessionStoreUnavailable` | Postgres primary unreachable > 15s | Check Postgres/PgBouncer connectivity |
 | `CheckpointStorageUnavailable` | MinIO checkpoint upload failed after retries | Check MinIO health, network |
 | `CredentialPoolExhausted` | 0 assignable credentials > 30s | Add credentials, check cooldowns |
-| `CredentialCompromised` | Revoked credential with active leases > 30s | Verify revocation propagation |
+| `CredentialCompromised` | Revoked credential (pool- or user-scoped) with active leases > 30s | Verify revocation propagation |
 | `TokenServiceUnavailable` | Circuit breaker open > 30s | Check Token Service deployment |
 | `ControllerLeaderElectionFailed` | Lease not renewed within 15s | Check controller pods, RBAC |
 | `DualStoreUnavailable` | Both Postgres and Redis unreachable | Follow dual-store recovery procedure |

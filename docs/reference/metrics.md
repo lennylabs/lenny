@@ -272,6 +272,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | Redis eviction rate | Counter | -- | Redis key evictions. | Operational monitoring. |
 | `lenny_quota_redis_fallback_total` | Counter | `service_instance_id`, `tenant_id`, `store` | Quota/rate-limit Redis fallback activations; increments when a gateway replica enters in-memory fail-open because Redis is unreachable. | `RedisUnavailable` alert. |
 | `lenny_quota_failopen_cumulative_seconds` | Gauge | `service_instance_id` | Rolling 1-hour cumulative wall-clock seconds this gateway replica has spent in quota fail-open mode. Persisted per replica to `/run/lenny/failopen-cumulative.json` and rehydrated on restart when within the window. Each fail-open entry edge also emits a `quota_failopen_started` audit event (one per affected tenant per replica, payload `tenant_id`, `service_instance_id`, `timestamp`) so billing consumers can bound overshoot windows ahead of fail-closed. | `QuotaFailOpenCumulativeThreshold` alert. |
+| `lenny_quota_user_failopen_fraction` | Gauge | -- | The gateway's currently configured `quotaUserFailOpenFraction` value (default `0.25`), emitted at startup and on config reload. Drives the `QuotaFailOpenUserFractionInoperative` alert when `>= 0.5`. | `QuotaFailOpenUserFractionInoperative` alert. |
 | mTLS handshake latency | Histogram | -- | Gateway-to-pod mTLS latency. | Operational monitoring. |
 | `lenny_dual_store_unavailable` | Gauge | -- | 1 when both Postgres and Redis are unreachable. | `DualStoreUnavailable` alert. |
 
@@ -424,6 +425,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `lenny_tenant_deletion_duration_seconds` | Histogram | `tenant_id` | Time from `disabling` to `deleted`. | `TenantDeletionOverdue` alert. |
 | `lenny_kms_key_deletion_failed_total` | Counter | `tenant_id` | KMS key deletion failures. | `KmsKeyDeletionFailed` alert. |
 | `lenny_storage_quota_bytes_used` | Gauge | `tenant_id` | Per-tenant artifact storage bytes. | `StorageQuotaHigh` alert. |
+| `lenny_tenant_storage_quota_bytes` | Gauge | `tenant_id` | The tenant's configured `storageQuotaBytes` value, exported by the gateway so alert expressions can compare against it as a metric rather than a bare config identifier. Updated when the tenant record changes. | `StorageQuotaHigh`, `CheckpointStorageHigh`, `LegalHoldCheckpointAccumulationProjectedBreach` alerts. |
 | `lenny_tenant_legal_hold_active_count` | Gauge | `tenant_id` | Active legal-hold scopes per tenant; denominator input for the checkpoint accumulation projection. | `LegalHoldCheckpointAccumulationProjectedBreach` alert. |
 | `lenny_legal_hold_checkpoint_projected_growth_bytes` | Gauge | `tenant_id`, `root_session_id` | Projected cumulative checkpoint growth (bytes) over the alert's evaluation horizon for a session held by an active legal hold; computed from the tenant's `storageQuotaBytes` headroom and the observed `lenny_checkpoint_storage_bytes_total` growth rate. | `LegalHoldCheckpointAccumulationProjectedBreach` alert. |
 | `lenny_t4_kms_probe_last_success_timestamp` | Gauge | -- | Unix timestamp of the last successful T4 KMS envelope probe from the leader-elected gateway goroutine. Freshness signal for T4 envelope encryption availability. | `T4KmsKeyUnusable` alert. |
@@ -448,7 +450,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `MinIOUnavailable` | `rate(lenny_artifact_upload_error_total{error_type="minio_unreachable"}[2m]) > 0` sustained for > 1 min; cluster-wide MinIO ArtifactStore unreachable | Critical |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Critical |
 | `CredentialPoolExhausted` | Any credential pool has 0 assignable credentials for > 30s | Critical |
-| `CredentialCompromised` | Revoked credential has active leases for > 30s | Critical |
+| `CredentialCompromised` | Revoked credential has active leases for > 30s (pool-scoped: `lenny_credential_revoked_with_active_leases`; user-scoped: `lenny_user_credential_revoked_with_active_leases`) | Critical |
 | `TokenServiceUnavailable` | Token Service circuit breaker open for > 30s | Critical |
 | `ControllerLeaderElectionFailed` | Lease not renewed within `leaseDuration` (15s) | Critical |
 | `DedicatedDNSUnavailable` | All dedicated CoreDNS replicas have zero ready pods for > 30s | Critical |
@@ -486,7 +488,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `CheckpointDurationHigh` | P95 checkpoint duration exceeds 2.5s over 5-min window | Warning |
 | `RateLimitDegraded` | Rate limiting in fail-open mode | Warning |
 | `QuotaFailOpenCumulativeThreshold` | `max by (service_instance_id) (lenny_quota_failopen_cumulative_seconds) > 0.8 * quotaFailOpenCumulativeMaxSeconds` sustained > 60s; pre-breach warning before a replica exhausts its rolling 1-hour cumulative fail-open budget and transitions to fail-closed for quota enforcement | Warning |
-| `QuotaFailOpenUserFractionInoperative` | Emitted at gateway startup when `quotaUserFailOpenFraction >= 0.5` — the per-user fail-open fraction is so high that the control is effectively inoperative and a single runaway user can consume the tenant ceiling during a Redis outage. Configured via `quotaUserFailOpenFraction` (default `0.25`). | Warning |
+| `QuotaFailOpenUserFractionInoperative` | `lenny_quota_user_failopen_fraction >= 0.5` — the per-user fail-open fraction is so high that the control is effectively inoperative and a single runaway user can consume the tenant ceiling during a Redis outage. The gauge is exported by the gateway at startup with the current `quotaUserFailOpenFraction` value (default `0.25`). Also emitted as a structured log warning at gateway startup and as a `lenny-ops` config-validation warning. | Warning |
 | `CertExpiryImminent` | mTLS cert expiry < 1h | Warning |
 | `ElicitationBacklogHigh` | Pending elicitations > 50 for > 30s | Warning |
 | `DelegationBudgetNearExhaustion` | Budget utilization > 90% for any tree | Warning |
@@ -504,7 +506,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `WorkspaceSealStuck` | Seal operation retrying beyond `maxWorkspaceSealDurationSeconds` | Warning |
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
-| `LegalHoldCheckpointAccumulationProjectedBreach` | `lenny_legal_hold_checkpoint_projected_growth_bytes / (storageQuotaBytes - lenny_storage_quota_bytes_used) > 0.9` — predictive alert that a legal-hold-protected session's projected checkpoint growth will consume 90% of remaining tenant storage headroom before the hold is cleared; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * on(tenant_id) group_left lenny_tenant_storage_quota_bytes` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
 | `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |

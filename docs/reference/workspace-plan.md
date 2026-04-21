@@ -74,7 +74,7 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
 | `uploadFile` | `path`, `uploadRef` | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`. |
 | `uploadArchive` | `pathPrefix`, `uploadRef`, `format` | Extract an uploaded archive (`tar.gz`, `zip`) under `pathPrefix`. |
 | `mkdir` | `path` | Create an empty directory (useful for output collection). |
-| `gitClone` | `url`, `ref`, `path` | Clone a Git repository at the specified ref into `path`. Optional `depth`, `submodules`, and `auth` (credential reference). The gateway resolves `ref` to a commit SHA at session-creation time and writes it back as `resolvedCommitSha` on the stored source (readable via `GET /v1/sessions/{id}`); unresolvable refs fail with `422 GIT_CLONE_REF_UNRESOLVABLE`. |
+| `gitClone` | `url`, `ref`, `path` | Clone a Git repository at the specified ref into `path`. Optional `depth`, `submodules`, and `auth` (credential reference). The gateway resolves `ref` to a commit SHA at session-creation time and writes it back as `resolvedCommitSha` on the stored source (readable via `GET /v1/sessions/{id}`); ref-resolution failures return `422 GIT_CLONE_REF_UNRESOLVABLE` (auth failure or unknown ref, not retryable) or `503 GIT_CLONE_REF_RESOLVE_TRANSIENT` (transient network failure, retryable). |
 
 **File mode (`inlineFile`, `mkdir`).** The optional `mode` field on these sources is a POSIX-style octal string matching the regex `^0[0-7]{3,4}$` (e.g., `"0644"`, `"0755"`). The setuid (`04000`) and setgid (`02000`) bits are prohibited for all source types; the sticky bit (`01000`) is accepted only on `mkdir`. Invalid values are rejected at session creation with `400 VALIDATION_ERROR`.
 

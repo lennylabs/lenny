@@ -146,16 +146,16 @@ Orchestrates recursive delegation and manages the virtual MCP interfaces that pa
 
 #### LLM Proxy subsystem
 
-The gateway talks to LLM providers on behalf of agent pods so that pods never hold the actual API keys. The pod makes its call against the gateway using only a lease token, and the gateway rewrites the request with the real credentials before forwarding it.
+The LLM Proxy is the request path for pools configured with `deliveryMode: proxy` (the default). In this mode, the gateway talks to LLM providers on behalf of agent pods so that pods never hold the actual API keys: the pod makes its call against the gateway using only a lease token, and the gateway rewrites the request with the real credentials before forwarding it. Pools configured with `deliveryMode: direct` bypass the LLM Proxy entirely -- the pod receives the materialized credential and calls the provider itself (see the [Credentials](concepts#credentials) section for when to choose each mode).
 
-The pod can speak either an OpenAI-style or an Anthropic-style request (whichever matches its runtime). The gateway translates between that and the upstream provider's wire format directly -- Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI are handled inside the gateway itself, without any extra container or network hop. Here's what happens on each call:
+In proxy mode, the pod can speak either an OpenAI-style or an Anthropic-style request (whichever matches its runtime). The gateway translates between that and the upstream provider's wire format directly -- Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI are handled inside the gateway itself, without any extra container or network hop. Here's what happens on each call:
 
 1. The pod sends the request to the gateway's LLM proxy at either `/v1/chat/completions` (OpenAI-style) or `/v1/messages` (Anthropic-style), carrying only a lease token.
 2. The gateway validates the lease token against the session's active credential lease, runs any configured policies, and accounts the request against the tenant's quota.
 3. The gateway rewrites the request into the upstream provider's format, attaches the real credentials from its in-memory cache, and forwards it over TLS.
 4. The provider's response comes back, gets translated into the pod's style, token usage is extracted from authoritative fields, post-response policies run, and the response is relayed to the pod.
 
-Consequences:
+Consequences (for proxy-mode pools):
 
 - **Pods never see API keys.** Only lease tokens.
 - **API keys never leave the gateway's memory.** They aren't written to disk, tmpfs, or any other container, so credential rotation is zero-downtime: refresh the cache and the next outbound call picks up the new key.
@@ -329,7 +329,7 @@ sequenceDiagram
 4. **Session lookup:** The gateway reads the session's pod assignment from the Redis routing cache (falling back to Postgres if the cache is empty).
 5. **Message delivery:** The gateway's Stream Proxy delivers the message to the assigned pod over the established gRPC bidirectional stream.
 6. **Runtime processing:** The adapter writes the message to the runtime's stdin. The runtime processes it, potentially calling tools, delegating to other agents, or requesting human input.
-7. **LLM calls (if needed):** The runtime's LLM requests flow through the gateway's LLM Proxy, which injects credentials and forwards to the upstream provider.
+7. **LLM calls (if needed):** For pools in `deliveryMode: proxy`, the runtime's LLM requests flow through the gateway's LLM Proxy, which injects credentials and forwards to the upstream provider. For pools in `deliveryMode: direct`, the runtime calls the provider itself using the credential materialized into the pod at assignment time, so the gateway is not on the request path.
 8. **Response streaming:** The runtime writes its response to stdout. The adapter sends it back to the gateway over gRPC. The gateway relays it to the client as SSE events.
 9. **State persistence:** The gateway updates the session state in Postgres.
 
@@ -490,7 +490,8 @@ graph TB
     GW4 -->|"SQL"| PGB -->|"SQL"| PG
     GW4 -->|"Redis Protocol"| RD
     GW4 -->|"S3 API"| MIO
-    GW4 -->|"HTTPS (via LLM Proxy)"| LLM2
+    GW4 -->|"HTTPS (via LLM Proxy, proxy-mode pools)"| LLM2
+    PA -->|"HTTPS (direct-mode pools)"| LLM2
     WPC2 -->|"K8s API"| PA & PB & PC & PD & PE
 ```
 
@@ -528,7 +529,7 @@ Every agent pod runs with:
 | Pods CAN | Pods CANNOT |
 |----------|-------------|
 | Read/write files in `/workspace/current` | Access the Kubernetes API server |
-| Call LLM providers through the gateway's LLM Proxy | Hold long-lived API keys or secrets |
+| Call LLM providers through the gateway's LLM Proxy (proxy-mode pools) or directly with a short-lived materialized credential (direct-mode pools) | Hold long-lived API keys or secrets |
 | Use MCP tools via the adapter's local MCP servers | Communicate with other pods |
 | Respond to gateway lifecycle RPCs | Access MinIO, Postgres, or Redis directly |
 | Report usage metrics to the gateway | Mount shared storage from other pods |

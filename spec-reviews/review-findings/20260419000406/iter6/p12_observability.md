@@ -37,6 +37,8 @@
 
 ### OBS-037 (Medium) — `QuotaFailOpenUserFractionInoperative` is an alert in docs, a startup log warning in the spec, and absent from §16.5
 
+**Status: Fixed** — Chose Option 1 (real alert). Added `lenny_gateway_quota_user_failopen_fraction` gauge to `spec/16_observability.md` §16.1 and `docs/reference/metrics.md`; catalogued `QuotaFailOpenUserFractionInoperative` alert in §16.5 with PromQL `max(lenny_gateway_quota_user_failopen_fraction) >= 0.5`; reconciled the log+alert language in `spec/12_storage-architecture.md:222` and docs surfaces.
+
 **Observation.** `spec/12_storage-architecture.md:222` describes the signal as:
 
 > `lenny-ops` emits the `QuotaFailOpenUserFractionInoperative` warning at startup whenever `quotaUserFailOpenFraction >= 0.5`
@@ -71,6 +73,8 @@ So the docs instruct operators that `QuotaFailOpenUserFractionInoperative` is an
 Option 1 is recommended — it parallels the treatment of the other fail-open controls (`QuotaFailOpenCumulativeThreshold` at §16.5 :447) and preserves the operator's single-pane Prometheus contract.
 
 ### OBS-038 (Medium) — `LegalHoldCheckpointAccumulationProjectedBreach` PromQL uses `storageQuotaBytes` as a bare identifier, which is a config value, not a metric
+
+**Status: Fixed** — Chose Option 1 (backing gauge). Added `lenny_storage_quota_bytes_limit{tenant_id}` to `spec/16_observability.md` §16.1 and `docs/reference/metrics.md`; rewrote alert expression in §16.5 and docs to `(lenny_storage_quota_bytes_used + sum by (tenant_id)(lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_storage_quota_bytes_limit`.
 
 **Observation.** `spec/16_observability.md:484` defines the alert expression as:
 

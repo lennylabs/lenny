@@ -32,6 +32,8 @@ Each carry-forward remains a documentation / classification hardening item with 
 
 ### API-020. `/v1/admin/circuit-breakers/*` endpoints absent from the §15.1 endpoint table despite being the sole referent of `INVALID_BREAKER_SCOPE` [Medium]
 
+**Status: Fixed** — Added four `/v1/admin/circuit-breakers/*` rows (list/get/open/close) to the §15.1 endpoint table in `spec/15_external-api-surface.md` before `POST /v1/admin/preflight`; each row cross-references §11.6 and names `INVALID_BREAKER_SCOPE` for the open endpoint.
+
 **Section:** `spec/15_external-api-surface.md` §15.1 endpoint table (lines 773–886) and the "The table above includes all endpoints" claim at line 888.
 
 The §15.4 catalog row for `INVALID_BREAKER_SCOPE` at line 1026 names the endpoint `POST /v1/admin/circuit-breakers/{name}/open` as its sole source. The `CIRCUIT_BREAKER_OPEN` row at line 1025 references the breaker machinery generally. The admin-API circuit-breaker surface has four endpoints — `GET /v1/admin/circuit-breakers`, `GET /v1/admin/circuit-breakers/{name}`, `POST /v1/admin/circuit-breakers/{name}/open`, `POST /v1/admin/circuit-breakers/{name}/close` — defined in `spec/11_policy-and-controls.md:308–313` and documented in `docs/api/admin.md:708–752`. None of these four rows appear in the §15.1 REST API endpoint table (verified by grep of `spec/15_external-api-surface.md` for `circuit-breaker` — only the SDK-warm pool breaker override `PUT /v1/admin/pools/{name}/circuit-breaker` at line 801 is catalogued; the operator-managed breaker class is absent).
@@ -45,6 +47,8 @@ This also breaks the §15.1 `x-lenny-*` MCP extension contract at line 917 ("Eve
 ---
 
 ### API-021. `circuit_breaker` domain missing from the §15.1 closed scope taxonomy despite being required to invoke the new endpoints [Medium]
+
+**Status: Fixed** — Added `circuit_breaker` to the closed scope taxonomy at `spec/15_external-api-surface.md:911`, consistent with `credential_pool` / `tenant` naming convention.
 
 **Section:** `spec/15_external-api-surface.md:911` (scope taxonomy domain list) and line 927 (CI contract).
 
@@ -64,6 +68,8 @@ The CI contract will break the build the first time someone writes the OpenAPI e
 ---
 
 ### API-022. `PLATFORM_AUDIT_REGION_UNRESOLVABLE` categorized `POLICY` breaks the "fail-closed mirror" family-category convention established by its three siblings [Medium]
+
+**Status: Fixed** — Changed category from `POLICY` to `PERMANENT` at `spec/15_external-api-surface.md:1041`, `spec/25_agent-operability.md:1495`, `spec/11_policy-and-controls.md:423`, `spec/16_observability.md:426`, and `spec/12_storage-architecture.md:885`; docs already carried `PERMANENT` via the earlier iter5 sync, updated `docs/operator-guide/configuration.md:541` as well.
 
 **Section:** `spec/15_external-api-surface.md:1037` and `spec/25_agent-operability.md:4339`.
 
@@ -89,6 +95,8 @@ Further knock-on: the `DataResidencyViolationAttempt` audit event (§25.11 line 
 ---
 
 ### API-023. `GIT_CLONE_REF_UNRESOLVABLE` conflates transient (`network_error`) and permanent (`auth_failed`, `ref_not_found`) sub-reasons under a single `PERMANENT`/422 code, breaking the iter4 `*_UNAVAILABLE` / `*_MISSING` split pattern [Medium]
+
+**Status: Fixed** — Split the code in `spec/15_external-api-surface.md` error catalog: `GIT_CLONE_REF_UNRESOLVABLE` retains `PERMANENT/422` for `auth_failed`/`ref_not_found`; new sibling `GIT_CLONE_REF_RESOLVE_TRANSIENT` added as `TRANSIENT/503` for `network_error`. Updated `spec/14_workspace-plan-schema.md:102` resolution language, `docs/reference/error-catalog.md`, and `docs/reference/workspace-plan.md:77` accordingly.
 
 **Section:** `spec/15_external-api-surface.md:1058` (`GIT_CLONE_REF_UNRESOLVABLE`); cross-references in `spec/14_workspace-plan-schema.md:102` and `docs/reference/error-catalog.md:91`.
 
@@ -118,6 +126,8 @@ Update both `spec/15_external-api-surface.md:1058` and the §14 cross-reference 
 ---
 
 ### API-024. `GIT_CLONE_REF_UNRESOLVABLE` missing from the §15.2.1 `RegisterAdapterUnderTest` session-creation rejection matrix despite being a §15.4 session-creation rejection [Medium]
+
+**Status: Fixed** — Added both `GIT_CLONE_REF_UNRESOLVABLE` and the new `GIT_CLONE_REF_RESOLVE_TRANSIENT` (from API-023) to the §15.2.1 `RegisterAdapterUnderTest` session-creation rejection family enumeration at `spec/15_external-api-surface.md:1395`.
 
 **Section:** `spec/15_external-api-surface.md:1390` (`RegisterAdapterUnderTest` test matrix).
 

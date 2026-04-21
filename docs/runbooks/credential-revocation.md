@@ -160,6 +160,67 @@ GET /v1/admin/audit-events?event_type=credential.added&since=1h
 
 This is the compliance evidence for the rotation.
 
+## User-scoped credentials
+
+The remediation above applies to **pool-managed** credentials (`/v1/admin/credential-pools/...`). User-scoped credentials registered via `POST /v1/credentials` (see Spec §4.9 "User credential management endpoints") use a distinct endpoint family and audit trail.
+
+### When it applies
+
+- A user reports that their personal provider key has been compromised.
+- Security telemetry attributes provider 4xx to a specific user-scoped `credential_ref` rather than a pool credential.
+- Compliance requires rotation of a named user's credentials (e.g., departing employee, contractor offboarding).
+
+### Remediation
+
+#### Step U1 — Identify the user credential
+
+<!-- access: api method=GET path=/v1/credentials -->
+```
+GET /v1/credentials
+```
+
+Invoked as the affected user, or as `platform-admin` impersonating the user. Record the `credential_ref` and `provider`.
+
+#### Step U2 — Revoke the user credential
+
+<!-- access: api method=POST path=/v1/credentials/{credential_ref}/revoke -->
+```
+POST /v1/credentials/<credential_ref>/revoke
+Body: {"reason": "<r>", "note": "<optional note>"}
+```
+
+Effect: the Token Service marks the credential as `revoked`, adds a user-shaped entry to the credential deny list (`{source: "user", tenantId, credentialRef}`), and immediately invalidates all active leases backed by it — proxy-mode leases via the deny list, direct-mode leases via `RotateCredentials` RPC. Emits `credential.user_revoked`.
+
+Unlike pool revocation, `POST .../revoke` on a user credential retains the record in `revoked` state for audit. Running sessions with active leases are cut off as soon as the deny list propagates (Redis pub/sub with Postgres `LISTEN/NOTIFY` fallback).
+
+If the revocation should be non-disruptive (no mid-session cutoff), use `DELETE /v1/credentials/{credential_ref}` instead — active leases continue using the previously materialized credential until natural TTL expiry.
+
+#### Step U3 — Revoke at the provider
+
+Same as Step 2 above: rotate or revoke the provider-side key. For user credentials this is the user's responsibility — an operator performing the revocation on behalf of a compromised user should confirm the provider-side action with the user or their manager.
+
+#### Step U4 — Rotate (user re-registers)
+
+The user (or platform-admin acting for the user) re-registers a new credential for the same provider:
+
+<!-- access: api method=POST path=/v1/credentials -->
+```
+POST /v1/credentials
+Body: {"provider": "<provider>", "credential": "<new-secret>", "label": "<optional>"}
+```
+
+New sessions created after re-registration resolve the new credential per the tenant's `credentialPolicy.preferredSource`.
+
+#### Step U5 — Audit trail
+
+<!-- access: api method=GET path=/v1/admin/audit-events -->
+```
+GET /v1/admin/audit-events?event_type=credential.user_revoked&since=1h
+GET /v1/admin/audit-events?event_type=credential.registered&since=1h
+```
+
+These events record `tenant_id`, `user_id`, `provider`, `credential_ref`, `reason`, and `active_leases_terminated` — the compliance record for the user-scoped rotation. The `lenny_user_credential_revoked_with_active_leases` gauge (labeled by `tenant_id`, `provider`) feeds the `CredentialCompromised` alert (Spec §16.5) alongside its pool-scoped counterpart.
+
 ## Escalation
 
 Escalate to:

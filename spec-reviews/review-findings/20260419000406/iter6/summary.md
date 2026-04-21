@@ -21,27 +21,27 @@ No Critical findings in this iteration.
 
 ### High Findings
 
-| # | Perspective | Finding | Section |
-|---|-------------|---------|---------|
-| CRD-020 | Credential | `lenny_credential_revoked_with_active_leases` gauge and `CredentialCompromised` alert cannot observe user-scoped revocation-propagation failures — iter5 CRD-015 fix introduced a production-monitoring asymmetry | `spec/16_observability.md` §16.4 (gauge labels `pool, provider`) and §16.5 (alert expression); `spec/04_system-components.md` §4.9 line 1348 user revoke handler |
+| # | Perspective | Finding | Section | Status |
+|---|-------------|---------|---------|--------|
+| CRD-020 | Credential | `lenny_credential_revoked_with_active_leases` gauge and `CredentialCompromised` alert cannot observe user-scoped revocation-propagation failures — iter5 CRD-015 fix introduced a production-monitoring asymmetry | `spec/16_observability.md` §16.4 (gauge labels `pool, provider`) and §16.5 (alert expression); `spec/04_system-components.md` §4.9 line 1348 user revoke handler | Fixed |
 
 ### Medium Findings
 
-| # | Perspective | Finding | Section |
-|---|-------------|---------|---------|
-| OBS-037 | Observability | `QuotaFailOpenUserFractionInoperative` is an alert in docs, a startup log warning in the spec, and absent from §16.5 | `spec/12_storage-architecture.md` §12.4; `spec/16_observability.md` §16.5; `docs/operator-guide/observability.md` |
-| OBS-038 | Observability | `LegalHoldCheckpointAccumulationProjectedBreach` PromQL uses `storageQuotaBytes` as a bare identifier, which is a config value, not a metric — alert will not evaluate | `spec/16_observability.md` §16.5 |
-| API-020 | API Design | `/v1/admin/circuit-breakers/*` endpoints absent from the §15.1 endpoint table despite being the sole referent of `INVALID_BREAKER_SCOPE` | `spec/15_external-api-surface.md:888`, endpoint catalog 773-886 |
-| API-021 | API Design | `circuit_breaker` domain missing from the §15.1 closed scope taxonomy | `spec/15_external-api-surface.md:911` |
-| API-022 | API Design | `PLATFORM_AUDIT_REGION_UNRESOLVABLE` categorized `POLICY` breaks the fail-closed-mirror family convention (`BACKUP/ARTIFACT/LEGAL_HOLD_ESCROW *_REGION_UNRESOLVABLE` are `PERMANENT`) | `spec/15_external-api-surface.md:1037`; `spec/25_agent-operability.md:4339` |
-| API-023 | API Design | `GIT_CLONE_REF_UNRESOLVABLE` conflates transient (`network_error`) and permanent (`auth_failed`, `ref_not_found`) sub-reasons under one `PERMANENT`/422 code | `spec/15_external-api-surface.md:1058` |
-| API-024 | API Design | `GIT_CLONE_REF_UNRESOLVABLE` missing from §15.2.1 `RegisterAdapterUnderTest` session-creation rejection matrix | `spec/15_external-api-surface.md:1390` |
-| CRD-021 | Credential | `docs/runbooks/credential-revocation.md` covers only pool-credential revocation; user-credential revoke path has no operator runbook | `docs/runbooks/credential-revocation.md`; `spec/04_system-components.md` §4.9 user revoke handler |
-| CNT-020 | Content Model | `resolvedCommitSha` request/response schema asymmetry is undocumented (request rejects it, response populates it; `additionalProperties: false` + `readOnly: true` interaction unclear) | `spec/14_workspace-plan-schema.md` §14 gitClone variant |
-| CNT-023 | Content Model | §14.1 `oneOf` + open-fallthrough branching description is not valid JSON Schema 2020-12 semantics — should be `allOf`+`if`/`then` | `spec/14_workspace-plan-schema.md` §14.1 line 334 |
-| CNT-024 | Content Model | `WORKSPACE_PLAN_INVALID` referenced 6× in §14/§14.1 but missing from §15.1 error catalog and `docs/reference/error-catalog.md` | `spec/14_workspace-plan-schema.md`; `spec/15_external-api-surface.md` §15.1; `docs/reference/error-catalog.md` |
-| DOC-024 | Document Quality | Cross-file anchor `15_external-api-surface.md#154-errors-and-degradation` does not exist — 9 broken occurrences introduced by iter5 compliance-fix commit | Multiple spec files |
-| DOC-025 | Document Quality | Cross-file anchor `17_deployment-topology.md#1781-helm-values` does not exist — 3 broken occurrences introduced by iter5 compliance-fix commit | Multiple spec files |
+| # | Perspective | Finding | Section | Status |
+|---|-------------|---------|---------|--------|
+| OBS-037 | Observability | `QuotaFailOpenUserFractionInoperative` is an alert in docs, a startup log warning in the spec, and absent from §16.5 | `spec/12_storage-architecture.md` §12.4; `spec/16_observability.md` §16.5; `docs/operator-guide/observability.md` | Fixed |
+| OBS-038 | Observability | `LegalHoldCheckpointAccumulationProjectedBreach` PromQL uses `storageQuotaBytes` as a bare identifier, which is a config value, not a metric — alert will not evaluate | `spec/16_observability.md` §16.5 | Fixed |
+| API-020 | API Design | `/v1/admin/circuit-breakers/*` endpoints absent from the §15.1 endpoint table despite being the sole referent of `INVALID_BREAKER_SCOPE` | `spec/15_external-api-surface.md:888`, endpoint catalog 773-886 | Fixed |
+| API-021 | API Design | `circuit_breaker` domain missing from the §15.1 closed scope taxonomy | `spec/15_external-api-surface.md:911` | Fixed |
+| API-022 | API Design | `PLATFORM_AUDIT_REGION_UNRESOLVABLE` categorized `POLICY` breaks the fail-closed-mirror family convention (`BACKUP/ARTIFACT/LEGAL_HOLD_ESCROW *_REGION_UNRESOLVABLE` are `PERMANENT`) | `spec/15_external-api-surface.md:1037`; `spec/25_agent-operability.md:4339` | Fixed |
+| API-023 | API Design | `GIT_CLONE_REF_UNRESOLVABLE` conflates transient (`network_error`) and permanent (`auth_failed`, `ref_not_found`) sub-reasons under one `PERMANENT`/422 code | `spec/15_external-api-surface.md:1058` | Fixed |
+| API-024 | API Design | `GIT_CLONE_REF_UNRESOLVABLE` missing from §15.2.1 `RegisterAdapterUnderTest` session-creation rejection matrix | `spec/15_external-api-surface.md:1390` | Fixed |
+| CRD-021 | Credential | `docs/runbooks/credential-revocation.md` covers only pool-credential revocation; user-credential revoke path has no operator runbook | `docs/runbooks/credential-revocation.md`; `spec/04_system-components.md` §4.9 user revoke handler | Fixed |
+| CNT-020 | Content Model | `resolvedCommitSha` request/response schema asymmetry is undocumented (request rejects it, response populates it; `additionalProperties: false` + `readOnly: true` interaction unclear) | `spec/14_workspace-plan-schema.md` §14 gitClone variant | Fixed |
+| CNT-023 | Content Model | §14.1 `oneOf` + open-fallthrough branching description is not valid JSON Schema 2020-12 semantics — should be `allOf`+`if`/`then` | `spec/14_workspace-plan-schema.md` §14.1 line 334 | Fixed |
+| CNT-024 | Content Model | `WORKSPACE_PLAN_INVALID` referenced 6× in §14/§14.1 but missing from §15.1 error catalog and `docs/reference/error-catalog.md` | `spec/14_workspace-plan-schema.md`; `spec/15_external-api-surface.md` §15.1; `docs/reference/error-catalog.md` | Fixed |
+| DOC-024 | Document Quality | Cross-file anchor `15_external-api-surface.md#154-errors-and-degradation` does not exist — 9 broken occurrences introduced by iter5 compliance-fix commit | Multiple spec files | Fixed |
+| DOC-025 | Document Quality | Cross-file anchor `17_deployment-topology.md#1781-helm-values` does not exist — 3 broken occurrences introduced by iter5 compliance-fix commit | Multiple spec files | Fixed |
 
 ### Severity Calibration Note
 

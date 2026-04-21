@@ -22,6 +22,8 @@
 
 ### DOC-024. Cross-file anchor `15_external-api-surface.md#154-errors-and-degradation` does not exist (9 occurrences) [Medium]
 
+**Status: Fixed** — Global find-and-replace executed across `spec/11_policy-and-controls.md`, `spec/12_storage-architecture.md`, `spec/14_workspace-plan-schema.md`, `spec/15_external-api-surface.md:816` (intra-file self-reference), and `spec/16_observability.md`. Link fragments changed from `15_external-api-surface.md#154-errors-and-degradation` to `#151-rest-api`; citation labels updated from `§15.4` to `§15.1`.
+
 **Files:**
 - `spec/11_policy-and-controls.md:423, 443, 445` (CMP-058 platform-tenant audit residency prose + CMP-057 compliance-profile downgrade ratchet)
 - `spec/12_storage-architecture.md:885` (Phase 3.5 legal-hold escrow Step 4 residency gate)
@@ -38,6 +40,8 @@ All nine call sites were **introduced by the iter5 fix commit (`c941492`, CMP-05
 Alternative, if the reviewer wants a dedicated stable anchor for the error catalog: promote the inline error-code table at `15_external-api-surface.md:988` to a named subsection `#### 15.1.1 Error Code Catalog`. This yields `#1511-error-code-catalog` and future references become independent of §15.1's surrounding prose. Either approach resolves DOC-024; the global find-and-replace is mechanically simpler and matches the iter5 pattern for DOC-020 / DOC-021.
 
 ### DOC-025. Cross-file anchor `17_deployment-topology.md#1781-helm-values` does not exist (3 occurrences) [Medium]
+
+**Status: Fixed** — Replaced the fabricated anchor `#1781-helm-values` with `#176-packaging-and-installation` (the canonical §17.6 Packaging and Installation anchor, where Helm values including `storage.regions.<region>.*` entries are documented) across `spec/11_policy-and-controls.md:421`, `spec/15_external-api-surface.md:1041`, and `spec/16_observability.md:425`. Citation labels updated from `§17.8.1` to `§17.6` accordingly.
 
 **Files:**
 - `spec/11_policy-and-controls.md:421` (CMP-058 platform-tenant audit residency, rule 1, "one logical platform-Postgres per region is the deployment topology ([§17.8.1](17_deployment-topology.md#1781-helm-values))")

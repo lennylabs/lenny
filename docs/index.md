@@ -53,7 +53,7 @@ runtimes. There's no custom scheduler, no external control plane, and no outboun
 | OpenAI Chat Completions           | Existing OpenAI SDK code -- change the base URL, keep the rest                    |
 | Open Responses / OpenAI Responses | Any Responses-API client                                                          |
 
-**LLM provider routing in the gateway.** The gateway routes requests to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI directly, with no additional proxy process to run. Agents receive short-lived lease tokens; raw API keys stay in the gateway's memory and never reach the pod. For other providers, route through an external LLM proxy such as LiteLLM or Portkey alongside the built-in routing.
+**LLM provider routing in the gateway.** The gateway routes requests to Anthropic, AWS Bedrock, Google Vertex AI, and Azure OpenAI directly, with no additional proxy process to run. For pools configured with `deliveryMode: proxy` (the default), agents receive short-lived lease tokens and raw API keys stay in the gateway's memory; for pools that opt into `deliveryMode: direct`, the gateway materializes a short-lived, lease-scoped credential onto the pod instead. For providers outside the built-in set, route through an external LLM proxy such as LiteLLM or Portkey alongside the built-in routing.
 
 **Pick your isolation level per pool.** You can run first-party code under plain containers (`runc`) when you trust it, sandbox untrusted code under gVisor (the default), or put high-risk workloads in a microVM with Kata Containers. All three are selected as Kubernetes `RuntimeClass` on the pool.
 
