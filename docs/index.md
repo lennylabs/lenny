@@ -85,7 +85,7 @@ Every capability on this page is specified in [`spec/`](https://github.com/lenny
 
 Decide if it fits. Start with `lenny up` and the comparison guide.
 
-{: .text-yellow-300 }
+{: .text-purple-300 }
 
 [Quickstart](/lenny/getting-started/){: .btn .btn-outline }
 [About](/lenny/about/){: .btn }
@@ -98,7 +98,7 @@ Decide if it fits. Start with `lenny up` and the comparison guide.
 
 You call Lenny from an app, a script, or an MCP host.
 
-{: .text-green-300 }
+{: .text-purple-300 }
 
 [Client Guide](/lenny/client-guide/){: .btn .btn-green }
 
@@ -110,7 +110,7 @@ You call Lenny from an app, a script, or an MCP host.
 
 You are bringing your own agent binary or adapter.
 
-{: .text-blue-300 }
+{: .text-purple-300 }
 
 [Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-blue }
 
@@ -146,7 +146,7 @@ You are on-call. `lenny-ops`, doctor, runbooks, alerts.
 
 You assess Lenny for isolation, audit, and regulatory fit.
 
-{: .text-red-300 }
+{: .text-purple-300 }
 
 [Security Principles](/lenny/operator-guide/security-principles){: .btn }
 
