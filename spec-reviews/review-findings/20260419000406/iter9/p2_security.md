@@ -1,0 +1,14 @@
+## SEC iter9 review — regressions from iter8 fix commit `df0e675`
+
+**Scope:** security-model surfaces touched by iter8 fix: `spec/13_security-model.md` §13.1 cred-guard fourth rejection condition, `spec/09_mcp-integration.md` §9.2 elicitation content-integrity gateway-origin binding.
+
+**Note on agent availability:** The dispatched SEC subagent hit a usage-rate-limit failure (`"You've hit your limit · resets 4am (America/Los_Angeles)"`); this review was performed inline by the parent agent against the same regressions-only scope.
+
+### Inspection results — no security-model regressions detected
+
+1. **§13.1 cred-guard condition (iv) narrative** — the volumeMount rejection correctly closes the fsGroup-inheritance side-channel that conditions (i)–(iii) cannot close on their own. The "Relationship among the four conditions" paragraph accurately describes why explicit `runAsUser`/`runAsGroup`/`supplementalGroups` values that bypass (i)–(iii) still inherit `fsGroup: <lenny-cred-readers GID>` from the pod-level securityContext (kubelet applies fsGroup as a supplementary group to every container including ephemeral containers regardless of explicit securityContext), making the volumeMount the operative and inspectable attack-surface.
+2. **Cross-surface consistency** — the four-condition taxonomy is consistent across §13.1 narrative, §17.2 admission-policies inventory item 13, and `docs/operator-guide/namespace-and-isolation.md` item 8 (see CRD-030 for the corresponding §15.1 / error-catalog completeness gap — classified as credential-lifecycle rather than security-model).
+3. **§9.2 elicitation content-integrity invariant** — gateway-origin-binding invariant correctly uses `{message, schema}` tuple matching §8.5 authoritative `lenny/request_elicitation` tool schema. Forward-hop mechanism is native MCP `elicitation/create` wire frame per §15.2.1 (not a re-issuance of `lenny/request_elicitation`). Divergence on any forwarded frame's `{message, schema}` against the gateway-recorded original is rejected with `ELICITATION_CONTENT_TAMPERED` (`PERMANENT`/409) and emits the paired audit event + counter + alert. Transformed-text path (translation, rephrasing) correctly requires emitting a new `lenny/request_elicitation` with a fresh `elicitation_id` rather than rewriting an existing one.
+4. **Prompt-injection and hostile-runtime posture** — the invariant binds user-visible text to the declared `origin_pod` for every elicitation the user sees, extending the gateway-mediates-every-hop property to cover content as well as control flow. Intermediate pods MAY observe original content for policy/logging/suppression but MUST NOT modify rendered text. This is a correct statement of the security invariant; no change from iter7 posture.
+
+No security-model regressions detected in the iter8 fix envelope.
