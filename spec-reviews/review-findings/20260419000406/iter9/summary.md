@@ -50,7 +50,7 @@
 
 ## 17. Credential Lifecycle
 
-### CRD-030. `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` sub-reason enumeration and retry guidance do not reflect condition (iv) added to §13.1 [Medium]
+### CRD-030. `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` sub-reason enumeration and retry guidance do not reflect condition (iv) added to §13.1 [Medium] — Fixed
 
 **Section:** 15.1 (error row `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN`, `spec/15_external-api-surface.md` line 1091); `docs/reference/error-catalog.md` line 123.
 
@@ -65,6 +65,8 @@ However, the paired error-catalog entries on the REST surface were not updated:
 Because condition (iv) is the operative closure for the fsGroup side-channel (per §13.1's "Relationship among the four conditions" paragraph), it is the most likely rejection path for any sophisticated bypass attempt, yet it has no discriminable sub-code in the operator-facing error payload and no remediation hint in the catalog prose.
 
 **Recommendation:** In both `spec/15_external-api-surface.md` line 1091 and `docs/reference/error-catalog.md` line 123: (a) extend the `details.reason` sub-code enumeration with at least one value covering condition (iv) — suggest `credential_volume_mounted` for the volume-name branch plus `run_lenny_path_mounted` for the mountPath-prefix branch, or a single `credential_volume_or_path_mounted` if a combined code is preferred; whichever is chosen, both branches of condition (iv) must be reachable from the sub-code or `details` payload; (b) extend the retry guidance to state that the caller must additionally ensure the ephemeral container's `volumeMounts` do not reference the pod-level credential tmpfs volume and contain no entry whose `mountPath` equals `/run/lenny` or begins with `/run/lenny/`. Cross-reference `spec/13_security-model.md` §13.1 condition (iv) in both surfaces so the four-condition taxonomy is consistent across the code-path rejection, the spec narrative, and the operator-facing error catalog.
+
+**Status:** Fixed. Both `spec/15_external-api-surface.md` line 1091 and `docs/reference/error-catalog.md` line 123 updated: (a) `details.reason` sub-code enumeration extended with two new codes — `credential_volume_mounted` (volume-name branch of condition (iv)) and `run_lenny_path_mounted` (mountPath-prefix branch); sub-code taxonomy reorganised to group (i)–(iii) UID/GID-surface codes separately from (iv) volumeMounts-surface codes; (b) retry guidance extended to require `volumeMounts` free of the credential tmpfs volume name and of any entry at the `/run/lenny` prefix; (c) cross-reference to §13.1 four-condition rationale added to both rows.
 
 ---
 
