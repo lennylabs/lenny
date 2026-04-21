@@ -270,6 +270,8 @@ These are derived from credential lifecycle counters, not directly named in the 
 | Postgres connection pool utilization | Gauge | `service_instance_id` | Per-replica connection pool usage. | Operational monitoring. |
 | Redis memory usage | Gauge | -- | Redis memory consumption. | `RedisMemoryHigh` alert. |
 | Redis eviction rate | Counter | -- | Redis key evictions. | Operational monitoring. |
+| `lenny_quota_redis_fallback_total` | Counter | `service_instance_id`, `tenant_id`, `store` | Quota/rate-limit Redis fallback activations; increments when a gateway replica enters in-memory fail-open because Redis is unreachable. | `RedisUnavailable` alert. |
+| `lenny_quota_failopen_cumulative_seconds` | Gauge | `service_instance_id` | Rolling 1-hour cumulative wall-clock seconds this gateway replica has spent in quota fail-open mode. Persisted per replica to `/run/lenny/failopen-cumulative.json` and rehydrated on restart when within the window. Each fail-open entry edge also emits a `quota_failopen_started` audit event (one per affected tenant per replica, payload `tenant_id`, `service_instance_id`, `timestamp`) so billing consumers can bound overshoot windows ahead of fail-closed. | `QuotaFailOpenCumulativeThreshold` alert. |
 | mTLS handshake latency | Histogram | -- | Gateway-to-pod mTLS latency. | Operational monitoring. |
 | `lenny_dual_store_unavailable` | Gauge | -- | 1 when both Postgres and Redis are unreachable. | `DualStoreUnavailable` alert. |
 
@@ -318,6 +320,19 @@ These are derived from credential lifecycle counters, not directly named in the 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_workspace_seal_duration_seconds` | Histogram | `pool`, `outcome` | Seal completion time: `success`, `timeout`. | `WorkspaceSealStuck` alert. |
+
+---
+
+## MinIO / ArtifactStore availability metrics
+
+| Metric | Type | Labels | Description | Used by |
+|:-------|:-----|:-------|:------------|:--------|
+| `lenny_artifact_upload_error_total` | Counter | `tenant_id`, `bucket`, `error_type` | `ArtifactStore` PUTs that failed after the adapter's per-request retry budget was exhausted. Error types: `minio_unreachable` (cluster-wide MinIO availability signal — TCP dial failure, TLS handshake failure, or `503 SlowDown` sustained past retry budget), `auth_denied`, `quota_exceeded`, `checksum_mismatch`, `transport_error`. Covers workspace uploads, workspace snapshot writes, session transcript writes, and eviction-context writes. | `MinIOUnavailable` alert (on `error_type="minio_unreachable"`). |
+| `lenny_minio_replication_lag_seconds` | Gauge | `region` | Seconds by which the off-cluster replication target lags the primary ArtifactStore bucket. | `MinIOArtifactReplicationLagHigh` (Warning, at 1× RPO) and `MinIOArtifactReplicationLagCritical` (Critical, at 4× RPO) alerts. |
+| `lenny_minio_replication_failed_total` | Counter | `region` | Object-level replication failures to the off-cluster destination. | `MinIOArtifactReplicationFailed` alert. |
+| `lenny_minio_replication_residency_violation_total` | Counter | `region`, `violation_type` (`jurisdiction_tag_mismatch` \| `jurisdiction_tag_missing` \| `dns_rebinding_outside_cidr` \| `tag_probe_failed`) | ArtifactStore runtime residency preflight halts — destination advertised jurisdiction does not match the source tenant's `dataResidencyRegion`. Steady-state value is zero. | `ArtifactReplicationResidencyViolation` alert. |
+| `lenny_legal_hold_escrow_region_unresolvable_total` | Counter | `region`, `failure_mode` (`missing_entry` \| `kms_unreachable` \| `endpoint_unreachable`) | Phase 3.5 of tenant force-delete aborts with `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` because the resolved escrow region has no corresponding `storage.regions.<region>.legalHoldEscrow` entry, its KMS key is unreachable, or its bucket endpoint is unreachable (CMP-054). Steady-state value is zero. | `LegalHoldEscrowResidencyViolation` alert. |
+| `lenny_platform_audit_region_unresolvable_total` | Counter | `region`, `failure_mode` (`missing_entry` \| `postgres_unreachable`) | A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission, etc.) failed to commit because the target tenant's `dataResidencyRegion` resolves to no `storage.regions.<region>.postgresEndpoint` entry or that region's platform-Postgres is unreachable (CMP-058). Steady-state value is zero. | `PlatformAuditResidencyViolation` alert. |
 
 ---
 
@@ -381,9 +396,10 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 
 | Metric | Type | Labels | Description |
 |:-------|:-----|:-------|:------------|
-| `lenny_memory_store_operation_duration_seconds` | Histogram | `operation`, `backend` | Latency for `write`, `query`, `delete`, `list`. Backend: `postgres`, `custom`. |
+| `lenny_memory_store_operation_duration_seconds` | Histogram | `operation`, `backend` | Latency for `write`, `query`, `delete`, `list`, `delete_by_user`, `delete_by_tenant`. Backend: `postgres`, `custom`. The `delete_by_user` and `delete_by_tenant` labels record the wall-clock duration of synchronous whole-scope erasure calls invoked by the GDPR erasure job and drive the `MemoryStoreErasureDurationHigh` warning alert. |
 | `lenny_memory_store_errors_total` | Counter | `operation`, `backend`, `error_type` | Error count per operation and backend. |
-| `lenny_memory_store_record_count` | Gauge | `tenant_id` | Approximate stored memory records per tenant. |
+| `lenny_memory_store_record_count` | Gauge | `tenant_id` | Approximate stored memory records per tenant, aggregated across all users. No per-user label (cardinality-forbidden); per-user headroom is surfaced by `lenny_memory_store_user_count_over_threshold_total`. |
+| `lenny_memory_store_user_count_over_threshold_total` | Counter | `tenant_id`, `backend` | Increments on each `MemoryStore.Write` commit that leaves the writing user at `>= 80%` of `memory.maxMemoriesPerUser`. Drives the `MemoryStoreGrowthHigh` warning alert. Per-user attribution via structured logs, not metric labels. |
 
 ---
 
@@ -395,7 +411,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `lenny_experiment_targeting_error_total` | Counter | `provider`, `error_type` | Targeting webhook failures. |
 | `lenny_experiment_targeting_circuit_open` | Gauge | `tenant_id`, `provider` | 1 when per-tenant circuit breaker is open. |
 | `lenny_experiment_sticky_cache_invalidations_total` | Counter | `experiment_id`, `transition` | Sticky user assignment cache flushes. |
-| `lenny_experiment_isolation_rejections_total` | Counter | `tenant_id`, `experiment_id`, `variant_id` | Incremented each time the `ExperimentRouter` fails closed because the variant pool's `isolationProfile` is weaker than the session's `minIsolationProfile`. Paired with the `experiment.isolation_mismatch` event so operators can detect rejection-population bias without log scraping. Returns `VARIANT_ISOLATION_UNAVAILABLE` to the caller. |
+| `lenny_experiment_isolation_rejections_total` | Counter | `tenant_id`, `experiment_id`, `variant_id` | Incremented each time the `ExperimentRouter` fails closed because the variant pool's `isolationProfile` is weaker than the session's `minIsolationProfile`. Paired with the `experiment.isolation_mismatch` event so operators can detect rejection-population bias without log scraping. Returns `VARIANT_ISOLATION_UNAVAILABLE` to the caller. Drives `ExperimentIsolationRejections` (Warning). |
 | `lenny_eval_score` | Histogram | `tenant_id`, `scorer`, `variant_id` | Eval scores per variant (built-in `/eval` endpoint only). Mean via `rate(sum) / rate(count)`. Deployers whose runtimes use runtime-native eval platforms (LangSmith, Braintrust, etc.) will not have data in this metric and should configure equivalent score-regression alerts in their eval platform. |
 
 ---
@@ -408,6 +424,10 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `lenny_tenant_deletion_duration_seconds` | Histogram | `tenant_id` | Time from `disabling` to `deleted`. | `TenantDeletionOverdue` alert. |
 | `lenny_kms_key_deletion_failed_total` | Counter | `tenant_id` | KMS key deletion failures. | `KmsKeyDeletionFailed` alert. |
 | `lenny_storage_quota_bytes_used` | Gauge | `tenant_id` | Per-tenant artifact storage bytes. | `StorageQuotaHigh` alert. |
+| `lenny_tenant_legal_hold_active_count` | Gauge | `tenant_id` | Active legal-hold scopes per tenant; denominator input for the checkpoint accumulation projection. | `LegalHoldCheckpointAccumulationProjectedBreach` alert. |
+| `lenny_legal_hold_checkpoint_projected_growth_bytes` | Gauge | `tenant_id`, `root_session_id` | Projected cumulative checkpoint growth (bytes) over the alert's evaluation horizon for a session held by an active legal hold; computed from the tenant's `storageQuotaBytes` headroom and the observed `lenny_checkpoint_storage_bytes_total` growth rate. | `LegalHoldCheckpointAccumulationProjectedBreach` alert. |
+| `lenny_t4_kms_probe_last_success_timestamp` | Gauge | -- | Unix timestamp of the last successful T4 KMS envelope probe from the leader-elected gateway goroutine. Freshness signal for T4 envelope encryption availability. | `T4KmsKeyUnusable` alert. |
+| `lenny_t4_kms_probe_result_total` | Counter | `outcome` (`success` \| `failure`) | Count of T4 KMS probe attempts by outcome. Non-zero `failure` increments concurrently with freshness staleness drive the fail-closed alert. | `T4KmsKeyUnusable` alert. |
 
 ---
 
@@ -423,7 +443,9 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `PostgresReplicationLag` | Sync replica lag > 1s for > 30s | Critical |
 | `GatewayNoHealthyReplicas` | Healthy replicas below the deployment size's configured minimum for > 30s | Critical |
 | `SessionStoreUnavailable` | Postgres primary unreachable for > 15s | Critical |
+| `RedisUnavailable` | `rate(lenny_quota_redis_fallback_total[2m]) > 0` sustained for > 1 min; cluster-wide Quota/Rate Limiting Redis unreachable | Critical |
 | `CheckpointStorageUnavailable` | Checkpoint upload to MinIO failed after all retries; Postgres fallback attempted | Critical |
+| `MinIOUnavailable` | `rate(lenny_artifact_upload_error_total{error_type="minio_unreachable"}[2m]) > 0` sustained for > 1 min; cluster-wide MinIO ArtifactStore unreachable | Critical |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Critical |
 | `CredentialPoolExhausted` | Any credential pool has 0 assignable credentials for > 30s | Critical |
 | `CredentialCompromised` | Revoked credential has active leases for > 30s | Critical |
@@ -445,7 +467,10 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `TokenStoreUnavailable` | `rate(lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}[1m]) > 0` sustained > 30s | Critical |
 | `LLMUpstreamEgressAnomaly` | `rate(lenny_gateway_llm_upstream_egress_anomaly_total[1m]) > 0` | Critical |
 | `ArtifactReplicationResidencyViolation` | `rate(lenny_minio_replication_residency_violation_total[5m]) > 0` — ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch, missing tag, DNS rebinding, or failed destination tag-probe. Replication for the affected region is suspended. | Critical |
+| `LegalHoldEscrowResidencyViolation` | `rate(lenny_legal_hold_escrow_region_unresolvable_total[5m]) > 0` — Phase 3.5 of tenant force-delete aborted because the resolved escrow region has no corresponding `storage.regions.<region>.legalHoldEscrow` entry, or the region's escrow KMS key / bucket endpoint is unreachable. The operator must configure the missing region-scoped escrow target before re-invoking force-delete. Fail-closed mirror of `ArtifactReplicationResidencyViolation` for the legal-hold escrow surface (CMP-054). | Critical |
+| `PlatformAuditResidencyViolation` | `rate(lenny_platform_audit_region_unresolvable_total[5m]) > 0` — A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable. The originating operation halts. The operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability) before retrying. Fail-closed mirror of `LegalHoldEscrowResidencyViolation` for the platform-tenant audit-write surface (CMP-058). | Critical |
 | `AuditRedactionReceiptMissing` | `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0` — a row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt`. | Critical |
+| `T4KmsKeyUnusable` | `time() - lenny_t4_kms_probe_last_success_timestamp > 2 * storage.t4KmsProbeInterval` — T4 envelope-encryption probe from the leader-elected gateway goroutine has not succeeded within twice its poll interval (default `storage.t4KmsProbeInterval: 300s`, min 60s). T4 writes fail closed until the KMS key is reachable again. | Critical |
 
 ### Warning alerts
 
@@ -460,6 +485,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `CheckpointStale` | `lenny_checkpoint_stale_sessions > 0` for > 60s | Warning |
 | `CheckpointDurationHigh` | P95 checkpoint duration exceeds 2.5s over 5-min window | Warning |
 | `RateLimitDegraded` | Rate limiting in fail-open mode | Warning |
+| `QuotaFailOpenCumulativeThreshold` | `max by (service_instance_id) (lenny_quota_failopen_cumulative_seconds) > 0.8 * quotaFailOpenCumulativeMaxSeconds` sustained > 60s; pre-breach warning before a replica exhausts its rolling 1-hour cumulative fail-open budget and transitions to fail-closed for quota enforcement | Warning |
+| `QuotaFailOpenUserFractionInoperative` | Emitted at gateway startup when `quotaUserFailOpenFraction >= 0.5` — the per-user fail-open fraction is so high that the control is effectively inoperative and a single runaway user can consume the tenant ceiling during a Redis outage. Configured via `quotaUserFailOpenFraction` (default `0.25`). | Warning |
 | `CertExpiryImminent` | mTLS cert expiry < 1h | Warning |
 | `ElicitationBacklogHigh` | Pending elicitations > 50 for > 30s | Warning |
 | `DelegationBudgetNearExhaustion` | Budget utilization > 90% for any tree | Warning |
@@ -467,6 +494,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `GatewaySubsystemCircuitOpen` | Any subsystem circuit breaker open for > 60s | Warning |
 | `LLMTranslationLatencyHigh` | `histogram_quantile(0.95, rate(lenny_gateway_llm_translation_duration_seconds_bucket[5m])) > 0.1` sustained > 5 min | Warning |
 | `LLMTranslationSchemaDrift` | `rate(lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}[5m]) > 0` sustained > 5 min | Warning |
+| `ExperimentIsolationRejections` | `rate(lenny_experiment_isolation_rejections_total[5m]) > 0` sustained > 2 min — runtime isolation-monotonicity fail-closed rejections from the `ExperimentRouter`. Steady-state zero because the admission-time check catches misconfiguration pre-activation. | Warning |
 | `PoolConfigDrift` | Postgres/CRD generation mismatch for > 60s | Warning |
 | `WarmPoolReplenishmentSlow` | P95 startup duration > 2x baseline for > 5 min | Warning |
 | `WarmPoolReplenishmentFailing` | Warmup failure rate > 1/min for > 5 min | Warning |
@@ -476,6 +504,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `WorkspaceSealStuck` | Seal operation retrying beyond `maxWorkspaceSealDurationSeconds` | Warning |
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `lenny_legal_hold_checkpoint_projected_growth_bytes / (storageQuotaBytes - lenny_storage_quota_bytes_used) > 0.9` — predictive alert that a legal-hold-protected session's projected checkpoint growth will consume 90% of remaining tenant storage headroom before the hold is cleared; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
 | `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
@@ -486,6 +515,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `PodStateMirrorStale` | `max by (pool) (lenny_agent_pod_state_mirror_lag_seconds) > 60` sustained > 60s | Warning |
 | `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted — `platform-admin` invoked user erase with `acknowledgeHoldOverride: true` | Warning |
 | `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted — `platform-admin` invoked tenant force-delete with `acknowledgeHoldOverride: true` | Warning |
+| `CompliancePostureDecommissioned` | `compliance.profile_decommissioned` audit event emitted — `platform-admin` invoked `POST /v1/admin/tenants/{id}/compliance-profile/decommission` to lower a regulated `complianceProfile`; generic `PUT` downgrades are rejected with `COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` | Warning |
 | `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented — the 300s in-flight gate ceiling was hit on a non-proactive rotation | Warning |
 | `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s-conservative-fallback selections (`source="postgres_null"` + `source="cache_miss_max_tier"`) exceeds 5% over 15 min | Warning |
 | `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable; node drains skip MinIO health check | Warning |

@@ -447,6 +447,8 @@ platform-admin tenant-admin
 
 Update a tenant. Requires `If-Match`. Quotas are embedded in the tenant record.
 
+`complianceProfile` is subject to a one-way ratchet ordered `none < soc2 < fedramp < hipaa` -- a request that lowers the value is rejected with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED`. For legitimate wind-down, use `POST /v1/admin/tenants/{id}/compliance-profile/decommission` (below). `workspaceTier` is similarly ratcheted (stricter only).
+
 ### DELETE /v1/admin/tenants/{id}
 {: .d-inline-block }
 platform-admin
@@ -486,6 +488,7 @@ Delete a tenant. Blocked if any non-terminal sessions, pools, or credential pool
 |:---------|:-------|:-----|:------------|
 | `POST /v1/admin/tenants/{id}/rotate-erasure-salt` | POST | platform-admin | Rotate billing pseudonymization salt |
 | `POST /v1/admin/tenants/{id}/force-delete` | POST | platform-admin | Force-delete a tenant with active legal holds. Body: `{"justification": "..."}` |
+| `POST /v1/admin/tenants/{id}/compliance-profile/decommission` | POST | platform-admin | Attested wind-down of a regulated `complianceProfile`. Sole legitimate path to lower the value (the generic `PUT` surface rejects downgrades with `COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED`). Body: `{"previousProfile": "...", "targetProfile": "...", "acknowledgeDataRemediation": true, "justification": "...", "remediationAttestations": ["..."]}`. Emits `compliance.profile_decommissioned` critical audit event and raises `CompliancePostureDecommissioned` warning alert. |
 
 ---
 
@@ -697,11 +700,55 @@ Adapters must pass this validation before receiving any traffic.
 
 ## Circuit breakers
 
+Two classes of circuit breaker are exposed via the admin API:
+
+1. **Operator-managed (platform-wide) breakers** — Redis-backed, declared and toggled by platform admins for incident response. Endpoints in the table below; see [Section 11.6](../spec/11_policy-and-controls.html#116-circuit-breakers).
+2. **SDK-warm pool breakers** — managed via `PUT /v1/admin/pools/{name}/circuit-breaker` above; see [Section 6.1](../spec/06_warm-pod-model.html#61-what-a-pre-warmed-pod-looks-like).
+
+### Operator-managed circuit breakers
+
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
 | `GET /v1/admin/circuit-breakers` | GET | platform-admin, tenant-admin | List all circuit breakers and their current state |
+| `GET /v1/admin/circuit-breakers/{name}` | GET | platform-admin, tenant-admin | Get state for a single circuit breaker |
+| `POST /v1/admin/circuit-breakers/{name}/open` | POST | platform-admin | Open (activate) a circuit breaker (see request body below) |
+| `POST /v1/admin/circuit-breakers/{name}/close` | POST | platform-admin | Close (deactivate) a circuit breaker; body is empty |
 
-Circuit breakers are managed via pool-level endpoints. See `PUT /v1/admin/pools/{name}/circuit-breaker` above.
+### POST /v1/admin/circuit-breakers/{name}/open
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Open (activate) an operator-managed circuit breaker. The admission path rejects matching requests with `CIRCUIT_BREAKER_OPEN` until the breaker is closed.
+
+Request body:
+
+```json
+{
+  "reason": "runtime degraded — upstream LLM API returning 5xx",
+  "limit_tier": "runtime",
+  "scope": { "runtime": "runtime_python_ml" }
+}
+```
+
+- `reason` (string, required) — free-text justification recorded in audit and returned in the `CIRCUIT_BREAKER_OPEN` error body of every rejected admission.
+- `limit_tier` (string, required) — one of `runtime` \| `pool` \| `connector` \| `operation_type`. Shares its closed vocabulary with the `lenny_circuit_breaker_rejections_total` metric label and the `admission.circuit_breaker_rejected` audit event.
+- `scope` (object, required) — tier-specific matcher object. The key must match the selected `limit_tier`:
+
+| `limit_tier`     | `scope` shape                                                                                      |
+|------------------|-----------------------------------------------------------------------------------------------------|
+| `runtime`        | `{ "runtime": "<runtime-name>" }`                                                                   |
+| `pool`           | `{ "pool": "<pool-name>" }`                                                                         |
+| `connector`      | `{ "connector": "<connector-identifier>" }`                                                         |
+| `operation_type` | `{ "operation_type": "uploads" \| "delegation_depth" \| "session_creation" \| "message_injection" }` |
+
+Invoking against a `{name}` that has no existing state **atomically registers and opens** the breaker with the supplied `limit_tier`/`scope`. Invoking against an existing `{name}` whose persisted `limit_tier` or `scope` differs from the request body is rejected with `INVALID_BREAKER_SCOPE` (HTTP 422) — scope is immutable across the breaker's lifecycle. To change scope, close the breaker and open a new one under a distinct `{name}`.
+
+Responses:
+- `200 OK` — breaker is open. Response body: `{ "name": "<name>", "state": "open", "reason": "...", "opened_at": "...", "opened_by_sub": "...", "opened_by_tenant_id": "...", "limit_tier": "...", "scope": {...} }` (the `opened_by_sub`/`opened_by_tenant_id` pair mirrors the Redis `cb:{name}` value shape in [Section 12.4](../spec/12_storage-architecture.html#124-redis-ha-and-failure-modes) and uses the same OIDC-subject vocabulary as the `caller_sub`/`caller_tenant_id` fields on the `admission.circuit_breaker_rejected` audit event).
+- `422 INVALID_BREAKER_SCOPE` — `limit_tier` or `scope` is missing, outside its closed vocabulary, inconsistent with the selected tier, or mismatched against the persisted scope. See [error catalog]({{ site.baseurl }}/reference/error-catalog.html#invalid_breaker_scope).
+
+Emits the `circuit_breaker.state_changed` audit event ([Section 16.7](../spec/16_observability.html#167-section-25-audit-events)).
 
 ---
 

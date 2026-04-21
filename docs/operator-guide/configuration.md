@@ -467,6 +467,79 @@ minio:
   encryption: true                      # Server-side encryption required
 ```
 
+### T4 KMS probe
+
+```yaml
+storage:
+  t4KmsProbeInterval: 300s              # Default: 300s. Minimum: 60s.
+```
+
+A leader-elected gateway goroutine continuously probes the T4 envelope-encryption KMS key at `storage.t4KmsProbeInterval` and publishes `lenny_t4_kms_probe_last_success_timestamp` / `lenny_t4_kms_probe_result_total{outcome}`. The `T4KmsKeyUnusable` Critical alert fires when `time() - last_success > 2 * t4KmsProbeInterval`, and T4 writes fail closed until the KMS key recovers. Values below the 60s minimum are rejected at startup.
+
+### Quota fail-open controls
+
+```yaml
+quotaUserFailOpenFraction: 0.25         # Default: 0.25. Range: (0, 1).
+```
+
+When Redis is unreachable and quota fail-open is active, each user may consume at most `quotaUserFailOpenFraction` of the tenant's per-second ceiling before being locally throttled. The gateway logs a startup warning and raises the `QuotaFailOpenUserFractionInoperative` alert when `quotaUserFailOpenFraction >= 0.5`, because a value that high lets a single runaway user exhaust the tenant ceiling during the outage window.
+
+### Data Residency (multi-region only)
+
+When any tenant has `dataResidencyRegion` set, the platform requires per-region storage, backup, and legal-hold escrow pipelines. Single-region deployments ignore this section and keep the default scalar settings above.
+
+```yaml
+storage:
+  regions:                              # Required when any tenant has dataResidencyRegion set
+    eu-west-1:
+      postgresEndpoint: "postgres://lenny:password@pg.eu-west-1.example.com:5432/lenny"
+      minioEndpoint:    "https://minio.eu-west-1.example.com"
+      redisEndpoint:    "rediss://:password@redis.eu-west-1.example.com:6380"
+      kmsEndpoint:      "arn:aws:kms:eu-west-1:<acct>:key/..."
+      legalHoldEscrow:
+        endpoint:     "https://escrow.minio.eu-west-1.example.com"
+        bucket:       "lenny-legal-hold-escrow-eu-west-1"
+        kmsKeyId:     "arn:aws:kms:eu-west-1:<acct>:key/..."
+        escrowKekId:  "platform:legal_hold_escrow:eu-west-1"
+    us-east-1:
+      postgresEndpoint: "postgres://lenny:password@pg.us-east-1.example.com:5432/lenny"
+      minioEndpoint:    "https://minio.us-east-1.example.com"
+      redisEndpoint:    "rediss://:password@redis.us-east-1.example.com:6380"
+      kmsEndpoint:      "arn:aws:kms:us-east-1:<acct>:key/..."
+      legalHoldEscrow:
+        endpoint:     "https://escrow.minio.us-east-1.example.com"
+        bucket:       "lenny-legal-hold-escrow-us-east-1"
+        kmsKeyId:     "arn:aws:kms:us-east-1:<acct>:key/..."
+        escrowKekId:  "platform:legal_hold_escrow:us-east-1"
+
+  # Single-region fallback used when storage.regions is empty. A single-region
+  # deployment that never sets dataResidencyRegion on any tenant uses these
+  # scalar values; the fail-closed residency gate is a no-op in that case
+  # because no residency constraint can be violated.
+  legalHoldEscrowDefault:
+    endpoint:     "https://escrow.minio.example.com"
+    bucket:       "lenny-legal-hold-escrow"
+    kmsKeyId:     "arn:aws:kms:us-east-1:<acct>:key/..."
+    escrowKekId:  "platform:legal_hold_escrow:default"
+
+backups:
+  regions:                              # Required when any tenant has dataResidencyRegion set
+    eu-west-1:
+      minioEndpoint:          "https://minio.eu-west-1.example.com"
+      kmsKeyId:               "arn:aws:kms:eu-west-1:<acct>:key/..."
+      accessCredentialSecret: "lenny-backups-eu-west-1"
+    us-east-1:
+      minioEndpoint:          "https://minio.us-east-1.example.com"
+      kmsKeyId:               "arn:aws:kms:us-east-1:<acct>:key/..."
+      accessCredentialSecret: "lenny-backups-us-east-1"
+```
+
+**Fail-closed validation.** `lenny-preflight` and `lenny-ops` startup both reject the release if any region referenced by a tenant's `dataResidencyRegion` is missing a complete `storage.regions.<region>.{postgresEndpoint, minioEndpoint, redisEndpoint, kmsEndpoint}`, a complete `storage.regions.<region>.legalHoldEscrow.{endpoint, bucket, kmsKeyId, escrowKekId}`, or a complete `backups.regions.<region>.{minioEndpoint, kmsKeyId, accessCredentialSecret}` entry. This is the install-time counterpart to the runtime fail-closed errors `REGION_CONSTRAINT_UNRESOLVABLE` (runtime writes), `BACKUP_REGION_UNRESOLVABLE` (backup pipeline), `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` (continuous replication), `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` (Phase 3.5 of tenant force-delete), and `PLATFORM_AUDIT_REGION_UNRESOLVABLE` (platform-tenant audit events referencing a regulated target tenant, CMP-058). The `postgresEndpoint` field is the same value used by runtime-tenant writes, backup-pipeline residency routing, and platform-tenant audit residency routing — configuring it once per region satisfies all three surfaces.
+
+**Legal-hold escrow residency.** The legal-hold escrow bucket, KMS key, and escrow KEK are all region-scoped: when a tenant with `dataResidencyRegion: eu-west-1` is force-deleted with active holds, Phase 3.5 resolves the region, re-encrypts held evidence under `platform:legal_hold_escrow:eu-west-1`, and writes the escrow objects to the EU-region bucket — never to a non-EU escrow bucket. A deployment that has not configured any `storage.regions.*` map uses `storage.legalHoldEscrowDefault` as the implicit single-region target, under the escrow KEK `platform:legal_hold_escrow:default`.
+
+**Platform-tenant audit residency (CMP-058).** Audit events written under the platform tenant that reference a non-platform `target_tenant_id` — `security.audit_write_rejected`, `admin.impersonation_started`/`_ended`, `gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`, `legal_hold.escrowed`, `legal_hold.escrow_released`, `compliance.profile_decommissioned` — are routed to the target tenant's regional platform-Postgres (the same `storage.regions.<region>.postgresEndpoint` used by runtime writes). The *fact* that a regulated tenant was the subject of an impersonation, an escrow migration, or a compliance decommission is itself personal data describing that tenant and must remain in its jurisdiction. In multi-region deployments, no additional configuration is required beyond the per-region `postgresEndpoint` already declared for runtime routing — the gateway reuses it. When a target tenant's `dataResidencyRegion` resolves to no `storage.regions.<region>.postgresEndpoint` or the region's platform-Postgres is unreachable at write time, the originating operation halts with `PLATFORM_AUDIT_REGION_UNRESOLVABLE` (HTTP 422, `POLICY`) and the `PlatformAuditResidencyViolation` critical alert fires — impersonation issuance, Phase 3.5 escrow ledger writes, and compliance decommission all refuse to proceed until the target region's platform-Postgres is restored.
+
 ---
 
 ## Agent Namespace Configuration
@@ -599,7 +672,8 @@ memory:
 
 - **`memory.maxMemoriesPerUser`** (default: 10,000): When a write would push a user's memory count above this limit, the oldest memories are evicted.
 - **`memory.retentionDays`** (optional): When set, the GC sweep deletes memory rows whose `created_at` exceeds the configured TTL.
-- The `MemoryStoreGrowthHigh` alert fires when any user's memory count exceeds 80% of `memory.maxMemoriesPerUser`.
+- The `MemoryStoreGrowthHigh` alert fires when `rate(lenny_memory_store_user_count_over_threshold_total[5m]) > 0` is sustained for more than 5 minutes on any `tenant_id` — i.e., any user in the tenant has crossed 80% of `memory.maxMemoriesPerUser`. Per-user attribution is surfaced via structured logs emitted alongside each counter increment; the metric itself carries no `user_id` label (forbidden as a high-cardinality metric label; see `spec/16_observability.md` §16.1.1).
+- The `MemoryStoreErasureDurationHigh` alert fires when the P99 of `lenny_memory_store_operation_duration_seconds{operation="delete_by_user"}` exceeds 60 seconds for more than 10 minutes, or when `operation="delete_by_tenant"` exceeds 300 seconds on the same window. The alert is the backend-level leading indicator of GDPR erasure-job delay and fires ahead of the job-aggregate `ErasureJobOverdue` tier deadlines (72 h for T3, 1 h for T4). Custom `MemoryStore` backends (Mem0, Zep, etc.) MUST emit both erasure-scope label values to make the alert function — see `spec/09_mcp-integration.md` §9.4 Instrumentation contract and `spec/12_storage-architecture.md` §12.8 custom-backend deployment guidance.
 
 ---
 

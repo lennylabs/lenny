@@ -82,6 +82,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `WorkspaceSealStuck` | [workspace-seal-stuck](workspace-seal-stuck.html) | `gateway` |
 | `CoordinatorHandoffSlow` | [coordinator-handoff-slow](coordinator-handoff-slow.html) | `gateway` |
 | `StorageQuotaHigh` | [storage-quota-high](storage-quota-high.html) | `objectStore` |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | [legal-hold-quota-pressure](legal-hold-quota-pressure.html) | `compliance`, `objectStore` |
 | `ErasureJobFailed` | [erasure-job-failed](erasure-job-failed.html) | `compliance` |
 | `TenantDeletionOverdue` | [tenant-deletion-overdue](tenant-deletion-overdue.html) | `compliance` |
 | `BillingStreamBackpressure` | [billing-stream-backlog](billing-stream-backlog.html) | `billing` |
@@ -124,7 +125,7 @@ When the health API (`GET /v1/admin/health`) returns `degraded` or `unhealthy` f
 | `admission` | [admission-webhook-outage](admission-webhook-outage.html) |
 | `audit` | [audit-pipeline-degraded](audit-pipeline-degraded.html), [audit-grant-drift](audit-grant-drift.html) |
 | `billing` | [billing-stream-backlog](billing-stream-backlog.html) |
-| `compliance` | [erasure-job-failed](erasure-job-failed.html), [tenant-deletion-overdue](tenant-deletion-overdue.html), [data-residency-violation](data-residency-violation.html) |
+| `compliance` | [erasure-job-failed](erasure-job-failed.html), [tenant-deletion-overdue](tenant-deletion-overdue.html), [data-residency-violation](data-residency-violation.html), [legal-hold-quota-pressure](legal-hold-quota-pressure.html) |
 | `controlPlane` | [etcd-operations](etcd-operations.html) |
 | `cluster` | [dns-outage](dns-outage.html), [network-policy-drift](network-policy-drift.html) |
 
@@ -272,6 +273,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [billing-stream-backlog](billing-stream-backlog.html)
 - [data-residency-violation](data-residency-violation.html)
 - [erasure-job-failed](erasure-job-failed.html)
+- [legal-hold-quota-pressure](legal-hold-quota-pressure.html)
 - [tenant-deletion-overdue](tenant-deletion-overdue.html)
 
 **SLO burn-rate**

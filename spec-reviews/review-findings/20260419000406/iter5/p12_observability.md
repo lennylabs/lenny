@@ -16,7 +16,7 @@
 - **Severity:** High — second instance of the iter4 OBS-023 regression pattern (runbook references undefined alert). Severity matched to OBS-031 / iter4 OBS-023.
 - **Fix options:** add a `MinIOUnavailable` row to §16.5 backed by a probe on `lenny_artifact_upload_error_total` rate (or the MinIO cluster `mc admin info` health endpoint); or rewrite §17.7 line 760 to trigger on the existing `WorkspaceSealStuck`/replication alerts with the runbook covering both paths.
 
-### OBS-033. `MemoryStoreGrowthHigh` alert referenced in §9.4 but not defined in §16.5; backing metric cardinality mismatch [Medium]
+### OBS-033. `MemoryStoreGrowthHigh` alert referenced in §9.4 but not defined in §16.5; backing metric cardinality mismatch [Medium] — **Fixed**
 
 - **Sections:** spec/09_mcp-integration.md §9.4 line 188; spec/16_observability.md §16.1 line 146, §16.5
 - **Symptom (alert):** §9.4 line 188 states "alert `MemoryStoreGrowthHigh` ([Section 16.5]...) fires when any user's memory count exceeds 80% of `memory.maxMemoriesPerUser`" but §16.5 contains no `MemoryStoreGrowthHigh` row. Iter4 OBS-023 closed exactly this pattern for other alerts; this one was not caught in the sweep.
@@ -24,6 +24,7 @@
 - **Why this matters:** The alert is a load-bearing part of the §9.4 "Retention and capacity limits" contract (operators are told this is the signal for per-user cap headroom), yet the chain metric → alert → runbook has two broken links in §16.5 and the metric schema.
 - **Severity:** Medium — a genuine gap: alert undefined and metric schema unable to back the described alert predicate. Not a runbook-level operator contract break (no §17.7 runbook keyed on it), so not High.
 - **Fix options:** define the alert in §16.5 using a sampled per-user aggregation (e.g., a `lenny_memory_store_user_count_over_threshold` counter the MemoryStore emits on writes that exceed 80%, avoiding high-cardinality labels), then change §9.4 line 188 to match. Update §16.1 line 146 description to stop promising "per user" resolution the label set cannot deliver.
+- **Resolution:** Added the `lenny_memory_store_user_count_over_threshold_total` counter (labels `tenant_id`, `backend`; no `user_id`) to §16.1 — incremented by `MemoryStore.Write` on every commit that leaves the writing user at `>= 80%` of `memory.maxMemoriesPerUser`. Defined the `MemoryStoreGrowthHigh` Warning alert in §16.5 on `sum by (tenant_id) (rate(lenny_memory_store_user_count_over_threshold_total[5m])) > 0` sustained for more than 5 minutes. Rewrote §9.4 line 188 to match the defined alert expression; tightened the §16.1 `lenny_memory_store_record_count` description to state the gauge is tenant-aggregated only and cross-reference the new counter. Extended the §9.4 instrumentation contract and the §12.8 custom-backend compliance bullet to require the new counter. Synced `docs/reference/metrics.md`, `docs/operator-guide/observability.md`, and `docs/operator-guide/configuration.md`.
 
 ### OBS-034. `MemoryStoreErasureDurationHigh` alert referenced in §12.8 but not defined in §16.5; no backing metric registered [Medium]
 

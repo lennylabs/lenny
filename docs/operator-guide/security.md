@@ -425,6 +425,8 @@ Audit events use a hash chain for tamper detection:
 | `hipaa` | SIEM required; 6-year audit retention; 6-year billing retention |
 | `none` | No additional requirements (default) |
 
+**Downgrade ratchet.** `complianceProfile` is subject to a strict one-way ratchet ordered `none < soc2 < fedramp < hipaa`. In-place lowering via `PUT /v1/admin/tenants/{id}` is rejected with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` -- the profile may be tightened but never silently loosened. This mirrors the `workspaceTier` stricter-only rule (see Data Classification below). Legitimate wind-down (e.g., contract end-of-life, tenant migration, data-surface fully remediated) uses the dedicated `POST /v1/admin/tenants/{id}/compliance-profile/decommission` endpoint: `platform-admin` scope only, with `acknowledgeDataRemediation: true` and a required `justification`, plus a free-text `remediationAttestations` list describing the data-surface steps taken (e.g., "BAA-held PHI separately erased via /v1/admin/users/{user_id}/erase jobs J-1, J-2"). The endpoint emits the critical `compliance.profile_decommissioned` audit event and raises the `CompliancePostureDecommissioned` warning alert so SIEM rules can distinguish this transition from generic tenant-update diffs.
+
 ### pgaudit Requirement
 
 For regulated compliance profiles (`soc2`, `fedramp`, `hipaa`), `audit.pgaudit.enabled` **must** be set to `true` to provide tamper-evident database audit logging. When enabled, the gateway's startup preflight check validates that the `pgaudit` extension is installed and that `pgaudit.log` includes `DDL` and `ROLE` classes. If validation fails in production mode with a regulated `complianceProfile`, the gateway refuses to start.

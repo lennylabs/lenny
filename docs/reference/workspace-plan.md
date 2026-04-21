@@ -52,7 +52,7 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
 | `pool` | string | Target pool. Defaults to the runtime's default pool. |
 | `isolationProfile` | enum | `standard` (runc, dev only) \| `sandboxed` (gVisor, default) \| `microvm` (Kata). See [§5.3 isolation profiles](https://github.com/lennylabs/lenny/blob/main/spec/05_runtime-registry-and-pool-model.md#53-isolation-profiles). |
 | `workspacePlan.schemaVersion` | integer | Schema version; the gateway validates incoming plans against the registered schema. |
-| `workspacePlan.sources` | array | Materialization sources: `inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`. |
+| `workspacePlan.sources` | array | Materialization sources: `inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`, `gitClone`. |
 | `workspacePlan.setupCommands` | array | Post-materialization setup commands with optional per-command `timeoutSeconds`. |
 | `env` | object | Environment variables injected into the session pod. Subject to the deployer-configured blocklist. |
 | `labels` | object | User-defined metadata for querying and cost attribution; indexed in the session store. |
@@ -74,6 +74,9 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
 | `uploadFile` | `path`, `uploadRef` | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`. |
 | `uploadArchive` | `pathPrefix`, `uploadRef`, `format` | Extract an uploaded archive (`tar.gz`, `zip`) under `pathPrefix`. |
 | `mkdir` | `path` | Create an empty directory (useful for output collection). |
+| `gitClone` | `url`, `ref`, `path` | Clone a Git repository at the specified ref into `path`. Optional `depth`, `submodules`, and `auth` (credential reference). The gateway resolves `ref` to a commit SHA at session-creation time and writes it back as `resolvedCommitSha` on the stored source (readable via `GET /v1/sessions/{id}`); unresolvable refs fail with `422 GIT_CLONE_REF_UNRESOLVABLE`. |
+
+**File mode (`inlineFile`, `mkdir`).** The optional `mode` field on these sources is a POSIX-style octal string matching the regex `^0[0-7]{3,4}$` (e.g., `"0644"`, `"0755"`). The setuid (`04000`) and setgid (`02000`) bits are prohibited for all source types; the sticky bit (`01000`) is accepted only on `mkdir`. Invalid values are rejected at session creation with `400 VALIDATION_ERROR`.
 
 ---
 

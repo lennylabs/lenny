@@ -141,7 +141,10 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 | `ArtifactReplicationResidencyViolation` | ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch or cross-border transfer attempt | Replication for the affected region is suspended; fix jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` |
+| `LegalHoldEscrowResidencyViolation` | Phase 3.5 of a tenant force-delete aborted because the resolved escrow region has no `storage.regions.<region>.legalHoldEscrow` entry, or the region's escrow KMS key / bucket endpoint is unreachable (CMP-054) | Configure the missing region-scoped escrow target (Helm values) and re-invoke `POST /v1/admin/tenants/{id}/force-delete` |
+| `PlatformAuditResidencyViolation` | A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable (CMP-058) | Configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability); the originating operation will succeed once audit can commit |
 | `AuditRedactionReceiptMissing` | Row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt` | Investigate orphaned GDPR redaction vs. genuine tamper; escalate as compliance incident if no receipt |
+| `T4KmsKeyUnusable` | Leader-elected T4 KMS probe has not succeeded within `2 * storage.t4KmsProbeInterval` (default interval 300s, min 60s); T4 envelope-encryption writes fail closed | Restore KMS reachability for the configured T4 key; T4 writes remain rejected until `lenny_t4_kms_probe_last_success_timestamp` is fresh again |
 
 ### Warning Alerts
 
@@ -158,12 +161,14 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `CircuitBreakerActive` | Any breaker open > 5 min | Review affected subsystem |
 | `LLMTranslationLatencyHigh` | P95 `lenny_gateway_llm_translation_duration_seconds` > 100 ms sustained 5 min | Investigate gateway translator regression or payload-size change |
 | `LLMTranslationSchemaDrift` | `lenny_gateway_llm_translation_errors_total{error_type="schema_mismatch"}` rate > 0 sustained 5 min | Investigate runtime/SDK request drift or upstream provider response schema change |
+| `ExperimentIsolationRejections` | `lenny_experiment_isolation_rejections_total` rate > 0 sustained 2 min | Re-validate every active experiment's variant pool `isolationProfile` against the strictest enrolled session `minIsolationProfile`; re-provision weaker pools or deactivate the experiment for the affected traffic class |
 | `StorageQuotaHigh` | Tenant storage > 80% of quota | Cleanup or increase quota |
 | `CredentialProactiveRenewalExhausted` | All proactive renewal retries exhausted before expiry | Session falls through to standard fallback flow |
 | `GatewayActiveStreamsHigh` | Active streams per replica > 80% of configured max | Approaching stream proxy capacity; review scaling |
 | `ErasureJobFailed` | User-level erasure job failed | User's `processing_restricted` flag remains set; retry job |
 | `ErasureJobOverdue` | Erasure job exceeded the data classification's deadline (72h for T3, 1h for T4) | Requires operator investigation |
-| `MemoryStoreGrowthHigh` | User memory count > 80% of `memory.maxMemoriesPerUser` | Review retention policy or increase limit |
+| `MemoryStoreGrowthHigh` | `rate(lenny_memory_store_user_count_over_threshold_total[5m]) > 0` sustained 5 min (any user in the tenant is at >= 80% of `memory.maxMemoriesPerUser`) | Review retention policy or increase limit |
+| `MemoryStoreErasureDurationHigh` | P99 of `lenny_memory_store_operation_duration_seconds{operation="delete_by_user"}` > 60s sustained 10 min, OR P99 with `operation="delete_by_tenant"` > 300s. Whole-scope erasure calls invoked by the GDPR erasure job are breaching per-backend SLO. | Investigate backend health, vector-index contention, or shard connectivity before `ErasureJobOverdue` fires on the aggregate job clock. Custom `MemoryStore` backends must emit the two erasure labels; see operator-guide backend contract. |
 | `EtcdQuotaNearLimit` | etcd database size > 80% of `--quota-backend-bytes` | Defragment or increase quota before alarm state |
 | `EtcdWriteLatencyHigh` | P99 etcd WAL fsync latency > 25 ms for > 2 min | Leading indicator of etcd saturation; consider dedicated cluster |
 | `ControllerWorkQueueDepthHigh` | Work queue depth > 50% of configured max for > 2 min | Controller reconciliation backlog; check CPU throttling |
@@ -175,10 +180,25 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `PodStateMirrorStale` | `lenny_agent_pod_state_mirror_lag_seconds > 60` sustained > 60s | WarmPoolController is not writing state transitions; Postgres-backed pod claim fallback is disabled for any pool whose lag exceeds `podClaimFallbackMaxMirrorLagSeconds` |
 | `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted | `platform-admin` bypassed DeleteByUser legal-hold preflight with `acknowledgeHoldOverride: true`; compliance review required |
 | `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted | `platform-admin` bypassed tenant-delete Phase 3.5 legal-hold gate; Phase 3.5 re-encrypted held evidence to escrow; compliance review required |
+| `CompliancePostureDecommissioned` | `compliance.profile_decommissioned` audit event emitted | `platform-admin` lowered a regulated `complianceProfile` via `POST /v1/admin/tenants/{id}/compliance-profile/decommission`; generic `PUT` downgrades are blocked by the one-way ratchet; review `justification` and `remediation_attestations` |
 | `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented | 300s in-flight gate ceiling hit during a non-proactive rotation; runtime may have failed to emit `llm_request_completed` |
 | `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s conservative-fallback selections exceeds 5% over 15 min | Indicates preStop Stage 2 regularly falling through to the conservative cap; correlate with Postgres outage or cold handoff cache |
 | `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable | Node drains will not check MinIO health before pod eviction |
 | `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any replica | AdmissionController's circuit-breaker cache has not refreshed from Redis; admission decisions served against stale state; correlate with Redis unreachability |
+| `QuotaFailOpenCumulativeThreshold` | `max by (service_instance_id) (lenny_quota_failopen_cumulative_seconds) > 0.8 * quotaFailOpenCumulativeMaxSeconds` sustained > 60s | Pre-breach warning before a replica exhausts its rolling 1-hour cumulative fail-open budget (default 300s) and transitions to fail-closed for quota enforcement; escalate the underlying Redis outage, tune `quotaFailOpenCumulativeMaxSeconds` per financial-risk exposure, or adjust `quotaPerReplicaHardCap` before fail-closed shutters new session creation |
+| `QuotaFailOpenUserFractionInoperative` | Gateway startup warning emitted when `quotaUserFailOpenFraction >= 0.5` (default `0.25`) | Lower `quotaUserFailOpenFraction` below 0.5 to keep the per-user fail-open cap meaningful; values at or above 0.5 let a single runaway user consume the tenant ceiling during a Redis outage |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `lenny_legal_hold_checkpoint_projected_growth_bytes / (storageQuotaBytes - lenny_storage_quota_bytes_used) > 0.9` — predictive projection that a legal-hold-protected session's checkpoint growth will consume 90% of remaining tenant storage headroom before the hold is cleared | Follow [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html): coordinate with compliance to clear or narrow the hold, raise the tenant's `storageQuotaBytes`, or route the affected session to a pool with tighter `workspaceSizeLimitBytes` |
+
+---
+
+## Operational and audit events
+
+Beyond alert-firing metrics, the gateway emits CloudEvents-wrapped operational events for admission-time advisory checks and security-salient state transitions. These flow through the same Redis-backed event stream as the session-lifecycle events and the `callbackUrl` webhook. See SPEC §16.6 (operational events) and §16.7 (audit events) for full envelope shape.
+
+| Event | Severity | When | Key payload fields |
+|---|---|---|---|
+| `experiment.variant_weaker_than_tenant_floor` | Warning | Admission-time tenant-floor advisory check (experiment create/update, including `?dryRun=true`) detects a variant pool whose resolved `isolationProfile` is weaker than the tenant-level `minIsolationProfile` floor. The experiment is still creatable — but sessions whose resolved `minIsolationProfile` lands at the tenant floor will be rejected at routing time with `VARIANT_ISOLATION_UNAVAILABLE`. One event per offending variant per admission call. | `tenant_id`, `experiment_id`, `variant_id`, `variant_pool_isolation`, `tenant_floor`, `actor_sub`, `emitted_at` |
+| `circuit_breaker.state_changed` | Audit | Every operator-managed circuit-breaker state transition via `POST /v1/admin/circuit-breakers/{name}/open` or `.../close`. Not sampled — one row per admin action. Written through the standard append-only audit path. | `circuit_name`, `old_state`, `new_state`, `reason`, `limit_tier`, `scope`, `operator_sub`, `operator_tenant_id`, `timestamp` |
 
 ---
 

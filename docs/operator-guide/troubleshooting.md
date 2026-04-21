@@ -250,10 +250,24 @@ Operator-managed circuit breakers are Redis-backed and propagate across all gate
 # List all circuit breakers
 lenny-ctl admin circuit-breakers list
 
-# Open a circuit breaker (rejects requests platform-wide)
-lenny-ctl admin circuit-breakers open <name>
+# Open a circuit breaker (rejects matching admission requests platform-wide).
+# --limit-tier + --scope declare what the breaker matches against (see §11.6).
+# Scope is immutable across the breaker's lifecycle — to change it, close the
+# breaker and open a new one under a different name.
+lenny-ctl admin circuit-breakers open <name> \
+  --limit-tier runtime \
+  --scope runtime=runtime_python_ml \
+  --reason "runtime degraded — upstream 5xx"
 
-# Close a circuit breaker
+# operation_type values come from the closed set:
+#   uploads | delegation_depth | session_creation | message_injection
+lenny-ctl admin circuit-breakers open uploads-paused \
+  --limit-tier operation_type \
+  --scope operation_type=uploads \
+  --reason "storage provider incident INC-123"
+
+# Close a circuit breaker (body is empty; persisted scope is retained across
+# open→closed→open cycles for the same name).
 lenny-ctl admin circuit-breakers close <name>
 ```
 

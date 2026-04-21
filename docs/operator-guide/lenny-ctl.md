@@ -41,7 +41,7 @@ If you're already familiar with `lenny-ctl`, this is what you'll reach for most:
 |:-----|:--------|
 | Revoke a compromised credential | `lenny-ctl admin credential-pools revoke-credential --pool <p> --credential <id> --reason "<why>"` |
 | Force-terminate a runaway session | `lenny-ctl admin sessions terminate <session-id> --reason "<why>"` |
-| Open a circuit breaker for a failing dependency | `lenny-ctl admin circuit-breakers open <subsystem>` |
+| Open a circuit breaker for a failing dependency | `lenny-ctl admin circuit-breakers open <name> --limit-tier <tier> --scope <key>=<value> --reason <text>` |
 | Close a circuit breaker after recovery | `lenny-ctl admin circuit-breakers close <subsystem>` |
 | Reconcile orphaned sandboxes | `lenny-ctl admin sandboxes reconcile` |
 | Raise a human escalation with pre-filled context | `lenny-ctl escalations create --alert <name> --step <n>` |
@@ -242,7 +242,7 @@ lenny-ctl preflight --config values.yaml \
 | Command | Description | Min Role |
 |---|---|---|
 | `lenny-ctl admin circuit-breakers list` | List all circuit breakers and state | `platform-admin` |
-| `lenny-ctl admin circuit-breakers open <name>` | Open a circuit breaker (platform-wide) | `platform-admin` |
+| `lenny-ctl admin circuit-breakers open <name> --limit-tier <tier> --scope <key>=<value> --reason <text>` | Open a circuit breaker (platform-wide). `--limit-tier` is one of `runtime`, `pool`, `connector`, `operation_type`; `--scope` key must match the tier (e.g., `--limit-tier runtime --scope runtime=runtime_python_ml`). `operation_type` values are drawn from the closed set `uploads`, `delegation_depth`, `session_creation`, `message_injection`. Scope is immutable across a breaker's lifecycle. | `platform-admin` |
 | `lenny-ctl admin circuit-breakers close <name>` | Close a circuit breaker | `platform-admin` |
 
 ---
@@ -398,8 +398,12 @@ lenny-ctl admin credential-pools remove-credential \
 ### Emergency Response
 
 ```bash
-# Open circuit breaker to stop all traffic
-lenny-ctl admin circuit-breakers open session-creation
+# Open a breaker that rejects all session creation platform-wide.
+# limit-tier/scope map the breaker onto the canonical admission dimensions.
+lenny-ctl admin circuit-breakers open session-creation \
+  --limit-tier operation_type \
+  --scope operation_type=session_creation \
+  --reason "incident triage — stop new session intake"
 
 # Investigate
 lenny-ctl admin sessions get <problematic-session-id>
@@ -407,7 +411,7 @@ lenny-ctl admin sessions get <problematic-session-id>
 # Force terminate stuck sessions
 lenny-ctl admin sessions force-terminate <session-id>
 
-# Close circuit breaker to resume
+# Close circuit breaker to resume (body is empty; scope persists across cycles)
 lenny-ctl admin circuit-breakers close session-creation
 ```
 
