@@ -500,7 +500,7 @@ The `CredentialRouter` interface supports cost-aware, latency-based, and intent-
 
 A **connector** is an external tool or agent registered via the admin API. Connectors are the mechanism by which agents running on Lenny access external services: both tool servers (GitHub, Jira, Slack) and external agents hosted outside the platform.
 
-In v1, connectors use MCP (Streamable HTTP) as the transport protocol. Post-v1, connectors will also support A2A (Agent-to-Agent) and Agent Protocol transports, allowing Lenny agents to delegate to external agents over their native protocols without requiring those agents to run on Lenny.
+Connectors use MCP (Streamable HTTP) as the transport protocol. Post-v1, connectors will also support A2A (Agent-to-Agent) and Agent Protocol transports, allowing Lenny agents to delegate to external agents over their native protocols without requiring those agents to run on Lenny.
 
 The gateway manages the full OAuth2 lifecycle for connectors: it handles authorization flows, stores refresh tokens encrypted via KMS (envelope encryption), and caches short-lived access tokens in Redis. Pods never see raw connector tokens; the gateway proxies all calls on behalf of the agent.
 

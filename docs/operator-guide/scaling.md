@@ -26,7 +26,7 @@ Lenny defines four T-shirt deployment sizes that determine infrastructure sizing
 
 **Size progression:**
 
-- **Starter through Scale** are achievable with the v1 architecture by scaling replica counts, instance sizes, and data store topology.
+- **Starter through Scale** are achievable with the standard architecture by scaling replica counts, instance sizes, and data store topology.
 - **Platform** requires swapping one or more scaling extension interfaces to their high-scale implementations (e.g., `PostgresPodRegistry` replacing `CRDPodRegistry`).
 
 ---

@@ -18,7 +18,7 @@ The `OpenAICompletionsAdapter` accepts the OpenAI Chat Completions wire format. 
 | **Adapter** | `OpenAICompletionsAdapter` |
 | **Path prefix** | `/v1/chat/completions` (completions endpoint), `/v1/models` (model list) |
 | **Protocol** | OpenAI Chat Completions (streaming and non-streaming) |
-| **Status** | V1 (built-in, always available) |
+| **Status** | Built-in, always available |
 
 The adapter translates between OpenAI's Chat Completions wire format and Lenny's internal session lifecycle. Each completions request creates a Lenny session, runs it to completion (or streams output), and returns the result in standard OpenAI format.
 

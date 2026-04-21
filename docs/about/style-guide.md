@@ -36,7 +36,7 @@ When writing or reviewing docs:
 
 **Voice.** Direct, second-person (`you`), active. Avoid hedging (`might`, `may`, `could`) unless the behavior is genuinely optional or version-dependent.
 
-**Tense.** Present tense for what the v1 platform does (assume v1 is fully built for doc purposes — we use finalized docs for spec-driven development). Future tense is reserved for explicitly planned work ("v1.1 will add …") and for "Status: Planned" tutorial stubs.
+**Tense.** Present tense for what the platform does (assume the spec is fully built for doc purposes — we use finalized docs for spec-driven development). Future tense is reserved for items the spec explicitly labels post-v1 and for "Status: Planned" tutorial stubs.
 
 **Person.**
 

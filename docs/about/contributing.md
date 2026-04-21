@@ -20,7 +20,7 @@ nav_order: 3
 
 ## Project status
 
-Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The public API surface described throughout these docs is the v1 target; the [Implementation Status](status) page tracks what's wired up today.
+Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The public API surface described throughout these docs reflects the spec; the [Implementation Status](status) page tracks what's wired up today.
 
 ### Where to plug in right now
 
@@ -227,13 +227,13 @@ Community members can propose ADRs via the Discussions forum. The maintainer (or
 
 A community runtime registry, where runtime authors publish versioned adapter packages for operator discovery and installation, is planned as a post-v1 platform service.
 
-In v1, runtime adapters are distributed via:
+Runtime adapters are distributed via:
 
 - Standard Go module hosting
 - Container registries (Docker Hub, GitHub Container Registry, private registries)
 - Helm chart repositories
 
-The runtime adapter specification defines the interface contract for v1 adapter distribution. The registry will build on this contract to add discoverability, versioning, and compatibility metadata.
+The runtime adapter specification defines the interface contract for adapter distribution. The registry will build on this contract to add discoverability, versioning, and compatibility metadata.
 
 ---
 

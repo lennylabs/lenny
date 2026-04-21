@@ -28,9 +28,9 @@ runtimes. There's no custom scheduler, no external control plane, and no outboun
 
 {: .note }
 
-> **Status: design phase.** The specification is complete and drives implementation under a spec- and test-driven workflow. These docs describe the v1 surface; see [Implementation Status](about/status) for what's wired up today. Design feedback is welcome right now — open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
+> **Status: design phase.** The specification is complete and drives implementation under a spec- and test-driven workflow. These docs describe the platform as specified; see [Implementation Status](about/status) for what's wired up today. Design feedback is welcome right now — open an [issue](https://github.com/lennylabs/lenny/issues) or a [discussion](https://github.com/lennylabs/lenny/discussions).
 >
-> **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
+> **Lenny is unusually ambitious for its stage.** The surface area is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
 
 ---
 

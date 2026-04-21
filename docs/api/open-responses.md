@@ -18,7 +18,7 @@ The `OpenResponsesAdapter` provides support for the **Open Responses** specifica
 | **Adapter** | `OpenResponsesAdapter` |
 | **Path prefix** | `/v1/responses` |
 | **Protocol** | Open Responses Specification |
-| **Status** | V1 (built-in, always available) |
+| **Status** | Built-in, always available |
 
 ### What is Open Responses?
 

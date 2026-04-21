@@ -176,7 +176,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 
 ## EventBus / CloudEvents transport
 
-Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`RedisEventBus` is the v1 implementation). `type` values follow `dev.lenny.<short_name>`.
+Inter-subsystem events use a CloudEvents v1.0.2 envelope over Redis pub/sub (`RedisEventBus` is the shipped implementation). `type` values follow `dev.lenny.<short_name>`.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
@@ -426,4 +426,4 @@ Four webhooks are unconditionally rendered and always expected regardless of fla
 | LLM proxy concurrent streams | 50 | 500 | 5,000 | 50,000 |
 | `maxSessionsPerReplica` | 50 | 200 | 400 | 400 |
 
-Starter through Scale sizes are achievable with horizontal scaling of v1 components. Platform size requires swapping scaling extension interfaces (PostgresPodRegistry, multi-shard StoreRouter, durable EventBus).
+Starter through Scale sizes are achievable with horizontal scaling of the standard platform components. Platform size requires swapping scaling extension interfaces (PostgresPodRegistry, multi-shard StoreRouter, durable EventBus).

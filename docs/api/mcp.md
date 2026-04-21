@@ -461,7 +461,7 @@ Send a message to a running or suspended session. This is the unified message de
 | `message` | string | Yes | Message content to send |
 | `delivery` | string | No | `"immediate"` (interrupt and deliver) or `"queued"` (buffer for next pause). Default: `"queued"`. |
 | `inReplyTo` | string | No | Message ID this is replying to. If it matches an outstanding `request_input`, resolves that call directly. |
-| `threadId` | string | No | Thread identifier (v1: one implicit thread per session) |
+| `threadId` | string | No | Thread identifier (one implicit thread per session; multi-thread support is post-v1 — see [Spec §21.4](https://github.com/lennylabs/lenny/blob/main/spec/21_planned-post-v1.md)) |
 
 **Output schema:**
 

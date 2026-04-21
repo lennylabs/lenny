@@ -19,9 +19,9 @@ Side-by-side analysis of Lenny against other platforms in the agent infrastructu
 </details>
 
 {: .note }
-> **Status: design phase.** This page compares Lenny's v1 target surface against shipping competitors. See [Implementation Status](status) for what's wired up in Lenny today.
+> **Status: design phase.** This page compares Lenny's design against shipping competitors. See [Implementation Status](status) for what's wired up in Lenny today.
 >
-> **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
+> **Lenny is unusually ambitious for its stage.** The surface area is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
 
 ---
 
@@ -33,7 +33,7 @@ Pick Lenny when **all** of the following apply; otherwise jump to the detailed c
 - [ ] You need **more than a sandbox** — session lifecycle, streaming, delegation with per-hop budgets, credential leasing, audit.
 - [ ] You want a **runtime-agnostic** contract so different teams can bring their own agents/frameworks behind one gateway.
 - [ ] You need enterprise controls out of the box: multi-tenancy, RBAC, audit log, GDPR-style erasure, data residency.
-- [ ] You do **not** need GPU workloads in v1.
+- [ ] You do **not** need GPU workloads (Lenny has no GPU support).
 
 If two or more boxes are unchecked, read the specific alternative below — you likely want something more specialized (E2B/Daytona for pure sandbox, Temporal for durable workflows, Modal for GPU, LangGraph for framework-coupled orchestration).
 
@@ -45,9 +45,9 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | Just need a sandbox | [Lenny vs E2B](#lenny-vs-e2b), [Lenny vs Daytona](#lenny-vs-daytona), or [Lenny vs Alibaba OpenSandbox](#lenny-vs-alibaba-opensandbox) |
 | Framework-coupled is fine | [Lenny vs LangGraph / LangSmith](#lenny-vs-langgraph--langsmith) |
 | Need durable workflows | [Lenny vs Temporal](#lenny-vs-temporal) |
-| Need GPU in v1 | [Lenny vs Modal](#lenny-vs-modal) |
+| Need GPU support | [Lenny vs Modal](#lenny-vs-modal) |
 | Don't care about delegation | [Lenny vs E2B](#lenny-vs-e2b) or [Lenny vs Daytona](#lenny-vs-daytona) |
-| Computer-use / GUI agents | [Lenny vs Alibaba OpenSandbox](#lenny-vs-alibaba-opensandbox) — Lenny has no GUI path in v1 |
+| Computer-use / GUI agents | [Lenny vs Alibaba OpenSandbox](#lenny-vs-alibaba-opensandbox) — Lenny has no GUI path |
 | Multi-agent research prototyping, not production | [Lenny vs Google Scion](#lenny-vs-google-scion) |
 | Single-developer policy sandbox | [Lenny vs NVIDIA OpenShell](#lenny-vs-nvidia-openshell) |
 
@@ -72,7 +72,7 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | **Compliance (GDPR/legal)**| Erasure, legal holds, data residency       | No                      | No                        | No                          | No                       | No                          | Basic                            |
 | **Guardrails/interceptors**| Pluggable gRPC interceptor chain (12 phases) | No                   | No                        | No                          | No                       | No                          | LangSmith guardrails             |
 | **Cold-start**             | P95 <2s runc, <5s gVisor (session-ready)   | ~150ms (container boot) | Sub-90ms (container boot) | ~300ms (checkpoint/restore) | N/A (persistent workers) | Sub-second (container boot) | N/A (persistent)                |
-| **GPU support**            | Not in v1                                  | Limited                 | Limited                   | No                          | No                       | Yes (primary use case)      | No                              |
+| **GPU support**            | No                                         | Limited                 | Limited                   | No                          | No                       | Yes (primary use case)      | No                              |
 | **Isolation profiles**     | runc / gVisor / Kata                       | Firecracker microVM     | Container                 | Firecracker microVM         | Process-level            | Container                   | Process-level                   |
 | **Semantic cache**         | Pluggable interface on credential pools (Section 4.9) | No                      | No                        | No                          | No                       | No                          | No                              |
 
@@ -220,7 +220,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 
 ### Where Modal has advantages
 
-- **GPU support.** Modal provides GPU instances with fast cold starts -- essential for inference workloads. Lenny v1 has no GPU support.
+- **GPU support.** Modal provides GPU instances with fast cold starts -- essential for inference workloads. Lenny has no GPU support.
 - **Simpler for batch inference.** If your use case is running inference functions without interactive sessions, Modal has less overhead.
 - **Sub-second cold starts.** Modal's container snapshots provide fast startup without pre-warming.
 - **Python-native.** Modal's SDK is Python-first with decorators for function definition.
@@ -321,7 +321,7 @@ Lenny matches Scion on the things that look like advantages at first glance: the
 
 ### Where OpenSandbox has advantages
 
-- **GUI / computer-use agents.** First-class VNC desktops, Chromium with DevTools, and code-server (VS Code Web) inside the sandbox make it the better choice today for browser-using and computer-use agents. Lenny v1 does not target this.
+- **GUI / computer-use agents.** First-class VNC desktops, Chromium with DevTools, and code-server (VS Code Web) inside the sandbox make it the better choice today for browser-using and computer-use agents. Lenny does not target this.
 - **SDK breadth.** Official SDKs for Python, Java/Kotlin, JavaScript/TypeScript, C#/.NET, and Go — broader than Lenny's Go + TypeScript client surface.
 - **Simpler data model.** One sandbox = one object with lifecycle + exec + file APIs. Lower cognitive load if you don't need sessions, delegation, or multi-tenancy.
 - **No framework coupling.** Shares Lenny's goal of being framework-independent; easier to drop into an existing Python codebase than a Kubernetes platform.
@@ -349,7 +349,7 @@ Lenny's design matches these requirements:
 
 Lenny is not a fit when:
 
-- You need GPU support (not in v1).
+- You need GPU support.
 - You do not have Kubernetes infrastructure and prefer a hosted solution.
 - You are building within the LangChain ecosystem and want tight framework integration.
 - You need a minimal sandbox without orchestration features.

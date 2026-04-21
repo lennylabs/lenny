@@ -78,7 +78,7 @@ Check the upstream IdP event log for the suspect `sub`(s) — sign-in anomalies,
 If the dominant `sub` is a legitimate automation:
 
 1. Contact the operator of that caller to fix the retry loop (exponential back-off, circuit breaker).
-2. Lenny v1 does not expose a per-subject rate-limit override; per-caller limits (10/s, 300/min) are platform-wide.
+2. Lenny does not expose a per-subject rate-limit override; per-caller limits (10/s, 300/min) are platform-wide.
 3. The only tenant-scoped tunable is `oauth.rateLimit.tenantPerSecond` in Helm values — use sparingly, as it affects all callers in the tenant.
 
 ### Step 2 — Hostile caller

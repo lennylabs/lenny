@@ -18,9 +18,9 @@ nav_order: 1
 
 {: .note }
 
-> **Status: design phase.** These docs describe the v1 target surface. See [Implementation Status](status) for what's wired up today.
+> **Status: design phase.** These docs describe the platform as specified. See [Implementation Status](status) for what's wired up today.
 >
-> **Lenny v1 is unusually ambitious for its stage.** The v1 surface is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
+> **Lenny is unusually ambitious for its stage.** The surface area is broader than a traditional early-stage OSS project would attempt. That's deliberate: with AI assistance, it's feasible to write a detailed spec and documentation up front and drive the implementation from them — an approach that wasn't realistic before. The project is still early stage; expect changes as feedback arrives.
 
 ---
 

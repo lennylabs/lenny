@@ -387,7 +387,7 @@ After `maxTasksPerPod` tasks or when `maxPodUptimeSeconds` is exceeded, the pod 
 
 Multiple tasks run simultaneously on a single pod. Your runtime must implement a **dispatch loop keyed on `slotId`** --- all binary protocol messages (inbound and outbound) carry a `slotId` field in this mode. Each slot gets its own workspace under `/workspace/slots/{slotId}/current/`. Your runtime must NOT assume a global `/workspace/current` path.
 
-Cross-slot isolation is process-level and filesystem-level only --- explicitly weaker than session mode. CPU and memory are shared across slots (no per-slot cgroup subdivision in v1).
+Cross-slot isolation is process-level and filesystem-level only --- explicitly weaker than session mode. CPU and memory are shared across slots (no per-slot cgroup subdivision).
 
 `preConnect` is incompatible with concurrent-workspace mode. The pool controller rejects pool definitions that combine `executionMode: concurrent`, `concurrencyStyle: workspace`, and `capabilities.preConnect: true`.
 
