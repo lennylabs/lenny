@@ -159,6 +159,7 @@ You assess Lenny for isolation, audit, and regulatory fit.
 ## Quick links
 
 - [Quickstart -- `lenny up` in 5 minutes](/lenny/getting-started/){: .btn .btn-outline }
+- [Core Concepts](/lenny/getting-started/concepts){: .btn .btn-outline }
 - [Reference Runtime Catalog](/lenny/reference/){: .btn .btn-outline }
 - [API Reference](/lenny/api/){: .btn .btn-outline }
 - [GitHub](https://github.com/lennylabs/lenny){: .btn .btn-outline }
