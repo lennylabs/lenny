@@ -85,9 +85,7 @@ Every capability on this page is specified in [`spec/`](https://github.com/lenny
 
 Decide if it fits. Start with `lenny up` and the comparison guide.
 
-{: .text-purple-300 }
-
-[Quickstart](/lenny/getting-started/){: .btn .btn-outline }
+[Quickstart](/lenny/getting-started/){: .btn .btn-purple }
 [About](/lenny/about/){: .btn }
 
 </div>
@@ -98,9 +96,7 @@ Decide if it fits. Start with `lenny up` and the comparison guide.
 
 You call Lenny from an app, a script, or an MCP host.
 
-{: .text-purple-300 }
-
-[Client Guide](/lenny/client-guide/){: .btn .btn-green }
+[Client Guide](/lenny/client-guide/){: .btn .btn-purple }
 
 </div>
 
@@ -110,9 +106,7 @@ You call Lenny from an app, a script, or an MCP host.
 
 You are bringing your own agent binary or adapter.
 
-{: .text-purple-300 }
-
-[Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-blue }
+[Runtime Author Guide](/lenny/runtime-author-guide/){: .btn .btn-purple }
 
 </div>
 
@@ -121,8 +115,6 @@ You are bringing your own agent binary or adapter.
 ### Operate Lenny on a cluster
 
 You install, configure, and scale the platform.
-
-{: .text-purple-300 }
 
 [Operator Guide](/lenny/operator-guide/){: .btn .btn-purple }
 
@@ -134,8 +126,6 @@ You install, configure, and scale the platform.
 
 You are on-call. `lenny-ops`, doctor, runbooks, alerts.
 
-{: .text-purple-300 }
-
 [Agent Operability](/lenny/operator-guide/agent-operability){: .btn .btn-purple }
 
 </div>
@@ -146,9 +136,7 @@ You are on-call. `lenny-ops`, doctor, runbooks, alerts.
 
 You assess Lenny for isolation, audit, and regulatory fit.
 
-{: .text-purple-300 }
-
-[Security Principles](/lenny/operator-guide/security-principles){: .btn }
+[Security Principles](/lenny/operator-guide/security-principles){: .btn .btn-purple }
 
 </div>
 
