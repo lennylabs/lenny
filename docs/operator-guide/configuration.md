@@ -519,6 +519,22 @@ helm upgrade lenny ./chart \
 
 After the upgrade, the phase-stamp still records `features.compliance.enabled=true`, the `lenny-data-residency-validator` and `lenny-t4-node-isolation` webhooks (the two that `features.compliance` gates per SPEC §17.2 Feature-gated chart inventory) are no longer rendered, and the `AdmissionPlaneFeatureFlagDowngrade` alert fires Warning. Operators MUST either re-enable `features.compliance=true` or reset the phase-stamp ConfigMap (as described above) to clear the alert. Note the flag-to-webhook mapping: `features.llmProxy` gates `lenny-direct-mode-isolation`; `features.drainReadiness` gates `lenny-drain-readiness`; `features.compliance` gates `lenny-data-residency-validator` and `lenny-t4-node-isolation` (two webhooks, both removed when the flag flips to `false`).
 
+### Elicitation content integrity floor
+
+```yaml
+security:
+  elicitationContentIntegrity:
+    floor: off                            # Default: off. One of: off | detect-only | enforce.
+```
+
+The gateway binds elicitation display text to its originating pod by recording the canonical `{message, schema}` pair at `lenny/request_elicitation` time and comparing its SHA-256 digest against every forward-hop `elicitation/create` re-emission (SPEC §9.2 gateway-origin-binding invariant). Whether a divergence is rejected, recorded-and-forwarded, or ignored is governed per tenant by the `elicitationContentIntegrityEnforcement` mode (three values: `enforce`, `detect-only`, `off`; tenants default to `enforce`), clamped from below by this platform-level floor. The gateway computes every tenant's effective mode as `max(platform_floor, tenant_stored_mode)` under ordering `off < detect-only < enforce`. The floor is the platform operator's lever to ensure that no tenant operates below a minimum integrity posture, regardless of per-tenant configuration.
+
+The floor value is rendered into the `lenny-deployment-phase-stamp` ConfigMap (same ConfigMap that holds the feature-flag keys) under the key `security.elicitationContentIntegrity.floor`. Unlike the feature-flag keys on that ConfigMap — whose write semantics are strictly append-only — the floor key is rewritten on every render; raising or lowering the floor is an ordinary, operator-audited posture change rather than a phase downgrade. Each floor transition emits a `platform.elicitation_content_integrity_floor_changed` audit event (SPEC §16.7) recording the previous and new floor, the operator's OIDC `sub`, and a count of tenants whose effective mode was raised by the change. A floor change that raises the effective mode for one or more tenants also emits one `tenant.elicitation_content_integrity_floor_clamp` audit event per affected tenant, so the full fanout is traceable.
+
+The `ElicitationContentIntegrityWeakened` warning alert fires continuously whenever any active tenant's effective mode is weaker than `enforce` (see `docs/reference/metrics.md`). This is the steady-state signal that the deployment is operating below the maximum-integrity posture — operators who raised the floor to `enforce` AND ensured every tenant's stored mode is also `enforce` will see this alert resolve. The companion `ElicitationContentIntegrityPermissiveTamper` alert is orthogonal: it fires only on an actual `detect-only` divergence, whereas `ElicitationContentIntegrityWeakened` fires on the standing configuration alone.
+
+**Typical values.** For non-regulated deployments, `floor: off` (default) leaves per-tenant control authoritative. For regulated or security-sensitive deployments, `floor: detect-only` as a pre-enforcement canary (with `ElicitationContentIntegrityPermissiveTamper` as the actionable signal) or `floor: enforce` as the production posture are both reasonable. Setting `floor: enforce` has the effect that every tenant's effective mode is `enforce` regardless of their stored value — use this to lock in a platform-wide integrity guarantee.
+
 ### Data Residency (multi-region only)
 
 When any tenant has `dataResidencyRegion` set, the platform requires per-region storage, backup, and legal-hold escrow pipelines. Single-region deployments ignore this section and keep the default scalar settings above.

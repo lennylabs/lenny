@@ -466,6 +466,15 @@ Delete a tenant. Blocked if any non-terminal sessions, pools, or credential pool
 | `GET /v1/admin/tenants/{id}/rbac-config` | GET | platform-admin, tenant-admin | Get tenant RBAC configuration |
 | `GET /v1/admin/tenants/{id}/access-report` | GET | platform-admin, tenant-admin | Cross-environment access matrix |
 
+### Elicitation content integrity enforcement
+
+Tenants carry a three-mode configuration for the gateway-origin-binding invariant that protects elicitation text from being rewritten by forwarding pods. Modes are `enforce` (default; any `{message, schema}` divergence rejected with `ELICITATION_CONTENT_TAMPERED`), `detect-only` (divergence recorded and alerted but forwarded as received — intended as a pre-enforcement canary), and `off` (no check performed). A platform-level floor (`.Values.security.elicitationContentIntegrity.floor`, default `off`; see the operator configuration guide) clamps every tenant's stored mode from below under ordering `off < detect-only < enforce`: `effective_mode = max(platform_floor, tenant_stored_mode)`.
+
+| Endpoint | Method | Role | Description |
+|:---------|:-------|:-----|:------------|
+| `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` | PUT | platform-admin, tenant-admin | Set the tenant's enforcement mode. Requires `If-Match`. Body: `{"mode": "enforce" \| "detect-only" \| "off", "justification": "<string>"}`. `justification` is REQUIRED when `mode` is `detect-only` or `off` (rejected with `400 ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED` otherwise). A stored `mode` strictly below the platform floor is rejected with `400 ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR`. Records `mode`, `justification`, `changedAt`, `changedBy` on the tenant; emits `tenant.elicitation_content_integrity_changed` audit event. |
+| `GET /v1/admin/tenants/{id}/elicitation-content-integrity` | GET | platform-admin, tenant-admin | Get the tenant's enforcement configuration. Response: `{"storedMode", "effectiveMode", "platformFloor", "justification", "changedAt", "changedBy"}`. `effectiveMode` is `max(platformFloor, storedMode)` — what the gateway enforces at runtime. |
+
 ### Tenant user management
 
 | Endpoint | Method | Role | Description |

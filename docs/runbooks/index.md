@@ -69,6 +69,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `RateLimitDegraded` | [redis-failure](redis-failure.html) | `redis` |
 | `CertExpiryImminent` | [cert-manager-outage](cert-manager-outage.html) | `certManager` |
 | `ElicitationBacklogHigh` | [elicitation-backlog](elicitation-backlog.html) | `gateway` |
+| `ElicitationContentIntegrityPermissiveTamper` | [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html) | `gateway` |
+| `ElicitationContentIntegrityWeakened` | [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html) | `gateway` |
 | `DelegationBudgetNearExhaustion` | [delegation-budget-recovery](delegation-budget-recovery.html) | `redis` |
 | `PodClaimQueueSaturated` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `GatewaySubsystemCircuitOpen` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
@@ -234,6 +236,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [circuit-breaker-open](circuit-breaker-open.html)
 - [coordinator-handoff-slow](coordinator-handoff-slow.html)
 - [elicitation-backlog](elicitation-backlog.html)
+- [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html)
 - [elicitation-content-tamper-detected](elicitation-content-tamper-detected.html)
 - [gateway-capacity](gateway-capacity.html)
 - [gateway-clock-drift](gateway-clock-drift.html)

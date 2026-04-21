@@ -21,25 +21,37 @@ requires:
   - admin-api
 related:
   - elicitation-backlog
+  - elicitation-content-integrity-weakened
   - credential-revocation
   - session-eviction-loss
 ---
 
 # elicitation-content-tamper-detected
 
-The gateway records the original `{message, schema}` pair of every elicitation at origination time, keyed by `elicitation_id` and `origin_pod`. Intermediate pods on a recursive-delegation graph MAY forward an elicitation upstream by re-emitting the native MCP `elicitation/create` frame, but the forwarded frame's `{message, schema}` MUST match the originally-recorded pair. Any divergence is rejected with `ELICITATION_CONTENT_TAMPERED` (`PERMANENT`/409) — the modified text never reaches the client — and `lenny_elicitation_content_tamper_detected_total` is incremented with `origin_pod` and `tampering_pod` labels.
+The gateway records the original `{message, schema}` pair of every elicitation at origination time, keyed by `elicitation_id` and `origin_pod`. Intermediate pods on a recursive-delegation graph MAY forward an elicitation upstream by re-emitting the native MCP `elicitation/create` frame, but the forwarded frame's `{message, schema}` MUST match the originally-recorded pair. Any divergence under effective mode `enforce` is rejected with `ELICITATION_CONTENT_TAMPERED` (`PERMANENT`/409) — the modified text never reaches the client — and `lenny_elicitation_content_tamper_detected_total` is incremented with `origin_pod`, `tampering_pod`, and `enforcement_mode` labels.
 
-This alert pages on **any** non-zero count because every increment is either an active prompt-injection attempt or a hostile-runtime signal.
+Enforcement is governed by a per-tenant `elicitationContentIntegrityEnforcement.mode` ∈ `{enforce, detect-only, off}` clamped from below by a deployment-scope platform floor (`security.elicitationContentIntegrity.floor`). Effective mode is `max(platform_floor, tenant_stored_mode)` under the ordering `off < detect-only < enforce`. This Critical alert fires only on the `enforcement_mode="enforce"` stream; the `detect-only` stream drives a separate Warning alert ([`ElicitationContentIntegrityPermissiveTamper`](elicitation-content-integrity-weakened.html)). The `off` stream does not exist — detection does not run under effective mode `off`.
 
 See SPEC §9.2 "Elicitation content integrity (gateway-origin binding)" for the invariant; SPEC §15.1 `ELICITATION_CONTENT_TAMPERED` error row; SPEC §16.7 `elicitation.content_tamper_detected` audit event.
 
 ## Trigger
 
-- `ElicitationContentTamperDetected` — `increase(lenny_elicitation_content_tamper_detected_total[5m]) > 0` (non-zero any time in the last 5 minutes). Fires with Critical severity.
+- `ElicitationContentTamperDetected` — `increase(lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce"}[5m]) > 0` (non-zero any time in the last 5 minutes). Fires with Critical severity.
 
 ## Diagnosis
 
-### Step 1 — Identify the pods involved
+### Step 1 — Verify enforcement posture
+
+Confirm the alert is firing on the `enforcement_mode="enforce"` stream (as configured on the rule expression). A divergence under `detect-only` is captured on the counter's `enforcement_mode="detect-only"` stream and drives the separate `ElicitationContentIntegrityPermissiveTamper` warning alert, not this Critical alert. If you believe the signal should have blocked the forward but did not (i.e., the client received a modified prompt), inspect the effective mode for the affected tenant:
+
+<!-- access: api method=GET path=/v1/admin/tenants/{id}/elicitation-content-integrity -->
+```
+GET /v1/admin/tenants/<tenant_id>/elicitation-content-integrity
+```
+
+The response `effectiveMode` field reports the live enforcement decision; if `detect-only`, the gateway observed and audited the tamper attempt but forwarded the modified frame to the client. Raise the tenant `storedMode` to `enforce` (or raise the platform floor) before proceeding if blocking is required. See [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html) for the standing-warning case.
+
+### Step 2 — Identify the pods involved
 
 Inspect the alert labels: `origin_pod` (the pod that originated the elicitation) and `tampering_pod` (the pod that forwarded a modified `{message, schema}`).
 
@@ -48,9 +60,9 @@ Inspect the alert labels: `origin_pod` (the pod that originated the elicitation)
 GET /v1/admin/metrics?q=lenny_elicitation_content_tamper_detected_total&groupBy=origin_pod,tampering_pod&window=15m
 ```
 
-### Step 2 — Correlate with the audit event
+### Step 3 — Correlate with the audit event
 
-Each tamper-detection writes an `elicitation.content_tamper_detected` audit event carrying `elicitation_id`, `origin_pod`, `tampering_pod`, `divergent_fields` (subset of `{message, schema}`), `original_sha256`, and `attempted_sha256`:
+Each tamper-detection writes an `elicitation.content_tamper_detected` audit event carrying `elicitation_id`, `origin_pod`, `tampering_pod`, `divergent_fields` (subset of `{message, schema}`), `original_sha256`, `attempted_sha256`, `enforcement_mode`, and `forward_outcome` (`blocked` under `enforce`; `forwarded` under `detect-only`):
 
 <!-- access: api method=GET path=/v1/admin/audit-events -->
 ```
@@ -59,7 +71,7 @@ GET /v1/admin/audit-events?event_type=elicitation.content_tamper_detected&since=
 
 The `divergent_fields` enumeration tells you which of `{message, schema}` was mutated — a `schema` divergence is typically more suspicious (attempts to widen accepted-input shape) than a `message` divergence (which may be a rephrasing or translation attempt).
 
-### Step 3 — Walk the delegation graph
+### Step 4 — Walk the delegation graph
 
 Identify the session(s) that include `tampering_pod` as an intermediate hop:
 
@@ -70,7 +82,7 @@ GET /v1/admin/sessions?pod_name=<tampering_pod>&since=1h
 
 If the tampering pod is a runtime that an operator expected to be trustworthy, the incident scope widens — review the runtime's image digest and registry provenance before proceeding.
 
-### Step 4 — Determine whether a sanctioned transform was misimplemented
+### Step 5 — Determine whether a sanctioned transform was misimplemented
 
 A legitimate pattern for presenting transformed text (translation, rephrasing, audience-targeted summarization) is to emit a **new** `lenny/request_elicitation` with a fresh `elicitation_id` — not to mutate content on a forwarded frame. If the runtime author tried to transform in-place, the design intent was rejected correctly by the gateway; coordinate with the runtime author to fix the adapter.
 
