@@ -172,6 +172,22 @@ Each runtime is configured with an **execution mode** that determines how pods a
 
 **`concurrent`** -- Multiple simultaneous tasks on a single pod, multiplexed via slot IDs. Each slot gets its own workspace directory (`/workspace/slots/{slotId}/current/`) and independent credential lease. Useful for high-throughput, stateless or semi-stateless workloads.
 
+### Derived runtimes
+
+A **derived runtime** customizes an existing runtime (the **base**) without shipping its own container image. It is registered like any other runtime — via the admin API or `values.yaml` — but declares a `baseRuntime` reference and omits `image`. Because it reuses the base's image, creating a derived runtime is a configuration change, not a release: no new build, no new deployment, no new pool required. If no pool is registered for the derived runtime, the gateway serves it from the base runtime's pool; operators can attach a dedicated pool later if the variant earns its own warm capacity.
+
+Derived runtimes exist so you can have per-team, per-environment, or per-purpose variations of the same agent binary without rebuilding anything. A single `claude-code` base runtime can have `claude-code-research` and `claude-code-legal` as derived variants, each with its own workspace defaults, delegation policy, and LLM credential pool.
+
+A derived runtime can customize:
+
+- **`workspaceDefaults` and `setupCommands`** — appended to the base's (execution order: base → derived → client).
+- **`setupPolicy.timeoutSeconds`** — the gateway uses the maximum of base and derived, so a derived runtime cannot shorten a base-defined safety margin.
+- **`agentInterface`, `limits`, `supportedProviders`, `credentialCapabilities`, `labels`, `taskPolicy`, `publishedMetadata`**.
+- **`delegationPolicyRef`** — restrict-only; the derived policy must be a subset of the base's.
+- **Pool configuration** — fully independent from the base, subject to the base's `allowedResourceClasses`.
+
+Security-critical fields are inherited from the base and cannot be overridden: `type`, `executionMode`, `isolationProfile`, `capabilities.interaction`, `allowedResourceClasses`, and `integrationLevel`. A derived runtime can never weaken its base's isolation or execution guarantees. From a delegating parent's perspective the target name is opaque — it does not know (and does not need to know) whether the target is a standalone runtime or a derived one, so operators can split a runtime into variants without breaking existing delegation graphs.
+
 ---
 
 ## Pools
