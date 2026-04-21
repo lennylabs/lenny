@@ -8,7 +8,15 @@
 
 ## Findings
 
-### DOC-033 (Medium) — §17.2 "Feature-flag downgrade enforcement" subsection: narrative says "three cooperating layers" but enumerates four numbered items
+### DOC-033 (Medium) — §17.2 "Feature-flag downgrade enforcement" subsection: narrative says "three cooperating layers" but enumerates four numbered items **[Fixed]**
+
+**Resolution:** Applied Option A (unify on four layers). Edits in `spec/17_deployment-topology.md` §17.2:
+- Heading parenthetical at line 72 updated: `(phase-stamp ConfigMap + render-time validation + runtime alert)` → `(phase-stamp ConfigMap + render-time validation + preflight mismatch check + runtime alert)`.
+- Leader paragraph at line 68: "actively enforced at three layers" → "actively enforced at four layers"; the inline three-item list expanded to a four-item list that adds the `lenny-preflight` phase-stamp consistency check (`PREFLIGHT_PHASE_STAMP_MISMATCH`) as the third element, annotated as "the primary enforcement for GitOps deployers".
+- Sub-section lead at line 72: both "three cooperating layers" and "The three layers are:" updated to "four cooperating layers" and "The four layers are:".
+- Cross-check of `docs/` and remainder of `spec/` for stale "three layers" / "three-layer" phrasing in this feature's context: no matches (the only pre-existing "three layers" phrase in `spec/27_web-playground.md:46` is unrelated, concerning `playground.devTenantId` validation). `docs/operator-guide/configuration.md` "Admission-plane feature flags" sub-section describes the mechanism without a numeric layer count and required no edit; runbook `docs/runbooks/admission-plane-feature-flag-downgrade.md` references "four-pair rule decomposition" (about the PromQL expression, not layers) and needed no edit.
+
+Regression check: the numbered list at lines 74–80 still enumerates exactly four items (1 phase-stamp ConfigMap, 2 render-time validation, 3 preflight mismatch check, 4 runtime alert); prose count now matches. KIN-040 (layer-2 scope limitation) and KIN-041 (layer-3 preflight as primary GitOps enforcement) edits remain intact and are consistent with the updated count.
 
 **File:** `spec/17_deployment-topology.md` §17.2 "Namespace Layout", sub-section "Feature-flag downgrade enforcement" (lines 72–80)
 

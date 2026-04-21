@@ -14,7 +14,9 @@ Severity rubric anchored to iter1–iter7 baseline per `feedback_severity_calibr
 
 ## New findings (bed7961 regressions only)
 
-### OBS-043 — `AdmissionPlaneFeatureFlagDowngrade` alert defined twice with materially inconsistent PromQL expressions (spec/16 vs. spec/17) [Medium]
+### OBS-043 — `AdmissionPlaneFeatureFlagDowngrade` alert defined twice with materially inconsistent PromQL expressions (spec/16 vs. spec/17) [Medium] **[Fixed]**
+
+**Resolution:** Closed by KIN-040 fix. §16.5 canonical expression now uses `kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_<slug>_enabled="true"} unless on() kube_validatingwebhookconfiguration_info{name="<webhook>"}` with one explicit PrometheusRule per `(flag, webhook)` pair (four pairs total — `lenny-direct-mode-isolation`, `lenny-drain-readiness`, `lenny-data-residency-validator`, `lenny-t4-node-isolation`). The RHS label is `name` (kube-state-metrics' real label), not `webhook_name`. §17.2 layer 4 reduced to a forward-reference pointing at §16.5 as the single source of truth. Literal `label_replace(..., ...)` ellipsis removed. `docs/operator-guide/configuration.md` now documents the mandatory `kube-state-metrics --metric-labels-allowlist=configmaps=[lenny.dev/flag-*]` operator precondition. `docs/operator-guide/observability.md:188` row references the canonical §16.5 expression form and the allowlist requirement.
 
 **Locations:**
 - `spec/16_observability.md:480` — §16.5 alerts table row (canonical site for alert definitions per this spec's single-source-of-truth rendering rule).
@@ -53,7 +55,9 @@ Per the `feedback_docs_sync_after_spec_changes.md` invariant applied intra-spec,
 
 ---
 
-### OBS-044 — Docs drift: `docs/reference/metrics.md` still carries the iter6 pre-fix `LegalHoldCheckpointAccumulationProjectedBreach` PromQL with invalid `on(tenant_id) group_left` on a scalar-vector product [Medium]
+### OBS-044 — Docs drift: `docs/reference/metrics.md` still carries the iter6 pre-fix `LegalHoldCheckpointAccumulationProjectedBreach` PromQL with invalid `on(tenant_id) group_left` on a scalar-vector product [Medium] **[Fixed]**
+
+**Resolution:** Updated `docs/reference/metrics.md:510` row for `LegalHoldCheckpointAccumulationProjectedBreach` to carry the canonical spec §16.5 form: `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0`. Regression-checked: zero remaining occurrences of `0.9 * on(tenant_id) group_left` in `docs/`; canonical form matches `spec/16_observability.md:492`, `spec/17_deployment-topology.md:834`, and `docs/operator-guide/observability.md:193` character-for-character.
 
 **Location:** `docs/reference/metrics.md:510`.
 
@@ -80,7 +84,15 @@ The commit message advertises "Docs sync across docs/api, docs/operator-guide, d
 
 ---
 
-### OBS-045 — Docs drift: three new §16.5 alerts added in `bed7961` are absent from `docs/reference/metrics.md` Critical/Warning alerts catalog [Medium]
+### OBS-045 — Docs drift: three new §16.5 alerts added in `bed7961` are absent from `docs/reference/metrics.md` Critical/Warning alerts catalog [Medium] [Fixed]
+
+**Fix applied:** Added the three rows to `docs/reference/metrics.md`:
+- `ElicitationContentTamperDetected` (Critical) inserted after `T4KmsKeyUnusable`; expression `increase(lenny_elicitation_content_tamper_detected_total[5m]) > 0` with `{message, schema}` vocabulary (post-SES-011) and `origin_pod` / `tampering_pod` label documentation.
+- `EphemeralContainerCredGuardUnavailable` (Warning) inserted after `DrainReadinessWebhookUnavailable`; expression `up{job="lenny-ephemeral-container-cred-guard"} == 0` sustained > 5 min, with fail-closed credential-boundary rationale.
+- `AdmissionPlaneFeatureFlagDowngrade` (Warning) inserted after `EphemeralContainerCredGuardUnavailable`; summary description with a pointer to spec §16.5 for the full four-pair expression introduced by the KIN-040 fix.
+
+The pre-existing `lenny_elicitation_content_tamper_detected_total` metric row's "Used by" reference now resolves to an actual alert-catalog row.
+
 
 **Location:** `docs/reference/metrics.md` §441 "Critical alerts" and §478 "Warning alerts" tables.
 

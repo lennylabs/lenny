@@ -19,7 +19,10 @@ Procedure executed:
 
 ## New findings
 
-### CNT-030. §17.9 admission-webhook inventory description lists only 4 baseline entries; §17.2 lists 5 [Medium]
+### CNT-030. §17.9 admission-webhook inventory description lists only 4 baseline entries; §17.2 lists 5 [Medium] **[Fixed]**
+
+**Status:** Fixed. Closed by KIN-039 fix — same baseline enumeration correction. `spec/17_deployment-topology.md:513` now enumerates all five Phase 3.5 baseline entries including `lenny-ephemeral-container-cred-guard`, aligned with §17.2 lines 68/82/84.
+
 
 **Section:** 17.9 (`spec/17_deployment-topology.md:513`, `Admission webhook inventory` preflight-check row) vs. 17.2 (`spec/17_deployment-topology.md:54,68,82`, item 13 + baseline narrative).
 
@@ -49,7 +52,11 @@ Severity **Medium**, calibrated against the iter7 rubric:
 
 Verifiable post-fix: `grep -n "baseline entries \`lenny-" spec/17_deployment-topology.md` should return a single enumeration including `lenny-ephemeral-container-cred-guard` at position 5, matching the §17.2 line-68/82 baseline-set prose.
 
-### CNT-031. Docs cross-reference to `docs/runbooks/admission-plane-feature-flag-downgrade.md` / `.html` is a broken link — runbook file was never created [Medium]
+### CNT-031. Docs cross-reference to `docs/runbooks/admission-plane-feature-flag-downgrade.md` / `.html` is a broken link — runbook file was never created [Medium] **[Fixed]**
+
+**Status:** Fixed. Chose Resolution (1) — the docs-sync-consistent path matching the feedback anchor. Created `docs/runbooks/admission-plane-feature-flag-downgrade.md` as the docs mirror of the §17.7 stub using the Trigger / Diagnosis / Remediation / Escalation structure and the `<!-- access: ... -->` machine-readable markers per §25.7. Created sibling runbook files `docs/runbooks/elicitation-content-tamper-detected.md` and `docs/runbooks/ephemeral-container-cred-guard-unavailable.md` so all three new iter7 alerts have live targets. Added three rows to `docs/runbooks/index.md` (one Critical, two Warning) plus corresponding entries in the component-grouped catalog. All three spec/docs references now resolve.
+
+
 
 **Section:** `spec/17_deployment-topology.md:80` (§17.2 "Feature-flag downgrade enforcement" layer 4 — `AdmissionPlaneFeatureFlagDowngrade` Warning alert narrative) and `spec/17_deployment-topology.md:201` (§17.7 "Admission-plane feature-flag downgrade" runbook stub) and `docs/operator-guide/observability.md:188` (docs row for `AdmissionPlaneFeatureFlagDowngrade`).
 

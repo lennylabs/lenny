@@ -63,7 +63,7 @@ Most admin `POST` and `PUT` endpoints accept `?dryRun=true`:
 
 **Not supported on:** pool/session action endpoints (`drain`, `force-terminate`, `warm-count`), `DELETE` endpoints.
 
-**Supported on circuit-breaker actions:** `POST /v1/admin/circuit-breakers/{name}/open` and `POST /v1/admin/circuit-breakers/{name}/close` accept `?dryRun=true`. The response body mirrors the real-call shape plus a top-level `simulation` object with `currentState`, `predictedState`, and `wouldChangeState`. See the circuit-breakers section below.
+**Supported on circuit-breaker actions:** `POST /v1/admin/circuit-breakers/{name}/open` and `POST /v1/admin/circuit-breakers/{name}/close` accept `?dryRun=true`. The response body is a reduced simulation object (a subset of the real-call response fields — audit-like fields such as `opened_at`, `opened_by_sub`, `opened_by_tenant_id` are omitted since no state mutation occurs) plus a top-level `simulation` object with `currentState`, `predictedState`, and `wouldChangeState`. See the circuit-breakers section below for the exact field enumeration per endpoint.
 
 ### Deletion semantics
 
@@ -752,7 +752,7 @@ Responses:
 
 Emits the `circuit_breaker.state_changed` audit event ([Section 16.7](../spec/16_observability.html#167-section-25-audit-events)).
 
-**Dry-run:** Supported. With `?dryRun=true`, the gateway validates `reason`/`limit_tier`/`scope` and the scope-immutability rule against any persisted `cb:{name}` value (`422 INVALID_BREAKER_SCOPE` on mismatch) but does not write Redis. The response body mirrors the real-call shape plus a top-level `simulation` object: `{"currentState": "open" | "closed" | "not_registered", "predictedState": "open", "wouldChangeState": <bool>}`. `wouldChangeState` is `false` when the breaker is already open with the same `limit_tier`/`scope` (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
+**Dry-run:** Supported. With `?dryRun=true`, the gateway validates `reason`/`limit_tier`/`scope` and the scope-immutability rule against any persisted `cb:{name}` value (`422 INVALID_BREAKER_SCOPE` on mismatch) but does not write Redis. The response body is a reduced simulation object with exactly these five fields: `name`, `state` (predicted `"open"`), `reason`, `limit_tier`, `scope` — plus a top-level `simulation` object: `{"currentState": "open" | "closed" | "not_registered", "predictedState": "open", "wouldChangeState": <bool>}`. Audit-like fields of the real-call response (`opened_at`, `opened_by_sub`, `opened_by_tenant_id`) are **not** populated under `dryRun` because no state mutation occurs and no audit trail is recorded. `wouldChangeState` is `false` when the breaker is already open with the same `limit_tier`/`scope` (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
 
 ### POST /v1/admin/circuit-breakers/{name}/close
 {: .d-inline-block }
@@ -763,11 +763,11 @@ Close (deactivate) an operator-managed circuit breaker. Body is empty. The persi
 
 Responses:
 - `200 OK` — breaker is closed.
-- `404 NOT_FOUND` — no breaker is registered under `{name}`.
+- `404 RESOURCE_NOT_FOUND` — no breaker is registered under `{name}` (no `cb:{name}` key exists in Redis).
 
 Emits the `circuit_breaker.state_changed` audit event.
 
-**Dry-run:** Supported. With `?dryRun=true`, the gateway validates that `{name}` exists in Redis (`404 NOT_FOUND` if not) and reads its persisted `limit_tier`/`scope` but does not write Redis. The response body mirrors the real-call shape plus a top-level `simulation` object: `{"currentState": "open" | "closed", "predictedState": "closed", "wouldChangeState": <bool>}`. `wouldChangeState` is `false` when the breaker is already closed (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
+**Dry-run:** Supported. With `?dryRun=true`, the gateway validates that `{name}` exists in Redis (`404 RESOURCE_NOT_FOUND` if not) and reads its persisted `limit_tier`/`scope` but does not write Redis. The response body is a reduced simulation object with exactly these four fields: `name`, `state` (predicted `"closed"`), `limit_tier`, `scope` (the latter two read from the persisted `cb:{name}` value) — plus a top-level `simulation` object: `{"currentState": "open" | "closed", "predictedState": "closed", "wouldChangeState": <bool>}`. No audit-like fields are populated since no state mutation occurs. `wouldChangeState` is `false` when the breaker is already closed (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
 
 ---
 

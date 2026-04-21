@@ -248,7 +248,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_elicitation_pending` | Gauge | -- | Currently pending elicitation requests. | `ElicitationBacklogHigh` alert. |
 | `lenny_elicitation_suppressed_total` | Counter | -- | Elicitations auto-suppressed (depth policy). | Operational monitoring. |
 | `lenny_elicitation_timeout_total` | Counter | -- | Elicitations timed out. | Operational monitoring. |
-| `lenny_elicitation_content_tamper_detected_total` | Counter | `origin_pod`, `tampering_pod` | Forward-hop re-emissions of an existing `elicitation_id` with diverging `{title, description, schema, inputs}` dropped per the gateway-origin-binding invariant. Steady-state zero. | `ElicitationContentTamperDetected` critical alert. |
+| `lenny_elicitation_content_tamper_detected_total` | Counter | `origin_pod`, `tampering_pod` | Forward-hop MCP `elicitation/create` wire frames re-emitting an existing `elicitation_id` with a `{message, schema}` pair diverging from the gateway-recorded original, dropped per the gateway-origin-binding invariant. Steady-state zero. | `ElicitationContentTamperDetected` critical alert. |
 
 ---
 
@@ -474,6 +474,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `PlatformAuditResidencyViolation` | `rate(lenny_platform_audit_region_unresolvable_total[5m]) > 0` — A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable. The originating operation halts. The operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability) before retrying. Fail-closed mirror of `LegalHoldEscrowResidencyViolation` for the platform-tenant audit-write surface (CMP-058). | Critical |
 | `AuditRedactionReceiptMissing` | `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0` — a row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt`. | Critical |
 | `T4KmsKeyUnusable` | `time() - lenny_t4_kms_probe_last_success_timestamp > 2 * storage.t4KmsProbeInterval` — T4 envelope-encryption probe from the leader-elected gateway goroutine has not succeeded within twice its poll interval (default `storage.t4KmsProbeInterval: 300s`, min 60s). T4 writes fail closed until the KMS key is reachable again. | Critical |
+| `ElicitationContentTamperDetected` | `increase(lenny_elicitation_content_tamper_detected_total[5m]) > 0` — an intermediate pod re-emitted an MCP `elicitation/create` wire frame for an existing `elicitation_id` with a `{message, schema}` pair diverging from the gateway-recorded original; forward dropped with `ELICITATION_CONTENT_TAMPERED` per the gateway-origin-binding invariant (§9.2). Fires immediately on any non-zero increment. Labels `origin_pod`, `tampering_pod`. | Critical |
 
 ### Warning alerts
 
@@ -507,7 +508,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `WorkspaceSealStuck` | Seal operation retrying beyond `maxWorkspaceSealDurationSeconds` | Warning |
 | `CoordinatorHandoffSlow` | P95 handoff duration > 5s for > 5 min | Warning |
 | `StorageQuotaHigh` | Artifact storage > 80% of tenant quota | Warning |
-| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * on(tenant_id) group_left lenny_tenant_storage_quota_bytes` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
+| `LegalHoldCheckpointAccumulationProjectedBreach` | `(lenny_storage_quota_bytes_used + sum by (tenant_id) (lenny_legal_hold_checkpoint_projected_growth_bytes)) > 0.9 * lenny_tenant_storage_quota_bytes and on(tenant_id) lenny_tenant_legal_hold_active_count > 0` — predictive alert that a tenant's projected 24-hour legal-hold checkpoint growth plus current usage will cross 90% of the tenant's configured `storageQuotaBytes` bucket; see [legal-hold-quota-pressure](../runbooks/legal-hold-quota-pressure.html). | Warning |
 | `ErasureJobFailed` | Erasure job failed | Warning |
 | `TenantDeletionOverdue` | Deletion exceeds 80% of the deployment size's SLA | Warning |
 | `BillingStreamBackpressure` | Redis stream depth > 80% of max for > 60s | Warning |
@@ -522,6 +523,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented — the 300s in-flight gate ceiling was hit on a non-proactive rotation | Warning |
 | `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s-conservative-fallback selections (`source="postgres_null"` + `source="cache_miss_max_tier"`) exceeds 5% over 15 min | Warning |
 | `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable; node drains skip MinIO health check | Warning |
+| `EphemeralContainerCredGuardUnavailable` | `up{job="lenny-ephemeral-container-cred-guard"} == 0` sustained > 5 min; all `update` operations on `pods/ephemeralcontainers` in agent namespaces are denied while the webhook is down (credential-boundary invariant remains protected by fail-closed policy). See spec §16.5 for canonical expression. | Warning |
+| `AdmissionPlaneFeatureFlagDowngrade` | The `lenny-deployment-phase-stamp` ConfigMap records `lenny.dev/flag-<slug>-enabled="true"` for a feature flag whose gated ValidatingWebhookConfiguration is absent from the cluster, sustained > 2 min. One PrometheusRule per `(flag, webhook)` pair in the Feature-gated chart inventory (§17.2); each rule carries static `flag_name` and `expected_webhook_name` labels. Sole runtime signal for feature-flag downgrade drift because the paired per-webhook `*Unavailable` alert does not fire when its `PrometheusRule` was removed alongside the webhook Deployment via the feature-flag flip. See spec §16.5 for the full four-pair expression. | Warning |
 | `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any gateway replica; admission decisions are being served against stale state | Warning |
 
 ### SLO burn-rate alerts

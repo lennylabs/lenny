@@ -46,6 +46,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `DualStoreUnavailable` | [dual-store-unavailable](dual-store-unavailable.html) | `postgres`, `redis` |
 | `DataResidencyWebhookUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
 | `DataResidencyViolationAttempt` | [data-residency-violation](data-residency-violation.html) | `gateway` |
+| `ElicitationContentTamperDetected` | [elicitation-content-tamper-detected](elicitation-content-tamper-detected.html) | `gateway` |
 | `PgBouncerAllReplicasDown` | [pgbouncer-saturation](pgbouncer-saturation.html) | `postgres` |
 | `SessionEvictionTotalLoss` | [session-eviction-loss](session-eviction-loss.html) | `postgres`, `objectStore` |
 | `DelegationBudgetKeysExpired` | [delegation-budget-recovery](delegation-budget-recovery.html) | `redis` |
@@ -91,6 +92,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `GatewayRateLimitStorm` | [gateway-rate-limit-storm](gateway-rate-limit-storm.html) | `gateway` |
 | `GatewayClockDrift` | [gateway-clock-drift](gateway-clock-drift.html) | `gateway` |
 | `FinalizerStuck` | [stuck-finalizer](stuck-finalizer.html) | `controllers` |
+| `EphemeralContainerCredGuardUnavailable` | [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html) | `admission` |
+| `AdmissionPlaneFeatureFlagDowngrade` | [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html) | `admission` |
 
 ### SLO burn-rate alerts
 
@@ -231,6 +234,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [circuit-breaker-open](circuit-breaker-open.html)
 - [coordinator-handoff-slow](coordinator-handoff-slow.html)
 - [elicitation-backlog](elicitation-backlog.html)
+- [elicitation-content-tamper-detected](elicitation-content-tamper-detected.html)
 - [gateway-capacity](gateway-capacity.html)
 - [gateway-clock-drift](gateway-clock-drift.html)
 - [gateway-rate-limit-storm](gateway-rate-limit-storm.html)
@@ -259,9 +263,11 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [storage-quota-high](storage-quota-high.html)
 
 **Controllers, admission, upgrades**
+- [admission-plane-feature-flag-downgrade](admission-plane-feature-flag-downgrade.html)
 - [admission-webhook-outage](admission-webhook-outage.html)
 - [controller-leader-election](controller-leader-election.html)
 - [crd-upgrade](crd-upgrade.html)
+- [ephemeral-container-cred-guard-unavailable](ephemeral-container-cred-guard-unavailable.html)
 - [network-policy-drift](network-policy-drift.html)
 - [runtime-upgrade-stuck](runtime-upgrade-stuck.html)
 - [schema-migration-failure](schema-migration-failure.html)

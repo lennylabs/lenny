@@ -25,7 +25,10 @@ The KIN-028 three-layer enforcement (phase-stamp CM + render-time gate + runtime
 
 ## 2. New findings (iter8, bed7961 regressions only)
 
-### FMR-022 (NEW, Medium) — Runbook remediation step references non-existent "Admission webhook storm" runbook entry and undefined `admin.freezeAdmission` control
+### FMR-022 (NEW, Medium) — Runbook remediation step references non-existent "Admission webhook storm" runbook entry and undefined `admin.freezeAdmission` control **[Fixed]**
+
+**Resolution:** Removed cargo-cult step (4) from the §17.7 runbook entry. The phantom step was internally incoherent for this alert: an admission-plane feature-flag downgrade means the missing webhook is already not enforcing, so halting admission traffic does not aid recovery — the actual remedy is re-enabling the flag via Helm upgrade (step 1). Folded the verification guidance (`kubectl get validatingwebhookconfigurations -l app.kubernetes.io/name=lenny` + `AdmissionPlaneFeatureFlagDowngrade` alert-clearing confirmation) into step (1) where it is semantically correct. Added a cross-reference pointer to `docs/runbooks/admission-plane-feature-flag-downgrade.md` for the full operator-facing procedure (which was already clean — the phantom references appeared only in the spec summary stub, not in the docs runbook). `grep -rn "admin.freezeAdmission\|freezeAdmission\|Admission webhook storm" spec/ docs/` now returns zero occurrences outside finding files.
+
 
 - Location: `/Users/joan/projects/lenny/spec/17_deployment-topology.md:841` (Remediation step 4 of the new `Admission-plane feature-flag downgrade` runbook stub)
 - Observation: The Remediation section ends with:
@@ -43,7 +46,9 @@ The KIN-028 three-layer enforcement (phase-stamp CM + render-time gate + runtime
 
 ---
 
-### FMR-023 (NEW, Medium) — `AdmissionPlaneFeatureFlagDowngrade` PromQL expression differs materially between the §17.2 enforcement-layer description and the §16.5 alert-rules row
+### FMR-023 (NEW, Medium) — `AdmissionPlaneFeatureFlagDowngrade` PromQL expression differs materially between the §17.2 enforcement-layer description and the §16.5 alert-rules row **[Fixed]**
+
+**Resolution:** Closed by KIN-040 fix. §17.2 layer 4 now forward-references §16.5 as the single source of truth and omits its own expression body. §16.5's expression was rewritten to use `kube_configmap_labels{configmap="lenny-deployment-phase-stamp", label_lenny_dev_flag_<slug>_enabled="true"}` on the LHS (aligned with the prose's chart-rendered label mechanism) and `name=` on the RHS (kube-state-metrics' real label for `kube_validatingwebhookconfiguration_info`). The alert emits one firing per `(flag, webhook)` pair via four explicit PrometheusRules (matching the §16.5 prose "emits one firing per missing webhook"). The un-renderable `label_replace(..., ...)` ellipsis is removed.
 
 - Location: `/Users/joan/projects/lenny/spec/17_deployment-topology.md:80` (§17.2 "Feature-flag downgrade enforcement" layer 4) vs `/Users/joan/projects/lenny/spec/16_observability.md:480` (§16.5 alert row)
 - Observation: The two canonical definition sites disagree on the alert expression and on the metric labels it joins.
@@ -75,7 +80,13 @@ The KIN-028 three-layer enforcement (phase-stamp CM + render-time gate + runtime
 
 ---
 
-### FMR-024 (NEW, Medium) — Runbook references undefined audit event `deployment.feature_flag_downgrade_acknowledged`
+### FMR-024 (NEW, Medium) — Runbook references undefined audit event `deployment.feature_flag_downgrade_acknowledged` [Fixed]
+
+**Resolution:** Added a catalog entry for `deployment.feature_flag_downgrade_acknowledged` in `spec/16_observability.md` §16.7 (line 669), placed immediately after `compliance.profile_decommissioned` (the closest semantic analog — both are operator-initiated audited posture downgrades, one tenant-scope, one deployment-scope). Payload: `flag_name`, `expected_webhook_name` (per-webhook when a flag gates multiple webhooks, matching the `AdmissionPlaneFeatureFlagDowngrade` per-pair rule decomposition at §16.5), `acknowledged_by_sub`, `acknowledged_by_tenant_id` (always platform tenant — deployment-scope override), `justification` (required; chart render fails with `PHASE_STAMP_FEATURE_FLAG_DOWNGRADE_JUSTIFICATION_REQUIRED` if absent), `acknowledged_at`. Severity: Notice (non-sampled, symmetric with `compliance.profile_decommissioned` and `circuit_breaker.state_changed`). Emission site: chart render-time override code path (§17.2 layer 2). Cross-references added: §17.2 layer-2 fail-closed message now cites `[§16.7](16_observability.md#167-section-25-audit-events)`; `docs/operator-guide/configuration.md` "Acknowledged downgrade override" cites SPEC §16.7 and enumerates payload fields, and the Typical invocation block now includes `--set acceptFeatureFlagDowngrade.<flag>.justification=...`; `docs/runbooks/admission-plane-feature-flag-downgrade.md` Remediation Step 2 command and body updated with the `.justification` override and SPEC §16.7 forward-reference. Regression-check: all 6 pre-existing reference sites (spec/17 lines 76/80/840/841, docs/operator-guide/configuration.md:511, docs/operator-guide/observability.md:188) plus the two runbook references (docs/runbooks/admission-plane-feature-flag-downgrade.md:74/118) now point to a defined event. No new broken cross-references introduced.
+
+---
+
+### FMR-024 (original) — Runbook references undefined audit event `deployment.feature_flag_downgrade_acknowledged`
 
 - Location: Multiple sites introduced by bed7961, collectively — the audit event `deployment.feature_flag_downgrade_acknowledged` is referenced 6 times across `spec/17_deployment-topology.md:76,80,840,841` and `docs/operator-guide/configuration.md:509` and `docs/operator-guide/observability.md:188`, but is never defined in the authoritative audit-event catalogues at §16.7 (audit events) or §11.7 (audit logging).
 - Observation: The new runbook's Diagnosis step 4 (line 840) tells operators:

@@ -99,7 +99,7 @@ The chart deploys the following admission policies:
 
 7. **`lenny-sandboxclaim-guard` webhook** -- Prevents double-claim of pods by intercepting `CREATE`, `PATCH`, and `PUT` on `SandboxClaim` resources.
 
-8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests that would reuse the adapter UID, agent UID, or `lenny-cred-readers` GID of the target agent pod; closes the credential-file read boundary against post-hoc debug containers.
+8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests on any of four conditions: reuse of the adapter UID or agent UID, inclusion of the `lenny-cred-readers` GID in `runAsGroup`/`supplementalGroups`, absent `runAsUser`/`runAsGroup`/`supplementalGroups` fields (which would inherit pod-level defaults including fsGroup), or a `volumeMounts` entry that references the credential tmpfs volume by name or mounts anything at the `/run/lenny` directory prefix. The fourth condition closes the fsGroup-inheritance side-channel that the first three cannot close on their own — fsGroup is applied by kubelet to every container regardless of explicit securityContext values, so rejecting the credential volumeMount is the cleanest barrier to credential-file access.
 
 ### Webhook Configuration
 

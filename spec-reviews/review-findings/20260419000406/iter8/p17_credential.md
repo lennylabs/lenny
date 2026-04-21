@@ -12,7 +12,9 @@
 
 ## Findings
 
-### CRD-029. `lenny-ephemeral-container-cred-guard` rejection conditions do not close the credential-file read boundary they claim to close — fsGroup mechanism automatically grants `lenny-cred-readers` supplementary-group membership to any ephemeral container, bypassing conditions (i)/(ii)/(iii) [Medium]
+### CRD-029. `lenny-ephemeral-container-cred-guard` rejection conditions do not close the credential-file read boundary they claim to close — fsGroup mechanism automatically grants `lenny-cred-readers` supplementary-group membership to any ephemeral container, bypassing conditions (i)/(ii)/(iii) [Medium] **[Fixed]**
+
+**Resolution.** Added a fourth rejection condition (iv) to `spec/13_security-model.md` §13.1 targeting the credential tmpfs `volumeMount` — the webhook now rejects any ephemeral container whose `volumeMounts` reference the pod-level credential tmpfs volume by name, or whose `mountPath` equals `/run/lenny` or begins with the prefix `/run/lenny/`. Updated narrative reconciles the fsGroup / container-securityContext / volumeMount layers: conditions (i)–(iii) guard against naive UID/GID enumeration while condition (iv) closes the fsGroup-inheritance side-channel — fsGroup is applied by kubelet to every container in the pod unconditionally, but reading the credential file still requires mounting the credential volume, so rejecting that `volumeMount` is the operative barrier. Propagated four-condition shape to `spec/17_deployment-topology.md` §17.2 item 13 (with explicit forward-reference to §13.1 for the full rationale) and `docs/operator-guide/namespace-and-isolation.md` admission-policies item 8.
 
 **Sections:**
 - `spec/13_security-model.md` §13.1 line 25 (Cross-UID file delivery — fsGroup-based) — introduced pre-iter7, unchanged by bed7961.

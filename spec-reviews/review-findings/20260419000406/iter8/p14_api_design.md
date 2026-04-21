@@ -17,7 +17,9 @@
 
 ## Regressions introduced by bed7961
 
-### API-029. `POST /v1/admin/circuit-breakers/{name}/close` real-call 404 response documented in docs and dryRun row but absent from the spec's real-call rows [Medium]
+### API-029. `POST /v1/admin/circuit-breakers/{name}/close` real-call 404 response documented in docs and dryRun row but absent from the spec's real-call rows [Medium] **[Fixed]**
+
+**Fix summary.** Added the 404-on-unknown-name response to both authoritative spec rows. `spec/15_external-api-surface.md:887` (§15.1 real-call row) now reads: "Returns `404 RESOURCE_NOT_FOUND` if no breaker is registered under `{name}` (no `cb:{name}` key exists in Redis)." `spec/11_policy-and-controls.md:313` (§11.6 policy row) now reads: "Returns `404 RESOURCE_NOT_FOUND` if `{name}` has no persisted `cb:{name}` state in Redis." Error-code vocabulary was unified on the canonical `RESOURCE_NOT_FOUND` code from the §15.1 error catalog (line 979) — the prior `NOT_FOUND` short-form in `docs/api/admin.md:766/770` and `spec/15_external-api-surface.md:1193` (dryRun row) was rewritten to `RESOURCE_NOT_FOUND` for catalog-alignment. The three-way asymmetry is eliminated: docs, dryRun row, and both authoritative spec rows now consistently document the 404 path with the same canonical error code. `/open` was verified to not require a 404 row — it atomically registers the breaker on unknown names, per its documented semantics at `spec/11_policy-and-controls.md:312` and `docs/api/admin.md:747` — so the same class of asymmetry does not apply there.
 
 **Section:** `spec/15_external-api-surface.md:887` (§15.1 endpoint row for close), `spec/11_policy-and-controls.md:313` (§11.6 admin-API row for close), `spec/15_external-api-surface.md:1193` (§15.1 dryRun row for close), `docs/api/admin.md:764-766` (real-call response table for close).
 
@@ -56,7 +58,9 @@ Alternatively (if the real-call is intended to be idempotent against unknown nam
 
 ---
 
-### API-030. `POST /v1/admin/circuit-breakers/{name}/open` dryRun response-shape enumeration omits `opened_at` / `opened_by_sub` / `opened_by_tenant_id` despite claiming to mirror the real-call shape [Medium]
+### API-030. `POST /v1/admin/circuit-breakers/{name}/open` dryRun response-shape enumeration omits `opened_at` / `opened_by_sub` / `opened_by_tenant_id` despite claiming to mirror the real-call shape [Medium] **[Fixed]**
+
+**Resolution:** Selected reconciliation (b) from the Recommended fix — dropped the "mirrors the real-call shape" phrasing at `spec/15_external-api-surface.md:1192` for `/open` and replaced it with an explicit statement that the dryRun response is a reduced simulation object with exactly five fields (`name`, `state`, `reason`, `limit_tier`, `scope`), and that the three audit-like fields (`opened_at`, `opened_by_sub`, `opened_by_tenant_id`) are **not** populated under `dryRun` because no state mutation occurs and no audit trail is recorded. Applied the parallel treatment to the `/close` dryRun row at `spec/15_external-api-surface.md:1193` (four-field explicit enumeration plus audit-field-omission rationale). Mirrored both in `docs/api/admin.md` at §750 (per-endpoint `/open` dry-run paragraph), §770 (per-endpoint `/close` dry-run paragraph), and §66 (supported-endpoints summary). Regression-checked: zero remaining "mirrors the real-call shape" occurrences under `spec/` or `docs/`.
 
 **Section:** `spec/15_external-api-surface.md:1192` (dryRun row for open) vs. `docs/api/admin.md:750` (real-call response body for open).
 
@@ -104,8 +108,8 @@ Option (b) is structurally safer (eliminates a future drift vector) and is consi
 
 | Finding | Severity | Surface |
 | --- | --- | --- |
-| API-029 | Medium | Close endpoint 404 response documented in docs and dryRun row but absent from spec real-call rows (§15.1 / §11.6) |
-| API-030 | Medium | Open endpoint dryRun response-shape parenthetical enumerates 5 of the 8 real-call fields despite claiming to mirror the real-call shape |
+| API-029 | Medium | Close endpoint 404 response documented in docs and dryRun row but absent from spec real-call rows (§15.1 / §11.6) **[Fixed]** |
+| API-030 | Medium | Open endpoint dryRun response-shape parenthetical enumerates 5 of the 8 real-call fields despite claiming to mirror the real-call shape **[Fixed]** |
 
 Both are the exact class of "fix introduced incomplete cross-surface reconciliation" that the iter7 fix cycle was intended to eliminate — the same class as iter7 API-026 (docs advertising a surface the spec does not carry) and iter7 API-028 (dryRun catalog silent on a new endpoint). The iter8 fix for these should edit only `spec/15_external-api-surface.md:887`, `spec/11_policy-and-controls.md:313`, and either expand or defer the parenthetical enumeration at `spec/15_external-api-surface.md:1192`.
 

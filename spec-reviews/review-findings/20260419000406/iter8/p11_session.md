@@ -12,8 +12,9 @@
 
 ## 1. Regression review of the new §9.2 paragraph
 
-### SES-011 (new in iter8, regression introduced by `bed7961`) — New gateway-origin-binding paragraph specifies a forward-hop wire mechanism and field vocabulary unreconcilable with the authoritative `lenny/request_elicitation` tool schema in §8.5
+### SES-011 (new in iter8, regression introduced by `bed7961`) — New gateway-origin-binding paragraph specifies a forward-hop wire mechanism and field vocabulary unreconcilable with the authoritative `lenny/request_elicitation` tool schema in §8.5 **[Fixed]**
 **Severity:** Medium
+**Status:** Fixed — §9.2 paragraph normalized to §8.5's `{message, schema}` tuple; forward-hop wire mechanism reframed as re-emission of the native MCP `elicitation/create` frame per the §15.2.1 per-kind wire projection. Propagated to §15.1 `ELICITATION_CONTENT_TAMPERED` row, §16.1 metric row, §16.5 alert row, §16.7 audit event (`divergent_fields` enum → `{message, schema}`; `original_sha256`/`attempted_sha256` over canonicalized `{message, schema}` pair). Docs resync: `docs/runtime-author-guide/platform-tools.md:264`, `docs/reference/metrics.md:251`, `docs/reference/error-catalog.md:108`, `docs/operator-guide/observability.md:189`. §8.5 tool schema unchanged.
 **Location:** `spec/09_mcp-integration.md` §9.2 line 56 (the paragraph inserted by `bed7961`); cross-reference with `spec/08_recursive-delegation.md` §8.5 lines 489–505 (`lenny/request_elicitation` input schema).
 **Finding:** The new §9.2 "Elicitation content integrity (gateway-origin binding)" paragraph — the sole SES-relevant prose added by the iter7 fix commit — specifies the elicitation-content-integrity invariant using two contracts that do not exist elsewhere in the spec:
 
@@ -63,7 +64,7 @@ The following cross-surface references introduced or amended by `bed7961` were v
 
 ## 3. Per-finding status vs. iter7
 
-- **SES-011** (iter8 new regression from `bed7961`): **Open**, Medium severity. Cross-referencing contradiction between new §9.2 paragraph's `{title, description, schema, inputs}` content vocabulary / `lenny/request_elicitation` re-issuance wire model and the authoritative tool schema in §8.5.
+- **SES-011** (iter8 new regression from `bed7961`): **Fixed**, Medium severity. §9.2 content-integrity paragraph normalized to §8.5's `{message, schema}` tuple; forward-hop wire mechanism reframed to the native MCP `elicitation/create` frame per §15.2.1 per-kind wire projection. Propagated across §15.1, §16.1, §16.5, §16.7 and the four docs mirrors.
 
 All prior SES findings (SES-001 through SES-010 from earlier iterations) are out of scope for iter8 per the regressions-only directive.
 
