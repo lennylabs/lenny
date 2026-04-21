@@ -86,7 +86,7 @@ Every capability on this page is specified in [`spec/`](https://github.com/lenny
 Decide if it fits. Start with `lenny up` and the comparison guide.
 
 [Quickstart](/lenny/getting-started/){: .btn .btn-purple }
-[About](/lenny/about/){: .btn }
+[About](/lenny/about/){: .btn .btn-purple }
 
 </div>
 
