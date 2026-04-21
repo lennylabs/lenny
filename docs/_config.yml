@@ -12,7 +12,7 @@ url: ""
 # --------------------------------------------------------------------------
 # Theme
 # --------------------------------------------------------------------------
-theme: just-the-docs
+remote_theme: just-the-docs
 
 color_scheme: nil               # start with light; toggle available below
 
