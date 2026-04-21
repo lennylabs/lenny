@@ -61,7 +61,9 @@ Most admin `POST` and `PUT` endpoints accept `?dryRun=true`:
 - Audit events are **not** emitted (exception: `POST /v1/admin/bootstrap` emits a dry-run audit event)
 - When combined with `If-Match`, ETag validation is performed as normal
 
-**Not supported on:** action endpoints (`drain`, `force-terminate`, `warm-count`), `DELETE` endpoints.
+**Not supported on:** pool/session action endpoints (`drain`, `force-terminate`, `warm-count`), `DELETE` endpoints.
+
+**Supported on circuit-breaker actions:** `POST /v1/admin/circuit-breakers/{name}/open` and `POST /v1/admin/circuit-breakers/{name}/close` accept `?dryRun=true`. The response body mirrors the real-call shape plus a top-level `simulation` object with `currentState`, `predictedState`, and `wouldChangeState`. See the circuit-breakers section below.
 
 ### Deletion semantics
 
@@ -707,12 +709,12 @@ Two classes of circuit breaker are exposed via the admin API:
 
 ### Operator-managed circuit breakers
 
-| Endpoint | Method | Role | Description |
-|:---------|:-------|:-----|:------------|
-| `GET /v1/admin/circuit-breakers` | GET | platform-admin, tenant-admin | List all circuit breakers and their current state |
-| `GET /v1/admin/circuit-breakers/{name}` | GET | platform-admin, tenant-admin | Get state for a single circuit breaker |
-| `POST /v1/admin/circuit-breakers/{name}/open` | POST | platform-admin | Open (activate) a circuit breaker (see request body below) |
-| `POST /v1/admin/circuit-breakers/{name}/close` | POST | platform-admin | Close (deactivate) a circuit breaker; body is empty |
+| Endpoint | Method | Role | Scope (`x-lenny-scope`) | Description |
+|:---------|:-------|:-----|:-----|:------------|
+| `GET /v1/admin/circuit-breakers` | GET | platform-admin | `tools:circuit_breaker:read` | List all circuit breakers and their current state |
+| `GET /v1/admin/circuit-breakers/{name}` | GET | platform-admin | `tools:circuit_breaker:read` | Get state for a single circuit breaker |
+| `POST /v1/admin/circuit-breakers/{name}/open` | POST | platform-admin | `tools:circuit_breaker:write` | Open (activate) a circuit breaker (see request body below) |
+| `POST /v1/admin/circuit-breakers/{name}/close` | POST | platform-admin | `tools:circuit_breaker:write` | Close (deactivate) a circuit breaker; body is empty |
 
 ### POST /v1/admin/circuit-breakers/{name}/open
 {: .d-inline-block }
@@ -749,6 +751,23 @@ Responses:
 - `422 INVALID_BREAKER_SCOPE` — `limit_tier` or `scope` is missing, outside its closed vocabulary, inconsistent with the selected tier, or mismatched against the persisted scope. See [error catalog]({{ site.baseurl }}/reference/error-catalog.html#invalid_breaker_scope).
 
 Emits the `circuit_breaker.state_changed` audit event ([Section 16.7](../spec/16_observability.html#167-section-25-audit-events)).
+
+**Dry-run:** Supported. With `?dryRun=true`, the gateway validates `reason`/`limit_tier`/`scope` and the scope-immutability rule against any persisted `cb:{name}` value (`422 INVALID_BREAKER_SCOPE` on mismatch) but does not write Redis. The response body mirrors the real-call shape plus a top-level `simulation` object: `{"currentState": "open" | "closed" | "not_registered", "predictedState": "open", "wouldChangeState": <bool>}`. `wouldChangeState` is `false` when the breaker is already open with the same `limit_tier`/`scope` (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
+
+### POST /v1/admin/circuit-breakers/{name}/close
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Close (deactivate) an operator-managed circuit breaker. Body is empty. The persisted `limit_tier` and `scope` are retained across open→closed→open transitions for the same `{name}`.
+
+Responses:
+- `200 OK` — breaker is closed.
+- `404 NOT_FOUND` — no breaker is registered under `{name}`.
+
+Emits the `circuit_breaker.state_changed` audit event.
+
+**Dry-run:** Supported. With `?dryRun=true`, the gateway validates that `{name}` exists in Redis (`404 NOT_FOUND` if not) and reads its persisted `limit_tier`/`scope` but does not write Redis. The response body mirrors the real-call shape plus a top-level `simulation` object: `{"currentState": "open" | "closed", "predictedState": "closed", "wouldChangeState": <bool>}`. `wouldChangeState` is `false` when the breaker is already closed (idempotent no-op). No `circuit_breaker.state_changed` audit event is emitted under `dryRun`.
 
 ---
 

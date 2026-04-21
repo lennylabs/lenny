@@ -67,7 +67,7 @@ The following were Low in prior iterations and remain so under the calibration r
 
 ## 3. New findings (iteration 7)
 
-### FMR-021 (NEW, Low) — Broken cross-file anchor introduced by iter6 OBS-037 fix
+### FMR-021 (NEW, Low) — Broken cross-file anchor introduced by iter6 OBS-037 fix [FIXED — closed by DOC-031]
 - Location: `/Users/joan/projects/lenny/spec/16_observability.md:203`
 - Observation: the iter6 fix that added the `lenny_quota_user_failopen_fraction` gauge row includes this cross-file link in its description:
 

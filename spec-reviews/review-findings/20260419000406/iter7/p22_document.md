@@ -22,7 +22,7 @@
 
 ## 22. Documentation & Cross-Reference Integrity
 
-### DOC-031. Cross-file anchor `12_storage-architecture.md#124-quota-and-rate-limiting` does not exist — introduced by iter6 OBS-037 fix [Medium]
+### DOC-031. Cross-file anchor `12_storage-architecture.md#124-quota-and-rate-limiting` does not exist — introduced by iter6 OBS-037 fix [Medium] [FIXED — see summary.md]
 
 **File:** `spec/16_observability.md:203`
 

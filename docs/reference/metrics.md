@@ -248,6 +248,7 @@ These are derived from credential lifecycle counters, not directly named in the 
 | `lenny_elicitation_pending` | Gauge | -- | Currently pending elicitation requests. | `ElicitationBacklogHigh` alert. |
 | `lenny_elicitation_suppressed_total` | Counter | -- | Elicitations auto-suppressed (depth policy). | Operational monitoring. |
 | `lenny_elicitation_timeout_total` | Counter | -- | Elicitations timed out. | Operational monitoring. |
+| `lenny_elicitation_content_tamper_detected_total` | Counter | `origin_pod`, `tampering_pod` | Forward-hop re-emissions of an existing `elicitation_id` with diverging `{title, description, schema, inputs}` dropped per the gateway-origin-binding invariant. Steady-state zero. | `ElicitationContentTamperDetected` critical alert. |
 
 ---
 

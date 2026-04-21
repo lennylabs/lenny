@@ -99,6 +99,8 @@ The chart deploys the following admission policies:
 
 7. **`lenny-sandboxclaim-guard` webhook** -- Prevents double-claim of pods by intercepting `CREATE`, `PATCH`, and `PUT` on `SandboxClaim` resources.
 
+8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests that would reuse the adapter UID, agent UID, or `lenny-cred-readers` GID of the target agent pod; closes the credential-file read boundary against post-hoc debug containers.
+
 ### Webhook Configuration
 
 All admission policy webhooks **must** use `failurePolicy: Fail` (fail-closed):

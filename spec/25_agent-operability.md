@@ -76,7 +76,7 @@ The `platform-admin` role confers broad authority; granting it in full to every 
 
 **Scope value syntax.** Each scope follows `tools:<domain>:<action>`, where:
 
-- `<domain>` is the tool family: `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`.
+- `<domain>` is the tool family: `pool`, `health`, `diagnostics`, `recommendations`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me`, `operations`, `tenant`, `credential_pool`, `credential`, `runtime`, `quota`, `config`, `circuit_breaker`. The authoritative closed list lives at [Section 15.1](15_external-api-surface.md#151-rest-api) Scope taxonomy; this paragraph mirrors it.
 - `<action>` is `read` (any `lenny_<domain>_list` / `lenny_<domain>_get` / `lenny_<domain>_summary` / similar read tool), `write` (any mutating tool), or a specific tool name (e.g., `scale`, `rotate`, `create`, `steal`).
 - `*` is permitted in the `<action>` position only: `tools:pool:*` matches every pool tool (`read` and `write`). `tools:*` is the most permissive scope and is equivalent to omitting the claim.
 
@@ -4423,6 +4423,8 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_runtime_list` | `GET /v1/admin/runtimes` | List registered runtimes |
 | `lenny_runtime_get` | `GET /v1/admin/runtimes/{name}` | Get a runtime's definition |
 | `lenny_quota_get` | `GET /v1/admin/tenants/{id}` | Get a tenant's quota (quota fields are embedded in the tenant record; see [§15.1](15_external-api-surface.md#151-rest-api)) |
+| `lenny_circuit_breaker_list` | `GET /v1/admin/circuit-breakers` | List operator-managed circuit breakers and their current state (`x-lenny-scope: "tools:circuit_breaker:read"`; see [§11.6](11_policy-and-controls.md#116-circuit-breakers) and [§15.1](15_external-api-surface.md#151-rest-api)) |
+| `lenny_circuit_breaker_get` | `GET /v1/admin/circuit-breakers/{name}` | Get state for a single circuit breaker (`x-lenny-scope: "tools:circuit_breaker:read"`) |
 
 #### Action Tools (mutating)
 
@@ -4469,6 +4471,8 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
 | `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |
 | `lenny_quota_update` | `PUT /v1/admin/tenants/{id}` | Update a tenant's quota (quota fields are part of the tenant record payload; see [§15.1](15_external-api-surface.md#151-rest-api)) |
+| `lenny_circuit_breaker_open` | `POST /v1/admin/circuit-breakers/{name}/open` | Open (activate) an operator-managed circuit breaker (destructive admission-gate activation; `x-lenny-scope: "tools:circuit_breaker:write"`; see [§11.6](11_policy-and-controls.md#116-circuit-breakers)) |
+| `lenny_circuit_breaker_close` | `POST /v1/admin/circuit-breakers/{name}/close` | Close (deactivate) an operator-managed circuit breaker (`x-lenny-scope: "tools:circuit_breaker:write"`) |
 
 The tool list above is not exhaustive; every admin-API endpoint with documented RBAC becomes an MCP tool automatically via the build-time OpenAPI → MCP generation (Section 25.12 Scope, and "Admin API MCP Extension" in "Edits Required Outside Section 25"). The canonical inventory is always `/v1/admin/me/authorized-tools` (Section 25.4) for the caller's filtered view, or `/v1/openapi.json` for the full surface.
 

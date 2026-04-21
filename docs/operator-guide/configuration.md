@@ -484,6 +484,38 @@ quotaUserFailOpenFraction: 0.25         # Default: 0.25. Range: (0, 1).
 
 When Redis is unreachable and quota fail-open is active, each user may consume at most `quotaUserFailOpenFraction` of the tenant's per-second ceiling before being locally throttled. The gateway logs a startup warning and raises the `QuotaFailOpenUserFractionInoperative` alert when `quotaUserFailOpenFraction >= 0.5`, because a value that high lets a single runaway user exhaust the tenant ceiling during the outage window.
 
+### Admission-plane feature flags
+
+```yaml
+features:
+  llmProxy: false                         # Gates lenny-direct-mode-isolation admission webhook (Phase 5.8)
+  drainReadiness: false                   # Gates lenny-drain-readiness admission webhook (Phase 8)
+  compliance: false                       # Gates lenny-data-residency-validator and lenny-t4-node-isolation webhooks (Phase 13)
+```
+
+Each flag gates the rendering of one or more `ValidatingWebhookConfiguration` resources that enforce admission-time policy. Flipping a flag from `false` to `true` is routine (it progresses the deployment into a later phase); flipping a flag from `true` to `false` is prohibited by default because it would silently remove a fail-closed admission surface the cluster was already enforcing.
+
+**Downgrade enforcement.** The chart renders a namespace-scoped, append-only `lenny-deployment-phase-stamp` ConfigMap that records every flag that has been set to `true`, along with an RFC3339 `enabledAt` timestamp. On every `helm install` / `helm upgrade` / `helm template --dry-run`, a render-time guard reads the phase-stamp via the Helm `lookup` primitive and fails closed with `PHASE_STAMP_FEATURE_FLAG_DOWNGRADE` if any flag recorded as enabled in the phase-stamp is being rendered as `false` without an explicit acknowledgement. The `lenny-preflight` Job re-runs the same check against the live cluster at install time with `PREFLIGHT_PHASE_STAMP_MISMATCH`, and the `AdmissionPlaneFeatureFlagDowngrade` Warning alert fires at runtime if the phase-stamp and the installed webhook set diverge after install. Operators with cluster-admin can reset the phase-stamp via `kubectl delete configmap lenny-deployment-phase-stamp -n <release-namespace>` and re-install the chart to establish a new baseline — this is the sole supported reset path.
+
+**Acknowledged downgrade override.**
+
+```yaml
+acceptFeatureFlagDowngrade:
+  llmProxy: false                         # Set to true to acknowledge disabling features.llmProxy after it was enabled
+  drainReadiness: false                   # Set to true to acknowledge disabling features.drainReadiness after it was enabled
+  compliance: false                       # Set to true to acknowledge disabling features.compliance after it was enabled
+```
+
+Setting `acceptFeatureFlagDowngrade.<flag>: true` is the sole authorised path to `helm upgrade` a flag from `true` to `false`. The override emits a `deployment.feature_flag_downgrade_acknowledged` audit event and retains the phase-stamp entry (so the `AdmissionPlaneFeatureFlagDowngrade` alert continues to fire until the flag is re-enabled or the ConfigMap is reset). The override MUST be set per-flag; a blanket acknowledgement is not supported. Typical invocation:
+
+```
+helm upgrade lenny ./chart \
+  --set features.compliance=false \
+  --set acceptFeatureFlagDowngrade.compliance=true
+```
+
+After the upgrade, the phase-stamp still records `features.compliance.enabled=true`, the `lenny-data-residency-validator` and `lenny-t4-node-isolation` webhooks (the two that `features.compliance` gates per SPEC §17.2 Feature-gated chart inventory) are no longer rendered, and the `AdmissionPlaneFeatureFlagDowngrade` alert fires Warning. Operators MUST either re-enable `features.compliance=true` or reset the phase-stamp ConfigMap (as described above) to clear the alert. Note the flag-to-webhook mapping: `features.llmProxy` gates `lenny-direct-mode-isolation`; `features.drainReadiness` gates `lenny-drain-readiness`; `features.compliance` gates `lenny-data-residency-validator` and `lenny-t4-node-isolation` (two webhooks, both removed when the flag flips to `false`).
+
 ### Data Residency (multi-region only)
 
 When any tenant has `dataResidencyRegion` set, the platform requires per-region storage, backup, and legal-hold escrow pipelines. Single-region deployments ignore this section and keep the default scalar settings above.

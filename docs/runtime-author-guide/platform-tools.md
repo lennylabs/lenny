@@ -261,6 +261,8 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 
 **Depth suppression:** At delegation depth >= 3, agent-initiated elicitations are auto-suppressed by default. Your runtime receives a `SUPPRESSED` response, which should be handled the same as "user declined."
 
+**Content integrity (gateway-origin binding).** The gateway is the authoritative source for elicitation display text. Intermediate pods in a delegation chain forward elicitations by `elicitation_id` only — they may observe the original `{title, description, schema, inputs}` (for policy, logging, or suppression decisions) but may not modify the rendered text. If your runtime needs to present transformed text (translation, rephrasing, audience-targeted summarization) for a different viewer, emit a new `lenny/request_elicitation` establishing a fresh `elicitation_id` and your runtime's own `origin_pod` — do not rewrite an existing one. Attempting to forward an existing `elicitation_id` with diverging content is rejected with `ELICITATION_CONTENT_TAMPERED` (HTTP 409) and raises the `ElicitationContentTamperDetected` critical alert.
+
 ---
 
 ### `lenny/request_input`

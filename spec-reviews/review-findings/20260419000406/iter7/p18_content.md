@@ -91,7 +91,9 @@ Iter5 and iter6 flagged this as a Low polish item deferrable to post-convergence
 
 If this recommendation is adopted, also add `invalid_schema_version` to the sub-code enumeration in the `WORKSPACE_PLAN_INVALID` row at `spec/15_external-api-surface.md:977` and at `docs/reference/error-catalog.md:70` (both rows currently enumerate `invalid_mode_format`, `setuid_setgid_prohibited`, `sticky_on_file_prohibited`, `gateway_written_field`, `schema_validation_failed`, but not `invalid_schema_version`).
 
-### CNT-029. Broken internal anchor `#141-extensibility-rules` introduced by iter6 CNT-020 fix [Low]
+### CNT-029. Broken internal anchor `#141-extensibility-rules` introduced by iter6 CNT-020 fix [Low] — **Fixed**
+
+**Status:** Fixed — Closed by DOC-032 fix — same anchor correction. Replaced `[§14.1](#141-extensibility-rules)` with `[§14.1](#141-workspaceplan-schema-versioning)` at `spec/14_workspace-plan-schema.md:104`; verified no remaining occurrences of `#141-extensibility-rules` in `spec/`, `docs/`, or `spec-reviews/`.
 
 **Section:** 14 (`spec/14_workspace-plan-schema.md:104`), 14.1 (heading at line 306).
 

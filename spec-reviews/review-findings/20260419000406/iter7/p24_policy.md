@@ -63,7 +63,10 @@ The docs-sync drift from iter5 POL-025 persists. Severity remains Low per iter6 
 
 ## Iter7 new findings
 
-### POL-034 `docs/operator-guide/observability.md:189` describes `QuotaFailOpenUserFractionInoperative` as "Gateway startup warning emitted" — stale against iter6 OBS-037 fix that made the alert a continuously-firing Prometheus rule [Low]
+### POL-034 `docs/operator-guide/observability.md:189` describes `QuotaFailOpenUserFractionInoperative` as "Gateway startup warning emitted" — stale against iter6 OBS-037 fix that made the alert a continuously-firing Prometheus rule [Low] — **Fixed**
+
+**Status:** Fixed alongside OBS-041 (Medium, same docs surface and same remediation). The `docs/operator-guide/observability.md` row for `QuotaFailOpenUserFractionInoperative` now describes the continuously-firing Prometheus alert expression `lenny_quota_user_failopen_fraction >= 0.5` with the supplementary mention of the startup log warning and `lenny-ops` config-validation warning, matching `spec/16_observability.md` §16.5 verbatim on the continuous-firing semantics. See iter7 OBS-041 Fixed entry in `summary.md` for the full remediation.
+
 
 **Section:** `docs/operator-guide/observability.md:189`, `spec/16_observability.md:451`, `docs/reference/metrics.md:491`.
 
@@ -106,7 +109,7 @@ Iter7 on the Policy Engine & Admission Control perspective **does not converge**
   - POL-031 (iter5 POL-028 → iter6 POL-031 → iter7 carry-forward; §11.6 "Sampling under breaker storms" omits cache-stale sibling).
   - POL-032 (iter6 new → iter7 carry-forward; `spec/25_agent-operability.md:688-689` "opener/closer identity").
   - POL-033 (iter6 new → iter7 carry-forward; `docs/reference/cloudevents-catalog.md:55-56` `opener`/`closer`).
-  - POL-034 (iter7 new; `docs/operator-guide/observability.md:189` describes `QuotaFailOpenUserFractionInoperative` as startup-only warning after iter6 OBS-037 made it continuous).
+  - POL-034 (iter7 new; `docs/operator-guide/observability.md:189` describes `QuotaFailOpenUserFractionInoperative` as startup-only warning after iter6 OBS-037 made it continuous) — **Fixed** (closed by OBS-041 fix on the same docs row).
 
 All six Lows are consistent-severity anchored against iter4/iter5/iter6 Low carry-forwards (POL-022 → POL-024 → POL-029; POL-027 → POL-030; POL-028 → POL-031) and against the POL-018/POL-025 identity-field alignment family reduced-from-Medium-for-non-home-surface rationale (POL-032, POL-033, POL-034). POL-034 aligns with the iter5/iter6 Low calibration for docs-sync follow-up findings on already-resolved Medium fixes (DOC-024/025, CRD-021 parallels).
 
