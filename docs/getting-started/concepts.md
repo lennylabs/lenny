@@ -62,7 +62,7 @@ stateDiagram-v2
 
 **created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session but the agent binary has not started. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
 
-**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace *content* — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
+**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
 
 **ready** -- Workspace materialization and setup commands have completed successfully. The session is ready for the agent binary to start.
 
@@ -341,17 +341,17 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 ### Workspace sources
 
-A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. Each source is materialized by the gateway at session creation time, before the agent runtime starts. V1 ships five source types:
+A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. Each source is materialized by the gateway at session creation time, before the agent runtime starts. Lenny ships five source types:
 
-| Source | Purpose |
-|--------|---------|
-| `inlineFile` | Write a small file whose content is embedded directly in the request (e.g., `CLAUDE.md`, `.claude/settings.json`). |
-| `uploadFile` | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`. |
-| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive into the workspace. |
-| `mkdir` | Create an empty directory (useful for output collection). |
-| `gitClone` | Clone a Git repository at a specified ref (branch, tag, or commit SHA). |
+| Source          | Purpose                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `inlineFile`    | Write a small file whose content is embedded directly in the request (e.g., `CLAUDE.md`, `.claude/settings.json`). |
+| `uploadFile`    | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`.                                 |
+| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive into the workspace.                                                    |
+| `mkdir`         | Create an empty directory (useful for output collection).                                                          |
+| `gitClone`      | Clone a Git repository at a specified ref (branch, tag, or commit SHA).                                            |
 
-`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. V1 accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA at session creation and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
+`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. Lenny accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA at session creation and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
 
 ```json
 {
@@ -377,7 +377,7 @@ Setup commands are strictly scoped by the runtime's `setupCommandPolicy`:
 - **No ambient network.** Pods have no outbound network during setup by default. Commands that need the internet (for example, a package mirror) require a pool egress profile that explicitly allows it.
 - **Non-root, read-only root filesystem.** Commands can write only to the workspace, `/tmp`, and session-scoped paths.
 
-**Setup commands are not the right place to clone a repository.** Because the pod has no network by default and `git` would have to be separately allowlisted, repository content belongs in a [`gitClone` source](#workspace-sources), not in `setupCommands`. The split is deliberate: sources describe *what should be in the workspace*; setup commands describe *what to do once it's there*.
+**Setup commands are not the right place to clone a repository.** Because the pod has no network by default and `git` would have to be separately allowlisted, repository content belongs in a [`gitClone` source](#workspace-sources), not in `setupCommands`. The split is deliberate: sources describe _what should be in the workspace_; setup commands describe _what to do once it's there_.
 
 A typical runtime's setup policy:
 
@@ -431,8 +431,8 @@ Lenny uses MCP for client-facing interaction and agent-to-agent communication. I
 
 ### Where MCP is not used
 
-| Boundary                           | Protocol              | Why                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Boundary                           | Protocol              | Why                                                                                                                                                                                                                                   |
+| ---------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Gateway to pod (lifecycle control) | Custom gRPC/HTTP+mTLS | Lifecycle operations (workspace setup, checkpointing, credential assignment, session start/stop) are infrastructure plumbing that does not map to MCP's task-oriented semantics. A custom protocol keeps the adapter contract simple. |
 
 ### MCP Tasks
@@ -553,7 +553,7 @@ The `CredentialRouter` interface supports cost-aware, latency-based, and intent-
 
 A **connector** is an external tool or agent registered via the admin API. Connectors are the mechanism by which agents running on Lenny access external services: both tool servers (GitHub, Jira, Slack) and external agents hosted outside the platform.
 
-Connectors use MCP (Streamable HTTP) as the transport protocol. Post-v1, connectors will also support A2A (Agent-to-Agent) and Agent Protocol transports, allowing Lenny agents to delegate to external agents over their native protocols without requiring those agents to run on Lenny.
+Connectors use MCP (Streamable HTTP) as the transport protocol. In the future, connectors will also support A2A (Agent-to-Agent) and Agent Protocol transports, allowing Lenny agents to delegate to external agents over their native protocols without requiring those agents to run on Lenny.
 
 The gateway manages the full OAuth2 lifecycle for connectors: it handles authorization flows, stores refresh tokens encrypted via KMS (envelope encryption), and caches short-lived access tokens in Redis. Pods never see raw connector tokens; the gateway proxies all calls on behalf of the agent.
 
