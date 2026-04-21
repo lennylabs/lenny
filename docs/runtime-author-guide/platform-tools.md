@@ -64,7 +64,8 @@ Spawn a child session on another runtime. The target is opaque --- your runtime 
 | Code | Meaning |
 |------|---------|
 | `BUDGET_EXHAUSTED` | Token budget, tree size, children total, parallel children, or tree memory limit exceeded |
-| `DELEGATION_CYCLE_DETECTED` | Target runtime appears in the caller's delegation lineage |
+| `DELEGATION_CYCLE_DETECTED` | Target runtime's `(runtime_name, pool_name)` appears in the caller's lineage and the three-layer self-recursion gate did not opt in. `details.blockedBy` names the first `false` layer (`platform` \| `runtime` \| `policy`). See the [delegation guide](delegation.md#opting-into-self-recursion). |
+| `DELEGATION_POLICY_WEAKENING` | Child lease widens an inherited `DelegationPolicy` axis. `details.field` is `maxDelegationPolicy` or `allowSelfRecursion`. |
 | `ISOLATION_MONOTONICITY_VIOLATED` | Target has weaker isolation than parent |
 | `CREDENTIAL_POOL_EXHAUSTED` | No credential available for the child |
 | `INPUT_TOO_LARGE` | `task.input` exceeds `contentPolicy.maxInputSize` |

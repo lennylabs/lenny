@@ -66,6 +66,7 @@ executionMode: task
 isolationProfile: sandboxed
 allowedResourceClasses: [small, medium, large]
 delegationPolicyRef: orchestrator-policy
+allowSelfRecursion: false  # when true AND platform+DelegationPolicy agree, this runtime's (runtime_name, pool_name) identity may repeat in its own delegation lineage (self-decomposition pattern); see [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) cycle detection
 supportedProviders:
   - anthropic_direct
   - aws_bedrock
@@ -198,6 +199,7 @@ When the gateway resolves a derived runtime, it applies the following per-field 
 | `runtimeOptionsSchema` | **Override** — derived value replaces base if set | Derived schema MAY only reference property names present in the base schema's `properties` map; introducing a property name absent from the base is forbidden. Gateway validates at derived-runtime registration and rejects with `INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares forbidden property '<name>'` if the constraint is violated. |
 | `defaultPoolConfig` | **Override** — derived value replaces base if set | |
 | `delegationPolicyRef` | **Override** — derived may set a more restrictive policy; gateway validates derived policy is a subset of base | |
+| `allowSelfRecursion` | **Override (restrict-only)** — derived may set `false` when base is `true`; a derived value of `true` is rejected when the base is `false` | Security boundary. Gateway rejects registration with `INVALID_DERIVED_RUNTIME: allowSelfRecursion cannot widen base value` if derived `true` while base `false`. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism). |
 | `agentInterface` | **Override** — derived value replaces base if set | |
 | `publishedMetadata` | **Append** — derived entries merged into base list; duplicate keys replaced by derived | |
 | `taskPolicy` | **Override** — derived value replaces base if set | |

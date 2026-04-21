@@ -290,7 +290,9 @@ Children must use an isolation profile at least as strong as their parent. The e
 
 ### Cycle Detection
 
-The gateway prevents runtime delegation loops (e.g., A delegates to B, B delegates back to A). It checks each delegation request against the caller's delegation lineage. If the target's resolved `(runtime_name, pool_name)` identity already appears in the lineage, the request is rejected with `DELEGATION_CYCLE_DETECTED`. This check uses Postgres-backed session records and remains enforced even during Redis outages.
+The gateway prevents runtime delegation loops (e.g., A delegates to B, B delegates back to A). It checks each delegation request against the caller's delegation lineage. If the target's resolved `(runtime_name, pool_name)` identity already appears in the lineage, the request is rejected with `DELEGATION_CYCLE_DETECTED` by default. This check uses Postgres-backed session records and remains enforced even during Redis outages.
+
+Self-recursion (a runtime intentionally delegating to itself) is opt-in across three layers (platform Helm, runtime spec, delegation policy); see the runtime-author guide for the admission rules. When `DELEGATION_CYCLE_DETECTED` is returned, `details.blockedBy` identifies the first layer that did not opt in.
 
 ### Credential Propagation
 

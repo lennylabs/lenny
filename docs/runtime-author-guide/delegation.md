@@ -233,9 +233,29 @@ The `credentialPropagation` field controls how child sessions get LLM provider c
 
 ## Cycle Detection
 
-The gateway prevents delegation cycles by checking the full runtime lineage. If the target's `(runtime_name, pool_name)` tuple appears anywhere in the caller's lineage, the delegation is rejected with `DELEGATION_CYCLE_DETECTED`.
+The gateway prevents delegation cycles by checking the full runtime lineage. If the target's `(runtime_name, pool_name)` tuple appears anywhere in the caller's lineage, the delegation is rejected with `DELEGATION_CYCLE_DETECTED` by default.
 
 Pool-differentiated cycles (e.g., `A/pool1 -> B -> A/pool2`) are intentionally **not** detected, because deploying the same runtime in different pools is a legitimate pattern. `maxDepth` bounds any such chain.
+
+### Opting into self-recursion
+
+Some agent patterns (planner-recurses-into-self refinement loops, deliberate self-evaluation) require a runtime to delegate to itself. The platform supports this through a three-layer AND gate; admission requires every layer to opt in:
+
+| Layer | Setting | Default | Owner |
+|---|---|---|---|
+| Platform | Helm `gateway.allowSelfRecursion: yes\|no` | `yes` | Platform operator |
+| Runtime | `Runtime.spec.allowSelfRecursion: true\|false` | `false` | Runtime author |
+| Policy | `DelegationPolicy.allowSelfRecursion: true\|false` | `false` | Tenant operator |
+
+The gate runs only under Helm `gateway.cycleDetection.mode: enforce` (the default). Under `mode: warn` the hop is admitted regardless of layer state and `delegation.cycle_warning` is audited; under `mode: permissive` no check runs at all (intended for development clusters).
+
+When the gate rejects, the error's `details.blockedBy` field names the first layer (declared order: `platform` → `runtime` → `policy`) whose value evaluated `false`, so you don't have to read three configs to know which knob to flip. `details.effectiveSettings` carries the full resolved tuple.
+
+`maxDepth` is enforced in every mode and can never be disabled. The Helm fallback `gateway.delegation.defaultMaxDepth` (default `10`) applies when no narrower value is set on the lease, preset, runtime default, or policy.
+
+### Inheritance of `allowSelfRecursion` across hops
+
+`DelegationPolicy.allowSelfRecursion` is monotonic across delegation hops: a child lease may narrow `true → false` (tighter posture is always allowed), but cannot widen `false → true`. Attempts to widen are rejected with `DELEGATION_POLICY_WEAKENING` and `details.field: "allowSelfRecursion"`.
 
 ---
 

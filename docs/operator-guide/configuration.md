@@ -185,6 +185,7 @@ runtimes:
     setupPolicy:
       timeoutSeconds: 300
       onTimeout: fail                    # fail | warn
+    allowSelfRecursion: false            # Layer 2 of the §8.2 self-recursion gate (default: false)
     labels:
       team: platform
       approved: "true"
@@ -229,6 +230,7 @@ Fields that **can** be independently configured:
 - `setupCommands` (appended after base commands)
 - `setupPolicy.timeoutSeconds` (gateway uses the maximum of base and derived)
 - `agentInterface`, `delegationPolicyRef`, `labels`, `taskPolicy`
+- `allowSelfRecursion` (restrict-only override: a derived runtime may set `false` when the base is `true`; widening `false → true` is rejected with `INVALID_DERIVED_RUNTIME`)
 
 ### Runtime Types
 
@@ -402,7 +404,30 @@ delegationPolicies:
     contentPolicy:
       interceptorRef: content-filter
     isolationMonotonicity: enforce       # enforce | warn
+    allowSelfRecursion: false            # Layer 3 of the §8.2 three-layer self-recursion gate
 ```
+
+### Self-recursion gate (platform layer)
+
+A delegation hop where the target's `(runtime_name, pool_name)` already appears in the caller's lineage is rejected by default. To opt in, **all three** layers must be `true` and the outer gate must be `enforce`:
+
+```yaml
+gateway:
+  cycleDetection:
+    mode: enforce                # enforce | warn | permissive
+    # justification: "..."       # required when mode is warn|permissive
+  allowSelfRecursion: yes        # yes | no — Layer 1 (master platform gate)
+  delegation:
+    defaultMaxDepth: 10          # Always-enforced fallback for lease maxDepth
+```
+
+- **`mode: enforce`** (default) — the three-layer AND gate (Helm + Runtime + DelegationPolicy) decides admission. Rejections return `DELEGATION_CYCLE_DETECTED` with `details.blockedBy` naming the first `false` layer.
+- **`mode: warn`** — every self-recursive hop is admitted; each emits a `delegation.cycle_warning` audit event and increments `lenny_delegation_would_have_blocked_total{mode="warn"}`. Use this to size the impact of an `enforce` rollout before flipping. Requires `gateway.cycleDetection.justification`.
+- **`mode: permissive`** — no check runs. Development clusters only; raises the standing `CycleDetectionModeUnsafe` warning alert.
+- **`gateway.allowSelfRecursion: no`** — master kill-switch that rejects every self-recursive hop regardless of runtime or policy opt-in.
+- **`gateway.delegation.defaultMaxDepth`** — bounds chain length even under `mode: permissive`. Cycle-detection mode controls runtime-identity gating, not depth.
+
+Helm transitions on these values emit `gateway.cycle_detection_mode_changed`, `gateway.allow_self_recursion_changed`, and `gateway.default_max_depth_changed` audit events; security-relaxing transitions require a justification.
 
 ### Isolation Monotonicity
 

@@ -224,6 +224,16 @@ scalePolicy:
 
 Sessions arriving during zero-warm periods incur cold-start latency (a pod must be created from scratch). This is disabled by default for `type: mcp` pools to avoid latency spikes on tool server connections.
 
+### Isolation Profiles
+
+Each pool is assigned an **isolation profile** via Kubernetes `RuntimeClass`, determining the container runtime used for agent pods. Three profiles are available:
+
+- **`sandboxed`** (gVisor) -- The default for all workloads. Provides userspace syscall interception, reducing the kernel attack surface.
+- **`microvm`** (Kata Containers) -- For higher-risk or multi-tenant workloads requiring stronger isolation. Runs each pod inside a lightweight virtual machine.
+- **`standard`** (runc) -- Standard OCI container runtime. Intended for development and testing only, and requires explicit opt-in. Not recommended for production multi-tenant deployments.
+
+gVisor is the default; runc requires explicit opt-in. Delegation enforces isolation monotonicity: child sessions must use an isolation profile at least as strong as their parent. See SPEC Section 5.3.
+
 ---
 
 ## Gateway
@@ -288,7 +298,7 @@ The delegation flow:
 
 1. The parent agent calls `lenny/delegate_task` with a target runtime name, task specification, and optional budget slice.
 2. The gateway validates the delegation against the parent's effective delegation policy and remaining budget (depth limits, fan-out limits, allowed runtimes, token budgets).
-3. The gateway performs **cycle detection**: it checks the full runtime lineage from root to current node. If the target runtime already appears in the lineage, the delegation is rejected with `DELEGATION_CYCLE_DETECTED`. This prevents circular wait deadlocks.
+3. The gateway performs **cycle detection**: it checks the full runtime lineage from root to current node. If the target's `(runtime_name, pool_name)` tuple already appears in the lineage, the delegation is rejected with `DELEGATION_CYCLE_DETECTED` by default. Self-recursion (the same identity reappearing in lineage) can be opted in by runtimes. Even when self-recursion is admitted, `maxDepth` (Helm fallback `gateway.delegation.defaultMaxDepth`, default `10`) bounds the chain.
 4. The gateway exports the requested files from the parent's workspace and stores them durably.
 5. The gateway allocates a child pod from the target runtime's pool.
 6. The exported files are streamed into the child pod, rebased to the child's workspace root.
@@ -614,15 +624,3 @@ The gateway's `RequestInterceptor` chain provides a 13-phase request hook system
 Built-in interceptors include `AuthEvaluator`, `QuotaEvaluator`, `DelegationPolicyEvaluator`, `ExperimentRouter`, `GuardrailsInterceptor` (disabled by default), and `RetryPolicyEvaluator`. External interceptors are invoked via gRPC (similar to Kubernetes admission webhooks) and can return `ALLOW`, `DENY`, or `MODIFY` decisions on content at any phase.
 
 The `GuardrailsInterceptor` is compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom classifiers. Deployers wire in their own content safety tools without modifying the gateway. See SPEC Section 4.8.
-
----
-
-## Isolation Profiles
-
-Each pool is assigned an **isolation profile** via Kubernetes `RuntimeClass`, determining the container runtime used for agent pods. Three profiles are available:
-
-- **`sandboxed`** (gVisor) -- The default for all workloads. Provides userspace syscall interception, reducing the kernel attack surface.
-- **`microvm`** (Kata Containers) -- For higher-risk or multi-tenant workloads requiring stronger isolation. Runs each pod inside a lightweight virtual machine.
-- **`standard`** (runc) -- Standard OCI container runtime. Intended for development and testing only, and requires explicit opt-in. Not recommended for production multi-tenant deployments.
-
-gVisor is the default; runc requires explicit opt-in. Delegation enforces isolation monotonicity: child sessions must use an isolation profile at least as strong as their parent. See SPEC Section 5.3.

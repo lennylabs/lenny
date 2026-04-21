@@ -110,7 +110,7 @@ All REST API endpoints return errors using a canonical JSON envelope:
 
 | Code | Category | HTTP | Retryable | Description | Recommended Action |
 |---|---|---|---|---|---|
-| `DELEGATION_CYCLE_DETECTED` | `PERMANENT` | 400 | No | Delegation would create a circular runtime chain | Choose a different delegation target. |
+| `DELEGATION_CYCLE_DETECTED` | `PERMANENT` | 400 | No | Target's `(runtime_name, pool_name)` already in the caller's lineage and the three-layer self-recursion gate did not opt in. `details.blockedBy` (`platform` \| `runtime` \| `policy`) names the first `false` layer. | Choose a different target, or have the operator/runtime author flip the named layer. |
 | `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 403 | No | Target pool's isolation is weaker than parent's | Use a target pool with equal or higher isolation. |
 | `INPUT_TOO_LARGE` | `PERMANENT` | 413 | No | Delegation input exceeds `contentPolicy.maxInputSize` | Reduce input size. |
 | `CONTENT_POLICY_WEAKENING` | `POLICY` | 403 | No | Child lease removes parent's content policy interceptor | Retain the parent's `interceptorRef`. |

@@ -72,6 +72,8 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `ElicitationContentIntegrityPermissiveTamper` | [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html) | `gateway` |
 | `ElicitationContentIntegrityWeakened` | [elicitation-content-integrity-weakened](elicitation-content-integrity-weakened.html) | `gateway` |
 | `DelegationBudgetNearExhaustion` | [delegation-budget-recovery](delegation-budget-recovery.html) | `redis` |
+| `CycleDetectionModeUnsafe` | [cycle-detection-mode-unsafe](cycle-detection-mode-unsafe.html) | `gateway` |
+| `CycleDetectionWarnModeBlocking` | [cycle-detection-mode-unsafe](cycle-detection-mode-unsafe.html) | `gateway` |
 | `PodClaimQueueSaturated` | [warm-pool-exhaustion](warm-pool-exhaustion.html) | `warmPools` |
 | `GatewaySubsystemCircuitOpen` | [circuit-breaker-open](circuit-breaker-open.html) | `gateway` |
 | `LLMTranslationLatencyHigh` | [llm-translation-degraded](llm-translation-degraded.html) | `gateway` |
