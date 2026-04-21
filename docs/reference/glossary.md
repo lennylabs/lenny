@@ -206,7 +206,7 @@ The gRPC bidirectional stream between the gateway and a pod's runtime adapter. U
 ### LLM Proxy
 {: #llm-proxy }
 
-The gateway subsystem that talks to LLM providers on behalf of agent pods. It validates the pod's short-lived lease token, injects the real provider API key (which lives only in the gateway's memory), and forwards streaming requests to the upstream provider. Because the gateway handles this hop, pods never see real API keys and credential rotation is zero-downtime. See [Metrics Reference](metrics).
+The gateway subsystem that talks to LLM providers on behalf of agent pods in pools configured with `deliveryMode: proxy` (the default). It validates the pod's short-lived lease token, injects the real provider API key (which lives only in the gateway's memory), and forwards streaming requests to the upstream provider. Because the gateway handles this hop, proxy-mode pods never see real API keys and credential rotation is zero-downtime. Pools configured with `deliveryMode: direct` bypass this subsystem: the gateway materializes a short-lived, lease-scoped credential onto the pod and the runtime calls the provider directly. See [Metrics Reference](metrics).
 
 ## M
 

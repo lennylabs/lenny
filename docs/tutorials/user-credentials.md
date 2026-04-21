@@ -70,7 +70,12 @@ curl -s -X POST http://localhost:8080/v1/sessions \
   }' | jq .
 ```
 
-The session proceeds through the normal lifecycle. The gateway injects your API key into LLM proxy requests; the agent pod never sees the raw key. The gateway talks to LLM providers on behalf of agent pods: it reads your API key from its in-memory Token Service cache, translates the request to the upstream provider's wire format, and forwards it. Your API key only lives in the gateway's memory, so agent pods do not hold real credentials and rotation happens without restarting pods. See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
+The session proceeds through the normal lifecycle. How your key reaches the LLM provider depends on the pool's `deliveryMode`:
+
+- **Proxy mode (default).** The gateway injects your API key into LLM proxy requests; the agent pod never sees the raw key. The gateway talks to LLM providers on behalf of agent pods: it reads your API key from its in-memory Token Service cache, translates the request to the upstream provider's wire format, and forwards it. Your API key only lives in the gateway's memory, so agent pods do not hold real credentials and rotation happens without restarting pods.
+- **Direct mode.** The gateway materializes a short-lived, lease-scoped credential onto the pod at assignment time and the runtime calls the provider itself. The LLM Proxy is not on the request path, and the pod briefly holds a credential file that is removed on session end or between tasks.
+
+See [LLM Proxy security](../operator-guide/security.md) for the full credential flow.
 
 You can verify which credential source was used by checking the session metadata:
 
