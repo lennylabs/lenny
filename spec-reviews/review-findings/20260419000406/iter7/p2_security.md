@@ -16,9 +16,9 @@
 
 **Re-verified iter7.** `spec/07_session-lifecycle.md` §7.4 still encodes every normative validator; `spec/13_security-model.md` §13.4 still mirrors the ceilings; `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with the nine `details.reason` sub-codes is present in `spec/15_external-api-surface.md` §15.1. iter5/iter6 fix commits did not touch §7.4 or §13.4 in ways that would regress this fix. No new gap.
 
-### SEC-009 — Exported workspace files bypass `contentPolicy.interceptorRef` [High — Deferred]
+### SEC-009 — Exported workspace files bypass `contentPolicy.interceptorRef` [High — Fixed]
 
-**Status unchanged.** `spec/08_recursive-delegation.md` §8.7 "Security note — exported files are untrusted input" (line 725) still documents the gap and points to the deployer-side mitigation (workspace-plan `inlineFile` interceptor). Exported files remain outside `contentPolicy.interceptorRef` scope — the known architectural gap flagged in iter4 and re-confirmed iter5. Still deferred pending user decision on question (a) from iter4. No iter7 action possible without user direction.
+**Status updated (2026-04-21): Fixed.** User confirmed the minimum-viable variant (iter4 option 2). Spec extended with `contentPolicy.scanExportedFiles` + `maxExportedFileSize` on `DelegationPolicy`, a new `PreExportMaterialization` interceptor phase (§4.8), §8.3 restrictiveness/cooldown coverage, four error codes (§15.1), two metrics (§16.1), and four audit events (§11.7). §8.7 "Security note" rewritten from a residual-risk framing to the new opt-in control. See `iter4/summary.md` SEC-009 for full resolution detail.
 
 ### SEC-010 — Trust-based chained-interceptor exception [High — Fixed iter4; verified iter5]
 
@@ -174,7 +174,7 @@ Also reference this rule from §15.1 `DOMAIN_NOT_ALLOWLISTED` so error messages 
 
 **Prior-iteration SEC status after iter7 verification:**
 - SEC-008 [High]: Fixed iter4, re-verified iter5 and iter7 — no regression
-- SEC-009 [High]: Deferred pending user direction — unchanged
+- SEC-009 [High]: Fixed in 2026-04-21 follow-up — see item above
 - SEC-010 [High]: Fixed iter4, re-verified — no regression
 - SEC-011 [Medium]: Fixed iter4, re-verified — no regression on its original scope, but see SEC-017 which surfaces an adjacent gap (ephemeral-container channel) that SEC-011's admission rule does not cover
 - SEC-012 [Medium]: Fixed iter4, re-verified — no regression
@@ -190,4 +190,4 @@ Also reference this rule from §15.1 `DOMAIN_NOT_ALLOWLISTED` so error messages 
 
 Rationale: SEC-017 is a concrete credential-boundary-bypass attack path with no in-spec mitigation (Medium), and SEC-018 is a concrete UX-deception attack path on the elicitation chain (Medium). Both require spec additions (new admission webhook scope for SEC-017; content-integrity mechanism for SEC-018). Low/Info findings can be addressed incrementally, but the two Medium findings should be fixed or explicitly deferred-with-rationale before declaring SEC convergence.
 
-The iter5 deferral (SEC-009) remains unchanged and still depends on user-level architectural direction, which is the documented project convention per `feedback_proposal_before_edit.md`.
+The iter5 deferral (SEC-009) has been closed in the 2026-04-21 follow-up (minimum-viable variant accepted).

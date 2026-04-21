@@ -556,7 +556,7 @@ A `ValidateMemoryStoreIsolation` contract test verifies tenant isolation for cus
 
 ## Interceptors
 
-The gateway's `RequestInterceptor` chain provides a 12-phase request hook system for custom logic at every stage of request processing, from pre-authentication through post-agent-output.
+The gateway's `RequestInterceptor` chain provides a 13-phase request hook system for custom logic at every stage of request processing, from pre-authentication through post-agent-output.
 
 Built-in interceptors include `AuthEvaluator`, `QuotaEvaluator`, `DelegationPolicyEvaluator`, `ExperimentRouter`, `GuardrailsInterceptor` (disabled by default), and `RetryPolicyEvaluator`. External interceptors are invoked via gRPC (similar to Kubernetes admission webhooks) and can return `ALLOW`, `DENY`, or `MODIFY` decisions on content at any phase.
 

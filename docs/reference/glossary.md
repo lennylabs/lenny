@@ -172,7 +172,7 @@ A container runtime sandbox that intercepts syscalls in userspace, providing str
 ### Interceptor
 {: #interceptor }
 
-A content policy evaluation hook in the gateway's 12-phase request processing chain. Interceptors can inspect and modify (or reject) traffic at specific phases. Built-in interceptors handle security-critical phases (priority <= 100); external interceptors are registered via gRPC and run at configurable phases with priority > 100. See [Error Catalog](error-catalog).
+A content policy evaluation hook in the gateway's 13-phase request processing chain. Interceptors can inspect and modify (or reject) traffic at specific phases. Built-in interceptors handle security-critical phases (priority <= 100); external interceptors are registered via gRPC and run at configurable phases with priority > 100. See [Error Catalog](error-catalog).
 
 ### Integration Level
 {: #integration-level }

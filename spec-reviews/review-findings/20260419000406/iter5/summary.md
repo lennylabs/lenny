@@ -181,9 +181,9 @@ The iter4 baseline list of WPC/PSC leader-election hazards, admission-plane HA c
 
 **Verified.** `spec/07_session-lifecycle.md` §7.4 now encodes every normative validator the iter4 resolution promised: 256 MiB decompressed cap, 100:1 ratio cap, 10 000 entries, 64 MiB per-entry cap, 32 path depth, 4 096 B path length, zip-slip canonicalization, outright rejection of `hardlink`/`character-device`/`block-device`/`FIFO`/`socket`, symlink blocklist for `/proc`, `/sys`, `/dev`, `/run/lenny`. `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with all nine `details.reason` sub-codes is in §15.1 (line 1072) and the §13.4 summary cross-references §7.4, §8.7, §15.1, §16.1. §13.5 §13.4 list at lines 657-666 mirrors the normative ceilings. No residual gap.
 
-### SEC-009 — Exported workspace files bypass `contentPolicy.interceptorRef` [High — Deferred]
+### SEC-009 — Exported workspace files bypass `contentPolicy.interceptorRef` [High — Fixed]
 
-**Status unchanged (still deferred pending user input).** §13.5 "Residual risk — file export content" (line 681) still explicitly documents the gap and points to §8.7 for deployer-side mitigations. The five open questions from iter4 remain unanswered. This is an acknowledged architectural gap, not a regression. No iter5 action possible without user direction on question (a).
+**Status updated (2026-04-21): Fixed.** Resolved via the minimum-viable variant (iter4 option 2): added opt-in `contentPolicy.scanExportedFiles: bool` + `maxExportedFileSize` on `DelegationPolicy`, new `PreExportMaterialization` interceptor phase (§4.8), four new error codes (§15.1), two new metrics (§16.1), four new audit events (§11.7), and §8.3 restrictiveness/cooldown coverage for the new field. §22.3 preserved — no built-in MIME classifier; deployers supply the scanning interceptor. §13.5 and §8.7 rewritten to reflect the new opt-in control. See iter4 SEC-009 resolution note for full detail.
 
 ### SEC-010 — Trust-based chained-interceptor exception [High — Fixed iter4]
 
@@ -219,10 +219,10 @@ Theoretical defense-in-depth polish considered and rejected as Low/Info (per cal
 
 **Iter4 SEC findings status after iter5 verification:**
 - Fixed & verified: 5 (SEC-008, SEC-010, SEC-011, SEC-012, SEC-013)
-- Deferred pending user input: 1 (SEC-009)
+- Fixed in follow-up (post-iter5, 2026-04-21): 1 (SEC-009 — see updated status above)
 - New iter5 findings: 0 Critical, 0 High, 0 Medium, 0 Low/Info
 
-**Convergence: YES** for the Security & Threat Modeling perspective. All actionable iter4 findings are fixed; the single outstanding deferral (SEC-009) is gated on user-level architectural direction and cannot progress without that input, which is the documented project convention (`feedback_proposal_before_edit.md`).
+**Convergence: YES** for the Security & Threat Modeling perspective. All iter4 findings are fixed (SEC-009 was closed in the 2026-04-21 follow-up after user confirmation of the minimum-viable variant).
 
 ---
 
@@ -1462,7 +1462,7 @@ The central competitive-positioning narrative (`spec/23_competitive-landscape.md
 
 ## Iter4 carry-over audit
 
-Iter4 recorded exactly four warm-pool-lifecycle findings. All were reported **Fixed**. There were no Skipped or Deferred iter4 WPL findings; the single Deferred item in iter4's index (`SEC-009`) is delegation/file-export security, not warm-pool scope.
+Iter4 recorded exactly four warm-pool-lifecycle findings. All were reported **Fixed**. There were no Skipped or Deferred iter4 WPL findings; the single Deferred item in iter4's index (`SEC-009`) is delegation/file-export security, not warm-pool scope. (`SEC-009` has since been closed in the 2026-04-21 follow-up; see the Security perspective section above.)
 
 Verification of each iter4 Fixed item against the current spec:
 

@@ -513,7 +513,7 @@ The `ErasureJobFailed` and `ErasureJobOverdue` alerts fire if the erasure job fa
 
 ## Content Policy / Request Interceptors
 
-The `RequestInterceptor` chain provides 12 hook phases spanning the full request lifecycle (`PreAuth`, `PostAuth`, `PreRoute`, `PreDelegation`, `PreMessageDelivery`, `PostRoute`, `PreToolResult`, `PostAgentOutput`, `PreLLMRequest`, `PostLLMResponse`, `PreConnectorRequest`, `PostConnectorResponse`).
+The `RequestInterceptor` chain provides 13 hook phases spanning the full request lifecycle (`PreAuth`, `PostAuth`, `PreRoute`, `PreDelegation`, `PreExportMaterialization`, `PreMessageDelivery`, `PostRoute`, `PreToolResult`, `PostAgentOutput`, `PreLLMRequest`, `PostLLMResponse`, `PreConnectorRequest`, `PostConnectorResponse`). `PreExportMaterialization` is an opt-in, per-exported-file inspection point that fires after `PreDelegation` and before the file is persisted to the child's workspace (enabled by setting `contentPolicy.scanExportedFiles: true` on a `DelegationPolicy`).
 
 ### Configuration
 

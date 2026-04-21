@@ -184,6 +184,8 @@ rules:
 contentPolicy:
   maxInputSize: 131072
   interceptorRef: null
+  scanExportedFiles: false
+  maxExportedFileSize: 10485760
 ```
 
 **Effective policy** is the intersection of the runtime-level policy and any derived-runtime policy --- derived policies can only restrict, never expand.
@@ -194,6 +196,8 @@ The `contentPolicy` on `DelegationPolicy` provides prompt injection mitigation:
 
 - `maxInputSize`: Hard byte-size limit on `TaskSpec.input` (default: 128KB). Delegations exceeding it are rejected with `INPUT_TOO_LARGE`.
 - `interceptorRef`: Optional reference to a `RequestInterceptor` for content scanning. The interceptor can `ALLOW`, `REJECT`, or `MODIFY` content.
+- `scanExportedFiles` (default `false`): When `true`, each exported file transferred from parent to child is additionally routed through `interceptorRef` at the `PreExportMaterialization` phase *before* the file is materialized into the child's workspace. Requires a non-null `interceptorRef` (otherwise the policy is rejected with `EXPORT_SCAN_REQUIRES_INTERCEPTOR`). Lets deployers inspect attacker-controlled `CLAUDE.md`, `AGENTS.md`, or any other file whose content a child runtime will treat as instructions. Runtime-time rejection surfaces as `EXPORT_FILE_SCAN_REJECTED`; interceptor unavailability under `fail-closed` surfaces as `EXPORT_FILE_SCAN_UNAVAILABLE`.
+- `maxExportedFileSize` (default 10 MiB): Per-file byte ceiling when `scanExportedFiles` is `true`. Files exceeding this surface as `EXPORT_FILE_SCAN_SIZE_EXCEEDED`.
 
 ---
 

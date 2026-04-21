@@ -79,7 +79,7 @@ See `p1_kubernetes.md`. 1 Medium (KIN-028 admission-plane feature-gate downgrade
 
 ### Perspective 2 — Security & Threat Modeling (SEC)
 
-See `p2_security.md`. 2 Medium (SEC-017 ephemeral debug container credential exposure; SEC-018 elicitation text integrity across chain hops), 2 Low (SEC-019/020), 1 Info (SEC-021). 5 iter5 carry-forwards re-verified no regression (SEC-008/010/011/012/013); SEC-009 remains deferred pending user direction.
+See `p2_security.md`. 2 Medium (SEC-017 ephemeral debug container credential exposure; SEC-018 elicitation text integrity across chain hops), 2 Low (SEC-019/020), 1 Info (SEC-021). 5 iter5 carry-forwards re-verified no regression (SEC-008/010/011/012/013); SEC-009 was closed in the 2026-04-21 follow-up (see `iter4/summary.md` SEC-009 resolution).
 
 ### Perspective 3 — Network Security & Isolation (NET)
 

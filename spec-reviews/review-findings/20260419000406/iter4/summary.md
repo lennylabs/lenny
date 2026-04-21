@@ -185,7 +185,9 @@ Recommendation: Expand §13.4 with normative, non-tunable platform defaults: max
 
 ### SEC-009. Exported workspace files bypass contentPolicy.interceptorRef, enabling delegation-mediated prompt injection [High]
 
-**Status:** Deferred - Input Required
+**Status:** Fixed
+
+**Resolution (2026-04-21):** Implemented the minimum-viable variant from the deferral rationale (option 2). Added two new opt-in fields to `DelegationPolicy.contentPolicy`: `scanExportedFiles: bool` (default `false`) and `maxExportedFileSize: uint64` (default 10 MiB). When `scanExportedFiles: true`, each exported file is routed through the existing `contentPolicy.interceptorRef` at a new `PreExportMaterialization` interceptor phase before the file is materialized into the child's workspace (§4.8). Per-file inline payload capped at `maxExportedFileSize`; oversized files reject with new `EXPORT_FILE_SCAN_SIZE_EXCEEDED` (413). Interceptor `REJECT` → `EXPORT_FILE_SCAN_REJECTED` (422); `fail-closed` timeout/error → `EXPORT_FILE_SCAN_UNAVAILABLE` (503); `fail-open` timeout admits file and emits `delegation.export_scan_failed_open` audit event. `scanExportedFiles` participates in the §8.3 restrictiveness rule (children may strengthen, never weaken) and the weakening cooldown (§8.3 rule 5 applied per-policy on `true → false` transitions). No built-in MIME classifier is added — §22.3 "No Built-In Guardrail Logic" preserved; deployers must supply the scanning interceptor. §8.7 "untrusted input" warning rewritten to point to the new opt-in control plus two alternative mitigations (runtime-side sandboxing, workspace-plan inspection). New metrics `lenny_export_file_scans_total` and `lenny_export_file_scan_duration_seconds` (§16.1). Four new audit events added to §11.7: `delegation.export_file_scan_rejected`, `delegation.export_scan_failed_open`, `delegation_policy.export_scan_weakened`, `delegation_policy.export_scan_strengthened`. docs/ synced (error catalog, metrics, delegation guide, interceptor phase count 12 → 13).
 
 **Section:** spec/08_recursive-delegation.md §8.7 (File Export Model); spec/13_security-model.md §13.5
 

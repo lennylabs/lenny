@@ -70,7 +70,7 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | **Memory store**           | Pluggable interface (Postgres+pgvector default) | No                 | No                        | No                          | No                       | No                          | Built-in (LangChain-coupled)     |
 | **Credential management**  | Pools, leasing, gateway-mediated LLM proxy (default) or optional direct delivery, pod-bound lease tokens | No                      | No                        | No                          | No                       | No                          | Basic                            |
 | **Compliance (GDPR/legal)**| Erasure, legal holds, data residency       | No                      | No                        | No                          | No                       | No                          | Basic                            |
-| **Guardrails/interceptors**| Pluggable gRPC interceptor chain (12 phases) | No                   | No                        | No                          | No                       | No                          | LangSmith guardrails             |
+| **Guardrails/interceptors**| Pluggable gRPC interceptor chain (13 phases) | No                   | No                        | No                          | No                       | No                          | LangSmith guardrails             |
 | **Cold-start**             | P95 <2s runc, <5s gVisor (session-ready)   | ~150ms (container boot) | Sub-90ms (container boot) | ~300ms (checkpoint/restore) | N/A (persistent workers) | Sub-second (container boot) | N/A (persistent)                |
 | **GPU support**            | No                                         | Limited                 | Limited                   | No                          | No                       | Yes (primary use case)      | No                              |
 | **Isolation profiles**     | runc / gVisor / Kata                       | Firecracker microVM     | Container                 | Firecracker microVM         | Process-level            | Container                   | Process-level                   |
@@ -287,7 +287,7 @@ Lenny matches Scion on the things that look like advantages at first glance: the
 | Aspect | Lenny | OpenShell |
 |:---|:---|:---|
 | **Scope** | Multi-tenant platform — many sessions, many tenants, recursive delegation. | Single-agent "single-player mode" (alpha). Multi-tenant is explicitly future work. |
-| **Policy model** | 12-phase request interceptor chain on the gateway; content classifiers, budgets, audit events plug in. | 4-layer YAML policy (filesystem/process static, network/inference hot-reloadable). |
+| **Policy model** | 13-phase request interceptor chain on the gateway; content classifiers, budgets, audit events plug in. | 4-layer YAML policy (filesystem/process static, network/inference hot-reloadable). |
 | **Multi-agent** | Recursive delegation is a platform primitive, enforced across sessions at the gateway. | No cross-sandbox orchestration (alpha: "single-player mode"); NVIDIA's blog mentions agents spawning "scoped subagents" inside a single sandbox. |
 | **Deployment** | Kubernetes deployment with CRDs and controllers. | A single Docker container running K3s on the developer's machine, or `--remote user@host` for a remote daemon. |
 | **Credentials** | Leased with per-pod identity; gateway mediates LLM API keys. | "Providers" — credential bundles injected as environment variables at sandbox creation. |

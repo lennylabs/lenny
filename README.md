@@ -172,7 +172,7 @@ Agents spawn child agents through the gateway with enforced delegation leases: m
 
 ### Gateway
 
-Multi-protocol: REST, MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure. 12-phase request interceptor chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
+Multi-protocol: REST, MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses clients connect to the same infrastructure. 13-phase request interceptor chain for guardrails, content policy, custom routing, and LLM request/response inspection. Compatible with AWS Bedrock Guardrails, Azure Content Safety, Lakera Guard, or custom gRPC classifiers.
 
 ### Enterprise controls and security
 
