@@ -7,26 +7,34 @@
 
 # shellcheck shell=bash
 
+# Pin policy: set each pin at the lowest version that ships with the tools we
+# need to use, or at the lowest version we have tested against. Raise pins
+# only when a real feature requires it.
+#
+# When the pin clashes with a platform-supplied default (e.g., Apple's
+# xcode-select git), prefer the platform default unless we have a feature
+# justification.
+
 # ---- Core toolchain (tiers 0-4) ----
-LENNY_VERSION_GO="1.22"
-LENNY_VERSION_DOCKER="24.0"
+LENNY_VERSION_GO="1.22"                # range-over-func, slices/maps stable
+LENNY_VERSION_DOCKER="24.0"            # threshold for Compose v2 as a plugin
 LENNY_VERSION_DOCKER_COMPOSE="2.20"
-LENNY_VERSION_MAKE="3.81"
-LENNY_VERSION_GIT="2.40"
+LENNY_VERSION_MAKE="3.81"              # ships on macOS by default
+LENNY_VERSION_GIT="2.34"               # Apple xcode-select ships 2.39; Ubuntu 22.04 ships 2.34
 LENNY_VERSION_JQ="1.6"
-LENNY_VERSION_PROTOC="25.0"
-LENNY_VERSION_BUF="1.30"
+LENNY_VERSION_PROTOC="24.0"            # widely available; we use no 25-specific features
+LENNY_VERSION_BUF="1.25"
 LENNY_VERSION_OPENSSL="3.0"
-LENNY_VERSION_GOLANGCI_LINT="1.56"
+LENNY_VERSION_GOLANGCI_LINT="1.54"     # broadly distributed via Homebrew and apt
 LENNY_VERSION_GOFUMPT="0.6"
 LENNY_VERSION_SQLC="1.25"
 LENNY_VERSION_MIGRATE="4.17"
 LENNY_VERSION_CONFTEST="0.50"
 
 # ---- Kubernetes toolchain (tier 5) ----
-LENNY_VERSION_KUBECTL="1.28"
-LENNY_VERSION_KIND="0.22"
-LENNY_VERSION_HELM="3.13"
+LENNY_VERSION_KUBECTL="1.27"           # +/-1 minor skew tolerated; managed K8s often lags
+LENNY_VERSION_KIND="0.20"              # 0.20 supports the K8s versions we target
+LENNY_VERSION_HELM="3.12"              # no 3.13-specific features required
 LENNY_VERSION_HELM_UNITTEST="0.4"
 LENNY_VERSION_CMCTL="2.0"
 

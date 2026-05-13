@@ -117,15 +117,25 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 # ---- Core toolchain (tiers 0-4) ----
 
 install_go() {
-  if have_cmd go && ! (( FORCE )); then
-    local v
+  local v=""
+  local present=0
+  if have_cmd go; then
+    present=1
     v="$(go version | awk '{print $3}' | sed 's/go//')"
+  fi
+
+  if (( present )) && ! (( FORCE )); then
     if lenny_version_ge "$v" "$LENNY_VERSION_GO"; then
       lenny_log_ok "go ($v)"
       return
     fi
-    lenny_log_warn "go $v is older than required $LENNY_VERSION_GO; upgrading"
+    lenny_log_warn "go ($v) is below pinned $LENNY_VERSION_GO; upgrading"
+  elif (( present )); then
+    lenny_log_info "go ($v): --force reinstall"
+  else
+    lenny_log_miss "go: not installed; installing"
   fi
+
   case "$PKG" in
     brew) run_or_dry brew install go ;;
     apt|dnf)
@@ -154,14 +164,30 @@ install_docker_check() {
 install_simple_brew() {
   # install_simple_brew <command> <brew-package> <version-flag> <version-min>
   local cmd="$1" pkg="$2" verflag="$3" verneed="$4"
-  if have_cmd "$cmd" && ! (( FORCE )); then
-    local v
+  local v=""
+  local present=0
+  if have_cmd "$cmd"; then
+    present=1
     v="$($cmd "$verflag" 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  fi
+
+  # Three outcomes, each logged explicitly so --dry-run is transparent:
+  #   present and current  → [ok], return.
+  #   present and stale    → [warn], fall through to upgrade.
+  #   absent               → [miss], fall through to install.
+  # --force always falls through.
+  if (( present )) && ! (( FORCE )); then
     if [[ -n "$v" ]] && lenny_version_ge "$v" "$verneed"; then
       lenny_log_ok "$cmd ($v)"
       return
     fi
+    lenny_log_warn "$cmd (${v:-unknown}) is below pinned $verneed; upgrading"
+  elif (( present )); then
+    lenny_log_info "$cmd (${v:-unknown}): --force reinstall"
+  else
+    lenny_log_miss "$cmd: not installed; installing"
   fi
+
   case "$PKG" in
     brew) run_or_dry brew install "$pkg" ;;
     apt)  run_or_dry sudo apt-get install -y "$pkg" ;;
@@ -181,10 +207,18 @@ install_conftest(){ install_simple_brew conftest conftest --version "$LENNY_VERS
 install_compose() {
   # docker compose v2 ships with Docker Desktop, OrbStack, Rancher Desktop.
   # Colima / Docker Engine require a separate install.
-  if docker compose version >/dev/null 2>&1; then
-    lenny_log_ok "docker compose ($(docker compose version --short 2>/dev/null || echo present))"
-    return
+  if docker compose version >/dev/null 2>&1 && ! (( FORCE )); then
+    local v
+    v="$(docker compose version --short 2>/dev/null || echo present)"
+    if lenny_version_ge "$v" "$LENNY_VERSION_DOCKER_COMPOSE"; then
+      lenny_log_ok "docker compose ($v)"
+      return
+    fi
+    lenny_log_warn "docker compose ($v) is below pinned $LENNY_VERSION_DOCKER_COMPOSE; upgrading"
+  elif ! docker compose version >/dev/null 2>&1; then
+    lenny_log_miss "docker compose: not installed; installing"
   fi
+
   case "$PKG" in
     brew) run_or_dry brew install docker-compose ;;
     apt)  run_or_dry sudo apt-get install -y docker-compose-plugin ;;
@@ -212,8 +246,13 @@ install_go_tools() {
     set -- $spec
     local cmd="$1"; shift
     if have_cmd "$cmd" && ! (( FORCE )); then
-      lenny_log_ok "$cmd"
+      lenny_log_ok "$cmd (go-installed)"
       continue
+    fi
+    if have_cmd "$cmd"; then
+      lenny_log_info "$cmd: --force reinstall"
+    else
+      lenny_log_miss "$cmd: not installed; go installing"
     fi
     run_or_dry go install "$@"
   done

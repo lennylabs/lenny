@@ -131,7 +131,7 @@ $ ./scripts/preflight.sh
 [ok]    go         1.22.3
 [ok]    docker     27.0.3
 [ok]    kubectl    1.28.4
-[warn]  helm       3.12.0 (expected >= 3.13.0)
+[warn]  buf        1.20.0 (expected >= 1.25.0)
 [miss]  k6         not installed (run: scripts/setup-dev.sh --include load)
 3 issues. See https://github.com/lennylabs/lenny/blob/main/TESTING_DEPENDENCIES.md
 ```
@@ -221,7 +221,7 @@ Bundled with Docker Desktop, OrbStack, Rancher Desktop. With Colima or Docker En
 - WSL2: same as Linux.
 - Verify: `make --version`.
 
-### git 2.40+
+### git 2.34+
 
 - macOS: `xcode-select --install` (provides git) or `brew install git`.
 - Linux: `sudo apt install git` or `sudo dnf install git`.
@@ -235,7 +235,7 @@ JSON processor used in scripts.
 - Linux: `sudo apt install jq` or `sudo dnf install jq`
 - Verify: `jq --version`
 
-### protoc 25.0+ and protoc-gen-go
+### protoc 24.0+ and protoc-gen-go
 
 Protocol Buffers compiler. Compiles `schemas/lenny-adapter.proto` and the gRPC service definitions.
 
@@ -257,14 +257,14 @@ go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ```
 
-### buf 1.30+
+### buf 1.25+
 
 Proto linter and breaking-change detector.
 
 - macOS: `brew install bufbuild/buf/buf`
 - Linux:
   ```bash
-  BUF_VERSION=1.30.0
+  BUF_VERSION=1.25.0
   curl -fsSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-$(uname -s)-$(uname -m)" -o /tmp/buf
   sudo install -m 0755 /tmp/buf /usr/local/bin/buf
   ```
@@ -281,7 +281,7 @@ Used to generate self-signed mTLS material in dev mode.
 - Linux: usually pre-installed (`openssl version` to confirm). Upgrade via the distro package manager if needed.
 - Verify: `openssl version` reports OpenSSL 3.0 or higher.
 
-### golangci-lint 1.56+
+### golangci-lint 1.54+
 
 Aggregated Go linter used in Tier 0.
 
@@ -289,7 +289,7 @@ Aggregated Go linter used in Tier 0.
 - Linux:
   ```bash
   curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-    | sh -s -- -b "$(go env GOPATH)/bin" v1.56.2
+    | sh -s -- -b "$(go env GOPATH)/bin" v1.54.2
   ```
 - Verify: `golangci-lint --version`
 
@@ -343,7 +343,7 @@ Policy testing for Helm-rendered manifests.
 
 ## 6. Kubernetes toolchain (tier 5)
 
-### kubectl 1.28+
+### kubectl 1.27+
 
 - macOS: `brew install kubectl`
 - Linux:
@@ -353,18 +353,18 @@ Policy testing for Helm-rendered manifests.
   ```
 - Verify: `kubectl version --client`
 
-### Kind 0.22+
+### Kind 0.20+
 
 Local Kubernetes via Docker-in-Docker.
 
 - macOS: `brew install kind`
 - Linux:
   ```bash
-  go install sigs.k8s.io/kind@v0.22.0
+  go install sigs.k8s.io/kind@v0.20.0
   ```
 - Verify: `kind version`
 
-### Helm 3.13+
+### Helm 3.12+
 
 Chart install for Tier 5 e2e.
 
