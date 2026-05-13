@@ -55,21 +55,72 @@ ISSUES=0
 
 record() {
   # record <status> <name> <version> <expected> <group>
+  #
+  # Accumulates the record for the final summary / JSON output, and streams
+  # the human-readable line as soon as the check completes. JSON mode
+  # suppresses streaming so the JSON document is the only stdout content.
   RESULTS+=("$1|$2|$3|$4|$5")
   if [[ "$1" != "ok" ]]; then
     ISSUES=$((ISSUES + 1))
   fi
+  if (( JSON )); then
+    return
+  fi
+  case "$1" in
+    ok)
+      (( QUIET )) || lenny_log_ok "$(printf '%-22s %s' "$2" "$3")"
+      ;;
+    warn)
+      lenny_log_warn "$(printf '%-22s %-15s (expected >= %s)' "$2" "$3" "$4")"
+      ;;
+    miss)
+      lenny_log_miss "$(printf '%-22s not installed (group: %s; run: scripts/setup-dev.sh --include %s)' "$2" "$5" "$5")"
+      ;;
+  esac
 }
 
 check_simple() {
   # check_simple <command> <name> <version-flag> <regex> <expected> <group>
   local cmd="$1" name="$2" flag="$3" regex="$4" expected="$5" group="$6"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
+  local resolved
+  resolved="$(lenny_resolve_tool "$cmd")"
+  if [[ -z "$resolved" ]]; then
     record "miss" "$name" "" "$expected" "$group"
     return
   fi
+  # If the resolved path isn't what PATH would have found, flag for the
+  # run-end advice. Catches both "not on PATH at all" (fallback dirs) and
+  # "we preferred a version-manager shim over the system PATH binary".
+  local on_path
+  on_path="$(command -v "$cmd" 2>/dev/null || true)"
+  if [[ "$resolved" != "$on_path" ]]; then
+    LENNY_RESOLVED_VIA_FALLBACK=1
+  fi
+  lenny_flag_manager_init "$resolved"
   local v
-  v="$("$cmd" "$flag" 2>&1 | head -3 | grep -oE "$regex" | head -1 || true)"
+  # Fallback chain for version detection — each step is increasingly more
+  # heuristic. Designed to handle the awkward output of real-world tools:
+  #
+  #   1. head -1 of <cmd> <flag>: covers the common case.
+  #   2. brew list --versions: covers brew binaries that report "dev".
+  #   3. go version -m: covers go-installed binaries (migrate, goimports,
+  #      oapi-codegen) whose --version is unhelpful.
+  #   4. pipx list: covers pipx-managed Python tools whose --version puts
+  #      noise on line 1 (e.g., tox's "ROOT: No tox.ini..." warning).
+  #   5. multi-line scan of <cmd> <flag>: last-ditch catch-all.
+  v="$("$resolved" "$flag" 2>&1 | head -1 | grep -oE "$regex" | head -1 || true)"
+  if [[ -z "$v" || "$v" == "dev" ]] && command -v brew >/dev/null 2>&1; then
+    v="$(brew list --versions "$cmd" 2>/dev/null | awk '{print $2}' | head -1 || true)"
+  fi
+  if [[ -z "$v" ]] && command -v go >/dev/null 2>&1; then
+    v="$(go version -m "$resolved" 2>/dev/null | awk '$1 == "mod" { print $3; exit }' | sed 's/^v//')"
+  fi
+  if [[ -z "$v" ]] && command -v pipx >/dev/null 2>&1; then
+    v="$(pipx list --short 2>/dev/null | awk -v c="$cmd" '$1 == c { print $2; exit }')"
+  fi
+  if [[ -z "$v" ]]; then
+    v="$("$resolved" "$flag" 2>&1 | grep -oE "$regex" | head -1 || true)"
+  fi
   if [[ -z "$v" ]]; then
     record "warn" "$name" "unknown" "$expected" "$group"
     return
@@ -123,9 +174,12 @@ if want core; then
   check_simple openssl        openssl        version          '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_OPENSSL"       core
   check_simple golangci-lint  golangci-lint  --version        '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_GOLANGCI_LINT" core
   check_simple gofumpt        gofumpt        -version         '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_GOFUMPT"       core
+  check_simple goimports      goimports      -h               '[0-9]+\.[0-9]+(\.[0-9]+)?' "0.0"                          core
   check_simple sqlc           sqlc           version          '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_SQLC"          core
   check_simple migrate        migrate        -version         '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_MIGRATE"       core
   check_simple conftest       conftest       --version        '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_CONFTEST"      core
+  check_simple oapi-codegen   oapi-codegen   -version         '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_OAPI_CODEGEN"  core
+  check_simple protoc-gen-go  protoc-gen-go  --version        '[0-9]+\.[0-9]+(\.[0-9]+)?' "0.0"                          core
 fi
 
 # ---- Kubernetes (tier 5) ----
@@ -136,8 +190,15 @@ if want kubernetes; then
   check_simple helm    helm    version     '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_HELM"         kubernetes
   check_simple cmctl   cmctl   version     '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_CMCTL"        kubernetes
   if command -v helm >/dev/null 2>&1; then
-    if helm plugin list 2>/dev/null | grep -q unittest; then
-      record "ok" "helm-unittest" "installed" "$LENNY_VERSION_HELM_UNITTEST" kubernetes
+    # helm plugin list output is `NAME\tVERSION\tDESCRIPTION` (Helm 3) or
+    # similar on Helm 4. Extract the version column for the unittest row.
+    plugin_v="$(helm plugin list 2>/dev/null | awk '$1 == "unittest" { print $2 }' | head -1)"
+    if [[ -n "$plugin_v" ]]; then
+      if lenny_version_ge "$plugin_v" "$LENNY_VERSION_HELM_UNITTEST"; then
+        record "ok" "helm-unittest" "$plugin_v" "$LENNY_VERSION_HELM_UNITTEST" kubernetes
+      else
+        record "warn" "helm-unittest" "$plugin_v" "$LENNY_VERSION_HELM_UNITTEST" kubernetes
+      fi
     else
       record "miss" "helm-unittest" "" "$LENNY_VERSION_HELM_UNITTEST" kubernetes
     fi
@@ -172,10 +233,14 @@ fi
 # ---- SDK toolchains ----
 
 if want sdk; then
-  check_simple python3  python3  --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_PYTHON" sdk
-  check_simple pipx     pipx     --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_PIPX"   sdk
-  check_simple node     node     --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_NODE"   sdk
-  check_simple tsc      tsc      --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TYPESCRIPT" sdk
+  check_simple python3               python3               --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_PYTHON"                 sdk
+  check_simple pipx                  pipx                  --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_PIPX"                   sdk
+  check_simple tox                   tox                   --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TOX"                    sdk
+  check_simple ruff                  ruff                  --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_RUFF"                   sdk
+  check_simple mypy                  mypy                  --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_MYPY"                   sdk
+  check_simple openapi-python-client openapi-python-client --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_OPENAPI_PYTHON_CLIENT"  sdk
+  check_simple node                  node                  --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_NODE"                   sdk
+  check_simple tsc                   tsc                   --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TYPESCRIPT"             sdk
 fi
 
 # ---- Documentation (tier 11) ----
@@ -183,6 +248,7 @@ fi
 if want docs; then
   check_simple ruby                 ruby                --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_RUBY"                docs
   check_simple markdown-link-check  markdown-link-check --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_MARKDOWN_LINK_CHECK" docs
+  check_simple vale                 vale                --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_VALE"                docs
 fi
 
 # ---- Render ----
@@ -198,26 +264,18 @@ if (( JSON )); then
   done
   printf ']\n'
 else
-  for r in "${RESULTS[@]}"; do
-    IFS='|' read -r status name version expected group <<<"$r"
-    case "$status" in
-      ok)
-        (( QUIET )) || lenny_log_ok "$(printf '%-22s %s' "$name" "$version")"
-        ;;
-      warn)
-        lenny_log_warn "$(printf '%-22s %-15s (expected >= %s)' "$name" "$version" "$expected")"
-        ;;
-      miss)
-        lenny_log_miss "$(printf '%-22s not installed (group: %s; run: scripts/setup-dev.sh --include %s)' "$name" "$group" "$group")"
-        ;;
-    esac
-  done
+  # Per-check lines streamed by record() as the checks ran. Just print the
+  # summary and PATH advice here.
   echo
   if (( ISSUES == 0 )); then
     lenny_log_ok "all checks passed"
   else
     lenny_log_err "$ISSUES issue(s). See https://github.com/lennylabs/lenny/blob/main/TESTING_DEPENDENCIES.md"
   fi
+  if (( LENNY_RESOLVED_VIA_FALLBACK )); then
+    lenny_path_advice
+  fi
+  lenny_shell_init_advice
 fi
 
 exit "$ISSUES"

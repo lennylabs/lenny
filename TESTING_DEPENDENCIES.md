@@ -281,17 +281,18 @@ Used to generate self-signed mTLS material in dev mode.
 - Linux: usually pre-installed (`openssl version` to confirm). Upgrade via the distro package manager if needed.
 - Verify: `openssl version` reports OpenSSL 3.0 or higher.
 
-### golangci-lint 1.54+
+### golangci-lint 1.61+
 
-Aggregated Go linter used in Tier 0.
+Aggregated Go linter used in Tier 0. Install via the upstream install script on every platform — it downloads a prebuilt binary and avoids `go install` compatibility issues that surface when an older pinned version's transitive `golang.org/x/tools` does not compile against a newer Go release.
 
-- macOS: `brew install golangci-lint`
-- Linux:
-  ```bash
-  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-    | sh -s -- -b "$(go env GOPATH)/bin" v1.54.2
-  ```
+```bash
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+  | sh -s -- -b "$(go env GOPATH)/bin" v1.61.0
+```
+
 - Verify: `golangci-lint --version`
+- Why not `brew install` on macOS: brew's package is fine when it tracks the pin, but on a `setup-dev.sh` upgrade we want one canonical path that pins to a specific patch version on every machine.
+- Why not `go install`: see above.
 
 ### gofumpt and goimports
 
@@ -375,13 +376,17 @@ Chart install for Tier 5 e2e.
   ```
 - Verify: `helm version`
 
-### helm-unittest 0.4+
+### helm-unittest 1.1+
 
-Helm plugin for chart-template unit tests.
+Helm plugin for chart-template unit tests. The 1.x line supports both Helm 3 and Helm 4.
 
 ```bash
-helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v0.4.5
+helm plugin install https://github.com/helm-unittest/helm-unittest.git \
+  --version v1.1.0 \
+  --verify=false
 ```
+
+`--verify=false` is required on Helm 4 (which enforces plugin signature verification by default) and harmless on Helm 3.
 
 Verify: `helm unittest --help`.
 

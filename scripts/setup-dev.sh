@@ -108,7 +108,19 @@ confirm() {
   [[ "$ans" =~ ^[Yy] ]]
 }
 
-have_cmd() { command -v "$1" >/dev/null 2>&1; }
+have_cmd() { lenny_have_tool "$1"; }
+
+# Run a command via its resolved path. Necessary when invoking tools that
+# live in fallback bin directories that may not be on PATH.
+run_resolved() {
+  local cmd="$1"; shift
+  local path
+  path="$(lenny_resolve_tool "$cmd")"
+  if [[ -z "$path" ]]; then
+    return 127
+  fi
+  "$path" "$@"
+}
 
 # install_<tool> functions decide whether to act, then dispatch by package
 # manager. Each writes its decision via lenny_log_ok / lenny_log_info /
@@ -161,6 +173,33 @@ install_docker_check() {
   lenny_log_ok "docker ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown))"
 }
 
+_lenny_probe_version() {
+  # _lenny_probe_version <cmd> <version-flag> [<brew-pkg-name>]
+  #
+  # Returns a parsed version string, or empty if no source produces one.
+  # Fallback chain — see preflight.sh check_simple for the documented order.
+  local cmd="$1" flag="$2" pkg="${3:-$1}"
+  local v=""
+  local resolved_path
+  resolved_path="$(lenny_resolve_tool "$cmd")"
+  [[ -z "$resolved_path" ]] && { echo ""; return; }
+
+  v="$("$resolved_path" "$flag" 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  if [[ -z "$v" || "$v" == "dev" ]] && [[ "$PKG" == "brew" ]]; then
+    v="$(brew list --versions "$pkg" 2>/dev/null | awk '{print $2}' | head -1 || true)"
+  fi
+  if [[ -z "$v" ]] && have_cmd go; then
+    v="$(go version -m "$resolved_path" 2>/dev/null | awk '$1 == "mod" { print $3; exit }' | sed 's/^v//')"
+  fi
+  if [[ -z "$v" ]] && have_cmd pipx; then
+    v="$(pipx list --short 2>/dev/null | awk -v c="$cmd" '$1 == c { print $2; exit }')"
+  fi
+  if [[ -z "$v" ]]; then
+    v="$("$resolved_path" "$flag" 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  fi
+  echo "$v"
+}
+
 install_simple_brew() {
   # install_simple_brew <command> <brew-package> <version-flag> <version-min>
   local cmd="$1" pkg="$2" verflag="$3" verneed="$4"
@@ -168,7 +207,7 @@ install_simple_brew() {
   local present=0
   if have_cmd "$cmd"; then
     present=1
-    v="$($cmd "$verflag" 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+    v="$(_lenny_probe_version "$cmd" "$verflag" "$pkg")"
   fi
 
   # Three outcomes, each logged explicitly so --dry-run is transparent:
@@ -211,7 +250,7 @@ install_pipx_tool() {
   local present=0
   if have_cmd "$cmd"; then
     present=1
-    v="$($cmd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+    v="$(_lenny_probe_version "$cmd" --version)"
   fi
 
   if (( present )) && ! (( FORCE )); then
@@ -244,7 +283,7 @@ install_npm_global_tool() {
   local present=0
   if have_cmd "$cmd"; then
     present=1
-    v="$($cmd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+    v="$(_lenny_probe_version "$cmd" --version)"
   fi
 
   if (( present )) && ! (( FORCE )); then
@@ -292,14 +331,57 @@ install_compose() {
   esac
 }
 
+install_golangci_lint() {
+  # golangci-lint is installed via the upstream install script so we get a
+  # prebuilt binary. `go install`-from-source frequently breaks because
+  # transitive dependencies (most often golang.org/x/tools) pin a version
+  # that does not compile against newer Go releases. The install script is
+  # the project's canonical install path on all platforms.
+  if ! have_cmd go; then
+    lenny_log_warn "skipping golangci-lint: go is not on PATH (needed for GOPATH detection)"
+    return
+  fi
+  local cmd="golangci-lint"
+  local need="$LENNY_VERSION_GOLANGCI_LINT"
+  local v=""
+  local present=0
+  if have_cmd "$cmd"; then
+    present=1
+    v="$(_lenny_probe_version "$cmd" --version)"
+  fi
+
+  if (( present )) && ! (( FORCE )); then
+    if [[ -n "$v" ]] && lenny_version_ge "$v" "$need"; then
+      lenny_log_ok "$cmd ($v)"
+      return
+    fi
+    lenny_log_warn "$cmd (${v:-unknown}) is below pinned $need; upgrading via install script"
+  elif (( present )); then
+    lenny_log_info "$cmd ($v): --force reinstall via install script"
+  else
+    lenny_log_miss "$cmd: not installed; installing via official install script"
+  fi
+
+  local bin_dir
+  bin_dir="$(go env GOPATH)/bin"
+  local url="https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh"
+  if (( DRY_RUN )); then
+    printf '%s[dry]%s   curl -sSfL %s | sh -s -- -b %s v%s\n' \
+      "$LENNY_C_DIM" "$LENNY_C_OFF" "$url" "$bin_dir" "$need"
+  else
+    curl -sSfL "$url" | sh -s -- -b "$bin_dir" "v$need"
+  fi
+}
+
 install_go_tools() {
-  # Go-installed binaries.
+  # Go-installed binaries. golangci-lint is handled separately above; the
+  # rest build quickly and rarely run into transitive-dep compatibility
+  # issues. If that changes for a specific tool, give it its own function.
   if ! have_cmd go; then
     lenny_log_warn "skipping go tools: go is not on PATH"
     return
   fi
   for spec in \
-    "golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint@v${LENNY_VERSION_GOLANGCI_LINT}.2" \
     "gofumpt mvdan.cc/gofumpt@latest" \
     "goimports golang.org/x/tools/cmd/goimports@latest" \
     "sqlc github.com/sqlc-dev/sqlc/cmd/sqlc@latest" \
@@ -334,6 +416,7 @@ install_core() {
   install_buf
   install_openssl
   install_conftest
+  install_golangci_lint
   install_go_tools
 }
 
@@ -345,8 +428,12 @@ install_kubernetes() {
   install_simple_brew helm helm version "$LENNY_VERSION_HELM"
   install_simple_brew cmctl cmctl version "$LENNY_VERSION_CMCTL"
   if have_cmd helm && ! helm plugin list 2>/dev/null | grep -q unittest; then
+    # --verify=false is required on Helm 4 (it enforces plugin signature
+    # verification by default and helm-unittest is not signed). Harmless on
+    # Helm 3, which already defaults to no verification.
     run_or_dry helm plugin install https://github.com/helm-unittest/helm-unittest.git \
-      --version "v$LENNY_VERSION_HELM_UNITTEST.5"
+      --version "v$LENNY_VERSION_HELM_UNITTEST" \
+      --verify=false
   else
     lenny_log_ok "helm-unittest plugin"
   fi
@@ -401,21 +488,21 @@ install_security() {
 # ---- SDK toolchains (§14.13) ----
 
 install_sdk_python() {
-  # Check the interpreter first so [warn] is logged when the system python is
-  # below pin. The script never replaces the system interpreter; it installs
-  # pyenv so the user can manage Python versions themselves.
+  # Detect system python.
   local pv=""
   local ppresent=0
+  local python_ok=0
   if have_cmd python3; then
     ppresent=1
     pv="$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
   if (( ppresent )) && [[ -n "$pv" ]] && lenny_version_ge "$pv" "$LENNY_VERSION_PYTHON" && ! (( FORCE )); then
     lenny_log_ok "python3 ($pv)"
+    python_ok=1
   elif (( ppresent )); then
-    lenny_log_warn "python3 (${pv:-unknown}) is below pinned $LENNY_VERSION_PYTHON; install pyenv (below) then run: pyenv install $LENNY_VERSION_PYTHON.9 && pyenv global $LENNY_VERSION_PYTHON.9"
+    lenny_log_warn "python3 (${pv:-unknown}) is below pinned $LENNY_VERSION_PYTHON; installing $LENNY_VERSION_PYTHON via pyenv"
   else
-    lenny_log_miss "python3: not installed; install pyenv (below) then run: pyenv install $LENNY_VERSION_PYTHON.9 && pyenv global $LENNY_VERSION_PYTHON.9"
+    lenny_log_miss "python3: not installed; installing $LENNY_VERSION_PYTHON via pyenv"
   fi
 
   # Version manager (pyenv) and isolation tool (pipx).
@@ -425,31 +512,57 @@ install_sdk_python() {
     run_or_dry pipx ensurepath || true
   fi
 
+  # Install python via pyenv when system python is below pin.
+  if ! (( python_ok )); then
+    if have_cmd pyenv; then
+      lenny_log_info "pyenv install $LENNY_VERSION_PYTHON (compiles from source; can take several minutes)"
+      run_or_dry pyenv install -s "$LENNY_VERSION_PYTHON"
+      run_or_dry pyenv global "$LENNY_VERSION_PYTHON"
+      LENNY_NEEDS_PYENV_INIT=1
+    else
+      lenny_log_warn "pyenv not on PATH; skipping python install. Re-run after pyenv is installed."
+    fi
+  fi
+
   # Per-tool pipx packages.
   install_pipx_tool tox                   "tox==$LENNY_VERSION_TOX.0"                                    "$LENNY_VERSION_TOX"
   install_pipx_tool ruff                  "ruff==$LENNY_VERSION_RUFF"                                    "$LENNY_VERSION_RUFF"
   install_pipx_tool mypy                  "mypy==$LENNY_VERSION_MYPY"                                    "$LENNY_VERSION_MYPY"
-  install_pipx_tool openapi-python-client "openapi-python-client==$LENNY_VERSION_OPENAPI_PYTHON_CLIENT.0" "$LENNY_VERSION_OPENAPI_PYTHON_CLIENT"
+  install_pipx_tool openapi-python-client "openapi-python-client==$LENNY_VERSION_OPENAPI_PYTHON_CLIENT" "$LENNY_VERSION_OPENAPI_PYTHON_CLIENT"
 }
 
 install_sdk_typescript() {
-  # Check node first.
+  # Detect system node.
   local nv=""
   local npresent=0
+  local node_ok=0
   if have_cmd node; then
     npresent=1
     nv="$(node --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
   if (( npresent )) && [[ -n "$nv" ]] && lenny_version_ge "$nv" "$LENNY_VERSION_NODE" && ! (( FORCE )); then
     lenny_log_ok "node ($nv)"
+    node_ok=1
   elif (( npresent )); then
-    lenny_log_warn "node (${nv:-unknown}) is below pinned $LENNY_VERSION_NODE LTS; install fnm (below) then run: fnm install $LENNY_VERSION_NODE && fnm use $LENNY_VERSION_NODE"
+    lenny_log_warn "node (${nv:-unknown}) is below pinned $LENNY_VERSION_NODE LTS; installing $LENNY_VERSION_NODE via fnm"
   else
-    lenny_log_miss "node: not installed; install fnm (below) then run: fnm install $LENNY_VERSION_NODE && fnm use $LENNY_VERSION_NODE"
+    lenny_log_miss "node: not installed; installing $LENNY_VERSION_NODE via fnm"
   fi
 
   # Version manager.
   install_simple_brew fnm fnm --version "0.0"
+
+  # Install node via fnm when system node is below pin.
+  if ! (( node_ok )); then
+    if have_cmd fnm; then
+      lenny_log_info "fnm install $LENNY_VERSION_NODE (downloads a prebuilt LTS binary)"
+      run_or_dry fnm install "$LENNY_VERSION_NODE"
+      run_or_dry fnm default "$LENNY_VERSION_NODE"
+      LENNY_NEEDS_FNM_INIT=1
+    else
+      lenny_log_warn "fnm not on PATH; skipping node install. Re-run after fnm is installed."
+    fi
+  fi
 
   # Global TypeScript compiler.
   install_npm_global_tool tsc "typescript@$LENNY_VERSION_TYPESCRIPT" "$LENNY_VERSION_TYPESCRIPT"
@@ -458,26 +571,42 @@ install_sdk_typescript() {
 # ---- Documentation toolchain (tier 11) ----
 
 install_docs() {
-  # Check ruby first so [warn] surfaces when the system ruby is below pin
-  # (Apple ships 2.6 on older macOS, Ubuntu LTS ships 3.0).
+  # Detect system ruby (Apple ships 2.6 on older macOS, Ubuntu LTS ships 3.0).
   local rv=""
   local rpresent=0
+  local ruby_ok=0
   if have_cmd ruby; then
     rpresent=1
     rv="$(ruby --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
   if (( rpresent )) && [[ -n "$rv" ]] && lenny_version_ge "$rv" "$LENNY_VERSION_RUBY" && ! (( FORCE )); then
     lenny_log_ok "ruby ($rv)"
+    ruby_ok=1
   elif (( rpresent )); then
-    lenny_log_warn "ruby (${rv:-unknown}) is below pinned $LENNY_VERSION_RUBY; install rbenv (below) then run: rbenv install $LENNY_VERSION_RUBY.4 && rbenv global $LENNY_VERSION_RUBY.4"
+    lenny_log_warn "ruby (${rv:-unknown}) is below pinned $LENNY_VERSION_RUBY; installing $LENNY_VERSION_RUBY via rbenv"
   else
-    lenny_log_miss "ruby: not installed; install rbenv (below) then run: rbenv install $LENNY_VERSION_RUBY.4 && rbenv global $LENNY_VERSION_RUBY.4"
+    lenny_log_miss "ruby: not installed; installing $LENNY_VERSION_RUBY via rbenv"
   fi
 
   # Version manager and prose linter via brew when available.
   install_simple_brew rbenv      rbenv      --version "0.0"
   install_simple_brew ruby-build ruby-build --version "0.0"
   install_simple_brew vale       vale       --version "$LENNY_VERSION_VALE"
+
+  # Install ruby via rbenv when the system ruby is below pin (or missing).
+  # `rbenv install -s` is a no-op when the version is already installed.
+  # The user must add `eval "$(rbenv init - zsh)"` to their shell rc to
+  # actually use the rbenv-managed ruby; that advice fires at end of run.
+  if ! (( ruby_ok )); then
+    if have_cmd rbenv; then
+      lenny_log_info "rbenv install $LENNY_VERSION_RUBY (compiles from source; can take several minutes)"
+      run_or_dry rbenv install -s "$LENNY_VERSION_RUBY"
+      run_or_dry rbenv global "$LENNY_VERSION_RUBY"
+      LENNY_NEEDS_RBENV_INIT=1
+    else
+      lenny_log_warn "rbenv not on PATH; skipping ruby install. Re-run after rbenv is installed."
+    fi
+  fi
 
   # Node-backed link checker.
   install_npm_global_tool markdown-link-check \
@@ -502,3 +631,7 @@ if want_group docs;       then echo; lenny_log_info "installing documentation to
 
 echo
 lenny_log_ok "done. Run scripts/preflight.sh to verify."
+if (( LENNY_RESOLVED_VIA_FALLBACK )); then
+  lenny_path_advice
+fi
+lenny_shell_init_advice
