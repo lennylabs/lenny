@@ -196,6 +196,71 @@ install_simple_brew() {
   esac
 }
 
+install_pipx_tool() {
+  # install_pipx_tool <command> <pipx-spec> <expected-version>
+  #
+  # Mirrors install_simple_brew's three-outcome logging for pipx-managed
+  # Python CLI tools. pipx install fails if a package is already installed,
+  # so the upgrade path uses `pipx install --force`.
+  local cmd="$1" spec="$2" verneed="$3"
+  if ! have_cmd pipx; then
+    lenny_log_warn "$cmd: pipx not available; skipping"
+    return
+  fi
+  local v=""
+  local present=0
+  if have_cmd "$cmd"; then
+    present=1
+    v="$($cmd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  fi
+
+  if (( present )) && ! (( FORCE )); then
+    if [[ -n "$v" ]] && lenny_version_ge "$v" "$verneed"; then
+      lenny_log_ok "$cmd ($v)"
+      return
+    fi
+    lenny_log_warn "$cmd (${v:-unknown}) is below pinned $verneed; upgrading"
+    run_or_dry pipx install --force "$spec"
+  elif (( present )); then
+    lenny_log_info "$cmd ($v): --force reinstall"
+    run_or_dry pipx install --force "$spec"
+  else
+    lenny_log_miss "$cmd: not installed; pipx installing"
+    run_or_dry pipx install "$spec"
+  fi
+}
+
+install_npm_global_tool() {
+  # install_npm_global_tool <command> <npm-spec> <expected-version>
+  #
+  # Same shape as install_pipx_tool for npm -g packages. npm install -g is
+  # idempotent and upgrades in place, so no --force handling needed.
+  local cmd="$1" spec="$2" verneed="$3"
+  if ! have_cmd npm; then
+    lenny_log_warn "$cmd: npm not available; skipping"
+    return
+  fi
+  local v=""
+  local present=0
+  if have_cmd "$cmd"; then
+    present=1
+    v="$($cmd --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+  fi
+
+  if (( present )) && ! (( FORCE )); then
+    if [[ -n "$v" ]] && lenny_version_ge "$v" "$verneed"; then
+      lenny_log_ok "$cmd ($v)"
+      return
+    fi
+    lenny_log_warn "$cmd (${v:-unknown}) is below pinned $verneed; upgrading"
+  elif (( present )); then
+    lenny_log_info "$cmd ($v): --force reinstall"
+  else
+    lenny_log_miss "$cmd: not installed; npm installing"
+  fi
+  run_or_dry npm install -g "$spec"
+}
+
 install_jq()      { install_simple_brew jq jq --version "$LENNY_VERSION_JQ"; }
 install_make()    { install_simple_brew make make --version "$LENNY_VERSION_MAKE"; }
 install_git()     { install_simple_brew git git --version "$LENNY_VERSION_GIT"; }
@@ -336,54 +401,88 @@ install_security() {
 # ---- SDK toolchains (§14.13) ----
 
 install_sdk_python() {
-  case "$PKG" in
-    brew)
-      run_or_dry brew install pyenv pipx
-      run_or_dry pipx ensurepath || true
-      ;;
-    apt|dnf)
-      lenny_log_info "Python: install pyenv per TESTING_DEPENDENCIES.md §10"
-      ;;
-  esac
-  if have_cmd pipx; then
-    for spec in \
-      "tox==$LENNY_VERSION_TOX.0" \
-      "ruff==$LENNY_VERSION_RUFF" \
-      "mypy==$LENNY_VERSION_MYPY" \
-      "openapi-python-client==$LENNY_VERSION_OPENAPI_PYTHON_CLIENT.0"; do
-      run_or_dry pipx install "$spec"
-    done
+  # Check the interpreter first so [warn] is logged when the system python is
+  # below pin. The script never replaces the system interpreter; it installs
+  # pyenv so the user can manage Python versions themselves.
+  local pv=""
+  local ppresent=0
+  if have_cmd python3; then
+    ppresent=1
+    pv="$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
+  if (( ppresent )) && [[ -n "$pv" ]] && lenny_version_ge "$pv" "$LENNY_VERSION_PYTHON" && ! (( FORCE )); then
+    lenny_log_ok "python3 ($pv)"
+  elif (( ppresent )); then
+    lenny_log_warn "python3 (${pv:-unknown}) is below pinned $LENNY_VERSION_PYTHON; install pyenv (below) then run: pyenv install $LENNY_VERSION_PYTHON.9 && pyenv global $LENNY_VERSION_PYTHON.9"
+  else
+    lenny_log_miss "python3: not installed; install pyenv (below) then run: pyenv install $LENNY_VERSION_PYTHON.9 && pyenv global $LENNY_VERSION_PYTHON.9"
+  fi
+
+  # Version manager (pyenv) and isolation tool (pipx).
+  install_simple_brew pyenv pyenv --version "0.0"
+  install_simple_brew pipx pipx --version "$LENNY_VERSION_PIPX"
+  if have_cmd pipx; then
+    run_or_dry pipx ensurepath || true
+  fi
+
+  # Per-tool pipx packages.
+  install_pipx_tool tox                   "tox==$LENNY_VERSION_TOX.0"                                    "$LENNY_VERSION_TOX"
+  install_pipx_tool ruff                  "ruff==$LENNY_VERSION_RUFF"                                    "$LENNY_VERSION_RUFF"
+  install_pipx_tool mypy                  "mypy==$LENNY_VERSION_MYPY"                                    "$LENNY_VERSION_MYPY"
+  install_pipx_tool openapi-python-client "openapi-python-client==$LENNY_VERSION_OPENAPI_PYTHON_CLIENT.0" "$LENNY_VERSION_OPENAPI_PYTHON_CLIENT"
 }
 
 install_sdk_typescript() {
-  case "$PKG" in
-    brew) run_or_dry brew install fnm ;;
-    *)    lenny_log_info "Node: install via nvm per TESTING_DEPENDENCIES.md §10" ;;
-  esac
-  if have_cmd npm && ! (( FORCE )) && have_cmd tsc; then
-    lenny_log_ok "typescript"
-  else
-    if have_cmd npm; then
-      run_or_dry npm install -g "typescript@$LENNY_VERSION_TYPESCRIPT"
-    fi
+  # Check node first.
+  local nv=""
+  local npresent=0
+  if have_cmd node; then
+    npresent=1
+    nv="$(node --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
+  if (( npresent )) && [[ -n "$nv" ]] && lenny_version_ge "$nv" "$LENNY_VERSION_NODE" && ! (( FORCE )); then
+    lenny_log_ok "node ($nv)"
+  elif (( npresent )); then
+    lenny_log_warn "node (${nv:-unknown}) is below pinned $LENNY_VERSION_NODE LTS; install fnm (below) then run: fnm install $LENNY_VERSION_NODE && fnm use $LENNY_VERSION_NODE"
+  else
+    lenny_log_miss "node: not installed; install fnm (below) then run: fnm install $LENNY_VERSION_NODE && fnm use $LENNY_VERSION_NODE"
+  fi
+
+  # Version manager.
+  install_simple_brew fnm fnm --version "0.0"
+
+  # Global TypeScript compiler.
+  install_npm_global_tool tsc "typescript@$LENNY_VERSION_TYPESCRIPT" "$LENNY_VERSION_TYPESCRIPT"
 }
 
 # ---- Documentation toolchain (tier 11) ----
 
 install_docs() {
-  case "$PKG" in
-    brew)
-      run_or_dry brew install rbenv ruby-build vale
-      ;;
-    *)
-      lenny_log_info "Ruby: install via rbenv per TESTING_DEPENDENCIES.md §11"
-      ;;
-  esac
-  if have_cmd npm; then
-    run_or_dry npm install -g "markdown-link-check@$LENNY_VERSION_MARKDOWN_LINK_CHECK.2"
+  # Check ruby first so [warn] surfaces when the system ruby is below pin
+  # (Apple ships 2.6 on older macOS, Ubuntu LTS ships 3.0).
+  local rv=""
+  local rpresent=0
+  if have_cmd ruby; then
+    rpresent=1
+    rv="$(ruby --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
   fi
+  if (( rpresent )) && [[ -n "$rv" ]] && lenny_version_ge "$rv" "$LENNY_VERSION_RUBY" && ! (( FORCE )); then
+    lenny_log_ok "ruby ($rv)"
+  elif (( rpresent )); then
+    lenny_log_warn "ruby (${rv:-unknown}) is below pinned $LENNY_VERSION_RUBY; install rbenv (below) then run: rbenv install $LENNY_VERSION_RUBY.4 && rbenv global $LENNY_VERSION_RUBY.4"
+  else
+    lenny_log_miss "ruby: not installed; install rbenv (below) then run: rbenv install $LENNY_VERSION_RUBY.4 && rbenv global $LENNY_VERSION_RUBY.4"
+  fi
+
+  # Version manager and prose linter via brew when available.
+  install_simple_brew rbenv      rbenv      --version "0.0"
+  install_simple_brew ruby-build ruby-build --version "0.0"
+  install_simple_brew vale       vale       --version "$LENNY_VERSION_VALE"
+
+  # Node-backed link checker.
+  install_npm_global_tool markdown-link-check \
+    "markdown-link-check@$LENNY_VERSION_MARKDOWN_LINK_CHECK.2" \
+    "$LENNY_VERSION_MARKDOWN_LINK_CHECK"
 }
 
 # ---- Dispatch ----
