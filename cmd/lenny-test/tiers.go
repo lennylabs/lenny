@@ -82,6 +82,13 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "lint-schema.sh (R-01) + lint-queries.sh (R-02) + schema validation"},
 			{name: "component", subsets: []string{"migrations"}, notes: "migration framework: round-trip, idempotency, rollback, regression"},
 		}
+	case "phase-2-gate":
+		return []tierPlan{
+			{name: "static", notes: "ImageResolver builds; all schemas validate"},
+			{name: "unit", notes: "state machines + ImageResolver precedence and digest enforcement"},
+			{name: "contract", subsets: []string{"adapter-jsonl"}, notes: "adapter JSONL contract round-trips against cmd/runtimes/echo (workspaceplan parser is a separate Phase 2 sub-track per spec §14)"},
+			{name: "conformance", subsets: []string{"basic"}, notes: "lenny-compliance --level basic against echo"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

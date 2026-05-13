@@ -254,10 +254,21 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, 1)
 			}
 		case "contract":
-			st, msg := runContractTier()
+			st, msg := runContractTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix contract-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				if writeErr := v.write(s.verdictFile); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+				}
+				return printSummary(s, v, overallStatus, 1)
+			}
+		case "conformance":
+			st, msg := runConformanceTier()
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix conformance-tier failures before moving to higher tiers.")
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -415,19 +426,92 @@ func runComponentTier() (string, string) {
 	return "pass", ""
 }
 
-func runContractTier() (string, string) {
-	// Tier 3 contract tests are guarded by the `contract` build tag. Phase 1
-	// ships failing stubs under tests/tier3_contract/ that document the
-	// Phase 2 contracts the implementation must satisfy.
+func runConformanceTier() (string, string) {
+	// Tier 10 conformance exercises the runtime adapters against the
+	// lenny-compliance harness. Phase 2 ships the Basic-level battery
+	// against cmd/runtimes/echo.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
-	cmd := exec.Command("go", "test", "-count=1", "-tags=contract", "./tests/tier3_contract/...")
+	root := repoRoot()
+	tmpBase, err := os.MkdirTemp("", "lenny-conformance-*")
+	if err != nil {
+		return "fail", fmt.Sprintf("mkdtemp: %v", err)
+	}
+	defer os.RemoveAll(tmpBase)
+
+	// Build both binaries into the temp dir.
+	binEcho := filepath.Join(tmpBase, "echo")
+	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
+	for _, b := range []struct{ out, pkg string }{
+		{binEcho, "./cmd/runtimes/echo"},
+		{binCompliance, "./cmd/lenny-compliance"},
+	} {
+		cmd := exec.Command("go", "build", "-o", b.out, b.pkg)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "fail", fmt.Sprintf("build %s: %v\n%s", b.pkg, err, out)
+		}
+	}
+
+	cmd := exec.Command(binCompliance, "--binary", binEcho, "--level", "basic")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "fail", fmt.Sprintf("contract suite failed (expected in Phase 1; Phase 2 implements):\n%s", out)
+		return "fail", fmt.Sprintf("conformance failed:\n%s", out)
+	}
+	return "pass", strings.TrimSpace(string(out))
+}
+
+func runContractTier(subsets []string) (string, string) {
+	// Tier 3 contract tests are guarded by the `contract` build tag. Each
+	// subdirectory under tests/tier3_contract/ targets a distinct contract
+	// surface (adapter_jsonl, workspaceplan, ...). When subsets is non-empty
+	// the runner scopes to those subdirectories so a phase gate can verify
+	// only the contracts in scope for that phase. When subsets is empty the
+	// runner exercises every contract directory.
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	targets, err := contractTargets(subsets)
+	if err != nil {
+		return "fail", err.Error()
+	}
+	args := append([]string{"test", "-count=1", "-tags=contract"}, targets...)
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("contract suite failed:\n%s", out)
 	}
 	return "pass", ""
+}
+
+// contractTargets maps contract subset names to the package globs the runner
+// executes. An empty subset list resolves to every contract directory.
+func contractTargets(subsets []string) ([]string, error) {
+	if len(subsets) == 0 {
+		return []string{"./tests/tier3_contract/..."}, nil
+	}
+	mapping := map[string]string{
+		"adapter-jsonl":  "./tests/tier3_contract/adapter_jsonl/...",
+		"workspaceplan":  "./tests/tier3_contract/workspaceplan/...",
+		"sdk-go":         "./tests/tier3_contract/sdks/...",
+		"sdk-python":     "./tests/tier3_contract/sdks/...",
+		"sdk-typescript": "./tests/tier3_contract/sdks/...",
+	}
+	seen := map[string]bool{}
+	targets := []string{}
+	for _, s := range subsets {
+		g, ok := mapping[s]
+		if !ok {
+			return nil, fmt.Errorf("unknown contract subset %q", s)
+		}
+		if seen[g] {
+			continue
+		}
+		seen[g] = true
+		targets = append(targets, g)
+	}
+	return targets, nil
 }
 
 func hasGoCode() bool {

@@ -238,6 +238,16 @@ subsets:
 
   # ---- Tier 3 contract subsets ----
 
+  adapter-jsonl:
+    tier: contract
+    tests:
+      - tests/tier3_contract/adapter_jsonl/...
+
+  workspaceplan:
+    tier: contract
+    tests:
+      - tests/tier3_contract/workspaceplan/...
+
   sdk-go:
     tier: contract
     tests:

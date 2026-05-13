@@ -1,2 +1,11 @@
 .DS_Store
 tmp/
+
+# Built Go binaries left in the repo root by `go build` against package
+# subdirectories. The names match the cmd/ and tests/tier7_load/scenarios/
+# package directories.
+/lenny-test
+/lenny-compliance
+/echo
+/startup_latency
+tests/results/

@@ -522,19 +522,48 @@
         "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterAcceptsCanonicalMessages",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterHeartbeatAckWithin10s",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterIgnoresUnknownMessageTypes",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterShutdownExitsWithinDeadline",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterSequentialMessagesHandled",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
-        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterIgnoresUnknownMessageTypes",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal"
       ],
-      "packages": ["pkg/adapter"],
+      "packages": ["cmd/runtimes/echo", "cmd/lenny-compliance"],
       "schemas": [
         "schemas/lenny-adapter.proto",
         "schemas/lenny-adapter-jsonl.schema.json",
         "schemas/outputpart.schema.json"
       ],
       "blocked_until_phase": "1",
-      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the adapter binary and the contract suite passes."
+      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
+    },
+    "6.3": {
+      "title": "Startup Latency Analysis",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [
+        "tests/tier7_load/scenarios/startup_latency"
+      ],
+      "packages": ["cmd/runtimes/echo"],
+      "blocked_until_phase": "2",
+      "notes": "Phase 2 ships the startup-latency benchmark harness and the first Basic-level baseline (heartbeat round-trip). Subsequent phases extend the harness with pod-warm vs SDK-warm comparisons and a Full-level checkpoint duration baseline."
+    },
+    "18.1": {
+      "title": "ImageResolver build artifact",
+      "spec_file": "spec/18_build-sequence.md",
+      "tests": [
+        "pkg/common/registry/resolver_test.go::TestOverrideWinsOverDefault",
+        "pkg/common/registry/resolver_test.go::TestDefaultRungBuildsURLPlusName",
+        "pkg/common/registry/resolver_test.go::TestRequireDigestRejectsUnpinned",
+        "pkg/common/registry/resolver_test.go::TestRequireDigestAcceptsPinned",
+        "pkg/common/registry/resolver_test.go::TestEmptyNameRejected",
+        "pkg/common/registry/resolver_test.go::TestNoOverrideNoURLFails",
+        "pkg/common/registry/resolver_test.go::TestNewDefensivelyCopiesOverrides",
+        "pkg/common/registry/resolver_test.go::TestPullSecretNamePassThrough"
+      ],
+      "packages": ["pkg/common/registry"],
+      "blocked_until_phase": "2",
+      "notes": "ImageResolver enforces override > url > default precedence and digest pinning. Spec §18 (build sequence) is currently deferred; this entry captures the §18.1 deliverable named by the prior spec revision."
     },
     "15.5": {
       "title": "API Versioning and Stability",

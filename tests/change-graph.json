@@ -140,8 +140,8 @@
       "unit": ["pkg/recommendations/rules/..."],
       "component": ["tests/tier2_component/recommendations/..."]
     },
-    "pkg/common/registry/resolver": {
-      "unit": ["pkg/common/registry/resolver/..."],
+    "pkg/common/registry": {
+      "unit": ["pkg/common/registry/..."],
       "component": ["tests/tier2_component/translators/image_resolver_test.go"]
     },
     "migrations/": {
@@ -218,7 +218,20 @@
     },
     "cmd/runtimes/echo/": {
       "unit": ["cmd/runtimes/echo/..."],
-      "conformance": ["tests/tier10_conformance/basic/..."]
+      "contract": ["tests/tier3_contract/adapter_jsonl/..."],
+      "conformance": ["tests/tier10_conformance/basic/...", "cmd/lenny-compliance/..."],
+      "load": ["tests/tier7_load/scenarios/startup_latency/..."]
+    },
+    "cmd/lenny-compliance/": {
+      "unit": ["cmd/lenny-compliance/..."],
+      "conformance": [
+        "tests/tier10_conformance/basic/...",
+        "tests/tier10_conformance/standard/...",
+        "tests/tier10_conformance/full/..."
+      ]
+    },
+    "tests/tier7_load/scenarios/startup_latency/": {
+      "load": ["tests/tier7_load/scenarios/startup_latency/..."]
     },
     "cmd/runtimes/streaming-echo/": {
       "unit": ["cmd/runtimes/streaming-echo/..."],
