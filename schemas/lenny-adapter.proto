@@ -76,11 +76,107 @@ service Adapter {
   // deadline. Returns when the agent process has exited.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {}
 
+  // DemoteSDK is required for runtimes that declare
+  // `capabilities.preConnect: true`. The gateway calls DemoteSDK when an
+  // SDK-warm pod's incoming WorkspacePlan matches a `sdkWarmBlockingPaths`
+  // pattern, instructing the adapter to tear down the pre-connected SDK
+  // and demote the pod to pod-warm before workspace materialization
+  // proceeds. Pods without preConnect: true return Unimplemented.
+  // Spec: §4.7, §6.1, §15.4.
+  rpc DemoteSDK(DemoteSDKRequest) returns (DemoteSDKResponse) {}
+
+  // NegotiateVersion is called once per gateway↔adapter handshake.
+  // The adapter advertises the protocol versions and capabilities it
+  // supports; the gateway selects a compatible version. Subsequent
+  // RPCs assume the negotiated version. See spec §15.5 (versioning).
+  rpc NegotiateVersion(NegotiateVersionRequest) returns (NegotiateVersionResponse) {}
+
   // LifecycleChannel is a bidirectional stream the adapter uses to surface
   // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
   // credentials_acknowledged, deadline_approaching). See spec §15.4 for
   // the event taxonomy.
   rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse) {}
+}
+
+// =====================================================================
+// gRPC Health Checking Protocol binding
+// =====================================================================
+//
+// The adapter also serves the standard `grpc.health.v1.Health` service
+// (defined in https://github.com/grpc/grpc-proto). It is not redeclared
+// here to avoid wire-incompatible duplication; Phase 2's implementation
+// registers `google.golang.org/grpc/health` with the same gRPC server
+// alongside Adapter. The gateway probes liveness via the standard
+// `Health.Check` and `Health.Watch` RPCs.
+
+// =====================================================================
+// Error envelope
+// =====================================================================
+//
+// Every RPC failure carries a structured error envelope alongside the
+// gRPC status code. The Category dimension classifies whether a caller
+// should retry (Transient), surface the failure (Permanent), or treat
+// it as a policy decision the operator must change (Policy). The Code
+// field is the spec-mandated error code from spec §15.1's catalog.
+
+message Error {
+  ErrorCode code = 1;
+  Category category = 2;
+  string message = 3;
+  // retryable mirrors the REST/MCP `retryable` flag in spec §15.1. True
+  // implies Category = CATEGORY_TRANSIENT; false implies Permanent or
+  // Policy.
+  bool retryable = 4;
+  // docs_url points at the operator runbook or spec section for this
+  // error code. Same shape as the REST error envelope.
+  string docs_url = 5;
+
+  enum Category {
+    CATEGORY_UNSPECIFIED = 0;
+    // CATEGORY_TRANSIENT: retry with backoff may succeed.
+    CATEGORY_TRANSIENT = 1;
+    // CATEGORY_PERMANENT: caller should not retry; surface the failure.
+    CATEGORY_PERMANENT = 2;
+    // CATEGORY_POLICY: rejected by policy (quota, budget, RBAC, scope).
+    // Caller may not change anything; the operator must.
+    CATEGORY_POLICY = 3;
+  }
+
+  enum ErrorCode {
+    ERROR_CODE_UNSPECIFIED = 0;
+    // The catalog below mirrors spec §15.1. New codes are added in the
+    // phase that introduces them. Reserved ranges keep wire compatibility
+    // when a code is renamed (the integer never changes).
+    ERROR_CODE_SESSION_NOT_FOUND = 1;
+    ERROR_CODE_INVALID_WORKSPACE_PLAN = 2;
+    ERROR_CODE_WORKSPACE_PLAN_SCHEMA_UNSUPPORTED = 3;
+    ERROR_CODE_RUNTIME_UNAVAILABLE = 4;
+    ERROR_CODE_RUNTIME_OPTIONS_INVALID = 5;
+    ERROR_CODE_CREDENTIAL_POOL_EXHAUSTED = 6;
+    ERROR_CODE_TOKEN_BUDGET_EXHAUSTED = 7;
+    ERROR_CODE_RATE_LIMITED = 8;
+    ERROR_CODE_BUDGET_EXHAUSTED = 9;
+    ERROR_CODE_DEADLINE_EXCEEDED = 10;
+    ERROR_CODE_DUPLICATE_MESSAGE_ID = 11;
+    ERROR_CODE_OUTPUTPART_TOO_LARGE = 12;
+    ERROR_CODE_OUTPUTPART_INLINE_REF_CONFLICT = 13;
+    ERROR_CODE_ENV_VAR_BLOCKLISTED = 14;
+    ERROR_CODE_GIT_CLONE_REF_RESOLVE_TRANSIENT = 15;
+    ERROR_CODE_GIT_CLONE_REF_UNRESOLVABLE = 16;
+    ERROR_CODE_GIT_CLONE_AUTH_UNSUPPORTED_HOST = 17;
+    ERROR_CODE_GIT_CLONE_AUTH_HOST_AMBIGUOUS = 18;
+    ERROR_CODE_DELEGATION_BUDGET_UNAVAILABLE = 19;
+    ERROR_CODE_DELEGATION_DENIED = 20;
+    ERROR_CODE_MAX_DELEGATION_DEPTH_EXCEEDED = 21;
+    ERROR_CODE_ISOLATION_MONOTONICITY_VIOLATED = 22;
+    ERROR_CODE_CROSS_TENANT_MESSAGE_DENIED = 23;
+    ERROR_CODE_ELICITATION_CONTENT_TAMPERED = 24;
+    ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE = 25;
+    ERROR_CODE_PLATFORM_DEGRADED = 26;
+    ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27;
+    // Reserved range for Phase 2+ additions. Do not assign 1000–1999 to
+    // anything that does not survive a wire-compat audit.
+  }
 }
 
 // =====================================================================
@@ -257,6 +353,42 @@ message ShutdownRequest {
 message ShutdownResponse {
   bool exited_cleanly = 1;
   int32 exit_code = 2;
+}
+
+message DemoteSDKRequest {
+  // Why the gateway is demoting the pod. Typically the WorkspacePlan
+  // included a path matching the runtime's sdkWarmBlockingPaths.
+  string reason = 1;
+}
+
+message DemoteSDKResponse {
+  // True once the SDK process has exited and the pod is back to
+  // pod-warm state, ready for fresh workspace materialization.
+  bool demoted = 1;
+}
+
+message NegotiateVersionRequest {
+  // Versions the gateway is willing to speak, highest preference first.
+  // Format: semver (e.g., "1.0.0", "1.1.0"). The adapter picks the
+  // highest version it also supports.
+  repeated string accepted_protocol_versions = 1;
+  // Capabilities the gateway expects the adapter to declare. Empty
+  // means the gateway will work with whatever the adapter advertises.
+  repeated string requested_capabilities = 2;
+}
+
+message NegotiateVersionResponse {
+  // The protocol version both sides agreed on.
+  string selected_protocol_version = 1;
+  // Adapter capabilities. The platform-known set includes (but is not
+  // limited to): preConnect, multiTurn, fullLifecycle, taskMode,
+  // concurrentWorkspace, immediateInjection, queuedInjection.
+  repeated string capabilities = 2;
+  // The adapter's own version string, surfaced for observability.
+  string adapter_version = 3;
+  // True when the adapter could not satisfy the gateway's accepted
+  // versions. The connection should be torn down and the pod evicted.
+  bool incompatible = 4;
 }
 
 // Opaque lifecycle event envelope. The lifecycle event taxonomy is defined

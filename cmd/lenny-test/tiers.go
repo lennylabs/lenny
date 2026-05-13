@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package main
 
 // allTiers returns the tier names in execution order. The order is the gate

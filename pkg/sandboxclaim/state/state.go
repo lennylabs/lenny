@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package state defines the SandboxClaim CRD state machine.
 //
 // SandboxClaim represents the gateway's binding of a session to a

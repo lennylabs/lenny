@@ -532,7 +532,8 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [],
       "packages": ["pkg/api/version"],
-      "blocked_until_phase": "5"
+      "blocked_until_phase": "5",
+      "notes": "Phase 1 ships only the proto's NegotiateVersion RPC envelope and the schemaVersion fields on WorkspacePlan, OutputPart, and MessageEnvelope. The REST/MCP version-negotiation contract (URL prefixes, deprecation headers, 6-month sunset rule) is a Phase 5 deliverable; tests land alongside the API implementation."
     },
     "15.6": {
       "title": "Client SDKs",

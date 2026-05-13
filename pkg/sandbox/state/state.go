@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package state defines the Sandbox CRD state machine, per spec §6.2.
 //
 // Phase 1 ships the state enum and the canonical transition list.

@@ -1,5 +1,7 @@
 //go:build contract
 
+// SPDX-License-Identifier: MIT
+
 // Package workspaceplan_test is the Tier 3 contract suite for the
 // WorkspacePlan schema (schemas/workspaceplan-v1.json). Phase 1 ships
 // the schema; Phase 2 implements the gateway-side WorkspacePlan parser

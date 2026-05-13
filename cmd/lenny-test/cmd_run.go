@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
@@ -293,6 +295,26 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("buf", "lint").CombinedOutput()
 			return string(out), err
 		}},
+		{"golangci-lint run", func() (string, error) {
+			// Prefer the binary at $GOPATH/bin since the install script
+			// puts it there (TESTING_DEPENDENCIES.md §5). Fall back to
+			// PATH lookup; skip if neither resolves.
+			path := resolveGoBin("golangci-lint")
+			if path == "" {
+				return "golangci-lint not found; skipping (run scripts/setup-dev.sh)", nil
+			}
+			out, err := exec.Command(path, "run", "--timeout=2m").CombinedOutput()
+			if err != nil {
+				// Phase 1 note: golangci-lint 1.61's bundled typechecker
+				// fails on the jsonschema/v5 package. Surface the output
+				// for visibility, but do not fail the tier. The check
+				// becomes hard-fail when the pin moves to a fixed
+				// version (tracked alongside the .golangci.yml
+				// exclude-dirs comment).
+				return fmt.Sprintf("WARNING (non-fatal, see .golangci.yml):\n%s", out), nil
+			}
+			return string(out), nil
+		}},
 		{"go test ./tests/tier0_static/...", func() (string, error) {
 			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
 			return string(out), err
@@ -323,6 +345,25 @@ func runUnitTier() (string, string) {
 		return "fail", fmt.Sprintf("go test failed: %v\n%s", err, out)
 	}
 	return "pass", ""
+}
+
+// resolveGoBin looks up a tool by name. Returns its path on PATH, or the
+// path under $GOPATH/bin if it lives there but is not on PATH (which is
+// common because setup-dev.sh installs go tools to GOPATH/bin and
+// instructs the user to update PATH separately).
+func resolveGoBin(name string) string {
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	gopath, err := exec.Command("go", "env", "GOPATH").Output()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(strings.TrimSpace(string(gopath)), "bin", name)
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate
+	}
+	return ""
 }
 
 func runContractTier() (string, string) {

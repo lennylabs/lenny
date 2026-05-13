@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Command lenny-test is the single entry point for running Lenny's tests.
 //
 // It wraps `go test`, the docker-compose stack, the Kind cluster lifecycle, and

@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lenny.dev/outputpart/v1.json",
   "title": "OutputPart",
-  "description": "Unified content envelope used by sessions, tasks, audit, and delegation. The building block of every output the platform emits. See spec/15_external-api-surface.md §15.4.",
+  "description": "Unified content envelope used by sessions, tasks, audit, and delegation. The building block of every output the platform emits. The spec's open-string extensibility applies to the `type` field (custom types via the `x-<vendor>/<typeName>` namespace), not to top-level keys; additionalProperties is therefore false at the root. Size-based representation (≤64KB inline, 64KB–50MB ref, >50MB rejected with 413 OUTPUTPART_TOO_LARGE) is a gateway runtime check, not a schema-validation check. See spec/15_external-api-surface.md §15.4.",
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": false,
   "properties": {
     "schemaVersion": {
       "type": "integer",

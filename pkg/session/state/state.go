@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package state defines the session state machine.
 //
 // Phase 1 ships the state enum and the canonical transition table as the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package state defines the TaskRecord state machine, per spec §8.8.
 //
 // Phase 1 ships the state enum and the canonical transition list.

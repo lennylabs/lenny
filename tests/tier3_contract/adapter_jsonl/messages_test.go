@@ -1,5 +1,7 @@
 //go:build contract
 
+// SPDX-License-Identifier: MIT
+
 // Package adapter_jsonl_test is the Tier 3 contract suite for the
 // adapter ↔ agent binary protocol. Phase 1 ships the schema; Phase 2
 // implements the adapter binary that reads and writes JSONL conforming
