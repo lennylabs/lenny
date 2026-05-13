@@ -76,14 +76,17 @@
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
-      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
+      "tests": [
+        "pkg/sandboxclaim/state/state_test.go::TestStatesAndTerminals",
+        "pkg/sandboxclaim/state/state_test.go::TestIsValidCanonicalTransitions"
+      ],
+      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry", "pkg/sandboxclaim/state"],
       "schemas": [],
       "migrations": [],
       "chart_templates": ["charts/lenny/templates/admission/sandboxclaim-guard.yaml"],
       "depends_on_sections": ["4.6", "12.3", "13.2"],
       "blocked_until_phase": "3.5",
-      "notes": "ADR-007: SandboxClaim optimistic locking and failover fencing verification. First-class concurrent-claim chaos test required."
+      "notes": "ADR-007: SandboxClaim optimistic locking and failover fencing verification. First-class concurrent-claim chaos test required. Phase 1 ships the state machine; Phase 3.5 wires the admission webhook."
     },
     "4.6.3": {
       "title": "CRD Field Ownership and Write Boundaries",
@@ -146,9 +149,13 @@
     "6.2": {
       "title": "Pod State Machine",
       "spec_file": "spec/06_warm-pod-model.md",
-      "tests": [],
-      "packages": ["pkg/podstate"],
-      "blocked_until_phase": "3"
+      "tests": [
+        "pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions",
+        "pkg/sandbox/state/state_test.go::TestIsTerminal",
+        "pkg/sandbox/state/state_test.go::TestIsValidCanonicalTransitions"
+      ],
+      "packages": ["pkg/sandbox/state"],
+      "blocked_until_phase": "1"
     },
     "6.3": {
       "title": "Startup Latency Analysis",
@@ -170,6 +177,18 @@
       "tests": [],
       "packages": ["pkg/session"],
       "blocked_until_phase": "4"
+    },
+    "7.2": {
+      "title": "Interactive Session Model — state machine",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [
+        "pkg/session/state/state_test.go::TestAllStatesIncludeSuspendedAndInputRequired",
+        "pkg/session/state/state_test.go::TestIsTerminal",
+        "pkg/session/state/state_test.go::TestIsValidCanonicalTransitions",
+        "pkg/session/state/state_test.go::TestIsValidIllegalTransitionsRejected"
+      ],
+      "packages": ["pkg/session/state"],
+      "blocked_until_phase": "1"
     },
     "7.2": {
       "title": "Interactive Session Model",
@@ -205,6 +224,17 @@
       "tests": [],
       "packages": ["pkg/delegation"],
       "blocked_until_phase": "9"
+    },
+    "8.8": {
+      "title": "TaskRecord and TaskResult — state machine",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [
+        "pkg/task/state/state_test.go::TestAllStatesIncludeInputRequired",
+        "pkg/task/state/state_test.go::TestMCPProtocolStateMapping",
+        "pkg/task/state/state_test.go::TestIsValidCanonicalTransitions"
+      ],
+      "packages": ["pkg/task/state"],
+      "blocked_until_phase": "1"
     },
     "9": {
       "title": "MCP Integration",
@@ -421,16 +451,28 @@
     "14": {
       "title": "Workspace Plan Schema",
       "spec_file": "spec/14_workspace-plan-schema.md",
-      "tests": [],
+      "tests": [
+        "tests/tier0_static/schemas_test.go::TestWorkspacePlanExamplesValidate",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserAcceptsCanonicalPlans",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserEmitsPathCollisionWarning",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsSetuidMode",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsSSHGitURL",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsClientResolvedCommitSha",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserSkipsUnknownSourceType"
+      ],
       "packages": ["pkg/workspaceplan"],
-      "schemas": ["schemas/workspaceplan-v1.json"],
+      "schemas": ["schemas/workspaceplan-v1.json", "schemas/examples/workspaceplan.minimal.json", "schemas/examples/workspaceplan.full.json"],
       "blocked_until_phase": "1"
     },
     "14.1": {
       "title": "WorkspacePlan Schema Versioning",
       "spec_file": "spec/14_workspace-plan-schema.md",
-      "tests": [],
+      "tests": [
+        "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsUnsupportedSchemaVersion"
+      ],
       "packages": ["pkg/workspaceplan"],
+      "schemas": ["schemas/workspaceplan-v1.json"],
       "blocked_until_phase": "1"
     },
     "15.1": {
@@ -465,10 +507,25 @@
     "15.4": {
       "title": "Runtime Adapter Specification",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
+        "tests/tier0_static/schemas_test.go::TestOutputPartExamplesValidate",
+        "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterAcceptsCanonicalMessages",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterHeartbeatAckWithin10s",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterIgnoresUnknownMessageTypes",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal"
+      ],
       "packages": ["pkg/adapter"],
-      "schemas": ["schemas/lenny-adapter-jsonl.schema.json"],
-      "blocked_until_phase": "2"
+      "schemas": [
+        "schemas/lenny-adapter.proto",
+        "schemas/lenny-adapter-jsonl.schema.json",
+        "schemas/outputpart.schema.json"
+      ],
+      "blocked_until_phase": "1",
+      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the adapter binary and the contract suite passes."
     },
     "15.5": {
       "title": "API Versioning and Stability",

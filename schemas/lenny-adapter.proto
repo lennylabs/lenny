@@ -1,0 +1,273 @@
+// Gateway ↔ pod control protocol. This is the gRPC contract the gateway uses
+// to drive a pod's adapter sidecar: deliver messages, push credentials,
+// interrupt, request checkpoints, and report usage. The adapter ↔ agent
+// channel is JSON Lines (see lenny-adapter-jsonl.schema.json); this proto
+// covers only the gateway-facing surface.
+//
+// See spec/15_external-api-surface.md §15.3 and §15.4.
+//
+// Phase 1 ships the service skeleton and the canonical message types.
+// Field shapes for individual RPCs are deliberately conservative: Phase 2
+// implementation fleshes them out and `buf breaking` catches incompatible
+// changes against this baseline.
+
+syntax = "proto3";
+
+package lenny.adapter.v1;
+
+option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
+
+// =====================================================================
+// Service
+// =====================================================================
+
+// Adapter is the long-running gRPC server hosted by the adapter sidecar
+// inside every Lenny pod. The gateway connects over mTLS and uses it for
+// session lifecycle, credential delivery, interrupt control, checkpoint
+// orchestration, and usage reporting. Pod → gateway traffic is initiated
+// by the gateway only; the adapter responds to RPCs and emits structured
+// events via a separate streaming RPC (the lifecycle channel).
+service Adapter {
+  // StartSession assigns a session to this pod. Workspace materialization
+  // (per the supplied WorkspacePlan) and setup-command execution happen
+  // before the response. Returns Unavailable if the pod is not in `idle`
+  // state.
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse) {}
+
+  // SendMessage delivers a content message to the agent over the adapter's
+  // stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse) {}
+
+  // AssignCredentials pushes a per-session credential lease map to the
+  // adapter. Adapter writes the credential file under /run/lenny/. Atomic
+  // across providers; partial failures are rolled back.
+  rpc AssignCredentials(AssignCredentialsRequest) returns (AssignCredentialsResponse) {}
+
+  // RotateCredentials replaces a previously assigned credential lease with
+  // a new lease. Emits a `credentials_rotated` lifecycle event to the
+  // agent. Used for hot rotation without pod restart.
+  rpc RotateCredentials(RotateCredentialsRequest) returns (RotateCredentialsResponse) {}
+
+  // RevokeCredentials removes a credential lease immediately. The agent
+  // receives no chance to drain in-flight requests; emergency revocation.
+  rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
+
+  // Interrupt asks the agent to pause and (optionally) checkpoint. Two
+  // modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+  rpc Interrupt(InterruptRequest) returns (InterruptResponse) {}
+
+  // Checkpoint requests an immediate checkpoint of the current session
+  // state to the artifact store. Used for eviction, drain, and session
+  // suspend.
+  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {}
+
+  // ReportUsage returns token-usage and time-usage accounting since the
+  // last call. The gateway uses this for budget enforcement and billing.
+  rpc ReportUsage(ReportUsageRequest) returns (ReportUsageResponse) {}
+
+  // ExtendLease is the adapter's request to the gateway for additional
+  // token budget when the current session lease is about to expire.
+  // Response carries one of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED,
+  // REJECTED (see spec §8.6).
+  rpc ExtendLease(ExtendLeaseRequest) returns (ExtendLeaseResponse) {}
+
+  // Shutdown asks the adapter to terminate the agent and release the pod.
+  // The adapter forwards a JSONL `shutdown` to the agent with the supplied
+  // deadline. Returns when the agent process has exited.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {}
+
+  // LifecycleChannel is a bidirectional stream the adapter uses to surface
+  // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
+  // credentials_acknowledged, deadline_approaching). See spec §15.4 for
+  // the event taxonomy.
+  rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse) {}
+}
+
+// =====================================================================
+// Common types
+// =====================================================================
+
+// SessionId identifies a session. Format: UUIDv8 (per spec §10.1 routing).
+message SessionId {
+  string value = 1;
+}
+
+// SlotId identifies a slot in a concurrent-workspace pod. Empty in
+// session-mode pods.
+message SlotId {
+  string value = 1;
+}
+
+// WorkspacePlan is the proto-encoded form of the JSON Schema in
+// workspaceplan-v1.json. The gateway translates between JSON and proto;
+// the wire schema is authoritative.
+message WorkspacePlan {
+  int32 schema_version = 1;
+  repeated WorkspaceSource sources = 2;
+  repeated SetupCommand setup_commands = 3;
+}
+
+message WorkspaceSource {
+  string type = 1;             // inlineFile|uploadFile|uploadArchive|mkdir|gitClone
+  string path = 2;
+  string content = 3;          // inlineFile only
+  string upload_ref = 4;       // uploadFile, uploadArchive
+  string format = 5;           // uploadArchive only
+  int32 strip_components = 6;  // uploadArchive only
+  string mode = 7;             // file/dir mode as octal string
+  string url = 8;              // gitClone only
+  string git_ref = 9;          // gitClone only
+  int32 depth = 10;            // gitClone only
+  bool submodules = 11;        // gitClone only
+  GitAuth auth = 12;           // gitClone only
+  string resolved_commit_sha = 13; // gateway-written, readonly
+}
+
+message GitAuth {
+  string mode = 1;        // credential-lease
+  string lease_scope = 2; // vcs.<provider>.(read|write)
+}
+
+message SetupCommand {
+  string cmd = 1;
+  int32 timeout_seconds = 2;
+}
+
+// =====================================================================
+// RPC request/response messages
+// =====================================================================
+
+message StartSessionRequest {
+  SessionId session_id = 1;
+  string runtime = 2;
+  WorkspacePlan workspace_plan = 3;
+  map<string, string> labels = 4;
+}
+
+message StartSessionResponse {
+  // Empty on success. Non-empty on graceful refusal (the pod is degraded
+  // but reachable).
+  string refusal_reason = 1;
+}
+
+message SendMessageRequest {
+  SessionId session_id = 1;
+  SlotId slot_id = 2;
+  // Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
+  // `message`). The adapter writes it verbatim to the agent's stdin.
+  bytes envelope_json = 3;
+}
+
+message SendMessageResponse {}
+
+message AssignCredentialsRequest {
+  SessionId session_id = 1;
+  map<string, CredentialLease> leases = 2; // keyed by provider
+}
+
+message AssignCredentialsResponse {}
+
+message RotateCredentialsRequest {
+  SessionId session_id = 1;
+  map<string, CredentialLease> leases = 2;
+}
+
+message RotateCredentialsResponse {}
+
+message RevokeCredentialsRequest {
+  SessionId session_id = 1;
+  repeated string providers = 2;
+  string reason = 3;
+}
+
+message RevokeCredentialsResponse {}
+
+message CredentialLease {
+  string lease_id = 1;
+  string provider = 2;
+  int64 expires_at_unix_ms = 3;
+  int64 renew_before_unix_ms = 4;
+  // Provider-specific payload. The adapter writes it under /run/lenny/.
+  bytes payload = 5;
+}
+
+message InterruptRequest {
+  SessionId session_id = 1;
+  Mode mode = 2;
+  int32 deadline_ms = 3;
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_CLEAN = 1; // SIGTERM with grace
+    MODE_HARD = 2;  // immediate SIGKILL
+  }
+}
+
+message InterruptResponse {
+  bool acknowledged = 1;
+}
+
+message CheckpointRequest {
+  SessionId session_id = 1;
+  int32 deadline_ms = 2;
+}
+
+message CheckpointResponse {
+  string checkpoint_id = 1;
+  int64 size_bytes = 2;
+}
+
+message ReportUsageRequest {
+  SessionId session_id = 1;
+}
+
+message ReportUsageResponse {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  int64 wall_clock_ms = 3;
+}
+
+message ExtendLeaseRequest {
+  SessionId session_id = 1;
+  int64 requested_tokens = 2;
+  int32 requested_seconds = 3;
+}
+
+message ExtendLeaseResponse {
+  Status status = 1;
+  int64 granted_tokens = 2;
+  int32 granted_seconds = 3;
+  // When status is REJECTED, the gateway includes the cool-off expiry.
+  int64 cool_off_expiry_unix_ms = 4;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_GRANTED = 1;
+    STATUS_PARTIALLY_GRANTED = 2;
+    STATUS_CEILING_REACHED = 3;
+    STATUS_REJECTED = 4;
+  }
+}
+
+message ShutdownRequest {
+  SessionId session_id = 1;
+  string reason = 2;
+  int32 deadline_ms = 3;
+}
+
+message ShutdownResponse {
+  bool exited_cleanly = 1;
+  int32 exit_code = 2;
+}
+
+// Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
+// in lenny-adapter-jsonl.schema.json under the lifecycle section in the
+// spec. Kept opaque here so the proto schema does not need to evolve every
+// time a lifecycle event is added. Request and response carry the same
+// payload but are typed separately per proto-RPC convention.
+message LifecycleChannelRequest {
+  bytes envelope_json = 1;
+}
+
+message LifecycleChannelResponse {
+  bytes envelope_json = 1;
+}

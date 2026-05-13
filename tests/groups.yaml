@@ -92,10 +92,14 @@ groups:
         - validate-diagnosis
 
   phase-1-gate:
-    description: Phase 1. Core types, schemas, wire contracts.
+    description: >
+      Phase 1. Core types, schemas, wire contracts. The static tier
+      verifies the contract-tagged tests compile (they intentionally
+      fail at runtime with "not implemented" diagnoses until Phase 2
+      ships the adapter and parser).
     selectors:
       spec_sections: ["14", "15.4"]
-      tiers: [static, unit, contract]
+      tiers: [static, unit]
 
   phase-1.5-gate:
     description: Phase 1.5. Migration framework + schema/query linters.

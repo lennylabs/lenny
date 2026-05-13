@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/outputpart/v1.json",
+  "title": "OutputPart",
+  "description": "Unified content envelope used by sessions, tasks, audit, and delegation. The building block of every output the platform emits. See spec/15_external-api-surface.md §15.4.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "OutputPart schema revision. Consumers MUST forward-read unknown fields per the open-string evolution rule."
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Open-string content type. Canonical v1 registry: text, code, reasoning_trace, citation, screenshot, image, diff, file, execution_result, error. Custom types use the `x-<vendor>/<typeName>` namespace; consumers collapse unknown types to text with annotations.originalType set."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^part_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Stable part identifier (ULID-like with `part_` prefix). Adapter-injected when omitted by the author."
+    },
+    "inline": {
+      "type": "string",
+      "description": "Direct content embedding. UTF-8 text for text-like types; base64 for binary types (image, screenshot, file). Mutually exclusive with `ref`."
+    },
+    "ref": {
+      "type": "string",
+      "pattern": "^lenny-blob://[^/]+/[^/]+/[^?]+(\\?.*)?$",
+      "description": "Blob reference for parts >64KB. Format: `lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl={seconds}&enc=aes256gcm`. Mutually exclusive with `inline`."
+    },
+    "mimeType": {
+      "type": "string",
+      "pattern": "^[a-z]+/[A-Za-z0-9.+_-]+$",
+      "description": "Content encoding. Type-dependent defaults (e.g., text → text/plain). Required for binary types."
+    },
+    "annotations": {
+      "type": "object",
+      "description": "Open metadata map. Well-known keys: role, confidence, language, final, audience, errorCode, originalType, protocolHints. Adapters index and filter on annotations.",
+      "additionalProperties": true,
+      "properties": {
+        "role": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "language": { "type": "string" },
+        "final": { "type": "boolean" },
+        "audience": { "type": "string", "enum": ["client", "agent", "system"] },
+        "errorCode": { "type": "string" },
+        "originalType": { "type": "string" },
+        "protocolHints": { "type": "object" }
+      }
+    },
+    "parts": {
+      "type": "array",
+      "items": { "$ref": "#" },
+      "description": "Nested OutputParts for compound outputs (for example, an execution_result containing code, stdout, stderr)."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["streaming", "complete", "failed"],
+      "default": "complete",
+      "description": "Delivery status. `streaming` for in-flight chunks, `complete` for fully delivered, `failed` for parts that errored mid-stream."
+    }
+  },
+  "required": ["type"],
+  "allOf": [
+    {
+      "description": "Exactly one of inline or ref must be present unless the part is a pure container (parts is non-empty and the type allows nesting, e.g., execution_result).",
+      "anyOf": [
+        { "required": ["inline"] },
+        { "required": ["ref"] },
+        {
+          "required": ["parts"],
+          "properties": {
+            "parts": { "minItems": 1 }
+          }
+        }
+      ]
+    },
+    {
+      "description": "inline and ref are mutually exclusive.",
+      "not": {
+        "required": ["inline", "ref"]
+      }
+    }
+  ],
+  "$comment": "Validation gates: inline+ref together → 400 OUTPUTPART_INLINE_REF_CONFLICT. Total size >50MB → 413 OUTPUTPART_TOO_LARGE. Annotations are advisory; unknown keys preserved."
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "gitClone",
+      "url": "https://github.com/acme/example.git",
+      "ref": "main",
+      "path": ".",
+      "depth": 1,
+      "auth": {
+        "mode": "credential-lease",
+        "leaseScope": "vcs.github.read"
+      }
+    },
+    {
+      "type": "inlineFile",
+      "path": "CLAUDE.md",
+      "content": "# Project notes for Claude\n\nUse the README as ground truth.\n",
+      "mode": "0644"
+    },
+    {
+      "type": "uploadArchive",
+      "pathPrefix": "fixtures",
+      "uploadRef": "upload_01J9X0ZW1ZF7K8Q1V2T3M4N5P4",
+      "format": "tar.gz",
+      "stripComponents": 1
+    },
+    {
+      "type": "mkdir",
+      "path": "build/output",
+      "mode": "0755"
+    }
+  ],
+  "setupCommands": [
+    { "cmd": "go mod download", "timeoutSeconds": 60 },
+    { "cmd": "make test-fixtures", "timeoutSeconds": 120 }
+  ]
+}

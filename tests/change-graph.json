@@ -153,24 +153,42 @@
       "integration": ["tests/tier4_integration/migration_upgrade_test.go"]
     },
     "schemas/lenny-adapter.proto": {
-      "static": ["tests/tier0_static/proto_lint_test.go"],
+      "static": ["tests/tier0_static/schemas_test.go"],
       "unit": ["pkg/adapter/..."],
       "contract": ["tests/tier3_contract/adapter_jsonl/..."]
     },
     "schemas/lenny-adapter-jsonl.schema.json": {
-      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "static": ["tests/tier0_static/schemas_test.go"],
       "contract": ["tests/tier3_contract/adapter_jsonl/..."],
       "conformance": ["tests/tier10_conformance/..."]
     },
     "schemas/outputpart.schema.json": {
-      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "static": ["tests/tier0_static/schemas_test.go"],
       "unit": ["pkg/output/..."],
       "contract": ["tests/tier3_contract/rest_openai_completions/..."]
     },
     "schemas/workspaceplan-v1.json": {
-      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "static": ["tests/tier0_static/schemas_test.go"],
       "unit": ["pkg/workspaceplan/..."],
       "contract": ["tests/tier3_contract/workspaceplan/..."]
+    },
+    "schemas/examples/": {
+      "static": ["tests/tier0_static/schemas_test.go"]
+    },
+    "pkg/session/state": {
+      "unit": ["pkg/session/state/..."]
+    },
+    "pkg/task/state": {
+      "unit": ["pkg/task/state/..."]
+    },
+    "pkg/sandbox/state": {
+      "unit": ["pkg/sandbox/state/..."]
+    },
+    "pkg/sandboxclaim/state": {
+      "unit": ["pkg/sandboxclaim/state/..."]
+    },
+    "buf.yaml": {
+      "static": ["tests/tier0_static/schemas_test.go"]
     },
     "charts/lenny/": {
       "static": [

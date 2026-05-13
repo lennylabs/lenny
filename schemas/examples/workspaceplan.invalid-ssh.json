@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "gitClone",
+      "url": "git@github.com:acme/example.git",
+      "ref": "main"
+    }
+  ]
+}

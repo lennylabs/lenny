@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/adapter-jsonl/v1.json",
+  "title": "Lenny Adapter Binary Protocol (JSONL)",
+  "description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. See spec/15_external-api-surface.md §15.4.",
+  "type": "object",
+  "required": ["type"],
+  "discriminator": { "propertyName": "type" },
+  "oneOf": [
+    { "$ref": "#/$defs/messageEnvelope" },
+    { "$ref": "#/$defs/heartbeat" },
+    { "$ref": "#/$defs/heartbeat_ack" },
+    { "$ref": "#/$defs/shutdown" },
+    { "$ref": "#/$defs/tool_call" },
+    { "$ref": "#/$defs/tool_result" },
+    { "$ref": "#/$defs/response" },
+    { "$ref": "#/$defs/status" },
+    { "$ref": "#/$defs/set_tracing_context" }
+  ],
+  "$defs": {
+    "messageEnvelope": {
+      "title": "message",
+      "description": "Inbound content delivery from gateway → adapter → agent. The unified envelope used for client prompts, inter-session messages, and platform-injected control text. See spec/15_external-api-surface.md §15.4.1.",
+      "type": "object",
+      "required": ["type", "id", "from", "input"],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Gateway-injected at write time. Immutable. Consumers MUST forward-read."
+        },
+        "type": { "const": "message" },
+        "id": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "ULID-like message id (msg_ prefix). Tenant-unique. Duplicate ids reject with 400 DUPLICATE_MESSAGE_ID."
+        },
+        "from": { "$ref": "#/$defs/from" },
+        "inReplyTo": {
+          "type": "string",
+          "pattern": "^msg_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "Optional reply-to message id for DAG threading and lenny/request_input routing."
+        },
+        "threadId": { "type": "string", "description": "Optional thread label. v1 has an implicit single thread per session." },
+        "delivery": {
+          "type": "string",
+          "enum": ["immediate", "queued"],
+          "default": "queued",
+          "description": "Interrupt behavior. `immediate` preempts running work; `queued` waits for the agent to drain."
+        },
+        "delegationDepth": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Gateway-injected hop count in the delegation tree. Informational."
+        },
+        "slotId": {
+          "type": "string",
+          "description": "Slot identifier. Present only on pods in concurrent-workspace mode."
+        },
+        "input": {
+          "type": "array",
+          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
+          "description": "Message content as a list of OutputPart objects."
+        }
+      }
+    },
+
+    "from": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "description": "Sender context. Adapter-injects this; runtimes MUST NOT set it.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["client", "agent", "system", "external"],
+          "description": "Closed enum. Determines the expected shape of `id`."
+        },
+        "id": {
+          "type": "string",
+          "description": "Identifier whose shape depends on kind. client: `client_{opaque}`. agent: `sess_{session_id}`. system: literal `lenny-gateway`. external: `conn_{connector_id}`."
+        }
+      }
+    },
+
+    "heartbeat": {
+      "title": "heartbeat",
+      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter sends SIGTERM.",
+      "type": "object",
+      "required": ["type", "ts"],
+      "properties": {
+        "type": { "const": "heartbeat" },
+        "ts": { "type": "integer", "minimum": 0, "description": "Unix epoch seconds." }
+      }
+    },
+
+    "heartbeat_ack": {
+      "title": "heartbeat_ack",
+      "description": "Outbound acknowledgement of an inbound heartbeat.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "heartbeat_ack" }
+      }
+    },
+
+    "shutdown": {
+      "title": "shutdown",
+      "description": "Inbound graceful-shutdown signal. The agent must exit cleanly within deadline_ms or receive SIGTERM.",
+      "type": "object",
+      "required": ["type", "reason", "deadline_ms"],
+      "properties": {
+        "type": { "const": "shutdown" },
+        "reason": { "type": "string", "minLength": 1, "description": "Reason code (for example: drain, runtime_upgrade, session_complete)." },
+        "deadline_ms": { "type": "integer", "minimum": 0, "description": "Milliseconds the agent has to exit before SIGTERM." }
+      }
+    },
+
+    "tool_call": {
+      "title": "tool_call",
+      "description": "Outbound request to invoke an adapter-local tool (read_file, write_file, list_dir, delete_file) or a platform MCP tool (lenny/...).",
+      "type": "object",
+      "required": ["type", "id", "name", "arguments"],
+      "properties": {
+        "type": { "const": "tool_call" },
+        "id": {
+          "type": "string",
+          "pattern": "^tc_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "Correlation id (tc_ prefix). Agent-generated."
+        },
+        "name": { "type": "string", "minLength": 1, "description": "Tool name. Adapter-local: read_file, write_file, list_dir, delete_file. Platform MCP: lenny/<tool>." },
+        "arguments": { "type": "object", "description": "Tool-specific parameters. Validated against the tool's inputSchema." },
+        "slotId": { "type": "string" }
+      }
+    },
+
+    "tool_result": {
+      "title": "tool_result",
+      "description": "Inbound result for a prior tool_call. The id matches the originating tool_call.id. Results with no matching call are dropped and logged.",
+      "type": "object",
+      "required": ["type", "id", "content"],
+      "properties": {
+        "type": { "const": "tool_result" },
+        "id": {
+          "type": "string",
+          "pattern": "^tc_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "Matches the originating tool_call.id."
+        },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
+          "description": "Result content as a list of OutputPart objects."
+        },
+        "isError": { "type": "boolean", "default": false },
+        "slotId": { "type": "string" }
+      }
+    },
+
+    "response": {
+      "title": "response",
+      "description": "Outbound task completion with the final output. Either `output` (canonical) or `text` (shorthand for a single text part).",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "response" },
+        "output": {
+          "type": "array",
+          "items": { "$ref": "https://schemas.lenny.dev/outputpart/v1.json" },
+          "description": "Complete task output as a list of OutputPart objects."
+        },
+        "text": {
+          "type": "string",
+          "description": "Shorthand for text-only responses. The adapter normalizes this to a single text OutputPart in `output`."
+        },
+        "error": {
+          "type": "object",
+          "description": "Structured task failure, maps to TaskResult.error.",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        },
+        "slotId": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["output"] },
+        { "required": ["text"] }
+      ]
+    },
+
+    "status": {
+      "title": "status",
+      "description": "Outbound optional status update, surfaced to the client as a low-priority signal.",
+      "type": "object",
+      "required": ["type", "state"],
+      "properties": {
+        "type": { "const": "status" },
+        "state": { "type": "string", "minLength": 1, "description": "Status label (for example: thinking, analyzing, calling_tool)." },
+        "message": { "type": "string", "description": "Human-readable status message." }
+      }
+    },
+
+    "set_tracing_context": {
+      "title": "set_tracing_context",
+      "description": "Outbound distributed-tracing context propagation. The agent declares its trace identifiers so the gateway can stitch them into the platform trace and forward to delegated children.",
+      "type": "object",
+      "required": ["type", "context"],
+      "properties": {
+        "type": { "const": "set_tracing_context" },
+        "context": {
+          "type": "object",
+          "description": "Opaque tracing context. Typical keys: langsmith_run_id, otel_trace_id, otel_span_id, tracestate.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

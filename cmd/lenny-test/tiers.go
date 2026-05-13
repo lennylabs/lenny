@@ -70,6 +70,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static"},
 			{name: "docs"},
 		}
+	case "phase-1-gate":
+		return []tierPlan{
+			{name: "static", notes: "schemas validate, contract tests compile, examples round-trip"},
+			{name: "unit", notes: "state-machine packages: Session, TaskRecord, Sandbox, SandboxClaim"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

@@ -240,6 +240,17 @@ func execute(s selector, r resolvedSelector) int {
 				}
 				return printSummary(s, v, overallStatus, 1)
 			}
+		case "contract":
+			st, msg := runContractTier()
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix contract-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				if writeErr := v.write(s.verdictFile); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+				}
+				return printSummary(s, v, overallStatus, 1)
+			}
 		default:
 			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 		}
@@ -252,14 +263,47 @@ func execute(s selector, r resolvedSelector) int {
 }
 
 func runStaticTier() (string, string) {
-	// Phase 0: just `go vet ./...`. golangci-lint integration in Phase 1.
+	// Tier 0 composes several independent checks. Each runs in sequence;
+	// the first failure stops the tier (the rest are still reported as
+	// "not-run" in the message).
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
-	cmd := exec.Command("go", "vet", "./...")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("go vet failed: %v\n%s", err, out)
+
+	type check struct {
+		name string
+		run  func() (string, error)
+	}
+	checks := []check{
+		{"go vet ./...", func() (string, error) {
+			out, err := exec.Command("go", "vet", "./...").CombinedOutput()
+			return string(out), err
+		}},
+		{"go vet -tags=contract ./tests/tier3_contract/...", func() (string, error) {
+			// Verify contract-tagged tests compile without running them.
+			// They are expected to fail at runtime in the current phase;
+			// the static tier guarantees they at least compile.
+			out, err := exec.Command("go", "vet", "-tags=contract", "./tests/tier3_contract/...").CombinedOutput()
+			return string(out), err
+		}},
+		{"buf lint", func() (string, error) {
+			if _, err := exec.LookPath("buf"); err != nil {
+				return "buf not on PATH; skipping (run scripts/setup-dev.sh)", nil
+			}
+			out, err := exec.Command("buf", "lint").CombinedOutput()
+			return string(out), err
+		}},
+		{"go test ./tests/tier0_static/...", func() (string, error) {
+			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
+			return string(out), err
+		}},
+	}
+
+	for _, c := range checks {
+		out, err := c.run()
+		if err != nil {
+			return "fail", fmt.Sprintf("%s failed:\n%s", c.name, out)
+		}
 	}
 	return "pass", ""
 }
@@ -277,6 +321,21 @@ func runUnitTier() (string, string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "fail", fmt.Sprintf("go test failed: %v\n%s", err, out)
+	}
+	return "pass", ""
+}
+
+func runContractTier() (string, string) {
+	// Tier 3 contract tests are guarded by the `contract` build tag. Phase 1
+	// ships failing stubs under tests/tier3_contract/ that document the
+	// Phase 2 contracts the implementation must satisfy.
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	cmd := exec.Command("go", "test", "-count=1", "-tags=contract", "./tests/tier3_contract/...")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("contract suite failed (expected in Phase 1; Phase 2 implements):\n%s", out)
 	}
 	return "pass", ""
 }

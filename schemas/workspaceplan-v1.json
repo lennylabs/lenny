@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/workspaceplan/v1.json",
+  "title": "WorkspacePlan v1",
+  "description": "Declares how to materialize a session's working tree under /workspace/current at pod claim time. Nested under CreateSessionRequest.workspacePlan. See spec/14_workspace-plan-schema.md.",
+  "type": "object",
+  "required": ["schemaVersion", "sources"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Wire-compat identifier. v1 ships with this value. Gateways reject schemaVersion > known with 422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED."
+    },
+    "sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" },
+      "description": "Ordered list of source directives. Later entries overwrite earlier paths (last-writer-wins). Unknown source.type values are skipped with a workspace_plan_unknown_source_type warning."
+    },
+    "setupCommands": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/setupCommand" },
+      "description": "Commands to execute after sources materialize, before the agent session starts. Subject to setupCommandPolicy (allowlist by default)."
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "discriminator": { "propertyName": "type" },
+      "oneOf": [
+        { "$ref": "#/$defs/inlineFile" },
+        { "$ref": "#/$defs/uploadFile" },
+        { "$ref": "#/$defs/uploadArchive" },
+        { "$ref": "#/$defs/mkdir" },
+        { "$ref": "#/$defs/gitClone" }
+      ]
+    },
+
+    "modeFile": {
+      "type": "string",
+      "pattern": "^0[0-7]{3,4}$",
+      "description": "Unix file permission as an octal string. Setuid/setgid bits are rejected on all source types. Sticky bit is rejected on file types (inlineFile, uploadFile, uploadArchive)."
+    },
+    "modeDir": {
+      "type": "string",
+      "pattern": "^0[0-7]{3,4}$",
+      "description": "Unix directory permission as an octal string. Setuid/setgid bits are rejected. Sticky bit is permitted on directories."
+    },
+
+    "inlineFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "content"],
+      "properties": {
+        "type": { "const": "inlineFile" },
+        "path": { "type": "string", "minLength": 1, "description": "Destination under /workspace/current/." },
+        "content": { "type": "string", "description": "UTF-8 text. Binary files must use uploadFile." },
+        "mode": { "$ref": "#/$defs/modeFile", "default": "0644" }
+      }
+    },
+
+    "uploadFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "uploadRef"],
+      "properties": {
+        "type": { "const": "uploadFile" },
+        "path": { "type": "string", "minLength": 1 },
+        "uploadRef": { "type": "string", "minLength": 1, "description": "Reference to a previously uploaded blob (lenny-blob:// URI or upload id)." },
+        "mode": { "$ref": "#/$defs/modeFile", "default": "0644" }
+      }
+    },
+
+    "uploadArchive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "pathPrefix", "uploadRef", "format"],
+      "properties": {
+        "type": { "const": "uploadArchive" },
+        "pathPrefix": { "type": "string", "minLength": 1, "description": "Extraction destination under /workspace/current/." },
+        "uploadRef": { "type": "string", "minLength": 1 },
+        "format": { "type": "string", "enum": ["tar", "tar.gz", "zip"] },
+        "stripComponents": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Leading path segments to drop per entry (GNU tar semantics). Entries with insufficient segments are skipped with a workspace_plan_strip_components_skip warning."
+        }
+      }
+    },
+
+    "mkdir": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "const": "mkdir" },
+        "path": { "type": "string", "minLength": 1 },
+        "mode": { "$ref": "#/$defs/modeDir", "default": "0755" }
+      }
+    },
+
+    "gitClone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "url", "ref"],
+      "properties": {
+        "type": { "const": "gitClone" },
+        "url": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "HTTPS only. SSH and git:// are rejected at schema validation."
+        },
+        "ref": { "type": "string", "minLength": 1, "description": "Branch, tag, or commit SHA. Resolved to a commit SHA at session creation and stored in resolvedCommitSha." },
+        "path": { "type": "string", "default": ".", "description": "Clone destination under /workspace/current/." },
+        "depth": { "type": "integer", "minimum": 1, "description": "Shallow-clone depth. Omit for a full clone." },
+        "submodules": { "type": "boolean", "default": false },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "leaseScope"],
+          "properties": {
+            "mode": { "const": "credential-lease" },
+            "leaseScope": {
+              "type": "string",
+              "pattern": "^vcs\\.[a-z0-9_-]+\\.(read|write)$",
+              "description": "VCS credential-lease scope (for example: vcs.github.read)."
+            }
+          }
+        },
+        "resolvedCommitSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "readOnly": true,
+          "description": "Gateway-written. Clients that supply this field are rejected with 400 WORKSPACE_PLAN_INVALID (reason: gateway_written_field)."
+        }
+      }
+    },
+
+    "setupCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cmd"],
+      "properties": {
+        "cmd": { "type": "string", "minLength": 1, "description": "Command to execute. Subject to setupCommandPolicy (allowlist by default)." },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-command timeout. Default comes from the runtime's setupPolicy.timeoutSeconds."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "type": "inlineFile",
+      "path": "evil",
+      "content": "#!/bin/sh\nexit 0\n",
+      "mode": "4755"
+    }
+  ]
+}

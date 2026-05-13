@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "type": "image",
+  "id": "part_01J9X0ZW1ZF7K8Q1V2T3M4N5P8",
+  "ref": "lenny-blob://acme/01J9X0ZW1ZF7K8Q1V2T3M4N5P9/part_01J9X0ZW1ZF7K8Q1V2T3M4N5P8?ttl=3600&enc=aes256gcm",
+  "mimeType": "image/png"
+}

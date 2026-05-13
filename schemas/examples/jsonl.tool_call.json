@@ -1,0 +1,8 @@
+{
+  "type": "tool_call",
+  "id": "tc_01J9X0ZW1ZF7K8Q1V2T3M4N5P2",
+  "name": "read_file",
+  "arguments": {
+    "path": "/workspace/current/README.md"
+  }
+}

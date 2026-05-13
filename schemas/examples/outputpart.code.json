@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "type": "code",
+  "id": "part_01J9X0ZW1ZF7K8Q1V2T3M4N5P7",
+  "inline": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
+  "mimeType": "text/x-go",
+  "annotations": {
+    "language": "go"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "type": "message",
+  "id": "msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P0",
+  "from": {
+    "kind": "client",
+    "id": "client_alice_dev"
+  },
+  "delivery": "queued",
+  "input": [
+    {
+      "schemaVersion": 1,
+      "type": "text",
+      "id": "part_01J9X0ZW1ZF7K8Q1V2T3M4N5P1",
+      "inline": "Summarize the architecture spec."
+    }
+  ]
+}
