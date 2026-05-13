@@ -144,42 +144,47 @@ The health API's `issueRunbooks` lookup returns the same mapping; `lenny-ops` po
 
 Runbooks describe what a platform operator can fix with the Lenny admin API, `lenny-ctl`, or `kubectl`. When a step says "escalate," follow this tree.
 
-```
-                Platform operator (you)
-                         │
-                         ▼
-            Can you fix this with:
-            - lenny-ctl / Admin API   ← preferred
-            - kubectl / Helm
-            - cloud console (managed services)?
-                         │
-                    ┌────┴────┐
-                   Yes       No
-                    │         │
-                    ▼         ▼
-             Apply remediation  Identify the layer:
-             Verify recovery    │
-                                ├─ Kubernetes layer ───────►  Cluster admin
-                                │   (node pressure, quotas,
-                                │   CNI, webhook TLS rot)
-                                │
-                                ├─ Managed service (Postgres,
-                                │   Redis, object store, KMS) ► Cloud provider
-                                │                                support
-                                │
-                                ├─ Data / compliance impact  ─► Security &
-                                │   (credential compromise,      compliance
-                                │   audit gap, PII exposure)     on-call
-                                │
-                                ├─ Billing accuracy impact   ─► Finance ops
-                                │   (quota, lease, measured      (with billing
-                                │    usage disagrees)            reconciliation
-                                │                                runbook output)
-                                │
-                                └─ Unclear / multi-layer    ─► Lenny
-                                                                platform
-                                                                on-call
-```
+![Escalation decision tree. The platform operator first checks whether the issue can be fixed with lenny-ctl or the admin API, kubectl or Helm, or a cloud console. If yes, apply remediation and verify recovery. If no, identify the layer: Kubernetes layer issues escalate to a cluster admin; managed service issues escalate to cloud provider support; data or compliance impact escalates to security and compliance on-call; billing accuracy impact escalates to finance ops; unclear or multi-layer issues escalate to Lenny platform on-call.](../assets/diagrams/escalation-tree.svg)
+
+<!--
+ASCII fallback for the diagram above (escalation-tree):
+
+                  Platform operator (you)
+                           |
+                           v
+              Can you fix this with:
+              - lenny-ctl or admin API  (preferred)
+              - kubectl or Helm
+              - cloud console (managed services)?
+                           |
+                      +----+----+
+                     Yes       No
+                      |         |
+                      v         v
+               Apply remediation  Identify the layer:
+               Verify recovery    |
+                                  +- Kubernetes layer ========>  Cluster admin
+                                  |   (node pressure, quotas,
+                                  |   CNI, webhook TLS rotation)
+                                  |
+                                  +- Managed service (Postgres,
+                                  |   Redis, object store, KMS) =>  Cloud provider
+                                  |                                  support
+                                  |
+                                  +- Data or compliance impact  ==>  Security and
+                                  |   (credential compromise,         compliance
+                                  |   audit gap, PII exposure)        on-call
+                                  |
+                                  +- Billing accuracy impact   ==>  Finance ops
+                                  |   (quota, lease, measured        (with billing
+                                  |    usage disagrees)              reconciliation
+                                  |                                  runbook output)
+                                  |
+                                  +- Unclear or multi-layer    ==>  Lenny
+                                                                    platform
+                                                                    on-call
+-->
+
 
 **Named roles** (adjust the names to your org):
 

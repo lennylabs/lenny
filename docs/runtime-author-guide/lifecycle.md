@@ -17,12 +17,17 @@ Every Lenny agent pod follows a state machine. The exact path depends on whether
 
 ### Pod-Warm Path (Default)
 
-```
-warming ──→ idle ──→ claimed ──→ receiving_uploads ──→ finalizing_workspace
-                                                              │
-                                                              ▼
-                         attached ←── starting_session ←── running_setup
-```
+![Pod-warm state machine: warming, idle, claimed, receiving_uploads, finalizing_workspace, running_setup, starting_session, then attached.](../assets/diagrams/pod-warm-path.svg)
+
+<!--
+ASCII fallback for the diagram above (pod-warm-path):
+
+  warming ===> idle ===> claimed ===> receiving_uploads ===> finalizing_workspace
+                                                                      |
+                                                                      v
+                            attached <=== starting_session <=== running_setup
+-->
+
 
 | State | What Happens |
 |-------|-------------|
@@ -37,12 +42,17 @@ warming ──→ idle ──→ claimed ──→ receiving_uploads ──→ f
 
 ### SDK-Warm Path (preConnect: true)
 
-```
-warming ──→ sdk_connecting ──→ idle ──→ claimed ──→ receiving_uploads
-                                                         │
-                                                         ▼
-                         attached ←── finalizing_workspace ──→ running_setup
-```
+![SDK-warm state machine: warming, sdk_connecting, idle, claimed, receiving_uploads, then finalizing_workspace branching to attached and running_setup.](../assets/diagrams/sdk-warm-path.svg)
+
+<!--
+ASCII fallback for the diagram above (sdk-warm-path):
+
+  warming ===> sdk_connecting ===> idle ===> claimed ===> receiving_uploads
+                                                                  |
+                                                                  v
+                            attached <=== finalizing_workspace ===> running_setup
+-->
+
 
 In SDK-warm mode, the agent process starts during the warm phase (before any session) to eliminate cold-start latency. The adapter pre-connects the SDK, then waits for session assignment.
 
@@ -108,22 +118,27 @@ Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`
 
 Once a session reaches `attached`, it enters the interactive session state machine:
 
-```
-                        attached
-                        │
-                ┌───────┼───────────────┬────────────────┬──────────┐
-                ▼       ▼               ▼                ▼          ▼
-           completed   failed    resume_pending     suspended   cancelled
-                                     │                   │
-                                ┌────┤              ┌────┼────────┐
-                                ▼    ▼              ▼    ▼        ▼
-                           resuming  awaiting    running completed resume_pending
-                              │       _client     (resume)
-                              ▼       _action
-                           attached     │
-                                        ▼
-                                      expired
-```
+![Session state machine starting from attached. attached branches to completed, failed, resume_pending, suspended, and cancelled. resume_pending branches to resuming (which returns to attached) and awaiting_client_action (which transitions to expired). suspended branches to running (resume), completed, and resume_pending.](../assets/diagrams/session-states.svg)
+
+<!--
+ASCII fallback for the diagram above (session-states):
+
+                          attached
+                             |
+      +----------+-----------+-----------+------------+
+      v          v           v           v            v
+  completed   failed   resume_pending  suspended   cancelled
+                            |              |
+                       +----+----+    +----+----+-------+
+                       v         v    v         v       v
+                   resuming  awaiting  running  completed  resume_pending
+                       |     _client_  (resume)
+                       v      action
+                   attached     |
+                                v
+                              expired
+-->
+
 
 ### Key States
 
@@ -340,9 +355,14 @@ When the in-flight counter for a provider reaches zero and a credential rotation
 
 Task-mode pods execute sequential tasks without pod replacement:
 
-```
-attached ──→ task_cleanup ──→ idle ──→ (next task) ──→ attached
-```
+![Task-mode pod reuse: attached, task_cleanup, idle, then attached again for the next task.](../assets/diagrams/task-mode-reuse.svg)
+
+<!--
+ASCII fallback for the diagram above (task-mode-reuse):
+
+  attached ===> task_cleanup ===> idle ====(next task)====> attached
+-->
+
 
 The lifecycle channel drives the handshake:
 

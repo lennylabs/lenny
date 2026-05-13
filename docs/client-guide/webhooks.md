@@ -202,13 +202,18 @@ def verify_lenny_webhook(headers, raw_body_bytes, secret_bytes):
 
 Webhooks support a fire-and-forget pattern for CI/CD pipelines and batch processing:
 
-```
-1. Create session with callbackUrl  ──>  Lenny creates session and starts agent
-2. Return immediately               <──  Response: {sessionId, state: "running"}
-3. Do other work...
-4. Receive webhook notification      <──  POST to callbackUrl: CloudEvents {type: "dev.lenny.session_completed"}
-5. Retrieve results                  ──>  GET /v1/sessions/{id}/artifacts
-```
+![Async job sequence between Client and Lenny. Step 1: client creates session with callbackUrl and Lenny starts the agent. Step 2: Lenny returns sessionId and state running. Step 3: client does other work. Step 4: Lenny POSTs a CloudEvents session_completed event to callbackUrl. Step 5: client retrieves artifacts via GET /v1/sessions/{id}/artifacts.](../assets/diagrams/async-job-pattern.svg)
+
+<!--
+ASCII fallback for the diagram above (async-job-pattern):
+
+  1. Create session with callbackUrl  ===>  Lenny creates session and starts agent
+  2. Return immediately               <===  Response: {sessionId, state: "running"}
+  3. Do other work
+  4. Receive webhook notification     <===  POST to callbackUrl: CloudEvents {type: "dev.lenny.session_completed"}
+  5. Retrieve results                 ===>  GET /v1/sessions/{id}/artifacts
+-->
+
 
 This avoids the need to poll `GET /v1/sessions/{id}` in a loop.
 

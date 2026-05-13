@@ -18,25 +18,31 @@ Every Lenny agent pod contains two containers:
 1. **Adapter container** (Lenny-managed) --- handles all platform communication: gRPC to the gateway, mTLS certificate management, workspace staging, credential injection, health checks, and MCP server hosting.
 2. **Agent container** (your runtime binary) --- your code. Communicates with the adapter exclusively via stdin/stdout (at every integration level) and optionally via local Unix sockets (Standard and Full levels).
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Lenny Pod                                                          │
-│                                                                     │
-│  ┌───────────────────────┐          ┌────────────────────────────┐  │
-│  │  Adapter Container    │  stdin → │  Agent Container           │  │
-│  │                       │  ← stdout│  (your runtime binary)     │  │
-│  │  - gRPC to gateway    │          │                            │  │
-│  │  - MCP servers (Unix) │  socket  │  - reads JSON from stdin   │  │
-│  │  - lifecycle channel  │  ──────→ │  - writes JSON to stdout   │  │
-│  │  - file staging       │          │  - optionally connects to  │  │
-│  │  - health checks      │          │    MCP servers + lifecycle  │  │
-│  │  - credential mgmt    │          │    channel via Unix sockets │  │
-│  └───────────┬───────────┘          └────────────────────────────┘  │
-│              │ gRPC (mTLS)                                          │
-└──────────────┼──────────────────────────────────────────────────────┘
-               │
-         Lenny Gateway
-```
+![Lenny pod with two containers. The adapter container runs gRPC to the gateway, MCP servers over Unix sockets, the lifecycle channel, file staging, health checks, and credential management. The agent container reads JSON from stdin, writes JSON to stdout, and optionally connects to MCP servers and the lifecycle channel via Unix sockets. The adapter connects to the Lenny gateway over gRPC with mTLS.](../assets/diagrams/lenny-pod-containers.svg)
+
+<!--
+ASCII fallback for the diagram above (lenny-pod-containers):
+
+  +---------------------------------------------------------------------+
+  |  LENNY POD                                                          |
+  |                                                                     |
+  |  +-----------------------+          +----------------------------+  |
+  |  |  Adapter container    |  stdin ==>  Agent container          |  |
+  |  |  (Lenny-managed)      |  <== stdout (your runtime binary)    |  |
+  |  |                       |                                       |  |
+  |  |  - gRPC to gateway    |  socket                              |  |
+  |  |  - MCP servers (Unix) |  ====>   - reads JSON from stdin     |  |
+  |  |  - lifecycle channel  |          - writes JSON to stdout     |  |
+  |  |  - file staging       |          - optionally connects to    |  |
+  |  |  - health checks      |            MCP servers and lifecycle |  |
+  |  |  - credential mgmt    |            channel via Unix sockets  |  |
+  |  +-----------+-----------+          +----------------------------+  |
+  |              | gRPC (mTLS)                                          |
+  +--------------|------------------------------------------------------+
+                 v
+           Lenny Gateway
+-->
+
 
 The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, and what capabilities are available. Basic-level runtimes do not need to read the manifest at all --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract.
 

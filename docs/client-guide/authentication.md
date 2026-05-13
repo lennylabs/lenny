@@ -13,19 +13,24 @@ Lenny uses **OIDC/OAuth 2.1** (OpenID Connect, layered on OAuth 2.1) for client 
 
 ## Authentication Flow Overview
 
-```
-Client                     Identity Provider                    Lenny Gateway
-  │                                 │                                │
-  │──── Authorization Request ─────>│                                │
-  │<─── Authorization Code ─────────│                                │
-  │──── Token Request (code) ──────>│                                │
-  │<─── ID Token + Access Token ────│                                │
-  │                                 │                                │
-  │──── API Request ────────────────────────────────────────────────>│
-  │     Authorization: Bearer <access_token>                        │
-  │                                 │                                │
-  │<─── Response ───────────────────────────────────────────────────│
-```
+![OAuth 2.1 flow with three actors: Client, Identity provider, and Lenny gateway. Steps 1 through 4 happen between Client and Identity provider: authorization request, authorization code, token request with the code, then ID token and access token. Steps 5 and 6 happen between Client and Lenny gateway: an API request carrying Authorization Bearer access_token, then a response.](../assets/diagrams/oauth-flow.svg)
+
+<!--
+ASCII fallback for the diagram above (oauth-flow):
+
+  Client                     Identity Provider                    Lenny Gateway
+    |                                 |                                |
+    |==== Authorization Request =====>|                                |
+    |<=== Authorization Code =========|                                |
+    |==== Token Request (code) ======>|                                |
+    |<=== ID Token + Access Token ====|                                |
+    |                                 |                                |
+    |==== API Request ====================================================>|
+    |     Authorization: Bearer <access_token>                              |
+    |                                 |                                |
+    |<=== Response ========================================================|
+-->
+
 
 ### Token Acquisition
 

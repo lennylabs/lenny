@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .outer { fill: #fffaf0; stroke: #1f2933; stroke-width: 2.2; }
+      .container { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2; }
+      .section { fill: #b56b1f; font-size: 13px; letter-spacing: 0.04em; }
+      .title { fill: #1f2933; font-size: 17px; font-weight: 600; }
+      .body { fill: #1f2933; font-size: 13px; }
+      .sub { fill: #54616e; font-size: 12px; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 12px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="800" height="360"/>
+
+  <rect class="outer" x="40" y="20" width="720" height="240" rx="10"/>
+  <text class="section" x="60" y="46">POD</text>
+
+  <rect class="container" x="80" y="70" width="280" height="170" rx="8"/>
+  <text class="title" x="220" y="108" text-anchor="middle">Adapter sidecar</text>
+  <text class="sub" x="220" y="130" text-anchor="middle">Lenny-provided</text>
+
+  <rect class="container" x="440" y="70" width="280" height="170" rx="8"/>
+  <text class="title" x="580" y="108" text-anchor="middle">Your program</text>
+  <text class="sub" x="580" y="130" text-anchor="middle">Any language</text>
+
+  <path class="ln" d="M 362 140 L 436 140" marker-end="url(#ar)"/>
+  <text class="mono" x="399" y="132" text-anchor="middle">stdin</text>
+
+  <path class="ln" d="M 438 180 L 364 180" marker-end="url(#ar)"/>
+  <text class="mono" x="401" y="172" text-anchor="middle">stdout</text>
+
+  <path class="ln" d="M 220 240 L 220 310" marker-end="url(#ar)"/>
+  <text class="sub" x="232" y="285">encrypted back to the gateway</text>
+
+  <rect class="container" x="120" y="314" width="200" height="38" rx="8"/>
+  <text class="title" x="220" y="339" text-anchor="middle">Gateway</text>
+</svg>

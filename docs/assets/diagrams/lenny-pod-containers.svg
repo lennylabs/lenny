@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .outer { fill: #fffaf0; stroke: #1f2933; stroke-width: 2.2; }
+      .container { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2; }
+      .section { fill: #b56b1f; font-size: 13px; letter-spacing: 0.04em; }
+      .title { fill: #1f2933; font-size: 17px; font-weight: 600; }
+      .body { fill: #1f2933; font-size: 13px; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 12px; }
+      .sub { fill: #54616e; font-size: 12px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="900" height="500"/>
+
+  <rect class="outer" x="40" y="20" width="820" height="360" rx="10"/>
+  <text class="section" x="60" y="46">LENNY POD</text>
+
+  <rect class="container" x="80" y="74" width="340" height="286" rx="8"/>
+  <text class="title" x="250" y="104" text-anchor="middle">Adapter container</text>
+  <text class="sub" x="250" y="124" text-anchor="middle">Lenny-managed</text>
+  <text class="body" x="100" y="164">•  gRPC to gateway</text>
+  <text class="body" x="100" y="192">•  MCP servers (Unix socket)</text>
+  <text class="body" x="100" y="220">•  Lifecycle channel</text>
+  <text class="body" x="100" y="248">•  File staging</text>
+  <text class="body" x="100" y="276">•  Health checks</text>
+  <text class="body" x="100" y="304">•  Credential management</text>
+
+  <rect class="container" x="480" y="74" width="340" height="286" rx="8"/>
+  <text class="title" x="650" y="104" text-anchor="middle">Agent container</text>
+  <text class="sub" x="650" y="124" text-anchor="middle">Your runtime binary</text>
+  <text class="body" x="500" y="164">•  Reads JSON from stdin</text>
+  <text class="body" x="500" y="192">•  Writes JSON to stdout</text>
+  <text class="body" x="500" y="220">•  Optionally connects to MCP servers</text>
+  <text class="body" x="514" y="248">and lifecycle channel via Unix sockets</text>
+
+  <path class="ln" d="M 422 188 L 476 188" marker-end="url(#ar)"/>
+  <text class="mono" x="449" y="180" text-anchor="middle">stdin</text>
+
+  <path class="ln" d="M 478 220 L 424 220" marker-end="url(#ar)"/>
+  <text class="mono" x="451" y="212" text-anchor="middle">stdout</text>
+
+  <path class="ln" d="M 422 268 L 476 268" marker-end="url(#ar)"/>
+  <text class="mono" x="449" y="260" text-anchor="middle">socket</text>
+
+  <path class="ln" d="M 250 360 L 250 430" marker-end="url(#ar)"/>
+  <text class="mono" x="262" y="400">gRPC (mTLS)</text>
+
+  <rect class="container" x="130" y="434" width="240" height="48" rx="8"/>
+  <text class="title" x="250" y="464" text-anchor="middle">Lenny gateway</text>
+</svg>

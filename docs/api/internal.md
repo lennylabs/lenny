@@ -16,23 +16,28 @@ The gateway communicates with agent pods over **gRPC + mTLS**. This page documen
 
 ## Architecture overview
 
-```
-┌────────────────────┐         gRPC + mTLS         ┌─────────────────────┐
-│                    │ ◄──────────────────────────► │                     │
-│   Gateway Replica  │                              │   Agent Pod         │
-│                    │   RuntimeAdapter service     │  ┌───────────────┐  │
-│   Session Router   │ ──── StartSession ────────►  │  │Runtime Adapter│  │
-│                    │ ──── StopSession ─────────►  │  ├───────────────┤  │
-│                    │ ──── Attach (bidi) ───────►  │  │ Agent Binary  │  │
-│                    │ ──── Checkpoint ──────────►  │  └───────────────┘  │
-│                    │ ──── UploadFiles ─────────►  │                     │
-│                    │ ──── DemoteSDK ───────────►  │                     │
-│                    │                              │                     │
-│                    │   Health service             │                     │
-│                    │ ──── Check ───────────────►  │                     │
-│                    │ ──── Watch ───────────────►  │                     │
-└────────────────────┘                              └─────────────────────┘
-```
+![A gateway replica with a session router exposes a RuntimeAdapter service (StartSession, StopSession, Attach, Checkpoint, UploadFiles, DemoteSDK) and a Health service (Check, Watch), and connects to an agent pod containing a runtime adapter and an agent binary over gRPC with mTLS.](../assets/diagrams/internal-rpc-architecture.svg)
+
+<!--
+ASCII fallback for the diagram above (internal-rpc-architecture):
+
+  +--------------------+         gRPC + mTLS         +---------------------+
+  |                    | <==========================> |                     |
+  |   Gateway Replica  |                              |   Agent Pod         |
+  |                    |   RuntimeAdapter service     |  +---------------+  |
+  |   Session Router   | ==== StartSession ========>  |  |Runtime Adapter|  |
+  |                    | ==== StopSession  ========>  |  +---------------+  |
+  |                    | ==== Attach (bidi) =======>  |  | Agent Binary  |  |
+  |                    | ==== Checkpoint   ========>  |  +---------------+  |
+  |                    | ==== UploadFiles  ========>  |                     |
+  |                    | ==== DemoteSDK    ========>  |                     |
+  |                    |                              |                     |
+  |                    |   Health service             |                     |
+  |                    | ==== Check        ========>  |                     |
+  |                    | ==== Watch        ========>  |                     |
+  +--------------------+                              +---------------------+
+-->
+
 
 ---
 
@@ -454,12 +459,17 @@ If the `Attach` stream is interrupted during an active session:
 
 ## RPC lifecycle state machine
 
-```
-INIT ──► READY ──► ACTIVE ──► DRAINING ──► TERMINATED
-                     │                          ▲
-                     └──────────────────────────┘
-                       (session ends normally)
-```
+![RPC lifecycle: INIT, READY, ACTIVE, DRAINING, TERMINATED. When a session ends normally, ACTIVE transitions directly to TERMINATED.](../assets/diagrams/rpc-lifecycle.svg)
+
+<!--
+ASCII fallback for the diagram above (rpc-lifecycle):
+
+  INIT ===> READY ===> ACTIVE ===> DRAINING ===> TERMINATED
+                        |                            ^
+                        +============================+
+                          (session ends normally)
+-->
+
 
 | State | Description |
 |:------|:------------|

@@ -43,21 +43,26 @@ A runtime is a program that reads JSON lines from standard input and writes JSON
 
 Your program runs inside a Kubernetes pod next to a small sidecar that Lenny provides. The sidecar takes care of all the platform plumbing: the connection back to the gateway, delivering the session's files into the pod, managing credentials, answering health checks. Messages from the user arrive on your program's stdin as JSON; your replies go to stdout.
 
-```
-                    Pod
- ┌──────────────────────────────────────────────┐
- │                                              │
- │  ┌──────────────────┐  stdin   ┌───────────┐ │
- │  │                  │ ──────── │           │ │
- │  │ Adapter sidecar  │          │ Your      │ │
- │  │ (Lenny-provided) │ ──────── │ program   │ │
- │  │                  │  stdout  │           │ │
- │  └────────┬─────────┘          └───────────┘ │
- │           │ encrypted back to the gateway    │
- └───────────┼──────────────────────────────────┘
-             │
-         Gateway
-```
+![Runtime pod: an adapter sidecar (Lenny-provided) and your program (any language) communicate over stdin and stdout. The adapter sends encrypted traffic back to the gateway.](../assets/diagrams/runtime-pod-simple.svg)
+
+<!--
+ASCII fallback for the diagram above (runtime-pod-simple):
+
+                       Pod
+   +----------------------------------------------+
+   |                                              |
+   |  +------------------+  stdin   +-----------+ |
+   |  |                  | ========>|           | |
+   |  | Adapter sidecar  |          | Your      | |
+   |  | (Lenny-provided) | <========| program   | |
+   |  |                  |  stdout  |           | |
+   |  +--------+---------+          +-----------+ |
+   |           | encrypted back to the gateway   |
+   +-----------|----------------------------------+
+               v
+           Gateway
+-->
+
 
 A few consequences of this design:
 

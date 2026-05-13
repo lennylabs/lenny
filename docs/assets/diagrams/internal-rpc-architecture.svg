@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 480" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .card { fill: #fffaf0; stroke: #1f2933; stroke-width: 2; }
+      .card-mustard { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2; }
+      .sub-cream { fill: #fffaf0; stroke: #1f2933; stroke-width: 1.6; }
+      .title { fill: #1f2933; font-size: 17px; font-weight: 600; }
+      .section { fill: #b56b1f; font-size: 13px; letter-spacing: 0.04em; }
+      .body { fill: #1f2933; font-size: 13px; }
+      .sub { fill: #54616e; font-size: 12px; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 12px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="1000" height="480"/>
+
+  <rect class="card" x="40" y="40" width="380" height="400" rx="10"/>
+  <text class="section" x="60" y="66">GATEWAY REPLICA</text>
+  <rect class="sub-cream" x="60" y="84" width="340" height="60" rx="6"/>
+  <text class="title" x="230" y="120" text-anchor="middle">Session router</text>
+
+  <text class="body" x="60" y="180">RuntimeAdapter service</text>
+  <text class="mono" x="80" y="208">StartSession</text>
+  <text class="mono" x="80" y="230">StopSession</text>
+  <text class="mono" x="80" y="252">Attach (bidi)</text>
+  <text class="mono" x="80" y="274">Checkpoint</text>
+  <text class="mono" x="80" y="296">UploadFiles</text>
+  <text class="mono" x="80" y="318">DemoteSDK</text>
+
+  <text class="body" x="60" y="356">Health service</text>
+  <text class="mono" x="80" y="382">Check</text>
+  <text class="mono" x="80" y="404">Watch</text>
+
+  <path class="ln" d="M 424 240 L 576 240" marker-end="url(#ar)"/>
+  <path class="ln" d="M 576 260 L 424 260" marker-end="url(#ar)"/>
+  <text class="body" x="500" y="226" text-anchor="middle">gRPC + mTLS</text>
+
+  <rect class="card" x="580" y="40" width="380" height="400" rx="10"/>
+  <text class="section" x="600" y="66">AGENT POD</text>
+
+  <rect class="card-mustard" x="620" y="108" width="300" height="120" rx="8"/>
+  <text class="title" x="770" y="144" text-anchor="middle">Runtime adapter</text>
+  <text class="sub" x="770" y="170" text-anchor="middle">gRPC server, MCP host,</text>
+  <text class="sub" x="770" y="188" text-anchor="middle">workspace, credentials</text>
+
+  <rect class="card-mustard" x="620" y="252" width="300" height="120" rx="8"/>
+  <text class="title" x="770" y="288" text-anchor="middle">Agent binary</text>
+  <text class="sub" x="770" y="314" text-anchor="middle">Your runtime</text>
+  <text class="sub" x="770" y="332" text-anchor="middle">(reads stdin, writes stdout)</text>
+
+  <path class="ln" d="M 770 228 L 770 248" marker-end="url(#ar)"/>
+</svg>

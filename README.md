@@ -83,49 +83,53 @@ Every capability above is specified in [`spec/`](spec/) and covered by the integ
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Client / MCP Host                         │
-└────────────────────────────┬────────────────────────────────┘
-                             │ REST / MCP / OpenAI / Open Responses
-                             ▼
-┌────────────────────────────────────────────────────────────┐
-│                   Gateway Edge Replicas                    │
-│  ┌────────┐ ┌──────────┐ ┌─────────┐ ┌─────────────────┐   │
-│  │ Auth / │ │ Policy   │ │ Session │ │ MCP Fabric      │   │
-│  │ OIDC   │ │ Engine + │ │ Router  │ │ (tasks,         │   │
-│  │        │ │ Intercep-│ │         │ │  elicitation,   │   │
-│  │        │ │ tors     │ │         │ │  delegation)    │   │
-│  └────────┘ └──────────┘ └─────────┘ └─────────────────┘   │
-└────────┬─────────┬──────────┬──────────┬───────────────────┘
-         │         │          │          │
-    ┌────▼───┐ ┌───▼───┐ ┌───▼────┐ ┌───▼─────┐   ┌─────────────┐
-    │Session │ │Token  │ │Event/  │ │Artifact │   │ External    │
-    │Manager │ │Service│ │Checkpt │ │Store    │   │ Connectors  │
-    │(PG+Red)│ │       │ │Store   │ │         │   │ (GitHub,    │
-    └────────┘ └───┬───┘ └────────┘ └─────────┘   │  Jira, ...) │
-                   │                              └──────▲──────┘
-                   │    OAuth tokens (encrypted,          │
-                   └────  cached in Redis) ───────────────┘
-                        Gateway proxies all connector
-                        calls — pods never see tokens
+![Lenny architecture: a client speaks REST, MCP, OpenAI Chat Completions, or Open Responses to the gateway edge replicas, which front a session manager, token service, event and checkpoint store, artifact store, and external connectors. Two controllers manage agent pods, and each pod runs an adapter container alongside an agent container.](docs/assets/diagrams/architecture-overview.svg)
 
-        Gateway ←── mTLS ──→ Pods (gRPC control protocol)
+<!--
+ASCII fallback for the diagram above (architecture-overview):
 
-┌─────────────────────────────────────────────────────────────┐
-│  Warm Pool Controller (pod lifecycle, agent-sandbox CRDs)   │
-│  PoolScalingController (scaling + variant pool sizing)      │
-└────────┬───────────────┬────────────────┬───────────────────┘
-         │               │                │
-    ┌────▼────┐    ┌─────▼─────┐    ┌─────▼─────┐
-    │  Pod A  │    │   Pod B   │    │   Pod C   │
-    │┌───────┐│    │┌─────────┐│    │┌─────────┐│
-    ││Adapter││    ││ Adapter ││    ││ Adapter ││
-    │├───────┤│    │├─────────┤│    │├─────────┤│
-    ││Agent  ││    ││  Agent  ││    ││  Agent  ││
-    │└───────┘│    │└─────────┘│    │└─────────┘│
-    └─────────┘    └───────────┘    └───────────┘
-```
+  +-------------------------------------------------------------+
+  |                    Client / MCP Host                        |
+  +---------------------------+---------------------------------+
+                              | REST, MCP, OpenAI Chat Completions, Open Responses
+                              v
+  +-------------------------------------------------------------+
+  |                   Gateway Edge Replicas                     |
+  |  +--------+ +-----------+ +---------+ +------------------+  |
+  |  | Auth / | | Policy    | | Session | | MCP Fabric       |  |
+  |  | OIDC   | | engine +  | | router  | | (tasks,          |  |
+  |  |        | | intercep- | |         | |  elicitation,    |  |
+  |  |        | | tors      | |         | |  delegation)     |  |
+  |  +--------+ +-----------+ +---------+ +------------------+  |
+  +--------+---------+----------+---------+--------------------+
+           |         |          |         |
+      +----v---+ +---v---+ +----v---+ +---v-----+   +-------------+
+      |Session | | Token | | Event /| |Artifact |   | External    |
+      |manager | |service| | check- | | store   |   | connectors  |
+      |(PG+Red)| |       | | point  | |         |   | (GitHub,    |
+      +--------+ +---+---+ +--------+ +---------+   |  Jira, etc.)|
+                     |                              +------+------+
+                     |    OAuth tokens, encrypted          |
+                     +========== via KMS, cached ==========+
+                                  in Redis. Pods never see tokens.
+
+          Gateway <===== mTLS gRPC =====> Pods (data plane)
+
+  +-------------------------------------------------------------+
+  |  Warm pool controller (pod lifecycle, agent-sandbox CRDs)   |
+  |  PoolScalingController (scaling, variant pool sizing)       |
+  +--------+----------------+----------------+------------------+
+           |                |                |
+      +----v----+      +----v----+      +----v----+
+      |  Pod A  |      |  Pod B  |      |  Pod C  |
+      | +-----+ |      | +-----+ |      | +-----+ |
+      | |Adap.| |      | |Adap.| |      | |Adap.| |
+      | +-----+ |      | +-----+ |      | +-----+ |
+      | |Agent| |      | |Agent| |      | |Agent| |
+      | +-----+ |      | +-----+ |      | +-----+ |
+      +---------+      +---------+      +---------+
+-->
+
 
 | Component                 | Role                                                                                                                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

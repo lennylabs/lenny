@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 240" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .card { fill: #fffaf0; stroke: #1f2933; stroke-width: 1.8; }
+      .card-primary { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2.2; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 12px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="1000" height="240"/>
+
+  <rect class="card" x="20" y="30" width="160" height="48" rx="6"/>
+  <text class="mono" x="100" y="60" text-anchor="middle">warming</text>
+
+  <rect class="card" x="220" y="30" width="160" height="48" rx="6"/>
+  <text class="mono" x="300" y="60" text-anchor="middle">sdk_connecting</text>
+
+  <rect class="card" x="420" y="30" width="160" height="48" rx="6"/>
+  <text class="mono" x="500" y="60" text-anchor="middle">idle</text>
+
+  <rect class="card" x="620" y="30" width="160" height="48" rx="6"/>
+  <text class="mono" x="700" y="60" text-anchor="middle">claimed</text>
+
+  <rect class="card" x="820" y="30" width="160" height="48" rx="6"/>
+  <text class="mono" x="900" y="60" text-anchor="middle">receiving_uploads</text>
+
+  <path class="ln" d="M 182 54 L 216 54" marker-end="url(#ar)"/>
+  <path class="ln" d="M 382 54 L 416 54" marker-end="url(#ar)"/>
+  <path class="ln" d="M 582 54 L 616 54" marker-end="url(#ar)"/>
+  <path class="ln" d="M 782 54 L 816 54" marker-end="url(#ar)"/>
+
+  <path class="ln" d="M 900 80 L 900 130 L 500 130 L 500 152" marker-end="url(#ar)"/>
+
+  <rect class="card" x="420" y="156" width="160" height="48" rx="6"/>
+  <text class="mono" x="500" y="186" text-anchor="middle">finalizing_workspace</text>
+
+  <rect class="card" x="620" y="156" width="160" height="48" rx="6"/>
+  <text class="mono" x="700" y="186" text-anchor="middle">running_setup</text>
+
+  <rect class="card-primary" x="220" y="156" width="160" height="48" rx="6"/>
+  <text class="mono" x="300" y="186" text-anchor="middle">attached</text>
+
+  <path class="ln" d="M 582 180 L 616 180" marker-end="url(#ar)"/>
+  <path class="ln" d="M 418 180 L 384 180" marker-end="url(#ar)"/>
+</svg>

@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 460" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .card { fill: #fffaf0; stroke: #1f2933; stroke-width: 1.8; }
+      .card-primary { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2.2; }
+      .card-terminal { fill: #fde2d6; stroke: #c84a1d; stroke-width: 1.8; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 13px; }
+      .ln { stroke: #1f2933; stroke-width: 1.6; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="1500" height="460"/>
+
+  <rect class="card-primary" x="680" y="20" width="140" height="44" rx="6"/>
+  <text class="mono" x="750" y="48" text-anchor="middle">attached</text>
+
+  <rect class="card-terminal" x="30" y="120" width="140" height="44" rx="6"/>
+  <text class="mono" x="100" y="148" text-anchor="middle">completed</text>
+
+  <rect class="card-terminal" x="210" y="120" width="140" height="44" rx="6"/>
+  <text class="mono" x="280" y="148" text-anchor="middle">failed</text>
+
+  <rect class="card" x="415" y="120" width="170" height="44" rx="6"/>
+  <text class="mono" x="500" y="148" text-anchor="middle">resume_pending</text>
+
+  <rect class="card" x="810" y="120" width="140" height="44" rx="6"/>
+  <text class="mono" x="880" y="148" text-anchor="middle">suspended</text>
+
+  <rect class="card-terminal" x="1310" y="120" width="140" height="44" rx="6"/>
+  <text class="mono" x="1380" y="148" text-anchor="middle">cancelled</text>
+
+  <path class="ln" d="M 710 66 L 100 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M 730 66 L 280 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M 748 66 L 500 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M 770 66 L 880 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M 790 66 L 1380 116" marker-end="url(#ar)"/>
+
+  <rect class="card" x="330" y="240" width="140" height="44" rx="6"/>
+  <text class="mono" x="400" y="268" text-anchor="middle">resuming</text>
+
+  <rect class="card" x="500" y="240" width="200" height="44" rx="6"/>
+  <text class="mono" x="600" y="268" text-anchor="middle">awaiting_client_action</text>
+
+  <rect class="card" x="720" y="240" width="160" height="44" rx="6"/>
+  <text class="mono" x="800" y="268" text-anchor="middle">running (resume)</text>
+
+  <rect class="card-terminal" x="910" y="240" width="140" height="44" rx="6"/>
+  <text class="mono" x="980" y="268" text-anchor="middle">completed</text>
+
+  <rect class="card" x="1085" y="240" width="170" height="44" rx="6"/>
+  <text class="mono" x="1170" y="268" text-anchor="middle">resume_pending</text>
+
+  <path class="ln" d="M 480 166 L 400 236" marker-end="url(#ar)"/>
+  <path class="ln" d="M 520 166 L 600 236" marker-end="url(#ar)"/>
+
+  <path class="ln" d="M 860 166 L 800 236" marker-end="url(#ar)"/>
+  <path class="ln" d="M 880 166 L 980 236" marker-end="url(#ar)"/>
+  <path class="ln" d="M 900 166 L 1170 236" marker-end="url(#ar)"/>
+
+  <rect class="card-primary" x="330" y="360" width="140" height="44" rx="6"/>
+  <text class="mono" x="400" y="388" text-anchor="middle">attached</text>
+
+  <rect class="card-terminal" x="530" y="360" width="140" height="44" rx="6"/>
+  <text class="mono" x="600" y="388" text-anchor="middle">expired</text>
+
+  <path class="ln" d="M 400 286 L 400 356" marker-end="url(#ar)"/>
+  <path class="ln" d="M 600 286 L 600 356" marker-end="url(#ar)"/>
+</svg>

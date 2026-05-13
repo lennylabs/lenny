@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 220" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .b-bg { fill: #ffffff; }
+      .card { fill: #fffaf0; stroke: #1f2933; stroke-width: 1.8; }
+      .card-primary { fill: #ffe9c7; stroke: #1f2933; stroke-width: 2.2; }
+      .card-terminal { fill: #fde2d6; stroke: #c84a1d; stroke-width: 1.8; }
+      .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; fill: #1f2933; font-size: 13px; }
+      .sub { fill: #54616e; font-size: 12px; }
+      .ln { stroke: #1f2933; stroke-width: 1.8; fill: none; stroke-linecap: round; }
+    </style>
+    <marker id="ar" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M 0 0 L 11 6 L 0 12 z" fill="#1f2933"/>
+    </marker>
+  </defs>
+  <rect class="b-bg" width="1000" height="220"/>
+
+  <rect class="card" x="30" y="60" width="150" height="48" rx="6"/>
+  <text class="mono" x="105" y="90" text-anchor="middle">INIT</text>
+
+  <rect class="card" x="230" y="60" width="150" height="48" rx="6"/>
+  <text class="mono" x="305" y="90" text-anchor="middle">READY</text>
+
+  <rect class="card-primary" x="430" y="60" width="150" height="48" rx="6"/>
+  <text class="mono" x="505" y="90" text-anchor="middle">ACTIVE</text>
+
+  <rect class="card" x="630" y="60" width="150" height="48" rx="6"/>
+  <text class="mono" x="705" y="90" text-anchor="middle">DRAINING</text>
+
+  <rect class="card-terminal" x="830" y="60" width="150" height="48" rx="6"/>
+  <text class="mono" x="905" y="90" text-anchor="middle">TERMINATED</text>
+
+  <path class="ln" d="M 182 84 L 226 84" marker-end="url(#ar)"/>
+  <path class="ln" d="M 382 84 L 426 84" marker-end="url(#ar)"/>
+  <path class="ln" d="M 582 84 L 626 84" marker-end="url(#ar)"/>
+  <path class="ln" d="M 782 84 L 826 84" marker-end="url(#ar)"/>
+
+  <path class="ln" d="M 505 110 L 505 150 L 905 150 L 905 112" marker-end="url(#ar)"/>
+  <text class="sub" x="705" y="175" text-anchor="middle">session ends normally</text>
+</svg>
