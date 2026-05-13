@@ -1,0 +1,43 @@
+# Spec sections explicitly exempt from the "every section has at least one
+# test" rule. Each exemption requires a justification. `lenny-test validate-maps`
+# reads this file when reconciling spec headings against the spec map.
+
+version: 1
+
+exceptions:
+
+  - section: "1"
+    reason: non-normative
+    justification: Executive summary. Restates content normatively covered elsewhere.
+
+  - section: "2"
+    reason: non-normative
+    justification: Goals and non-goals. Aspirations and exclusions; no behavior to verify.
+
+  - section: "3"
+    reason: non-normative
+    justification: High-level architecture diagram. Visual only; the behavioral contracts it sketches are covered in §4 onward.
+
+  - section: "18"
+    reason: non-normative
+    justification: Build sequence is directional guidance for implementing agents. Mapped to TESTING.md §13 phase-gate groups.
+
+  - section: "19"
+    reason: indirect-coverage
+    justification: Resolved decisions become ADRs under docs/adr/. Each decision is covered by the test surface of the feature it codifies.
+
+  - section: "20"
+    reason: empty
+    justification: Spec §20 is "Open Questions". All open questions have been resolved per the spec's own note. Re-validated nightly via the ADR catalog check.
+
+  - section: "21"
+    reason: post-v1
+    justification: Planned post-V1 features. Test infrastructure remains forward-compatible per TESTING.md §23 but no v1 tests are required.
+
+  - section: "22"
+    reason: anti-feature
+    justification: Explicit non-decisions. Tier 0 lint asserts no eval/guardrail/memory-extraction logic ships in the platform code.
+
+  - section: "23"
+    reason: non-normative
+    justification: Competitive landscape and community strategy. No behavior to verify.

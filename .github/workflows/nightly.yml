@@ -1,0 +1,94 @@
+# Nightly gate. Full e2e on Kind, cloud-subset rotated across providers,
+# full security minus pentest, path-specific load baselines.
+# Target wall-clock: < 2 hours.
+#
+# Architecture and tier definitions: TESTING.md §20.9.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 5 * * *'    # 05:00 UTC daily
+  workflow_dispatch:        # manual trigger
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+
+  # Phase 0: nightly delegates entirely to the PR pipeline plus a TODO list
+  # for the tiers that have not landed yet. Each tier becomes a real job as
+  # it ships per TESTING.md §13.
+
+  pr-suite:
+    name: PR suite (re-run)
+    uses: ./.github/workflows/pr.yml
+    secrets: inherit
+
+  e2e-kind-full:
+    name: tier 5 — e2e Kind (full, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [pr-suite]
+    steps:
+      - run: 'echo "full e2e Kind ships incrementally Phase 3.5+; see TESTING.md §13"'
+
+  e2e-cloud-rotated:
+    name: tier 6 — e2e cloud (critical-path, rotated across providers, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [pr-suite]
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [gke, eks, aks]
+    steps:
+      - run: |
+          echo "cloud tier ships starting Phase 13+; see TESTING.md §12.6 and §13.28"
+          echo "matrix provider: ${{ matrix.provider }}"
+
+  chaos:
+    name: tier 8 — chaos (placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [pr-suite]
+    steps:
+      - run: 'echo "chaos tier ships Phase 8+; see TESTING.md §12.8"'
+
+  security-full:
+    name: tier 9 — security (full minus pentest, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [pr-suite]
+    steps:
+      - run: 'echo "security tier ships Phase 3.5+; see TESTING.md §12.9"'
+
+  load-baseline:
+    name: tier 7 — load (per-phase baseline, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [pr-suite]
+    steps:
+      - run: 'echo "load tier ships per phase 6.5/9.5/11.5/13.5/14.5; see TESTING.md §12.7"'
+
+  dep-audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [pr-suite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go mod verify
+        run: go mod verify
+      - name: go list updates
+        run: go list -m -u all
+        continue-on-error: true

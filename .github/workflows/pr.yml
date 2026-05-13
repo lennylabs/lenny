@@ -1,0 +1,158 @@
+# PR gate. Triggered on pull_request and on push to any feature branch.
+# Target wall-clock: < 15 minutes.
+#
+# Architecture and tier definitions: TESTING.md §20.8.
+
+name: pr
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches-ignore: [main]
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+  checks: write
+
+jobs:
+
+  # Phase 0: a single job builds lenny-test and runs the early tiers. As
+  # higher tiers come online the gate fans out into parallel jobs per tier.
+
+  pr-fast:
+    name: pr-fast (changed-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history for `git diff` resolution
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run pr-fast group
+        run: ./bin/lenny-test --group pr-fast --output human
+
+  static:
+    name: tier 0 — static
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [pr-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Validate maps
+        run: ./bin/lenny-test validate-maps
+      - name: Validate diagnosis coverage
+        run: ./bin/lenny-test validate-diagnosis
+      - name: Run static tier
+        run: ./bin/lenny-test --tier static
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-static
+          path: tests/results/latest.json
+          retention-days: 30
+
+  unit:
+    name: tier 1 — unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [pr-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run unit tier
+        run: ./bin/lenny-test --tier unit
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-unit
+          path: tests/results/latest.json
+          retention-days: 30
+
+  # The remaining tiers are scaffolded as TODO jobs. Each is added in the
+  # phase that first implements its tier. See TESTING.md §13.
+
+  component:
+    name: tier 2 — component (placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [unit]
+    steps:
+      - run: 'echo "component tier ships in Phase 1.5+; see TESTING.md §13.2"'
+
+  contract:
+    name: tier 3 — contract (placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [unit]
+    steps:
+      - run: 'echo "contract tier ships in Phase 5; see TESTING.md §13.10"'
+
+  integration:
+    name: tier 4 — integration (placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [component, contract]
+    steps:
+      - run: 'echo "integration tier ships in Phase 4; see TESTING.md §13.8"'
+
+  e2e-kind-critical:
+    name: tier 5 — e2e Kind (critical-path, placeholder)
+    runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
+    timeout-minutes: 30
+    needs: [integration]
+    steps:
+      - run: 'echo "e2e Kind ships in Phase 3.5; see TESTING.md §13.7"'
+
+  conformance-bundled:
+    name: tier 10 — conformance (bundled runtimes, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [unit]
+    steps:
+      - run: 'echo "conformance tier ships in Phase 2; see TESTING.md §13.3"'
+
+  docs:
+    name: tier 11 — documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [pr-fast]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install markdown-link-check
+        run: npm install -g markdown-link-check@3.12.2
+      - name: Check links in docs and spec
+        run: |
+          set -e
+          fail=0
+          for f in $(find docs spec -name '*.md' -not -path '*/node_modules/*'); do
+            markdown-link-check "$f" -q --config .markdown-link-check.json 2>/dev/null || fail=1
+          done
+          exit $fail

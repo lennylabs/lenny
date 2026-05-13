@@ -1,0 +1,384 @@
+# Test selection groups for `lenny-test --group <name>`.
+# Each group resolves to a set of tier/subset selectors that the harness
+# expands into a concrete list of tests at run time.
+#
+# See TESTING.md §8 for the design and §20 for how CI consumes these groups.
+
+version: 1
+
+groups:
+
+  # Developer inner loop. Changed files only, fast tiers only.
+  pr-fast:
+    description: >
+      Developer inner loop. Inspect git diff, walk the change graph,
+      run unit and component tiers only. Target wall-clock < 90 seconds.
+    selectors:
+      changed: true
+      max_tier: component
+
+  # PR gate. Everything fast enough to run on every push.
+  pr:
+    description: >
+      PR gate. Target wall-clock < 15 minutes on a laptop.
+      Failure on any of these tiers blocks merge.
+    selectors:
+      max_tier: integration
+      include:
+        - tier: e2e_kind
+          subset: critical-path
+        - tier: security
+          subset: critical
+        - tier: chaos
+          subset: core
+        - tier: conformance
+          subset: bundled-runtimes
+        - tier: docs
+
+  # Nightly gate. Full e2e on Kind, cloud-subset rotated across providers.
+  nightly:
+    description: >
+      Nightly gate. Full e2e Kind, cloud-subset rotated across providers,
+      full security minus pentest, path-specific load baselines.
+      Target wall-clock < 2 hours.
+    selectors:
+      include_all_tiers: true
+      cloud_subset: critical-path-rotated
+      load_scenarios: per-phase-baseline
+      exclude:
+        - tier: security
+          subset: pentest
+
+  # Weekly gate. Full e2e on all three cloud providers in non-sandbox shape.
+  weekly:
+    description: >
+      Weekly gate. Full e2e on all three cloud providers in non-sandbox
+      shape. Includes the full chaos suite.
+      Target wall-clock < 4 hours.
+    selectors:
+      include_all_tiers: true
+      cloud_subset: full-non-sandbox
+      load_scenarios: full
+
+  # Pre-release gate. Everything, including all three providers in both shapes.
+  pre-release:
+    description: >
+      Release gate. Full e2e on all three providers (GKE, EKS, AKS) in both
+      cloud-small and cloud-sandbox shapes. Full chaos. SLO regression
+      comparison against the prior release baseline. External pen-test
+      driver replay.
+      Target wall-clock < 8 hours.
+    selectors:
+      include_all_tiers: true
+      cloud_subset: full
+      load_scenarios: full
+      load_baselines:
+        compare_against: prior-release
+        regression_threshold_pct: 15
+      include:
+        - tier: security
+          subset: pentest
+
+  # Per-phase gates. The implementing agents use these to declare a phase
+  # complete. Each gate runs the spec sections relevant to that phase plus
+  # any cross-cutting tiers the phase touches.
+
+  phase-0-gate:
+    description: Phase 0. ADRs, license, scripts, harness skeleton, traceability files.
+    selectors:
+      tiers: [static, docs]
+      additional_checks:
+        - validate-maps
+        - validate-diagnosis
+
+  phase-1-gate:
+    description: Phase 1. Core types, schemas, wire contracts.
+    selectors:
+      spec_sections: ["14", "15.4"]
+      tiers: [static, unit, contract]
+
+  phase-1.5-gate:
+    description: Phase 1.5. Migration framework + schema/query linters.
+    selectors:
+      spec_sections: ["12.2", "12.3"]
+      tiers: [static, component]
+      include:
+        - tier: component
+          subset: migrations
+
+  phase-2-gate:
+    description: Phase 2. Adapter protocol, make run, echo runtime, ImageResolver.
+    selectors:
+      spec_sections: ["4.7", "6.3", "15.4", "17.4"]
+      tiers: [static, unit, component, contract]
+      include:
+        - tier: conformance
+          subset: basic
+
+  phase-2.5-gate:
+    description: Phase 2.5. Observability foundation + shared rule packages.
+    selectors:
+      spec_sections: ["16.1", "16.3", "16.4", "16.5"]
+      tiers: [static, unit, component]
+
+  phase-2.8-gate:
+    description: Phase 2.8. streaming-echo runtime + Full-level lifecycle channel.
+    selectors:
+      spec_sections: ["4.7"]
+      tiers: [static, unit, contract]
+      include:
+        - tier: conformance
+          subset: full
+
+  phase-3-gate:
+    description: Phase 3. PoolScalingController, DelegationPolicy, RuntimeUpgrade, mTLS.
+    selectors:
+      spec_sections: ["4.6", "10.3", "10.5"]
+      tiers: [static, unit, component]
+      include:
+        - tier: e2e_kind
+          subset: pool-upgrade,mtls
+
+  phase-3.5-gate:
+    description: Phase 3.5. Admission policies, NetworkPolicy, lenny-ops first deploy.
+    selectors:
+      spec_sections: ["4.6.1", "4.6.3", "13.1", "13.2", "17.2", "17.8.5", "25.4"]
+      tiers: [static, unit, component]
+      include:
+        - tier: e2e_kind
+          subset: admission-critical-path
+        - tier: chaos
+          subset: admission-webhook-outage
+
+  phase-4-gate:
+    description: Phase 4. Session manager + REST.
+    selectors:
+      spec_sections: ["4.2", "7.1", "15.1"]
+      tiers: [static, unit, component, integration]
+
+  phase-4.5-gate:
+    description: Phase 4.5. Admin API, authentication, bootstrap.
+    selectors:
+      spec_sections: ["10.2", "11.5", "17.6", "24"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: e2e_kind
+          subset: bootstrap-first-install
+
+  phase-5-gate:
+    description: Phase 5. ExternalAdapterRegistry, MCP, Completions, Open Responses adapters.
+    selectors:
+      spec_sections: ["15.2", "15.2.1"]
+      tiers: [static, unit, component, contract]
+
+  phase-5.4-gate:
+    description: Phase 5.4. etcd encryption at rest.
+    selectors:
+      spec_sections: ["12.9"]
+      tiers: [static]
+      include:
+        - tier: e2e_kind
+          subset: etcd-encryption
+
+  phase-5.5-gate:
+    description: Phase 5.5. Basic credential leasing + Token Service.
+    selectors:
+      spec_sections: ["4.3", "4.9", "13.3"]
+      tiers: [static, unit, component]
+
+  phase-5.75-gate:
+    description: Phase 5.75. Minimum viable policy enforcement.
+    selectors:
+      spec_sections: ["10.2", "11.2"]
+      tiers: [static, unit, component, integration]
+
+  phase-5.8-gate:
+    description: Phase 5.8. LLM Proxy + native translator + direct-mode-isolation webhook.
+    selectors:
+      spec_sections: ["4.1", "4.9"]
+      tiers: [static, unit, component]
+      include:
+        - tier: e2e_kind
+          subset: llm-proxy-proxy-mode
+
+  phase-6-gate:
+    description: Phase 6. Interactive sessions + SDKs.
+    selectors:
+      spec_sections: ["7.2", "15.6"]
+      tiers: [static, unit, integration]
+      include:
+        - tier: contract
+          subset: sdk-go,sdk-typescript
+
+  phase-6.5-gate:
+    description: Phase 6.5. Incremental load test (streaming).
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: streaming-reconnect
+
+  phase-7-gate:
+    description: Phase 7. Policy engine, audit hooks.
+    selectors:
+      spec_sections: ["11.1", "11.2", "11.3"]
+      tiers: [static, unit, component, integration]
+
+  phase-8-gate:
+    description: Phase 8. Checkpoint/resume + drain-readiness webhook.
+    selectors:
+      spec_sections: ["4.4", "4.5", "7.3", "12.5"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: e2e_kind
+          subset: drain-readiness,checkpoint-resume
+        - tier: chaos
+          subset: minio-outage,node-drain
+
+  phase-9-gate:
+    description: Phase 9. Recursive delegation + delegation-echo.
+    selectors:
+      spec_sections: ["8"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: conformance
+          subset: standard
+
+  phase-9.5-gate:
+    description: Phase 9.5. Incremental load test (delegation).
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: delegation-fanout
+
+  phase-10-gate:
+    description: Phase 10. MCP fabric, elicitation chain.
+    selectors:
+      spec_sections: ["9", "9.2", "13.5"]
+      tiers: [static, unit, component, integration]
+
+  phase-11-gate:
+    description: Phase 11. Advanced credentials + multi-provider translators + revocation.
+    selectors:
+      spec_sections: ["4.9"]
+      tiers: [static, unit, component, integration]
+
+  phase-11.5-gate:
+    description: Phase 11.5. Incremental load test (credential lifecycle).
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: credential-rotation
+
+  phase-12a-gate:
+    description: Phase 12a. Token Service hardening (KMS + OAuth).
+    selectors:
+      spec_sections: ["4.3", "9.3"]
+      tiers: [static, unit, component, integration]
+
+  phase-12b-gate:
+    description: Phase 12b. type:mcp runtime support.
+    selectors:
+      spec_sections: ["15.4"]
+      tiers: [static, unit, component, integration]
+
+  phase-12c-gate:
+    description: Phase 12c. Concurrent execution modes.
+    selectors:
+      spec_sections: ["5.2", "6.4"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: e2e_kind
+          subset: concurrent-modes
+
+  phase-13-gate:
+    description: Phase 13. Full observability + audit + lenny-backup + compliance webhooks.
+    selectors:
+      spec_sections: ["11.7", "12.8", "12.9", "16.5"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: e2e_kind
+          subset: audit-pipeline,backup-restore,data-residency,t4-node-isolation
+
+  phase-13.5-gate:
+    description: Phase 13.5. Pre-hardening full-system load baseline.
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: full-system
+
+  phase-14-gate:
+    description: Phase 14. Comprehensive security hardening.
+    selectors:
+      tiers: [static]
+      include:
+        - tier: security
+          subset: full
+        - tier: e2e_kind
+          subset: image-signing
+
+  phase-14.5-gate:
+    description: Phase 14.5. Post-hardening SLO re-validation.
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: full-system-with-hardening
+
+  phase-15-gate:
+    description: Phase 15. Environment resource + RBAC + cross-environment delegation.
+    selectors:
+      spec_sections: ["10.6"]
+      tiers: [static, unit, component, integration]
+      include:
+        - tier: e2e_kind
+          subset: cross-environment-delegation
+
+  phase-16-gate:
+    description: Phase 16. Experiments + PoolScalingController integration.
+    selectors:
+      spec_sections: ["10.7"]
+      tiers: [static, unit, component, integration]
+
+  phase-16.5-gate:
+    description: Phase 16.5. Experiment load test SLO re-validation.
+    selectors:
+      tiers: [static]
+      include:
+        - tier: load
+          subset: experiment-active
+
+  phase-17a-gate:
+    description: Phase 17a. Documentation, governance, community launch.
+    selectors:
+      tiers: [docs]
+      include:
+        - tier: load
+          subset: tthw
+      additional_checks:
+        - validate-maps
+        - validate-diagnosis
+        - adr-catalog-intact
+
+  phase-17b-gate:
+    description: Phase 17b. Memory, semantic caching, eval hooks.
+    selectors:
+      spec_sections: ["9.4"]
+      tiers: [static, unit, component, integration]
+
+# Subsets are concrete sets of test names. They live in groups.subsets.yaml so
+# this file stays readable. When a new test joins a subset, the subset file
+# changes, not this one.
+subsets_file: groups.subsets.yaml
+
+# Groups deferred to post-V1. Listed so the harness can recognise the name
+# (and report not-yet-applicable) without failing.
+groups_post_v1:
+  - a2a-adapter
+  - ap-adapter
+  - multi-cluster
+  - kata-microvm-isolation
+  - external-execution-host

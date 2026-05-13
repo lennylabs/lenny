@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "description": "Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. The lenny-test harness walks this graph when invoked with --changed to determine the minimal test set. CI runs `lenny-test validate-maps` on every PR.",
+  "globs": {
+    "pkg/store/session": {
+      "unit": ["pkg/store/session/..."],
+      "component": ["tests/tier2_component/stores/session_store_test.go"],
+      "integration": [
+        "tests/tier4_integration/session_lifecycle_test.go",
+        "tests/tier4_integration/checkpoint_resume_test.go"
+      ],
+      "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
+    },
+    "pkg/store/lease": {
+      "unit": ["pkg/store/lease/..."],
+      "component": ["tests/tier2_component/stores/lease_store_test.go"]
+    },
+    "pkg/store/quota": {
+      "unit": ["pkg/store/quota/..."],
+      "component": ["tests/tier2_component/stores/quota_store_test.go"],
+      "integration": ["tests/tier4_integration/quota_enforcement_test.go"]
+    },
+    "pkg/store/token": {
+      "unit": ["pkg/store/token/..."],
+      "component": ["tests/tier2_component/stores/token_store_test.go"]
+    },
+    "pkg/store/artifact": {
+      "unit": ["pkg/store/artifact/..."],
+      "component": ["tests/tier2_component/stores/artifact_store_test.go"],
+      "integration": ["tests/tier4_integration/checkpoint_resume_test.go"]
+    },
+    "pkg/store/event": {
+      "unit": ["pkg/store/event/..."],
+      "component": ["tests/tier2_component/stores/event_store_test.go"],
+      "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
+    },
+    "pkg/store/credentialpool": {
+      "unit": ["pkg/store/credentialpool/..."],
+      "component": ["tests/tier2_component/stores/credential_pool_store_test.go"]
+    },
+    "pkg/store/memory": {
+      "unit": ["pkg/store/memory/..."],
+      "component": ["tests/tier2_component/stores/memory_store_test.go"]
+    },
+    "pkg/gateway/session_orchestrator": {
+      "unit": ["pkg/gateway/session_orchestrator/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
+      "integration": [
+        "tests/tier4_integration/session_lifecycle_test.go",
+        "tests/tier4_integration/streaming_reconnect_test.go"
+      ],
+      "contract": ["tests/tier3_contract/rest_mcp/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
+    },
+    "pkg/gateway/llm_proxy": {
+      "unit": ["pkg/gateway/llm_proxy/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/llm_proxy_test.go"],
+      "integration": ["tests/tier4_integration/llm_proxy_anthropic_test.go"]
+    },
+    "pkg/gateway/admin": {
+      "unit": ["pkg/gateway/admin/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
+    },
+    "pkg/controller/warmpool": {
+      "unit": ["pkg/controller/warmpool/..."],
+      "component": ["tests/tier2_component/controllers/warmpool_test.go"],
+      "e2e_kind": [
+        "tests/tier5_e2e_kind/warm_pool_test.go",
+        "tests/tier5_e2e_kind/sandbox_claim_test.go"
+      ],
+      "chaos": ["tests/tier8_chaos/concurrent_claim_test.go"]
+    },
+    "pkg/controller/poolscaling": {
+      "unit": ["pkg/controller/poolscaling/..."],
+      "component": ["tests/tier2_component/controllers/poolscaling_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/pool_upgrade_test.go"]
+    },
+    "pkg/delegation": {
+      "unit": ["pkg/delegation/..."],
+      "component": ["tests/tier2_component/delegation/..."],
+      "integration": ["tests/tier4_integration/delegation_test.go"],
+      "load": ["tests/tier7_load/scenarios/delegation_fanout.go"]
+    },
+    "pkg/mcp": {
+      "unit": ["pkg/mcp/..."],
+      "contract": ["tests/tier3_contract/rest_mcp/..."],
+      "integration": [
+        "tests/tier4_integration/mcp_elicitation_chain_test.go",
+        "tests/tier4_integration/mcp_provenance_test.go"
+      ]
+    },
+    "pkg/credential": {
+      "unit": ["pkg/credential/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/token_service_test.go"],
+      "integration": [
+        "tests/tier4_integration/credential_lifecycle_test.go",
+        "tests/tier4_integration/credential_rotation_test.go",
+        "tests/tier4_integration/credential_revocation_test.go"
+      ],
+      "load": ["tests/tier7_load/scenarios/credential_rotation_under_load.go"]
+    },
+    "pkg/admission/sandboxclaim_guard": {
+      "unit": ["pkg/admission/sandboxclaim_guard/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/sandbox_claim_test.go"]
+    },
+    "pkg/admission/label_immutability": {
+      "unit": ["pkg/admission/label_immutability/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/label_immutability_test.go"]
+    },
+    "pkg/admission/drain_readiness": {
+      "unit": ["pkg/admission/drain_readiness/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/drain_readiness_webhook_test.go"],
+      "chaos": ["tests/tier8_chaos/node_drain_during_minio_outage_test.go"]
+    },
+    "pkg/workspaceplan": {
+      "unit": ["pkg/workspaceplan/..."],
+      "component": ["tests/tier2_component/workspace_plan/..."],
+      "contract": ["tests/tier3_contract/workspaceplan/..."]
+    },
+    "pkg/checkpoint": {
+      "unit": ["pkg/checkpoint/..."],
+      "integration": ["tests/tier4_integration/checkpoint_resume_test.go"],
+      "chaos": ["tests/tier8_chaos/minio_outage_during_checkpoint_test.go"],
+      "load": ["tests/tier7_load/scenarios/checkpoint_duration.go"]
+    },
+    "pkg/observability/metrics": {
+      "unit": ["pkg/observability/metrics/..."],
+      "component": ["tests/tier2_component/observability/metrics_test.go"]
+    },
+    "pkg/observability/tracing": {
+      "unit": ["pkg/observability/tracing/..."],
+      "component": ["tests/tier2_component/observability/tracing_test.go"]
+    },
+    "pkg/alerting/rules": {
+      "unit": ["pkg/alerting/rules/..."],
+      "component": ["tests/tier2_component/alerting/..."]
+    },
+    "pkg/recommendations/rules": {
+      "unit": ["pkg/recommendations/rules/..."],
+      "component": ["tests/tier2_component/recommendations/..."]
+    },
+    "pkg/common/registry/resolver": {
+      "unit": ["pkg/common/registry/resolver/..."],
+      "component": ["tests/tier2_component/translators/image_resolver_test.go"]
+    },
+    "migrations/": {
+      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "component": [
+        "tests/tier2_component/migrations/...",
+        "tests/tier2_component/stores/..."
+      ],
+      "integration": ["tests/tier4_integration/migration_upgrade_test.go"]
+    },
+    "schemas/lenny-adapter.proto": {
+      "static": ["tests/tier0_static/proto_lint_test.go"],
+      "unit": ["pkg/adapter/..."],
+      "contract": ["tests/tier3_contract/adapter_jsonl/..."]
+    },
+    "schemas/lenny-adapter-jsonl.schema.json": {
+      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "contract": ["tests/tier3_contract/adapter_jsonl/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
+    "schemas/outputpart.schema.json": {
+      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "unit": ["pkg/output/..."],
+      "contract": ["tests/tier3_contract/rest_openai_completions/..."]
+    },
+    "schemas/workspaceplan-v1.json": {
+      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "unit": ["pkg/workspaceplan/..."],
+      "contract": ["tests/tier3_contract/workspaceplan/..."]
+    },
+    "charts/lenny/": {
+      "static": [
+        "charts/lenny/tests/...",
+        "tests/tier0_static/helm_lint_test.go"
+      ],
+      "e2e_kind": [
+        "tests/tier5_e2e_kind/admission_policy_test.go",
+        "tests/tier5_e2e_kind/admission_inventory_test.go",
+        "tests/tier5_e2e_kind/network_policy_test.go",
+        "tests/tier5_e2e_kind/bootstrap_first_install_test.go",
+        "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go"
+      ]
+    },
+    "cmd/runtimes/echo/": {
+      "unit": ["cmd/runtimes/echo/..."],
+      "conformance": ["tests/tier10_conformance/basic/..."]
+    },
+    "cmd/runtimes/streaming-echo/": {
+      "unit": ["cmd/runtimes/streaming-echo/..."],
+      "conformance": ["tests/tier10_conformance/full/..."],
+      "integration": ["tests/tier4_integration/streaming_reconnect_test.go"]
+    },
+    "cmd/runtimes/delegation-echo/": {
+      "unit": ["cmd/runtimes/delegation-echo/..."],
+      "conformance": ["tests/tier10_conformance/standard/..."],
+      "integration": ["tests/tier4_integration/delegation_test.go"]
+    },
+    "sdks/client/go/": {
+      "unit": ["sdks/client/go/..."],
+      "contract": ["tests/tier3_contract/sdks/go_client_test.go"]
+    },
+    "sdks/client/python/": {
+      "unit": ["sdks/client/python/..."],
+      "contract": ["tests/tier3_contract/sdks/python_client_test.go"]
+    },
+    "sdks/client/typescript/": {
+      "unit": ["sdks/client/typescript/..."],
+      "contract": ["tests/tier3_contract/sdks/typescript_client_test.go"]
+    },
+    "sdks/runtime/go/": {
+      "unit": ["sdks/runtime/go/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
+    "sdks/runtime/python/": {
+      "unit": ["sdks/runtime/python/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
+    "sdks/runtime/typescript/": {
+      "unit": ["sdks/runtime/typescript/..."],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
+    "docs/": {
+      "docs": ["tests/tier11_docs/..."]
+    },
+    "spec/": {
+      "static": ["tests/tier0_static/spec_link_check_test.go"]
+    }
+  }
+}

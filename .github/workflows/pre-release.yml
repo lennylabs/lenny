@@ -1,0 +1,76 @@
+# Pre-release gate. Everything, including all three providers in both shapes.
+# Target wall-clock: < 8 hours.
+#
+# Architecture and tier definitions: TESTING.md §20.10.
+
+name: pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag being validated (e.g., v0.1.0-rc.1)'
+        required: true
+        type: string
+      compare_against:
+        description: 'Prior release tag to diff load baselines against'
+        required: false
+        type: string
+
+concurrency:
+  group: pre-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+
+  weekly-suite:
+    name: Weekly suite (re-run)
+    uses: ./.github/workflows/weekly.yml
+    secrets: inherit
+
+  e2e-cloud-full-sandbox:
+    name: tier 6 — e2e cloud (all providers × both shapes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    needs: [weekly-suite]
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [gke, eks, aks]
+        shape:    [cloud-small, cloud-sandbox]
+    steps:
+      - run: |
+          echo "Phase 0 placeholder. Full sandbox cloud suite ships Phase 14+; TESTING.md §12.6."
+          echo "matrix: provider=${{ matrix.provider }} shape=${{ matrix.shape }}"
+
+  chaos-full:
+    name: tier 8 — chaos (full, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [weekly-suite]
+    steps:
+      - run: 'echo "full chaos ships incrementally; see TESTING.md §12.8"'
+
+  security-pentest:
+    name: tier 9 — security (full + pentest driver, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [weekly-suite]
+    steps:
+      - run: 'echo "external pen-test driver ships Phase 14; see TESTING.md §13.30"'
+
+  slo-baseline-diff:
+    name: SLO regression diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [weekly-suite]
+    steps:
+      - run: |
+          echo "Phase 0 placeholder."
+          echo "Compares Phase 14.5 baseline against ${{ inputs.compare_against }}."
+          echo "Threshold: 15% per percentile (TESTING.md §22.5)."

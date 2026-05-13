@@ -1,0 +1,618 @@
+{
+  "version": 1,
+  "description": "Maps every spec leaf section to the tests, packages, schemas, migrations, and chart templates that encode it. Maintained alongside code: every PR that touches spec/, pkg/, schemas/, migrations/, or charts/lenny/ updates this file. CI runs `lenny-test validate-maps`.",
+  "exceptions_file": "spec-map-exceptions.yaml",
+  "sections": {
+    "1": {
+      "title": "Executive Summary",
+      "spec_file": "spec/01_executive-summary.md",
+      "tests": [],
+      "packages": [],
+      "schemas": [],
+      "migrations": [],
+      "chart_templates": [],
+      "depends_on_sections": [],
+      "blocked_until_phase": "0",
+      "notes": "Non-normative. No tests required."
+    },
+    "2": {
+      "title": "Goals and Non-Goals",
+      "spec_file": "spec/02_goals-and-non-goals.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Non-normative. No tests required."
+    },
+    "3": {
+      "title": "High-Level Architecture",
+      "spec_file": "spec/03_high-level-architecture.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Non-normative. Architecture diagram only. No tests required."
+    },
+    "4.1": {
+      "title": "Edge Gateway Replicas",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/gateway"],
+      "blocked_until_phase": "4"
+    },
+    "4.2": {
+      "title": "Session Manager",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/session", "pkg/store/session"],
+      "blocked_until_phase": "4"
+    },
+    "4.3": {
+      "title": "Token Service",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/token", "pkg/store/token"],
+      "blocked_until_phase": "5.5"
+    },
+    "4.4": {
+      "title": "Event / Checkpoint Store",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/store/event", "pkg/checkpoint"],
+      "blocked_until_phase": "8"
+    },
+    "4.5": {
+      "title": "Artifact Store",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/store/artifact"],
+      "blocked_until_phase": "5"
+    },
+    "4.6": {
+      "title": "Pod Lifecycle Controllers",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/controller/warmpool", "pkg/controller/poolscaling"],
+      "blocked_until_phase": "3"
+    },
+    "4.6.1": {
+      "title": "Warm Pool Controller — Pod Lifecycle",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
+      "schemas": [],
+      "migrations": [],
+      "chart_templates": ["charts/lenny/templates/admission/sandboxclaim-guard.yaml"],
+      "depends_on_sections": ["4.6", "12.3", "13.2"],
+      "blocked_until_phase": "3.5",
+      "notes": "ADR-007: SandboxClaim optimistic locking and failover fencing verification. First-class concurrent-claim chaos test required."
+    },
+    "4.6.3": {
+      "title": "CRD Field Ownership and Write Boundaries",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/controller/poolscaling", "pkg/admission/poolconfig"],
+      "depends_on_sections": ["4.6"],
+      "blocked_until_phase": "3.5"
+    },
+    "4.7": {
+      "title": "Runtime Adapter",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/adapter", "cmd/runtimes/echo"],
+      "schemas": ["schemas/lenny-adapter.proto", "schemas/lenny-adapter-jsonl.schema.json"],
+      "blocked_until_phase": "2"
+    },
+    "4.8": {
+      "title": "Gateway Policy Engine",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/gateway/interceptors", "pkg/policy"],
+      "blocked_until_phase": "7"
+    },
+    "4.9": {
+      "title": "Credential Leasing Service",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [],
+      "packages": ["pkg/credential", "pkg/store/credentialpool"],
+      "blocked_until_phase": "5.5"
+    },
+    "5.1": {
+      "title": "Runtime",
+      "spec_file": "spec/05_runtime-registry-and-pool-model.md",
+      "tests": [],
+      "packages": ["pkg/runtime"],
+      "blocked_until_phase": "1"
+    },
+    "5.2": {
+      "title": "Pool Configuration and Execution Modes",
+      "spec_file": "spec/05_runtime-registry-and-pool-model.md",
+      "tests": [],
+      "packages": ["pkg/pool"],
+      "blocked_until_phase": "3"
+    },
+    "5.3": {
+      "title": "Isolation Profiles",
+      "spec_file": "spec/05_runtime-registry-and-pool-model.md",
+      "tests": [],
+      "packages": ["pkg/isolation"],
+      "blocked_until_phase": "3.5"
+    },
+    "6.1": {
+      "title": "Pre-Warmed Pod Anatomy",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [],
+      "packages": ["pkg/controller/warmpool", "cmd/lenny-adapter"],
+      "blocked_until_phase": "3"
+    },
+    "6.2": {
+      "title": "Pod State Machine",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [],
+      "packages": ["pkg/podstate"],
+      "blocked_until_phase": "3"
+    },
+    "6.3": {
+      "title": "Startup Latency Analysis",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [],
+      "packages": ["tests/tier7_load/scenarios"],
+      "blocked_until_phase": "2"
+    },
+    "6.4": {
+      "title": "Pod Filesystem Layout",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [],
+      "packages": ["pkg/workspace"],
+      "blocked_until_phase": "6"
+    },
+    "7.1": {
+      "title": "Session Lifecycle — Normal Flow",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [],
+      "packages": ["pkg/session"],
+      "blocked_until_phase": "4"
+    },
+    "7.2": {
+      "title": "Interactive Session Model",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [],
+      "packages": ["pkg/session/interactive"],
+      "blocked_until_phase": "6"
+    },
+    "7.3": {
+      "title": "Retry and Resume",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [],
+      "packages": ["pkg/session/resume", "pkg/checkpoint"],
+      "blocked_until_phase": "8"
+    },
+    "7.4": {
+      "title": "Upload Safety",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [],
+      "packages": ["pkg/upload"],
+      "blocked_until_phase": "5"
+    },
+    "7.5": {
+      "title": "Setup Commands",
+      "spec_file": "spec/07_session-lifecycle.md",
+      "tests": [],
+      "packages": ["pkg/setup"],
+      "blocked_until_phase": "3"
+    },
+    "8": {
+      "title": "Recursive Delegation",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": ["pkg/delegation"],
+      "blocked_until_phase": "9"
+    },
+    "9": {
+      "title": "MCP Integration",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [],
+      "packages": ["pkg/mcp"],
+      "blocked_until_phase": "10"
+    },
+    "9.2": {
+      "title": "Elicitation Chain",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [],
+      "packages": ["pkg/mcp/elicitation"],
+      "blocked_until_phase": "10"
+    },
+    "9.3": {
+      "title": "Connector Definition and OAuth/OIDC",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [],
+      "packages": ["pkg/connector", "pkg/oauth"],
+      "blocked_until_phase": "12a"
+    },
+    "9.4": {
+      "title": "Memory Store",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [],
+      "packages": ["pkg/store/memory"],
+      "blocked_until_phase": "17b"
+    },
+    "10.1": {
+      "title": "Gateway Horizontal Scaling",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/gateway"],
+      "blocked_until_phase": "4"
+    },
+    "10.2": {
+      "title": "Authentication",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/auth"],
+      "blocked_until_phase": "4.5"
+    },
+    "10.3": {
+      "title": "mTLS PKI",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/mtls"],
+      "blocked_until_phase": "3"
+    },
+    "10.4": {
+      "title": "Gateway Reliability",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/gateway/reliability"],
+      "blocked_until_phase": "4"
+    },
+    "10.5": {
+      "title": "Upgrade and Rollback Strategy",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/upgrade"],
+      "blocked_until_phase": "3"
+    },
+    "10.6": {
+      "title": "Environment Resource and RBAC Model",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/environment", "pkg/rbac"],
+      "blocked_until_phase": "15"
+    },
+    "10.7": {
+      "title": "Experiment Primitives",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [],
+      "packages": ["pkg/experiment"],
+      "blocked_until_phase": "16"
+    },
+    "11.1": {
+      "title": "Admission and Fairness",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/policy/admission"],
+      "blocked_until_phase": "7"
+    },
+    "11.2": {
+      "title": "Budgets and Quotas",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/quota", "pkg/store/quota"],
+      "blocked_until_phase": "5.75"
+    },
+    "11.3": {
+      "title": "Timeouts and Cancellation",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/policy/timeout"],
+      "blocked_until_phase": "7"
+    },
+    "11.5": {
+      "title": "Idempotency",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/idempotency"],
+      "blocked_until_phase": "4.5"
+    },
+    "11.6": {
+      "title": "Circuit Breakers",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/circuitbreaker"],
+      "blocked_until_phase": "4"
+    },
+    "11.7": {
+      "title": "Audit Logging",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": ["pkg/audit", "pkg/store/event"],
+      "blocked_until_phase": "13"
+    },
+    "12.1": {
+      "title": "Storage Design Principle",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "1.5",
+      "notes": "Non-normative principles. Enforced by §12.2 and §12.3 tests."
+    },
+    "12.2": {
+      "title": "Storage Roles",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store"],
+      "blocked_until_phase": "1.5"
+    },
+    "12.3": {
+      "title": "Postgres HA Requirements",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store", "migrations/"],
+      "depends_on_sections": ["12.2"],
+      "blocked_until_phase": "1.5"
+    },
+    "12.4": {
+      "title": "Redis HA and Failure Modes",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store/lease", "pkg/store/quota"],
+      "blocked_until_phase": "4"
+    },
+    "12.5": {
+      "title": "Artifact Store",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store/artifact"],
+      "blocked_until_phase": "5"
+    },
+    "12.6": {
+      "title": "Storage Interface Design",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store"],
+      "blocked_until_phase": "2"
+    },
+    "12.8": {
+      "title": "Compliance Interfaces",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/store", "pkg/compliance"],
+      "blocked_until_phase": "13"
+    },
+    "12.9": {
+      "title": "Data Classification",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": ["pkg/compliance/dataclassification"],
+      "blocked_until_phase": "13"
+    },
+    "13.1": {
+      "title": "Pod Security",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [],
+      "packages": ["pkg/admission/podsecurity"],
+      "blocked_until_phase": "3.5"
+    },
+    "13.2": {
+      "title": "Network Isolation",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [],
+      "packages": ["pkg/admission/labelimmutability"],
+      "blocked_until_phase": "3.5"
+    },
+    "13.3": {
+      "title": "Credential Flow",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [],
+      "packages": ["pkg/credential", "pkg/admission/credfsgroup"],
+      "blocked_until_phase": "5.5"
+    },
+    "13.4": {
+      "title": "Upload Security",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [],
+      "packages": ["pkg/upload"],
+      "blocked_until_phase": "5"
+    },
+    "13.5": {
+      "title": "Delegation Chain Content Security",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [],
+      "packages": ["pkg/delegation/security"],
+      "blocked_until_phase": "10"
+    },
+    "14": {
+      "title": "Workspace Plan Schema",
+      "spec_file": "spec/14_workspace-plan-schema.md",
+      "tests": [],
+      "packages": ["pkg/workspaceplan"],
+      "schemas": ["schemas/workspaceplan-v1.json"],
+      "blocked_until_phase": "1"
+    },
+    "14.1": {
+      "title": "WorkspacePlan Schema Versioning",
+      "spec_file": "spec/14_workspace-plan-schema.md",
+      "tests": [],
+      "packages": ["pkg/workspaceplan"],
+      "blocked_until_phase": "1"
+    },
+    "15.1": {
+      "title": "REST API",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/gateway/rest"],
+      "blocked_until_phase": "4"
+    },
+    "15.2": {
+      "title": "MCP API",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/gateway/mcp"],
+      "blocked_until_phase": "5"
+    },
+    "15.2.1": {
+      "title": "REST/MCP Consistency Contract",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/gateway/rest", "pkg/gateway/mcp"],
+      "blocked_until_phase": "5"
+    },
+    "15.3": {
+      "title": "Internal Control API",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/gateway/internal"],
+      "schemas": ["schemas/lenny-adapter.proto"],
+      "blocked_until_phase": "2"
+    },
+    "15.4": {
+      "title": "Runtime Adapter Specification",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/adapter"],
+      "schemas": ["schemas/lenny-adapter-jsonl.schema.json"],
+      "blocked_until_phase": "2"
+    },
+    "15.5": {
+      "title": "API Versioning and Stability",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["pkg/api/version"],
+      "blocked_until_phase": "5"
+    },
+    "15.6": {
+      "title": "Client SDKs",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["sdks/client/go", "sdks/client/python", "sdks/client/typescript"],
+      "blocked_until_phase": "6"
+    },
+    "15.7": {
+      "title": "Runtime Author SDKs",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [],
+      "packages": ["sdks/runtime/go", "sdks/runtime/python", "sdks/runtime/typescript"],
+      "blocked_until_phase": "2"
+    },
+    "16.1": {
+      "title": "Metrics",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": ["pkg/observability/metrics"],
+      "blocked_until_phase": "2.5"
+    },
+    "16.3": {
+      "title": "Distributed Tracing",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": ["pkg/observability/tracing"],
+      "blocked_until_phase": "2.5"
+    },
+    "16.4": {
+      "title": "Logging",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": ["pkg/observability/logging"],
+      "blocked_until_phase": "2.5"
+    },
+    "16.5": {
+      "title": "Alerting Rules and SLOs",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": ["pkg/alerting/rules"],
+      "blocked_until_phase": "2.5"
+    },
+    "17.2": {
+      "title": "Namespace Layout",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": ["charts/lenny"],
+      "chart_templates": ["charts/lenny/templates/namespaces/"],
+      "blocked_until_phase": "3.5"
+    },
+    "17.4": {
+      "title": "Local Development Mode (lenny-dev)",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": ["cmd/lenny-dev"],
+      "blocked_until_phase": "2"
+    },
+    "17.6": {
+      "title": "Packaging and Installation",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": ["charts/lenny", "cmd/lenny-ctl"],
+      "blocked_until_phase": "4.5"
+    },
+    "17.7": {
+      "title": "Operational Runbooks",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": ["docs/runbooks/"],
+      "blocked_until_phase": "13"
+    },
+    "17.8.5": {
+      "title": "Mandatory lenny-ops Deployment",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": ["cmd/lenny-ops"],
+      "chart_templates": ["charts/lenny/templates/lenny-ops/"],
+      "blocked_until_phase": "3.5"
+    },
+    "18": {
+      "title": "Build Sequence",
+      "spec_file": "spec/18_build-sequence.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Non-normative. The implementation phases drive the test sequence in TESTING.md §13."
+    },
+    "19": {
+      "title": "Resolved Decisions",
+      "spec_file": "spec/19_resolved-decisions.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Each entry maps to an ADR under docs/adr/. Tests are attached to the relevant feature section."
+    },
+    "24": {
+      "title": "lenny-ctl Command Reference",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": ["cmd/lenny-ctl"],
+      "blocked_until_phase": "4.5"
+    },
+    "25": {
+      "title": "Agent Operability",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": ["cmd/lenny-ops"],
+      "blocked_until_phase": "3.5"
+    },
+    "25.3": {
+      "title": "Gateway-Side Ops Endpoints",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": ["pkg/gateway/ops"],
+      "blocked_until_phase": "4.5"
+    },
+    "25.4": {
+      "title": "The lenny-ops Service",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": ["cmd/lenny-ops"],
+      "blocked_until_phase": "3.5"
+    },
+    "26": {
+      "title": "Reference Runtime Catalog",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": ["cmd/runtimes/"],
+      "blocked_until_phase": "2"
+    },
+    "27": {
+      "title": "Web Playground",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [],
+      "packages": ["pkg/playground"],
+      "blocked_until_phase": "5"
+    }
+  }
+}

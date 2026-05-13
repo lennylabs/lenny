@@ -1,0 +1,67 @@
+# Reusable workflow: OIDC federation to one of the three supported clouds.
+# Caller passes provider=gke|eks|aks. The corresponding secrets/vars must be
+# configured on the repository.
+#
+# Vars expected per provider:
+#   GCP_WIP, GCP_SA, GCP_PROJECT
+#   AWS_ROLE_ARN, AWS_REGION
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#
+# TESTING.md §20.4 and TESTING_DEPENDENCIES.md §13 document the trust setup.
+
+name: reusable / cloud-auth
+
+on:
+  workflow_call:
+    inputs:
+      provider:
+        description: 'gke | eks | aks'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+
+  authenticate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate provider
+        run: |
+          case "${{ inputs.provider }}" in
+            gke|eks|aks) echo "provider=${{ inputs.provider }}" ;;
+            *) echo "::error::unsupported provider: ${{ inputs.provider }}"; exit 2 ;;
+          esac
+
+      - name: GCP — Workload Identity Federation
+        if: inputs.provider == 'gke'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIP }}
+          service_account: ${{ vars.GCP_SA }}
+
+      - name: AWS — assume role via OIDC
+        if: inputs.provider == 'eks'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Azure — OIDC login
+        if: inputs.provider == 'aks'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Confirm authenticated identity
+        run: |
+          case "${{ inputs.provider }}" in
+            gke) gcloud auth list ;;
+            eks) aws sts get-caller-identity ;;
+            aks) az account show ;;
+          esac

@@ -1927,13 +1927,160 @@ Each fuzz target runs with a small corpus per PR and a longer corpus nightly. Cr
 
 ---
 
-## 20. CI pipeline
+## 20. CI framework and pipeline
 
-The CI orchestrator runs the same `lenny-test` binary developers run. The pipeline below is encoded in `.github/workflows/`.
+This section is the bridge between the framework-agnostic test infrastructure described above and the concrete CI integration. The harness (`cmd/lenny-test/`) is the single source of truth: every workflow below is a thin wrapper that calls `lenny-test --group <name>` or `lenny-test --tier <name>`. The same commands run on a developer laptop.
 
-### 20.1 PR pipeline (every push)
+### 20.1 Framework choice
 
-Target wall-clock: under 15 minutes.
+**Selected: GitHub Actions.** The repository is hosted on GitHub, the project targets community contributions, and GHA offers the tightest integration available for the use cases below.
+
+Decision factors:
+
+| Factor | GHA | Notes |
+|:-------|:---:|:------|
+| Free for OSS public repos | yes | Unlimited minutes for `ubuntu-latest`, `macos-latest`, `windows-latest` runners |
+| OIDC federation to GCP, AWS, Azure | yes | First-class support per provider; no long-lived secrets |
+| PR-comment and inline-annotation surface | yes | Required for the verdict integration in §20.5 |
+| Self-hosted runner support | yes | Required for Tier 5+ (memory and time ceilings on hosted runners) |
+| Reusable workflows and composite actions | yes | Bounds YAML sprawl |
+| Mature community familiarity | yes | Lowers contributor friction |
+| Per-repo cache cap | 10 GB | Manageable with the strategy in §20.6 |
+| Hosted-runner wall-clock cap | 6 hours | Tier 7 sustained load and Tier 6 cloud must run on self-hosted |
+
+Alternatives considered:
+- **Buildkite.** More programmable pipeline model, scales better for very complex matrices. Adds operational cost (agents must be hosted somewhere). Recommended reconsideration trigger: GHA YAML becomes a recurring debugging bottleneck.
+- **CircleCI.** Strong caching and matrix support. Less GitHub-native; paid plans for the scale Lenny will reach.
+- **GitLab CI.** Tightly coupled to GitLab hosting; not applicable.
+- **Tekton.** Kubernetes-native, conceptually attractive for a K8s-native project. Operational burden outweighs the benefits at this stage.
+- **Jenkins.** Mature but high-maintenance; not a fit for a new project.
+
+### 20.2 Deferred: Dagger as an orchestration layer
+
+Dagger lets you express CI pipelines as code (Go, Python, or TypeScript) that compile to a DAG of containerized operations. Workflow YAML becomes a one-liner that runs `dagger call <function>`. The same code runs locally on a laptop. BuildKit-based caching is operation-level and survives across local and CI runs through Dagger Cloud or a self-hosted cache.
+
+Lenny's `lenny-test` harness already provides the "same command everywhere" property that Dagger's main pitch builds on. Adopting Dagger at Phase 0 would add tooling complexity for value we can't yet quantify. The reconsideration triggers are:
+
+1. Matrix fan-out for SDKs or cloud providers becomes unwieldy in YAML (likely Phase 11+).
+2. Cache misses on PR routinely dominate wall-clock.
+3. Local replay of CI failures becomes a recurring source of friction.
+
+Migration path when triggered: introduce a `dagger/` module that wraps each `lenny-test --group` invocation as a Dagger function, then thin the GHA workflows to `dagger call`. This is a refactor of `.github/workflows/`, not of the test infrastructure.
+
+### 20.3 Runner architecture
+
+Lenny uses two runner classes.
+
+**Hosted runners (GitHub-managed).**
+- `ubuntu-latest` for Tier 0 (static), Tier 1 (unit), Tier 3 (contract), Tier 4 (integration with the compose stack), Tier 10 (conformance against bundled runtimes), Tier 11 (docs).
+- `macos-latest` for Tier 11 documentation diagram rendering (the `qlmanage` step) and SDK smoke tests against the macOS toolchain.
+- Windows is not in scope.
+
+**Self-hosted runners.**
+- Tier 2 (component) optionally uses self-hosted for the cached-container performance win, but works fine on hosted.
+- Tier 5 (e2e on Kind) requires self-hosted: 14 GB RAM and 8 cores are the documented minimum; hosted runners cap at 7 GB / 4 cores.
+- Tier 6 (e2e on cloud) requires self-hosted with provider credentials accessible via OIDC.
+- Tier 7 (load) requires self-hosted; sustained runs exceed the 6-hour hosted ceiling.
+- Tier 8 (chaos) and Tier 9 (security) run wherever Tier 5 runs.
+
+Self-hosted runner pool layout:
+
+- The runners themselves are Kubernetes pods scheduled by `actions-runner-controller` (ARC) in a dedicated GKE or AKS cluster (`lenny-ci-cluster`). ARC autoscales from zero based on the GitHub webhook queue.
+- Pool sizing: minimum 0, maximum 20 standard runners, maximum 4 cloud-test runners with higher resource budgets.
+- Each runner is ephemeral: one job per pod, pod deleted after the job. This eliminates state leakage between jobs.
+- Runners receive cloud credentials via Workload Identity / IRSA / Workload Identity Federation depending on which cluster they live in.
+- The CI cluster is operated by the Lenny project. The configuration is in `deploy/ci/` (a deliverable of Phase 17a, but stubbed from Phase 0 onward).
+- A security review precedes every runner-image change; see §20.13.
+
+### 20.4 Cloud authentication
+
+CI authenticates to GCP, AWS, and Azure via OIDC federation. Long-lived access keys are not stored in repository secrets. The setup steps are documented in [`TESTING_DEPENDENCIES.md`](TESTING_DEPENDENCIES.md) §13.
+
+Per-workflow snippet:
+
+```yaml
+permissions:
+  id-token: write           # required for OIDC
+  contents: read
+  pull-requests: write      # required for verdict PR comments
+```
+
+Per-provider auth step (reusable workflow form):
+
+```yaml
+- uses: google-github-actions/auth@v2
+  with:
+    workload_identity_provider: ${{ vars.GCP_WIP }}
+    service_account: ${{ vars.GCP_SA }}
+
+- uses: aws-actions/configure-aws-credentials@v4
+  with:
+    role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+    aws-region: us-east-2
+
+- uses: azure/login@v2
+  with:
+    client-id: ${{ vars.AZURE_CLIENT_ID }}
+    tenant-id: ${{ vars.AZURE_TENANT_ID }}
+    subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+```
+
+Provider trust configuration (WIP pools, IAM roles, federated credentials) is provisioned by Terraform in `deploy/terraform/cloud/` and documented per provider in `docs/operator-guide/installation.md`.
+
+### 20.5 Verdict integration
+
+Every workflow step that runs `lenny-test` produces three artifacts in `tests/results/`:
+
+1. **`latest.json`** — the canonical machine-readable verdict per §7. Uploaded as a build artifact and indexed by run ID.
+2. **`latest.junit.xml`** — JUnit XML emitted via `--output junit`. GHA's `actions/upload-artifact@v4` plus `dorny/test-reporter@v1` surface this as the "Tests" tab on the workflow run.
+3. **GHA annotations** — `lenny-test --output github-annotations` emits `::error file=<file>,line=<line>::<message>` lines for each failing test, producing inline annotations on the PR diff. The diagnosis string from `// diagnosis:` is the annotation body.
+
+PR comment summary: a sticky comment (one per PR, updated on every push) summarizes:
+- Verdict per tier (✓ / ✗ / skipped / pending).
+- Spec sections currently FAIL.
+- Top three failing tests with diagnosis snippets.
+- Re-run commands as copy-paste-ready code blocks.
+- A link to the full verdict JSON.
+
+The PR-comment action is implemented as a composite action in `.github/actions/post-verdict-comment/`. Phase 0 ships a stub; full implementation lands with Phase 2 when `lenny-test` produces real verdicts.
+
+### 20.6 Caching strategy
+
+The 10 GB per-repo cache cap is the binding constraint. The strategy:
+
+- **Go module cache** (`~/go/pkg/mod`): keyed by `go.sum` hash. Restore-on-miss falls back to the previous main branch cache. Typical size: 500 MB to 1 GB.
+- **Go build cache** (`~/.cache/go-build`): keyed by `go.sum` plus a workflow tag. Typical size: 1 to 2 GB. Restored before Tier 1 and Tier 2.
+- **npm cache** (`~/.npm`): keyed by `package-lock.json` hash. Per-SDK and per-tool.
+- **pip cache** (`~/.cache/pip`): keyed by `pyproject.toml` plus lock file.
+- **Ruby gem cache** (`vendor/bundle`): keyed by `Gemfile.lock` (docs tier only).
+- **Docker layer cache** (testcontainers and compose images): persisted via the GitHub Container Registry (`ghcr.io/lennylabs/cache/*`) using `docker buildx build --cache-to type=gha,mode=max`. This bypasses the 10 GB repo cap because GHCR images are not subject to it.
+- **Kind node images**: pinned by digest and pre-pulled to self-hosted runners on the ARC node template. Hosted-runner Kind jobs (if any) pull from GHCR using the Docker layer cache.
+- **Test runtime images** (`echo`, `streaming-echo`, `delegation-echo`): built on every change and pushed to `ghcr.io/lennylabs/runtimes/*` keyed by Git SHA. Used by Tier 5+ tests by SHA.
+- **Container cache socket** (`lenny-test-cached`) is a developer convenience and does not apply to CI; CI always starts with cold containers for isolation.
+
+Cache eviction policy: stale caches older than seven days are removed by a weekly workflow (`.github/workflows/cache-prune.yml`). Branch-scoped caches are pruned when the branch is deleted.
+
+### 20.7 Reusable workflows and composite actions
+
+Cross-cutting patterns live under `.github/workflows/reusable/` and `.github/actions/`. They keep the top-level workflows thin.
+
+| Workflow / action | Purpose |
+|:------------------|:--------|
+| `reusable/go-setup.yml` | Install Go, restore caches, install `golangci-lint`, `gofumpt`, `goimports`, `sqlc`, `migrate`, `oapi-codegen` |
+| `reusable/node-setup.yml` | Install Node 20, restore npm cache, run `npm ci` in the named workspace |
+| `reusable/python-setup.yml` | Install Python 3.11, restore pip cache, install dev dependencies |
+| `reusable/lenny-test.yml` | Run `lenny-test --group <input>` with verdict upload and PR-comment update |
+| `reusable/cloud-auth-gcp.yml` | OIDC federation to GCP; outputs configured gcloud context |
+| `reusable/cloud-auth-aws.yml` | OIDC federation to AWS; outputs AWS_PROFILE env |
+| `reusable/cloud-auth-azure.yml` | OIDC federation to Azure; configures kubelogin |
+| `reusable/kind-up.yml` | Provisions a Kind cluster via `scripts/setup-cluster.sh` |
+| `reusable/cloud-cluster-up.yml` | Provisions a managed cluster on the named provider |
+| `actions/post-verdict-comment/` | Composite action that posts or updates the PR verdict comment |
+| `actions/upload-verdict/` | Uploads `tests/results/latest.json` and `latest.junit.xml` as artifacts |
+
+### 20.8 PR pipeline (every push)
+
+Workflow file: `.github/workflows/pr.yml`. Triggered on `pull_request` and `push` to feature branches. Target wall-clock: under 15 minutes.
 
 1. `lenny-test --group pr-fast` (changed-only, max-tier component). Fails fast on common bugs.
 2. `lenny-test --tier static`.
@@ -1947,24 +2094,28 @@ Target wall-clock: under 15 minutes.
 10. `lenny-test --tier conformance --subset bundled-runtimes`.
 11. `lenny-test --tier docs`.
 
-Each step produces a verdict JSON. The PR comment summarizes status, links to artifacts, and identifies the failing spec sections. A failing test publishes the diagnosis and the rerun command directly in the comment.
+Each step produces a verdict JSON. The sticky PR comment summarizes status, links to artifacts, and identifies the failing spec sections. A failing test publishes the diagnosis and the rerun command directly in the comment.
 
-### 20.2 Nightly pipeline
+Concurrency: `concurrency.group = pr-${{ github.head_ref }}`, `cancel-in-progress: true`. A new push to the same PR cancels the in-flight run.
 
-Target wall-clock: under 2 hours.
+### 20.9 Nightly pipeline
+
+Workflow file: `.github/workflows/nightly.yml`. Scheduled `0 5 * * *` UTC. Target wall-clock: under 2 hours.
 
 1. Full PR pipeline.
 2. `lenny-test --tier e2e_kind` (full suite).
-3. `lenny-test --tier e2e_cloud --subset critical-path`.
+3. `lenny-test --tier e2e_cloud --subset critical-path` rotated across the three providers (so each provider runs at least every 48 hours).
 4. `lenny-test --tier chaos` (most scenarios; severe-cloud scenarios run on cloud).
 5. `lenny-test --tier security` (full suite minus pen-test).
 6. `lenny-test --tier load --scenario <per-phase-baseline>` per the spec's incremental gates (Phase 6.5, 9.5, 11.5).
 7. `lenny-test --tier conformance --subset reference-catalog`.
 8. Dependency audit: `go mod verify`, `go list -m -u all`, `trivy fs`, `trivy image` against all built images.
 
-### 20.3 Weekly / pre-release pipeline
+A nightly failure pages the on-call rotation defined in `docs/runbooks/index.md`.
 
-Target wall-clock: under 8 hours.
+### 20.10 Weekly / pre-release pipeline
+
+Workflow files: `.github/workflows/weekly.yml` and `.github/workflows/pre-release.yml`. Scheduled weekly on Sunday; pre-release triggered manually via `workflow_dispatch`. Target wall-clock: under 8 hours.
 
 1. Full nightly pipeline.
 2. `lenny-test --tier load` (full Tier 2 plus Tier 3 sampling). Phase 13.5 and 14.5 baselines.
@@ -1974,18 +2125,11 @@ Target wall-clock: under 8 hours.
 6. Multi-profile validation: cloud-managed, self-managed, embedded chart configs.
 7. SLO regression comparison against the prior release baseline.
 
-### 20.4 Per-phase gate pipeline
+### 20.11 Per-phase gate pipeline
 
-For each phase in §13, a dedicated CI workflow runs `lenny-test --group phase-<N>-gate` and produces a phase-completion artifact. The artifact is required to merge the phase's implementation branches.
+Workflow file: `.github/workflows/phase-gate.yml`, parameterized by `inputs.phase`. For each phase in §13, the workflow runs `lenny-test --group phase-<N>-gate` and produces a phase-completion artifact. The artifact is required to merge the phase's implementation branches.
 
-### 20.5 CI infrastructure
-
-- GitHub Actions for orchestration.
-- Self-hosted runners for Tier 5+ (Kind plus cloud).
-- A dedicated cloud project for nightly cloud runs with cost caps.
-- Artifacts retained for 30 days for nightly, 365 days for pre-release.
-
-### 20.6 Branch protection
+### 20.12 Branch protection
 
 Required checks for `main`:
 - Tier 0 through Tier 6 critical-path on PR.
@@ -1993,7 +2137,50 @@ Required checks for `main`:
 - `lenny-test validate-maps`.
 - `lenny-test validate-diagnosis`.
 
-No force-push to `main`. No merge with failing checks. No merge without ADR for changes that require one (per `docs/adr/index.md`).
+No force-push to `main`. No merge with failing checks. No merge without an ADR for changes that require one (per `docs/adr/index.md`). Linear history enforced. Signed commits recommended after Phase 14 (image signing GA).
+
+### 20.13 Secrets management
+
+The project minimizes long-lived secrets:
+
+- Cloud credentials: OIDC federation only. No long-lived service-account keys in repository secrets.
+- GHCR push: uses `GITHUB_TOKEN` with `packages: write`. No personal access tokens.
+- External pen-test report uploads: encrypted at rest, scoped to the pen-test partner via a separate org-level secret with two-person approval.
+- Real LLM provider keys (for pre-release smoke against real providers): held in `lenny-prerelease` environment with required reviewers.
+
+Secret scanning: GitHub's built-in scanner is on. `trivy fs --scanners secret` runs in Tier 0.
+
+Runner-image security: the ARC runner image is rebuilt weekly with the latest base image, signed with cosign, and digest-pinned in the ARC values file. Every PR that modifies the runner image requires review from a maintainer.
+
+### 20.14 Concurrency and queueing
+
+Per-workflow concurrency groups:
+
+| Workflow | Group | Cancel in progress |
+|:---------|:------|:------------------:|
+| pr.yml | `pr-${{ github.head_ref }}` | yes |
+| nightly.yml | `nightly` | no |
+| weekly.yml | `weekly` | no |
+| pre-release.yml | `pre-release-${{ inputs.tag }}` | no |
+| phase-gate.yml | `phase-gate-${{ inputs.phase }}-${{ github.ref }}` | yes |
+| cache-prune.yml | `cache-prune` | yes |
+
+Self-hosted runner queueing: when the ARC pool is saturated, jobs queue. The dashboard at `lenny-ci-cluster:/grafana/d/runners` reports queue depth and pages on sustained backlog > 10 jobs for > 15 minutes.
+
+### 20.15 Artifact retention
+
+| Artifact | Retention |
+|:---------|:---------:|
+| PR verdict JSON and JUnit | 30 days |
+| Nightly verdict and load baselines | 90 days |
+| Pre-release verdicts and load baselines | 365 days |
+| Phase-gate completion artifacts | indefinite (used as merge gates) |
+| Container images pushed to GHCR | indefinite for tagged releases, 30 days for SHA-tagged builds |
+| Test failure logs | 30 days |
+
+### 20.16 Migration path off GHA
+
+The test infrastructure is GHA-agnostic by construction: every concrete piece of CI logic lives in `cmd/lenny-test/`, `scripts/`, and provider-specific reusable workflows. Migrating to Buildkite, Dagger, or another framework involves rewriting `.github/workflows/` and porting the reusable workflows. The harness, the verdict format, the spec-map, the change-graph, the test runtimes, and the per-tier suites are unaffected.
 
 ---
 

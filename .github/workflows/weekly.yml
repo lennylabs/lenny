@@ -1,0 +1,49 @@
+# Weekly gate. Full e2e on all three cloud providers in cloud-small shape.
+# Target wall-clock: < 4 hours.
+#
+# Architecture and tier definitions: TESTING.md §20.10.
+
+name: weekly
+
+on:
+  schedule:
+    - cron: '0 6 * * 0'    # 06:00 UTC every Sunday
+  workflow_dispatch:
+
+concurrency:
+  group: weekly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+
+  nightly-suite:
+    name: Nightly suite (re-run)
+    uses: ./.github/workflows/nightly.yml
+    secrets: inherit
+
+  e2e-cloud-full:
+    name: tier 6 — e2e cloud (all providers, cloud-small)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: [nightly-suite]
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [gke, eks, aks]
+    steps:
+      - run: |
+          echo "Phase 0 placeholder. Full cloud suite ships Phase 13+; TESTING.md §12.6."
+          echo "matrix provider: ${{ matrix.provider }}"
+
+  load-full-system:
+    name: tier 7 — load (full-system, placeholder)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: [nightly-suite]
+    steps:
+      - run: 'echo "full-system load ships Phase 13.5; see TESTING.md §13.29"'

@@ -1,0 +1,91 @@
+# Reusable workflow: run lenny-test with a named group, upload the verdict,
+# and post or update the PR comment.
+#
+# Usage from a caller workflow:
+#
+#   jobs:
+#     pr-fast:
+#       uses: ./.github/workflows/reusable/lenny-test.yml
+#       with:
+#         group: pr-fast
+#         runner: ubuntu-latest
+#         timeout-minutes: 5
+
+name: reusable / lenny-test
+
+on:
+  workflow_call:
+    inputs:
+      group:
+        description: 'Group name from tests/groups.yaml (e.g., pr, pr-fast, nightly).'
+        required: false
+        type: string
+      tier:
+        description: 'Single tier (alternative to group).'
+        required: false
+        type: string
+      max_tier:
+        description: 'Run all tiers up to and including this one.'
+        required: false
+        type: string
+      runner:
+        description: 'Runner label (default: ubuntu-latest).'
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        required: false
+        type: number
+        default: 15
+      output:
+        description: 'human | json | junit | github-annotations'
+        required: false
+        type: string
+        default: human
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+
+  run:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Resolve selector
+        id: sel
+        run: |
+          if [[ -n "${{ inputs.group }}" ]]; then
+            echo "args=--group ${{ inputs.group }}" >> "$GITHUB_OUTPUT"
+            echo "label=group=${{ inputs.group }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.tier }}" ]]; then
+            echo "args=--tier ${{ inputs.tier }}" >> "$GITHUB_OUTPUT"
+            echo "label=tier=${{ inputs.tier }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.max_tier }}" ]]; then
+            echo "args=--max-tier ${{ inputs.max_tier }}" >> "$GITHUB_OUTPUT"
+            echo "label=max-tier=${{ inputs.max_tier }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::reusable/lenny-test.yml requires group, tier, or max_tier"
+            exit 2
+          fi
+      - name: Run lenny-test
+        id: run
+        run: ./bin/lenny-test ${{ steps.sel.outputs.args }} --output ${{ inputs.output }}
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-${{ steps.sel.outputs.label }}
+          path: tests/results/latest.json
+          retention-days: 30

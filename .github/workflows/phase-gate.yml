@@ -1,0 +1,49 @@
+# Per-phase gate. Run manually or via branch trigger to confirm a phase is
+# complete. Each phase's gate group is defined in tests/groups.yaml.
+#
+# Architecture: TESTING.md §13 (per-phase deliverables) and §20.11.
+
+name: phase-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Phase identifier (e.g., 3.5, 5.8, 13.5, 17a)'
+        required: true
+        type: string
+
+concurrency:
+  group: phase-gate-${{ inputs.phase }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+
+  gate:
+    name: phase-${{ inputs.phase }}-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run phase gate
+        run: ./bin/lenny-test --group phase-${{ inputs.phase }}-gate
+      - name: Upload phase-completion artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-${{ inputs.phase }}-completion
+          path: tests/results/latest.json
+          retention-days: 36500   # phase-gate artifacts are gate inputs; retain effectively forever

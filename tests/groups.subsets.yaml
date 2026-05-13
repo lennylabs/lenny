@@ -1,0 +1,261 @@
+# Concrete subset definitions referenced by groups.yaml.
+# Each entry is a named subset that resolves to a set of test patterns.
+# Patterns can be:
+#   - exact test names (e.g., TestSandboxClaimSkipLocked)
+#   - file globs (e.g., tests/tier5_e2e_kind/sandbox_claim_*_test.go)
+#   - tier-relative suite names (e.g., admission/inventory)
+#
+# The harness resolves patterns against the change graph and the discovered
+# test list. Unresolved patterns fail `lenny-test validate-maps`.
+
+version: 1
+
+subsets:
+
+  # ---- Tier 5 e2e Kind subsets ----
+
+  critical-path:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/warm_pool_test.go
+      - tests/tier5_e2e_kind/sandbox_claim_test.go
+      - tests/tier5_e2e_kind/pod_lifecycle_test.go
+      - tests/tier5_e2e_kind/mtls_enforcement_test.go
+      - tests/tier5_e2e_kind/admission_policy_test.go
+      - tests/tier5_e2e_kind/admission_inventory_test.go
+      - tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go
+      - tests/tier5_e2e_kind/bootstrap_first_install_test.go
+
+  admission-critical-path:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/admission_policy_test.go
+      - tests/tier5_e2e_kind/admission_inventory_test.go
+      - tests/tier5_e2e_kind/label_immutability_test.go
+      - tests/tier5_e2e_kind/sandbox_claim_test.go
+
+  pool-upgrade:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/pool_upgrade_test.go
+
+  mtls:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/mtls_enforcement_test.go
+
+  etcd-encryption:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/etcd_encryption_test.go
+
+  bootstrap-first-install:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/bootstrap_first_install_test.go
+
+  llm-proxy-proxy-mode:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/llm_proxy_proxy_mode_test.go
+      - tests/tier5_e2e_kind/admission_direct_mode_isolation_test.go
+
+  drain-readiness:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/drain_readiness_webhook_test.go
+
+  checkpoint-resume:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/pod_lifecycle_test.go
+      - tests/tier5_e2e_kind/node_drain_test.go
+
+  concurrent-modes:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/concurrent_modes_test.go
+
+  audit-pipeline:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/audit_pipeline_test.go
+
+  backup-restore:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/backup_restore_test.go
+
+  data-residency:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/admission_data_residency_test.go
+
+  t4-node-isolation:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/admission_t4_node_isolation_test.go
+
+  cross-environment-delegation:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/cross_environment_delegation_test.go
+
+  image-signing:
+    tier: e2e_kind
+    tests:
+      - tests/tier5_e2e_kind/image_signing_test.go
+
+  # ---- Tier 6 e2e cloud subsets ----
+
+  critical-path-rotated:
+    tier: e2e_cloud
+    rotated_across_providers: true
+    tests:
+      - tests/tier6_e2e_cloud/gvisor_isolation_test.go
+      - tests/tier6_e2e_cloud/cloud_csi_test.go
+      - tests/tier6_e2e_cloud/cloud_kms_test.go
+
+  full-non-sandbox:
+    tier: e2e_cloud
+    providers: [gke, eks, aks]
+    cluster_shapes: [cloud-small]
+    tests: all
+
+  full:
+    tier: e2e_cloud
+    providers: [gke, eks, aks]
+    cluster_shapes: [cloud-small, cloud-sandbox]
+    tests: all
+
+  # ---- Tier 7 load subsets ----
+
+  streaming-reconnect:
+    tier: load
+    scenarios:
+      - tests/tier7_load/scenarios/streaming_reconnect.go
+
+  delegation-fanout:
+    tier: load
+    scenarios:
+      - tests/tier7_load/scenarios/delegation_fanout.go
+
+  credential-rotation:
+    tier: load
+    scenarios:
+      - tests/tier7_load/scenarios/credential_rotation_under_load.go
+
+  full-system:
+    tier: load
+    scenarios: all-except:
+      - tests/tier7_load/scenarios/tthw.go
+      - tests/tier7_load/scenarios/experiment_active_under_load.go
+
+  full-system-with-hardening:
+    tier: load
+    scenarios: same-as: full-system
+    cluster_profile: hardened
+
+  experiment-active:
+    tier: load
+    scenarios:
+      - tests/tier7_load/scenarios/experiment_active_under_load.go
+
+  tthw:
+    tier: load
+    scenarios:
+      - tests/tier7_load/scenarios/tthw.go
+
+  # ---- Tier 8 chaos subsets ----
+
+  core:
+    tier: chaos
+    tests:
+      - tests/tier8_chaos/pod_kill_during_session_test.go
+      - tests/tier8_chaos/concurrent_claim_test.go
+      - tests/tier8_chaos/redis_outage_test.go
+      - tests/tier8_chaos/postgres_failover_test.go
+      - tests/tier8_chaos/minio_outage_test.go
+
+  admission-webhook-outage:
+    tier: chaos
+    tests:
+      - tests/tier8_chaos/admission_webhook_outage_test.go
+
+  minio-outage:
+    tier: chaos
+    tests:
+      - tests/tier8_chaos/minio_outage_during_checkpoint_test.go
+
+  node-drain:
+    tier: chaos
+    tests:
+      - tests/tier8_chaos/node_drain_during_minio_outage_test.go
+
+  # ---- Tier 9 security subsets ----
+
+  critical:
+    tier: security
+    tests:
+      - tests/tier9_security/tenant_isolation_test.go
+      - tests/tier9_security/tls_enforcement_test.go
+      - tests/tier9_security/admission/...
+
+  full:
+    tier: security
+    tests: all-except:
+      - tests/tier9_security/pentest/...
+
+  pentest:
+    tier: security
+    tests:
+      - tests/tier9_security/pentest/...
+
+  # ---- Tier 10 conformance subsets ----
+
+  basic:
+    tier: conformance
+    tests:
+      - tests/tier10_conformance/basic/...
+
+  standard:
+    tier: conformance
+    tests:
+      - tests/tier10_conformance/standard/...
+
+  full:
+    tier: conformance
+    tests:
+      - tests/tier10_conformance/full/...
+
+  bundled-runtimes:
+    tier: conformance
+    runtimes: [echo, streaming-echo, delegation-echo]
+
+  reference-catalog:
+    tier: conformance
+    runtimes: [claude-code, gemini-cli, codex, cursor-cli, chat, langgraph, mastra, openai-assistants, crewai]
+
+  # ---- Tier 3 contract subsets ----
+
+  sdk-go:
+    tier: contract
+    tests:
+      - tests/tier3_contract/sdks/go_client_test.go
+
+  sdk-python:
+    tier: contract
+    tests:
+      - tests/tier3_contract/sdks/python_client_test.go
+
+  sdk-typescript:
+    tier: contract
+    tests:
+      - tests/tier3_contract/sdks/typescript_client_test.go
+
+  # ---- Tier 2 component subsets ----
+
+  migrations:
+    tier: component
+    tests:
+      - tests/tier2_component/migrations/...
