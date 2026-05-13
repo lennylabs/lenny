@@ -366,17 +366,26 @@
     "12.2": {
       "title": "Storage Roles",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
-      "packages": ["pkg/store"],
+      "tests": [
+        "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
+        "tests/tier2_component/migrations/migrations_test.go::TestIdempotencyApplyTwiceIsNoOp",
+        "tests/tier2_component/migrations/migrations_test.go::TestRollbackRemovesAllObjects",
+        "tests/tier2_component/migrations/migrations_test.go::TestRegressionSeedSurvivesIndexUpAndDown"
+      ],
+      "packages": ["pkg/store", "tests/testinfra/containers", "tests/tier2_component/migrations"],
       "blocked_until_phase": "1.5"
     },
     "12.3": {
-      "title": "Postgres HA Requirements",
+      "title": "Postgres HA Requirements (R-01, R-02, R-03)",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
-      "packages": ["pkg/store", "migrations/"],
+      "tests": [
+        "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
+        "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion"
+      ],
+      "packages": ["pkg/store", "migrations/", "scripts/lint-schema.sh", "scripts/lint-queries.sh"],
       "depends_on_sections": ["12.2"],
-      "blocked_until_phase": "1.5"
+      "blocked_until_phase": "1.5",
+      "notes": "Phase 1.5 ships R-01 (lint-schema.sh) and R-02 (lint-queries.sh) as static-tier linters. R-03 (StoreRouter for billing/audit) is verified by integration tests that land alongside the Postgres-backed store implementations in later phases."
     },
     "12.4": {
       "title": "Redis HA and Failure Modes",

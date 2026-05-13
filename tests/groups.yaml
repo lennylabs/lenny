@@ -102,7 +102,11 @@ groups:
       tiers: [static, unit]
 
   phase-1.5-gate:
-    description: Phase 1.5. Migration framework + schema/query linters.
+    description: >
+      Phase 1.5. Migration framework + schema/query linters. Static tier
+      runs lint-schema.sh (R-01) and lint-queries.sh (R-02) alongside the
+      schema-validation tests. Component tier runs the migration suite
+      end-to-end against a real Postgres container (requires Docker).
     selectors:
       spec_sections: ["12.2", "12.3"]
       tiers: [static, component]

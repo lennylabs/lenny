@@ -145,12 +145,25 @@
       "component": ["tests/tier2_component/translators/image_resolver_test.go"]
     },
     "migrations/": {
-      "static": ["tests/tier0_static/schema_lint_test.go"],
+      "static": ["scripts/lint-schema.sh", "scripts/lint-queries.sh"],
       "component": [
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/..."
       ],
       "integration": ["tests/tier4_integration/migration_upgrade_test.go"]
+    },
+    "scripts/lint-schema.sh": {
+      "static": ["scripts/lint-schema.sh"]
+    },
+    "scripts/lint-queries.sh": {
+      "static": ["scripts/lint-queries.sh"]
+    },
+    "tests/testinfra/containers": {
+      "component": ["tests/testinfra/containers/postgres_test.go"]
+    },
+    "tests/testdata/migrations": {
+      "static": ["scripts/lint-schema.sh"],
+      "component": ["tests/tier2_component/migrations/migrations_test.go"]
     },
     "schemas/lenny-adapter.proto": {
       "static": ["tests/tier0_static/schemas_test.go"],

@@ -242,6 +242,17 @@ func execute(s selector, r resolvedSelector) int {
 				}
 				return printSummary(s, v, overallStatus, 1)
 			}
+		case "component":
+			st, msg := runComponentTier()
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix component-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				if writeErr := v.write(s.verdictFile); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+				}
+				return printSummary(s, v, overallStatus, 1)
+			}
 		case "contract":
 			st, msg := runContractTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
@@ -315,6 +326,22 @@ func runStaticTier() (string, string) {
 			}
 			return string(out), nil
 		}},
+		{"scripts/lint-schema.sh (R-01)", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "lint-schema.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "lint-schema.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
+		{"scripts/lint-queries.sh (R-02)", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "lint-queries.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "lint-queries.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
 		{"go test ./tests/tier0_static/...", func() (string, error) {
 			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
 			return string(out), err
@@ -364,6 +391,28 @@ func resolveGoBin(name string) string {
 		return candidate
 	}
 	return ""
+}
+
+func runComponentTier() (string, string) {
+	// Tier 2 component tests are guarded by the `component` build tag and
+	// require Docker for testcontainers-go. The runner does a soft probe
+	// for Docker and returns skipped (not failed) when the daemon is not
+	// reachable, so developers without Docker can still pass other tiers.
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "skipped", "docker not on PATH"
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		return "skipped", "docker daemon not running; start Docker and retry"
+	}
+	cmd := exec.Command("go", "test", "-count=1", "-timeout=180s", "-tags=component", "./tests/tier2_component/...", "./tests/testinfra/containers/...")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("component suite failed:\n%s", out)
+	}
+	return "pass", ""
 }
 
 func runContractTier() (string, string) {

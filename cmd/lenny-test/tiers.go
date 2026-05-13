@@ -77,6 +77,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "schemas validate, contract tests compile, examples round-trip"},
 			{name: "unit", notes: "state-machine packages: Session, TaskRecord, Sandbox, SandboxClaim"},
 		}
+	case "phase-1.5-gate":
+		return []tierPlan{
+			{name: "static", notes: "lint-schema.sh (R-01) + lint-queries.sh (R-02) + schema validation"},
+			{name: "component", subsets: []string{"migrations"}, notes: "migration framework: round-trip, idempotency, rollback, regression"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does
