@@ -31,6 +31,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // Result is a scenario result.
@@ -75,7 +77,7 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 	if !K6Available(t) {
 		t.Skipf("RunScenario: k6 not on PATH; install via `brew install k6` or per https://k6.io")
 	}
-	scriptPath := filepath.Join(repoRoot(t), "tests", "tier7_load", "scenarios", scenario, "main.js")
+	scriptPath := filepath.Join(schematest.RepoRoot(t), "tests", "tier7_load", "scenarios", scenario, "main.js")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Skipf("RunScenario: scenario %s not present at %s", scenario, scriptPath)
 	}
@@ -180,7 +182,7 @@ func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Re
 // stored baseline is overwritten.
 func AssertBaseline(t testing.TB, scenario string, res Result, threshold Threshold) {
 	t.Helper()
-	path := filepath.Join(repoRoot(t), "tests", "tier7_load", "baselines", scenario+".json")
+	path := filepath.Join(schematest.RepoRoot(t), "tests", "tier7_load", "baselines", scenario+".json")
 	if os.Getenv("LENNY_UPDATE_BASELINE") == "1" {
 		writeBaseline(t, path, res)
 		t.Logf("wrote baseline %s", path)
@@ -249,19 +251,3 @@ func compareBaseline(stored, got Result, t Threshold) []string {
 	return regs
 }
 
-// repoRoot is duplicated here to avoid an import cycle with
-// tests/testinfra/schematest. The walk is identical.
-func repoRoot(t testing.TB) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-	}
-	t.Fatalf("could not find go.mod from %s", wd)
-	return ""
-}

@@ -1235,11 +1235,7 @@ func printGitHubAnnotations(v *verdict) {
 // orderedTierNames returns the tier names in a stable order so the
 // emitted output is deterministic across runs.
 func orderedTierNames(v *verdict) []string {
-	preferred := []string{
-		"static", "unit", "component", "contract", "integration",
-		"e2e_kind", "e2e_cloud", "load", "chaos", "security",
-		"conformance", "docs",
-	}
+	preferred := allTiers()
 	out := make([]string, 0, len(v.Tiers))
 	seen := map[string]bool{}
 	for _, n := range preferred {

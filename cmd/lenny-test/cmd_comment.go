@@ -88,12 +88,8 @@ func renderComment(v map[string]any) string {
 		sb.WriteString("_No tier results recorded._\n")
 		return sb.String()
 	}
-	// Stable tier ordering.
-	preferred := []string{
-		"static", "unit", "component", "contract", "integration",
-		"e2e_kind", "e2e_cloud", "load", "chaos", "security",
-		"conformance", "docs",
-	}
+	// Stable tier ordering — see tiers.go for the canonical list.
+	preferred := allTiers()
 	names := []string{}
 	seen := map[string]bool{}
 	for _, p := range preferred {

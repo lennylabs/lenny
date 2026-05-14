@@ -2,22 +2,41 @@
 
 package main
 
+// Tier names. These are the canonical string values used in
+// groups.yaml, spec-map.json, change-graph.json, build tags, and
+// the verdict JSON. Every call site that needs a tier name must
+// use one of these constants rather than a bare literal.
+const (
+	tierStatic      = "static"
+	tierUnit        = "unit"
+	tierComponent   = "component"
+	tierContract    = "contract"
+	tierIntegration = "integration"
+	tierE2EKind     = "e2e_kind"
+	tierE2ECloud    = "e2e_cloud"
+	tierLoad        = "load"
+	tierChaos       = "chaos"
+	tierSecurity    = "security"
+	tierConformance = "conformance"
+	tierDocs        = "docs"
+)
+
 // allTiers returns the tier names in execution order. The order is the gate
 // hierarchy from TESTING.md §3: lower-numbered tiers gate higher ones.
 func allTiers() []string {
 	return []string{
-		"static",
-		"unit",
-		"component",
-		"contract",
-		"integration",
-		"e2e_kind",
-		"e2e_cloud",
-		"load",
-		"chaos",
-		"security",
-		"conformance",
-		"docs",
+		tierStatic,
+		tierUnit,
+		tierComponent,
+		tierContract,
+		tierIntegration,
+		tierE2EKind,
+		tierE2ECloud,
+		tierLoad,
+		tierChaos,
+		tierSecurity,
+		tierConformance,
+		tierDocs,
 	}
 }
 

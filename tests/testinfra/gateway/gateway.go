@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // Process represents a running lenny-gateway subprocess.
@@ -47,7 +49,7 @@ func Start(t testing.TB) *Process {
 	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
 
 	binary := filepath.Join(tmp, "lenny-gateway")
-	root := repoRoot(t)
+	root := schematest.RepoRoot(t)
 	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
@@ -155,24 +157,3 @@ func freePort() (int, error) {
 	return port, nil
 }
 
-// repoRoot walks upward from the test's working dir until it finds
-// go.mod. testinfra packages are nested at varying depths so the
-// caller can't bake in a fixed relative path.
-func repoRoot(t testing.TB) string {
-	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	dir := wd
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("repoRoot: walked past filesystem root looking for go.mod")
-		}
-		dir = parent
-	}
-}

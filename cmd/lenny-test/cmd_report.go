@@ -211,7 +211,7 @@ func renderRollupMarkdown(r rolledUp) string {
 }
 
 func orderedTierNamesByKey(m map[string]tierRollup) []string {
-	preferred := []string{"static", "unit", "component", "contract", "integration", "e2e_kind", "e2e_cloud", "load", "chaos", "security", "conformance", "docs"}
+	preferred := allTiers()
 	out := []string{}
 	seen := map[string]bool{}
 	for _, p := range preferred {
