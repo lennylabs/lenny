@@ -44,25 +44,71 @@ jobs:
         provider: [gke, eks, aks]
         shape:    [cloud-small, cloud-sandbox]
     steps:
-      - run: |
-          echo "Phase 0 placeholder. Full sandbox cloud suite ships Phase 14+; TESTING.md §12.6."
-          echo "matrix: provider=${{ matrix.provider }} shape=${{ matrix.shape }}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run e2e cloud tier
+        env:
+          LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
+          LENNY_CLOUD_SHAPE: ${{ matrix.shape }}
+        run: ./bin/lenny-test --tier e2e_cloud
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-prerelease-${{ matrix.provider }}-${{ matrix.shape }}
+          path: tests/results/latest.json
+          retention-days: 90
 
   chaos-full:
-    name: tier 8 — chaos (full, placeholder)
+    name: tier 8 — chaos (full)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: [weekly-suite]
     steps:
-      - run: 'echo "full chaos ships incrementally; see TESTING.md §12.8"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run chaos tier
+        run: ./bin/lenny-test --tier chaos
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-prerelease-chaos
+          path: tests/results/latest.json
+          retention-days: 90
 
   security-pentest:
-    name: tier 9 — security (full + pentest driver, placeholder)
+    name: tier 9 — security (full + pentest driver)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [weekly-suite]
     steps:
-      - run: 'echo "external pen-test driver ships Phase 14; see TESTING.md §13.30"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run security tier
+        run: ./bin/lenny-test --tier security
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-prerelease-security
+          path: tests/results/latest.json
+          retention-days: 90
 
   slo-baseline-diff:
     name: SLO regression diff
