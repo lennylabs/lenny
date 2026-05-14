@@ -55,9 +55,21 @@
     "4.4": {
       "title": "Event / Checkpoint Store",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/checkpoint/checkpoint_test.go::TestAllLevelsIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
+        "pkg/checkpoint/checkpoint_test.go::TestAllTriggersIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestRetryBudgetForTriggers",
+        "pkg/checkpoint/checkpoint_test.go::TestCheckpointTimeoutIs60s",
+        "pkg/checkpoint/checkpoint_test.go::TestAllOutcomesIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestAllResumeModesIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestResumeModeWorkspaceLost",
+        "pkg/checkpoint/checkpoint_test.go::TestWorkspaceSizePreCheckRejectsExceed",
+        "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale"
+      ],
       "packages": ["pkg/store/event", "pkg/checkpoint"],
-      "blocked_until_phase": "8"
+      "blocked_until_phase": "8",
+      "notes": "Phase 8 ships the §4.4 checkpoint enums (Level, Trigger, Outcome, ResumeMode) plus the per-level consistency tag, the per-trigger retry budget, the §4.4 60-second quiescence timeout constant, the §4.4 'Hard workspace size limit' pre-check, and the §4.4 'Checkpoint freshness SLO' check. The MinIO upload pipeline, the SIGSTOP/SIGCONT embedded-adapter path, the eviction-fallback Postgres minimal-state record, and the lenny-drain-readiness admission webhook are deferred to the K8s-integration phase."
     },
     "4.5": {
       "title": "Artifact Store",

@@ -1417,11 +1417,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.19 Phase 8 — Checkpoint/resume + drain-readiness webhook
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/checkpoint_resume_test.go` exercises eviction, checkpoint, resume on new pod.
-- `tests/tier5_e2e_kind/drain_readiness_webhook_test.go` validates the new webhook.
-- `tests/tier8_chaos/minio_outage_during_checkpoint_test.go`.
-- `tests/tier8_chaos/node_drain_during_minio_outage_test.go`.
+**Test infrastructure delivered in Phase 8.**
+- `pkg/checkpoint` ships the §4.4 checkpoint primitives: the `Level` enum (basic, standard, full, embedded) with the `ConsistencyForLevel` mapping (basic/standard → best-effort; full/embedded → consistent), the `Trigger` enum (periodic, pre_scale_down, eviction) with `IsEviction` and `RetryBudgetFor` returning the §4.4 per-trigger budget (200ms/5s/5s for non-eviction; 500ms/5s/30s for eviction), the `Outcome` enum (success, failed, aborted, partial), the `ResumeMode` enum (full, partial_workspace, conversation_only, coordinator_handoff) with `WorkspaceLost` mapping, the `CheckpointTimeout` 60-second constant, the `WorkspaceSizePreCheck` implementing the §4.4 "Hard workspace size limit" pre-check, and the `FreshnessCheck` implementing the §4.4 "Checkpoint freshness SLO" with the §16.5 `CheckpointStale` alert condition.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/checkpoint_resume_test.go` (eviction → checkpoint → resume on a new pod) is deferred. It needs the gateway, the adapter, MinIO, and the compose stack.
+- `tests/tier5_e2e_kind/drain_readiness_webhook_test.go` is deferred. The `lenny-drain-readiness` admission-decision logic that the webhook calls into is also deferred (Phase 3.5 covered the three webhooks whose decision logic was clearly bounded; drain-readiness depends on a MinIO health probe that does not exist yet).
+- `tests/tier8_chaos/minio_outage_during_checkpoint_test.go` and `tests/tier8_chaos/node_drain_during_minio_outage_test.go` (chaos tests) are deferred to the same phase that brings up the MinIO-bearing compose stack.
+- The SIGSTOP/SIGCONT embedded-adapter path and the §4.4 eviction-fallback Postgres minimal-state record are deferred to the K8s-integration phase. The pure primitives are in place.
 
 ### 13.20 Phase 9 — Delegation + `delegation-echo`
 
