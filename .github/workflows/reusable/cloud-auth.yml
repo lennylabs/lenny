@@ -2,6 +2,12 @@
 # Caller passes provider=gke|eks|aks. The corresponding secrets/vars must be
 # configured on the repository.
 #
+# Status: scaffolded but not yet called from the cloud e2e jobs in
+# nightly/weekly/pre-release. Those jobs set LENNY_CLOUD_PROVIDER but
+# defer the actual federation step until the Phase 6 cloud e2e suite
+# ships. The schema below pins the canonical input contract so callers
+# can wire it in once the cloud-side identity bindings exist.
+#
 # Vars expected per provider:
 #   GCP_WIP, GCP_SA, GCP_PROJECT
 #   AWS_ROLE_ARN, AWS_REGION

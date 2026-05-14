@@ -1,6 +1,13 @@
 # Reusable workflow: run lenny-test with a named group, upload the verdict,
 # and post or update the PR comment.
 #
+# Status: scaffolded but not yet called from a parent workflow. The PR,
+# nightly, weekly, and pre-release workflows hand-roll their lenny-test
+# invocations today; once the harness ships its full set of side effects
+# (verdict upload + PR comment + step summary), those workflows can switch
+# to this reusable. The schema below is the agreed input surface so a
+# caller can rely on stable input names when the migration lands.
+#
 # Usage from a caller workflow:
 #
 #   jobs:
