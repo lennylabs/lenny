@@ -235,6 +235,20 @@ func describe(s selector) string {
 func execute(s selector, r resolvedSelector) int {
 	v := newVerdict(s)
 
+	// When --cached is requested and any tier in the plan needs the
+	// compose stack, probe (and optionally spawn) the cached daemon
+	// before running anything. The daemon brings the stack up once
+	// and reuses it across tiers in the same run.
+	if s.cached && !s.noInfra && planNeedsCompose(r) {
+		if eps, err := cachedEnsure(); err != nil {
+			fmt.Fprintf(os.Stderr, "lenny-test: cached daemon not reachable: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Continuing without cached infrastructure; tier-specific containers will be provisioned per test.")
+		} else {
+			fmt.Fprintf(os.Stderr, "lenny-test: using cached daemon (postgres=%v redis=%v minio=%v)\n",
+				eps["postgres"], eps["redis"], eps["minio"])
+		}
+	}
+
 	overallStatus := "PASS"
 	for _, t := range r.tiers {
 		start := time.Now()
@@ -599,6 +613,18 @@ func runUnitTier() (string, string) {
 		return "fail", fmt.Sprintf("go test failed: %v\n%s", err, out)
 	}
 	return "pass", ""
+}
+
+// planNeedsCompose reports whether any tier in r benefits from the
+// compose stack (component / contract / integration / load).
+func planNeedsCompose(r resolvedSelector) bool {
+	for _, t := range r.tiers {
+		switch t.name {
+		case "component", "contract", "integration", "load":
+			return true
+		}
+	}
+	return false
 }
 
 // coverProfilePath returns the canonical cover-profile location.
