@@ -6,7 +6,8 @@
 // WorkspacePlan schema (schemas/workspaceplan-v1.json). Phase 1 ships
 // the schema; Phase 2 implements the gateway-side WorkspacePlan parser
 // and validator that this suite exercises end-to-end via REST. The
-// stubs below fail with diagnoses until that parser exists.
+// stubs below skip with §17.9 not-yet-applicable diagnoses until that
+// parser exists.
 package workspaceplan_test
 
 import (
@@ -22,7 +23,7 @@ import (
 //	under schemas/examples/workspaceplan.*.json through the
 //	parser.
 func TestParserAcceptsCanonicalPlans(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: pkg/workspaceplan/ parser is a Phase 2 deliverable per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — pkg/workspaceplan parser per spec §14")
 }
 
 // spec: 14
@@ -31,7 +32,7 @@ func TestParserAcceptsCanonicalPlans(t *testing.T) {
 //	must be emitted when two sources write to the same path.
 //	Last-writer-wins. Phase 2 ships the collision detector.
 func TestParserEmitsPathCollisionWarning(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: collision warning ships in Phase 2 per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — collision warning per spec §14")
 }
 
 // spec: 14
@@ -42,7 +43,7 @@ func TestParserEmitsPathCollisionWarning(t *testing.T) {
 //	rejects on shape; this test exercises the gateway's
 //	full-validation layer where the error code is attached.
 func TestParserRejectsSetuidMode(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: error-code attachment is a Phase 2 deliverable per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — error-code attachment per spec §14")
 }
 
 // spec: 14
@@ -51,7 +52,7 @@ func TestParserRejectsSetuidMode(t *testing.T) {
 //	schema validation rejects on pattern; this test exercises
 //	the gateway's reason-code attachment.
 func TestParserRejectsSSHGitURL(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: gitClone protocol guard is a Phase 2 deliverable per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — gitClone protocol guard per spec §14")
 }
 
 // spec: 14
@@ -60,7 +61,7 @@ func TestParserRejectsSSHGitURL(t *testing.T) {
 //	rejected with 400 WORKSPACE_PLAN_INVALID,
 //	reason `gateway_written_field`.
 func TestParserRejectsClientResolvedCommitSha(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: resolvedCommitSha guard is a Phase 2 deliverable per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — resolvedCommitSha guard per spec §14")
 }
 
 // spec: 14.1
@@ -69,7 +70,7 @@ func TestParserRejectsClientResolvedCommitSha(t *testing.T) {
 //	422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED. Phase 2 ships the
 //	version-gate.
 func TestParserRejectsUnsupportedSchemaVersion(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: schema-version gate ships in Phase 2 per spec §14.1")
+	t.Skip("not-yet-applicable: phase-2 — schema-version gate per spec §14.1")
 }
 
 // spec: 14
@@ -78,5 +79,5 @@ func TestParserRejectsUnsupportedSchemaVersion(t *testing.T) {
 //	workspace_plan_unknown_source_type warning emitted. Phase 2
 //	ships the open-string discriminator with pass-through.
 func TestParserSkipsUnknownSourceType(t *testing.T) {
-	t.Fatalf("not implemented in Phase 1: unknown-type pass-through ships in Phase 2 per spec §14")
+	t.Skip("not-yet-applicable: phase-2 — unknown-type pass-through per spec §14")
 }
