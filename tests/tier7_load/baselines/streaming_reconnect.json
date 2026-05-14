@@ -1,0 +1,18 @@
+{
+  "scenario": "streaming_reconnect",
+  "version": "0.1.0",
+  "recorded_at": "2026-05-14T00:00:00Z",
+  "duration": "10m",
+  "vus": 500,
+  "metric_ms": {
+    "avg": 60.0,
+    "p50": 45.0,
+    "p90": 180.0,
+    "p95": 270.0,
+    "p99": 420.0,
+    "p999": 690.0
+  },
+  "error_rate": 0.0,
+  "throughput_per_sec": 0.0,
+  "notes": "Placeholder baseline. SLO: reconnect latency P95 < 500ms; zero event loss."
+}

@@ -1,0 +1,18 @@
+{
+  "scenario": "checkpoint_duration",
+  "version": "0.1.0",
+  "recorded_at": "2026-05-14T00:00:00Z",
+  "duration": "5m",
+  "vus": 10,
+  "metric_ms": {
+    "avg": 750.0,
+    "p50": 600.0,
+    "p90": 1500.0,
+    "p95": 1850.0,
+    "p99": 2400.0,
+    "p999": 3800.0
+  },
+  "error_rate": 0.0,
+  "throughput_per_sec": 0.0,
+  "notes": "Placeholder baseline for the 100MB workspace size. SLO: P95 < 2s with cooperative quiescence overhead. Smaller sizes are linearly scaled; 500MB is allowed to exceed."
+}
