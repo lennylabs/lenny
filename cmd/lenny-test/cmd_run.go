@@ -124,62 +124,104 @@ type tierPlan struct {
 	notes   string
 }
 
-// resolve expands the selector into a concrete plan.
+// resolve expands the selector into a concrete plan per TESTING.md §6.
 //
-// Phase 0 implementation: returns the tier-ordered list of tiers implied by
-// the selector. Test discovery within a tier is stubbed; the executor falls
-// back to running every Go test in the repository for the unit tier, and
-// prints a "not yet implemented" notice for others.
+// Per the selection algorithm:
+//   1. Resolve every active selector into a candidate plan.
+//   2. Intersect with --max-tier when present.
+//   3. Order by tier ascending; group by package within a tier.
+//
+// Selectors compose: --changed --max-tier component runs the
+// changed-only plan capped at component; --spec 4.2 --max-tier
+// integration runs only the tiers for §4.2's tests up to integration.
 func (s selector) resolve() (resolvedSelector, error) {
 	tiers := allTiers()
-	plan := resolvedSelector{}
 
+	if s.maxTier != "" && !contains(tiers, s.maxTier) {
+		return resolvedSelector{}, fmt.Errorf("unknown --max-tier %q. Valid tiers: %s", s.maxTier, strings.Join(tiers, ", "))
+	}
+
+	// Compute the raw plan from whatever the primary selector is.
+	// --group / --tier are mutually exclusive with the others (each
+	// names a complete plan).
+	var raw []tierPlan
 	switch {
 	case s.group != "":
-		// Read tests/groups.yaml. For Phase 0, recognize the canonical
-		// groups but defer their full resolution to subset expansion in
-		// a later phase.
-		plan.tiers = tiersForGroup(s.group)
-		if len(plan.tiers) == 0 {
-			return plan, fmt.Errorf("unknown group %q. Run `lenny-test list --groups` to see available groups.", s.group)
+		raw = tiersForGroup(s.group)
+		if len(raw) == 0 {
+			return resolvedSelector{}, fmt.Errorf("unknown group %q. Run `lenny-test list --groups` to see available groups.", s.group)
 		}
 	case s.tier != "":
 		if !contains(tiers, s.tier) {
-			return plan, fmt.Errorf("unknown tier %q. Valid tiers: %s", s.tier, strings.Join(tiers, ", "))
+			return resolvedSelector{}, fmt.Errorf("unknown tier %q. Valid tiers: %s", s.tier, strings.Join(tiers, ", "))
 		}
-		plan.tiers = []tierPlan{{name: s.tier}}
-	case s.maxTier != "":
-		if !contains(tiers, s.maxTier) {
-			return plan, fmt.Errorf("unknown --max-tier %q. Valid tiers: %s", s.maxTier, strings.Join(tiers, ", "))
-		}
-		for _, t := range tiers {
-			plan.tiers = append(plan.tiers, tierPlan{name: t})
-			if t == s.maxTier {
-				break
+		raw = []tierPlan{{name: s.tier}}
+	case s.changed, len(s.specs) > 0, len(s.pkgs) > 0:
+		// Union the discovery selectors. Each contributes tiers; the
+		// union de-duplicates via planFromTierSet.
+		tierSet := map[string]bool{}
+		if s.changed {
+			for _, t := range resolveChangedPlanFor(s.since) {
+				tierSet[t.name] = true
 			}
 		}
-	case s.changed:
-		plan.tiers = resolveChangedPlanFor(s.since)
-		if len(plan.tiers) == 0 {
-			// No applicable changes; default to static + unit so the
-			// developer at least gets a clean lint pass.
-			plan.tiers = []tierPlan{
-				{name: "static", notes: "no changes detected; running static only"},
+		if len(s.specs) > 0 {
+			for _, t := range resolveSpecsPlan(s.specs) {
+				tierSet[t.name] = true
 			}
 		}
-	case len(s.specs) > 0:
-		plan.tiers = resolveSpecsPlan(s.specs)
-		if len(plan.tiers) == 0 {
-			return plan, fmt.Errorf("no tier resolved for spec sections %s", strings.Join(s.specs, ","))
+		if len(s.pkgs) > 0 {
+			for _, t := range resolvePkgsPlan(s.pkgs) {
+				tierSet[t.name] = true
+			}
 		}
-	case len(s.pkgs) > 0:
-		plan.tiers = resolvePkgsPlan(s.pkgs)
-		if len(plan.tiers) == 0 {
-			return plan, fmt.Errorf("no tier resolved for packages %s", strings.Join(s.pkgs, ","))
+		raw = planFromTierSet(tierSet)
+		if len(raw) == 0 {
+			// No tiers resolved — when --max-tier is set we still
+			// honor it as the explicit plan; otherwise fall back to
+			// static + unit so the developer gets feedback.
+			if s.maxTier == "" {
+				raw = []tierPlan{
+					{name: "static", notes: "no tiers resolved from selector; running static only"},
+				}
+			}
+		}
+	default:
+		if s.maxTier != "" {
+			// --max-tier alone runs every tier up to (and including)
+			// the named bound.
+			for _, t := range tiers {
+				raw = append(raw, tierPlan{name: t})
+				if t == s.maxTier {
+					break
+				}
+			}
 		}
 	}
 
-	return plan, nil
+	// Intersect with --max-tier when present (step 2 of the §6 algorithm).
+	if s.maxTier != "" {
+		bound := indexOf(tiers, s.maxTier)
+		filtered := []tierPlan{}
+		for _, p := range raw {
+			if i := indexOf(tiers, p.name); i >= 0 && i <= bound {
+				filtered = append(filtered, p)
+			}
+		}
+		raw = filtered
+	}
+
+	return resolvedSelector{tiers: raw}, nil
+}
+
+// indexOf returns the index of needle in haystack, or -1.
+func indexOf(haystack []string, needle string) int {
+	for i, h := range haystack {
+		if h == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 func printDryRun(s selector, r resolvedSelector) int {
