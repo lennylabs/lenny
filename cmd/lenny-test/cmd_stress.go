@@ -60,11 +60,33 @@ func runStress(args []string) int {
 		label = "pattern=" + *pattern
 	}
 
+	// Preflight: ask `go test -list <runArg>` which tests match. A
+	// silent "0 tests" would otherwise look like a clean 50/50 pass
+	// when in fact nothing ran. Print the names so the operator can
+	// see what's about to be hammered.
+	matched, err := listMatchingTests(runArg, *target, *tag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stress: discovery failed: %v\n", err)
+		return 2
+	}
+	if len(matched) == 0 {
+		fmt.Fprintf(os.Stderr, "stress: no tests match %s in %s", label, *target)
+		if *tag != "" {
+			fmt.Fprintf(os.Stderr, " (tag=%s)", *tag)
+		}
+		fmt.Fprintln(os.Stderr, "\nVerify the test name, the package selector, and the build tag.")
+		return 2
+	}
+
 	fmt.Printf("lenny-test stress: %d consecutive runs of %s against %s", *runs, label, *target)
 	if *tag != "" {
 		fmt.Printf(" (tag=%s)", *tag)
 	}
 	fmt.Println()
+	fmt.Printf("stress: %d test(s) matched discovery:\n", len(matched))
+	for _, n := range matched {
+		fmt.Printf("  - %s\n", n)
+	}
 
 	start := time.Now()
 	pass := 0
@@ -110,6 +132,40 @@ func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int) *exec.Cmd 
 	}
 	args = append(args, target)
 	return exec.Command("go", args...)
+}
+
+// listMatchingTests asks `go test -list <regex>` which tests under
+// the target package(s) match the regex. The output is a flat list
+// of test names, one per line, interleaved with "ok" footers per
+// package; we filter the footers out and return the names.
+func listMatchingTests(runArg, target, tag string) ([]string, error) {
+	args := []string{"test", "-list", runArg}
+	if tag != "" {
+		args = append(args, "-tags="+tag)
+	}
+	args = append(args, target)
+	out, err := exec.Command("go", args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("go test -list: %v\n%s", err, out)
+	}
+	var matched []string
+	for _, line := range strings.Split(string(out), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		// `go test -list` prints package footer lines starting with
+		// "ok " or "?". Filter those out.
+		if strings.HasPrefix(s, "ok ") || strings.HasPrefix(s, "?") {
+			continue
+		}
+		// `[no tests to run]` and `FAIL ` are also footer-like noise.
+		if strings.HasPrefix(s, "FAIL") || strings.HasPrefix(s, "[no") {
+			continue
+		}
+		matched = append(matched, s)
+	}
+	return matched, nil
 }
 
 func trimLines(lines []string, max int) []string {
