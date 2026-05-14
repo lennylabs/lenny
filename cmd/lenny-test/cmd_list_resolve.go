@@ -11,6 +11,73 @@ import (
 	"strings"
 )
 
+// enumerateTier returns the concrete test function names for the
+// tier by shelling out to `go test -list`. Falls back to the
+// directory glob from testsForTier when `go test` is unavailable
+// or the listing fails (e.g., compilation error).
+func enumerateTier(tier string) []string {
+	glob := testsForTier(tier)
+	if len(glob) == 0 {
+		return nil
+	}
+	// Some tiers need a build tag (component, contract, integration,
+	// e2e_kind, e2e_cloud, load, chaos, security, conformance).
+	args := []string{"test", "-list", ".*"}
+	if tag := tierBuildTag(tier); tag != "" {
+		args = append(args, "-tags="+tag)
+	}
+	args = append(args, glob...)
+	cmd := exec.Command("go", args...)
+	cmd.Dir = repoRoot()
+	out, err := cmd.Output()
+	if err != nil {
+		// Fall back to the directory glob.
+		return glob
+	}
+	names := []string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// `go test -list` interleaves "ok pkg" lines with test
+		// names; only Test/Fuzz/Example/Benchmark names are useful.
+		if strings.HasPrefix(line, "Test") ||
+			strings.HasPrefix(line, "Fuzz") ||
+			strings.HasPrefix(line, "Example") ||
+			strings.HasPrefix(line, "Benchmark") {
+			names = append(names, line)
+		}
+	}
+	if len(names) == 0 {
+		return glob
+	}
+	return names
+}
+
+// tierBuildTag returns the build tag a tier needs, or "" when the
+// tier compiles untagged.
+func tierBuildTag(tier string) string {
+	switch tier {
+	case "component":
+		return "component"
+	case "contract":
+		return "contract"
+	case "integration":
+		return "integration"
+	case "e2e_kind":
+		return "e2e_kind"
+	case "e2e_cloud":
+		return "e2e_cloud"
+	case "load":
+		return "load"
+	case "chaos":
+		return "chaos"
+	case "security":
+		return "security"
+	case "conformance":
+		return "conformance"
+	}
+	return ""
+}
+
 // testsForTier returns the canonical test paths for the given tier
 // name. Returns an empty slice when the tier is unknown.
 func testsForTier(tier string) []string {

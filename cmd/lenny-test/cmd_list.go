@@ -105,7 +105,7 @@ func runList(args []string) int {
 func listDiscovered(tier, spec, pkg string, changed, jsonOut bool) int {
 	tests := []string{}
 	if tier != "" {
-		tests = append(tests, testsForTier(tier)...)
+		tests = append(tests, enumerateTier(tier)...)
 	}
 	if spec != "" {
 		tests = append(tests, testsForSpec(spec)...)
