@@ -101,6 +101,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "unit", notes: "no new unit packages — streaming-echo behaviour is covered by the conformance battery"},
 			{name: "conformance", subsets: []string{"full"}, notes: "lenny-compliance --level full against cmd/runtimes/streaming-echo"},
 		}
+	case "phase-3-gate":
+		return []tierPlan{
+			{name: "static", notes: "poolscaling/strategy + runtime/upgrade/state + mtls/spiffe + mtls/denylist build"},
+			{name: "unit", notes: "§4.6.2 scaling formula, §10.5 upgrade state machine, §10.3 SPIFFE validation + cert deny list — every spec-mandated invariant tested"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

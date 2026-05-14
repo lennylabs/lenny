@@ -71,7 +71,25 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [],
       "packages": ["pkg/controller/warmpool", "pkg/controller/poolscaling"],
-      "blocked_until_phase": "3"
+      "blocked_until_phase": "3",
+      "notes": "Phase 3 ships the §4.6.2 scaling strategy (pkg/controller/poolscaling/strategy) as a unit-testable package. The full WarmPoolController and PoolScalingController binaries are deferred to the K8s-integration phase that brings up envtest and the Kind harness."
+    },
+    "4.6.2": {
+      "title": "PoolScalingController — Pool Configuration",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeStandardSession",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeTaskModeReducesSteady",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeConcurrentModeReducesBothTerms",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeVariantPool",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeAdjustedBasePool",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeBootstrapMode",
+        "pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeRejectsVariantWeightsExceedingOne"
+      ],
+      "packages": ["pkg/controller/poolscaling/strategy"],
+      "depends_on_sections": ["4.6", "5.2", "10.7"],
+      "blocked_until_phase": "3",
+      "notes": "Phase 3 ships the PoolScalingStrategy interface and the DefaultStrategy implementing §4.6.2 (standard, mode-adjusted, variant pool, adjusted base pool) plus the bootstrap fallback. The controller binary that wires the strategy to Postgres / Kubernetes is deferred to the K8s-integration phase."
     },
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
@@ -281,9 +299,21 @@
     "10.3": {
       "title": "mTLS PKI",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
-      "packages": ["pkg/mtls"],
-      "blocked_until_phase": "3"
+      "tests": [
+        "pkg/mtls/spiffe/spiffe_test.go::TestParseAgent",
+        "pkg/mtls/spiffe/spiffe_test.go::TestParseInterceptor",
+        "pkg/mtls/spiffe/spiffe_test.go::TestParseRejectsMalformed",
+        "pkg/mtls/spiffe/spiffe_test.go::TestValidateAgentRejectsMismatches",
+        "pkg/mtls/spiffe/spiffe_test.go::TestValidateInterceptorMatchesAllowlistedNamespaces",
+        "pkg/mtls/spiffe/spiffe_test.go::TestValidateInterceptorRejectsForeignNamespace",
+        "pkg/mtls/denylist/denylist_test.go::TestAddAndContains",
+        "pkg/mtls/denylist/denylist_test.go::TestContainsExpiresEntries",
+        "pkg/mtls/denylist/denylist_test.go::TestSweepEvictsAllExpired",
+        "pkg/mtls/denylist/denylist_test.go::TestConcurrentAddContainsSafe"
+      ],
+      "packages": ["pkg/mtls/spiffe", "pkg/mtls/denylist"],
+      "blocked_until_phase": "3",
+      "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The cert-manager integration, the Helm-rendered Certificate resources, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
     },
     "10.4": {
       "title": "Gateway Reliability",
@@ -295,9 +325,18 @@
     "10.5": {
       "title": "Upgrade and Rollback Strategy",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
-      "packages": ["pkg/upgrade"],
-      "blocked_until_phase": "3"
+      "tests": [
+        "pkg/runtime/upgrade/state/state_test.go::TestIsValidCanonicalTransitions",
+        "pkg/runtime/upgrade/state/state_test.go::TestIsValidIllegalTransitionsRejected",
+        "pkg/runtime/upgrade/state/state_test.go::TestRecordHappyPath",
+        "pkg/runtime/upgrade/state/state_test.go::TestRecordPauseAndResumePreservesPrior",
+        "pkg/runtime/upgrade/state/state_test.go::TestRecordPauseRejectsTerminal",
+        "pkg/runtime/upgrade/state/state_test.go::TestRecordDoublePauseIsError",
+        "pkg/runtime/upgrade/state/state_test.go::TestNewRecordAtRehydratesPausedRecord"
+      ],
+      "packages": ["pkg/runtime/upgrade/state"],
+      "blocked_until_phase": "3",
+      "notes": "Phase 3 ships the RuntimeUpgrade state machine from §10.5 (Pending → Expanding → Draining → Contracting → Complete, with Paused as a side-state). The lenny-ctl admin command surface and the SandboxTemplate-CRD interaction land with the K8s-integration phase. Schema-migration runbook tooling is covered by the Phase 1.5 migration framework."
     },
     "10.6": {
       "title": "Environment Resource and RBAC Model",

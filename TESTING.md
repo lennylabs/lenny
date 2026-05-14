@@ -1283,15 +1283,21 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Spec/18 components.** PoolScalingController. DelegationPolicy resource. RuntimeUpgrade state machine. mTLS PKI via cert-manager.
 
-**Test infrastructure to land.**
-- `tests/testinfra/kind/cluster.go` is operational; the harness brings up a Kind cluster with cert-manager.
-- `tests/tier2_component/controllers/poolscaling_test.go` against `envtest`.
-- `tests/tier5_e2e_kind/pool_upgrade_test.go` exercises the state machine end-to-end including pause/resume/rollback.
-- `tests/tier5_e2e_kind/mtls_enforcement_test.go` validates gateway↔pod mTLS, cert auto-renewal, plain-text rejection.
-- `tests/tier9_security/mtls/` is operational.
+**Test infrastructure delivered in Phase 3.**
+- `pkg/controller/poolscaling/strategy` ships the `PoolScalingStrategy` interface and the `DefaultStrategy` implementing the §4.6.2 formula (standard, mode-adjusted per §5.2, variant pool, adjusted base pool) plus the cold-start bootstrap fallback. Tests cover every worked-example variant and the `Σ variant_weights ≥ 1` rejection path.
+- `pkg/runtime/upgrade/state` ships the §10.5 `RuntimeUpgrade` state machine (`Pending → Expanding → Draining → Contracting → Complete`, with `Paused` as a side-state captured per `Record`). The `Record` type enforces pause-and-resume invariants and rejects pausing a `Complete` record.
+- `pkg/mtls/spiffe` parses both SPIFFE URI shapes from §10.3 (`spiffe://<trust-domain>/agent/{pool}/{pod-name}`, `spiffe://<trust-domain>/interceptor/{namespace}/{pod-name}`), enforces the no-userinfo / no-query / no-fragment constraints, and ships `ValidateAgent` and `ValidateInterceptor` for the NET-060 and NET-063 inbound-handshake checks.
+- `pkg/mtls/denylist` ships the in-memory, TTL-evicting certificate deny list from §10.3 (certificate revocation). The implementation is goroutine-safe and exposes opportunistic eviction on read plus an explicit `Sweep`.
+
+**Test infrastructure deferred to later phases.**
+- `tests/testinfra/kind/cluster.go` (Kind cluster harness with cert-manager) is deferred. Bringing it up requires Docker, kind, cert-manager CRDs, and a controller image — none of which exist on this branch.
+- `tests/tier2_component/controllers/poolscaling_test.go` against `envtest` is deferred. It requires the `envtest` binary plus the PoolScalingController binary; the strategy package above is the unit-testable substrate that test will drive.
+- `tests/tier5_e2e_kind/pool_upgrade_test.go` exercises the runtime-upgrade state machine end-to-end against real CRDs and pods. It is deferred until the WarmPoolController and PoolScalingController binaries exist alongside the Kind harness.
+- `tests/tier5_e2e_kind/mtls_enforcement_test.go` and `tests/tier9_security/mtls/` are deferred. The SPIFFE validation and deny-list units above are the substrate; the e2e tests need the gateway binary, cert-manager wiring, and a Kind cluster.
+- The Redis pub/sub fan-out that propagates deny-list entries across gateway replicas is deferred to the phase that ships the gateway. The single-replica primitive is in place.
 
 **Test group gating Phase 3 → Phase 3.5.**
-- `phase-3-gate`: e2e Kind smoke runs cleanly with mTLS. Pool upgrade state machine passes.
+- `phase-3-gate`: static and unit tiers pass over the new packages. The e2e Kind smoke and the mTLS enforcement test land alongside the K8s-integration phase.
 
 ### 13.7 Phase 3.5 — Admission policies + `lenny-ops` first deploy
 

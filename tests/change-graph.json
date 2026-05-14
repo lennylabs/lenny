@@ -76,6 +76,20 @@
       "component": ["tests/tier2_component/controllers/poolscaling_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/pool_upgrade_test.go"]
     },
+    "pkg/controller/poolscaling/strategy": {
+      "unit": ["pkg/controller/poolscaling/strategy/..."]
+    },
+    "pkg/runtime/upgrade/state": {
+      "unit": ["pkg/runtime/upgrade/state/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/pool_upgrade_test.go"]
+    },
+    "pkg/mtls/spiffe": {
+      "unit": ["pkg/mtls/spiffe/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/mtls_enforcement_test.go"]
+    },
+    "pkg/mtls/denylist": {
+      "unit": ["pkg/mtls/denylist/..."]
+    },
     "pkg/delegation": {
       "unit": ["pkg/delegation/..."],
       "component": ["tests/tier2_component/delegation/..."],
