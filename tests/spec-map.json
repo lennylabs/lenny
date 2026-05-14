@@ -752,11 +752,25 @@
         "pkg/api/v1/session/session_test.go::TestValidateTerminateAdmitsEveryNonTerminal",
         "pkg/api/v1/session/session_test.go::TestValidateUploadMidSessionGated",
         "pkg/api/v1/session/session_test.go::TestValidateDeriveAllowStaleGated",
-        "pkg/api/v1/session/session_test.go::TestPreconditionErrorEnvelope"
+        "pkg/api/v1/session/session_test.go::TestPreconditionErrorEnvelope",
+        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestCreateAndGet",
+        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestGetRejectsCrossTenant",
+        "pkg/gateway/sessionstore/memstore/memstore_test.go::TestListExcludesForeignTenant",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestCreateSessionReturnsCreatedRow",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionMissingReturns404",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestGetSessionCrossTenantReturns404",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestHappyPathLifecycle",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestStartRejectsFromCreated",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestInterruptRejectsFromCreated",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestFinalizeRejectsFromReady",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestResumeRejectsFromRunning",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestTerminateRejectsTerminal",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestDeleteCancelsSession",
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestListFiltersByState"
       ],
-      "packages": ["pkg/api/v1/session", "pkg/gateway/rest"],
+      "packages": ["pkg/api/v1/session", "pkg/gateway/sessionstore", "pkg/gateway/sessionstore/memstore", "pkg/gateway/sessionserver", "cmd/lenny-gateway"],
       "blocked_until_phase": "4",
-      "notes": "Phase 4 ships the §15.1 externally-visible SessionState enum, the §7.1 FailureClass enum, and the §15.1 state-mutating-endpoint precondition table as a Go-callable Validate function. The OpenAPI document, the per-endpoint request/response shapes, and the gateway binary that serves them are deferred to the K8s-integration phase."
+      "notes": "Phase 4 ships: (1) pkg/api/v1/session §15.1 state enum + precondition validator (Go-callable); (2) pkg/gateway/sessionstore Store interface and memstore in-memory backend with tenant isolation; (3) pkg/gateway/sessionserver http.Handler implementing POST /v1/sessions, GET, GET /v1/sessions/{id}, DELETE, and the five state-mutating transitions (finalize, start, interrupt, terminate, resume) — each enforces §15.1 preconditions via session.Validate and emits the INVALID_STATE_TRANSITION envelope on rejection; (4) cmd/lenny-gateway minimal binary boots the handler against memstore. Tier-3 contract tests drive the handler via httptest. The Postgres-backed store, OIDC auth middleware, workspace materialization, upload pipeline, derive/replay flows, OpenAPI document, and the §11.6 admission controller wiring are deferred to later phases — the handler surface is store-agnostic, so swapping memstore for the production store leaves the contract tests unchanged."
     },
     "15.2": {
       "title": "MCP API",

@@ -6,6 +6,7 @@ tmp/
 # package directories.
 /lenny-test
 /lenny-compliance
+/lenny-gateway
 /echo
 /streaming-echo
 /startup_latency

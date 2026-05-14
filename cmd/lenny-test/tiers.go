@@ -113,8 +113,9 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-4-gate":
 		return []tierPlan{
-			{name: "static", notes: "pkg/api/v1/session builds; precondition table parses"},
-			{name: "unit", notes: "§15.1 SessionState + FailureClass enums; §15.1 state-mutating endpoint precondition table"},
+			{name: "static", notes: "pkg/api/v1/session + sessionstore/memstore + sessionserver + cmd/lenny-gateway build"},
+			{name: "unit", notes: "§15.1 SessionState + precondition validator; memstore CRUD + tenant isolation"},
+			{name: "contract", subsets: []string{"rest-sessions"}, notes: "§15.1 REST session lifecycle against the minimal gateway: create / get / list / transitions / precondition rejections / cross-tenant 404 / INVALID_STATE_TRANSITION envelope"},
 		}
 	case "phase-4.5-gate":
 		return []tierPlan{

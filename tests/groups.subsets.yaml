@@ -248,6 +248,11 @@ subsets:
     tests:
       - tests/tier3_contract/workspaceplan/...
 
+  rest-sessions:
+    tier: contract
+    tests:
+      - tests/tier3_contract/rest_sessions/...
+
   sdk-go:
     tier: contract
     tests:

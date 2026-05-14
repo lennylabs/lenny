@@ -561,6 +561,7 @@ func contractTargets(subsets []string) ([]string, error) {
 	mapping := map[string]string{
 		"adapter-jsonl":  "./tests/tier3_contract/adapter_jsonl/...",
 		"workspaceplan":  "./tests/tier3_contract/workspaceplan/...",
+		"rest-sessions":  "./tests/tier3_contract/rest_sessions/...",
 		"sdk-go":         "./tests/tier3_contract/sdks/...",
 		"sdk-python":     "./tests/tier3_contract/sdks/...",
 		"sdk-typescript": "./tests/tier3_contract/sdks/...",

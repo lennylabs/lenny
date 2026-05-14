@@ -181,7 +181,20 @@
     "pkg/api/v1/session": {
       "unit": ["pkg/api/v1/session/..."],
       "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
-      "contract": ["tests/tier3_contract/rest_mcp/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/rest_mcp/..."],
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+    },
+    "pkg/gateway/sessionstore": {
+      "unit": ["pkg/gateway/sessionstore/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."]
+    },
+    "pkg/gateway/sessionserver": {
+      "unit": ["pkg/gateway/sessionserver/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."]
+    },
+    "cmd/lenny-gateway": {
+      "static": ["cmd/lenny-gateway/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
     "pkg/auth": {
