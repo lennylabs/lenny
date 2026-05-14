@@ -106,6 +106,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "poolscaling/strategy + runtime/upgrade/state + mtls/spiffe + mtls/denylist build"},
 			{name: "unit", notes: "§4.6.2 scaling formula, §10.5 upgrade state machine, §10.3 SPIFFE validation + cert deny list — every spec-mandated invariant tested"},
 		}
+	case "phase-3.5-gate":
+		return []tierPlan{
+			{name: "static", notes: "admission decision packages build"},
+			{name: "unit", notes: "§4.6.1 sandboxclaim_guard, §17.2 label_immutability, §4.6.3 ownership matrix — every rule asserted"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

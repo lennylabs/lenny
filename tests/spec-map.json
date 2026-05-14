@@ -96,23 +96,34 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/sandboxclaim/state/state_test.go::TestStatesAndTerminals",
-        "pkg/sandboxclaim/state/state_test.go::TestIsValidCanonicalTransitions"
+        "pkg/sandboxclaim/state/state_test.go::TestIsValidCanonicalTransitions",
+        "pkg/sandboxclaim/state/state_test.go::TestIsValidIllegalTransitionsRejected",
+        "pkg/admission/sandboxclaim_guard/guard_test.go::TestCreateAdmitsWhenNoExistingClaim",
+        "pkg/admission/sandboxclaim_guard/guard_test.go::TestCreateRejectsWhenNonTerminalClaimExists",
+        "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed",
+        "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed"
       ],
-      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry", "pkg/sandboxclaim/state"],
+      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry", "pkg/sandboxclaim/state", "pkg/admission/sandboxclaim_guard"],
       "schemas": [],
       "migrations": [],
       "chart_templates": ["charts/lenny/templates/admission/sandboxclaim-guard.yaml"],
       "depends_on_sections": ["4.6", "12.3", "13.2"],
       "blocked_until_phase": "3.5",
-      "notes": "ADR-007: SandboxClaim optimistic locking and failover fencing verification. First-class concurrent-claim chaos test required. Phase 1 ships the state machine; Phase 3.5 wires the admission webhook."
+      "notes": "ADR-007: SandboxClaim optimistic-locking + failover fencing. Phase 1 shipped the state machine; Phase 3.5 ships the admission-decision logic in pkg/admission/sandboxclaim_guard. The webhook binary (HTTP+AdmissionReview transport) and the Kind-based admission integration test are deferred to the K8s-integration phase."
     },
     "4.6.3": {
       "title": "CRD Field Ownership and Write Boundaries",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
-      "packages": ["pkg/controller/poolscaling", "pkg/admission/poolconfig"],
+      "tests": [
+        "pkg/admission/ownership/ownership_test.go::TestValidateAllowsOwnedWrites",
+        "pkg/admission/ownership/ownership_test.go::TestValidateRejectsCrossControllerWrites",
+        "pkg/admission/ownership/ownership_test.go::TestOwnerSdkWarmCircuitBreakerOverridesDefault",
+        "pkg/admission/ownership/ownership_test.go::TestAllRulesEnumerateMatrix"
+      ],
+      "packages": ["pkg/admission/ownership", "pkg/controller/poolscaling"],
       "depends_on_sections": ["4.6"],
-      "blocked_until_phase": "3.5"
+      "blocked_until_phase": "3.5",
+      "notes": "Phase 3.5 ships the §4.6.3 ownership matrix as a Go-callable validator. The Kubernetes Server-Side Apply field-manager enforcement is the primary control in production; this package mirrors the matrix so admission-webhook decisions and audit tooling can reason about ownership without round-tripping through the API server."
     },
     "4.7": {
       "title": "Runtime Adapter",
@@ -146,9 +157,16 @@
     "5.2": {
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
-      "tests": [],
-      "packages": ["pkg/pool"],
-      "blocked_until_phase": "3"
+      "tests": [
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantInitialAssignmentByGateway",
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsTenantInitialAssignmentByOtherSA",
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsCrossTenantRewrite",
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation"
+      ],
+      "packages": ["pkg/admission/label_immutability", "pkg/pool"],
+      "blocked_until_phase": "3",
+      "notes": "Phase 3.5 ships the §5.2 NET-003 / §17.2 item 5 label-immutability admission-decision logic. The webhook binary that wires this to AdmissionReview transport and the Kind-based admission integration test are deferred to the K8s-integration phase."
     },
     "5.3": {
       "title": "Isolation Profiles",

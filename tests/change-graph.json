@@ -122,6 +122,9 @@
       "unit": ["pkg/admission/label_immutability/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/label_immutability_test.go"]
     },
+    "pkg/admission/ownership": {
+      "unit": ["pkg/admission/ownership/..."]
+    },
     "pkg/admission/drain_readiness": {
       "unit": ["pkg/admission/drain_readiness/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/drain_readiness_webhook_test.go"],

@@ -1303,15 +1303,20 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
 
-**Test infrastructure to land.**
-- `tests/tier5_e2e_kind/admission_inventory_test.go` is parameterized over `features.llmProxy`, `features.drainReadiness`, `features.compliance` and verifies render-versus-expected parity.
-- `tests/tier5_e2e_kind/admission_policy_test.go` asserts every documented rejection.
-- `tests/tier5_e2e_kind/sandbox_claim_test.go` runs the ADR-007 concurrent-claim chaos test under 50+ goroutines.
-- `tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go` confirms `lenny-ops` Deployment is Ready, Lease-based leader election works, the four NetworkPolicies are applied, the PDB exists.
-- `tests/tier8_chaos/admission_webhook_outage_test.go` validates failurePolicy: Fail behavior.
+**Test infrastructure delivered in Phase 3.5.**
+- `pkg/admission/sandboxclaim_guard` is the pure-decision logic for the `lenny-sandboxclaim-guard` webhook from §4.6.1 (ADR-007). CREATE rejects when a non-terminal `SandboxClaim` already exists for the same `Sandbox`; PATCH/PUT rejects when the referenced `Sandbox.status.phase` is not `claimed`. Rejection messages match the spec verbatim.
+- `pkg/admission/label_immutability` is the pure-decision logic for the `lenny-label-immutability` webhook from §17.2 item 5 / §5.2 NET-003. The three immutable agent-pod labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) reject any mutation; `lenny.dev/tenant-id` allows `unset → {tenant_id}` only for the gateway ServiceAccount and `{tenant_id} → unassigned` only for the WarmPoolController ServiceAccount.
+- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `SandboxTemplate`, `SandboxWarmPool` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `Sandbox`, and `SandboxClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
+
+**Test infrastructure deferred to later phases.**
+- The webhook binaries that wrap each decision package with a `k8s.io/api/admission/v1` AdmissionReview HTTP handler are deferred to the K8s-integration phase. The handlers are thin shims over the decision packages above; they need the controller-runtime stack and a cert-manager-issued serving certificate.
+- `tests/tier5_e2e_kind/admission_inventory_test.go`, `admission_policy_test.go`, `sandbox_claim_test.go` (ADR-007 concurrent-claim chaos test), `label_immutability_test.go`, and `lenny_ops_first_deploy_test.go` are deferred. They need Kind, cert-manager, the webhook binaries, and the rendered Helm chart.
+- `tests/tier8_chaos/admission_webhook_outage_test.go` (`failurePolicy: Fail` chaos) is deferred to the same phase.
+- The `lenny-pool-config-validator` webhook is also deferred — its semantic rule set (the §10.1 tiered-cap vs `terminationGracePeriodSeconds` budget and the `checkpointBarrierAckTimeoutSeconds` floor) depends on §10.1 details that are out of scope for Phase 3.5.
+- `lenny-ops` first-deploy and its NetworkPolicies are deferred. The lenny-ops binary does not exist yet; the §25.4 correlation primitive shipped in Phase 2.5 (`pkg/observability/correlation`) is the substrate it will use.
 
 **Test group gating Phase 3.5 → Phase 4.**
-- `phase-3.5-gate`: admission_inventory passes at the Phase 3.5 feature-flag values. mTLS end-to-end works. `lenny-ops` is healthy. Critical-path e2e on Kind passes.
+- `phase-3.5-gate`: static and unit tiers pass over the new admission-decision packages. The e2e-Kind admission and chaos suites land alongside the K8s-integration phase.
 
 ### 13.8 Phase 4 — Session manager + REST
 
