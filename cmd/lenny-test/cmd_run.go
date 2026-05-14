@@ -28,7 +28,8 @@ func runRun(args []string) int {
 	groupFlag := fs.String("group", "", "named group from tests/groups.yaml")
 	tierFlag := fs.String("tier", "", "single tier")
 	maxTierFlag := fs.String("max-tier", "", "run all tiers up to and including this one")
-	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes")
+	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
+	sinceFlag := fs.String("since", "", "diff against the given git ref (e.g. main, HEAD~5) instead of the working tree")
 	specFlag := fs.String("spec", "", "comma-separated spec sections")
 	pkgFlag := fs.String("pkg", "", "comma-separated source packages")
 	dryRunFlag := fs.Bool("dry-run", false, "resolve the selector and print what would run; do not execute")
@@ -58,7 +59,8 @@ func runRun(args []string) int {
 		group:       *groupFlag,
 		tier:        *tierFlag,
 		maxTier:     *maxTierFlag,
-		changed:     *changedFlag,
+		changed:     *changedFlag || *sinceFlag != "",
+		since:       *sinceFlag,
 		specs:       splitNonEmpty(*specFlag),
 		pkgs:        splitNonEmpty(*pkgFlag),
 		dryRun:      *dryRunFlag,
@@ -94,6 +96,7 @@ type selector struct {
 	tier        string
 	maxTier     string
 	changed     bool
+	since       string // git ref to diff against; empty means working tree
 	specs       []string
 	pkgs        []string
 	dryRun      bool
@@ -156,7 +159,7 @@ func (s selector) resolve() (resolvedSelector, error) {
 			}
 		}
 	case s.changed:
-		plan.tiers = resolveChangedPlan()
+		plan.tiers = resolveChangedPlanFor(s.since)
 		if len(plan.tiers) == 0 {
 			// No applicable changes; default to static + unit so the
 			// developer at least gets a clean lint pass.

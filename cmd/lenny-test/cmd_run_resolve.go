@@ -11,18 +11,20 @@ import (
 	"strings"
 )
 
-// resolveChangedPlan walks `git diff --name-only` and maps each
-// changed path through tests/change-graph.json to a set of tiers.
-//
-// The change graph entries look like:
-//
-//	"pkg/quota": {"unit": [...], "component": [...], "integration": [...]}
-//
-// We accumulate the set of tiers each match touches, then emit
-// tierPlans in canonical order. The static tier is always included
-// (every change re-runs the lint set).
+// resolveChangedPlan walks `git diff --name-only` against the
+// working tree. Equivalent to resolveChangedPlanFor("").
 func resolveChangedPlan() []tierPlan {
-	paths := changedPaths()
+	return resolveChangedPlanFor("")
+}
+
+// resolveChangedPlanFor diffs against the given git ref. An empty
+// ref reads the working tree (staged + unstaged + untracked); a
+// ref like "main" or "HEAD~5" diffs from that ref to HEAD.
+//
+// Maps each changed path through tests/change-graph.json to a set
+// of tiers; the static tier is always included.
+func resolveChangedPlanFor(ref string) []tierPlan {
+	paths := changedPathsFor(ref)
 	if len(paths) == 0 {
 		return nil
 	}
@@ -99,18 +101,33 @@ func resolvePkgsPlan(pkgs []string) []tierPlan {
 }
 
 // changedPaths returns the union of staged + unstaged + untracked
-// changes per `git`.
+// changes per `git`. Equivalent to changedPathsFor("").
 func changedPaths() []string {
+	return changedPathsFor("")
+}
+
+// changedPathsFor returns the changed paths between `ref` and HEAD.
+// When ref is empty, falls back to the working-tree diff (staged +
+// unstaged + untracked).
+func changedPathsFor(ref string) []string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil
 	}
 	seen := map[string]bool{}
 	out := []string{}
-	for _, args := range [][]string{
-		{"diff", "--name-only"},
-		{"diff", "--name-only", "--staged"},
-		{"ls-files", "--others", "--exclude-standard"},
-	} {
+	var sets [][]string
+	if ref == "" {
+		sets = [][]string{
+			{"diff", "--name-only"},
+			{"diff", "--name-only", "--staged"},
+			{"ls-files", "--others", "--exclude-standard"},
+		}
+	} else {
+		sets = [][]string{
+			{"diff", "--name-only", ref + "..HEAD"},
+		}
+	}
+	for _, args := range sets {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repoRoot()
 		body, err := cmd.Output()
