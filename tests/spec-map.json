@@ -379,7 +379,17 @@
         "pkg/auth/auth_test.go::TestExtractTenantMultiTenantClaimMissing",
         "pkg/auth/auth_test.go::TestExtractTenantMultiTenantUnregistered",
         "pkg/auth/auth_test.go::TestExtractTenantMultiTenantRegistered",
-        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantRegistryError"
+        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantRegistryError",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestSingleTenantIgnoresClaim",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestMultiTenantClaimMissingReturns401",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestMultiTenantClaimBadFormatReturns401",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestMultiTenantUnregisteredReturns403",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestMultiTenantRegisteredAccepted",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestExpiredTokenReturns401",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestTamperedTokenReturns401",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestNoCredentialsRejectedWhenAuthRequired",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
+        "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403"
       ],
       "packages": ["pkg/auth"],
       "blocked_until_phase": "4.5",
@@ -525,7 +535,11 @@
         "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyDifferentBodyReturns422",
         "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyOversizeKeyRejected",
         "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyNoHeaderIsPassthrough",
-        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyTenantScoped"
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyTenantScoped",
+        "tests/tier4_integration/idempotency_test.go::TestIdempotencyReplayThroughBinary",
+        "tests/tier4_integration/idempotency_test.go::TestIdempotencyDifferentBodyReusedThroughBinary",
+        "tests/tier4_integration/idempotency_test.go::TestIdempotencyOversizeKeyThroughBinary",
+        "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary"
       ],
       "packages": ["pkg/idempotency", "pkg/gateway/middleware/idempotency"],
       "blocked_until_phase": "7",
@@ -686,7 +700,16 @@
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsTypMutationOnRotation",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateExpRespectsPerDialectCap",
         "pkg/tokenexchange/tokenexchange_test.go::TestValidateExpTruncatesToWholeSeconds",
-        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsExpInPast"
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsExpInPast",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestRotationHappyPath",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestScopeBroadeningRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestCrossTenantExchangeRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestChildMintingProducesA2ADelegation",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestExpiredSubjectRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestCallerTypeElevationRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestMissingCallerRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp"
       ],
       "packages": ["pkg/credential", "pkg/admission/credfsgroup", "pkg/tokenexchange"],
       "blocked_until_phase": "12a",
@@ -776,7 +799,9 @@
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestResumeRejectsFromRunning",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestTerminateRejectsTerminal",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestDeleteCancelsSession",
-        "tests/tier3_contract/rest_sessions/sessions_test.go::TestListFiltersByState"
+        "tests/tier3_contract/rest_sessions/sessions_test.go::TestListFiltersByState",
+        "tests/tier4_integration/session_lifecycle_test.go::TestSessionLifecycleAgainstRealGateway",
+        "tests/tier4_integration/session_lifecycle_test.go::TestCrossTenantLookupRejectedAgainstRealGateway"
       ],
       "packages": ["pkg/api/v1/session", "pkg/gateway/sessionstore", "pkg/gateway/sessionstore/memstore", "pkg/gateway/sessionserver", "cmd/lenny-gateway"],
       "blocked_until_phase": "4",
@@ -893,14 +918,21 @@
     "15.6": {
       "title": "Client SDKs",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/sdks/go_client_test.go",
+        "tests/tier3_contract/sdks/python_client_test.go",
+        "tests/tier3_contract/sdks/typescript_client_test.go",
+        "tests/tier3_contract/sdks/harness/"
+      ],
       "packages": ["sdks/client/go", "sdks/client/python", "sdks/client/typescript"],
       "blocked_until_phase": "6"
     },
     "15.7": {
       "title": "Runtime Author SDKs",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/sdks/runtime_sdk_test.go"
+      ],
       "packages": ["sdks/runtime/go", "sdks/runtime/python", "sdks/runtime/typescript"],
       "blocked_until_phase": "2"
     },

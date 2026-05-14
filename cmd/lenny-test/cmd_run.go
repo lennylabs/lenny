@@ -586,6 +586,17 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command(self, "validate-diagnosis").CombinedOutput()
 			return string(out), err
 		}},
+		{"validate-maps", func() (string, error) {
+			// §5 spec-map integrity: spec_file existence,
+			// change-graph file existence, every tier-2+ test file
+			// appears in spec-map.
+			self, err := os.Executable()
+			if err != nil {
+				return "", fmt.Errorf("locate self: %w", err)
+			}
+			out, err := exec.Command(self, "validate-maps").CombinedOutput()
+			return string(out), err
+		}},
 	}
 
 	for _, c := range checks {

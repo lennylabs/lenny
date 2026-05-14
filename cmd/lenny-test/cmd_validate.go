@@ -43,6 +43,8 @@ func runValidateMaps(args []string) int {
 		validateChangeGraphVersion(changeGraphPath),
 		validateSpecMapPaths(specMapPath, root),
 		validateChangeGraphPaths(changeGraphPath, root),
+		validateChangeGraphFileExistence(changeGraphPath, root),
+		validateTestFilesMapped(specMapPath, root),
 	}
 
 	failed := 0
@@ -251,6 +253,169 @@ func validateSpecMapPaths(specMapPath, root string) checkResult {
 			fmt.Sprintf("%d missing spec_file reference(s): %s", len(missing), strings.Join(preview, "; ")))
 	}
 	return newResult("spec-map paths", true, fmt.Sprintf("%d section(s); every spec_file resolves", len(doc.Sections)))
+}
+
+// validateChangeGraphFileExistence walks every change-graph glob
+// key and confirms it points at a file or directory that actually
+// exists. Catches typos and renames that leave stale entries.
+//
+// Globs ending with `/...` (Go-style recursive) or `/` (directory
+// hint) are matched against directories; other entries are matched
+// against either a directory or a file. Entries that legitimately
+// reference yet-to-land paths are tolerated when explicitly listed
+// in tests/change-graph-pending.txt (one path per line); this lets
+// the change graph commit ahead of the implementation.
+func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult {
+	data, err := os.ReadFile(changeGraphPath)
+	if err != nil {
+		return newResult("change-graph file-existence", false, err.Error())
+	}
+	var doc struct {
+		Globs map[string]any `json:"globs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("change-graph file-existence", false, err.Error())
+	}
+	pending := readPendingPaths(filepath.Join(root, "tests", "change-graph-pending.txt"))
+	missing := []string{}
+	for key := range doc.Globs {
+		if pending[key] {
+			continue
+		}
+		// Strip trailing `/...` or `/` to test the directory itself.
+		probe := strings.TrimSuffix(key, "/...")
+		probe = strings.TrimSuffix(probe, "/")
+		if _, err := os.Stat(filepath.Join(root, probe)); err != nil {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		preview := missing
+		if len(preview) > 5 {
+			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(missing)-5))
+		}
+		return newResult("change-graph file-existence", false,
+			fmt.Sprintf("%d glob(s) point at missing paths: %s",
+				len(missing), strings.Join(preview, "; ")))
+	}
+	return newResult("change-graph file-existence", true,
+		fmt.Sprintf("%d glob(s); every path resolves on disk", len(doc.Globs)))
+}
+
+// validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
+// files and confirms each is referenced from at least one section's
+// `tests` list in spec-map.json (or is explicitly exempt via
+// tests/spec-map-exceptions.yaml — though this version of the
+// validator does not yet parse exceptions per-file). Test files
+// matching the `testinfra/` or `testdata/` prefix are exempt by
+// construction; same for fuzz_test.go and property_test.go which
+// live alongside their pkg/.
+func validateTestFilesMapped(specMapPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("test files mapped", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("test files mapped", false, err.Error())
+	}
+	mapped := map[string]bool{}
+	for _, sec := range doc.Sections {
+		for _, t := range sec.Tests {
+			// Normalise: a test entry might be a file path, a
+			// directory glob (.../...), or a TestName attached via
+			// "::". Strip the trailing /... or ::Name.
+			path := t
+			if i := strings.Index(path, "::"); i >= 0 {
+				path = path[:i]
+			}
+			path = strings.TrimSuffix(path, "/...")
+			path = strings.TrimSuffix(path, "/")
+			mapped[path] = true
+		}
+	}
+
+	// Walk every _test.go under the tier dirs at or above component.
+	tierDirs := []string{
+		"tests/tier2_component",
+		"tests/tier3_contract",
+		"tests/tier4_integration",
+		"tests/tier5_e2e_kind",
+		"tests/tier6_e2e_cloud",
+		"tests/tier7_load",
+		"tests/tier8_chaos",
+		"tests/tier9_security",
+		"tests/tier10_conformance",
+	}
+	orphans := []string{}
+	for _, dir := range tierDirs {
+		base := filepath.Join(root, dir)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if !strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			// Scaffold test files are deliberate placeholders ahead
+			// of their backing implementation; exempt by convention
+			// (filename suffix or every test is a t.Skip scaffold).
+			base := filepath.Base(path)
+			if base == "scaffolds_test.go" {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			// Try direct match, parent dir match, parent's parent match.
+			if mapped[rel] {
+				return nil
+			}
+			parent := filepath.Dir(rel)
+			for parent != "." && parent != "/" {
+				if mapped[parent] {
+					return nil
+				}
+				parent = filepath.Dir(parent)
+			}
+			orphans = append(orphans, rel)
+			return nil
+		})
+	}
+	if len(orphans) > 0 {
+		preview := orphans
+		if len(preview) > 5 {
+			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(orphans)-5))
+		}
+		return newResult("test files mapped", false,
+			fmt.Sprintf("%d test file(s) absent from spec-map: %s",
+				len(orphans), strings.Join(preview, "; ")))
+	}
+	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
+}
+
+// readPendingPaths reads tests/change-graph-pending.txt — one path
+// per line, '#' starts a comment. Returns an empty set when the
+// file is absent.
+func readPendingPaths(path string) map[string]bool {
+	out := map[string]bool{}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out[line] = true
+	}
+	return out
 }
 
 // validateChangeGraphPaths confirms each glob key points at a real

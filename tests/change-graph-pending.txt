@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT
+#
+# Change-graph entries whose target paths don't yet exist on disk
+# but are committed ahead of the implementation phase that ships
+# them. validate-maps consults this list and exempts the entries
+# from the file-existence check.
+#
+# Format: one path per line, matching the change-graph key exactly
+# (including trailing `/` or `/...`). `#` starts a comment.
+#
+# Drop an entry from this file once the matching directory or file
+# ships under pkg/, cmd/, charts/, migrations/, or sdks/.
+
+# Phase 3+ deliverables.
+charts/lenny/
+migrations/
+pkg/admission/drain_readiness
+pkg/controller/warmpool
+
+# Phase 4+ — gateway internals.
+pkg/gateway/admin
+pkg/gateway/llm_proxy
+pkg/gateway/session_orchestrator
+pkg/workspaceplan
+
+# Phase 5+ — MCP fabric.
+pkg/mcp
+
+# Phase 5+ — stores.
+pkg/store/artifact
+pkg/store/credentialpool
+pkg/store/event
+pkg/store/lease
+pkg/store/memory
+pkg/store/quota
+pkg/store/session
+pkg/store/token
+
+# Phase 9+ — delegation runtime.
+cmd/runtimes/delegation-echo/
+
+# Phase 6+ — SDKs.
+sdks/client/go/
+sdks/client/python/
+sdks/client/typescript/
+sdks/runtime/go/
+sdks/runtime/python/
+sdks/runtime/typescript/
+
+# Phase 17b+ — recommendations rule engine.
+pkg/recommendations/rules
