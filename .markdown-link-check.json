@@ -1,11 +1,14 @@
 {
+  "_comment": "Lenny docs link-check policy. Jekyll renders docs/*.md to docs/*.html; the link checker runs against .md sources, so internal cross-doc links pointing at .html siblings (the rendered URL the docs site uses) are rewritten back to .md so the checker can resolve them on disk. The same rewriting applies to .html fragments. External patterns we cannot fetch (schemas.lenny.dev placeholders, localhost loops) are ignored. See scripts/check-markdown-links.sh and TESTING.md §16.",
   "ignorePatterns": [
     { "pattern": "^https://schemas\\.lenny\\.dev/" },
     { "pattern": "^https?://localhost" },
     { "pattern": "^https?://127\\.0\\.0\\.1" }
   ],
   "replacementPatterns": [
-    { "pattern": "^/", "replacement": "{{BASEURL}}/" }
+    { "pattern": "^/", "replacement": "{{BASEURL}}/" },
+    { "pattern": "\\.html#", "replacement": ".md#" },
+    { "pattern": "\\.html$", "replacement": ".md" }
   ],
   "httpHeaders": [
     { "urls": ["https://github.com"], "headers": { "User-Agent": "lenny-link-check" } }
