@@ -70,6 +70,18 @@ func K6Available(t testing.TB) bool {
 	return err == nil
 }
 
+// SkipUnlessAvailable t.Skips when k6 is not on PATH. Matches the
+// chaos.SkipUnlessAvailable / envtest.SkipUnlessAvailable
+// convention. Callers that need conditional execution (a load
+// scenario that has both a k6 and a fallback path) can still call
+// K6Available directly.
+func SkipUnlessAvailable(t testing.TB) {
+	t.Helper()
+	if !K6Available(t) {
+		t.Skip("load.SkipUnlessAvailable: k6 not on PATH; install via `brew install k6` or per https://k6.io")
+	}
+}
+
 // RunScenario invokes k6 against scenarios/<name>/main.js and parses
 // the produced summary JSON.
 func RunScenario(t testing.TB, scenario string, opts Options) Result {

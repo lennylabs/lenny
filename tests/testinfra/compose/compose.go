@@ -48,12 +48,29 @@ type Stack struct {
 	profile Profile
 }
 
-// Available reports whether docker and docker compose are reachable
-// on this host. Callers that want a hard skip can use:
+// SkipUnlessAvailable t.Skips with a precise reason when docker or
+// docker compose is unreachable. Matches the convention used by
+// chaos.SkipUnlessAvailable, envtest.SkipUnlessAvailable, and
+// kind.PrerequisitesAvailable so callers can write one line:
 //
-//	if !compose.Available(t) {
-//	    t.Skip("docker compose not available")
-//	}
+//	compose.SkipUnlessAvailable(t)
+//	stack := compose.Up(t, compose.ProfileDefault)
+func SkipUnlessAvailable(t testing.TB) {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skipf("compose.SkipUnlessAvailable: docker not on PATH: %v", err)
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skipf("compose.SkipUnlessAvailable: docker daemon not reachable: %v", err)
+	}
+	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
+		t.Skipf("compose.SkipUnlessAvailable: docker compose v2 plugin not present: %v", err)
+	}
+}
+
+// Available reports whether docker and docker compose are reachable
+// on this host. Callers usually prefer SkipUnlessAvailable above;
+// Available is kept for code paths that need a non-skipping check.
 func Available(t testing.TB) bool {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {

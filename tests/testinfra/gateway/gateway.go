@@ -33,6 +33,20 @@ type Process struct {
 	stderr  *os.File
 }
 
+// SkipUnlessAvailable t.Skips when the prerequisites for booting
+// the gateway (the `go` toolchain) are missing. Matches the
+// chaos / envtest / kind / compose / load convention so callers
+// can guard the test in one line:
+//
+//	gateway.SkipUnlessAvailable(t)
+//	gw := gateway.Start(t)
+func SkipUnlessAvailable(t testing.TB) {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("gateway.SkipUnlessAvailable: go not on PATH: %v", err)
+	}
+}
+
 // Start builds + spawns cmd/lenny-gateway on a random free port and
 // returns when /v1/sessions is responsive. Skips the test when go is
 // not on PATH (CI environments without Go).
