@@ -1484,11 +1484,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.28 Phase 13 — Full observability + audit + `lenny-backup` + compliance webhooks
 
-**Test infrastructure to land.**
-- `tests/tier2_component/stores/event_store_test.go` extended for hash-chain, OCSF, EventBus publish state, retranscribe worker.
-- `tests/tier4_integration/audit_pipeline_test.go` end-to-end including SIEM mock.
-- `tests/tier5_e2e_kind/admission_data_residency_test.go` and `admission_t4_node_isolation_test.go`.
-- `tests/tier5_e2e_kind/backup_restore_test.go` exercises the §25.11 API end-to-end against Postgres and MinIO.
+**Test infrastructure delivered in Phase 13.**
+- `pkg/audit` ships the §11.7 audit-log enums: `ChainIntegrity` (verified, broken, unchecked, rechained_post_outage, gap_suspected, redacted_gdpr) with `IsAlarming` mapping to the §16.5 `AuditChainGap` alert; `ComplianceProfile` (none, soc2, fedramp, hipaa) with `RequiresSIEM` mapping; `RetentionPreset` (soc2, fedramp-high, hipaa, nis2-dora, custom) with `PresetDays`, `PresetWindow`, `CompatibleProfiles`, and `ValidatePairing`; `OCSFTranslationState` (pending, retry_pending, succeeded, dead_lettered) with `IsTerminal` mapping.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier2_component/stores/event_store_test.go` (extended for hash-chain verifier, OCSF translator, EventBus publish state, retranscribe worker) is deferred. It needs the gateway's EventStore writer and the OCSF translator binary.
+- `tests/tier4_integration/audit_pipeline_test.go` (end-to-end including the SIEM mock) is deferred. It needs the gateway, Postgres, and the §11.7 per-tenant advisory lock implementation.
+- `tests/tier5_e2e_kind/admission_data_residency_test.go` and `tests/tier5_e2e_kind/admission_t4_node_isolation_test.go` are deferred to the K8s-integration phase that ships the corresponding admission webhooks.
+- `tests/tier5_e2e_kind/backup_restore_test.go` (§25.11 API end-to-end against Postgres and MinIO) is deferred to the K8s-integration phase that ships `lenny-backup`.
 
 ### 13.29 Phase 13.5 — Pre-hardening full-system load baseline
 

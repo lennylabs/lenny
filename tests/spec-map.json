@@ -479,9 +479,22 @@
     "11.7": {
       "title": "Audit Logging",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "pkg/audit/audit_test.go::TestAllChainIntegritiesIsExhaustive",
+        "pkg/audit/audit_test.go::TestChainIntegrityIsAlarming",
+        "pkg/audit/audit_test.go::TestAllComplianceProfilesIsExhaustive",
+        "pkg/audit/audit_test.go::TestComplianceProfileRequiresSIEM",
+        "pkg/audit/audit_test.go::TestAllRetentionPresetsIsExhaustive",
+        "pkg/audit/audit_test.go::TestPresetDaysMatchesSpec",
+        "pkg/audit/audit_test.go::TestPresetCompatibilityMatrix",
+        "pkg/audit/audit_test.go::TestValidatePairingHappyPath",
+        "pkg/audit/audit_test.go::TestValidatePairingMismatches",
+        "pkg/audit/audit_test.go::TestAllOCSFStatesIsExhaustive",
+        "pkg/audit/audit_test.go::TestOCSFStateIsTerminal"
+      ],
       "packages": ["pkg/audit", "pkg/store/event"],
-      "blocked_until_phase": "13"
+      "blocked_until_phase": "13",
+      "notes": "Phase 13 ships the §11.7 audit-log enums (ChainIntegrity, ComplianceProfile, OCSFTranslationState) and the §16.4 RetentionPreset → days mapping with the compliance-profile compatibility matrix. The audit-log row writer, the per-tenant Postgres advisory lock, the SIEM forwarder, the OCSF translator, and the audit_log_deferred_writes reconciliation flow are deferred to the K8s-integration phase that ships the gateway and lenny-ops."
     },
     "12.1": {
       "title": "Storage Design Principle",

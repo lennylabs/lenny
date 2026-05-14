@@ -141,6 +141,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/checkpoint builds"},
 			{name: "unit", notes: "§4.4 Level + Trigger + Outcome + ResumeMode enums; ConsistencyForLevel; RetryBudgetFor (eviction vs non-eviction); WorkspaceSizePreCheck; FreshnessCheck"},
 		}
+	case "phase-13-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/audit builds"},
+			{name: "unit", notes: "§11.7 ChainIntegrity, ComplianceProfile, OCSFTranslationState enums; §16.4 RetentionPreset → days mapping and compatibility matrix"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

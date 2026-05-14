@@ -138,6 +138,10 @@
     "pkg/admission/ownership": {
       "unit": ["pkg/admission/ownership/..."]
     },
+    "pkg/audit": {
+      "unit": ["pkg/audit/..."],
+      "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
+    },
     "pkg/api/v1/session": {
       "unit": ["pkg/api/v1/session/..."],
       "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
