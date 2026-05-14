@@ -20,6 +20,14 @@
 //     subdirectories are allowed for organization
 //   - The file is treated as bytes; line-ending normalisation is
 //     up to the caller (use NormalizeNewlines if needed)
+//
+// # Environment variables
+//
+//	GOLDEN_UPDATE  When set to "1", every golden assertion in the
+//	               test binary rewrites its file from current output.
+//	               Equivalent to `go test -update-golden`. Use one or
+//	               the other; not both. Captured at flag-parse time
+//	               (the start of the binary), not per-test.
 package golden
 
 import (

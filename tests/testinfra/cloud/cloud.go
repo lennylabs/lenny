@@ -8,6 +8,12 @@
 // provider scripts under scripts/cloud/<provider>/{up,down}.sh.
 // When the relevant SDK / CLI is not installed (gcloud, aws, az)
 // the test skips with a precise diagnosis.
+//
+// # Environment variables
+//
+//	LENNY_CLOUD_PROVIDER  Selects the active provider: gke, eks, aks.
+//	                      Unset / empty → tests that gate on a
+//	                      specific provider skip.
 package cloud
 
 import (

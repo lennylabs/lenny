@@ -18,6 +18,17 @@
 //	cfg := env.RESTConfig()
 //	cl, _ := client.New(cfg, client.Options{})
 //	// ... reconcile ...
+//
+// # Environment variables
+//
+//	KUBEBUILDER_ASSETS  Path to the kube-apiserver + etcd binaries
+//	                    that envtest spawns. Set by `setup-envtest
+//	                    use 1.31.x` (a controller-runtime tool).
+//	                    Required; SkipUnlessAvailable short-circuits
+//	                    when unset and no fallback location resolves.
+//	LENNY_ENVTEST_REAL  When set to "1", forces envtest to run even
+//	                    if a faster in-process fake would suffice.
+//	                    Default (unset) lets the package choose.
 package envtest
 
 import (

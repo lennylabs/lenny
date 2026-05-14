@@ -17,6 +17,22 @@
 // raw cluster — tests that need the chart should still call
 // SkipUnlessAvailable + EnsureCluster + assert that the namespace
 // is reachable, then t.Skip the chart-dependent assertions.
+//
+// # Environment variables
+//
+//	LENNY_KIND_CLUSTER       Cluster name to create / reuse.
+//	                         Default: lenny-e2e.
+//	LENNY_KIND_SKIP_BRINGUP  When "1", EnsureCluster expects an
+//	                         existing cluster and only wires the
+//	                         handle. For CI workflows that
+//	                         provision the cluster as a separate
+//	                         step.
+//	LENNY_KIND_TEARDOWN      When "1", EnsureCluster registers a
+//	                         t.Cleanup that calls Delete() at the
+//	                         end of the bringing-up test. Default
+//	                         (unset) keeps the cluster across
+//	                         tests to amortize the ~30s bring-up
+//	                         cost.
 package kind
 
 import (

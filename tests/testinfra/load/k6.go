@@ -19,6 +19,14 @@
 // The baseline file format mirrors the structure tests/tier7_load/
 // baselines/startup_latency.json already uses: a JSON document with
 // per-percentile latency, throughput, and error rate.
+//
+// # Environment variables
+//
+//	LENNY_UPDATE_BASELINE  When "1", AssertBaseline rewrites the
+//	                       stored baseline JSON from the current
+//	                       k6 run instead of comparing against it.
+//	                       Use after a deliberate perf change has
+//	                       been reviewed and approved.
 package load
 
 import (
