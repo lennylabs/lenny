@@ -596,9 +596,21 @@
     "13.1": {
       "title": "Pod Security",
       "spec_file": "spec/13_security-model.md",
-      "tests": [],
-      "packages": ["pkg/admission/podsecurity"],
-      "blocked_until_phase": "3.5"
+      "tests": [
+        "pkg/podsecurity/podsecurity_test.go::TestValidateAcceptsWellFormedAgentPod",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsHostSharing",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMissingFSGroup",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsWrongFSGroup",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsRoot",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAllowPrivilegeEscalation",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsPrivilegedContainer",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMutableRootFS",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities"
+      ],
+      "packages": ["pkg/podsecurity"],
+      "blocked_until_phase": "14",
+      "notes": "Phase 14 ships the §13.1 pod-spec validator: every host-sharing flag forbidden (shareProcessNamespace, hostPID, hostNetwork, hostIPC → POD_SPEC_HOST_SHARING_FORBIDDEN), pod-level fsGroup = lenny-cred-readers GID (POD_SPEC_CRED_FSGROUP_MISSING), pod-level runAsNonRoot=true, per-container allowPrivilegeEscalation=false / privileged=false / readOnlyRootFilesystem=true / capabilities.drop=[ALL] / capabilities.add=[]. The Kubernetes admission webhook that wraps this validator and the lenny-preflight startup hard-fail are deferred to the K8s-integration phase."
     },
     "13.2": {
       "title": "Network Isolation",

@@ -156,6 +156,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/experiment builds"},
 			{name: "unit", notes: "§10.7 Status, TargetingMode, Sticky, Propagation enums; Definition validation including reserved control id + Σ weights < 1; HMAC-SHA256 bucketing determinism + distribution + ordering + experiment-id independence"},
 		}
+	case "phase-14-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/podsecurity builds"},
+			{name: "unit", notes: "§13.1 host-sharing prohibition (shareProcessNamespace/hostPID/hostNetwork/hostIPC); SecurityContext invariants (runAsNonRoot, allowPrivilegeEscalation, privileged, readOnlyRootFilesystem, drop ALL, no add); fsGroup = lenny-cred-readers GID"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

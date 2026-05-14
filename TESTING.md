@@ -1507,11 +1507,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.30 Phase 14 — Comprehensive security hardening
 
-**Test infrastructure to land.**
-- Image signing assertion in `tests/tier9_security/image_signing_test.go`.
-- Advanced NetworkPolicy refinement in `tests/tier9_security/network_policy/`.
-- seccomp profile assertions.
-- External pen-test driver under `tests/tier9_security/pentest/`.
+**Test infrastructure delivered in Phase 14.**
+- `pkg/podsecurity` ships the §13.1 pod-spec validator: rejects every host-sharing flag (`shareProcessNamespace`, `hostPID`, `hostNetwork`, `hostIPC` → `POD_SPEC_HOST_SHARING_FORBIDDEN`), requires pod-level `fsGroup = lenny-cred-readers GID` (`POD_SPEC_CRED_FSGROUP_MISSING`) and `runAsNonRoot = true`, and enforces per-container `allowPrivilegeEscalation = false`, `privileged = false`, `readOnlyRootFilesystem = true`, `capabilities.drop = [ALL]`, and `capabilities.add = []`. `PodSecurityError.HasViolation` lets callers assert which §13.1 rejection code fired.
+
+**Test infrastructure deferred to later phases.**
+- The Kubernetes admission webhook that wraps `pkg/podsecurity.ValidateAgentPod` is deferred to the K8s-integration phase that ships the webhook server + cert-manager-issued serving certificate.
+- The `lenny-preflight` startup hard-fail is deferred to the same phase; it imports this package and stops the install when any Lenny-managed Deployment / DaemonSet / Job pod template fails the validator.
+- `tests/tier9_security/image_signing_test.go` (cosign verification at admission) is deferred; the §13.1 validator above is the orthogonal posture control.
+- `tests/tier9_security/network_policy/` (CIDR drift, default-deny, gateway-egress allowlist enforcement) is deferred to the K8s-integration phase.
+- seccomp profile assertions and the external pen-test driver under `tests/tier9_security/pentest/` are deferred to the same phase.
 
 ### 13.31 Phase 14.5 — Post-hardening SLO re-validation
 

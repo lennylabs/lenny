@@ -152,6 +152,10 @@
       "component": ["tests/tier2_component/experiments/..."],
       "integration": ["tests/tier4_integration/experiment_routing_test.go"]
     },
+    "pkg/podsecurity": {
+      "unit": ["pkg/podsecurity/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/admission_policy_test.go"]
+    },
     "pkg/api/v1/session": {
       "unit": ["pkg/api/v1/session/..."],
       "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
