@@ -174,7 +174,10 @@ jobs:
     name: tier 4 — integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [component, contract]
+    # The tier hierarchy is gating: failures in static/unit invalidate
+    # higher tiers' assumptions. Listing static and unit here
+    # short-circuits a wasted integration runner when Tier 0/1 is red.
+    needs: [static, unit, component, contract]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
@@ -316,3 +319,8 @@ jobs:
             gh pr comment "${PR_NUMBER}" --body-file pr-summary.md
             echo "posted new comment"
           fi
+      - name: Fail when the aggregated verdict is not PASS
+        # Posted after the comment so reviewers always see the
+        # rollup, regardless of overall verdict. Branch-protection
+        # rules that require pr-summary now gate on this step.
+        run: ./bin/lenny-test report --dir tests/results --output json | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["verdict"]=="PASS" else 1)'

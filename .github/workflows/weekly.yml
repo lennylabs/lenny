@@ -59,7 +59,9 @@ jobs:
     name: weekly roll-up summary
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [e2e-cloud-full]
+    # load-full-system also uploads a verdict; include it so the
+    # rollup never fires before its sibling completes.
+    needs: [e2e-cloud-full, load-full-system]
     if: always()
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -83,6 +85,8 @@ jobs:
                 cp "$f" "tests/results/$(basename "$(dirname "$f")").json"
               done
           ./bin/lenny-test report --dir tests/results --output markdown >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when any verdict failed
+        run: ./bin/lenny-test report --dir tests/results --output json | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["verdict"]=="PASS" else 1)'
 
   load-full-system:
     name: tier 7 — load (full-system)
