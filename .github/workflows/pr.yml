@@ -54,6 +54,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Restore tool cache (~/go/bin)
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            lenny-go-bin-v1-${{ runner.os }}-
+      - name: Install static-tier tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          go install mvdan.cc/gofumpt@latest
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          go install github.com/bufbuild/buf/cmd/buf@latest
+      - name: Add tool bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Validate maps
@@ -61,7 +78,7 @@ jobs:
       - name: Validate diagnosis coverage
         run: ./bin/lenny-test validate-diagnosis
       - name: Run static tier
-        run: ./bin/lenny-test --tier static
+        run: ./bin/lenny-test --tier static --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,7 +101,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run unit tier
-        run: ./bin/lenny-test --tier unit
+        run: ./bin/lenny-test --tier unit --output github-annotations
       - name: Coverage report (§22.1 80% floor; informational today)
         # The 80% floor in §22.1 applies to "new code"; without a
         # per-PR diff measurement we currently surface the absolute
@@ -122,7 +139,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run component tier
-        run: ./bin/lenny-test --tier component
+        run: ./bin/lenny-test --tier component --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -145,7 +162,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run contract tier
-        run: ./bin/lenny-test --tier contract
+        run: ./bin/lenny-test --tier contract --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -168,7 +185,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run integration tier
-        run: ./bin/lenny-test --tier integration
+        run: ./bin/lenny-test --tier integration --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -193,7 +210,7 @@ jobs:
       - name: Run e2e-Kind critical-path subset
         # SkipUnlessAvailable gates on docker + kind; on ubuntu-latest
         # without setup-docker the suite skips cleanly.
-        run: ./bin/lenny-test --tier e2e_kind
+        run: ./bin/lenny-test --tier e2e_kind --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -216,7 +233,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run conformance tier
-        run: ./bin/lenny-test --tier conformance
+        run: ./bin/lenny-test --tier conformance --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4

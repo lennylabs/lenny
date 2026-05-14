@@ -45,7 +45,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run e2e Kind tier
-        run: ./bin/lenny-test --tier e2e_kind
+        run: ./bin/lenny-test --tier e2e_kind --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,7 +74,7 @@ jobs:
       - name: Run e2e cloud tier
         env:
           LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
-        run: ./bin/lenny-test --tier e2e_cloud
+        run: ./bin/lenny-test --tier e2e_cloud --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,7 +97,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run chaos tier
-        run: ./bin/lenny-test --tier chaos
+        run: ./bin/lenny-test --tier chaos --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,7 +120,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run security tier
-        run: ./bin/lenny-test --tier security
+        run: ./bin/lenny-test --tier security --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,7 +143,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run load tier
-        run: ./bin/lenny-test --tier load
+        run: ./bin/lenny-test --tier load --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,9 +179,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Restore tool cache (~/go/bin)
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            lenny-go-bin-v1-${{ runner.os }}-
       - name: Install go-mutesting
+        if: steps.tools-cache.outputs.cache-hit != 'true'
         run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
         continue-on-error: true
+      - name: Add tool bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Mutate critical packages

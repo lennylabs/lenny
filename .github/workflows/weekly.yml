@@ -46,7 +46,7 @@ jobs:
       - name: Run e2e cloud tier
         env:
           LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
-        run: ./bin/lenny-test --tier e2e_cloud
+        run: ./bin/lenny-test --tier e2e_cloud --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4

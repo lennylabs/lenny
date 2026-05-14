@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT
+#
+# Reusable workflow: cache + install the go-installed binaries the
+# Lenny test harness uses (gofumpt, goimports, golangci-lint,
+# go-mutesting, setup-envtest, buf).
+#
+# Callers consume it via `uses:`; the workflow restores ~/go/bin
+# from a cache keyed on go.sum + a `tools` revision marker, and
+# installs anything missing.
+#
+# Reference: TESTING.md §20.
+
+name: reusable / tool-cache
+
+on:
+  workflow_call:
+    inputs:
+      tools:
+        description: 'comma-separated subset; defaults to "fmt,lint,buf,envtest,mutation"'
+        required: false
+        type: string
+        default: 'fmt,lint,buf,envtest,mutation'
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache go/bin tools
+        id: cache-tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin
+          key: lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ inputs.tools }}
+          restore-keys: |
+            lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            lenny-go-bin-v1-${{ runner.os }}-
+      - name: Install fmt tools
+        if: contains(inputs.tools, 'fmt')
+        run: |
+          which gofumpt   || go install mvdan.cc/gofumpt@latest
+          which goimports || go install golang.org/x/tools/cmd/goimports@latest
+      - name: Install lint tools
+        if: contains(inputs.tools, 'lint')
+        run: |
+          which golangci-lint || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - name: Install buf
+        if: contains(inputs.tools, 'buf')
+        run: |
+          which buf || go install github.com/bufbuild/buf/cmd/buf@latest
+      - name: Install setup-envtest
+        if: contains(inputs.tools, 'envtest')
+        run: |
+          which setup-envtest || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+      - name: Install go-mutesting
+        if: contains(inputs.tools, 'mutation')
+        run: |
+          which go-mutesting || go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
