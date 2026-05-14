@@ -99,6 +99,68 @@ func TestRecordTierMarksFailVerdict(t *testing.T) {
 	}
 }
 
+func TestClassifyInfraFailure(t *testing.T) {
+	infra := []string{
+		"compose up: services did not reach healthy state",
+		"Docker daemon is not running",
+		"kind cluster bring-up failed",
+		"could not reach the apiserver after 60s",
+		"image pull backoff for postgres:16-alpine",
+		"connection refused dialing 127.0.0.1:5432",
+	}
+	for _, d := range infra {
+		if !classifyInfraFailure(d) {
+			t.Errorf("classifyInfraFailure(%q) = false; want true", d)
+		}
+	}
+	tests := []string{
+		"assertion failed: want 5, got 4",
+		"TestFoo: panic at line 42",
+		"compile error: undeclared identifier",
+		"",
+	}
+	for _, d := range tests {
+		if classifyInfraFailure(d) {
+			t.Errorf("classifyInfraFailure(%q) = true; want false", d)
+		}
+	}
+}
+
+func TestRecordTierReclassifiesInfraFailure(t *testing.T) {
+	v := newVerdict(selector{tier: "integration"})
+	v.recordTier("integration", "fail", 10*time.Millisecond, "compose up: services did not reach healthy state")
+	if got := v.Tiers["integration"].Status; got != "inconclusive" {
+		t.Fatalf("infra failure should reclassify to inconclusive; got %q", got)
+	}
+	if v.Verdict != "INCONCLUSIVE" {
+		t.Fatalf("overall verdict should be INCONCLUSIVE; got %q", v.Verdict)
+	}
+}
+
+func TestRecordTierFailOutranksInconclusive(t *testing.T) {
+	v := newVerdict(selector{tier: "static"})
+	v.recordTier("static", "fail", 5*time.Millisecond, "go vet found three issues")
+	v.recordTier("integration", "fail", 5*time.Millisecond, "compose up failed: docker daemon down")
+	if v.Verdict != "FAIL" {
+		t.Fatalf("FAIL must outrank INCONCLUSIVE; got %q", v.Verdict)
+	}
+}
+
+func TestExitCodeFor(t *testing.T) {
+	cases := map[string]int{
+		"PASS":         0,
+		"FAIL":         1,
+		"INCONCLUSIVE": 2,
+		"":             1,
+		"weird":        1,
+	}
+	for verdict, want := range cases {
+		if got := exitCodeFor(verdict); got != want {
+			t.Errorf("exitCodeFor(%q) = %d; want %d", verdict, got, want)
+		}
+	}
+}
+
 func TestRecordTierSkippedKeepsPass(t *testing.T) {
 	v := newVerdict(selector{tier: "static"})
 	v.recordTier("integration", "skipped", 0, "no docker on PATH")

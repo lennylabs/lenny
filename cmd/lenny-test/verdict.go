@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -92,7 +93,74 @@ func newVerdict(s selector) *verdict {
 	if s.cached {
 		v.Infra.ContainerCache = "warm"
 	}
+	if sha := currentGitRevision(); sha != "" {
+		v.Trigger.GitRevision = sha
+	}
+	if s.changed {
+		v.Trigger.ChangedPaths = currentChangedPaths(s.since)
+	}
+	if len(s.specs) > 0 {
+		v.Trigger.ResolvedSpecs = append([]string{}, s.specs...)
+	}
+	if len(s.pkgs) > 0 {
+		v.Trigger.ResolvedPackages = append([]string{}, s.pkgs...)
+	}
 	return v
+}
+
+// currentGitRevision returns the HEAD SHA, or "" when git is
+// unavailable or the working directory is not a checkout. The
+// verdict omits the field rather than carrying an obviously wrong
+// value.
+func currentGitRevision() string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoRoot()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// currentChangedPaths returns the union of files reported by
+// `git status --porcelain` (uncommitted changes) and, when `since`
+// is set, `git diff --name-only <since>...HEAD`. Returns nil when
+// git is not available.
+func currentChangedPaths(since string) []string {
+	root := repoRoot()
+	seen := map[string]bool{}
+	collect := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// porcelain output prefixes XY status; --name-only does not.
+			if len(line) > 3 && (line[2] == ' ' || line[1] == ' ') {
+				line = strings.TrimSpace(line[2:])
+			}
+			seen[line] = true
+		}
+	}
+	collect("status", "--porcelain")
+	if since != "" {
+		collect("diff", "--name-only", since+"...HEAD")
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func triggerMode(s selector) string {
@@ -114,25 +182,83 @@ func triggerMode(s selector) string {
 }
 
 func (v *verdict) recordTier(name, status string, dur time.Duration, detail string) {
+	// Reclassify a "fail" whose detail looks like an infrastructure
+	// blow-up into "inconclusive" per §7 + §21.3. A genuine test
+	// failure stays FAIL; a docker-daemon crash or a kind bring-up
+	// timeout does not.
+	if status == "fail" && classifyInfraFailure(detail) {
+		status = "inconclusive"
+	}
 	v.Tiers[name] = tierStat{
 		Status:     status,
 		DurationMS: dur.Milliseconds(),
 		Reason:     reasonFromStatus(status, detail),
 		Detail:     detail,
 	}
-	if status == "fail" {
+	switch status {
+	case "fail":
 		v.Verdict = "FAIL"
+	case "inconclusive":
+		// FAIL outranks INCONCLUSIVE; a real failure earlier in the
+		// run stays surfaced.
+		if v.Verdict != "FAIL" {
+			v.Verdict = "INCONCLUSIVE"
+		}
 	}
 }
 
 func reasonFromStatus(status, detail string) string {
-	if status == "skipped" {
+	switch status {
+	case "skipped":
 		if detail != "" {
 			return detail
 		}
 		return "skipped"
+	case "inconclusive":
+		if detail != "" {
+			return detail
+		}
+		return "infrastructure failure"
 	}
 	return ""
+}
+
+// classifyInfraFailure reports whether `detail` describes a known
+// infrastructure-class failure rather than a test failure. The list
+// is conservative: matches against the lower-cased detail string so
+// known patterns (compose down, docker daemon, kind cluster, cloud
+// auth, image pull, container exec, network unreachable) reclassify
+// as INCONCLUSIVE. Unknown failures stay FAIL.
+func classifyInfraFailure(detail string) bool {
+	if detail == "" {
+		return false
+	}
+	d := strings.ToLower(detail)
+	patterns := []string{
+		"docker daemon",
+		"docker compose: services did not reach healthy",
+		"compose up:",
+		"compose down:",
+		"kind cluster",
+		"kind: failed to create cluster",
+		"kubeconfig",
+		"could not reach the apiserver",
+		"context deadline exceeded waiting for",
+		"image pull",
+		"unable to authenticate",
+		"failed to acquire cloud credentials",
+		"network unreachable",
+		"no route to host",
+		"connection refused",
+		"container exec",
+		"container exited",
+	}
+	for _, p := range patterns {
+		if strings.Contains(d, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *verdict) next(action string) {
@@ -187,6 +313,28 @@ func (v *verdict) finalize() {
 	v.finishedAt = time.Now().UTC()
 	v.FinishedAt = v.finishedAt.Format(time.RFC3339Nano)
 	v.DurationMS = v.finishedAt.Sub(v.startedAt).Milliseconds()
+	v.fillNotSelected()
+}
+
+// fillNotSelected emits a "not-selected" tier entry for every
+// canonical tier the run did not include. §7 enumerates four tier
+// statuses (pass, fail, skipped, not-selected); downstream tooling
+// can distinguish "ran and passed" from "did not run" only when the
+// map contains every tier.
+func (v *verdict) fillNotSelected() {
+	for _, name := range []string{
+		tierStatic, tierUnit, tierComponent, tierContract, tierIntegration,
+		tierE2EKind, tierE2ECloud, tierLoad, tierChaos, tierSecurity,
+		tierConformance, tierDocs,
+	} {
+		if _, already := v.Tiers[name]; already {
+			continue
+		}
+		v.Tiers[name] = tierStat{
+			Status: "not-selected",
+			Reason: "outside the resolved selector",
+		}
+	}
 }
 
 func (v *verdict) write(path string) error {

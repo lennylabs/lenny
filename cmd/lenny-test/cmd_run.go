@@ -306,127 +306,157 @@ func execute(s selector, r resolvedSelector) int {
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("static", "Fix static-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "unit":
 			st, msg := runUnitTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("unit", "Fix unit-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "component":
 			st, msg := runComponentTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("component", "Fix component-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "contract":
 			st, msg := runContractTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("contract", "Fix contract-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "conformance":
 			st, msg := runConformanceTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("conformance", "Fix conformance-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "integration":
+			// §7 infra fields: integration runs against the compose
+			// stack. Phase 0 uses the `default` profile; mtls is the
+			// only alternative and is opt-in via the kind tier.
+			v.Infra.ComposeProfile = "default"
 			st, msg := runIntegrationTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("integration", "Fix integration-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "e2e_kind":
+			// §7 infra fields: record the kind cluster name the tier
+			// will use. testinfra/kind reads LENNY_KIND_CLUSTER with
+			// the same fallback to "lenny".
+			if name := os.Getenv("LENNY_KIND_CLUSTER"); name != "" {
+				v.Infra.KindCluster = name
+			} else {
+				v.Infra.KindCluster = "lenny"
+			}
 			st, msg := runE2EKindTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("e2e_kind", "Fix e2e-Kind-tier failures before moving to higher tiers."))
-				overallStatus = "FAIL"
+				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 				}
-				return printSummary(s, v, overallStatus, 1)
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "load":
 			st, msg := runTaggedTier("load", "./tests/tier7_load/...", 600*time.Second)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix load-tier failures before moving to higher tiers.")
-				overallStatus = "FAIL"
-				return printSummary(s, v, overallStatus, 1)
+				overallStatus = v.Verdict
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "chaos":
 			st, msg := runTaggedTier("chaos", "./tests/tier8_chaos/...", 600*time.Second)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix chaos-tier failures before moving to higher tiers.")
-				overallStatus = "FAIL"
-				return printSummary(s, v, overallStatus, 1)
+				overallStatus = v.Verdict
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "security":
 			st, msg := runTaggedTier("security", "./tests/tier9_security/...", 600*time.Second)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix security-tier failures before moving to higher tiers.")
-				overallStatus = "FAIL"
-				return printSummary(s, v, overallStatus, 1)
+				overallStatus = v.Verdict
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "docs":
 			st, msg := runDocsTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix docs-tier failures before moving to higher tiers.")
-				overallStatus = "FAIL"
-				return printSummary(s, v, overallStatus, 1)
+				overallStatus = v.Verdict
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "e2e_cloud":
 			st, msg := runE2ECloudTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix e2e-cloud-tier failures before moving to higher tiers.")
-				overallStatus = "FAIL"
-				return printSummary(s, v, overallStatus, 1)
+				overallStatus = v.Verdict
+				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		default:
 			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 		}
 	}
 
+	// printSummary fills in "not-selected" for every tier the
+	// dispatch loop did not reach; we don't need to do it here.
+
 	if writeErr := v.write(s.verdictFile); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
 	}
-	return printSummary(s, v, overallStatus, 0)
+	return printSummary(s, v, v.Verdict, exitCodeFor(v.Verdict))
+}
+
+
+// exitCodeFor maps the §7 verdict value to the process exit code
+// CI gates on: 0 for PASS, 1 for FAIL, 2 for INCONCLUSIVE so an
+// infra-class failure is distinguishable from a real test failure.
+func exitCodeFor(verdict string) int {
+	switch verdict {
+	case "PASS":
+		return 0
+	case "INCONCLUSIVE":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func runStaticTier() (string, string) {
@@ -1125,6 +1155,10 @@ func hasGoCode() bool {
 }
 
 func printSummary(s selector, v *verdict, status string, exit int) int {
+	// verdict.finalize fills in any "not-selected" tiers; the
+	// summary just reads what's already there. Idempotent finalize
+	// makes early-exit paths and the happy path emit the same map.
+	v.fillNotSelected()
 	switch s.output {
 	case "json":
 		fmt.Println(v.json())
