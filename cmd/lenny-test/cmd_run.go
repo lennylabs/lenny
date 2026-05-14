@@ -415,6 +415,14 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{"scripts/lint-migrations.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "lint-migrations.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "lint-migrations.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
 		{"go test ./tests/tier0_static/...", func() (string, error) {
 			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
 			return string(out), err
