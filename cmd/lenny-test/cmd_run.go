@@ -559,13 +559,14 @@ func contractTargets(subsets []string) ([]string, error) {
 		return []string{"./tests/tier3_contract/..."}, nil
 	}
 	mapping := map[string]string{
-		"adapter-jsonl":    "./tests/tier3_contract/adapter_jsonl/...",
-		"workspaceplan":    "./tests/tier3_contract/workspaceplan/...",
-		"rest-sessions":    "./tests/tier3_contract/rest_sessions/...",
-		"rest-idempotency": "./tests/tier3_contract/rest_idempotency/...",
-		"sdk-go":           "./tests/tier3_contract/sdks/...",
-		"sdk-python":       "./tests/tier3_contract/sdks/...",
-		"sdk-typescript":   "./tests/tier3_contract/sdks/...",
+		"adapter-jsonl":       "./tests/tier3_contract/adapter_jsonl/...",
+		"workspaceplan":       "./tests/tier3_contract/workspaceplan/...",
+		"rest-sessions":       "./tests/tier3_contract/rest_sessions/...",
+		"rest-idempotency":    "./tests/tier3_contract/rest_idempotency/...",
+		"rest-circuitbreaker": "./tests/tier3_contract/rest_circuitbreaker/...",
+		"sdk-go":              "./tests/tier3_contract/sdks/...",
+		"sdk-python":          "./tests/tier3_contract/sdks/...",
+		"sdk-typescript":      "./tests/tier3_contract/sdks/...",
 	}
 	seen := map[string]bool{}
 	targets := []string{}

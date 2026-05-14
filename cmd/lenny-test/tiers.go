@@ -149,9 +149,9 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-7-gate":
 		return []tierPlan{
-			{name: "static", notes: "pkg/circuitbreaker + pkg/idempotency + middleware/idempotency build"},
-			{name: "unit", notes: "§11.5 idempotency primitives; §11.6 circuit breaker primitives; idempotency middleware in-memory store"},
-			{name: "contract", subsets: []string{"rest-idempotency"}, notes: "§11.5 wire contract end-to-end against the minimal gateway: header validation, same-key+body replay, 422 IDEMPOTENCY_KEY_REUSED on body mismatch, tenant scoping"},
+			{name: "static", notes: "pkg/{circuitbreaker, idempotency} + gateway/middleware/{idempotency, circuitbreaker} build"},
+			{name: "unit", notes: "§11.5 idempotency primitives; §11.6 circuit breaker primitives; middleware in-memory stores"},
+			{name: "contract", subsets: []string{"rest-idempotency", "rest-circuitbreaker"}, notes: "§11.5 + §11.6 wire contracts end-to-end against the minimal gateway"},
 		}
 	case "phase-16-gate":
 		return []tierPlan{

@@ -258,6 +258,11 @@ subsets:
     tests:
       - tests/tier3_contract/rest_idempotency/...
 
+  rest-circuitbreaker:
+    tier: contract
+    tests:
+      - tests/tier3_contract/rest_circuitbreaker/...
+
   sdk-go:
     tier: contract
     tests:

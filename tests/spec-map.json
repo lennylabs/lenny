@@ -546,11 +546,16 @@
         "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchConnectorTier",
         "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchOperationTypeTier",
         "pkg/circuitbreaker/circuitbreaker_test.go::TestFirstMatchReturnsFirstOpenMatch",
-        "pkg/circuitbreaker/circuitbreaker_test.go::TestScopeMatches"
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestScopeMatches",
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestClosedRegistryPassesThrough",
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestClosedBreakerPassesThrough",
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenOperationTypeBreakerRejects",
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenBreakerWithDifferentScopeDoesNotMatch",
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins"
       ],
-      "packages": ["pkg/circuitbreaker"],
+      "packages": ["pkg/circuitbreaker", "pkg/gateway/middleware/circuitbreaker"],
       "blocked_until_phase": "7",
-      "notes": "Phase 7 ships the §11.6 operator-managed circuit-breaker admission logic: State enum, LimitTier enum (runtime/pool/connector/operation_type), OperationType enum, per-tier Scope validator, Match function, and the §11.6 immutable-scope invariant via ScopeMatches. The Redis-backed cache with pub/sub propagation, the admin API handlers, the 5-second cache-stale fallback path, and the §11.6 sampling-under-breaker-storms audit emitter are all deferred to the K8s-integration phase that ships the gateway and Redis."
+      "notes": "Phase 7 ships the §11.6 operator-managed circuit-breaker admission logic and the HTTP middleware that wraps the gateway handler. The middleware consults a Registry of breakers on every request and emits 503 CIRCUIT_BREAKER_OPEN when the request matches an open breaker per §11.6 FirstMatch. The Redis-backed cache with pub/sub propagation, the admin API handlers, the 5-second cache-stale fallback path, and the §11.6 sampling-under-breaker-storms audit emitter are deferred to the K8s-integration phase; the in-memory Registry satisfies the same interface for the minimal gateway and tier-3 contract tests."
     },
     "11.7": {
       "title": "Audit Logging",
