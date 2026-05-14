@@ -511,36 +511,52 @@ func scanDiagnosis(path string) (int, []string) {
 			continue
 		}
 		funcs++
-		if hasDiagnosisBefore(lines, i) {
+		// §17.2 marks both `// spec:` and `// diagnosis:` as
+		// mandatory. Accept the test when either both annotations
+		// are present above the function body, OR a scaffold skip
+		// is inside (the skip carries the same diagnostic
+		// information at runtime).
+		hasSpec := hasAnnotationBefore(lines, i, "// spec:")
+		hasDiag := hasAnnotationBefore(lines, i, "// diagnosis:")
+		if hasSpec && hasDiag {
 			continue
 		}
-		// Scaffold form: a t.Skip("not implemented: ...") inside the
-		// function body counts as a diagnosis. The skip message names
-		// the spec section and the missing implementation, which is
-		// exactly the information `// diagnosis:` is meant to carry,
-		// and it has the additional benefit that the harness sees it
-		// at runtime too. When the scaffold is replaced with a real
-		// test, the author writes the canonical `// spec:` and
-		// `// diagnosis:` annotations above the function.
 		if hasNotImplementedSkipAfter(lines, i) {
 			continue
 		}
-		missing = append(missing, fmt.Sprintf("%s:%d", path, i+1))
+		// Report which annotation is missing for actionable output.
+		missingMarker := []string{}
+		if !hasSpec {
+			missingMarker = append(missingMarker, "spec")
+		}
+		if !hasDiag {
+			missingMarker = append(missingMarker, "diagnosis")
+		}
+		missing = append(missing, fmt.Sprintf("%s:%d (missing %s)", path, i+1, strings.Join(missingMarker, " + ")))
 	}
 	return funcs, missing
 }
 
-func hasDiagnosisBefore(lines []string, idx int) bool {
+// hasAnnotationBefore returns true when one of the 10 lines preceding
+// idx contains the named annotation marker (e.g. "// spec:" or
+// "// diagnosis:").
+func hasAnnotationBefore(lines []string, idx int, marker string) bool {
 	start := idx - 10
 	if start < 0 {
 		start = 0
 	}
 	for i := start; i < idx; i++ {
-		if containsSubstr(lines[i], "// diagnosis:") {
+		if containsSubstr(lines[i], marker) {
 			return true
 		}
 	}
 	return false
+}
+
+// hasDiagnosisBefore is kept as a thin alias for back-compat with
+// any callers outside this file.
+func hasDiagnosisBefore(lines []string, idx int) bool {
+	return hasAnnotationBefore(lines, idx, "// diagnosis:")
 }
 
 // hasNotImplementedSkipAfter checks the 8 lines following the function
