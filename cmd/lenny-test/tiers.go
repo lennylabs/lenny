@@ -166,6 +166,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/environment builds"},
 			{name: "unit", notes: "§10.6 Role enum + AtLeast; LabelSelector matchLabels + matchExpressions (In/NotIn/Exists/DoesNotExist); types filter; include/exclude overrides (exclude beats include); Filter helper"},
 		}
+	case "phase-10-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/elicitation builds"},
+			{name: "unit", notes: "§9.2 EnforcementMode (off|detect-only|enforce) strict ordering + platform-floor clamp; DepthPolicy (allow_all|suppress_at_depth|block_all); InitiatorType (connector|agent); canonicalised SHA-256 content digest + tamper detection; Provenance validation"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

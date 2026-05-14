@@ -1451,10 +1451,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.22 Phase 10 — MCP fabric (virtual child interfaces, elicitation chain)
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/mcp_elicitation_chain_test.go`.
-- `tests/tier4_integration/mcp_provenance_test.go` covers ElicitationProvenance fields, URL-mode elicitation, depth-based suppression.
-- `tests/tier2_component/mcp/integrity_test.go` covers SHA-256 canonicalization across modes.
+**Test infrastructure delivered in Phase 10.**
+- `pkg/elicitation` ships the §9.2 elicitation primitives: the `EnforcementMode` enum (off < detect-only < enforce) with the strict ordering and `ResolveEffective` platform-floor clamp (the stricter of platform floor and tenant stored mode wins); the `DepthPolicy` enum (allow_all, suppress_at_depth, block_all) with `ShouldSuppress` honouring the §9.2 connector-exempt rule; the `InitiatorType` enum (connector, agent); the canonicalised SHA-256 `Content.Digest` and `VerifyContent` implementing the §9.2 gateway-origin-binding tamper detector (alphabetical key ordering inside JSON objects so semantically-equal `{message, schema}` pairs produce identical digests); `Provenance.Validate` enforcing the §9.2 metadata shape (`origin_pod` required, connector initiators require `connector_id`, depth ≥ 0).
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/mcp_elicitation_chain_test.go` (the hop-by-hop forward chain end-to-end) is deferred to the K8s-integration phase that ships the gateway's virtual MCP server.
+- `tests/tier4_integration/mcp_provenance_test.go` (URL-mode elicitation allowlist, depth-based suppression integration) is deferred to the same phase.
+- `tests/tier2_component/mcp/integrity_test.go` (the integration of canonicalization with the audit pipeline and the §16.1 counter emission) is deferred.
+- The `respond_to_elicitation` authorization triple `(session_id, user_id, elicitation_id)` and the `maxElicitationWait` timer live in the gateway binary that ships in a later phase.
 
 ### 13.23 Phase 11 — Advanced credentials + multi-provider translators + revocation
 

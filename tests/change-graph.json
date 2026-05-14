@@ -151,6 +151,10 @@
       "unit": ["pkg/idempotency/..."],
       "integration": ["tests/tier4_integration/idempotency_test.go"]
     },
+    "pkg/elicitation": {
+      "unit": ["pkg/elicitation/..."],
+      "integration": ["tests/tier4_integration/mcp_elicitation_chain_test.go"]
+    },
     "pkg/experiment": {
       "unit": ["pkg/experiment/..."],
       "component": ["tests/tier2_component/experiments/..."],

@@ -328,9 +328,22 @@
     "9.2": {
       "title": "Elicitation Chain",
       "spec_file": "spec/09_mcp-integration.md",
-      "tests": [],
-      "packages": ["pkg/mcp/elicitation"],
-      "blocked_until_phase": "10"
+      "tests": [
+        "pkg/elicitation/elicitation_test.go::TestAllModesIsExhaustive",
+        "pkg/elicitation/elicitation_test.go::TestModeOrderingStrict",
+        "pkg/elicitation/elicitation_test.go::TestResolveEffectivePicksStricter",
+        "pkg/elicitation/elicitation_test.go::TestDepthPolicyAllowAll",
+        "pkg/elicitation/elicitation_test.go::TestDepthPolicyBlockAll",
+        "pkg/elicitation/elicitation_test.go::TestDepthPolicySuppressAtDepth",
+        "pkg/elicitation/elicitation_test.go::TestContentDigestIsStable",
+        "pkg/elicitation/elicitation_test.go::TestContentDigestCanonicalKeyOrder",
+        "pkg/elicitation/elicitation_test.go::TestVerifyContentRejectsTampered",
+        "pkg/elicitation/elicitation_test.go::TestProvenanceValidateHappyPath",
+        "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID"
+      ],
+      "packages": ["pkg/elicitation"],
+      "blocked_until_phase": "10",
+      "notes": "Phase 10 ships the §9.2 elicitation primitives: the EnforcementMode strict ordering (off < detect-only < enforce) and platform-floor clamp; the DepthPolicy with connector-exempt suppression; the InitiatorType enum; the canonicalised SHA-256 content digest used by the gateway-origin-binding tamper detector; the Provenance metadata validator. The hop-by-hop elicitation chain dispatcher, the URL-mode allowlist evaluator, the maxElicitationWait timer, the respond_to_elicitation authorization triple, and the §11.7 audit / §16.1 metric emissions are all wired by the gateway binary."
     },
     "9.3": {
       "title": "Connector Definition and OAuth/OIDC",
