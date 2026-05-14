@@ -253,6 +253,11 @@ subsets:
     tests:
       - tests/tier3_contract/rest_sessions/...
 
+  rest-idempotency:
+    tier: contract
+    tests:
+      - tests/tier3_contract/rest_idempotency/...
+
   sdk-go:
     tier: contract
     tests:

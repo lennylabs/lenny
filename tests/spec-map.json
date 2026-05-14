@@ -520,11 +520,16 @@
         "pkg/idempotency/idempotency_test.go::TestDetectReuseReplayWhenMatch",
         "pkg/idempotency/idempotency_test.go::TestDetectReuseRejectsKeyReusedWithDifferentBody",
         "pkg/idempotency/idempotency_test.go::TestDetectReuseTreatsExpiredAsNoPrior",
-        "pkg/idempotency/idempotency_test.go::TestRecordIsExpired"
+        "pkg/idempotency/idempotency_test.go::TestRecordIsExpired",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyReplayReturnsCachedResponse",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyDifferentBodyReturns422",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyOversizeKeyRejected",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyNoHeaderIsPassthrough",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go::TestIdempotencyTenantScoped"
       ],
-      "packages": ["pkg/idempotency"],
+      "packages": ["pkg/idempotency", "pkg/gateway/middleware/idempotency"],
       "blocked_until_phase": "7",
-      "notes": "Phase 7 ships the §11.5 idempotency primitives: 128-character key cap, tenant-scoped Key shape, SHA-256 body hashing, 24-hour TTL constant, and the DetectReuse action resolver (store_new | replay | reject) that maps same-key-different-body to the *ReuseError 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys table, the GC job, and the HTTP/MCP transport handlers (Idempotency-Key header / idempotencyKey field) are deferred to the K8s-integration phase."
+      "notes": "Phase 7 ships the §11.5 idempotency primitives and the HTTP middleware that wraps the gateway handler. pkg/gateway/middleware/idempotency consults a tenant-scoped Store on every POST with an Idempotency-Key header; matching keys replay the cached response, mismatching bodies emit the 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys store and the GC job are deferred to the K8s-integration phase; the in-memory MemoryStore satisfies the same interface for the minimal gateway and the tier-3 contract tests."
     },
     "11.6": {
       "title": "Circuit Breakers",
