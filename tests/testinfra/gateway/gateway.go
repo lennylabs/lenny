@@ -69,25 +69,40 @@ func Start(t testing.TB) *Process {
 	cmd := exec.Command(binary, "--addr", addr)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
+	// WaitDelay backstops the cleanup path: if SIGINT does not cause
+	// the gateway to exit within this window, the runtime sends
+	// SIGKILL and closes the inherited stdio pipes so cmd.Wait can
+	// return. Without it, a hung subprocess deadlocks t.Cleanup.
+	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
 	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile}
 
 	t.Cleanup(func() {
+		defer func() { _ = stderrFile.Close() }()
+
+		// Buffered so the goroutine never blocks if cleanup gives up
+		// waiting and returns.
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+
 		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() {
-			_ = cmd.Wait()
-			close(done)
-		}()
+
 		select {
 		case <-done:
+			return
 		case <-time.After(3 * time.Second):
-			_ = cmd.Process.Kill()
-			<-done
 		}
-		_ = stderrFile.Close()
+
+		// SIGINT did not take. Force-kill; WaitDelay still bounds the
+		// final wait if the kernel takes its time reaping.
+		_ = cmd.Process.Kill()
+		select {
+		case <-done:
+		case <-time.After(cmd.WaitDelay + time.Second):
+			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
+		}
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
