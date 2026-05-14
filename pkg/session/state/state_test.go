@@ -79,14 +79,7 @@ func TestIsTerminal(t *testing.T) {
 // diagnosis: IsValid rejected a transition listed in ValidTransitions(),
 //
 //	or accepted one that is not listed. The canonical list lives
-//	in pkg/session/state/state.go's ValidTransitions(). If the
-//	spec list has changed, update both ValidTransitions and this
-//	test. If IsValid is wrong, this test points at the failing
-//	transition.
-//
-// Phase 1 expected behavior: IsValid returns ErrNotImplemented for every
-// row. Phase 2 implements IsValid; this test then passes for every legal
-// transition and fails for illegal ones.
+//	in pkg/session/state/state.go's ValidTransitions().
 func TestIsValidCanonicalTransitions(t *testing.T) {
 	t.Parallel()
 
@@ -94,11 +87,7 @@ func TestIsValidCanonicalTransitions(t *testing.T) {
 		tr := tr
 		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
 			t.Parallel()
-			err := state.IsValid(tr.From, tr.To)
-			if errors.Is(err, state.ErrNotImplemented) {
-				t.Skipf("not implemented in Phase 1; Phase 2 makes this pass: see pkg/session/state/state.go IsValid")
-			}
-			if err != nil {
+			if err := state.IsValid(tr.From, tr.To); err != nil {
 				t.Errorf("IsValid(%q, %q) returned %v, want nil (this is a legal transition per spec §7.2)", tr.From, tr.To, err)
 			}
 		})
@@ -114,22 +103,17 @@ func TestIsValidCanonicalTransitions(t *testing.T) {
 func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 	t.Parallel()
 
-	// Build the legal set for lookup.
 	legal := map[string]bool{}
 	for _, tr := range state.ValidTransitions() {
 		legal[string(tr.From)+"->"+string(tr.To)] = true
 	}
 
-	// A few hand-picked illegal transitions per spec §7.2.
 	illegal := []state.Transition{
-		// Terminal-to-anything is illegal.
 		{state.Completed, state.Running},
 		{state.Failed, state.Running},
 		{state.Cancelled, state.Running},
 		{state.Expired, state.Running},
-		// Created cannot skip to Running.
 		{state.Created, state.Running},
-		// Finalizing cannot skip to Completed.
 		{state.Finalizing, state.Completed},
 	}
 
@@ -141,11 +125,12 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
 			t.Parallel()
 			err := state.IsValid(tr.From, tr.To)
-			if errors.Is(err, state.ErrNotImplemented) {
-				t.Skipf("not implemented in Phase 1; Phase 2 makes this pass")
-			}
 			if err == nil {
 				t.Errorf("IsValid(%q, %q) returned nil, expected an error (illegal per spec §7.2)", tr.From, tr.To)
+			}
+			var ite *state.InvalidTransitionError
+			if !errors.As(err, &ite) {
+				t.Errorf("IsValid(%q, %q) returned %T, want *InvalidTransitionError", tr.From, tr.To, err)
 			}
 		})
 	}

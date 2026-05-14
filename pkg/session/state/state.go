@@ -2,15 +2,14 @@
 
 // Package state defines the session state machine.
 //
-// Phase 1 ships the state enum and the canonical transition table as the
-// authoritative contract. The transition-validation function (IsValid) is
-// scaffolded as a "not implemented" stub; Phase 2 implements it against
-// these tests.
+// The state enum and ValidTransitions() form the authoritative contract
+// for the §7.2 lifecycle. IsValid returns nil for an edge present in
+// ValidTransitions() and an InvalidTransitionError otherwise.
 //
 // Spec: 07_session-lifecycle.md §7.2.
 package state
 
-import "errors"
+import "fmt"
 
 // State is the session lifecycle state, per spec §7.2.
 type State string
@@ -115,18 +114,32 @@ func ValidTransitions() []Transition {
 	}
 }
 
-// ErrNotImplemented is returned by IsValid until Phase 2 implementation
-// lands. The diagnosis comment on each failing test explains where the
-// implementation belongs.
-var ErrNotImplemented = errors.New("session-state IsValid: not implemented in Phase 1 (see TESTING.md §13.1)")
+// InvalidTransitionError is returned by IsValid for any edge not present
+// in ValidTransitions(). Callers can errors.As to retrieve the typed
+// value and read From/To for structured logging.
+type InvalidTransitionError struct {
+	From State
+	To   State
+}
 
-// IsValid reports whether the transition from → to is legal.
-//
-// Phase 1 stub: always returns ErrNotImplemented.
-// Phase 2 implementation: returns nil for transitions in ValidTransitions(),
-// a structured error otherwise.
+func (e *InvalidTransitionError) Error() string {
+	return fmt.Sprintf("session: %q → %q is not a valid transition per spec §7.2", e.From, e.To)
+}
+
+var validSet = func() map[Transition]struct{} {
+	m := make(map[Transition]struct{}, len(ValidTransitions()))
+	for _, t := range ValidTransitions() {
+		m[t] = struct{}{}
+	}
+	return m
+}()
+
+// IsValid reports whether the transition from → to is legal per the
+// canonical list in ValidTransitions(). Returns nil on a legal edge and
+// an *InvalidTransitionError on an illegal one.
 func IsValid(from, to State) error {
-	_ = from
-	_ = to
-	return ErrNotImplemented
+	if _, ok := validSet[Transition{From: from, To: to}]; ok {
+		return nil
+	}
+	return &InvalidTransitionError{From: from, To: to}
 }

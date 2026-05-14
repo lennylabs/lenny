@@ -65,20 +65,45 @@ func TestMCPProtocolStateMapping(t *testing.T) {
 // diagnosis: IsValid rejected a transition in ValidTransitions() or
 //
 //	accepted one not in the list.
-//
-// Phase 1: Phase 2 implementation makes this pass. Until then, skipped.
 func TestIsValidCanonicalTransitions(t *testing.T) {
 	t.Parallel()
 	for _, tr := range state.ValidTransitions() {
 		tr := tr
 		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
 			t.Parallel()
-			err := state.IsValid(tr.From, tr.To)
-			if errors.Is(err, state.ErrNotImplemented) {
-				t.Skipf("not implemented in Phase 1")
-			}
-			if err != nil {
+			if err := state.IsValid(tr.From, tr.To); err != nil {
 				t.Errorf("IsValid(%q, %q) = %v, want nil", tr.From, tr.To, err)
+			}
+		})
+	}
+}
+
+// spec: 8.8
+// diagnosis: IsValid accepted a transition that is not in
+//
+//	ValidTransitions(). Task state machine forbids these edges
+//	per §8.8 — terminal states are sinks and pod-crash recovery is
+//	session-level (no running → resume_pending edge).
+func TestIsValidIllegalTransitionsRejected(t *testing.T) {
+	t.Parallel()
+	illegal := []state.Transition{
+		{state.Completed, state.Running},
+		{state.Failed, state.Running},
+		{state.Cancelled, state.Running},
+		{state.Expired, state.Running},
+		{state.Submitted, state.Completed},
+	}
+	for _, tr := range illegal {
+		tr := tr
+		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
+			t.Parallel()
+			err := state.IsValid(tr.From, tr.To)
+			if err == nil {
+				t.Errorf("IsValid(%q, %q) returned nil, expected error", tr.From, tr.To)
+			}
+			var ite *state.InvalidTransitionError
+			if !errors.As(err, &ite) {
+				t.Errorf("IsValid(%q, %q) returned %T, want *InvalidTransitionError", tr.From, tr.To, err)
 			}
 		})
 	}

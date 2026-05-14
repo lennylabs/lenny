@@ -15,7 +15,7 @@
 // Spec: 04_system-components.md §4.6.1.
 package state
 
-import "errors"
+import "fmt"
 
 // State is the SandboxClaim phase, written to SandboxClaim.status.phase.
 type State string
@@ -63,14 +63,33 @@ func ValidTransitions() []Transition {
 	}
 }
 
-var ErrNotImplemented = errors.New("sandboxclaim-state IsValid: not implemented in Phase 1 (see TESTING.md §13.1)")
+// InvalidTransitionError is returned by IsValid for any edge not present
+// in ValidTransitions(). Callers can errors.As to retrieve the typed
+// value and read From/To for structured logging.
+type InvalidTransitionError struct {
+	From State
+	To   State
+}
 
-// IsValid reports whether the transition from → to is legal.
-//
-// Phase 1 stub. Phase 3.5 implements alongside the
-// lenny-sandboxclaim-guard admission webhook.
+func (e *InvalidTransitionError) Error() string {
+	return fmt.Sprintf("sandboxclaim: %q → %q is not a valid transition per spec §4.6.1", e.From, e.To)
+}
+
+var validSet = func() map[Transition]struct{} {
+	m := make(map[Transition]struct{}, len(ValidTransitions()))
+	for _, t := range ValidTransitions() {
+		m[t] = struct{}{}
+	}
+	return m
+}()
+
+// IsValid reports whether the transition from → to is legal per the
+// canonical list in ValidTransitions(). The initial create edge is
+// modeled as From="". Returns nil on a legal edge and an
+// *InvalidTransitionError on an illegal one.
 func IsValid(from, to State) error {
-	_ = from
-	_ = to
-	return ErrNotImplemented
+	if _, ok := validSet[Transition{From: from, To: to}]; ok {
+		return nil
+	}
+	return &InvalidTransitionError{From: from, To: to}
 }

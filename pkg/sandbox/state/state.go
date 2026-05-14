@@ -2,12 +2,16 @@
 
 // Package state defines the Sandbox CRD state machine, per spec §6.2.
 //
-// Phase 1 ships the state enum and the canonical transition list.
-// IsValid is a Phase 2 deliverable; in Phase 1 it returns
-// ErrNotImplemented.
+// The state enum and ValidTransitions() form the authoritative contract.
+// IsValid returns nil for an edge present in ValidTransitions() and an
+// InvalidTransitionError otherwise. The host-schedulable label check that
+// distinguishes task_cleanup → sdk_connecting/idle (schedulable) from
+// task_cleanup → draining (not schedulable) is enforced separately by the
+// admission webhook lenny-sandboxclaim-guard; this function reports both
+// edges as valid because they are legal at the state-machine layer.
 package state
 
-import "errors"
+import "fmt"
 
 // State is the Sandbox phase, written to Sandbox.status.phase.
 type State string
@@ -125,14 +129,32 @@ func ValidTransitions() []Transition {
 	}
 }
 
-var ErrNotImplemented = errors.New("sandbox-state IsValid: not implemented in Phase 1 (see TESTING.md §13.1)")
+// InvalidTransitionError is returned by IsValid for any edge not present
+// in ValidTransitions(). Callers can errors.As to retrieve the typed
+// value and read From/To for structured logging.
+type InvalidTransitionError struct {
+	From State
+	To   State
+}
 
-// IsValid reports whether the transition from → to is legal.
-//
-// Phase 1 stub. Phase 2 implements; Phase 3.5 adds the host-schedulable
-// label check via a separate guard function.
+func (e *InvalidTransitionError) Error() string {
+	return fmt.Sprintf("sandbox: %q → %q is not a valid transition per spec §6.2", e.From, e.To)
+}
+
+var validSet = func() map[Transition]struct{} {
+	m := make(map[Transition]struct{}, len(ValidTransitions()))
+	for _, t := range ValidTransitions() {
+		m[t] = struct{}{}
+	}
+	return m
+}()
+
+// IsValid reports whether the transition from → to is legal per the
+// canonical list in ValidTransitions(). Returns nil on a legal edge and
+// an *InvalidTransitionError on an illegal one.
 func IsValid(from, to State) error {
-	_ = from
-	_ = to
-	return ErrNotImplemented
+	if _, ok := validSet[Transition{From: from, To: to}]; ok {
+		return nil
+	}
+	return &InvalidTransitionError{From: from, To: to}
 }

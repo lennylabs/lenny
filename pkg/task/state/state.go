@@ -2,12 +2,12 @@
 
 // Package state defines the TaskRecord state machine, per spec §8.8.
 //
-// Phase 1 ships the state enum and the canonical transition list.
-// IsValid is a Phase 2 deliverable; in Phase 1 it returns
-// ErrNotImplemented.
+// The state enum and ValidTransitions() form the authoritative contract
+// for the §8.8 task lifecycle. IsValid returns nil for an edge present
+// in ValidTransitions() and an InvalidTransitionError otherwise.
 package state
 
-import "errors"
+import "fmt"
 
 // State is the TaskRecord lifecycle state, per spec §8.8.
 type State string
@@ -92,14 +92,32 @@ func MCPProtocolState(s State) string {
 	return ""
 }
 
-// ErrNotImplemented is returned by IsValid until Phase 2 ships.
-var ErrNotImplemented = errors.New("task-state IsValid: not implemented in Phase 1 (see TESTING.md §13.1)")
+// InvalidTransitionError is returned by IsValid for any edge not present
+// in ValidTransitions(). Callers can errors.As to retrieve the typed
+// value and read From/To for structured logging.
+type InvalidTransitionError struct {
+	From State
+	To   State
+}
 
-// IsValid reports whether the transition from → to is legal.
-//
-// Phase 1 stub: always returns ErrNotImplemented.
+func (e *InvalidTransitionError) Error() string {
+	return fmt.Sprintf("task: %q → %q is not a valid transition per spec §8.8", e.From, e.To)
+}
+
+var validSet = func() map[Transition]struct{} {
+	m := make(map[Transition]struct{}, len(ValidTransitions()))
+	for _, t := range ValidTransitions() {
+		m[t] = struct{}{}
+	}
+	return m
+}()
+
+// IsValid reports whether the transition from → to is legal per the
+// canonical list in ValidTransitions(). Returns nil on a legal edge and
+// an *InvalidTransitionError on an illegal one.
 func IsValid(from, to State) error {
-	_ = from
-	_ = to
-	return ErrNotImplemented
+	if _, ok := validSet[Transition{From: from, To: to}]; ok {
+		return nil
+	}
+	return &InvalidTransitionError{From: from, To: to}
 }

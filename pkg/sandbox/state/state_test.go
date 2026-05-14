@@ -67,20 +67,43 @@ func TestIsTerminal(t *testing.T) {
 //
 //	ValidTransitions(). The canonical list is in
 //	pkg/sandbox/state/state.go.
-//
-// Phase 1: Phase 2 implementation makes this pass; skipped here.
 func TestIsValidCanonicalTransitions(t *testing.T) {
 	t.Parallel()
 	for _, tr := range state.ValidTransitions() {
 		tr := tr
 		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
 			t.Parallel()
-			err := state.IsValid(tr.From, tr.To)
-			if errors.Is(err, state.ErrNotImplemented) {
-				t.Skipf("not implemented in Phase 1")
-			}
-			if err != nil {
+			if err := state.IsValid(tr.From, tr.To); err != nil {
 				t.Errorf("IsValid(%q, %q) = %v, want nil", tr.From, tr.To, err)
+			}
+		})
+	}
+}
+
+// spec: 6.2
+// diagnosis: IsValid accepted a transition that is not in
+//
+//	ValidTransitions(). Sandbox state machine forbids these
+//	edges per §6.2.
+func TestIsValidIllegalTransitionsRejected(t *testing.T) {
+	t.Parallel()
+	illegal := []state.Transition{
+		{state.Idle, state.Attached},
+		{state.Failed, state.Idle},
+		{state.Terminated, state.Idle},
+		{state.Warming, state.Claimed},
+	}
+	for _, tr := range illegal {
+		tr := tr
+		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
+			t.Parallel()
+			err := state.IsValid(tr.From, tr.To)
+			if err == nil {
+				t.Errorf("IsValid(%q, %q) returned nil, expected error", tr.From, tr.To)
+			}
+			var ite *state.InvalidTransitionError
+			if !errors.As(err, &ite) {
+				t.Errorf("IsValid(%q, %q) returned %T, want *InvalidTransitionError", tr.From, tr.To, err)
 			}
 		})
 	}

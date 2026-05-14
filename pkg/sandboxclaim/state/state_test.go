@@ -46,11 +46,10 @@ func TestStatesAndTerminals(t *testing.T) {
 // spec: 4.6.1
 // diagnosis: IsValid rejected or accepted a transition contrary to
 //
-//	ValidTransitions(). Note: ADR-007 admission-webhook
-//	double-claim prevention is a separate Phase 3.5 deliverable
-//	in pkg/admission/sandboxclaim_guard/.
-//
-// Phase 1: Phase 3.5 implementation makes this pass; skipped here.
+//	ValidTransitions(). Note: the admission-webhook double-claim
+//	prevention is a separate deliverable in
+//	pkg/admission/sandboxclaim_guard/ that ships alongside this
+//	state machine; it does not change the legal-edge set.
 func TestIsValidCanonicalTransitions(t *testing.T) {
 	t.Parallel()
 	for _, tr := range state.ValidTransitions() {
@@ -61,12 +60,40 @@ func TestIsValidCanonicalTransitions(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			err := state.IsValid(tr.From, tr.To)
-			if errors.Is(err, state.ErrNotImplemented) {
-				t.Skipf("not implemented in Phase 1; Phase 3.5 makes this pass")
-			}
-			if err != nil {
+			if err := state.IsValid(tr.From, tr.To); err != nil {
 				t.Errorf("IsValid(%q, %q) = %v, want nil", tr.From, tr.To, err)
+			}
+		})
+	}
+}
+
+// spec: 4.6.1
+// diagnosis: IsValid accepted a transition not in ValidTransitions().
+//
+//	SandboxClaim states are bound → released | failed; the
+//	terminal states are sinks and there is no edge that
+//	resurrects a released or failed claim.
+func TestIsValidIllegalTransitionsRejected(t *testing.T) {
+	t.Parallel()
+	illegal := []state.Transition{
+		{state.Released, state.Bound},
+		{state.Failed, state.Bound},
+		{state.Released, state.Failed},
+		{state.Failed, state.Released},
+		{"", state.Released}, // no initial-to-terminal edge
+		{"", state.Failed},   // no initial-to-terminal edge
+	}
+	for _, tr := range illegal {
+		tr := tr
+		t.Run(string(tr.From)+"_to_"+string(tr.To), func(t *testing.T) {
+			t.Parallel()
+			err := state.IsValid(tr.From, tr.To)
+			if err == nil {
+				t.Errorf("IsValid(%q, %q) returned nil, expected error", tr.From, tr.To)
+			}
+			var ite *state.InvalidTransitionError
+			if !errors.As(err, &ite) {
+				t.Errorf("IsValid(%q, %q) returned %T, want *InvalidTransitionError", tr.From, tr.To, err)
 			}
 		})
 	}
