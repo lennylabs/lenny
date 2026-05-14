@@ -168,6 +168,57 @@ jobs:
         run: go list -m -u all
         continue-on-error: true
 
+  mutation:
+    name: tier 1 — mutation testing (§19.3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [pr-suite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install go-mutesting
+        run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+        continue-on-error: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Mutate critical packages
+        # Critical packages per §19.3: audit, circuitbreaker,
+        # idempotency, quota, tokenexchange, auth/jwt. The mutation
+        # subcommand internally applies the 0.85 threshold to these
+        # packages.
+        run: |
+          for pkg in pkg/audit pkg/circuitbreaker pkg/idempotency pkg/quota pkg/tokenexchange pkg/auth/jwt; do
+            echo "=== ${pkg} ==="
+            ./bin/lenny-test mutation --pkg "${pkg}" || echo "mutation regression in ${pkg}"
+          done | tee mutation.log
+          cat mutation.log >> "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true   # informational today; gate flips on once go-mutesting ships in the repo
+
+  spec-coverage:
+    name: spec coverage (§22.2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [pr-suite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Report spec coverage
+        run: |
+          ./bin/lenny-test coverage --spec | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Enforce minimum spec coverage
+        # Today's leaf-section coverage sits at ~45%; the threshold
+        # ratchets up as phases ship. Set to 0.40 today so a
+        # regression of more than 5 percentage points fires.
+        run: ./bin/lenny-test coverage --spec --threshold 0.40
+
   nightly-rollup:
     name: nightly roll-up summary
     runs-on: ubuntu-latest
