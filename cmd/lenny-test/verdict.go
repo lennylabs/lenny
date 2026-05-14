@@ -202,22 +202,56 @@ func (v *verdict) write(path string) error {
 	// the same content for tools that consume the canonical path.
 	dir := filepath.Dir(path)
 	rotated := filepath.Join(dir, "verdict-"+v.RunID+".json")
+	payload, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
 	for _, p := range []string{path, rotated} {
-		f, err := os.Create(p)
-		if err != nil {
+		if err := writeFileAtomic(p, payload, 0o644); err != nil {
 			return err
 		}
-		enc := json.NewEncoder(f)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(v); err != nil {
-			_ = f.Close()
-			return err
-		}
-		_ = f.Close()
 	}
 	// Bound the on-disk history: keep the 20 most recent rotated
 	// files; older verdicts are removed.
 	pruneOldVerdicts(dir, 20)
+	return nil
+}
+
+// writeFileAtomic writes data to a temp file in the same directory,
+// fsyncs it, then renames into place. A reader of `path` sees either
+// the prior verdict or the new one — never a truncated half-write.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return err
+	}
 	return nil
 }
 
