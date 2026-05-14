@@ -43,3 +43,63 @@ exceptions:
   - section: "23"
     reason: non-normative
     justification: Competitive landscape and community strategy. No behavior to verify.
+
+  - section: "23.1"
+    reason: non-normative
+    justification: Why-Lenny positioning statement. No behavior to verify.
+
+  - section: "23.2"
+    reason: non-normative
+    justification: Community adoption strategy. Non-technical content.
+
+  - section: "26.1"
+    reason: non-normative
+    justification: Reference runtime catalog overview. Describes the catalog without defining executable behavior; per-runtime behavior is verified by the §26.3-§26.11 entries.
+
+  - section: "26.12"
+    reason: non-normative
+    justification: Procedural guidance for adding new reference runtimes. The conformance harness in §15.4 validates whatever runtime is added.
+
+  - section: "27"
+    reason: post-v1
+    justification: Web playground is feature-flag-gated and disabled by default. Reaches v1 only when playground.enabled rolls out alongside an admin UI.
+
+  - section: "27.1"
+    reason: non-normative
+    justification: Web playground purpose and non-goals. Aspirational framing for the feature.
+
+  - section: "27.2"
+    reason: post-v1
+    justification: Web playground placement and gating. Behavior covered when §27 ships.
+
+  - section: "27.3"
+    reason: post-v1
+    justification: Web playground authentication. Behavior covered when §27 ships.
+
+  - section: "27.4"
+    reason: post-v1
+    justification: Web playground UI surface. Behavior covered when §27 ships.
+
+  - section: "27.5"
+    reason: post-v1
+    justification: Web playground protocol. Behavior covered when §27 ships.
+
+  - section: "27.6"
+    reason: post-v1
+    justification: Web playground session lifecycle and cleanup. Behavior covered when §27 ships.
+
+  - section: "27.7"
+    reason: post-v1
+    justification: Web playground asset serving and CSP. Behavior covered when §27 ships.
+
+  - section: "27.8"
+    reason: post-v1
+    justification: Web playground metrics. Behavior covered when §27 ships.
+
+  - section: "27.9"
+    reason: post-v1
+    justification: Web playground security considerations. Behavior covered when §27 ships.
+
+  - section: "27.10"
+    reason: non-normative
+    justification: Web playground roll-forward notes. Forward-compatibility guidance, no executable behavior.
