@@ -124,7 +124,7 @@ subsets:
     cluster_shapes: [cloud-small]
     tests: all
 
-  full:
+  full-cloud:
     tier: e2e_cloud
     providers: [gke, eks, aks]
     cluster_shapes: [cloud-small, cloud-sandbox]
@@ -149,13 +149,15 @@ subsets:
 
   full-system:
     tier: load
-    scenarios: all-except:
+    scenarios_mode: all-except
+    scenarios:
       - tests/tier7_load/scenarios/tthw.go
       - tests/tier7_load/scenarios/experiment_active_under_load.go
 
   full-system-with-hardening:
     tier: load
-    scenarios: same-as: full-system
+    scenarios_mode: same-as
+    scenarios_ref: full-system
     cluster_profile: hardened
 
   experiment-active:
@@ -205,7 +207,8 @@ subsets:
 
   full:
     tier: security
-    tests: all-except:
+    tests_mode: all-except
+    tests:
       - tests/tier9_security/pentest/...
 
   pentest:
@@ -225,7 +228,7 @@ subsets:
     tests:
       - tests/tier10_conformance/standard/...
 
-  full:
+  full-conformance:
     tier: conformance
     tests:
       - tests/tier10_conformance/full/...

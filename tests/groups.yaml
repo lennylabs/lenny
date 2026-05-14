@@ -72,7 +72,7 @@ groups:
       Target wall-clock < 8 hours.
     selectors:
       include_all_tiers: true
-      cloud_subset: full
+      cloud_subset: full-cloud
       load_scenarios: full
       load_baselines:
         compare_against: prior-release
@@ -145,7 +145,7 @@ groups:
       tiers: [static, unit, contract]
       include:
         - tier: conformance
-          subset: full
+          subset: full-conformance
 
   phase-3-gate:
     description: Phase 3. PoolScalingController, DelegationPolicy, RuntimeUpgrade, mTLS.

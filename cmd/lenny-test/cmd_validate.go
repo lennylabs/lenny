@@ -35,6 +35,7 @@ func runValidateMaps(args []string) int {
 	root := repoRoot()
 	specMapPath := filepath.Join(root, "tests", "spec-map.json")
 	changeGraphPath := filepath.Join(root, "tests", "change-graph.json")
+	groupsPath, subsetsPath, exceptionsPath := yamlPaths(root)
 
 	results := []checkResult{
 		validateJSONFile(specMapPath, "tests/spec-map.json"),
@@ -45,6 +46,9 @@ func runValidateMaps(args []string) int {
 		validateChangeGraphPaths(changeGraphPath, root),
 		validateChangeGraphFileExistence(changeGraphPath, root),
 		validateTestFilesMapped(specMapPath, root),
+		validateGroupsYAML(groupsPath),
+		validateGroupsSubsetsYAML(subsetsPath),
+		validateSpecMapExceptionsYAML(exceptionsPath),
 	}
 
 	failed := 0
