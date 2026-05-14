@@ -2,16 +2,16 @@
 
 // Command lenny-gateway is the minimal Lenny gateway binary. It
 // serves the §15.1 REST session endpoints from
-// pkg/gateway/sessionserver against the in-memory session store
-// from pkg/gateway/sessionstore/memstore. No auth, no Postgres, no
-// Kubernetes — the tenant is taken from the dev X-Lenny-Tenant-ID
-// header (default "default" per §10.2 single-tenant mode).
+// pkg/gateway/sessionserver wrapped in the gateway middleware stack:
 //
-// The intent is to give the tier-3 / tier-4 test harness something
-// concrete to run against, even before the Postgres-backed gateway
-// ships. As Phase 4+ implementation lands, the in-memory backend is
-// swapped for the real Postgres / Redis / Kubernetes wiring without
-// changing the handler surface.
+//   - auth        — §10.2 Bearer JWT + dev-header fallback
+//   - idempotency — §11.5 Idempotency-Key replay cache
+//   - circuit     — §11.6 admission gate
+//
+// Backed by in-memory stores. The tier-3 contract suites and the
+// tier-4 integration tests drive the same binary; production swaps
+// the in-memory backends for Postgres / Redis / Kubernetes wiring
+// behind the same interfaces.
 //
 // Usage:
 //
@@ -23,7 +23,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -31,21 +30,72 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
+// permissiveRegistry accepts every tenant. The minimal gateway uses
+// this so dev-header transports can name an arbitrary tenant during
+// integration tests without operator pre-provisioning. Production
+// swaps in a Postgres-backed Registry.
+type permissiveRegistry struct{}
+
+func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
+
+var _ auth.TenantRegistry = permissiveRegistry{}
+
 func main() {
 	addr := flag.String("addr", ":8080", "address to bind (host:port)")
+	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
 	store := memstore.New()
 	server := sessionserver.New(store, sessionserver.Options{})
 
-	srv := &http.Server{
+	// Wrap in reverse order so the outermost middleware (auth) runs
+	// first on every request.
+	var handler http.Handler = server.Handler()
+
+	// Idempotency innermost (after auth + circuit; needs the
+	// authenticated tenant on the request to scope keys correctly).
+	idemStore := idemmw.NewMemoryStore()
+	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{})
+
+	// Circuit breaker next: rejects requests when any open breaker
+	// matches. Empty registry = no breakers configured = pass-through.
+	cbRegistry := cbmw.NewMemoryRegistry()
+	handler = cbmw.Wrap(handler, cbRegistry, cbmw.Options{})
+
+	// Auth outermost: validates Bearer or dev headers, attaches
+	// Principal to context, sets X-Lenny-Tenant-ID for downstream
+	// handlers. The minimal gateway defaults to multi-tenant mode
+	// with a permissive Registry so dev-header callers can name an
+	// arbitrary tenant during contract / integration tests without
+	// pre-registering it. Production swaps in a real Registry.
+	authOpts := authmw.Options{
+		MultiTenant:     *multiTenant,
+		AllowDevHeaders: true,
+	}
+	if *multiTenant {
+		authOpts.Registry = permissiveRegistry{}
+	} else {
+		// Even in single-tenant mode, AllowDevHeaders should not
+		// silently force every request to "default" — flip to
+		// multi-tenant with a permissive registry so the
+		// X-Lenny-Tenant-ID header round-trips.
+		authOpts.MultiTenant = true
+		authOpts.Registry = permissiveRegistry{}
+	}
+	handler = authmw.Wrap(handler, authOpts)
+
+	httpSrv := &http.Server{
 		Addr:              *addr,
-		Handler:           server.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -53,10 +103,8 @@ func main() {
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		log.Printf("lenny-gateway: listening on %s", *addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("lenny-gateway: listen: %v", err)
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("lenny-gateway: listen: %v", err)
 		}
 	}()
 
@@ -64,5 +112,5 @@ func main() {
 	log.Printf("lenny-gateway: shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
-	_ = srv.Shutdown(ctx)
+	_ = httpSrv.Shutdown(ctx)
 }

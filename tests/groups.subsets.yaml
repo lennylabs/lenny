@@ -304,5 +304,8 @@ subsets:
 
   session-lifecycle:
     tier: integration
-    tests:
-      - tests/tier4_integration/session_lifecycle_test.go
+    run: TestSessionLifecycleAgainstRealGateway|TestCrossTenantLookupRejectedAgainstRealGateway
+
+  idempotency:
+    tier: integration
+    run: TestIdempotency.*ThroughBinary

@@ -154,6 +154,7 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/{circuitbreaker, idempotency} + gateway/middleware/{idempotency, circuitbreaker} build"},
 			{name: "unit", notes: "§11.5 idempotency primitives; §11.6 circuit breaker primitives; middleware in-memory stores"},
 			{name: "contract", subsets: []string{"rest-idempotency", "rest-circuitbreaker"}, notes: "§11.5 + §11.6 wire contracts end-to-end against the minimal gateway"},
+			{name: "integration", subsets: []string{"idempotency"}, notes: "§11.5 idempotency end-to-end against the cmd/lenny-gateway subprocess: replay, body-mismatch 422, oversize key, tenant scoping"},
 		}
 	case "phase-16-gate":
 		return []tierPlan{

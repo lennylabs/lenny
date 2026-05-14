@@ -543,31 +543,30 @@ func runConformanceTier(subsets []string) (string, string) {
 // runIntegrationTier runs the tier-4 integration tests under the
 // `integration` build tag. Each test boots cmd/lenny-gateway as a
 // subprocess (via tests/testinfra/gateway) and drives the real HTTP
-// surface end-to-end.
+// surface end-to-end. When subsets is non-empty the runner uses
+// -run with the canonical regex for that subset.
 func runIntegrationTier(subsets []string) (string, string) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
-	targets := []string{"./tests/tier4_integration/..."}
+	runArgs := []string{}
 	if len(subsets) > 0 {
 		mapping := map[string]string{
-			"session-lifecycle": "./tests/tier4_integration/session_lifecycle_test.go",
+			"session-lifecycle": "TestSessionLifecycleAgainstRealGateway|TestCrossTenantLookupRejectedAgainstRealGateway",
+			"idempotency":       "TestIdempotency.*ThroughBinary",
 		}
-		targets = nil
-		seen := map[string]bool{}
+		parts := []string{}
 		for _, sub := range subsets {
 			p, ok := mapping[sub]
 			if !ok {
 				return "fail", fmt.Sprintf("unknown integration subset %q", sub)
 			}
-			if seen[p] {
-				continue
-			}
-			seen[p] = true
-			targets = append(targets, p)
+			parts = append(parts, p)
 		}
+		runArgs = []string{"-run", strings.Join(parts, "|")}
 	}
-	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=integration"}, targets...)
+	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=integration"}, runArgs...)
+	args = append(args, "./tests/tier4_integration/...")
 	cmd := exec.Command("go", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
