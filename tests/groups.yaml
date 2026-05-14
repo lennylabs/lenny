@@ -205,6 +205,17 @@ groups:
       spec_sections: ["4.3", "4.9"]
       tiers: [static, unit, component]
 
+  phase-5.6-gate:
+    description: >
+      Phase 5.6. Targeted security design review (credential).
+      The review itself is a human activity; the gate runs the
+      static linters and asserts that the review checklist at
+      tests/tier9_security/reviews/credential-review.md exists.
+    selectors:
+      tiers: [static]
+      additional_checks:
+        - credential-security-review
+
   phase-5.75-gate:
     description: Phase 5.75. Minimum viable policy enforcement.
     selectors:
