@@ -663,9 +663,24 @@
     "13.3": {
       "title": "Credential Flow",
       "spec_file": "spec/13_security-model.md",
-      "tests": [],
-      "packages": ["pkg/credential", "pkg/admission/credfsgroup"],
-      "blocked_until_phase": "5.5"
+      "tests": [
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRotationHappyPath",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantCaller",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCrossTenantIssued",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsScopeBroadening",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsAudienceBroadening",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsCallerTypeElevation",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsExpiredSubject",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateChildMintingProducesA2ADelegation",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsExpiredActor",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsTypMutationOnRotation",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateExpRespectsPerDialectCap",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateExpTruncatesToWholeSeconds",
+        "pkg/tokenexchange/tokenexchange_test.go::TestValidateRejectsExpInPast"
+      ],
+      "packages": ["pkg/credential", "pkg/admission/credfsgroup", "pkg/tokenexchange"],
+      "blocked_until_phase": "12a",
+      "notes": "Phase 12a ships the §13.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject ⊆), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the §13.3 ±1s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."
     },
     "13.4": {
       "title": "Upload Security",

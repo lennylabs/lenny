@@ -1475,9 +1475,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.25 Phase 12a — Token Service hardening (KMS envelope + OAuth)
 
-**Test infrastructure to land.**
-- `tests/tier2_component/stores/token_store_kms_test.go` validates KMS envelope encryption.
-- `tests/tier4_integration/oauth_connector_test.go` covers the full OAuth flow including state, PKCE, and storage.
+**Test infrastructure delivered in Phase 12a.**
+- `pkg/tokenexchange` ships the §13.3 RFC 8693 invariants as a pure `Validate` function: scope narrowing (`issued.scope ⊆ subject.scope`), tenant-scope match (`issued.tenant_id == subject.tenant_id == caller.tenant_id`), caller-type cannot-elevate (`agent < service < human`), audience cannot broaden, `typ` rules (only `actor_token`-bearing child minting produces `typ: a2a_delegation`; rotation preserves `typ`; mutation rejected), `delegation_depth = parent + 1` for child minting, `exp = min(requested, subject.exp, actor.exp, perDialectCap)` with the §13.3 ±1s skew and the RFC 7519 whole-second truncation. Every rejection path produces a typed `*ExchangeError` with the canonical RFC 8693 `Code` (`invalid_request`, `invalid_grant`, `invalid_scope`) and the §13.3 sub-reason.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier2_component/stores/token_store_kms_test.go` (KMS envelope encryption + the §13.3 write-before-issue Postgres transaction) is deferred to the K8s-integration phase that ships the Token Service binary.
+- `tests/tier4_integration/oauth_connector_test.go` (the full OAuth flow including PKCE, state, and storage) is deferred to the same phase.
+- The Redis EventBus `token.revoked` cluster-wide propagation and the §16.5 `TokenRevocationPropagationLag` alert are deferred.
 
 ### 13.26 Phase 12b — `type: mcp` runtime support
 

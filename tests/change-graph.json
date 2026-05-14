@@ -155,6 +155,11 @@
       "unit": ["pkg/elicitation/..."],
       "integration": ["tests/tier4_integration/mcp_elicitation_chain_test.go"]
     },
+    "pkg/tokenexchange": {
+      "unit": ["pkg/tokenexchange/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/token_service_test.go"],
+      "integration": ["tests/tier4_integration/credential_lifecycle_test.go"]
+    },
     "pkg/experiment": {
       "unit": ["pkg/experiment/..."],
       "component": ["tests/tier2_component/experiments/..."],
