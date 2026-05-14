@@ -147,6 +147,10 @@
       "component": ["tests/tier2_component/policy/..."],
       "integration": ["tests/tier4_integration/policy_gate_test.go"]
     },
+    "pkg/idempotency": {
+      "unit": ["pkg/idempotency/..."],
+      "integration": ["tests/tier4_integration/idempotency_test.go"]
+    },
     "pkg/experiment": {
       "unit": ["pkg/experiment/..."],
       "component": ["tests/tier2_component/experiments/..."],

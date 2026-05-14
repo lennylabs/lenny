@@ -1413,6 +1413,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure delivered in Phase 7.**
 - `pkg/circuitbreaker` ships the §11.6 operator-managed circuit-breaker admission logic. The `State` enum (open, closed), `LimitTier` enum (runtime, pool, connector, operation_type), `OperationType` enum (uploads, delegation_depth, session_creation, message_injection), and per-tier `Scope` validator capture every shape the §11.6 admin POST /open body can take. The `Match` function implements the §11.6 AdmissionController evaluation rule: a breaker keys exclusively on its (`LimitTier`, `Scope`) pair, never on its `{name}`. `FirstMatch` picks the first open match in cache order; `ScopeMatches` enforces the §11.6 immutable-scope invariant when an operator reopens a previously-existing breaker.
+- `pkg/idempotency` ships the §11.5 idempotency primitives: 128-character `MaxKeyLength` cap, 24-hour `TTL` constant, tenant-scoped `Key` shape with `Validate` returning `*KeyTooLongError` on length overflow, `HashBody` returning a stable 64-character SHA-256 hex digest, and `DetectReuse` returning the canonical action (`store_new` | `replay` | `reject`) with `*ReuseError` carrying the §11.5 `IDEMPOTENCY_KEY_REUSED` 422 envelope.
 
 **Test infrastructure deferred to later phases.**
 - `tests/tier4_integration/quota_enforcement_test.go` and `quota_recovery_test.go` are deferred. The Phase 5.75 `pkg/quota` arithmetic is the substrate; integration tests need the gateway, Redis, and the storage_quota_reserve.lua script.

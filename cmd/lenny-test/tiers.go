@@ -148,8 +148,8 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-7-gate":
 		return []tierPlan{
-			{name: "static", notes: "pkg/circuitbreaker builds"},
-			{name: "unit", notes: "§11.6 State, LimitTier, OperationType enums; per-tier Scope validation; Match function; FirstMatch; ScopeMatches"},
+			{name: "static", notes: "pkg/circuitbreaker + pkg/idempotency build"},
+			{name: "unit", notes: "§11.5 idempotency (key validation, body hashing, reuse detection, TTL); §11.6 circuit breakers (State, LimitTier, OperationType enums; per-tier Scope validation; Match function; FirstMatch; ScopeMatches)"},
 		}
 	case "phase-16-gate":
 		return []tierPlan{
