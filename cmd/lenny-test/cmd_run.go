@@ -846,10 +846,18 @@ func hasGoCode() bool {
 }
 
 func printSummary(s selector, v *verdict, status string, exit int) int {
-	if s.output == "json" {
-		// Phase 0: a minimal JSON summary on stdout. The full verdict file is
-		// already written.
+	switch s.output {
+	case "json":
 		fmt.Println(v.json())
+		return exit
+	case "tap":
+		printTAP(v, status)
+		return exit
+	case "junit":
+		printJUnit(v)
+		return exit
+	case "github-annotations":
+		printGitHubAnnotations(v)
 		return exit
 	}
 
@@ -873,6 +881,120 @@ func printSummary(s selector, v *verdict, status string, exit int) int {
 		fmt.Println()
 	}
 	return exit
+}
+
+// printTAP emits the verdict in TAP (Test Anything Protocol) v13
+// format so downstream tooling can consume it without parsing the
+// human-formatted summary.
+func printTAP(v *verdict, _ string) {
+	tiers := orderedTierNames(v)
+	fmt.Println("TAP version 13")
+	fmt.Printf("1..%d\n", len(tiers))
+	for i, name := range tiers {
+		t := v.Tiers[name]
+		switch t.Status {
+		case "pass":
+			fmt.Printf("ok %d - %s\n", i+1, name)
+		case "fail":
+			fmt.Printf("not ok %d - %s\n", i+1, name)
+			if t.Reason != "" {
+				fmt.Printf("  ---\n  message: %s\n  ...\n", escapeTAPReason(t.Reason))
+			}
+		case "skipped":
+			fmt.Printf("ok %d - %s # SKIP %s\n", i+1, name, t.Reason)
+		default:
+			fmt.Printf("ok %d - %s # %s\n", i+1, name, t.Status)
+		}
+	}
+}
+
+// printJUnit emits the verdict as a JUnit-compatible XML document.
+// Downstream tooling (GitLab, Buildkite, Bazel test summary) consumes
+// this format directly.
+func printJUnit(v *verdict) {
+	tiers := orderedTierNames(v)
+	failures := 0
+	skipped := 0
+	for _, n := range tiers {
+		switch v.Tiers[n].Status {
+		case "fail":
+			failures++
+		case "skipped":
+			skipped++
+		}
+	}
+	fmt.Println(`<?xml version="1.0" encoding="UTF-8"?>`)
+	fmt.Printf(`<testsuite name="lenny-test" tests="%d" failures="%d" skipped="%d">`+"\n",
+		len(tiers), failures, skipped)
+	for _, name := range tiers {
+		t := v.Tiers[name]
+		fmt.Printf(`  <testcase classname="lenny-test" name="%s">`+"\n", name)
+		switch t.Status {
+		case "fail":
+			fmt.Printf(`    <failure message="%s"/>`+"\n", escapeXML(t.Reason))
+		case "skipped":
+			fmt.Printf(`    <skipped message="%s"/>`+"\n", escapeXML(t.Reason))
+		}
+		fmt.Println(`  </testcase>`)
+	}
+	fmt.Println(`</testsuite>`)
+}
+
+// printGitHubAnnotations emits the verdict as GitHub Actions
+// workflow commands so failures appear inline on the PR.
+func printGitHubAnnotations(v *verdict) {
+	for name, t := range v.Tiers {
+		switch t.Status {
+		case "fail":
+			fmt.Printf("::error title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
+		case "skipped":
+			fmt.Printf("::notice title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
+		}
+	}
+}
+
+// orderedTierNames returns the tier names in a stable order so the
+// emitted output is deterministic across runs.
+func orderedTierNames(v *verdict) []string {
+	preferred := []string{
+		"static", "unit", "component", "contract", "integration",
+		"e2e_kind", "e2e_cloud", "load", "chaos", "security",
+		"conformance", "docs",
+	}
+	out := make([]string, 0, len(v.Tiers))
+	seen := map[string]bool{}
+	for _, n := range preferred {
+		if _, ok := v.Tiers[n]; ok {
+			out = append(out, n)
+			seen[n] = true
+		}
+	}
+	for n := range v.Tiers {
+		if !seen[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func escapeTAPReason(s string) string {
+	// TAP YAML diagnostic block — keep it single-line.
+	return oneLine(s)
+}
+
+func escapeXML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	return oneLine(s)
+}
+
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.TrimSpace(s)
 }
 
 func splitNonEmpty(s string) []string {
