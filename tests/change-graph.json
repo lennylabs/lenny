@@ -306,6 +306,22 @@
     "pkg/sandboxclaim/state": {
       "unit": ["pkg/sandboxclaim/state/..."]
     },
+    "pkg/tokenservice": {
+      "unit": ["pkg/tokenservice/..."],
+      "contract": ["tests/tier3_contract/oauth_token/..."]
+    },
+    "cmd/lenny-test": {
+      "static": ["tests/tier0_static/..."],
+      "unit": ["cmd/lenny-test/..."]
+    },
+    "cmd/lenny-test-cached": {
+      "static": ["tests/tier0_static/..."],
+      "unit": ["cmd/lenny-test-cached/..."]
+    },
+    "cmd/lenny-token-service": {
+      "unit": ["cmd/lenny-token-service/..."],
+      "contract": ["tests/tier3_contract/oauth_token/..."]
+    },
     "buf.yaml": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },

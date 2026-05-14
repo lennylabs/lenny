@@ -58,13 +58,20 @@ type tierStat struct {
 	Failures   []failureEntry `json:"failures,omitempty"`
 }
 
-// failureEntry captures one failed test with enough structure for a
-// PR comment to link to it.
+// failureEntry captures one failed test with the §7 structure: a
+// PR comment links to it, a CI dashboard groups by spec_sections,
+// the rerun_command is copy-paste-ready.
 type failureEntry struct {
-	Test     string `json:"test"`
-	Package  string `json:"package,omitempty"`
-	Location string `json:"location,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Test         string   `json:"test"`
+	Package      string   `json:"package,omitempty"`
+	File         string   `json:"file,omitempty"`
+	Line         int      `json:"line,omitempty"`
+	SpecSections []string `json:"spec_sections,omitempty"`
+	Diagnosis    string   `json:"diagnosis,omitempty"`
+	Error        string   `json:"error,omitempty"`
+	DurationMS   int64    `json:"duration_ms,omitempty"`
+	StdoutTail   string   `json:"stdout_tail,omitempty"`
+	RerunCommand string   `json:"rerun_command,omitempty"`
 }
 
 func newVerdict(s selector) *verdict {
