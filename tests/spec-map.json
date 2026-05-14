@@ -279,9 +279,14 @@
     "8": {
       "title": "Recursive Delegation",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
-      "packages": ["pkg/delegation"],
-      "blocked_until_phase": "9"
+      "tests": [
+        "pkg/delegation/cycle/...",
+        "pkg/delegation/lease/...",
+        "pkg/task/state/..."
+      ],
+      "packages": ["pkg/delegation", "pkg/task/state"],
+      "blocked_until_phase": "9",
+      "notes": "§8 is the umbrella section for recursive delegation. The behavioral surface lives in subsections §8.2 (cycle detection + lease budgets) and §8.8 (TaskRecord state machine); the tests listed here mirror those subsection entries so a dashboard query for §8 surfaces the same coverage."
     },
     "8.2": {
       "title": "Delegation Mechanism — cycle detection and maxDepth",
@@ -922,7 +927,7 @@
         "tests/tier3_contract/sdks/go_client_test.go",
         "tests/tier3_contract/sdks/python_client_test.go",
         "tests/tier3_contract/sdks/typescript_client_test.go",
-        "tests/tier3_contract/sdks/harness/"
+        "tests/tier3_contract/sdks/harness/..."
       ],
       "packages": ["sdks/client/go", "sdks/client/python", "sdks/client/typescript"],
       "blocked_until_phase": "6"
