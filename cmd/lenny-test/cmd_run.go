@@ -308,7 +308,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("static", "Fix static-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -319,7 +319,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("unit", "Fix unit-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -330,7 +330,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("component", "Fix component-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -341,7 +341,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("contract", "Fix contract-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -352,7 +352,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("conformance", "Fix conformance-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -367,7 +367,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("integration", "Fix integration-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -386,7 +386,7 @@ func execute(s selector, r resolvedSelector) int {
 				v.next(v.synthesizeNextAction("e2e_kind", "Fix e2e-Kind-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 				}
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
@@ -439,7 +439,7 @@ func execute(s selector, r resolvedSelector) int {
 	// dispatch loop did not reach; we don't need to do it here.
 
 	if writeErr := v.write(s.verdictFile); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+		fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
 	}
 	return printSummary(s, v, v.Verdict, exitCodeFor(v.Verdict))
 }
