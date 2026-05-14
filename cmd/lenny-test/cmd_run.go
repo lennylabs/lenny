@@ -419,6 +419,19 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
 			return string(out), err
 		}},
+		{"validate-diagnosis", func() (string, error) {
+			// Re-invoke this very binary's `validate-diagnosis`
+			// subcommand. The subcommand walks every Tier 2+
+			// _test.go file and confirms each test function carries
+			// the §17.2 annotation (or is a scaffold whose t.Skip
+			// already names the spec section).
+			self, err := os.Executable()
+			if err != nil {
+				return "", fmt.Errorf("locate self: %w", err)
+			}
+			out, err := exec.Command(self, "validate-diagnosis").CombinedOutput()
+			return string(out), err
+		}},
 	}
 
 	for _, c := range checks {

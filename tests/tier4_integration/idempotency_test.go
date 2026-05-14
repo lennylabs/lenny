@@ -19,6 +19,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
+// spec: 11.5 (replay through the gateway subprocess + middleware stack)
+// diagnosis: Replay returned a different session id end-to-end. The
+//
+//	middleware stack does not preserve the store across the
+//	first/second request, or the subprocess restarts state.
 func TestIdempotencyReplayThroughBinary(t *testing.T) {
 	gw := gateway.Start(t)
 	body := map[string]any{"runtimeRef": "claude-code"}
@@ -34,6 +39,11 @@ func TestIdempotencyReplayThroughBinary(t *testing.T) {
 	}
 }
 
+// spec: 11.5 (body-hash detection through the running binary)
+// diagnosis: Different body under same key was not rejected end-to-
+//
+//	end. The body-hash branch is not invoked in the binary
+//	build, or the envelope mapping was lost.
 func TestIdempotencyDifferentBodyReusedThroughBinary(t *testing.T) {
 	gw := gateway.Start(t)
 	postWithKey(t, gw.BaseURL(), "key-B", map[string]any{"runtimeRef": "claude-code"}, "acme")
@@ -52,6 +62,11 @@ func TestIdempotencyDifferentBodyReusedThroughBinary(t *testing.T) {
 	}
 }
 
+// spec: 11.5 (key length cap enforced end-to-end through the binary)
+// diagnosis: Oversize key was not rejected end-to-end. The key
+//
+//	validator is missing from the binary's middleware
+//	configuration.
 func TestIdempotencyOversizeKeyThroughBinary(t *testing.T) {
 	gw := gateway.Start(t)
 	resp := postRaw(t, gw.BaseURL(), strings.Repeat("a", 129),
@@ -62,6 +77,11 @@ func TestIdempotencyOversizeKeyThroughBinary(t *testing.T) {
 	}
 }
 
+// spec: 11.5 + 4.2 (tenant-scoped idempotency through the binary)
+// diagnosis: Tenant B's request replayed tenant A's response end-to-
+//
+//	end. The store key in the running binary did not include
+//	the resolved tenant id from the auth middleware.
 func TestIdempotencyTenantScopedThroughBinary(t *testing.T) {
 	gw := gateway.Start(t)
 	body := map[string]any{"runtimeRef": "claude-code"}

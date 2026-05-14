@@ -62,6 +62,12 @@ func post(t *testing.T, ts *httptest.Server, path, idemKey string, body any) (*h
 	return resp, out
 }
 
+// spec: 11.5 (Idempotency-Key middleware: cache-on-first-write, replay-on-second-write)
+// diagnosis: Replay returned a different session id — the middleware
+//
+//	did not consult the store, or the response cache was not
+//	written on the first call. Inspect captureWriter.flush and
+//	store.Put in pkg/gateway/middleware/idempotency.
 func TestIdempotencyReplayReturnsCachedResponse(t *testing.T) {
 	ts := newTestServer(t)
 	body := map[string]any{"runtimeRef": "claude-code", "userId": "alice"}
@@ -85,6 +91,12 @@ func TestIdempotencyReplayReturnsCachedResponse(t *testing.T) {
 	}
 }
 
+// spec: 11.5 (IDEMPOTENCY_KEY_REUSED envelope on body-hash mismatch)
+// diagnosis: Different request body under the same key returned a
+//
+//	status other than 422 — either the body hash was not
+//	persisted, DetectReuse was not invoked, or the envelope
+//	mapping in writeError dropped the code.
 func TestIdempotencyDifferentBodyReturns422(t *testing.T) {
 	ts := newTestServer(t)
 	post(t, ts, "/v1/sessions", "key-2", map[string]any{"runtimeRef": "claude-code"})
@@ -98,6 +110,11 @@ func TestIdempotencyDifferentBodyReturns422(t *testing.T) {
 	}
 }
 
+// spec: 11.5 (key length bound: 128 octets)
+// diagnosis: Oversize idempotency key not rejected with 400
+//
+//	INVALID_IDEMPOTENCY_KEY — Key.Validate is not running or
+//	the length cap moved. Check pkg/idempotency.Key.Validate.
 func TestIdempotencyOversizeKeyRejected(t *testing.T) {
 	ts := newTestServer(t)
 	oversize := strings.Repeat("a", 129)
@@ -111,6 +128,11 @@ func TestIdempotencyOversizeKeyRejected(t *testing.T) {
 	}
 }
 
+// spec: 11.5 (Idempotency-Key is optional; no-key requests pass through)
+// diagnosis: Requests without Idempotency-Key were rejected, or two
+//
+//	such requests collapsed to the same session. The
+//	middleware must short-circuit when the header is absent.
 func TestIdempotencyNoHeaderIsPassthrough(t *testing.T) {
 	ts := newTestServer(t)
 	// Two calls without idempotency key — both should create.
@@ -124,8 +146,12 @@ func TestIdempotencyNoHeaderIsPassthrough(t *testing.T) {
 	}
 }
 
-// Cross-tenant isolation: same key value from a different tenant
-// must not see the first tenant's cached response.
+// spec: 11.5 (tenant-scoped key), 4.2 (cross-tenant isolation)
+// diagnosis: Same idempotency key value from a second tenant
+//
+//	replayed the first tenant's response. The store key must
+//	include the tenant id; cross-tenant isolation requires
+//	both halves of (tenant_id, key) to match.
 func TestIdempotencyTenantScoped(t *testing.T) {
 	ts := newTestServer(t)
 	body := map[string]any{"runtimeRef": "claude-code"}

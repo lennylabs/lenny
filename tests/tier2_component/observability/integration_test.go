@@ -26,6 +26,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/mocks/otelcollector"
 )
 
+// spec: 13.4 (observability primitives compose: correlation + logging + tracing)
+// diagnosis: A correlated log/span did not carry the tenant id or
+//
+//	component label end-to-end. Inspect correlation.With,
+//	the JSONHandler attribute pipeline, and the otelcollector
+//	span recorder.
 func TestObservabilityPrimitivesWireTogether(t *testing.T) {
 	collector := otelcollector.New(t)
 	tr := tracing.NewTracer(collector.Tracer("gateway"))

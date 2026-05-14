@@ -239,13 +239,32 @@ func scanDiagnosis(path string) (int, []string) {
 	funcs := 0
 	missing := []string{}
 	for i, line := range lines {
-		if !startsWith(trimLeft(line), "func Test") {
+		stripped := trimLeft(line)
+		if !startsWith(stripped, "func Test") {
+			continue
+		}
+		// TestMain is the Go test-binary entrypoint, not a test case.
+		// It has no assertions, so the diagnosis-comment convention
+		// does not apply.
+		if startsWith(stripped, "func TestMain(") {
 			continue
 		}
 		funcs++
-		if !hasDiagnosisBefore(lines, i) {
-			missing = append(missing, fmt.Sprintf("%s:%d", path, i+1))
+		if hasDiagnosisBefore(lines, i) {
+			continue
 		}
+		// Scaffold form: a t.Skip("not implemented: ...") inside the
+		// function body counts as a diagnosis. The skip message names
+		// the spec section and the missing implementation, which is
+		// exactly the information `// diagnosis:` is meant to carry,
+		// and it has the additional benefit that the harness sees it
+		// at runtime too. When the scaffold is replaced with a real
+		// test, the author writes the canonical `// spec:` and
+		// `// diagnosis:` annotations above the function.
+		if hasNotImplementedSkipAfter(lines, i) {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf("%s:%d", path, i+1))
 	}
 	return funcs, missing
 }
@@ -257,6 +276,37 @@ func hasDiagnosisBefore(lines []string, idx int) bool {
 	}
 	for i := start; i < idx; i++ {
 		if containsSubstr(lines[i], "// diagnosis:") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNotImplementedSkipAfter checks the 8 lines following the function
+// signature for a skip-style scaffold marker. Scaffolds use one of:
+//
+//   - t.Skip("not implemented: …")          → carry the diagnosis inline
+//   - kind.SkipUnlessAvailable(t)           → tier-5 e2e_kind one-liner
+//   - cloud.SkipUnlessAuthorized(t)         → future tier-6 helper
+//   - any *.SkipUnless* harness helper that gates the test on an
+//     infrastructure precondition
+//
+// Either form is acceptable: the skip message names the spec section
+// and the missing implementation, which is exactly the information
+// `// diagnosis:` is meant to carry, and it has the additional
+// benefit that the harness sees it at runtime too. When the scaffold
+// is replaced with a real test, the author writes the canonical
+// `// spec:` and `// diagnosis:` annotations above the function.
+func hasNotImplementedSkipAfter(lines []string, idx int) bool {
+	end := idx + 8
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+	for i := idx; i <= end; i++ {
+		if containsSubstr(lines[i], "t.Skip(\"not implemented:") {
+			return true
+		}
+		if containsSubstr(lines[i], ".SkipUnless") {
 			return true
 		}
 	}

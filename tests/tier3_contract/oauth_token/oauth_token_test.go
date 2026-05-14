@@ -75,8 +75,11 @@ func exchange(t *testing.T, ts *httptest.Server, callerTok string, body tokenser
 	return resp, out
 }
 
-// Happy-path rotation: subject token gets a fresh exp; scope and typ
-// preserved.
+// spec: 13.3 (RFC 8693 happy path: fresh exp, scope and typ preserved)
+// diagnosis: An issued token had the wrong typ/scope, or the call
+//
+//	returned non-200. Inspect tokenexchange.Validate plus
+//	the Token Service per-dialect cap.
 func TestRotationHappyPath(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -114,7 +117,10 @@ func TestRotationHappyPath(t *testing.T) {
 	}
 }
 
-// Scope broadening is rejected per §13.3 (invalid_scope).
+// spec: 13.3 (invalid_scope when requested scope exceeds subject scope)
+// diagnosis: A broader scope was issued. The scope-narrowing rule in
+//
+//	tokenexchange.Validate is not enforcing scope ⊆ subject.
 func TestScopeBroadeningRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -136,8 +142,10 @@ func TestScopeBroadeningRejected(t *testing.T) {
 	}
 }
 
-// Cross-tenant exchange (caller and subject tenants differ) is
-// rejected with tenant_mismatch.
+// spec: 13.3 + 4.2 (caller and subject tenants must match: tenant_mismatch)
+// diagnosis: A cross-tenant exchange succeeded. The tenant-equality
+//
+//	guard before scope checks is missing or out of order.
 func TestCrossTenantExchangeRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	caller := mint(t, signer, jwt.Claims{
@@ -167,8 +175,10 @@ func TestCrossTenantExchangeRejected(t *testing.T) {
 	}
 }
 
-// Child-token minting (actor_token present): issued typ is
-// a2a_delegation, depth = actor.depth + 1.
+// spec: 13.3 + 8.2 (actor_token present → a2a_delegation, depth = actor.depth + 1)
+// diagnosis: The issued typ was wrong or depth did not increment.
+//
+//	Inspect the actor-token branch of tokenexchange.Validate.
 func TestChildMintingProducesA2ADelegation(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -205,7 +215,10 @@ func TestChildMintingProducesA2ADelegation(t *testing.T) {
 	}
 }
 
-// Expired subject token: invalid_grant.
+// spec: 13.3 (expired subject token → invalid_grant)
+// diagnosis: An expired subject token was accepted. The expiry check
+//
+//	on the subject must run before any other rule.
 func TestExpiredSubjectRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	caller := mint(t, signer, jwt.Claims{
@@ -232,7 +245,10 @@ func TestExpiredSubjectRejected(t *testing.T) {
 	}
 }
 
-// caller_type cannot elevate (agent → human is rejected).
+// spec: 13.3 (caller_type ratchet — agent caller cannot become human in the issued token)
+// diagnosis: An agent token round-tripped to a human typ. The
+//
+//	monotonicity guard on caller_type is missing.
 func TestCallerTypeElevationRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -258,7 +274,11 @@ func TestCallerTypeElevationRejected(t *testing.T) {
 	}
 }
 
-// Missing Authorization header: invalid_client.
+// spec: 13.3 (Authorization header required: invalid_client / 401)
+// diagnosis: An unauthenticated request to /v1/oauth/token returned
+//
+//	a 2xx. The caller-auth gate is missing in the Token
+//	Service handler.
 func TestMissingCallerRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -284,7 +304,10 @@ func TestMissingCallerRejected(t *testing.T) {
 	}
 }
 
-// Unsupported grant_type: unsupported_grant_type.
+// spec: 13.3 (grant_type allowlist: only token-exchange)
+// diagnosis: A non-token-exchange grant was accepted. The allowlist
+//
+//	check is missing or includes the wrong values.
 func TestUnsupportedGrantTypeRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
@@ -304,7 +327,11 @@ func TestUnsupportedGrantTypeRejected(t *testing.T) {
 	}
 }
 
-// Per-dialect cap: exp is capped at the dialect ceiling.
+// spec: 13.3 (per-dialect cap: gateway 24h, ops 1h, llm-proxy 1h)
+// diagnosis: expires_in came back above the dialect ceiling. The
+//
+//	PerDialectCap is not being applied to the requested
+//	expiry.
 func TestPerDialectCapCapsExp(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{

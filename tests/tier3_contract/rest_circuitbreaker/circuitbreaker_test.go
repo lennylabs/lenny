@@ -52,6 +52,11 @@ func post(t *testing.T, ts *httptest.Server, path string, body any) (*http.Respo
 	return resp, out
 }
 
+// spec: 11.6 (admission with no breakers configured)
+// diagnosis: Empty registry returned non-201 — the middleware
+//
+//	short-circuit on the no-breakers path is broken. Inspect
+//	registry.Active() in pkg/gateway/middleware/circuitbreaker.
 func TestClosedRegistryPassesThrough(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	ts := newTestServer(t, reg)
@@ -61,6 +66,11 @@ func TestClosedRegistryPassesThrough(t *testing.T) {
 	}
 }
 
+// spec: 11.6 (breaker state machine: Closed allows traffic)
+// diagnosis: A breaker in StateClosed blocked the request. The
+//
+//	state-based admission check is incorrectly treating Closed
+//	as Open.
 func TestClosedBreakerPassesThrough(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	reg.Set([]circuitbreaker.Breaker{
@@ -78,6 +88,11 @@ func TestClosedBreakerPassesThrough(t *testing.T) {
 	}
 }
 
+// spec: 11.6 (open-tier breaker → 503 CIRCUIT_BREAKER_OPEN envelope with details)
+// diagnosis: Open operation_type breaker did not reject with the
+//
+//	full envelope (code/details). Inspect Match() or
+//	writeOpenEnvelope; the limitTier mapping may have drifted.
 func TestOpenOperationTypeBreakerRejects(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	reg.Set([]circuitbreaker.Breaker{
@@ -108,7 +123,11 @@ func TestOpenOperationTypeBreakerRejects(t *testing.T) {
 	}
 }
 
-// Non-matching open breaker (different operation_type) must NOT block.
+// spec: 11.6 (scope-narrowing: a breaker matches only when its Scope contains the request)
+// diagnosis: An open breaker with a different operation_type blocked
+//
+//	the request — Scope matching is too broad. Inspect
+//	Scope.Contains() in pkg/circuitbreaker.
 func TestOpenBreakerWithDifferentScopeDoesNotMatch(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	reg.Set([]circuitbreaker.Breaker{
@@ -126,7 +145,11 @@ func TestOpenBreakerWithDifferentScopeDoesNotMatch(t *testing.T) {
 	}
 }
 
-// Multiple breakers: middleware returns the first match per §11.6.
+// spec: 11.6 (deterministic first-match selection across the active breaker list)
+// diagnosis: Two breakers both matched and the response named the
+//
+//	wrong circuitName. The selection order is non-deterministic
+//	or the registry returned breakers in the wrong order.
 func TestFirstOpenMatchWins(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	reg.Set([]circuitbreaker.Breaker{

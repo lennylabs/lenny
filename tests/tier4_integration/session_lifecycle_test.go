@@ -26,6 +26,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
+// spec: 15.1 (full session lifecycle through the gateway subprocess)
+// diagnosis: A transition through the binary returned the wrong
+//
+//	state or a non-2xx. The integration path differs from the
+//	httptest version — middleware order, store wiring, or
+//	binary dev-mode flag is wrong in cmd/lenny-gateway.
 func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 	gw := gateway.Start(t)
 	base := gw.BaseURL()
@@ -112,8 +118,12 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 	}
 }
 
-// Cross-tenant lookups must 404 — the §4.2 isolation invariant must
-// hold end-to-end through the binary, not just inside the handler.
+// spec: 4.2 + 15.1 (tenant isolation through the gateway subprocess)
+// diagnosis: A cross-tenant GET succeeded end-to-end. The
+//
+//	permissiveRegistry must still let the auth middleware
+//	resolve distinct tenant ids; the store path then enforces
+//	isolation.
 func TestCrossTenantLookupRejectedAgainstRealGateway(t *testing.T) {
 	gw := gateway.Start(t)
 	base := gw.BaseURL()

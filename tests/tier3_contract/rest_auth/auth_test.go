@@ -85,8 +85,11 @@ func do(t *testing.T, ts *httptest.Server, headers map[string]string, body any) 
 	return resp, out
 }
 
-// Single-tenant deployment: every request collapses to the
-// "default" tenant per §10.2, regardless of claim contents.
+// spec: 10.2 (single-tenant deployment collapses every request to "default")
+// diagnosis: A non-default tenantId on the response shows the auth
+//
+//	middleware respected the claim. Single-tenant mode must
+//	short-circuit before claim parsing.
 func TestSingleTenantIgnoresClaim(t *testing.T) {
 	ts, signer := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -103,7 +106,11 @@ func TestSingleTenantIgnoresClaim(t *testing.T) {
 	}
 }
 
-// Multi-tenant + missing tenant claim → 401 TENANT_CLAIM_MISSING.
+// spec: 10.2 (TENANT_CLAIM_MISSING when tenant_id absent in multi-tenant mode)
+// diagnosis: A 200 / 403 instead of 401 means tenant extraction is
+//
+//	wrong, or the envelope mapping dropped the code. Inspect
+//	resolveTenant in pkg/gateway/middleware/auth.
 func TestMultiTenantClaimMissingReturns401(t *testing.T) {
 	registry := &fakeRegistry{registered: map[string]bool{"acme": true}}
 	ts, signer := newTestServer(t, authmw.Options{
@@ -123,7 +130,11 @@ func TestMultiTenantClaimMissingReturns401(t *testing.T) {
 	}
 }
 
-// Multi-tenant + malformed tenant claim → 401 TENANT_CLAIM_INVALID_FORMAT.
+// spec: 10.2 (tenant id syntax: alphanumeric + hyphen, no slashes)
+// diagnosis: A claim containing "/" passed through. The tenant-id
+//
+//	format check must run before registry lookup; check
+//	the regex in jwt.Claims.TenantID validation.
 func TestMultiTenantClaimBadFormatReturns401(t *testing.T) {
 	registry := &fakeRegistry{registered: map[string]bool{"acme": true}}
 	ts, signer := newTestServer(t, authmw.Options{
@@ -143,7 +154,11 @@ func TestMultiTenantClaimBadFormatReturns401(t *testing.T) {
 	}
 }
 
-// Multi-tenant + unregistered tenant → 403 TENANT_NOT_FOUND.
+// spec: 10.2 (TENANT_NOT_FOUND when registry lookup fails)
+// diagnosis: An unregistered tenant id was accepted. The Registry
+//
+//	interface returned true for an unknown tenant or the
+//	middleware skipped the lookup.
 func TestMultiTenantUnregisteredReturns403(t *testing.T) {
 	registry := &fakeRegistry{registered: map[string]bool{"acme": true}}
 	ts, signer := newTestServer(t, authmw.Options{
@@ -163,8 +178,11 @@ func TestMultiTenantUnregisteredReturns403(t *testing.T) {
 	}
 }
 
-// Multi-tenant + registered tenant: request proceeds with the
-// authenticated tenant attached.
+// spec: 10.2 (happy path: registered tenant id propagates through to the response)
+// diagnosis: The response carried the wrong tenantId. The Principal
+//
+//	is either not being attached to the request context or
+//	sessionserver did not read it back out via auth.FromContext.
 func TestMultiTenantRegisteredAccepted(t *testing.T) {
 	registry := &fakeRegistry{registered: map[string]bool{"acme": true}}
 	ts, signer := newTestServer(t, authmw.Options{
@@ -183,7 +201,11 @@ func TestMultiTenantRegisteredAccepted(t *testing.T) {
 	}
 }
 
-// Expired Bearer token: 401 TOKEN_EXPIRED.
+// spec: 10.2 / 13.3 (token expiry with ±1s skew on the exp check)
+// diagnosis: An expired token was accepted. Inspect Verify() in
+//
+//	pkg/auth/jwt and the VerifyError.Reason mapping in the
+//	auth middleware.
 func TestExpiredTokenReturns401(t *testing.T) {
 	ts, signer := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -206,7 +228,10 @@ func TestExpiredTokenReturns401(t *testing.T) {
 	}
 }
 
-// Tampered Bearer token: 401 TOKEN_INVALID.
+// spec: 10.2 (HMAC signature must verify byte-for-byte)
+// diagnosis: A modified signature was accepted. Check the constant-
+//
+//	time comparison in pkg/auth/jwt.HMACSigner.Verify.
 func TestTamperedTokenReturns401(t *testing.T) {
 	ts, signer := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -226,7 +251,10 @@ func TestTamperedTokenReturns401(t *testing.T) {
 	}
 }
 
-// RequireAuth=true + no credentials: 401 AUTH_REQUIRED.
+// spec: 10.2 (auth required when RequireAuth is true)
+// diagnosis: A request with no credentials proceeded. The middleware
+//
+//	must return AUTH_REQUIRED before any handler runs.
 func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant: false,
@@ -242,8 +270,10 @@ func TestNoCredentialsRejectedWhenAuthRequired(t *testing.T) {
 	}
 }
 
-// Dev-header transport: when AllowDevHeaders is true, the
-// X-Lenny-Tenant-ID header substitutes for Bearer.
+// spec: 10.2 (AllowDevHeaders allows X-Lenny-Tenant-ID in place of Bearer)
+// diagnosis: The dev header was either ignored or accepted without
+//
+//	registry lookup. Dev mode must still consult the Registry.
 func TestDevHeaderTransportAccepted(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant:     true,
@@ -260,7 +290,10 @@ func TestDevHeaderTransportAccepted(t *testing.T) {
 	}
 }
 
-// Dev-header with unregistered tenant still emits TENANT_NOT_FOUND.
+// spec: 10.2 (dev-header transport still enforces registry lookup)
+// diagnosis: The dev header bypassed the registry. AllowDevHeaders
+//
+//	must apply the same TENANT_NOT_FOUND check as Bearer.
 func TestDevHeaderUnregisteredReturns403(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{
 		MultiTenant:     true,

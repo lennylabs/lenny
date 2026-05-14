@@ -98,6 +98,10 @@ func transition(t *testing.T, ts *httptest.Server, id, endpoint string) (*http.R
 
 // ─── happy-path coverage ──────────────────────────────────────────
 
+// spec: 15.1 (POST /v1/sessions: 201 Created with created state)
+// diagnosis: Created session row missing fields or state. Inspect
+//
+//	sessionserver.createSession and the response writer.
 func TestCreateSessionReturnsCreatedRow(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{
@@ -118,6 +122,10 @@ func TestCreateSessionReturnsCreatedRow(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (runtimeRef is required at session creation)
+// diagnosis: Missing runtimeRef did not return 400 VALIDATION_ERROR.
+//
+//	Inspect the request-body validator in sessionserver.
 func TestCreateRejectsMissingRuntimeRef(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{"userId": "alice"})
@@ -129,6 +137,10 @@ func TestCreateRejectsMissingRuntimeRef(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (GET /v1/sessions/{id} returns the stored row)
+// diagnosis: GET returned a session with the wrong id, or 404. The
+//
+//	store path or the id parser may have drifted.
 func TestGetSessionReturnsRow(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -141,6 +153,10 @@ func TestGetSessionReturnsRow(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (GET on a non-existent session returns 404 RESOURCE_NOT_FOUND)
+// diagnosis: A non-existent id returned a different status or code.
+//
+//	The store must surface ErrNotFound which maps to 404.
 func TestGetSessionMissingReturns404(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "GET", "/v1/sessions/sess_missing", nil)
@@ -152,9 +168,10 @@ func TestGetSessionMissingReturns404(t *testing.T) {
 	}
 }
 
-// §15.1 cross-tenant invariant: GET with a different tenant header
-// must NOT leak existence — returns 404 regardless of whether the
-// row exists in another tenant.
+// spec: 15.1 + 4.2 (cross-tenant GET returns 404 to avoid existence leak)
+// diagnosis: A 403 leaked existence. The store's tenant filter must
+//
+//	return ErrNotFound for the other tenant's id.
 func TestGetSessionCrossTenantReturns404(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts) // created under tenant "acme"
@@ -171,8 +188,11 @@ func TestGetSessionCrossTenantReturns404(t *testing.T) {
 	}
 }
 
-// Happy-path lifecycle: created → finalize → ready → start → running
-// → interrupt → suspended → terminate → completed.
+// spec: 15.1 (full state machine: created → ready → running → suspended → completed)
+// diagnosis: A transition returned the wrong state. Inspect the
+//
+//	transition table in pkg/api/v1/session and the dispatch
+//	in sessionserver.
 func TestHappyPathLifecycle(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -199,6 +219,10 @@ func TestHappyPathLifecycle(t *testing.T) {
 
 // ─── §15.1 precondition table coverage ─────────────────────────────
 
+// spec: 15.1 (start requires state=ready)
+// diagnosis: A start from created returned non-409. The transition
+//
+//	validator skipped the precondition check.
 func TestStartRejectsFromCreated(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -209,6 +233,10 @@ func TestStartRejectsFromCreated(t *testing.T) {
 	assertInvalidStateTransition(t, body, "created", []string{"ready"})
 }
 
+// spec: 15.1 (interrupt requires state=running)
+// diagnosis: Interrupt from created returned non-409. Inspect the
+//
+//	allowedStates table.
 func TestInterruptRejectsFromCreated(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -219,6 +247,10 @@ func TestInterruptRejectsFromCreated(t *testing.T) {
 	assertInvalidStateTransition(t, body, "created", []string{"running"})
 }
 
+// spec: 15.1 (finalize requires state=created)
+// diagnosis: Finalize from ready returned non-409. The transition
+//
+//	table accepted a forbidden transition.
 func TestFinalizeRejectsFromReady(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -230,6 +262,11 @@ func TestFinalizeRejectsFromReady(t *testing.T) {
 	assertInvalidStateTransition(t, body, "ready", []string{"created"})
 }
 
+// spec: 15.1 (resume requires state=awaiting_client_action)
+// diagnosis: Resume from running returned non-409. The transition
+//
+//	table is wrong, or the resume endpoint is dispatching
+//	without checking state.
 func TestResumeRejectsFromRunning(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -242,6 +279,10 @@ func TestResumeRejectsFromRunning(t *testing.T) {
 	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action"})
 }
 
+// spec: 15.1 (terminate is admitted from every non-terminal state)
+// diagnosis: Terminate from created returned non-200. The transition
+//
+//	table is missing created→completed via terminate.
 func TestTerminateAdmitsEveryNonTerminal(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -252,6 +293,10 @@ func TestTerminateAdmitsEveryNonTerminal(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (terminate is rejected from terminal states: completed, failed, etc.)
+// diagnosis: Terminate from completed returned non-409. The terminal
+//
+//	state check is missing or wrongly placed.
 func TestTerminateRejectsTerminal(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -269,6 +314,10 @@ func TestTerminateRejectsTerminal(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (DELETE /v1/sessions/{id} cancels the session)
+// diagnosis: DELETE returned a session whose state is not "cancelled".
+//
+//	The DELETE handler must move the session to cancelled.
 func TestDeleteCancelsSession(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -283,6 +332,10 @@ func TestDeleteCancelsSession(t *testing.T) {
 
 // ─── §15.1 listing ────────────────────────────────────────────────
 
+// spec: 15.1 (GET /v1/sessions returns the tenant's session list)
+// diagnosis: List returned the wrong count or missing ids. The store
+//
+//	List path or the response writer dropped entries.
 func TestListReturnsCreatedSessions(t *testing.T) {
 	ts := newTestServer(t)
 	id1 := createSession(t, ts)
@@ -308,6 +361,10 @@ func TestListReturnsCreatedSessions(t *testing.T) {
 	}
 }
 
+// spec: 15.1 (GET /v1/sessions?state=X filters by session state)
+// diagnosis: ?state=running returned the wrong sessions. The state
+//
+//	filter is not being applied in the store List path.
 func TestListFiltersByState(t *testing.T) {
 	ts := newTestServer(t)
 	idA := createSession(t, ts)
