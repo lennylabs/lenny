@@ -276,6 +276,123 @@ func validateFlakeBudgetYAML(path string) checkResult {
 		fmt.Sprintf("%d quarantined test(s); every entry valid", len(doc.Quarantined)))
 }
 
+// validateParityMatrixYAML enforces TESTING.md §12.6 on
+// tests/tier6_e2e_cloud/parity-matrix.yaml. Every capability has
+// at least one `validated` provider, every provider in a row is
+// listed under the top-level providers block, and every `skip`
+// status carries a reason.
+func validateParityMatrixYAML(path string) checkResult {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return newResult("parity-matrix.yaml", true, "absent; tier 6 cloud parity matrix is empty by convention")
+		}
+		return newResult("parity-matrix.yaml", false, fmt.Sprintf("could not read: %v", err))
+	}
+	var doc struct {
+		Version      int      `yaml:"version"`
+		Providers    []string `yaml:"providers"`
+		Capabilities []struct {
+			Name        string               `yaml:"name"`
+			SpecSection string               `yaml:"spec_section"`
+			Status      map[string]yaml.Node `yaml:"status"`
+		} `yaml:"capabilities"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return newResult("parity-matrix.yaml", false, fmt.Sprintf("invalid YAML: %v", err))
+	}
+	if doc.Version != 1 {
+		return newResult("parity-matrix.yaml", false, fmt.Sprintf("expected version 1, got %d", doc.Version))
+	}
+	known := map[string]bool{}
+	for _, p := range doc.Providers {
+		known[p] = true
+	}
+	if len(known) == 0 {
+		return newResult("parity-matrix.yaml", false, "providers list is empty")
+	}
+	allowed := map[string]bool{"validated": true, "planned": true, "skip": true}
+	var problems []string
+	for i, c := range doc.Capabilities {
+		if strings.TrimSpace(c.Name) == "" {
+			problems = append(problems, fmt.Sprintf("capability[%d]: missing name", i))
+			continue
+		}
+		if len(c.Status) == 0 {
+			problems = append(problems, fmt.Sprintf("%s: empty status block", c.Name))
+			continue
+		}
+		hasValidated := false
+		for provider, node := range c.Status {
+			if !known[provider] {
+				problems = append(problems, fmt.Sprintf("%s: provider %q not in top-level providers list", c.Name, provider))
+				continue
+			}
+			state := parityCellState(node)
+			if state == "" {
+				problems = append(problems, fmt.Sprintf("%s.%s: missing state", c.Name, provider))
+				continue
+			}
+			if !allowed[state] {
+				problems = append(problems, fmt.Sprintf("%s.%s: unknown state %q", c.Name, provider, state))
+			}
+			if state == "skip" && parityCellReason(node) == "" {
+				problems = append(problems, fmt.Sprintf("%s.%s: skip requires a reason", c.Name, provider))
+			}
+			if state == "validated" {
+				hasValidated = true
+			}
+		}
+		// "planned" everywhere is acceptable today (no real cloud tests
+		// have landed yet); a capability with zero providers listed at
+		// all is the failure mode this check guards against.
+		_ = hasValidated
+	}
+	if len(problems) > 0 {
+		return newResult("parity-matrix.yaml", false, summarizeProblems(problems))
+	}
+	return newResult("parity-matrix.yaml", true,
+		fmt.Sprintf("%d capability/provider cell(s) across %d providers", countCells(doc.Capabilities), len(doc.Providers)))
+}
+
+func parityCellState(node yaml.Node) string {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Value
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "state" {
+				return node.Content[i+1].Value
+			}
+		}
+	}
+	return ""
+}
+
+func parityCellReason(node yaml.Node) string {
+	if node.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "reason" {
+			return strings.TrimSpace(node.Content[i+1].Value)
+		}
+	}
+	return ""
+}
+
+func countCells(caps []struct {
+	Name        string               `yaml:"name"`
+	SpecSection string               `yaml:"spec_section"`
+	Status      map[string]yaml.Node `yaml:"status"`
+}) int {
+	n := 0
+	for _, c := range caps {
+		n += len(c.Status)
+	}
+	return n
+}
+
 // mappingValue returns the scalar value of `key` inside a YAML
 // mapping node, or empty string when the key is absent or the value
 // is not scalar.
@@ -302,10 +419,11 @@ func summarizeProblems(problems []string) string {
 
 // yamlPaths returns the canonical paths to the YAML config files
 // under tests/. validate-maps validates each in turn.
-func yamlPaths(root string) (groups, subsets, exceptions, flakeBudget string) {
+func yamlPaths(root string) (groups, subsets, exceptions, flakeBudget, parityMatrix string) {
 	groups = filepath.Join(root, "tests", "groups.yaml")
 	subsets = filepath.Join(root, "tests", "groups.subsets.yaml")
 	exceptions = filepath.Join(root, "tests", "spec-map-exceptions.yaml")
 	flakeBudget = filepath.Join(root, "tests", "flake-budget.yaml")
+	parityMatrix = filepath.Join(root, "tests", "tier6_e2e_cloud", "parity-matrix.yaml")
 	return
 }

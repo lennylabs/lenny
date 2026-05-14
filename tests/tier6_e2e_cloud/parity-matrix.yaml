@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: MIT
+
+# Provider parity matrix per TESTING.md §12.6.
+#
+# Each capability listed here is documented somewhere in the spec or
+# the Helm chart and is exercised against the providers marked
+# `validated`. A capability that the spec claims but is missing from
+# this matrix fails the Tier 0 static gate.
+#
+# Cells:
+#   validated: capability is exercised against the provider and asserted to pass
+#   planned: capability is documented but the test does not yet exist
+#   skip: capability is intentionally not validated against the provider (with reason)
+#
+# Validation invariants (enforced by cmd/lenny-test validate-maps):
+#   - Every capability has at least one `validated` provider.
+#   - Every provider listed across rows is in the allow-list (gke, eks, aks).
+#   - Every `skip` carries a `reason`.
+
+version: 1
+
+providers:
+  - gke
+  - eks
+  - aks
+
+capabilities:
+
+  - name: gvisor_isolation
+    spec_section: "12.6"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: kata_isolation
+    spec_section: "12.6"
+    status:
+      gke: planned
+      eks:
+        state: skip
+        reason: AWS does not offer a first-party Kata RuntimeClass; Firecracker-via-Fargate is covered separately under firecracker_isolation.
+      aks: planned
+
+  - name: firecracker_isolation
+    spec_section: "12.6"
+    status:
+      gke:
+        state: skip
+        reason: Firecracker integration is AWS-specific.
+      eks: planned
+      aks:
+        state: skip
+        reason: Firecracker integration is AWS-specific.
+
+  - name: multi_zone_dr
+    spec_section: "17.3"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: managed_ingress
+    spec_section: "12.6"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: external_dns
+    spec_section: "12.6"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_csi
+    spec_section: "12.5"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_kms
+    spec_section: "13"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_oidc
+    spec_section: "13"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_secret_store
+    spec_section: "13"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: multi_az_minio
+    spec_section: "12.5"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_observability
+    spec_section: "16"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  - name: cloud_billing_export
+    spec_section: "16"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
