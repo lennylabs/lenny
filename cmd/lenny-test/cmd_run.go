@@ -329,6 +329,14 @@ func execute(s selector, r resolvedSelector) int {
 				overallStatus = "FAIL"
 				return printSummary(s, v, overallStatus, 1)
 			}
+		case "e2e_cloud":
+			st, msg := runE2ECloudTier()
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix e2e-cloud-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				return printSummary(s, v, overallStatus, 1)
+			}
 		default:
 			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 		}
@@ -610,6 +618,24 @@ func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, strin
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "fail", fmt.Sprintf("%s suite failed:\n%s", tag, out)
+	}
+	return "pass", ""
+}
+
+// runE2ECloudTier runs the tier-6 cloud tests under the `e2e_cloud`
+// build tag. Tests internally guard on LENNY_CLOUD_PROVIDER + the
+// per-provider auth surface; without that, every test skips with a
+// precise diagnosis. The tier reports `pass` (with skipped
+// sub-tests) on hosts that have not been bound to a cloud target.
+func runE2ECloudTier() (string, string) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	args := []string{"test", "-count=1", "-timeout=1800s", "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/..."}
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("e2e_cloud suite failed:\n%s", out)
 	}
 	return "pass", ""
 }
