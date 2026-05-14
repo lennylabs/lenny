@@ -29,11 +29,28 @@ func allTiers() []string {
 func tiersForGroup(name string) []tierPlan {
 	switch name {
 	case "pr-fast":
-		return []tierPlan{
-			{name: "static", notes: "changed-only when implemented"},
-			{name: "unit", notes: "changed-only when implemented"},
-			{name: "component", notes: "changed-only when implemented"},
+		// pr-fast is the changed-only fast feedback group per
+		// TESTING.md §20.8. Resolve --changed at the time of the
+		// call so the plan reflects today's diff rather than a
+		// static superset.
+		plan := resolveChangedPlan()
+		// Cap at component — pr-fast never reaches integration.
+		capped := []tierPlan{}
+		for _, p := range plan {
+			capped = append(capped, p)
+			if p.name == "component" {
+				break
+			}
 		}
+		if len(capped) == 0 {
+			// No applicable diff; fall back to the static + unit
+			// minimum so a fast feedback run still happens.
+			capped = []tierPlan{
+				{name: "static", notes: "pr-fast: no diff detected"},
+				{name: "unit", notes: "pr-fast: no diff detected"},
+			}
+		}
+		return capped
 	case "pr":
 		return []tierPlan{
 			{name: "static"},
