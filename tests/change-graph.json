@@ -160,6 +160,10 @@
       "component": ["tests/tier2_component/gateway_subsystems/token_service_test.go"],
       "integration": ["tests/tier4_integration/credential_lifecycle_test.go"]
     },
+    "pkg/upload": {
+      "unit": ["pkg/upload/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/upload_handler_test.go"]
+    },
     "pkg/experiment": {
       "unit": ["pkg/experiment/..."],
       "component": ["tests/tier2_component/experiments/..."],

@@ -176,6 +176,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/tokenexchange builds"},
 			{name: "unit", notes: "§13.3 RFC 8693 invariants: scope narrowing, tenant match, caller_type cannot elevate, audience cannot broaden, typ rules (a2a_delegation child-minting), depth = parent+1, exp = min(requested, subject, actor, cap), ±1s skew, Unix-seconds exp truncation"},
 		}
+	case "phase-13.4-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/upload builds"},
+			{name: "unit", notes: "§13.4 archive validators: per-entry kind / path / size / depth / length checks; aggregate decompressed size + ratio + entry count; symlink default-deny with workspace-root canonicalisation"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

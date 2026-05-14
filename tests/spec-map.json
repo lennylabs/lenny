@@ -685,9 +685,26 @@
     "13.4": {
       "title": "Upload Security",
       "spec_file": "spec/13_security-model.md",
-      "tests": [],
+      "tests": [
+        "pkg/upload/upload_test.go::TestNormativeCeilingsMatchSpec",
+        "pkg/upload/upload_test.go::TestForbiddenEntryKinds",
+        "pkg/upload/upload_test.go::TestValidateEntryAcceptsRegularInWorkspace",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsForbiddenKinds",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsAbsolutePath",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsTraversal",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsOverLengthPath",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsExcessiveDepth",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsOversizedEntry",
+        "pkg/upload/upload_test.go::TestValidateEntryRejectsSymlinkByDefault",
+        "pkg/upload/upload_test.go::TestValidateEntrySymlinkOptInWorkspaceLocalTarget",
+        "pkg/upload/upload_test.go::TestValidateEntrySymlinkRejectsEscape",
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsOversizedAggregate",
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsTooManyEntries",
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio"
+      ],
       "packages": ["pkg/upload"],
-      "blocked_until_phase": "5"
+      "blocked_until_phase": "13.4",
+      "notes": "Phase 13.4 ships the §13.4 archive-validator constants (MaxDecompressedSize 256MiB, MaxDecompressionRatio 100:1, MaxEntryCount 10000, MaxPerEntrySize 64MiB, MaxPathDepth 32, MaxPathLength 4096) and the §13.4 invariants: per-entry kind check (hardlink/char-device/block-device/FIFO/socket rejected), path traversal rejection including absorbed `..` segments, depth and length caps, symlink default-deny with the §13.4 workspace-root + `/proc` / `/sys` / `/dev` / `/run/lenny` escape check. Reason sub-codes match the §16.1 lenny_upload_extraction_aborted_total{error_type} labels exactly. The streaming-extraction harness, the staging→validation→promotion pattern, and the post-promotion symlink re-validation are deferred to the gateway phase."
     },
     "13.5": {
       "title": "Delegation Chain Content Security",
