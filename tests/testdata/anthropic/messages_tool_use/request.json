@@ -1,0 +1,23 @@
+{
+  "model": "claude-3-5-sonnet-20240620",
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the weather in a location",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": { "type": "string" }
+        },
+        "required": ["location"]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's the weather in SF?"
+    }
+  ]
+}

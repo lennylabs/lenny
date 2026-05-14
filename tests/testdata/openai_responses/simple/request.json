@@ -1,0 +1,5 @@
+{
+  "model": "gpt-4o",
+  "input": "Hello!",
+  "instructions": "You are a helpful assistant."
+}
