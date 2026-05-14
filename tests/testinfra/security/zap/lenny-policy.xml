@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lenny ZAP scan policy (§12.9.6). Tuned for the gateway's REST and
+  MCP surfaces. The policy disables a small set of test categories
+  that fire false positives on the gateway's intentional behavior
+  (e.g., the OPTIONS preflight returns 405 by design) and keeps the
+  injection / traversal / oversize / fuzzing rules at strength=HIGH
+  so the fuzz suite is thorough.
+-->
+<configuration>
+  <policy>lenny-policy</policy>
+  <scanner>
+    <level>MEDIUM</level>
+    <strength>HIGH</strength>
+  </scanner>
+
+  <plugins>
+    <!-- Active scan plugins kept on. -->
+    <p0p0>
+      <name>SQL Injection</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p0>
+    <p0p1>
+      <name>Cross Site Scripting (Reflected)</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p1>
+    <p0p2>
+      <name>Path Traversal</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p2>
+    <p0p3>
+      <name>Remote File Inclusion</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p3>
+    <p0p4>
+      <name>Buffer Overflow</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p4>
+    <p0p5>
+      <name>Server Side Include</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p5>
+    <p0p6>
+      <name>External Redirect</name>
+      <enabled>true</enabled>
+      <level>HIGH</level>
+      <strength>HIGH</strength>
+    </p0p6>
+
+    <!-- Categories we know fire false positives on Lenny's surface. -->
+    <p1p0>
+      <name>Cookie Slack Detector</name>
+      <enabled>false</enabled>
+      <reason>Lenny uses bearer tokens; cookies are scoped to playground only.</reason>
+    </p1p0>
+    <p1p1>
+      <name>Backup File Disclosure</name>
+      <enabled>false</enabled>
+      <reason>Static-file probing is irrelevant for a JSON API.</reason>
+    </p1p1>
+  </plugins>
+
+  <seed>1742428800</seed>
+</configuration>
