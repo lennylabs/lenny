@@ -59,7 +59,7 @@ lenny session start --runtime claude-code --workspace ./my-repo \
   --message "Summarize the architecture."
 ```
 
-Contributors to the platform itself can skip the embedded Kubernetes layer and run `make run` for a native-process dev loop with SQLite and in-memory stores — see [Contributing](#contributing).
+Contributors to the platform itself can skip the embedded Kubernetes layer and run `make run` for a native-process dev loop with SQLite and in-memory stores — see [Contributing](#contributing). (`make run` activates when `cmd/lenny-dev` ships per the §13 phase plan; today the Makefile carries the test-infrastructure targets — `make help` lists them.)
 
 ---
 
