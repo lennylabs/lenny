@@ -310,6 +310,15 @@ groups:
         - tier: e2e_kind
           subset: concurrent-modes
 
+  phase-12d-gate:
+    description: >
+      Phase 12d. Delegation tree recovery: rebuild parent/child wiring
+      from TaskRecord rows after a gateway pod restart. Implements
+      §8.10's recovery worker on top of the §8.8 state machine.
+    selectors:
+      spec_sections: ["8.10"]
+      tiers: [static, unit, component, integration]
+
   phase-13-gate:
     description: Phase 13. Full observability + audit + lenny-backup + compliance webhooks.
     selectors:
@@ -318,6 +327,18 @@ groups:
       include:
         - tier: e2e_kind
           subset: audit-pipeline,backup-restore,data-residency,t4-node-isolation
+
+  phase-13.4-gate:
+    description: >
+      Phase 13.4. Upload security: archive-validator ceilings, entry-kind
+      enforcement, traversal rejection, symlink default-deny per §13.4.
+      Targets pkg/upload and the staging→validation→promotion harness.
+    selectors:
+      spec_sections: ["13.4"]
+      tiers: [static, unit]
+      include:
+        - tier: component
+          subset: migrations
 
   phase-13.5-gate:
     description: Phase 13.5. Pre-hardening full-system load baseline.

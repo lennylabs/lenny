@@ -600,8 +600,8 @@
         "pkg/delegation/tree",
         "pkg/delegation/recovery"
       ],
-      "blocked_until_phase": "12",
-      "notes": "Recovery rebuilds a delegation tree after a gateway pod restart by replaying TaskRecord rows. Phase 12 ships the worker."
+      "blocked_until_phase": "12d",
+      "notes": "Recovery rebuilds a delegation tree after a gateway pod restart by replaying TaskRecord rows. Phase 12d ships the worker; phase-12d-gate in groups.yaml drives the test selection."
     },
     "9": {
       "title": "MCP Integration",
