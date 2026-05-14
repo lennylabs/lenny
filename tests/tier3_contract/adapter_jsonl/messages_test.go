@@ -166,7 +166,7 @@ func TestAdapterHeartbeatAckWithin10s(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	start := time.Now()
+	start := time.Now() // lint-determinism:exempt — measuring wall-clock duration is the assertion
 	lines, exit := driveEcho(t, ctx, []string{`{"type":"heartbeat","ts":1}`}, 1)
 	elapsed := time.Since(start)
 
@@ -224,7 +224,7 @@ func TestAdapterShutdownExitsWithinDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	start := time.Now()
+	start := time.Now() // lint-determinism:exempt — measuring wall-clock duration is the assertion
 	_, exit := driveEcho(t, ctx, []string{
 		`{"type":"shutdown","reason":"test","deadline_ms":250}`,
 	}, 0)

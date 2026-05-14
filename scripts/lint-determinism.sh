@@ -54,7 +54,13 @@ fi
 check_pattern() {
     local rule="$1" pattern="$2"
     while IFS= read -r match; do
-        # match format: file:line:content
+        # match format: file:line:content. Per-line escape hatch:
+        # any match whose content includes "lint-determinism:exempt"
+        # is intentionally skipped. The marker must appear on the
+        # same physical line as the flagged call.
+        case "${match}" in
+            *lint-determinism:exempt*) continue ;;
+        esac
         report "${rule}: ${match}"
     done < <(grep -EHn "${pattern}" "${files[@]}" 2>/dev/null || true)
 }
