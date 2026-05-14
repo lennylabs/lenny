@@ -479,6 +479,14 @@
       "blocked_until_phase": "9",
       "notes": "\u00a78 is the umbrella section for recursive delegation. The behavioral surface lives in subsections \u00a78.2 (cycle detection + lease budgets) and \u00a78.8 (TaskRecord state machine); the tests listed here mirror those subsection entries so a dashboard query for \u00a78 surfaces the same coverage."
     },
+    "8.1": {
+      "title": "Design Philosophy",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "9",
+      "notes": "Non-normative design rationale for recursive delegation. Behavioral surface is \u00a78.2 (cycle detection + lease) and \u00a78.8 (TaskRecord state)."
+    },
     "8.2": {
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
@@ -506,6 +514,61 @@
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the \u00a78.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the \u00a78.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the \u00a78.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the \u00a78.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
     },
+    "8.3": {
+      "title": "Delegation Policy and Lease",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun"
+      ],
+      "packages": [
+        "pkg/delegation/lease",
+        "pkg/delegation/policy"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with \u00a78.2."
+    },
+    "8.4": {
+      "title": "Approval Modes",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/approval"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "Delegation approval modes (auto / human-in-loop / require-confirm). Phase 9 ships the in-process state machine; the human-approval UI is a Phase 12 deliverable."
+    },
+    "8.5": {
+      "title": "Delegation Tools",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/tools"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "The delegate_task MCP tool and its in-process counterpart. Phase 9 ships the dispatch path; integration tests land alongside the delegation-echo runtime."
+    },
+    "8.6": {
+      "title": "Lease Extension",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/lease"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "Lease extension is the renew-budget path on an in-flight delegate task. Phase 9 ships the Redis Lua script (budget_extend.lua) and the request handler."
+    },
+    "8.7": {
+      "title": "File Export Model",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/export"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "File-export bridges between parent and child workspaces. Phase 9 ships the in-process abstraction; the cross-pod variant is a Phase 12 deliverable."
+    },
     "8.8": {
       "title": "TaskRecord and TaskResult \u2014 state machine",
       "spec_file": "spec/08_recursive-delegation.md",
@@ -519,6 +582,27 @@
       ],
       "blocked_until_phase": "1"
     },
+    "8.9": {
+      "title": "Task Tree",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/tree"
+      ],
+      "blocked_until_phase": "9",
+      "notes": "Task tree maintenance: parent/child wiring, traversal, and pruning. Phase 9 ships the in-memory structure; the durable storage layer ships with \u00a78.8 (TaskRecord)."
+    },
+    "8.10": {
+      "title": "Delegation Tree Recovery",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [],
+      "packages": [
+        "pkg/delegation/tree",
+        "pkg/delegation/recovery"
+      ],
+      "blocked_until_phase": "12",
+      "notes": "Recovery rebuilds a delegation tree after a gateway pod restart by replaying TaskRecord rows. Phase 12 ships the worker."
+    },
     "9": {
       "title": "MCP Integration",
       "spec_file": "spec/09_mcp-integration.md",
@@ -527,6 +611,16 @@
         "pkg/mcp"
       ],
       "blocked_until_phase": "10"
+    },
+    "9.1": {
+      "title": "Where MCP Is Used",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [],
+      "packages": [
+        "pkg/mcp"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Catalogue of MCP touchpoints: client-facing protocol, internal control-plane stub, delegation MCP. Phase 5 ships the client-facing layer; the others are \u00a79.2-\u00a79.4."
     },
     "9.2": {
       "title": "Elicitation Chain",
@@ -912,6 +1006,16 @@
       ],
       "blocked_until_phase": "7"
     },
+    "11.4": {
+      "title": "User Invalidation",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": [
+        "pkg/auth/invalidate"
+      ],
+      "blocked_until_phase": "7",
+      "notes": "User-invalidation flow: token revocation, session draining, downstream notification. Phase 7 ships the revocation pipeline."
+    },
     "11.5": {
       "title": "Idempotency",
       "spec_file": "spec/11_policy-and-controls.md",
@@ -994,6 +1098,16 @@
       ],
       "blocked_until_phase": "13",
       "notes": "Phase 13 ships the \u00a711.7 audit-log enums (ChainIntegrity, ComplianceProfile, OCSFTranslationState) and the \u00a716.4 RetentionPreset \u2192 days mapping with the compliance-profile compatibility matrix. The audit-log row writer, the per-tenant Postgres advisory lock, the SIEM forwarder, the OCSF translator, and the audit_log_deferred_writes reconciliation flow are deferred to the K8s-integration phase that ships the gateway and lenny-ops."
+    },
+    "11.8": {
+      "title": "Security Incident Response",
+      "spec_file": "spec/11_policy-and-controls.md",
+      "tests": [],
+      "packages": [
+        "pkg/security/incident"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Security incident response runbooks: tenant suspension, credential rotation, audit-log forensics. Phase 14 ships the lenny-ops operator surface."
     },
     "12": {
       "title": "Storage Architecture",
@@ -1091,6 +1205,14 @@
         "pkg/store"
       ],
       "blocked_until_phase": "2"
+    },
+    "12.7": {
+      "title": "Extensibility",
+      "spec_file": "spec/12_storage-architecture.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Non-normative design note. Documents the pluggable-storage interface boundary so future stores can be swapped without touching callers; the interface itself is \u00a712.6."
     },
     "12.8": {
       "title": "Compliance Interfaces",
@@ -1607,6 +1729,16 @@
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. The full metrics catalog (lenny_warmpool_idle_pods, lenny_session_startup_duration_seconds, etc.) lands incrementally with each feature that emits the metric."
     },
+    "16.2": {
+      "title": "Key Latency Breakpoints",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/slo"
+      ],
+      "blocked_until_phase": "14.5",
+      "notes": "Per-percentile latency targets for the four hot paths. Phase 14.5 lands the production baseline; SLO comparator runs in pre-release."
+    },
     "16.3": {
       "title": "Distributed Tracing",
       "spec_file": "spec/16_observability.md",
@@ -1657,6 +1789,56 @@
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the typed Rule, the PromQL validator, and a representative catalog (WarmPoolExhausted, PostgresReplicationLagHigh, CredentialPoolLow, WarmPoolLow, CertExpiryImminent). The full \u00a716.5 catalog lands incrementally with each feature that emits the underlying metric."
     },
+    "16.6": {
+      "title": "Operational Events Catalog",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/events"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Operational event catalog: every event type, its payload schema, when it fires. Phase 14 ships the emitter and the event-store consumer."
+    },
+    "16.7": {
+      "title": "Section 25 Audit Events",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/audit"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725-mandated audit events: agent action attribution, runbook execution, policy override. Phase 14 wires the emitter."
+    },
+    "16.8": {
+      "title": "Section 25 Metrics",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/metrics"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725-mandated Prometheus metrics for operability surfaces. Phase 14 wires the registry and the scrape targets."
+    },
+    "16.9": {
+      "title": "Prometheus Scrape Targets and CRDs",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/prom"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "ServiceMonitor and PodMonitor CRD wiring. Phase 14 ships the chart templates and the conftest policies."
+    },
+    "16.10": {
+      "title": "OpenSLO Export",
+      "spec_file": "spec/16_observability.md",
+      "tests": [],
+      "packages": [
+        "pkg/observability/slo"
+      ],
+      "blocked_until_phase": "14.5",
+      "notes": "OpenSLO YAML export so the \u00a716.5 alerts can be regenerated from the SLO definitions in code. Phase 14.5 ships the exporter."
+    },
     "17": {
       "title": "Deployment Topology",
       "spec_file": "spec/17_deployment-topology.md",
@@ -1671,6 +1853,17 @@
       "blocked_until_phase": "13",
       "notes": "\u00a717 is the umbrella section for deployment topology. Behavioral surface lives in its subsections (\u00a717.2, \u00a717.4, \u00a717.6, \u00a717.7, \u00a717.8.5); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a717 surfaces the same coverage as drilling into each subsection."
     },
+    "17.1": {
+      "title": "Kubernetes Resources",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "chart_templates": [
+        "charts/lenny/templates/"
+      ],
+      "blocked_until_phase": "3",
+      "notes": "Kubernetes resource inventory: Deployments, StatefulSets, Services, ConfigMaps, Secrets, ServiceAccounts. Phase 3 ships the Helm chart."
+    },
     "17.2": {
       "title": "Namespace Layout",
       "spec_file": "spec/17_deployment-topology.md",
@@ -1683,6 +1876,16 @@
       ],
       "blocked_until_phase": "3.5"
     },
+    "17.3": {
+      "title": "Disaster Recovery",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [
+        "pkg/dr"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness."
+    },
     "17.4": {
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
@@ -1691,6 +1894,14 @@
         "cmd/lenny-dev"
       ],
       "blocked_until_phase": "2"
+    },
+    "17.5": {
+      "title": "Cloud Portability",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "6",
+      "notes": "Non-normative portability statement. The cloud-provider abstractions live in pkg/cloud and ship in Phase 6."
     },
     "17.6": {
       "title": "Packaging and Installation",
@@ -1711,6 +1922,52 @@
       ],
       "blocked_until_phase": "13"
     },
+    "17.8": {
+      "title": "Capacity Planning and Defaults",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "Tier-based capacity model. The defaults table, the tier reference, and the promotion guide are \u00a717.8.1-\u00a717.8.4."
+    },
+    "17.8.1": {
+      "title": "Operational Defaults \u2014 Quick Reference",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "Reference table of operational defaults. Non-normative summary; the binding values live in chart presets (\u00a717.8.4)."
+    },
+    "17.8.2": {
+      "title": "Capacity Tier Reference",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "Per-tier resource bounds for nano / micro / small / medium / large. Phase 14 lands the chart presets that encode them."
+    },
+    "17.8.3": {
+      "title": "Tier Promotion Guide",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "Procedural guidance for moving from one tier preset to the next. Non-normative; the preset files themselves are \u00a717.8.4."
+    },
+    "17.8.4": {
+      "title": "Tier Preset Files",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "chart_templates": [
+        "charts/lenny/values-nano.yaml",
+        "charts/lenny/values-micro.yaml",
+        "charts/lenny/values-small.yaml",
+        "charts/lenny/values-medium.yaml",
+        "charts/lenny/values-large.yaml"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Concrete tier preset values files. Phase 14 ships the values files and the chart's docs-render that previews each tier."
+    },
     "17.8.5": {
       "title": "Mandatory lenny-ops Deployment",
       "spec_file": "spec/17_deployment-topology.md",
@@ -1722,6 +1979,24 @@
         "charts/lenny/templates/lenny-ops/"
       ],
       "blocked_until_phase": "3.5"
+    },
+    "17.8.6": {
+      "title": "Image Registry and Air-Gap",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "Image-registry overrides and air-gap mirror support. Phase 14 lands the chart values and the bootstrap Job's pre-flight check."
+    },
+    "17.9": {
+      "title": "Deployment Answer Files",
+      "spec_file": "spec/17_deployment-topology.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "Answer-file format that lenny-ctl install consumes. Phase 14 ships the parser and the lenny-ctl subcommand."
     },
     "18": {
       "title": "Build Sequence",
@@ -1767,6 +2042,216 @@
       ],
       "blocked_until_phase": "4.5"
     },
+    "24.0": {
+      "title": "Packaging and Installation",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl packaging and installation subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.1": {
+      "title": "Bootstrap",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl bootstrap subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.2": {
+      "title": "Preflight",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl preflight subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.3": {
+      "title": "Runtime Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl runtime management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.4": {
+      "title": "Pool Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl pool management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.5": {
+      "title": "Credential Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl credential management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.6": {
+      "title": "Quota Operations",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl quota operations subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.7": {
+      "title": "Circuit Breakers",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl circuit breakers subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.8": {
+      "title": "External Adapter Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl external adapter management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.9": {
+      "title": "User and Token Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl user and token management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.10": {
+      "title": "Tenant Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl tenant management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.11": {
+      "title": "Session Investigation",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl session investigation subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.12": {
+      "title": "Erasure Job Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl erasure job management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.13": {
+      "title": "Migration Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl migration management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.14": {
+      "title": "Policy Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl policy management subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.15": {
+      "title": "Agent-Operability Commands",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl agent-operability commands subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.16": {
+      "title": "Server Discovery and Routing",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.17": {
+      "title": "Session Operations",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl session operations subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.18": {
+      "title": "Runtime Scaffolding",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl runtime scaffolding subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.19": {
+      "title": "Local Stack",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl local stack subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
+    "24.20": {
+      "title": "Installation Wizard",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny-ctl installation wizard subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+    },
     "25": {
       "title": "Agent Operability",
       "spec_file": "spec/25_agent-operability.md",
@@ -1775,6 +2260,24 @@
         "cmd/lenny-ops"
       ],
       "blocked_until_phase": "3.5"
+    },
+    "25.1": {
+      "title": "Design Philosophy and Agent Model",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.1 Design Philosophy and Agent Model. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.2": {
+      "title": "Architecture Overview",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.2 Architecture Overview. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
     },
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
@@ -1794,6 +2297,128 @@
       ],
       "blocked_until_phase": "3.5"
     },
+    "25.5": {
+      "title": "Operational Event Stream",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/events"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.6": {
+      "title": "Diagnostic Endpoints",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/diag"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.6 Diagnostic Endpoints. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.7": {
+      "title": "Operational Runbooks",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/runbooks"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.8": {
+      "title": "Platform Lifecycle Management",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/lifecycle"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.9": {
+      "title": "Audit Log Query API",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/audit"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.9 Audit Log Query API. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.10": {
+      "title": "Configuration Drift Detection",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/drift"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.11": {
+      "title": "Backup and Restore API",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/backup"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.12": {
+      "title": "MCP Management Server",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "pkg/operability/mcp"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.12 MCP Management Server. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.13": {
+      "title": "Bundled Alerting Rules",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.14": {
+      "title": "lenny-ctl Extensions",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [
+        "cmd/lenny-ctl"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.15": {
+      "title": "Failure Mode Analysis",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.15 Failure Mode Analysis. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.16": {
+      "title": "Deployment Topology Summary",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.16 Deployment Topology Summary. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
+    "25.17": {
+      "title": "End-to-End Operational Example",
+      "spec_file": "spec/25_agent-operability.md",
+      "tests": [],
+      "packages": [],
+      "blocked_until_phase": "14",
+      "notes": "\u00a725.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+    },
     "26": {
       "title": "Reference Runtime Catalog",
       "spec_file": "spec/26_reference-runtime-catalog.md",
@@ -1802,6 +2427,106 @@
         "cmd/runtimes/"
       ],
       "blocked_until_phase": "2"
+    },
+    "26.2": {
+      "title": "Shared Patterns for Coding-Agent Runtimes",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Phase 4 ships the shared adapter patterns that coding-agent runtimes inherit. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.3": {
+      "title": "claude-code",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/claude-code"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for Anthropic Claude Code. Ships behind the runtime catalog. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.4": {
+      "title": "gemini-cli",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/gemini-cli"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for Google Gemini CLI. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.5": {
+      "title": "codex",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/codex"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for OpenAI Codex. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.6": {
+      "title": "cursor-cli",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/cursor-cli"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for Cursor CLI. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.7": {
+      "title": "chat",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/chat"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for the bundled chat agent. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.8": {
+      "title": "langgraph",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/langgraph"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for LangGraph. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.9": {
+      "title": "mastra",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/mastra"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for Mastra. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.10": {
+      "title": "openai-assistants",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/openai-assistants"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for OpenAI Assistants API. Conformance harness validates the integration level once the binary ships."
+    },
+    "26.11": {
+      "title": "crewai",
+      "spec_file": "spec/26_reference-runtime-catalog.md",
+      "tests": [],
+      "packages": [
+        "cmd/runtimes/crewai"
+      ],
+      "blocked_until_phase": "11",
+      "notes": "Reference runtime for CrewAI. Conformance harness validates the integration level once the binary ships."
     },
     "27": {
       "title": "Web Playground",
