@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -22,14 +24,18 @@ func runCoverage(args []string) int {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
 	wantSpec := fs.Bool("spec", false, "report spec-section coverage from spec-map.json")
 	wantGo := fs.Bool("go", false, "report Go coverage from tests/results/cover.out")
+	wantDiff := fs.String("diff", "", "report coverage on lines changed since this git ref (e.g. main, HEAD~5)")
 	threshold := fs.Float64("threshold", 0.0, "fail when coverage is below this fraction (0..1)")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if !*wantSpec && !*wantGo {
-		fmt.Fprintln(os.Stderr, "coverage: specify --spec or --go")
+	if !*wantSpec && !*wantGo && *wantDiff == "" {
+		fmt.Fprintln(os.Stderr, "coverage: specify --spec, --go, or --diff <ref>")
 		return 2
+	}
+	if *wantDiff != "" {
+		return reportDiffCoverage(*wantDiff, *threshold, *jsonOut)
 	}
 	if *wantSpec {
 		return reportSpecCoverage(*threshold, *jsonOut)
@@ -38,6 +44,193 @@ func runCoverage(args []string) int {
 		return reportGoCoverage(*threshold, *jsonOut)
 	}
 	return 0
+}
+
+// reportDiffCoverage measures coverage on the lines changed between
+// <ref> and HEAD. Walks `git diff <ref>..HEAD --unified=0 -- *.go`
+// to identify changed line ranges per file, then cross-references
+// tests/results/cover.out for those lines. Applies --threshold to
+// the resulting overall rate.
+func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
+	root := repoRoot()
+	profile := os.Getenv("LENNY_COVER_PROFILE")
+	if profile == "" {
+		profile = filepath.Join(root, "tests", "results", "cover.out")
+	}
+	if _, err := os.Stat(profile); err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test --tier unit` first to emit %s.\n", err, profile)
+		return 1
+	}
+
+	changedLines, err := changedLineRanges(root, ref)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\n", err)
+		return 1
+	}
+	if len(changedLines) == 0 {
+		fmt.Println("coverage --diff: no .go files changed since", ref)
+		return 0
+	}
+
+	body, err := os.ReadFile(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: read profile: %v\n", err)
+		return 1
+	}
+	covered := parseCoverProfileRanges(string(body))
+
+	type fileCov struct {
+		File    string `json:"file"`
+		Total   int    `json:"total"`
+		Covered int    `json:"covered"`
+	}
+	files := []fileCov{}
+	totalChanged := 0
+	totalCovered := 0
+	for file, ranges := range changedLines {
+		fc := fileCov{File: file}
+		for _, r := range ranges {
+			for line := r.start; line <= r.end; line++ {
+				fc.Total++
+				if covered[file] != nil && covered[file][line] {
+					fc.Covered++
+				}
+			}
+		}
+		totalChanged += fc.Total
+		totalCovered += fc.Covered
+		files = append(files, fc)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].File < files[j].File })
+
+	rate := 0.0
+	if totalChanged > 0 {
+		rate = float64(totalCovered) / float64(totalChanged)
+	}
+
+	if jsonOut {
+		out, _ := json.MarshalIndent(map[string]any{
+			"ref":           ref,
+			"profile":       profile,
+			"files":         files,
+			"total_changed": totalChanged,
+			"total_covered": totalCovered,
+			"rate":          rate,
+			"threshold":     threshold,
+		}, "", "  ")
+		fmt.Println(string(out))
+	} else {
+		fmt.Printf("coverage --diff (against %s):\n", ref)
+		fmt.Printf("  total: %d / %d changed lines covered (%.1f%%)\n",
+			totalCovered, totalChanged, rate*100)
+		fmt.Println()
+		fmt.Printf("%-50s  %8s  %s\n", "File", "Cov", "Lines")
+		for _, fc := range files {
+			pct := 0.0
+			if fc.Total > 0 {
+				pct = float64(fc.Covered) / float64(fc.Total) * 100
+			}
+			fmt.Printf("%-50s  %7.1f%%  %d/%d\n", fc.File, pct, fc.Covered, fc.Total)
+		}
+	}
+	if threshold > 0 && rate < threshold {
+		fmt.Fprintf(os.Stderr, "\ncoverage --diff: rate %.1f%% below threshold %.1f%%\n",
+			rate*100, threshold*100)
+		return 1
+	}
+	return 0
+}
+
+type lineRange struct{ start, end int }
+
+// changedLineRanges parses `git diff -U0 <ref>..HEAD -- *.go` and
+// returns a map of file → []lineRange (added/modified ranges on
+// the new side).
+func changedLineRanges(root, ref string) (map[string][]lineRange, error) {
+	cmd := exec.Command("git", "diff", "-U0", ref+"..HEAD", "--", "*.go")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff %s..HEAD: %w", ref, err)
+	}
+	result := map[string][]lineRange{}
+	current := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ b/"):
+			current = strings.TrimPrefix(line, "+++ b/")
+			if current == "/dev/null" {
+				current = ""
+			}
+		case strings.HasPrefix(line, "@@") && current != "":
+			idx := strings.Index(line, "+")
+			if idx < 0 {
+				continue
+			}
+			rest := line[idx+1:]
+			end := strings.IndexAny(rest, " ")
+			if end < 0 {
+				continue
+			}
+			span := rest[:end]
+			parts := strings.SplitN(span, ",", 2)
+			start, _ := strconv.Atoi(parts[0])
+			count := 1
+			if len(parts) == 2 {
+				count, _ = strconv.Atoi(parts[1])
+			}
+			if count == 0 {
+				continue
+			}
+			result[current] = append(result[current], lineRange{start: start, end: start + count - 1})
+		}
+	}
+	return result, nil
+}
+
+// parseCoverProfileRanges parses cover.out into file → set of
+// covered line numbers. A line is "covered" when at least one
+// statement block over it has a non-zero hit count.
+func parseCoverProfileRanges(body string) map[string]map[int]bool {
+	out := map[string]map[int]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "mode:") || strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		span := fields[0]
+		colonIdx := strings.LastIndex(span, ":")
+		if colonIdx < 0 {
+			continue
+		}
+		path := stripModulePrefix(span[:colonIdx])
+		rest := span[colonIdx+1:]
+		comma := strings.Index(rest, ",")
+		if comma < 0 {
+			continue
+		}
+		startLine, _ := strconv.Atoi(strings.SplitN(rest[:comma], ".", 2)[0])
+		endLine, _ := strconv.Atoi(strings.SplitN(rest[comma+1:], ".", 2)[0])
+		var hits int
+		fmt.Sscanf(fields[2], "%d", &hits)
+		if out[path] == nil {
+			out[path] = map[int]bool{}
+		}
+		if hits == 0 {
+			continue
+		}
+		for ln := startLine; ln <= endLine; ln++ {
+			out[path][ln] = true
+		}
+	}
+	return out
+}
+
+func stripModulePrefix(p string) string {
+	return strings.TrimPrefix(p, "github.com/lennylabs/lenny/")
 }
 
 // reportSpecCoverage walks tests/spec-map.json and reports how many
