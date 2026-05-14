@@ -45,7 +45,10 @@ func TestStubSignatureEnforced(t *testing.T) {
 	s := siem.New(t)
 	s.CheckSignature("shh")
 
-	resp, _ := http.Post(s.URL(), "application/json", bytes.NewReader([]byte("[]")))
+	resp, err := http.Post(s.URL(), "application/json", bytes.NewReader([]byte("[]")))
+	if err != nil {
+		t.Fatalf("unsigned post: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("unsigned: want 401, got %d", resp.StatusCode)

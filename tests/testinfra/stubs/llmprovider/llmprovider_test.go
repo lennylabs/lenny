@@ -90,7 +90,10 @@ func TestRequestRecording(t *testing.T) {
 	t.Parallel()
 	llm := llmprovider.New(t)
 	body, _ := json.Marshal(map[string]any{"messages": []map[string]any{{"role": "user", "content": "x"}}})
-	resp, _ := http.Post(llm.URL()+"/v1/messages", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(llm.URL()+"/v1/messages", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
 	defer resp.Body.Close()
 	last, ok := llm.LastRequest()
 	if !ok {
@@ -111,7 +114,10 @@ func TestResponseOverride(t *testing.T) {
 	llm.SetResponseOverride(func(req llmprovider.Request) (int, string, map[string]string) {
 		return http.StatusTooManyRequests, `{"error":"rate_limit"}`, map[string]string{"Retry-After": "5"}
 	})
-	resp, _ := http.Post(llm.URL()+"/v1/messages", "application/json", bytes.NewReader([]byte("{}")))
+	resp, err := http.Post(llm.URL()+"/v1/messages", "application/json", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("status: want 429, got %d", resp.StatusCode)

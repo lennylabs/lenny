@@ -423,6 +423,54 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{"scripts/check-adr-catalog.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-adr-catalog.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-adr-catalog.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
+		{"scripts/check-doc-examples.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-doc-examples.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-doc-examples.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
+		{"scripts/check-helm-charts.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-helm-charts.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-helm-charts.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
+		{"scripts/check-proto-generated.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-proto-generated.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-proto-generated.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
+		{"scripts/check-markdown-links.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-markdown-links.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-markdown-links.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			if err != nil {
+				// Jekyll renders many internal links at site-build
+				// time that markdown-link-check cannot resolve in
+				// isolation. Surface the report but do not fail the
+				// tier; the PR workflow keeps a separate hard gate
+				// that runs against the rendered site.
+				return fmt.Sprintf("WARNING (non-fatal):\n%s", out), nil
+			}
+			return string(out), nil
+		}},
 		{"go test ./tests/tier0_static/...", func() (string, error) {
 			out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
 			return string(out), err
