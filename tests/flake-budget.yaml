@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+
+# Quarantined tests registry per TESTING.md §21.4.
+#
+# A test enters this list when `lenny-test stress --test <name> --runs 50`
+# observes a non-deterministic failure. The author has one week from the
+# `quarantined_at` date to land a fix or remove the test; after that,
+# nightly invocations of phase-launch-gate fail.
+#
+# CI's PR gate refuses to merge a PR that adds a new entry without an
+# associated issue link and an ETA, per §21.4. The validator that enforces
+# this lives in scripts/check-flake-budget.sh and runs in the Tier 0 static
+# gate.
+
+version: 1
+
+quarantined: []
+
+# Schema for entries when populated:
+#
+#   - test: TestName
+#     package: pkg/path/...
+#     owner: github-handle
+#     quarantined_at: YYYY-MM-DD
+#     issue: https://github.com/lennylabs/lenny/issues/N
+#     eta: YYYY-MM-DD
+#     root_cause: flaky-time | flaky-network | flaky-ordering | genuine | unknown
+#     notes: Optional free-form explanation.

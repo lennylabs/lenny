@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -217,6 +218,64 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		fmt.Sprintf("%d exception(s); every entry has a reason and a justification", len(doc.Exceptions)))
 }
 
+// validateFlakeBudgetYAML enforces TESTING.md §21.4 on
+// tests/flake-budget.yaml. Every quarantined entry must carry a
+// non-empty test name, an https issue link, and an eta in
+// YYYY-MM-DD that has not yet passed.
+func validateFlakeBudgetYAML(path string) checkResult {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return newResult("flake-budget.yaml", true, "absent; quarantine list is empty by convention")
+		}
+		return newResult("flake-budget.yaml", false, fmt.Sprintf("could not read: %v", err))
+	}
+	var doc struct {
+		Version     int `yaml:"version"`
+		Quarantined []struct {
+			Test    string `yaml:"test"`
+			Package string `yaml:"package"`
+			Owner   string `yaml:"owner"`
+			Issue   string `yaml:"issue"`
+			ETA     string `yaml:"eta"`
+		} `yaml:"quarantined"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return newResult("flake-budget.yaml", false, fmt.Sprintf("invalid YAML: %v", err))
+	}
+	if doc.Version != 1 {
+		return newResult("flake-budget.yaml", false, fmt.Sprintf("expected version 1, got %d", doc.Version))
+	}
+	var problems []string
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	for i, e := range doc.Quarantined {
+		if strings.TrimSpace(e.Test) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d]: missing test name", i))
+			continue
+		}
+		if !strings.HasPrefix(e.Issue, "https://") {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): issue must be an https URL; got %q", i, e.Test, e.Issue))
+		}
+		if e.ETA == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing eta", i, e.Test))
+			continue
+		}
+		t, err := time.Parse("2006-01-02", e.ETA)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): eta %q not YYYY-MM-DD", i, e.Test, e.ETA))
+			continue
+		}
+		if t.Before(today) {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): eta %s has passed; resolve or extend with a new issue", i, e.Test, e.ETA))
+		}
+	}
+	if len(problems) > 0 {
+		return newResult("flake-budget.yaml", false, summarizeProblems(problems))
+	}
+	return newResult("flake-budget.yaml", true,
+		fmt.Sprintf("%d quarantined test(s); every entry valid", len(doc.Quarantined)))
+}
+
 // mappingValue returns the scalar value of `key` inside a YAML
 // mapping node, or empty string when the key is absent or the value
 // is not scalar.
@@ -241,11 +300,12 @@ func summarizeProblems(problems []string) string {
 	return fmt.Sprintf("%d issue(s): %s", len(problems), strings.Join(preview, "; "))
 }
 
-// yamlPaths returns the canonical paths to the three YAML config
-// files under tests/.
-func yamlPaths(root string) (groups, subsets, exceptions string) {
+// yamlPaths returns the canonical paths to the YAML config files
+// under tests/. validate-maps validates each in turn.
+func yamlPaths(root string) (groups, subsets, exceptions, flakeBudget string) {
 	groups = filepath.Join(root, "tests", "groups.yaml")
 	subsets = filepath.Join(root, "tests", "groups.subsets.yaml")
 	exceptions = filepath.Join(root, "tests", "spec-map-exceptions.yaml")
+	flakeBudget = filepath.Join(root, "tests", "flake-budget.yaml")
 	return
 }

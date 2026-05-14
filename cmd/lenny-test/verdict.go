@@ -393,6 +393,48 @@ func (v *verdict) write(path string) error {
 	// Bound the on-disk history: keep the 20 most recent rotated
 	// files; older verdicts are removed.
 	pruneOldVerdicts(dir, 20)
+	// Append a one-line summary to history.jsonl per §21.2 so the
+	// flake root-cause analyzer has a stable, append-only source.
+	if err := appendHistory(filepath.Join(dir, "history.jsonl"), v); err != nil {
+		// Non-fatal: history is observational, not gating.
+		_, _ = fmt.Fprintf(os.Stderr, "lenny-test: append history: %v\n", err)
+	}
+	return nil
+}
+
+// appendHistory adds a one-line JSON record summarizing v to the
+// history file. Format mirrors §21.2: just enough fields to feed
+// the root-cause heuristics (run_id, started_at, finished_at,
+// verdict, trigger.mode, per-tier status). The file is open-append;
+// concurrent writers race only on the os.Write boundary, which is
+// atomic for sub-PIPE_BUF writes on POSIX.
+func appendHistory(path string, v *verdict) error {
+	tierStatus := map[string]string{}
+	for name, t := range v.Tiers {
+		tierStatus[name] = t.Status
+	}
+	rec := map[string]any{
+		"run_id":       v.RunID,
+		"started_at":   v.StartedAt,
+		"finished_at":  v.FinishedAt,
+		"duration_ms":  v.DurationMS,
+		"verdict":      v.Verdict,
+		"trigger_mode": v.Trigger.Mode,
+		"tiers":        tierStatus,
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	line = append(line, '\n')
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(line); err != nil {
+		return err
+	}
 	return nil
 }
 
