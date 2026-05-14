@@ -1,0 +1,47 @@
+# Pre-commit hooks — https://pre-commit.com
+#
+# Local-only enforcement; CI runs the same checks via lenny-test
+# regardless of whether the developer installed the hooks. Install
+# once with `pre-commit install` after a fresh clone.
+#
+# Pins follow TESTING.md §20.16: every external hook is fetched by
+# tag or SHA, never by HEAD.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: gofumpt
+        name: gofumpt
+        entry: bash -c 'command -v gofumpt >/dev/null || { echo "gofumpt missing — run scripts/setup-dev.sh"; exit 0; }; gofumpt -l -w'
+        language: system
+        files: \.go$
+        pass_filenames: true
+
+      - id: check-action-pins
+        name: check action pins
+        entry: bash scripts/check-action-pins.sh
+        language: system
+        files: ^\.github/(workflows|actions)/.*\.ya?ml$
+        pass_filenames: false
+
+      - id: check-tool-pins
+        name: check go install pins
+        entry: bash scripts/check-tool-pins.sh
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false

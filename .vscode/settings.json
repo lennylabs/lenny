@@ -1,0 +1,34 @@
+{
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "go.formatTool": "gofumpt",
+  "go.useLanguageServer": true,
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["--fast"],
+  "go.testFlags": ["-count=1", "-race"],
+  "go.testTimeout": "120s",
+  "go.coverOnSave": false,
+  "[go]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": false
+  },
+  "[yaml]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+  "[markdown]": {
+    "files.trimTrailingWhitespace": false
+  },
+  "files.exclude": {
+    "bin": true,
+    "tests/results/verdict-*.json": true
+  },
+  "search.exclude": {
+    "tests/results": true,
+    "bin": true
+  }
+}
