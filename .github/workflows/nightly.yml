@@ -32,15 +32,30 @@ jobs:
     secrets: inherit
 
   e2e-kind-full:
-    name: tier 5 — e2e Kind (full, placeholder)
+    name: tier 5 — e2e Kind (full)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [pr-suite]
     steps:
-      - run: 'echo "full e2e Kind ships incrementally Phase 3.5+; see TESTING.md §13"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run e2e Kind tier
+        run: ./bin/lenny-test --tier e2e_kind
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-e2e-kind-full
+          path: tests/results/latest.json
+          retention-days: 30
 
   e2e-cloud-rotated:
-    name: tier 6 — e2e cloud (critical-path, rotated across providers, placeholder)
+    name: tier 6 — e2e cloud (rotated across providers)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [pr-suite]
@@ -49,33 +64,93 @@ jobs:
       matrix:
         provider: [gke, eks, aks]
     steps:
-      - run: |
-          echo "cloud tier ships starting Phase 13+; see TESTING.md §12.6 and §13.28"
-          echo "matrix provider: ${{ matrix.provider }}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run e2e cloud tier
+        env:
+          LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
+        run: ./bin/lenny-test --tier e2e_cloud
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-e2e-cloud-${{ matrix.provider }}
+          path: tests/results/latest.json
+          retention-days: 30
 
   chaos:
-    name: tier 8 — chaos (placeholder)
+    name: tier 8 — chaos
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [pr-suite]
     steps:
-      - run: 'echo "chaos tier ships Phase 8+; see TESTING.md §12.8"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run chaos tier
+        run: ./bin/lenny-test --tier chaos
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-chaos
+          path: tests/results/latest.json
+          retention-days: 30
 
   security-full:
-    name: tier 9 — security (full minus pentest, placeholder)
+    name: tier 9 — security (full minus pentest)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [pr-suite]
     steps:
-      - run: 'echo "security tier ships Phase 3.5+; see TESTING.md §12.9"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run security tier
+        run: ./bin/lenny-test --tier security
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-security
+          path: tests/results/latest.json
+          retention-days: 30
 
   load-baseline:
-    name: tier 7 — load (per-phase baseline, placeholder)
+    name: tier 7 — load (per-phase baseline)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [pr-suite]
     steps:
-      - run: 'echo "load tier ships per phase 6.5/9.5/11.5/13.5/14.5; see TESTING.md §12.7"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run load tier
+        run: ./bin/lenny-test --tier load
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-load
+          path: tests/results/latest.json
+          retention-days: 30
 
   dep-audit:
     name: dependency audit
