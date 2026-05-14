@@ -1361,10 +1361,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.12 Phase 5.5 — Basic credential leasing + Token Service
 
-**Test infrastructure to land.**
-- `tests/tier2_component/stores/token_store_test.go` against real Postgres with the KMS stub.
-- `tests/tier2_component/gateway_subsystems/token_service_test.go` covering AssignCredentials, RevokeCredentials, multi-replica leader election, K8s Secrets backend.
-- `tests/tier4_integration/credential_lifecycle_test.go` integrated end-to-end.
+**Test infrastructure delivered in Phase 5.5.**
+- `pkg/credential` ships the §4.9 closed enums (`Provider`, `AssignmentStrategy`, `LeaseSource`, `RotationTrigger`) plus the rotation-trigger semantics: `IsFaultTriggered`, `IsCeilingApplicable` (the §4.7 300-second in-flight gate rule — only `proactive_renewal` escapes), and `CountsAgainstRotationBudget` (the §4.9 proactive-renewal exclusion from `maxRotationsPerSession`). `PoolConfig.Validate` rejects malformed admin-path `CredentialPool` definitions before the K8s/Postgres write.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier2_component/stores/token_store_test.go` (real Postgres + KMS stub) is deferred. It needs the Token Service binary and the schema migration to land.
+- `tests/tier2_component/gateway_subsystems/token_service_test.go` (AssignCredentials, RevokeCredentials, multi-replica leader election, K8s Secrets backend) is deferred to the K8s-integration phase that ships the Token Service.
+- `tests/tier4_integration/credential_lifecycle_test.go` (end-to-end credential lifecycle against the compose stack) is deferred to the same phase.
+- The `CredentialRenewalWorker` proactive-renewal loop, the materializedConfig schemas per provider, the §4.9.1 KMS-key-rotation procedure, and the SIEM-streaming audit-event pipeline all need the gateway binary and the Token Service to land first.
 
 ### 13.13 Phase 5.6 — Targeted security design review (credential)
 

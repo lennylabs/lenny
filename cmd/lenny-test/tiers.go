@@ -121,6 +121,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/auth builds"},
 			{name: "unit", notes: "§10.2 TokenType + Role enums, tenant_id format, tenant-claim extraction"},
 		}
+	case "phase-5.5-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/credential builds"},
+			{name: "unit", notes: "§4.9 Provider, AssignmentStrategy, LeaseSource, RotationTrigger enums; §4.7 ceiling-applicable rule; §4.9 proactive-renewal budget-exclusion rule; PoolConfig.Validate"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

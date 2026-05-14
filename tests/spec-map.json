@@ -143,9 +143,19 @@
     "4.9": {
       "title": "Credential Leasing Service",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/credential/credential_test.go::TestAllProvidersIsExhaustive",
+        "pkg/credential/credential_test.go::TestAllAssignmentStrategiesIsExhaustive",
+        "pkg/credential/credential_test.go::TestAllRotationTriggersIsExhaustive",
+        "pkg/credential/credential_test.go::TestRotationTriggerIsFaultTriggered",
+        "pkg/credential/credential_test.go::TestRotationTriggerIsCeilingApplicable",
+        "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
+        "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
+        "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields"
+      ],
       "packages": ["pkg/credential", "pkg/store/credentialpool"],
-      "blocked_until_phase": "5.5"
+      "blocked_until_phase": "5.5",
+      "notes": "Phase 5.5 ships the §4.9 Provider, AssignmentStrategy, LeaseSource, and RotationTrigger enums plus the §4.7 ceiling-applicable rule and the §4.9 proactive-renewal budget-exclusion rule as Go-callable methods. The full Credential Leasing Service binary (Token Service binding, KMS rotation, materializedConfig schemas, the CredentialRenewalWorker) is deferred to the K8s-integration phase that ships the Token Service."
     },
     "5.1": {
       "title": "Runtime",
