@@ -268,6 +268,11 @@ subsets:
     tests:
       - tests/tier3_contract/rest_auth/...
 
+  oauth-token:
+    tier: contract
+    tests:
+      - tests/tier3_contract/oauth_token/...
+
   sdk-go:
     tier: contract
     tests:

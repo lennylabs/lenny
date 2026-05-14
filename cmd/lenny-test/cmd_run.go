@@ -565,6 +565,7 @@ func contractTargets(subsets []string) ([]string, error) {
 		"rest-idempotency":    "./tests/tier3_contract/rest_idempotency/...",
 		"rest-circuitbreaker": "./tests/tier3_contract/rest_circuitbreaker/...",
 		"rest-auth":           "./tests/tier3_contract/rest_auth/...",
+		"oauth-token":         "./tests/tier3_contract/oauth_token/...",
 		"sdk-go":              "./tests/tier3_contract/sdks/...",
 		"sdk-python":          "./tests/tier3_contract/sdks/...",
 		"sdk-typescript":      "./tests/tier3_contract/sdks/...",

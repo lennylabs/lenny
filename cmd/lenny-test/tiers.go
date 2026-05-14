@@ -176,8 +176,9 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-12a-gate":
 		return []tierPlan{
-			{name: "static", notes: "pkg/tokenexchange builds"},
-			{name: "unit", notes: "§13.3 RFC 8693 invariants: scope narrowing, tenant match, caller_type cannot elevate, audience cannot broaden, typ rules (a2a_delegation child-minting), depth = parent+1, exp = min(requested, subject, actor, cap), ±1s skew, Unix-seconds exp truncation"},
+			{name: "static", notes: "pkg/tokenexchange + pkg/tokenservice + cmd/lenny-token-service build"},
+			{name: "unit", notes: "§13.3 RFC 8693 invariants: scope narrowing, tenant match, caller_type cannot elevate, audience cannot broaden, typ rules, depth = parent+1, exp = min(requested, subject, actor, cap), ±1s skew, Unix-seconds exp truncation"},
+			{name: "contract", subsets: []string{"oauth-token"}, notes: "§13.3 POST /v1/oauth/token wire contract: rotation, scope broaden rejection, cross-tenant rejection, child minting, expired subject, missing caller, unsupported grant, per-dialect cap"},
 		}
 	case "phase-13.4-gate":
 		return []tierPlan{

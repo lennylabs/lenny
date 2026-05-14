@@ -7,6 +7,7 @@ tmp/
 /lenny-test
 /lenny-compliance
 /lenny-gateway
+/lenny-token-service
 /echo
 /streaming-echo
 /startup_latency
