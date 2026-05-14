@@ -135,6 +135,12 @@ The `tests/testinfra/` packages are shared building blocks:
 
 ## Further reading
 
-- [Test conventions](conventions.html) — naming, annotations, table-driven form, determinism, cleanup, parallelism, skipping
+- [Test conventions](conventions.html) — naming, annotations, table-driven form, cleanup, parallelism, skipping
+- [Determinism](determinism.html) — `timectl`, `randctl`, `wait`, `goleak`, `ports`
+- [Domain suites](domain-suites.html) — RLS, workspace plan, credentials, delegation, MCP elicitation, operability, multi-protocol, interceptor chain, pool lifecycle, compliance/erasure, T4 controls, web playground, SDKs
+- [Testing `lenny-ctl`](lenny-ctl.html) — operability tests across the 14 command categories
+- [Flakiness](flakiness.html) — §17.10 stress sweep, quarantine workflow, root-cause categories
+- [Documentation tests](documentation-tests.html) — tier-11 markdown / code-block / runbook / ADR checks
+- [Forward compatibility](forward-compatibility.html) — §23 v2 surfaces
 - [TESTING.md](../../TESTING.md) — the authoritative design
 - [TESTING_DEPENDENCIES.md](../../TESTING_DEPENDENCIES.md) — local tool setup
