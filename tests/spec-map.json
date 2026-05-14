@@ -271,6 +271,30 @@
       "packages": ["pkg/delegation"],
       "blocked_until_phase": "9"
     },
+    "8.2": {
+      "title": "Delegation Mechanism — cycle detection and maxDepth",
+      "spec_file": "spec/08_recursive-delegation.md",
+      "tests": [
+        "pkg/delegation/cycle/cycle_test.go::TestAllModesIsExhaustive",
+        "pkg/delegation/cycle/cycle_test.go::TestIdentityEqualsRequiresBothFields",
+        "pkg/delegation/cycle/cycle_test.go::TestDecideNonCyclicHopAdmits",
+        "pkg/delegation/cycle/cycle_test.go::TestDecidePermissiveAdmitsSelfRecursion",
+        "pkg/delegation/cycle/cycle_test.go::TestDecideEnforceAdmitsWhenAllLayersTrue",
+        "pkg/delegation/cycle/cycle_test.go::TestDecideEnforceRejectsAndAttributesBlocker",
+        "pkg/delegation/cycle/cycle_test.go::TestDecideWarnAdmitsAndRecordsBlocker",
+        "pkg/delegation/cycle/cycle_test.go::TestDecidePoolDifferentiatedIsNotCycle",
+        "pkg/delegation/cycle/cycle_test.go::TestToErrorMapsRejectionToTypedError",
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
+        "pkg/delegation/lease/lease_test.go::TestResolveMaxDepthApplies82BisPrecedence",
+        "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
+        "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling"
+      ],
+      "packages": ["pkg/delegation/cycle", "pkg/delegation/lease"],
+      "blocked_until_phase": "9",
+      "notes": "Phase 9 ships the §8.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the §8.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the §8.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the §8.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
+    },
     "8.8": {
       "title": "TaskRecord and TaskResult — state machine",
       "spec_file": "spec/08_recursive-delegation.md",

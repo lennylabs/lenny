@@ -131,6 +131,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/quota builds"},
 			{name: "unit", notes: "§11.2 ResetPeriod enum, 80%/100% threshold checks, global→tenant→user hierarchical check, §11.2 fail-open ceiling formula, MAX-rule reconciliation"},
 		}
+	case "phase-9-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/delegation/cycle + pkg/delegation/lease build"},
+			{name: "unit", notes: "§8.2 three-layer AND gate (enforce|warn|permissive); §8.2.bis maxDepth precedence chain; LeaseSlice budget validation; depth check"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

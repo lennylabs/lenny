@@ -1425,10 +1425,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.20 Phase 9 — Delegation + `delegation-echo`
 
-**Test infrastructure to land.**
-- `cmd/runtimes/delegation-echo/` built.
-- `tests/tier4_integration/delegation_test.go` covering all of §12.4 delegation suites.
-- `tests/tier9_security/reviews/delegation-review.md` documenting the §9.1 review.
+**Test infrastructure delivered in Phase 9.**
+- `pkg/delegation/cycle` ships the §8.2 cycle-detection decision matrix: the `Mode` enum (`enforce`, `warn`, `permissive`), the `Layer` enum (`platform`, `runtime`, `policy`), the `Identity` (runtime, pool) tuple with pool-differentiated equality, the `Lineage` chain with `Contains`/`Depth`, and the `Decide` function implementing the three-layer AND gate. Decisions carry `BlockedBy` plus the full `WouldHaveBlockedLayers` set for the §16 metric and audit emission. `ToError` produces the `*Rejection` typed error the gateway returns as `DELEGATION_CYCLE_DETECTED`.
+- `pkg/delegation/lease` ships the §8.2 `LeaseSlice` arithmetic (`ValidateChildSlice` rejecting any axis that exceeds the parent's remaining budget) and the §8.2.bis maxDepth precedence chain (`ResolveMaxDepth` applies the explicit → preset → runtime → policy → Helm fallback order; `EnforcePolicyCeiling` caps the resolved value at the policy ceiling; `CheckDepth` enforces the next-hop bound).
+
+**Test infrastructure deferred to later phases.**
+- `cmd/runtimes/delegation-echo/` (Standard-level reference runtime that exercises `lenny/delegate_task` through the platform MCP server) is deferred. The Standard-level conformance battery in `cmd/lenny-compliance` is also deferred to the same phase; the cycle and lease packages above are the pure substrate.
+- `tests/tier4_integration/delegation_test.go` is deferred to the K8s-integration phase that ships the gateway's `lenny/delegate_task` handler and the Redis-backed delegation budget counters (`budget_reserve.lua`, `budget_return.lua`).
+- `tests/tier7_load/scenarios/delegation_fanout.go` (Phase 9.5 incremental load test) is deferred to the gateway-bearing phase.
+- `tests/tier9_security/reviews/delegation-review.md` (the §9.1 security review) is a human activity, recorded by the documentation-only deliverable in Phase 17a.
 
 ### 13.21 Phase 9.5 — Incremental load test (delegation)
 

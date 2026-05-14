@@ -101,6 +101,14 @@
       "integration": ["tests/tier4_integration/delegation_test.go"],
       "load": ["tests/tier7_load/scenarios/delegation_fanout.go"]
     },
+    "pkg/delegation/cycle": {
+      "unit": ["pkg/delegation/cycle/..."],
+      "integration": ["tests/tier4_integration/delegation_test.go"]
+    },
+    "pkg/delegation/lease": {
+      "unit": ["pkg/delegation/lease/..."],
+      "integration": ["tests/tier4_integration/delegation_test.go"]
+    },
     "pkg/mcp": {
       "unit": ["pkg/mcp/..."],
       "contract": ["tests/tier3_contract/rest_mcp/..."],
