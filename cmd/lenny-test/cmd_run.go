@@ -286,6 +286,49 @@ func execute(s selector, r resolvedSelector) int {
 				}
 				return printSummary(s, v, overallStatus, 1)
 			}
+		case "e2e_kind":
+			st, msg := runE2EKindTier(t.subsets)
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix e2e-Kind-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				if writeErr := v.write(s.verdictFile); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+				}
+				return printSummary(s, v, overallStatus, 1)
+			}
+		case "load":
+			st, msg := runTaggedTier("load", "./tests/tier7_load/...", 600*time.Second)
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix load-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				return printSummary(s, v, overallStatus, 1)
+			}
+		case "chaos":
+			st, msg := runTaggedTier("chaos", "./tests/tier8_chaos/...", 600*time.Second)
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix chaos-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				return printSummary(s, v, overallStatus, 1)
+			}
+		case "security":
+			st, msg := runTaggedTier("security", "./tests/tier9_security/...", 600*time.Second)
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix security-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				return printSummary(s, v, overallStatus, 1)
+			}
+		case "docs":
+			st, msg := runDocsTier()
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix docs-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				return printSummary(s, v, overallStatus, 1)
+			}
 		default:
 			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 		}
@@ -538,6 +581,56 @@ func runConformanceTier(subsets []string) (string, string) {
 		results = append(results, strings.TrimSpace(string(out)))
 	}
 	return "pass", strings.Join(results, "\n\n")
+}
+
+// runDocsTier runs the tier-11 documentation checks. No build tag —
+// these tests exercise repo state directly.
+func runDocsTier() (string, string) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	cmd := exec.Command("go", "test", "-count=1", "-timeout=60s", "./tests/tier11_docs/...")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("docs suite failed:\n%s", out)
+	}
+	return "pass", ""
+}
+
+// runTaggedTier runs `go test` over targetGlob under the supplied
+// build tag. Used for tiers whose tests are mostly skip-bearing
+// scaffolds — load, chaos, security — so the tier reports `pass`
+// (with skipped sub-tests) until the backing infrastructure lands.
+func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, string) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	args := []string{"test", "-count=1", fmt.Sprintf("-timeout=%s", timeout), "-tags=" + tag, targetGlob}
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("%s suite failed:\n%s", tag, out)
+	}
+	return "pass", ""
+}
+
+// runE2EKindTier runs the tier-5 e2e tests under the `e2e_kind`
+// build tag. Each test calls tests/testinfra/kind.SkipUnlessAvailable
+// to short-circuit when docker / kind / a reachable docker daemon
+// are absent, so the tier reports `pass` (with skipped sub-tests)
+// on hosts without the e2e prerequisites.
+func runE2EKindTier(subsets []string) (string, string) {
+	_ = subsets // future: subset → -run regex
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	args := []string{"test", "-count=1", "-timeout=600s", "-tags=e2e_kind", "./tests/tier5_e2e_kind/..."}
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("e2e_kind suite failed:\n%s", out)
+	}
+	return "pass", ""
 }
 
 // runIntegrationTier runs the tier-4 integration tests under the
