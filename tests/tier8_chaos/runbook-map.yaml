@@ -1,0 +1,241 @@
+# Mapping from runbook → chaos test scenario.
+#
+# §12.8 says every runbook in docs/runbooks/ implies at least one
+# chaos test. This file is the cross-reference: when a new runbook
+# ships, add a row here naming the test that exercises the failure
+# mode. When `lenny-test --tier chaos` runs the test suite, the
+# harness validates that every runbook listed under docs/runbooks/
+# appears as a key.
+#
+# Format:
+#
+#   <runbook-slug>:
+#     test: <TestName>
+#     severity: <P0|P1|P2|P3>
+#     coverage: <core|extended|cloud>
+
+version: 1
+
+runbooks:
+
+  # ---- Store failures (§12.8) ----
+
+  postgres-failover:
+    test: TestPostgresFailover
+    severity: P0
+    coverage: core
+  postgres-unavailable:
+    test: TestPostgresUnavailable
+    severity: P0
+    coverage: core
+  redis-sentinel-failover:
+    test: TestRedisSentinelFailover
+    severity: P0
+    coverage: core
+  redis-cluster-degraded:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  minio-unavailable:
+    test: TestMinIOUnavailable
+    severity: P0
+    coverage: core
+  minio-replication-lag:
+    test: TestMinIOReplicationLag
+    severity: P2
+    coverage: extended
+  kms-unavailable:
+    test: TestKMSUnavailable
+    severity: P0
+    coverage: core
+  kms-key-probe-stale:
+    test: TestKMSKeyProbeStale
+    severity: P1
+    coverage: extended
+  dual-store-unavailable:
+    test: TestDualStoreUnavailable
+    severity: P0
+    coverage: extended
+  pgbouncer-saturation:
+    test: TestPgBouncerSaturation
+    severity: P1
+    coverage: extended
+
+  # ---- Component failures (§12.8) ----
+
+  gateway-replica-failure:
+    test: TestGatewayReplicaFailure
+    severity: P0
+    coverage: core
+  controller-leader-election:
+    test: TestControllerLeaderElectionDisruption
+    severity: P1
+    coverage: extended
+  admission-webhook-outage:
+    test: TestAdmissionWebhookOutage
+    severity: P0
+    coverage: core
+  cert-manager-outage:
+    test: TestCertManagerOutage
+    severity: P1
+    coverage: extended
+  dns-outage:
+    test: TestDNSOutage
+    severity: P1
+    coverage: extended
+  token-service-outage:
+    test: TestTokenServiceOutage
+    severity: P1
+    coverage: extended
+  cred-guard-outage:
+    test: TestEphemeralContainerCredGuardOutage
+    severity: P1
+    coverage: extended
+
+  # ---- Lifecycle failures (§12.8) ----
+
+  pod-kill-during-session:
+    test: TestPodKillDuringActiveSession
+    severity: P0
+    coverage: core
+  node-drain-during-minio-outage:
+    test: TestNodeDrainDuringMinIOOutage
+    severity: P0
+    coverage: core
+  sandbox-finalizer-hang:
+    test: TestSandboxFinalizerHang
+    severity: P1
+    coverage: extended
+  runtime-upgrade-stuck:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  pool-upgrade-rollback:
+    test: TestPoolUpgradeRollbackDuringExpanding
+    severity: P1
+    coverage: extended
+
+  # ---- Network failures (§12.8) ----
+
+  gateway-to-pod-partition:
+    test: TestGatewayToPodPartition
+    severity: P0
+    coverage: core
+  agent-to-llm-partition:
+    test: TestAgentToLLMProviderPartition
+    severity: P1
+    coverage: extended
+  network-policy-drift:
+    test: TestNetworkPolicyDrift
+    severity: P2
+    coverage: extended
+  cross-zone-partition:
+    test: TestCrossZonePartition
+    severity: P0
+    coverage: cloud
+
+  # ---- Credential failures (§12.8) ----
+
+  emergency-credential-revocation:
+    test: TestEmergencyRevocationDuringActiveSession
+    severity: P0
+    coverage: core
+  credential-rotation-failure:
+    test: TestRotationFailure
+    severity: P1
+    coverage: extended
+  deny-list-under-redis-outage:
+    test: TestDenyListPropagationUnderRedisOutage
+    severity: P1
+    coverage: extended
+  credential-pool-exhaustion:
+    test: TestCredentialPoolExhaustion
+    severity: P2
+    coverage: extended
+
+  # ---- Delegation failures (§12.8) ----
+
+  child-crash-mid-task:
+    test: TestChildCrashMidTask
+    severity: P1
+    coverage: core
+  parent-crash-await:
+    test: TestParentCrashDuringAwaitChildren
+    severity: P1
+    coverage: core
+  delegation-budget-exhaustion:
+    test: TestDelegationBudgetExhaustion
+    severity: P1
+    coverage: extended
+  lease-extension-cool-off:
+    test: TestLeaseExtensionCoolOffPersistence
+    severity: P2
+    coverage: extended
+
+  # ---- Compliance failures (§12.8) ----
+
+  erasure-job-failure:
+    test: TestErasureJobFailureMidSequence
+    severity: P0
+    coverage: core
+  legal-hold-override:
+    test: TestLegalHoldOverrideFlow
+    severity: P1
+    coverage: extended
+  t3-t4-sla-breach:
+    test: TestT3T4SLABreach
+    severity: P1
+    coverage: extended
+  audit-chain-gap:
+    test: TestAuditChainGapDetection
+    severity: P0
+    coverage: core
+
+  # ---- Concurrency (§12.8) ----
+
+  sandbox-claim-race:
+    test: TestSandboxClaimRaceUnder100Goroutines
+    severity: P0
+    coverage: core
+  double-claim-verification:
+    test: TestDoubleClaimVerification
+    severity: P0
+    coverage: core
+  elicitation-deadlock:
+    test: TestElicitationDeadlockDetection
+    severity: P1
+    coverage: extended
+  delegation-depth-deadlock:
+    test: TestDelegationDepthDeadlockDetection
+    severity: P1
+    coverage: extended
+
+  # ---- Time (§12.8) ----
+
+  gateway-clock-drift:
+    test: TestGatewayClockDrift
+    severity: P1
+    coverage: extended
+  certificate-expiry:
+    test: TestCertificateExpiryAdvance
+    severity: P1
+    coverage: extended
+
+  # ---- Configuration (§12.8) ----
+
+  pool-config-drift:
+    test: TestPoolConfigDrift
+    severity: P2
+    coverage: extended
+  network-policy-config-drift:
+    test: TestNetworkPolicyConfigDrift
+    severity: P2
+    coverage: extended
+  schema-migration-dirty-flag:
+    test: TestSchemaMigrationDirtyFlag
+    severity: P1
+    coverage: extended
+  crd-upgrade-immutable:
+    test: TestCRDUpgradeImmutableFieldChange
+    severity: P1
+    coverage: extended
