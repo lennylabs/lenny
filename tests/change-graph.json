@@ -15,6 +15,11 @@
       "unit": ["pkg/store/lease/..."],
       "component": ["tests/tier2_component/stores/lease_store_test.go"]
     },
+    "pkg/quota": {
+      "unit": ["pkg/quota/..."],
+      "component": ["tests/tier2_component/policy/..."],
+      "integration": ["tests/tier4_integration/quota_enforcement_test.go"]
+    },
     "pkg/store/quota": {
       "unit": ["pkg/store/quota/..."],
       "component": ["tests/tier2_component/stores/quota_store_test.go"],

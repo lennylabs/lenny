@@ -402,9 +402,22 @@
     "11.2": {
       "title": "Budgets and Quotas",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "pkg/quota/quota_test.go::TestAllResetPeriodsIsExhaustive",
+        "pkg/quota/quota_test.go::TestCheckOK",
+        "pkg/quota/quota_test.go::TestCheckSoftWarning",
+        "pkg/quota/quota_test.go::TestCheckHardExceeded",
+        "pkg/quota/quota_test.go::TestHierarchyValidateAcceptsNested",
+        "pkg/quota/quota_test.go::TestHierarchyValidateRejectsInverted",
+        "pkg/quota/quota_test.go::TestHierarchicalCheckPicksMostRestrictive",
+        "pkg/quota/quota_test.go::TestFailOpenCeilingFormula",
+        "pkg/quota/quota_test.go::TestPerUserFailOpenCeiling",
+        "pkg/quota/quota_test.go::TestMaxOvershootFormula",
+        "pkg/quota/quota_test.go::TestReconcileMaxImplementsMaxRule"
+      ],
       "packages": ["pkg/quota", "pkg/store/quota"],
-      "blocked_until_phase": "5.75"
+      "blocked_until_phase": "5.75",
+      "notes": "Phase 5.75 ships the §11.2 quota arithmetic primitives: ResetPeriod enum, 80%/100% threshold checks, global→tenant→user hierarchical check, the §11.2 Maximum Overshoot Formula's fail-open ceiling, and the MAX-rule reconciliation function for Redis recovery. The Redis Lua scripts (storage_quota_reserve.lua, the per-replica fail-open accounting, the cumulative fail-open timer) and the gateway's quota Redis client are deferred to the K8s-integration phase."
     },
     "11.3": {
       "title": "Timeouts and Cancellation",

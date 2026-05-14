@@ -1379,9 +1379,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Spec/18 components.** `AuthEvaluator` and `QuotaEvaluator` interceptors active.
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/policy_gate_test.go` asserts unauthenticated session creation is denied, per-tenant `maxConcurrentSessions` is enforced, exhausted token budget rejects new sessions.
-- `tests/tier8_chaos/redis_down_during_policy_check.go` asserts the fail-open/fail-closed behavior matches spec §11.
+**Test infrastructure delivered in Phase 5.75.**
+- `pkg/quota` ships the §11.2 quota arithmetic primitives that the `QuotaEvaluator` interceptor wraps with Redis I/O: the `ResetPeriod` enum, the soft-warning (80%) and hard-limit (100%) threshold tests, the global→tenant→user `Hierarchy` validator and `HierarchicalCheck` resolver, the §11.2 `FailOpenCeiling` formula (`min(tenant_limit / replicas, per_replica_hard_cap)`), the `PerUserFailOpenCeiling` companion, the `MaxOvershoot` formula, and the `ReconcileMax` MAX-rule for Redis-recovery counter reconciliation.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/policy_gate_test.go` (unauthenticated session-creation denial, per-tenant `maxConcurrentSessions` enforcement, token-budget rejection) is deferred. It needs the gateway, the `AuthEvaluator` and `QuotaEvaluator` interceptors, and Redis wired in.
+- `tests/tier8_chaos/redis_down_during_policy_check.go` (fail-open / fail-closed behaviour under Redis outage) is deferred. The arithmetic primitives are in place; the chaos test needs the gateway and a Redis instance the chaos harness can disable.
+- The `storage_quota_reserve.lua` Redis Lua script, the per-replica fail-open accounting goroutine, the cumulative fail-open timer (`quotaFailOpenCumulativeMaxSeconds`), and the §11.2.1 billing event emitter are all deferred to the K8s-integration phase.
 
 **Hard prerequisite for Phase 6 real-credential testing.**
 
