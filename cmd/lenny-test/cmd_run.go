@@ -545,6 +545,14 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{"scripts/check-schema-breaking.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-schema-breaking.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-schema-breaking.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
 		{"scripts/check-markdown-links.sh", func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "check-markdown-links.sh")
 			if _, err := os.Stat(script); err != nil {
