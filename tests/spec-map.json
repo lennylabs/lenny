@@ -417,9 +417,25 @@
     "10.6": {
       "title": "Environment Resource and RBAC Model",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
+      "tests": [
+        "pkg/environment/environment_test.go::TestAllRolesIsExhaustive",
+        "pkg/environment/environment_test.go::TestRoleAtLeastOrder",
+        "pkg/environment/environment_test.go::TestAllLabelOperatorsIsExhaustive",
+        "pkg/environment/environment_test.go::TestRequirementValidateRejectsBadShape",
+        "pkg/environment/environment_test.go::TestSelectorMatchLabelsExactMatch",
+        "pkg/environment/environment_test.go::TestSelectorMatchExpressionsIn",
+        "pkg/environment/environment_test.go::TestSelectorMatchExpressionsNotIn",
+        "pkg/environment/environment_test.go::TestSelectorMatchExpressionsExists",
+        "pkg/environment/environment_test.go::TestSelectorMatchExpressionsDoesNotExist",
+        "pkg/environment/environment_test.go::TestSelectorTypesFilter",
+        "pkg/environment/environment_test.go::TestSelectorExcludeOverridesMatchLabels",
+        "pkg/environment/environment_test.go::TestSelectorIncludeOverridesSelector",
+        "pkg/environment/environment_test.go::TestSelectorExcludeBeatsInclude",
+        "pkg/environment/environment_test.go::TestFilterReturnsAdmittedSubset"
+      ],
       "packages": ["pkg/environment", "pkg/rbac"],
-      "blocked_until_phase": "15"
+      "blocked_until_phase": "15",
+      "notes": "Phase 15 ships the §10.6 Role enum (viewer, creator, operator, admin) with the AtLeast escalation order, the K8s-style LabelSelector evaluator (matchLabels + matchExpressions with In/NotIn/Exists/DoesNotExist), the §10.6 types filter, and the include/exclude override semantics (exclude beats include for deterministic deny precedence). The admin API surface (POST /v1/admin/environments, etc.), the transparent-filtering middleware, the explicit-environment endpoint dispatcher, the OIDC-group resolver, and the cross-environment delegation policy resolver are deferred to the K8s-integration phase."
     },
     "10.7": {
       "title": "Experiment Primitives",

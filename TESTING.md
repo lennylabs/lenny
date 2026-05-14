@@ -1525,10 +1525,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.32 Phase 15 — Environment resource + RBAC + cross-environment delegation
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/environment_resource_test.go`.
-- `tests/tier5_e2e_kind/cross_environment_delegation_test.go`.
-- `tests/tier9_security/rbac/environment_rbac_test.go`.
+**Test infrastructure delivered in Phase 15.**
+- `pkg/environment` ships the §10.6 Environment primitives: the `Role` enum (viewer, creator, operator, admin) with `AtLeast` enforcing the escalation order; the K8s-style `Selector` evaluator with `MatchLabels`, `MatchExpressions` (operators `In`, `NotIn`, `Exists`, `DoesNotExist`), the §10.6 `Types` filter, and the `Include`/`Exclude` overrides (exclude beats include for deterministic deny precedence); `Requirement.Validate` rejects malformed operators and value lists; `Filter` returns the admitted subset for the transparent-filtering path.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/environment_resource_test.go` (full admin API surface for creating, listing, updating, deleting environments) is deferred to the K8s-integration phase that ships the admin API.
+- `tests/tier5_e2e_kind/cross_environment_delegation_test.go` (`crossEnvironmentDelegation: true` flow) is deferred. The selector primitives above are the substrate; the delegation policy resolver and the explicit-environment endpoint dispatcher land with the gateway.
+- `tests/tier9_security/rbac/environment_rbac_test.go` (OIDC-group resolution against the §10.6 `members` list) is deferred to the same phase.
+- The transparent-filtering middleware that wraps `Selector.Filter` and joins authorized runtimes across the user's environments is deferred to the gateway phase.
 
 ### 13.33 Phase 16 — Experiments + PoolScalingController integration
 
