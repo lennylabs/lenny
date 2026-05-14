@@ -56,6 +56,8 @@ func main() {
 		os.Exit(runInfra(args[1:]))
 	case "run":
 		os.Exit(runRun(args[1:]))
+	case "stress":
+		os.Exit(runStress(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
@@ -74,6 +76,8 @@ Usage:
   lenny-test list [flags]                  Print the tests that would run for a
                                            given selector, without executing them.
   lenny-test infra <up|down|status|prune>  Manage cached test infrastructure.
+  lenny-test stress --test <name> [flags]  Run a single test N times to detect
+                                           flakes (§17.10).
   lenny-test version                       Print the version.
   lenny-test help                          This message.
 
