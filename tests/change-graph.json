@@ -131,6 +131,11 @@
       "contract": ["tests/tier3_contract/rest_mcp/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
+    "pkg/auth": {
+      "unit": ["pkg/auth/..."],
+      "component": ["tests/tier2_component/auth/..."],
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
+    },
     "pkg/admission/drain_readiness": {
       "unit": ["pkg/admission/drain_readiness/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/drain_readiness_webhook_test.go"],

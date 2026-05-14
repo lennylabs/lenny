@@ -310,9 +310,21 @@
     "10.2": {
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
+      "tests": [
+        "pkg/auth/auth_test.go::TestAllTokenTypesIsExhaustive",
+        "pkg/auth/auth_test.go::TestAllRolesIsExhaustive",
+        "pkg/auth/auth_test.go::TestRoleIsTenantScoped",
+        "pkg/auth/auth_test.go::TestValidateTenantIDAcceptsCanonicalValues",
+        "pkg/auth/auth_test.go::TestValidateTenantIDRejectsBadValues",
+        "pkg/auth/auth_test.go::TestExtractTenantSingleTenantReturnsDefault",
+        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantClaimMissing",
+        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantUnregistered",
+        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantRegistered",
+        "pkg/auth/auth_test.go::TestExtractTenantMultiTenantRegistryError"
+      ],
       "packages": ["pkg/auth"],
-      "blocked_until_phase": "4.5"
+      "blocked_until_phase": "4.5",
+      "notes": "Phase 4.5 ships the §10.2 typ enum, RBAC role enum, tenant_id format validator, and the tenant-claim extraction state machine. The JWTSigner (KMS-backed in production, HMAC-SHA256 in dev mode), the OIDC discovery layer, and the signature-validation chain are deferred to the K8s-integration phase that wires the gateway to a real OIDC provider."
     },
     "10.3": {
       "title": "mTLS PKI",

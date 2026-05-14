@@ -1333,12 +1333,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Spec/18 components.** Admin API for runtimes/pools/connectors/policies/tenants/users. Bootstrap seed (`lenny-ctl bootstrap`). OIDC/OAuth 2.1 JWT validation. `tenant_id` claim propagation. `UserStateStore` integration. `noEnvironmentPolicy` default (`deny-all`) validation.
 
-**Test infrastructure to land.**
-- `tests/tier2_component/gateway_subsystems/admin_plane_test.go` covers every admin endpoint against real stores.
-- `tests/tier2_component/auth/` covers JWT validation, claim extraction, role resolution.
-- `tests/tier4_integration/admin_bootstrap_test.go` runs `lenny-ctl bootstrap --from-values` and asserts idempotency.
-- `tests/tier5_e2e_kind/bootstrap_first_install_test.go` runs `helm install` plus bootstrap on a fresh Kind cluster and asserts a smoke session succeeds with the `chat` runtime.
-- `tests/testinfra/mocks/oidc/` produces tokens for `platform-admin`, `tenant-admin`, `user` roles across multiple tenants.
+**Test infrastructure delivered in Phase 4.5.**
+- `pkg/auth` ships the §10.2 primitives that do not depend on a live OIDC provider or KMS: the `TokenType` enum (`user_bearer`, `session_capability`, `a2a_delegation`, `service_token`), the `Role` enum (`platform-admin`, `tenant-admin`, `tenant-viewer`, `billing-viewer`, `user`), `ValidateTenantID` for the `^[a-zA-Z0-9_-]{1,128}$` format constraint, and `ExtractTenant` for the §10.2 single-tenant / multi-tenant claim-extraction state machine. The function returns the spec-mandated rejection categories (`ErrTenantClaimMissing` → 401, `*TenantIDFormatError` → 401, `ErrTenantNotFound` → 403) so the gateway HTTP handler can map them to the §10.2 error codes.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier2_component/gateway_subsystems/admin_plane_test.go` (every admin endpoint against real stores) is deferred. The admin endpoints do not exist yet.
+- `tests/tier2_component/auth/` (JWT signature validation, signing-key rotation, KMS / HMAC backends) is deferred. The pure primitive in `pkg/auth` is the substrate; the `JWTSigner` interface and its KMS implementation land with the gateway binary.
+- `tests/tier4_integration/admin_bootstrap_test.go` (`lenny-ctl bootstrap --from-values` idempotency) is deferred. `lenny-ctl` does not yet implement the bootstrap subcommand.
+- `tests/tier5_e2e_kind/bootstrap_first_install_test.go` is deferred to the K8s-integration phase.
+- `tests/testinfra/mocks/oidc/` (a mock OIDC provider that mints tokens for the role matrix above) is deferred. The pure-Go primitives in `pkg/auth` can be exercised without it; the mock provider is needed only by the component-tier and integration-tier suites.
 
 ### 13.10 Phase 5 — ExternalAdapterRegistry + MCP/Completions/Open Responses + REST/MCP contract tests
 
