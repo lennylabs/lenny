@@ -30,21 +30,21 @@ import (
 // additional values.
 type Claims struct {
 	// RFC 7519 standard claims.
-	Issuer   string `json:"iss,omitempty"`
-	Subject  string `json:"sub,omitempty"`
-	Audience []string `json:"aud,omitempty"`
-	Expiry   int64  `json:"exp,omitempty"`
-	NotBefore int64 `json:"nbf,omitempty"`
-	IssuedAt int64  `json:"iat,omitempty"`
-	JWTID    string `json:"jti,omitempty"`
+	Issuer    string   `json:"iss,omitempty"`
+	Subject   string   `json:"sub,omitempty"`
+	Audience  []string `json:"aud,omitempty"`
+	Expiry    int64    `json:"exp,omitempty"`
+	NotBefore int64    `json:"nbf,omitempty"`
+	IssuedAt  int64    `json:"iat,omitempty"`
+	JWTID     string   `json:"jti,omitempty"`
 
 	// §10.2 Lenny extensions.
-	TenantID         string         `json:"tenant_id,omitempty"`
-	SessionID        string         `json:"session_id,omitempty"`
-	CallerType       string         `json:"caller_type,omitempty"`
-	DelegationDepth  int            `json:"delegation_depth,omitempty"`
-	Scope            string         `json:"scope,omitempty"`
-	Typ              auth.TokenType `json:"typ,omitempty"`
+	TenantID        string         `json:"tenant_id,omitempty"`
+	SessionID       string         `json:"session_id,omitempty"`
+	CallerType      string         `json:"caller_type,omitempty"`
+	DelegationDepth int            `json:"delegation_depth,omitempty"`
+	Scope           string         `json:"scope,omitempty"`
+	Typ             auth.TokenType `json:"typ,omitempty"`
 }
 
 // ExpiryTime returns the Claims expiry as a time.Time. Zero when

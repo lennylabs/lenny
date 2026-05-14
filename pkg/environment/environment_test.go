@@ -35,7 +35,7 @@ func TestRequirementValidateRejectsBadShape(t *testing.T) {
 	cases := []Requirement{
 		{Key: "", Operator: OpIn, Values: []string{"a"}},
 		{Key: "team", Operator: "BADOP", Values: []string{"a"}},
-		{Key: "team", Operator: OpIn, Values: nil}, // In requires values
+		{Key: "team", Operator: OpIn, Values: nil},               // In requires values
 		{Key: "team", Operator: OpExists, Values: []string{"a"}}, // Exists rejects values
 	}
 	for _, r := range cases {

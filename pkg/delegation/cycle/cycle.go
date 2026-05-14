@@ -3,9 +3,9 @@
 // Package cycle implements the §8.2 cycle-detection decision matrix
 // for recursive delegation:
 //
-//	1. Outer gate — gateway.cycleDetection.mode (enforce | warn | permissive)
-//	2. Three-layer AND gate (platform | runtime | policy) under enforce
-//	3. Decision records which layer blocked the hop
+//  1. Outer gate — gateway.cycleDetection.mode (enforce | warn | permissive)
+//  2. Three-layer AND gate (platform | runtime | policy) under enforce
+//  3. Decision records which layer blocked the hop
 //
 // The gateway uses cycle detection on every delegation admission: when
 // the resolved target's (runtime_name, pool_name) tuple already appears
@@ -109,10 +109,10 @@ func (l Lineage) Contains(target Identity) bool {
 // mode. AllowSelfRecursion at each layer is the per-layer opt-in;
 // false means the layer rejects every self-recursive hop.
 type Settings struct {
-	Mode                   Mode
-	PlatformAllowSelfRec   bool
-	RuntimeAllowSelfRec    bool
-	PolicyAllowSelfRec     bool
+	Mode                 Mode
+	PlatformAllowSelfRec bool
+	RuntimeAllowSelfRec  bool
+	PolicyAllowSelfRec   bool
 }
 
 // Outcome reports the §8.2 outcome of a delegation hop's admission.
@@ -138,11 +138,11 @@ const (
 // warn-mode "would have blocked" counter that is keyed on each
 // failing layer individually).
 type Decision struct {
-	Outcome                 Outcome
-	IsSelfRecursive         bool
-	BlockedBy               Layer
-	WouldHaveBlockedLayers  []Layer
-	EffectiveSettings       Settings
+	Outcome                Outcome
+	IsSelfRecursive        bool
+	BlockedBy              Layer
+	WouldHaveBlockedLayers []Layer
+	EffectiveSettings      Settings
 }
 
 // Decide applies the §8.2 cycle-detection decision matrix to a

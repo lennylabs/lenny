@@ -135,7 +135,7 @@ func TestValidatePairingMismatches(t *testing.T) {
 		c ComplianceProfile
 	}{
 		{PresetSOC2, ComplianceHIPAA},
-		{PresetFedRAMPHigh, ComplianceSOC2},  // FedRAMP-high mandates fedramp profile
+		{PresetFedRAMPHigh, ComplianceSOC2}, // FedRAMP-high mandates fedramp profile
 		{PresetHIPAA, ComplianceSOC2},
 		{PresetNIS2DORA, ComplianceFedRAMP},
 	}

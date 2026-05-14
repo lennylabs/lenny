@@ -21,11 +21,11 @@ const (
 
 // User identifiers — §17 cryptography convention.
 const (
-	UserAlice  = "alice@acme.com"
-	UserBob    = "bob@acme.com"
-	UserCarol  = "carol@globex.com"
-	UserDave   = "dave@globex.com"
-	UserErin   = "erin@initech.com"
+	UserAlice = "alice@acme.com"
+	UserBob   = "bob@acme.com"
+	UserCarol = "carol@globex.com"
+	UserDave  = "dave@globex.com"
+	UserErin  = "erin@initech.com"
 )
 
 // Runtime references — bundled and reference catalog. The bundled

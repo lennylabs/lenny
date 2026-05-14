@@ -50,14 +50,14 @@ const (
 type EntryKind string
 
 const (
-	KindRegular      EntryKind = "regular"
-	KindDirectory    EntryKind = "directory"
-	KindSymlink      EntryKind = "symlink"
-	KindHardlink     EntryKind = "hardlink"
-	KindCharDevice   EntryKind = "char_device"
-	KindBlockDevice  EntryKind = "block_device"
-	KindFIFO         EntryKind = "fifo"
-	KindSocket       EntryKind = "socket"
+	KindRegular     EntryKind = "regular"
+	KindDirectory   EntryKind = "directory"
+	KindSymlink     EntryKind = "symlink"
+	KindHardlink    EntryKind = "hardlink"
+	KindCharDevice  EntryKind = "char_device"
+	KindBlockDevice EntryKind = "block_device"
+	KindFIFO        EntryKind = "fifo"
+	KindSocket      EntryKind = "socket"
 )
 
 // AllEntryKinds returns every §13.4 entry kind the validator knows
@@ -86,10 +86,10 @@ func (k EntryKind) IsForbidden() bool {
 // gateway's tar/zip parser populates this struct for each entry
 // before calling ValidateEntry.
 type Entry struct {
-	Path     string    // Path as declared in the archive (pre-canonicalization)
-	Kind     EntryKind
-	Size     int64     // Uncompressed size in bytes
-	LinkTarget string  // For symlinks: the target path
+	Path       string // Path as declared in the archive (pre-canonicalization)
+	Kind       EntryKind
+	Size       int64  // Uncompressed size in bytes
+	LinkTarget string // For symlinks: the target path
 }
 
 // Archive captures the aggregate properties the validator checks once
@@ -116,19 +116,19 @@ type RuntimeAllow struct {
 type Reason string
 
 const (
-	ReasonZipBomb                Reason = "zip_bomb"
-	ReasonSizeLimit              Reason = "size_limit"
-	ReasonPathTraversal          Reason = "path_traversal"
-	ReasonSymlink                Reason = "symlink"
-	ReasonFormatError            Reason = "format_error"
-	ReasonMaxDecompressedSize    Reason = "max_decompressed_size"
-	ReasonMaxDecompressionRatio  Reason = "max_decompression_ratio"
-	ReasonMaxEntryCount          Reason = "max_entry_count"
-	ReasonMaxEntrySize           Reason = "max_entry_size"
-	ReasonMaxPathDepth           Reason = "max_path_depth"
-	ReasonMaxPathLength          Reason = "max_path_length"
-	ReasonPathEscapesRoot        Reason = "path_escapes_root"
-	ReasonNonRegularEntry        Reason = "non_regular_entry"
+	ReasonZipBomb               Reason = "zip_bomb"
+	ReasonSizeLimit             Reason = "size_limit"
+	ReasonPathTraversal         Reason = "path_traversal"
+	ReasonSymlink               Reason = "symlink"
+	ReasonFormatError           Reason = "format_error"
+	ReasonMaxDecompressedSize   Reason = "max_decompressed_size"
+	ReasonMaxDecompressionRatio Reason = "max_decompression_ratio"
+	ReasonMaxEntryCount         Reason = "max_entry_count"
+	ReasonMaxEntrySize          Reason = "max_entry_size"
+	ReasonMaxPathDepth          Reason = "max_path_depth"
+	ReasonMaxPathLength         Reason = "max_path_length"
+	ReasonPathEscapesRoot       Reason = "path_escapes_root"
+	ReasonNonRegularEntry       Reason = "non_regular_entry"
 )
 
 // ValidationError is the typed error returned by ValidateEntry and

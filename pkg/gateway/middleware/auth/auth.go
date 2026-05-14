@@ -8,11 +8,11 @@
 //
 // Two transport conventions are supported:
 //
-//	- Authorization: Bearer <jwt>  — the canonical RFC 6750 path
-//	- X-Lenny-Tenant-ID + X-Lenny-User-ID — dev-mode headers, only
-//	  honoured when the Options.AllowDevHeaders flag is true; used
-//	  by the existing tier-3 contract suites until they migrate to
-//	  signed-token fixtures
+//   - Authorization: Bearer <jwt>  — the canonical RFC 6750 path
+//   - X-Lenny-Tenant-ID + X-Lenny-User-ID — dev-mode headers, only
+//     honoured when the Options.AllowDevHeaders flag is true; used
+//     by the existing tier-3 contract suites until they migrate to
+//     signed-token fixtures
 //
 // On rejection the middleware emits the §10.2 error envelopes:
 // TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT (401) and

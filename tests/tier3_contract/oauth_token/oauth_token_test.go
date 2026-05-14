@@ -89,11 +89,11 @@ func TestRotationHappyPath(t *testing.T) {
 		Scope:    "sessions:read sessions:write",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
-		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
-		SubjectToken:       subject,
-		SubjectTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		Scope:              "sessions:read",
-		Audience:           "lenny-gateway",
+		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
+		SubjectToken:     subject,
+		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+		Scope:            "sessions:read",
+		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("rotation: want 200, got %d (body %v)", resp.StatusCode, body)
@@ -124,7 +124,7 @@ func TestRotationHappyPath(t *testing.T) {
 func TestScopeBroadeningRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
-		Subject:  "alice", TenantID: "acme",
+		Subject: "alice", TenantID: "acme",
 		Typ: auth.TokenUserBearer, Scope: "sessions:read",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{

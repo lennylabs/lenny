@@ -103,6 +103,7 @@ func (cryptoRandImpl) Read(b []byte) (int, error) {
 	// import as needed to keep the package light
 	return cryptoReader(b)
 }
+
 func (cryptoRandImpl) Uint64() uint64 {
 	var b [8]byte
 	if _, err := cryptoReader(b[:]); err != nil {
@@ -110,6 +111,7 @@ func (cryptoRandImpl) Uint64() uint64 {
 	}
 	return binary.LittleEndian.Uint64(b[:])
 }
+
 func (cryptoRandImpl) IntN(n int) int {
 	if n <= 0 {
 		panic("randctl: IntN called with n <= 0")

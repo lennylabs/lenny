@@ -56,10 +56,10 @@ type Options struct {
 
 // Result is the parsed ZAP report.
 type Result struct {
-	ReportPath string
-	HighAlerts int
+	ReportPath   string
+	HighAlerts   int
 	MediumAlerts int
-	LowAlerts  int
+	LowAlerts    int
 }
 
 // Run executes a ZAP scan and returns the parsed result.

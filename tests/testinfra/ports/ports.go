@@ -9,8 +9,8 @@
 //
 // Two patterns:
 //
-//   ln := ports.NewListener(t)       // a net.Listener already bound
-//   addr := ports.Reserve(t)         // an address; the caller binds
+//	ln := ports.NewListener(t)       // a net.Listener already bound
+//	addr := ports.Reserve(t)         // an address; the caller binds
 package ports
 
 import (

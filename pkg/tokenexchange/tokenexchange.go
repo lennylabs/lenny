@@ -9,14 +9,14 @@
 //   - Scope narrowing: issued.scope ⊆ subject.scope (RFC 8693)
 //   - Tenant match: issued.tenant_id == subject.tenant_id == caller.tenant_id
 //   - delegation_depth: child = parent + 1 (with actor_token);
-//                       rotation preserves
+//     rotation preserves
 //   - caller_type cannot elevate
 //   - audience cannot broaden (cannot add to subject's audiences)
 //   - typ rules: only a2a_delegation child-minting (with actor_token)
-//                produces typ = a2a_delegation; otherwise copied
-//                from subject
+//     produces typ = a2a_delegation; otherwise copied
+//     from subject
 //   - exp = min(requested_exp, subject.exp, actor.exp, perDialectCap)
-//          with ±1s skew allowance for expiry checks
+//     with ±1s skew allowance for expiry checks
 //
 // The package is import-free of any JWT library; the gateway maps
 // k8s.io / jose / jwt-go claim structs into the Token type before

@@ -168,11 +168,11 @@ type Candidate struct {
 // Matches applies the §10.6 selector + override layers to a
 // candidate. The evaluation order matches the spec text:
 //
-//	1. Exclude → if c.Name is on the Exclude list, reject.
-//	2. Include → if c.Name is on the Include list, admit.
-//	3. Types → if Types is non-empty and c.Type is not in it, reject.
-//	4. MatchLabels → every (key, value) MUST be present on c.Labels.
-//	5. MatchExpressions → every requirement MUST be satisfied.
+//  1. Exclude → if c.Name is on the Exclude list, reject.
+//  2. Include → if c.Name is on the Include list, admit.
+//  3. Types → if Types is non-empty and c.Type is not in it, reject.
+//  4. MatchLabels → every (key, value) MUST be present on c.Labels.
+//  5. MatchExpressions → every requirement MUST be satisfied.
 //
 // Returns true when every layer admits.
 func (s Selector) Matches(c Candidate) bool {

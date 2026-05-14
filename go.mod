@@ -13,6 +13,8 @@ require (
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
+	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (
@@ -79,6 +81,4 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
-	pgregory.net/rapid v1.3.0 // indirect
 )

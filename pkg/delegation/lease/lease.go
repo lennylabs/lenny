@@ -146,11 +146,11 @@ var ErrUnresolvedMaxDepth = errors.New("delegation lease: no positive maxDepth f
 
 // ResolveMaxDepth applies the §8.2.bis precedence chain in order:
 //
-//	1. ExplicitClient
-//	2. PresetEntry
-//	3. RuntimeDefault
-//	4. PolicyCeiling
-//	5. HelmFallback
+//  1. ExplicitClient
+//  2. PresetEntry
+//  3. RuntimeDefault
+//  4. PolicyCeiling
+//  5. HelmFallback
 //
 // Returns the first positive value. Returns ErrUnresolvedMaxDepth
 // when every layer is zero.

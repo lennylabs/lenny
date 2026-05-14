@@ -116,10 +116,10 @@ func (h Hierarchy) Validate() error {
 // the binding constraint, which the gateway uses for the
 // QUOTA_EXCEEDED error's details.scope field.
 type HierarchicalCheckResult struct {
-	State   State
-	Scope   string // "global" | "tenant" | "user" | ""
-	Used    int64
-	Limit   int64
+	State State
+	Scope string // "global" | "tenant" | "user" | ""
+	Used  int64
+	Limit int64
 }
 
 // HierarchicalCheck runs Check at each scope and returns the result

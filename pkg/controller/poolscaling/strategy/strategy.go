@@ -14,33 +14,33 @@
 //
 //  1. Standard (non-experiment) pool, session mode (the base formula):
 //     target_minWarm = ceil(
-//       base_demand_p95 × safety_factor ×
-//       (failover_seconds + pod_warmup_seconds)
-//       + burst_p99_claims × pod_warmup_seconds
+//     base_demand_p95 × safety_factor ×
+//     (failover_seconds + pod_warmup_seconds)
+//     + burst_p99_claims × pod_warmup_seconds
 //     )
 //
 //  2. Mode-adjusted form (task or concurrent mode), §5.2:
 //     target_minWarm = ceil(
-//       base_demand_p95 × safety_factor ×
-//       (failover_seconds + pod_warmup_seconds) / mode_factor
-//       + burst_p99_claims × pod_warmup_seconds / burst_mode_factor
+//     base_demand_p95 × safety_factor ×
+//     (failover_seconds + pod_warmup_seconds) / mode_factor
+//     + burst_p99_claims × pod_warmup_seconds / burst_mode_factor
 //     )
 //
 //  3. Variant pool (A/B experiment), §4.6.2 variant-pool formula:
 //     target_minWarm = ceil(
-//       base_demand_p95 × variant_weight × safety_factor ×
-//       (failover_seconds + pod_warmup_seconds) / mode_factor
-//       + burst_p99_claims × variant_weight × pod_warmup_seconds /
-//         burst_mode_factor
+//     base_demand_p95 × variant_weight × safety_factor ×
+//     (failover_seconds + pod_warmup_seconds) / mode_factor
+//     + burst_p99_claims × variant_weight × pod_warmup_seconds /
+//     burst_mode_factor
 //     )
 //
 //  4. Adjusted base pool when one or more variant pools are active,
 //     §4.6.2 base-pool adjustment:
 //     base_minWarm = ceil(
-//       base_demand_p95 × (1 - Σ variant_weights) × safety_factor ×
-//       (failover_seconds + pod_warmup_seconds) / mode_factor
-//       + burst_p99_claims × (1 - Σ variant_weights) × pod_warmup_seconds /
-//         burst_mode_factor
+//     base_demand_p95 × (1 - Σ variant_weights) × safety_factor ×
+//     (failover_seconds + pod_warmup_seconds) / mode_factor
+//     + burst_p99_claims × (1 - Σ variant_weights) × pod_warmup_seconds /
+//     burst_mode_factor
 //     )
 //
 // When the inputs are insufficient (cold start: no historical demand
@@ -176,14 +176,14 @@ type ScalingDecision struct {
 // It feeds the §4.6.2 reconciliation-lag metric and the structured-log
 // trace for each scaling decision.
 type FormulaSnapshot struct {
-	BaseDemandP95          float64
-	BurstP99Claims         float64
-	SafetyFactor           float64
-	FailoverSeconds        float64
-	PodWarmupSeconds       float64
-	ModeFactor             float64
-	BurstModeFactor        float64
-	EffectiveWeight        float64
+	BaseDemandP95    float64
+	BurstP99Claims   float64
+	SafetyFactor     float64
+	FailoverSeconds  float64
+	PodWarmupSeconds float64
+	ModeFactor       float64
+	BurstModeFactor  float64
+	EffectiveWeight  float64
 }
 
 // PoolScalingStrategy is the interface the §4.6.2 "Pluggable

@@ -9,13 +9,14 @@ import (
 )
 
 // Worked example: standard session-mode pool, agent type, Tier 1 defaults.
-//   base_demand_p95 = 2 claims/s
-//   burst_p99_claims = 5 claims/s
-//   safety_factor = 1.5
-//   failover_seconds = 25
-//   pod_warmup_seconds = 10
-//   mode_factor = 1, burst_mode_factor = 1
-//   weight = 1 (no variants)
+//
+//	base_demand_p95 = 2 claims/s
+//	burst_p99_claims = 5 claims/s
+//	safety_factor = 1.5
+//	failover_seconds = 25
+//	pod_warmup_seconds = 10
+//	mode_factor = 1, burst_mode_factor = 1
+//	weight = 1 (no variants)
 //
 // steady = 2 × 1.5 × (25+10) / 1 = 2 × 1.5 × 35 = 105
 // burst  = 5 × 10 / 1 = 50
@@ -49,9 +50,10 @@ func TestComputeStandardSession(t *testing.T) {
 // Using the same inputs above with mode_factor=10 (i.e., each pod
 // serves ~10 tasks before recycling), burst_mode_factor=1 (task pods
 // process sequentially):
-//   steady = 105 / 10 = 10.5
-//   burst  = 50 / 1   = 50
-//   target = ceil(60.5) = 61
+//
+//	steady = 105 / 10 = 10.5
+//	burst  = 50 / 1   = 50
+//	target = ceil(60.5) = 61
 func TestComputeTaskModeReducesSteady(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:          PoolStandard,
@@ -74,9 +76,10 @@ func TestComputeTaskModeReducesSteady(t *testing.T) {
 }
 
 // Concurrent mode reduces both terms. Using maxConcurrent=8:
-//   steady = 105 / 8 = 13.125
-//   burst  = 50 / 8  = 6.25
-//   target = ceil(19.375) = 20
+//
+//	steady = 105 / 8 = 13.125
+//	burst  = 50 / 8  = 6.25
+//	target = ceil(19.375) = 20
 func TestComputeConcurrentModeReducesBothTerms(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:          PoolStandard,
@@ -101,9 +104,10 @@ func TestComputeConcurrentModeReducesBothTerms(t *testing.T) {
 // Variant pool: variant_weight=0.25 (exactly representable in IEEE 754
 // so the worked example is rounding-stable) scales the formula
 // proportionally.
-//   steady = 2 × 0.25 × 1.5 × 35 = 26.25
-//   burst  = 5 × 0.25 × 10 = 12.5
-//   target = ceil(38.75) = 39
+//
+//	steady = 2 × 0.25 × 1.5 × 35 = 26.25
+//	burst  = 5 × 0.25 × 10 = 12.5
+//	target = ceil(38.75) = 39
 func TestComputeVariantPool(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:          PoolVariant,
@@ -127,9 +131,10 @@ func TestComputeVariantPool(t *testing.T) {
 // Adjusted base pool: standard pool with active variants. Σ
 // variant_weights = 0.25 (exactly representable) leaves the base pool
 // serving 0.75 of demand.
-//   steady = 2 × 0.75 × 1.5 × 35 = 78.75
-//   burst  = 5 × 0.75 × 10 = 37.5
-//   target = ceil(116.25) = 117
+//
+//	steady = 2 × 0.75 × 1.5 × 35 = 78.75
+//	burst  = 5 × 0.75 × 10 = 37.5
+//	target = ceil(116.25) = 117
 func TestComputeAdjustedBasePool(t *testing.T) {
 	got, err := New().Compute(ScalingInputs{
 		PoolType:                PoolStandard,

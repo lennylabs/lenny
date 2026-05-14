@@ -102,5 +102,7 @@ func contains(s, sub string) bool {
 // guard against unused imports — the harness package supports
 // streaming + cancellation paths in future expansion that will need
 // bufio + io.
-var _ = bufio.NewReader
-var _ = io.Discard
+var (
+	_ = bufio.NewReader
+	_ = io.Discard
+)

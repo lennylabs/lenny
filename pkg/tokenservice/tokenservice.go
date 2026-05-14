@@ -29,10 +29,10 @@ import (
 
 // Server is the §13.3 Token Service http handler.
 type Server struct {
-	signer      *jwt.HMACSigner
-	verifier    jwt.Verifier
-	issuer      string
-	perDialect  map[string]time.Duration
+	signer     *jwt.HMACSigner
+	verifier   jwt.Verifier
+	issuer     string
+	perDialect map[string]time.Duration
 
 	mu     sync.Mutex
 	issued map[string]bool // jti seen
@@ -89,11 +89,11 @@ type Request struct {
 
 // Response is the RFC 8693 successful response.
 type Response struct {
-	AccessToken      string `json:"access_token"`
-	IssuedTokenType  string `json:"issued_token_type"`
-	TokenType        string `json:"token_type"`
-	ExpiresIn        int64  `json:"expires_in"`
-	Scope            string `json:"scope,omitempty"`
+	AccessToken     string `json:"access_token"`
+	IssuedTokenType string `json:"issued_token_type"`
+	TokenType       string `json:"token_type"`
+	ExpiresIn       int64  `json:"expires_in"`
+	Scope           string `json:"scope,omitempty"`
 }
 
 const (
@@ -146,8 +146,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	exchangeReq := tokenexchange.Request{
-		Subject:       toExchangeToken(subjectClaims),
-		Caller:        toExchangeToken(callerClaims),
+		Subject: toExchangeToken(subjectClaims),
+		Caller:  toExchangeToken(callerClaims),
 		Requested: tokenexchange.Token{
 			Scope:    splitScope(req.Scope),
 			Audience: splitSpace(req.Audience),
@@ -249,7 +249,7 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 	}
 }
 
-func splitScope(s string) []string  { return splitSpace(s) }
+func splitScope(s string) []string { return splitSpace(s) }
 func splitSpace(s string) []string {
 	s = strings.TrimSpace(s)
 	if s == "" {

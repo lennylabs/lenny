@@ -266,13 +266,13 @@ func (e *TamperError) Error() string {
 // fields prominently so users can distinguish platform OAuth flows
 // from agent-initiated prompts.
 type Provenance struct {
-	OriginPod        string
-	DelegationDepth  int
-	OriginRuntime    string
-	Purpose          string
-	ConnectorID      string
-	ExpectedDomain   string
-	InitiatorType    InitiatorType
+	OriginPod       string
+	DelegationDepth int
+	OriginRuntime   string
+	Purpose         string
+	ConnectorID     string
+	ExpectedDomain  string
+	InitiatorType   InitiatorType
 }
 
 // Validate reports the §9.2 provenance-shape errors.

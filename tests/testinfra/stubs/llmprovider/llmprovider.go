@@ -37,8 +37,8 @@ import (
 type Stub struct {
 	server *httptest.Server
 
-	mu       sync.Mutex
-	requests []Request
+	mu               sync.Mutex
+	requests         []Request
 	responseOverride func(req Request) (status int, body string, headers map[string]string)
 }
 
@@ -150,13 +150,13 @@ data: {"type":"message_stop"}`,
 		return
 	}
 	resp := map[string]any{
-		"id":      "msg-1",
-		"type":    "message",
-		"role":    "assistant",
-		"content": []map[string]any{{"type": "text", "text": echo}},
-		"model":   "claude-stub",
+		"id":          "msg-1",
+		"type":        "message",
+		"role":        "assistant",
+		"content":     []map[string]any{{"type": "text", "text": echo}},
+		"model":       "claude-stub",
 		"stop_reason": "end_turn",
-		"usage":   map[string]any{"input_tokens": 1, "output_tokens": 1},
+		"usage":       map[string]any{"input_tokens": 1, "output_tokens": 1},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -165,8 +165,8 @@ data: {"type":"message_stop"}`,
 func (s *Stub) handleOpenAIChat(w http.ResponseWriter, r *http.Request, body []byte) {
 	echo := extractLastUserMessage(body)
 	resp := map[string]any{
-		"id":      "chatcmpl-1",
-		"object":  "chat.completion",
+		"id":     "chatcmpl-1",
+		"object": "chat.completion",
 		"choices": []map[string]any{{
 			"index":         0,
 			"message":       map[string]any{"role": "assistant", "content": echo},
@@ -185,8 +185,8 @@ func (s *Stub) handleOpenAIResponses(w http.ResponseWriter, r *http.Request, bod
 		"id":     "resp-1",
 		"object": "response",
 		"output": []map[string]any{{
-			"type": "message",
-			"role": "assistant",
+			"type":    "message",
+			"role":    "assistant",
 			"content": []map[string]any{{"type": "output_text", "text": echo}},
 		}},
 		"model": "gpt-responses-stub",

@@ -22,7 +22,8 @@ func FuzzValidateDoesNotPanic(f *testing.F) {
 	f.Add("acme/bad", "alice", "alice", "alice", "alice", "scope", "aud")
 
 	f.Fuzz(func(t *testing.T,
-		tenant, callerSub, callerEmail, subjectSub, subjectEmail, scope, audience string) {
+		tenant, callerSub, callerEmail, subjectSub, subjectEmail, scope, audience string,
+	) {
 		caller := Token{
 			TenantID: tenant,
 			Subject:  callerSub,

@@ -22,11 +22,12 @@ import (
 	"context"
 	"errors"
 
-	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
 // SpanName enumerates the span boundaries instrumented per §16.3. Callers
@@ -38,28 +39,28 @@ type SpanName string
 // adds a row; the catalog is intentionally explicit so a typo cannot
 // silently invent a span.
 const (
-	SpanSessionCreate           SpanName = "session.create"
-	SpanSessionClaimPod         SpanName = "session.claim_pod"
-	SpanSessionUpload           SpanName = "session.upload"
+	SpanSessionCreate            SpanName = "session.create"
+	SpanSessionClaimPod          SpanName = "session.claim_pod"
+	SpanSessionUpload            SpanName = "session.upload"
 	SpanSessionFinalizeWorkspace SpanName = "session.finalize_workspace"
-	SpanSessionRunSetup         SpanName = "session.run_setup"
-	SpanSessionStart            SpanName = "session.start"
-	SpanSessionPrompt           SpanName = "session.prompt"
-	SpanSessionToolCall         SpanName = "session.tool_call"
-	SpanSessionCheckpoint       SpanName = "session.checkpoint"
-	SpanSessionSealAndExport    SpanName = "session.seal_and_export"
-	SpanDelegationSpawnChild    SpanName = "delegation.spawn_child"
-	SpanDelegationAwaitChild    SpanName = "delegation.await_child"
-	SpanDelegationExportFiles   SpanName = "delegation.export_files"
-	SpanDelegationBudgetReserve SpanName = "delegation.budget_reserve"
-	SpanDelegationBudgetReturn  SpanName = "delegation.budget_return"
-	SpanMCPExternalToolCall     SpanName = "mcp.external_tool_call"
-	SpanMCPElicitation          SpanName = "mcp.elicitation"
-	SpanCredentialAssign        SpanName = "credential.assign"
-	SpanCredentialRotate        SpanName = "credential.rotate"
-	SpanCredentialFallbackChain SpanName = "credential.fallback_chain"
-	SpanCredentialProxyRequest  SpanName = "credential.proxy_request"
-	SpanCoordinatorHandoff      SpanName = "coordinator.handoff"
+	SpanSessionRunSetup          SpanName = "session.run_setup"
+	SpanSessionStart             SpanName = "session.start"
+	SpanSessionPrompt            SpanName = "session.prompt"
+	SpanSessionToolCall          SpanName = "session.tool_call"
+	SpanSessionCheckpoint        SpanName = "session.checkpoint"
+	SpanSessionSealAndExport     SpanName = "session.seal_and_export"
+	SpanDelegationSpawnChild     SpanName = "delegation.spawn_child"
+	SpanDelegationAwaitChild     SpanName = "delegation.await_child"
+	SpanDelegationExportFiles    SpanName = "delegation.export_files"
+	SpanDelegationBudgetReserve  SpanName = "delegation.budget_reserve"
+	SpanDelegationBudgetReturn   SpanName = "delegation.budget_return"
+	SpanMCPExternalToolCall      SpanName = "mcp.external_tool_call"
+	SpanMCPElicitation           SpanName = "mcp.elicitation"
+	SpanCredentialAssign         SpanName = "credential.assign"
+	SpanCredentialRotate         SpanName = "credential.rotate"
+	SpanCredentialFallbackChain  SpanName = "credential.fallback_chain"
+	SpanCredentialProxyRequest   SpanName = "credential.proxy_request"
+	SpanCoordinatorHandoff       SpanName = "coordinator.handoff"
 )
 
 // SpanNames returns the full catalog. Tests use it to assert exhaustive

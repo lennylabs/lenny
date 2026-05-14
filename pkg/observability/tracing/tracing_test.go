@@ -7,11 +7,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
 func newTestTracer(t *testing.T) (*Tracer, *tracetest.SpanRecorder) {

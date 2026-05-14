@@ -33,10 +33,10 @@ import (
 
 // fencedBlock is one extracted code block.
 type fencedBlock struct {
-	Path     string
-	Language string
+	Path      string
+	Language  string
 	StartLine int
-	Body     string
+	Body      string
 }
 
 // extractFencedBlocks walks the file and yields every fenced code

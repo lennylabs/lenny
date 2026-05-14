@@ -46,7 +46,8 @@ func FuzzProvenanceValidate(f *testing.F) {
 	f.Add("pod-1", 99, "", "", "", "", "connector")
 
 	f.Fuzz(func(t *testing.T,
-		origin string, depth int, runtime, purpose, connector, domain, initiatorType string) {
+		origin string, depth int, runtime, purpose, connector, domain, initiatorType string,
+	) {
 		p := Provenance{
 			OriginPod:       origin,
 			DelegationDepth: depth,

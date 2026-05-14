@@ -87,10 +87,10 @@ func drawMode(rt *rapid.T) string {
 func TaskRecord() *rapid.Generator[map[string]any] {
 	return rapid.Custom(func(rt *rapid.T) map[string]any {
 		return map[string]any{
-			"id":     "task-" + rapid.StringMatching(`[a-z0-9]{12,24}`).Draw(rt, "id"),
-			"state":  rapid.SampledFrom([]string{"submitted", "running", "completed", "failed", "cancelled", "expired", "input_required"}).Draw(rt, "state"),
+			"id":      "task-" + rapid.StringMatching(`[a-z0-9]{12,24}`).Draw(rt, "id"),
+			"state":   rapid.SampledFrom([]string{"submitted", "running", "completed", "failed", "cancelled", "expired", "input_required"}).Draw(rt, "state"),
 			"runtime": rapid.SampledFrom([]string{"echo", "streaming-echo", "delegation-echo", "claude-code"}).Draw(rt, "runtime"),
-			"prompt": rapid.StringMatching(`[a-zA-Z0-9 ]{1,128}`).Draw(rt, "prompt"),
+			"prompt":  rapid.StringMatching(`[a-zA-Z0-9 ]{1,128}`).Draw(rt, "prompt"),
 		}
 	})
 }

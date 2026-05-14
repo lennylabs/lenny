@@ -46,7 +46,7 @@ func TestResolveEffectivePicksStricter(t *testing.T) {
 		{ModeOff, ModeEnforce, ModeEnforce},
 		{ModeDetectOnly, ModeOff, ModeDetectOnly}, // floor wins
 		{ModeDetectOnly, ModeEnforce, ModeEnforce},
-		{ModeEnforce, ModeOff, ModeEnforce},       // floor wins strongly
+		{ModeEnforce, ModeOff, ModeEnforce}, // floor wins strongly
 		{ModeEnforce, ModeDetectOnly, ModeEnforce},
 		{ModeEnforce, ModeEnforce, ModeEnforce},
 	}

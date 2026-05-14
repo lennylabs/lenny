@@ -37,13 +37,13 @@ func TestIsValidCanonicalTransitions(t *testing.T) {
 
 func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 	illegal := []state.Transition{
-		{state.Pending, state.Draining},        // skip Expanding
-		{state.Pending, state.Complete},        // skip everything
-		{state.Complete, state.Expanding},      // terminal is a sink
-		{state.Complete, state.Paused},         // terminal cannot be paused
-		{state.Expanding, state.Pending},       // no reverse edge
-		{state.Draining, state.Expanding},      // no reverse edge
-		{state.Paused, state.Expanding},        // Resume restores; not a transition
+		{state.Pending, state.Draining},   // skip Expanding
+		{state.Pending, state.Complete},   // skip everything
+		{state.Complete, state.Expanding}, // terminal is a sink
+		{state.Complete, state.Paused},    // terminal cannot be paused
+		{state.Expanding, state.Pending},  // no reverse edge
+		{state.Draining, state.Expanding}, // no reverse edge
+		{state.Paused, state.Expanding},   // Resume restores; not a transition
 	}
 	for _, tr := range illegal {
 		tr := tr

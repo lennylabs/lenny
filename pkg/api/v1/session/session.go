@@ -73,11 +73,11 @@ func IsTerminal(s State) bool {
 type FailureClass string
 
 const (
-	FailureClassRuntime         FailureClass = "runtime_failure"
-	FailureClassStartingTimeout FailureClass = "starting_timeout"
-	FailureClassBudgetKeysExpired FailureClass = "budget_keys_expired"
+	FailureClassRuntime              FailureClass = "runtime_failure"
+	FailureClassStartingTimeout      FailureClass = "starting_timeout"
+	FailureClassBudgetKeysExpired    FailureClass = "budget_keys_expired"
 	FailureClassWorkspaceSealTimeout FailureClass = "workspace_seal_timeout"
-	FailureClassDeriveFailure   FailureClass = "derive_failure"
+	FailureClassDeriveFailure        FailureClass = "derive_failure"
 )
 
 // AllFailureClasses returns the closed enum in §7.1 table order.

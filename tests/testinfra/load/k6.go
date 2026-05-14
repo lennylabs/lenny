@@ -35,14 +35,14 @@ import (
 
 // Result is a scenario result.
 type Result struct {
-	Scenario    string             `json:"scenario"`
-	Version     string             `json:"version"`
-	RecordedAt  string             `json:"recorded_at"`
-	Duration    string             `json:"duration"`
-	VUs         int                `json:"vus"`
-	MetricMS    map[string]float64 `json:"metric_ms"`
-	ErrorRate   float64            `json:"error_rate"`
-	Throughput  float64            `json:"throughput_per_sec"`
+	Scenario   string             `json:"scenario"`
+	Version    string             `json:"version"`
+	RecordedAt string             `json:"recorded_at"`
+	Duration   string             `json:"duration"`
+	VUs        int                `json:"vus"`
+	MetricMS   map[string]float64 `json:"metric_ms"`
+	ErrorRate  float64            `json:"error_rate"`
+	Throughput float64            `json:"throughput_per_sec"`
 }
 
 // Options configures a scenario run.
@@ -100,7 +100,8 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 	args = append(args, scriptPath)
 
 	cmd := exec.Command("k6", args...)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"K6_NO_USAGE_REPORT=true",
 	)
 	if opts.BaseURL != "" {

@@ -16,12 +16,12 @@
 //
 //  2. lenny.dev/tenant-id has constrained transitions:
 //     - unset → {tenant_id} : allowed only for the gateway SA on
-//       initial first-assignment of a pod to a tenant.
+//     initial first-assignment of a pod to a tenant.
 //     - {tenant_id} → "unassigned" : allowed only for the
-//       WarmPoolController SA when a pod is returned to the pool.
+//     WarmPoolController SA when a pod is returned to the pool.
 //     - {tenant_id} → {different_tenant_id} : always rejected.
 //     - {tenant_id} → unset, "unassigned" → {tenant_id} etc are
-//       outside the documented permitted transitions and are rejected.
+//     outside the documented permitted transitions and are rejected.
 //
 // The webhook binary (a later phase) wraps this package with a
 // k8s.io/api/admission/v1 handler that extracts old and new pod label
@@ -49,8 +49,8 @@ const UnassignedTenantID = "unassigned"
 // ServiceAccount usernames whose admission UserInfo grants the
 // privileged transitions. The strings match §10.3 / §17.2 mentions.
 const (
-	GatewayServiceAccount    = "system:serviceaccount:lenny-system:lenny-gateway"
-	WarmPoolControllerSA     = "system:serviceaccount:lenny-system:lenny-controller"
+	GatewayServiceAccount = "system:serviceaccount:lenny-system:lenny-gateway"
+	WarmPoolControllerSA  = "system:serviceaccount:lenny-system:lenny-controller"
 	// PoolScalingControllerSA is included for symmetry; the
 	// label-immutability webhook does not authorize any tenant-id
 	// transition for it (only field-ownership matters), but tests

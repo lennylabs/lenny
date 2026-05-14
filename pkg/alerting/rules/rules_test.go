@@ -11,10 +11,10 @@ import (
 
 func TestSeverityIsValid(t *testing.T) {
 	cases := map[Severity]bool{
-		SeverityCritical:    true,
-		SeverityWarning:     true,
-		Severity(""):        false,
-		Severity("page"):    false,
+		SeverityCritical:     true,
+		SeverityWarning:      true,
+		Severity(""):         false,
+		Severity("page"):     false,
 		Severity("CRITICAL"): false,
 	}
 	for s, want := range cases {
@@ -26,12 +26,12 @@ func TestSeverityIsValid(t *testing.T) {
 
 func TestRuleValidateAcceptsWellFormed(t *testing.T) {
 	r := Rule{
-		Name:       "Example",
-		Expr:       `up == 0`,
-		For:        30 * time.Second,
-		Severity:   SeverityWarning,
-		Summary:    "test alert",
-		SpecRef:    "§16.5",
+		Name:     "Example",
+		Expr:     `up == 0`,
+		For:      30 * time.Second,
+		Severity: SeverityWarning,
+		Summary:  "test alert",
+		SpecRef:  "§16.5",
 	}
 	if err := r.Validate(); err != nil {
 		t.Errorf("Validate should accept well-formed rule, got %v", err)

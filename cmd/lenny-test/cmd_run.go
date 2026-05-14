@@ -379,6 +379,63 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("buf", "lint").CombinedOutput()
 			return string(out), err
 		}},
+		{"buf breaking", func() (string, error) {
+			// Skip outside a git repo or when buf isn't installed.
+			if _, err := exec.LookPath("buf"); err != nil {
+				return "buf not on PATH; skipping breaking-change check", nil
+			}
+			if _, err := exec.LookPath("git"); err != nil {
+				return "git not on PATH; skipping buf breaking", nil
+			}
+			// `buf breaking` exits 0 when no breaking changes; non-
+			// zero on real regressions. Tolerate the "no .proto files"
+			// case (pre-Phase 2) with a skip — buf reports it via the
+			// "had no .proto files" message.
+			cmd := exec.Command("buf", "breaking", "schemas/", "--against", ".git#branch=main")
+			cmd.Dir = repoRoot()
+			out, err := cmd.CombinedOutput()
+			body := string(out)
+			if err != nil && (strings.Contains(body, "does not exist") || strings.Contains(body, "no .proto files")) {
+				return "schemas/ has no .proto files; skipping buf breaking (Phase 2 deliverable)", nil
+			}
+			return body, err
+		}},
+		{"gofumpt -l .", func() (string, error) {
+			path := resolveGoBin("gofumpt")
+			if path == "" {
+				return "gofumpt not on PATH; skipping (install via go install mvdan.cc/gofumpt@latest)", nil
+			}
+			cmd := exec.Command(path, "-l", ".")
+			cmd.Dir = repoRoot()
+			out, err := cmd.CombinedOutput()
+			body := strings.TrimSpace(string(out))
+			if err != nil {
+				return body, err
+			}
+			if body != "" {
+				return fmt.Sprintf("gofumpt reports unformatted files:\n%s\n(run `gofumpt -w .` to fix)", body),
+					fmt.Errorf("gofumpt: %d file(s) need formatting", strings.Count(body, "\n")+1)
+			}
+			return "gofumpt: all files formatted", nil
+		}},
+		{"goimports -l -local github.com/lennylabs/lenny .", func() (string, error) {
+			path := resolveGoBin("goimports")
+			if path == "" {
+				return "goimports not on PATH; skipping (install via go install golang.org/x/tools/cmd/goimports@latest)", nil
+			}
+			cmd := exec.Command(path, "-l", "-local", "github.com/lennylabs/lenny", ".")
+			cmd.Dir = repoRoot()
+			out, err := cmd.CombinedOutput()
+			body := strings.TrimSpace(string(out))
+			if err != nil {
+				return body, err
+			}
+			if body != "" {
+				return fmt.Sprintf("goimports reports unordered imports:\n%s\n(run `goimports -w -local github.com/lennylabs/lenny .` to fix)", body),
+					fmt.Errorf("goimports: %d file(s) need ordering", strings.Count(body, "\n")+1)
+			}
+			return "goimports: import ordering clean", nil
+		}},
 		{"golangci-lint run", func() (string, error) {
 			// Prefer the binary at $GOPATH/bin since the install script
 			// puts it there (TESTING_DEPENDENCIES.md §5). Fall back to

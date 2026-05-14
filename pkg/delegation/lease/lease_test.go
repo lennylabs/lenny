@@ -73,9 +73,9 @@ func TestValidateChildSliceUnconstrainedParentAdmits(t *testing.T) {
 
 func TestResolveMaxDepthApplies82BisPrecedence(t *testing.T) {
 	cases := []struct {
-		name    string
-		in      MaxDepthInputs
-		want    int
+		name string
+		in   MaxDepthInputs
+		want int
 	}{
 		{"explicit wins", MaxDepthInputs{ExplicitClient: 3, PresetEntry: 5, RuntimeDefault: 7, PolicyCeiling: 9, HelmFallback: 10}, 3},
 		{"preset wins when no explicit", MaxDepthInputs{PresetEntry: 5, RuntimeDefault: 7, HelmFallback: 10}, 5},

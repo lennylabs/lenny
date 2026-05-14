@@ -84,7 +84,8 @@ func StartPostgres(t *testing.T, opts PostgresOptions) *Postgres {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
 	defer cancel()
 
-	container, err := tcpostgres.Run(ctx,
+	container, err := tcpostgres.Run(
+		ctx,
 		opts.Image,
 		tcpostgres.WithDatabase(opts.Database),
 		tcpostgres.WithUsername(opts.User),

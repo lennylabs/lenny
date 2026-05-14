@@ -38,9 +38,9 @@ func main() {
 		Signer: signer,
 		Issuer: *issuer,
 		PerDialectCap: map[string]time.Duration{
-			"lenny-gateway":       24 * time.Hour,
-			"lenny-ops":           1 * time.Hour,
-			"llm-proxy":           1 * time.Hour,
+			"lenny-gateway": 24 * time.Hour,
+			"lenny-ops":     1 * time.Hour,
+			"llm-proxy":     1 * time.Hour,
 		},
 	})
 

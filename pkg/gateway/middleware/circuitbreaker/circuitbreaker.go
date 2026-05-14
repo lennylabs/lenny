@@ -32,8 +32,8 @@ type Registry interface {
 // MemoryRegistry is an in-memory Registry. Set replaces the current
 // snapshot atomically; readers see a consistent set.
 type MemoryRegistry struct {
-	mu        sync.RWMutex
-	breakers  []circuitbreaker.Breaker
+	mu       sync.RWMutex
+	breakers []circuitbreaker.Breaker
 }
 
 // NewMemoryRegistry returns an empty Registry.

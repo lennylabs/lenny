@@ -14,20 +14,20 @@ import (
 
 // verdict is the §7 JSON shape, simplified for Phase 0.
 type verdict struct {
-	Version      int                 `json:"version"`
-	RunID        string              `json:"run_id"`
-	StartedAt    string              `json:"started_at"`
-	FinishedAt   string              `json:"finished_at"`
-	DurationMS   int64               `json:"duration_ms"`
-	Command      string              `json:"command"`
-	Trigger      trigger             `json:"trigger"`
-	Infra        infrastructureInfo  `json:"infrastructure"`
-	Tiers        map[string]tierStat `json:"tiers"`
-	Verdict      string              `json:"verdict"`
-	NextAction   string              `json:"next_action,omitempty"`
-	SpecStatus   map[string]string   `json:"spec_section_status,omitempty"`
-	startedAt    time.Time
-	finishedAt   time.Time
+	Version    int                 `json:"version"`
+	RunID      string              `json:"run_id"`
+	StartedAt  string              `json:"started_at"`
+	FinishedAt string              `json:"finished_at"`
+	DurationMS int64               `json:"duration_ms"`
+	Command    string              `json:"command"`
+	Trigger    trigger             `json:"trigger"`
+	Infra      infrastructureInfo  `json:"infrastructure"`
+	Tiers      map[string]tierStat `json:"tiers"`
+	Verdict    string              `json:"verdict"`
+	NextAction string              `json:"next_action,omitempty"`
+	SpecStatus map[string]string   `json:"spec_section_status,omitempty"`
+	startedAt  time.Time
+	finishedAt time.Time
 }
 
 type trigger struct {

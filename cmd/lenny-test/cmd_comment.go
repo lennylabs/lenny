@@ -14,15 +14,15 @@ import (
 // runComment emits a Markdown summary of a verdict file suitable
 // for posting as a PR comment. The format is:
 //
-//   ## lenny-test verdict: PASS
-//   Run ID: …
-//   Duration: …
+//	## lenny-test verdict: PASS
+//	Run ID: …
+//	Duration: …
 //
-//   | Tier | Status | Detail |
-//   | --- | --- | --- |
-//   | static | ✓ pass |  |
-//   | unit   | ✓ pass |  |
-//   ...
+//	| Tier | Status | Detail |
+//	| --- | --- | --- |
+//	| static | ✓ pass |  |
+//	| unit   | ✓ pass |  |
+//	...
 //
 // Usage:
 //

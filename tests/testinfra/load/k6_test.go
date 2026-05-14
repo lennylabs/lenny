@@ -21,12 +21,12 @@ func TestParseK6Summary(t *testing.T) {
 		"metrics": map[string]any{
 			"http_req_duration": map[string]any{
 				"values": map[string]any{
-					"avg":      12.5,
-					"med":      9.0,
-					"p(90)":    25.0,
-					"p(95)":    40.0,
-					"p(99)":    100.0,
-					"p(99.9)":  500.0,
+					"avg":     12.5,
+					"med":     9.0,
+					"p(90)":   25.0,
+					"p(95)":   40.0,
+					"p(99)":   100.0,
+					"p(99.9)": 500.0,
 				},
 			},
 			"http_req_failed": map[string]any{

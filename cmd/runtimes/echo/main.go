@@ -29,10 +29,11 @@
 //   - stdin EOF → exit cleanly with code 0.
 //
 // Exit codes (spec §15.4):
-//   0   success
-//   1   runtime error (unexpected internal failure)
-//   2   protocol error (malformed inbound JSONL the adapter cannot recover from)
-//   137 SIGKILL (set by the OS, not by this binary)
+//
+//	0   success
+//	1   runtime error (unexpected internal failure)
+//	2   protocol error (malformed inbound JSONL the adapter cannot recover from)
+//	137 SIGKILL (set by the OS, not by this binary)
 package main
 
 import (

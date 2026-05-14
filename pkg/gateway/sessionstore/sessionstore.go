@@ -24,12 +24,12 @@ import (
 // subset of the §15.1 GET /v1/sessions/{id} envelope the minimal
 // gateway populates.
 type Session struct {
-	ID         string
-	TenantID   string
-	UserID     string
-	State      session.State
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID        string
+	TenantID  string
+	UserID    string
+	State     session.State
+	CreatedAt time.Time
+	UpdatedAt time.Time
 
 	// FailureClass is populated when State == failed per §7.1; nil
 	// otherwise.
@@ -72,8 +72,8 @@ type Store interface {
 
 // ListFilter narrows the List result. Empty fields mean "no filter".
 type ListFilter struct {
-	State       session.State
-	RuntimeRef  string
+	State        session.State
+	RuntimeRef   string
 	FailureClass session.FailureClass
 }
 

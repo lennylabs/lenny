@@ -38,9 +38,9 @@ import (
 type Controller string
 
 const (
-	WarmPoolController     Controller = "lenny-warm-pool-controller"
-	PoolScalingController  Controller = "lenny-pool-scaling-controller"
-	Gateway                Controller = "lenny-gateway"
+	WarmPoolController    Controller = "lenny-warm-pool-controller"
+	PoolScalingController Controller = "lenny-pool-scaling-controller"
+	Gateway               Controller = "lenny-gateway"
 )
 
 // CRD enumerates the Lenny CRD kinds covered by the matrix.
