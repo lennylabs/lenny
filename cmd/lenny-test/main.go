@@ -74,6 +74,8 @@ func main() {
 		os.Exit(runReport(args[1:]))
 	case "watch":
 		os.Exit(runWatch(args[1:]))
+	case "cached":
+		os.Exit(runCachedSubcommand(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
