@@ -2266,7 +2266,25 @@ Self-hosted runner queueing: when the ARC pool is saturated, jobs queue. The das
 | Container images pushed to GHCR | indefinite for tagged releases, 30 days for SHA-tagged builds |
 | Test failure logs | 30 days |
 
-### 20.16 Migration path off GHA
+### 20.16 Action pinning discipline
+
+Every `uses:` reference to an external GitHub Action pins to a full 40-character commit SHA, with a trailing comment naming the human-readable version:
+
+```yaml
+- uses: actions/checkout@a81bbbf8298c0fa03ea29cdc473d45aa4c4d8bba  # v4.2.2
+- uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
+- uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684    # v4.2.3
+```
+
+The rule applies to every action referenced under `.github/workflows/*.yml`, `.github/workflows/reusable/*.yml`, and `.github/actions/*`. References that begin with `./` are local paths to first-party actions and are exempt; they resolve to the caller's commit.
+
+The threat model is supply-chain compromise of an external action. Tag refs like `@v4` are mutable; an attacker with push access to the action's repo (or to a maintainer account) can retag `v4` to a malicious SHA and exfiltrate `GITHUB_TOKEN`, `secrets.*`, and the OIDC ID token used for cloud federation. The March 2025 `tj-actions/changed-files` incident exploited exactly this path. SHA pinning closes the vector at the cost of explicit version-bump PRs.
+
+Updates are managed by `.github/dependabot.yml`, which proposes weekly SHA + comment changes together so reviewers see the version each bump moves to.
+
+The Tier 0 static gate enforces the rule via `scripts/check-action-pins.sh`. An unpinned external `uses:` line fails the gate.
+
+### 20.17 Migration path off GHA
 
 The test infrastructure is GHA-agnostic by construction: every concrete piece of CI logic lives in `cmd/lenny-test/`, `scripts/`, and provider-specific reusable workflows. Migrating to Buildkite, Dagger, or another framework involves rewriting `.github/workflows/` and porting the reusable workflows. The harness, the verdict format, the spec-map, the change-graph, the test runtimes, and the per-tier suites are unaffected.
 
@@ -2338,6 +2356,10 @@ The `lenny-compliance` harness must pass for every bundled runtime and every ref
 ### 22.7 Documentation gate
 
 The Time-to-Hello-World scenario must complete in under five minutes. The runtime-author scaffold-to-publish flow must complete in under five minutes for the supported Language × Template combinations.
+
+### 22.8 Supply-chain gate
+
+Action pinning (§20.16) is enforced by `scripts/check-action-pins.sh` at Tier 0. An unpinned external `uses:` line in `.github/workflows/*.yml` or `.github/actions/*` fails the gate. Updates land via the Dependabot PR queue.
 
 ---
 
