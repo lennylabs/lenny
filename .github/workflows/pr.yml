@@ -102,14 +102,13 @@ jobs:
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run unit tier
         run: ./bin/lenny-test --tier unit --output github-annotations
-      - name: Coverage report (§22.1 80% floor; informational today)
-        # The 80% floor in §22.1 applies to "new code"; without a
-        # per-PR diff measurement we currently surface the absolute
-        # rate via $GITHUB_STEP_SUMMARY. Promote to a hard
-        # --threshold gate once diff-cover is wired (Phase 1+).
+      - name: Fetch base branch for diff coverage
+        run: git fetch --no-tags --depth=2000 origin main || true
+      - name: Coverage report (§22.1 80% floor on changed code)
         run: |
           ./bin/lenny-test coverage --go | tee -a "$GITHUB_STEP_SUMMARY"
-        continue-on-error: true
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          ./bin/lenny-test coverage --diff origin/main --threshold 0.80 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage profile
         if: always()
         uses: actions/upload-artifact@v4

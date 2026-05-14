@@ -601,6 +601,33 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{"scripts/lint-determinism.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "lint-determinism.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "lint-determinism.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			if err != nil {
+				// §17.4 violations are informational today —
+				// pre-existing tests use real clocks for JWT expiry
+				// and denylist TTLs. Each migrates to testinfra/timectl
+				// individually. The linter surfaces the gap on every
+				// run without breaking the gate.
+				return fmt.Sprintf("WARNING (non-fatal, §17.4):\n%s", out), nil
+			}
+			return string(out), nil
+		}},
+		{"scripts/lint-test-conventions.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "lint-test-conventions.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "lint-test-conventions.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			if err != nil {
+				return fmt.Sprintf("WARNING (non-fatal, §17.6/§17.7/§17.9):\n%s", out), nil
+			}
+			return string(out), nil
+		}},
 		{"scripts/check-markdown-links.sh", func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "check-markdown-links.sh")
 			if _, err := os.Stat(script); err != nil {
