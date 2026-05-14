@@ -127,9 +127,9 @@ type tierPlan struct {
 // resolve expands the selector into a concrete plan per TESTING.md §6.
 //
 // Per the selection algorithm:
-//   1. Resolve every active selector into a candidate plan.
-//   2. Intersect with --max-tier when present.
-//   3. Order by tier ascending; group by package within a tier.
+//  1. Resolve every active selector into a candidate plan.
+//  2. Intersect with --max-tier when present.
+//  3. Order by tier ascending; group by package within a tier.
 //
 // Selectors compose: --changed --max-tier component runs the
 // changed-only plan capped at component; --spec 4.2 --max-tier

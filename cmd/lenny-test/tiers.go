@@ -206,11 +206,16 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	}
 
-	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does
-	// not error, but resolution is deferred to Phase 1.
+	// Fall back to YAML-driven resolution: read tests/groups.yaml
+	// and build a plan from the documented selectors. This lets
+	// authors add or modify groups in the YAML without touching
+	// this file.
+	if plan := tiersForGroupFromYAML(name); len(plan) > 0 {
+		return plan
+	}
 	if isPhaseGate(name) {
 		return []tierPlan{
-			{name: "static", notes: "phase-0-stub: full phase-gate resolution pending"},
+			{name: "static", notes: "phase gate has no selectors in groups.yaml; falling back to static"},
 		}
 	}
 	return nil
