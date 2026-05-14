@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Mapping from runbook → chaos test scenario.
 #
 # §12.8 says every runbook in docs/runbooks/ implies at least one

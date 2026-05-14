@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/check-adr-catalog.sh — verifies the ADR catalog is intact.
 #
 # Checks:

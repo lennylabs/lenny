@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/preflight.sh — verifies that the test-infrastructure dependencies
 # are installed at the pinned minimum versions. Exit code is the count of
 # issues, suitable for CI gating.

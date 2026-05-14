@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/mutation.sh — wraps go-mutesting (or an equivalent Go
 # mutation tool) for the §19.3 mutation-testing gate.
 #

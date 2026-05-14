@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Pinned versions for the test infrastructure. Sourced by setup-dev.sh and
 # preflight.sh so they agree on what "current" means. Each entry is the
 # minimum acceptable version per TESTING_DEPENDENCIES.md.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/lint-queries.sh — enforces spec §12.3 R-02 against SQL queries.
 #
 # Rule R-02 (exact wording from spec/12_storage-architecture.md):

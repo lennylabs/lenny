@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Concrete subset definitions referenced by groups.yaml.
 # Each entry is a named subset that resolves to a set of test patterns.
 # Patterns can be:

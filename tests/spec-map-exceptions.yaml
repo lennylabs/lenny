@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Spec sections explicitly exempt from the "every section has at least one
 # test" rule. Each exemption requires a justification. `lenny-test validate-maps`
 # reads this file when reconciling spec headings against the spec map.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/check-proto-generated.sh — verifies that `buf generate`
 # produces no diff against the committed generated code (TESTING.md
 # §12.0 #17).

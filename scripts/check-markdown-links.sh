@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/check-markdown-links.sh — runs markdown-link-check over
 # docs/ and spec/ Markdown files. Wrapper script invoked by the
 # static tier; gracefully skips when the tool is absent.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/check-helm-charts.sh — runs `helm lint` and `conftest test`
 # against the Helm chart at charts/lenny/.
 #

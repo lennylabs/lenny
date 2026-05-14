@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Test selection groups for `lenny-test --group <name>`.
 # Each group resolves to a set of tier/subset selectors that the harness
 # expands into a concrete list of tests at run time.

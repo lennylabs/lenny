@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/setup-cluster.sh — provisions a Kind cluster with the Lenny test
 # profile. Idempotent.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Shared helpers for the Lenny test-infrastructure setup scripts.
 # shellcheck shell=bash
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/setup-dev.sh — Lenny test-infrastructure setup.
 #
 # Installs the dependencies enumerated in TESTING_DEPENDENCIES.md by tier

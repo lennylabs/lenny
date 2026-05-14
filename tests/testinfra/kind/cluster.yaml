@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Kind cluster configuration for the tier-5 e2e suite.
 #
 # Three nodes (1 control plane + 2 workers) so the tests can exercise

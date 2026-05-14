@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/cloud/gke/down.sh — tears down the GKE cluster brought up
 # by up.sh.
 #

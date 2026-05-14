@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/cloud/eks/down.sh — tears down the EKS cluster.
 set -euo pipefail
 SHAPE="${1:-cloud-small}"

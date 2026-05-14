@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/cloud/aks/down.sh — tears down the AKS cluster.
 set -euo pipefail
 SHAPE="${1:-cloud-small}"

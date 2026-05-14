@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/cloud/eks/up.sh — brings up an EKS cluster for tier-6.
 set -euo pipefail
 SHAPE="${1:-cloud-small}"

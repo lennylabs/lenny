@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/lint-schema.sh — enforces spec §12.3 R-01 against SQL migrations.
 #
 # Rule R-01 (exact wording from spec/12_storage-architecture.md):

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/check-doc-examples.sh — validates JSON example payloads in
 # docs/ against their declared schema.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # scripts/cloud/gke/up.sh — brings up a GKE cluster for tier-6 tests.
 #
 # Usage:

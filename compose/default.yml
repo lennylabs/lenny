@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Compose profile: default
 #
 # Provisions the backing stores the tier-3 contract and tier-4
