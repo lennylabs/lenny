@@ -176,7 +176,8 @@ groups:
   phase-4.5-gate:
     description: Phase 4.5. Admin API, authentication, bootstrap.
     selectors:
-      spec_sections: ["10.2", "11.5", "17.6", "24"]
+      # §11.5 (Idempotency) ships in Phase 7, not 4.5; track it there.
+      spec_sections: ["10.2", "17.6", "24"]
       tiers: [static, unit, component, integration]
       include:
         - tier: e2e_kind
@@ -200,7 +201,8 @@ groups:
   phase-5.5-gate:
     description: Phase 5.5. Basic credential leasing + Token Service.
     selectors:
-      spec_sections: ["4.3", "4.9", "13.3"]
+      # §13.3 (Credential Flow) ships in Phase 12a; track it there.
+      spec_sections: ["4.3", "4.9"]
       tiers: [static, unit, component]
 
   phase-5.75-gate:
@@ -212,7 +214,10 @@ groups:
   phase-5.8-gate:
     description: Phase 5.8. LLM Proxy + native translator + direct-mode-isolation webhook.
     selectors:
-      spec_sections: ["4.1", "4.9"]
+      # §4.1 ships in Phase 4 and §4.9 in Phase 5.5; the 5.8 surface
+      # is the proxy/translator integration which lives in tier
+      # e2e_kind under the llm-proxy-proxy-mode subset. No spec_sections
+      # are blocked specifically at 5.8 today.
       tiers: [static, unit, component]
       include:
         - tier: e2e_kind
