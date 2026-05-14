@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // runValidateMaps validates that tests/spec-map.json and tests/change-graph.json
@@ -40,6 +41,8 @@ func runValidateMaps(args []string) int {
 		validateJSONFile(changeGraphPath, "tests/change-graph.json"),
 		validateSpecMapVersion(specMapPath),
 		validateChangeGraphVersion(changeGraphPath),
+		validateSpecMapPaths(specMapPath, root),
+		validateChangeGraphPaths(changeGraphPath, root),
 	}
 
 	failed := 0
@@ -208,6 +211,99 @@ func validateChangeGraphVersion(path string) checkResult {
 		return newResult("change-graph version", false, fmt.Sprintf("expected version 1, got %d", v))
 	}
 	return newResult("change-graph version", true, "1")
+}
+
+// validateSpecMapPaths walks every section and confirms the
+// spec_file points at an extant file. Returns the count of missing
+// references.
+//
+// Test/package/schema/migration/chart_templates paths are NOT
+// required to exist yet (many ship in later phases). This check is
+// limited to the spec_file pointer so the gate is reliable today.
+func validateSpecMapPaths(specMapPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map paths", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			SpecFile string `json:"spec_file"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map paths", false, err.Error())
+	}
+	missing := []string{}
+	for section, entry := range doc.Sections {
+		if entry.SpecFile == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry.SpecFile)); err != nil {
+			missing = append(missing, fmt.Sprintf("%s → %s", section, entry.SpecFile))
+		}
+	}
+	if len(missing) > 0 {
+		preview := missing
+		if len(preview) > 5 {
+			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(missing)-5))
+		}
+		return newResult("spec-map paths", false,
+			fmt.Sprintf("%d missing spec_file reference(s): %s", len(missing), strings.Join(preview, "; ")))
+	}
+	return newResult("spec-map paths", true, fmt.Sprintf("%d section(s); every spec_file resolves", len(doc.Sections)))
+}
+
+// validateChangeGraphPaths confirms each glob key points at a real
+// pkg/, schemas/, migrations/, or charts/ path. Targeted globs that
+// reference yet-to-ship packages are tolerated with a per-glob
+// `phase:` marker (today simply accept anything under the canonical
+// roots).
+func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
+	data, err := os.ReadFile(changeGraphPath)
+	if err != nil {
+		return newResult("change-graph paths", false, err.Error())
+	}
+	var doc struct {
+		Globs map[string]any `json:"globs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("change-graph paths", false, err.Error())
+	}
+	misshaped := []string{}
+	knownRoots := []string{
+		"pkg/", "schemas/", "migrations/", "charts/", "cmd/", "tests/", "docs/", "spec/",
+		"sdks/", "scripts/", "compose/", "deploy/", ".github/",
+	}
+	knownFiles := map[string]bool{
+		"buf.yaml": true, "buf.gen.yaml": true, "go.mod": true, "go.sum": true,
+		".golangci.yml": true, "Makefile": true, "TESTING.md": true, "README.md": true,
+	}
+	for key := range doc.Globs {
+		if knownFiles[key] {
+			continue
+		}
+		ok := false
+		for _, r := range knownRoots {
+			if strings.HasPrefix(key, r) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			misshaped = append(misshaped, key)
+		}
+	}
+	if len(misshaped) > 0 {
+		preview := misshaped
+		if len(preview) > 5 {
+			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(misshaped)-5))
+		}
+		return newResult("change-graph paths", false,
+			fmt.Sprintf("%d glob(s) outside the canonical roots %v: %s",
+				len(misshaped), knownRoots, strings.Join(preview, "; ")))
+	}
+	return newResult("change-graph paths", true,
+		fmt.Sprintf("%d glob(s); every entry under a canonical root", len(doc.Globs)))
 }
 
 func readJSONInt(path, key string) (int, error) {
