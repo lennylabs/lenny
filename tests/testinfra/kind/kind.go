@@ -1,27 +1,64 @@
 // SPDX-License-Identifier: MIT
 
 // Package kind is the testinfra harness for the tier-5 e2e suite.
-// Every tier-5 test calls SkipUnlessAvailable to short-circuit when
-// the host has no Docker daemon or `kind` binary; the e2e tests run
-// only on workstations and CI runners with those tools installed.
+// Tier-5 tests call SkipUnlessAvailable to short-circuit when the
+// host has no Docker daemon, no `kind` binary, or `kubectl`; the
+// e2e tests run only on workstations and CI runners with those
+// tools installed.
 //
-// The harness shape will evolve to bring up a real Kind cluster and
-// install the chart once the chart + admission webhook binaries
-// land. Today it provides the skip plumbing and a stable place for
-// the cluster bring-up to land.
+// When the prerequisites are present, EnsureCluster brings up a
+// Kind cluster named `lenny-e2e` (idempotent: a cluster with that
+// name is reused) and returns a *Cluster handle. The handle exposes
+// the kubeconfig path and helpers for applying manifests.
+//
+// The Helm chart that installs Lenny itself is a Phase 3+
+// deliverable. When that chart lands, EnsureCluster grows an
+// InstallChart helper. For Phase 0 the harness only provisions the
+// raw cluster — tests that need the chart should still call
+// SkipUnlessAvailable + EnsureCluster + assert that the namespace
+// is reachable, then t.Skip the chart-dependent assertions.
 package kind
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
-// SkipUnlessAvailable skips the test when the host cannot run Kind
-// e2e suites (docker missing, kind missing, or docker daemon
-// unreachable). Returns a Cluster handle when the prerequisites are
-// in place; today this is a placeholder type until the cluster
-// bring-up logic lands.
-func SkipUnlessAvailable(t testing.TB) *Cluster {
+const (
+	defaultClusterName = "lenny-e2e"
+	envClusterName     = "LENNY_KIND_CLUSTER"
+	envSkipBringUp     = "LENNY_KIND_SKIP_BRINGUP"
+)
+
+// Cluster represents a running Kind cluster.
+type Cluster struct {
+	Name           string
+	KubeconfigPath string
+}
+
+// SkipUnlessAvailable is the legacy entry point existing tier-5
+// scaffolds call. It skips when prerequisites are missing AND when
+// the Lenny Helm chart that the tests assert against has not yet
+// shipped (Phase 3 deliverable).
+//
+// Tests that want to drive a raw Kind cluster without expecting the
+// chart should call PrerequisitesAvailable + EnsureCluster directly.
+func SkipUnlessAvailable(t testing.TB) {
+	t.Helper()
+	PrerequisitesAvailable(t)
+	t.Skip("kind cluster bring-up succeeds; Lenny Helm chart is a Phase 3 deliverable. Use EnsureCluster directly for raw-cluster tests.")
+}
+
+// PrerequisitesAvailable skips when docker / kind / kubectl are
+// missing OR the docker daemon is unreachable. Does NOT skip on
+// missing chart, so callers that want a raw Kind cluster can use
+// EnsureCluster directly after this.
+func PrerequisitesAvailable(t testing.TB) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skipf("docker not on PATH: %v", err)
@@ -29,14 +66,129 @@ func SkipUnlessAvailable(t testing.TB) *Cluster {
 	if _, err := exec.LookPath("kind"); err != nil {
 		t.Skipf("kind not on PATH: %v", err)
 	}
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skipf("kubectl not on PATH: %v", err)
+	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skipf("docker daemon not reachable: %v", err)
 	}
-	// Placeholder: future revisions bring up a Kind cluster, install
-	// cert-manager + the Lenny chart, and return a populated Cluster.
-	t.Skip("kind cluster bring-up not yet implemented: ships with the Helm chart + admission webhook binaries")
-	return &Cluster{}
 }
 
-// Cluster is the handle the bring-up logic will return. Empty for now.
-type Cluster struct{}
+// EnsureCluster brings up a Kind cluster (idempotent) and returns a
+// *Cluster handle. The cluster is shared across tests in the same
+// process via a sync.Once; t.Cleanup is NOT registered for teardown
+// because the cluster's create cost (~30 seconds) makes reuse the
+// right default. Set LENNY_KIND_TEARDOWN=1 to force cleanup at
+// process exit.
+//
+// When LENNY_KIND_SKIP_BRINGUP=1 the function expects an existing
+// cluster and only configures the handle. Useful for CI workflows
+// that provision the cluster as a workflow step.
+func EnsureCluster(t testing.TB) *Cluster {
+	t.Helper()
+	PrerequisitesAvailable(t)
+	once.Do(func() {
+		shared = createOrReuse(t)
+	})
+	if shared == nil {
+		t.Skip("kind cluster bring-up failed; see earlier diagnostics")
+	}
+	return shared
+}
+
+var (
+	once   sync.Once
+	shared *Cluster
+)
+
+// clusterName resolves the kind cluster name from the env var,
+// falling back to the default.
+func clusterName() string {
+	if v := strings.TrimSpace(os.Getenv(envClusterName)); v != "" {
+		return v
+	}
+	return defaultClusterName
+}
+
+// createOrReuse brings the cluster up when absent. Returns a
+// populated *Cluster on success, nil + log on any failure.
+func createOrReuse(t testing.TB) *Cluster {
+	t.Helper()
+	name := clusterName()
+	out, err := exec.Command("kind", "get", "clusters").Output()
+	if err != nil {
+		t.Logf("kind get clusters: %v", err)
+		return nil
+	}
+	if !strings.Contains(string(out), name) {
+		if os.Getenv(envSkipBringUp) == "1" {
+			t.Logf("LENNY_KIND_SKIP_BRINGUP=1 but cluster %q is not running; cannot proceed", name)
+			return nil
+		}
+		create := exec.Command("kind", "create", "cluster", "--name", name, "--config", configPath(t))
+		create.Stdout = os.Stdout
+		create.Stderr = os.Stderr
+		if err := create.Run(); err != nil {
+			t.Logf("kind create cluster: %v", err)
+			return nil
+		}
+	}
+	kubeconfig, err := exec.Command("kind", "get", "kubeconfig", "--name", name).Output()
+	if err != nil {
+		t.Logf("kind get kubeconfig: %v", err)
+		return nil
+	}
+	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("lenny-kind-%s-kubeconfig", name))
+	if err := os.WriteFile(tmp, kubeconfig, 0o600); err != nil {
+		t.Logf("write kubeconfig: %v", err)
+		return nil
+	}
+	return &Cluster{Name: name, KubeconfigPath: tmp}
+}
+
+// configPath returns the path to the kind cluster YAML used by
+// EnsureCluster. When tests/testinfra/kind/values.yaml does not
+// exist (the canonical name documented in TESTING.md), the cluster
+// is created with the default config.
+func configPath(t testing.TB) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	root := wd
+	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			root = d
+			break
+		}
+	}
+	cfg := filepath.Join(root, "tests", "testinfra", "kind", "cluster.yaml")
+	if _, err := os.Stat(cfg); err == nil {
+		return cfg
+	}
+	return ""
+}
+
+// Apply runs `kubectl apply -f <path>` against the cluster's
+// kubeconfig.
+func (c *Cluster) Apply(t testing.TB, manifestPath string) {
+	t.Helper()
+	cmd := exec.Command("kubectl", "--kubeconfig", c.KubeconfigPath, "apply", "-f", manifestPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("kubectl apply %s: %v\n%s", manifestPath, err, out)
+	}
+}
+
+// Kubectl returns an *exec.Cmd pre-bound to the cluster's
+// kubeconfig.
+func (c *Cluster) Kubectl(args ...string) *exec.Cmd {
+	return exec.Command("kubectl", append([]string{"--kubeconfig", c.KubeconfigPath}, args...)...)
+}
+
+// Delete tears down the cluster. Tests rarely call this; CI runs
+// invoke it at workflow-end to free resources.
+func (c *Cluster) Delete() error {
+	return exec.Command("kind", "delete", "cluster", "--name", c.Name).Run()
+}

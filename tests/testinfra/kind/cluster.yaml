@@ -1,0 +1,40 @@
+# Kind cluster configuration for the tier-5 e2e suite.
+#
+# Three nodes (1 control plane + 2 workers) so the tests can exercise
+# pod scheduling, label-based admission, and the sandbox node-pool
+# topology Phase 3 introduces. The image pin tracks the latest GA
+# release; bump as Kubernetes versions advance.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lenny-e2e
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.4
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "lenny.dev/role=control-plane"
+    extraPortMappings:
+      - containerPort: 30443
+        hostPort: 30443
+        protocol: TCP
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+    image: kindest/node:v1.31.4
+    labels:
+      lenny.dev/pool: "default-runc"
+  - role: worker
+    image: kindest/node:v1.31.4
+    labels:
+      lenny.dev/pool: "sandbox-gvisor"
+
+# Networking: pod CIDR + service CIDR pinned for reproducibility.
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+  disableDefaultCNI: false
