@@ -1223,30 +1223,39 @@ func printTAP(v *verdict, _ string) {
 
 // printJUnit emits the verdict as a JUnit-compatible XML document.
 // Downstream tooling (GitLab, Buildkite, Bazel test summary) consumes
-// this format directly.
+// this format directly. JUnit has no "not-selected" element; we map
+// not-selected and skipped through <skipped> with the reason text.
 func printJUnit(v *verdict) {
 	tiers := orderedTierNames(v)
 	failures := 0
+	errors := 0
 	skipped := 0
 	for _, n := range tiers {
 		switch v.Tiers[n].Status {
 		case "fail":
 			failures++
-		case "skipped":
+		case "inconclusive":
+			errors++
+		case "skipped", "not-selected":
 			skipped++
 		}
 	}
 	fmt.Println(`<?xml version="1.0" encoding="UTF-8"?>`)
-	fmt.Printf(`<testsuite name="lenny-test" tests="%d" failures="%d" skipped="%d">`+"\n",
-		len(tiers), failures, skipped)
+	fmt.Printf(`<testsuite name="lenny-test" tests="%d" failures="%d" errors="%d" skipped="%d">`+"\n",
+		len(tiers), failures, errors, skipped)
 	for _, name := range tiers {
 		t := v.Tiers[name]
-		fmt.Printf(`  <testcase classname="lenny-test" name="%s">`+"\n", name)
+		dur := float64(t.DurationMS) / 1000.0
+		fmt.Printf(`  <testcase classname="lenny-test" name="%s" time="%.3f">`+"\n", name, dur)
 		switch t.Status {
 		case "fail":
 			fmt.Printf(`    <failure message="%s"/>`+"\n", escapeXML(t.Reason))
+		case "inconclusive":
+			fmt.Printf(`    <error message="%s"/>`+"\n", escapeXML(t.Reason))
 		case "skipped":
 			fmt.Printf(`    <skipped message="%s"/>`+"\n", escapeXML(t.Reason))
+		case "not-selected":
+			fmt.Printf(`    <skipped message="not-selected: %s"/>`+"\n", escapeXML(t.Reason))
 		}
 		fmt.Println(`  </testcase>`)
 	}
@@ -1254,15 +1263,34 @@ func printJUnit(v *verdict) {
 }
 
 // printGitHubAnnotations emits the verdict as GitHub Actions
-// workflow commands so failures appear inline on the PR.
+// workflow commands so failures appear inline on the PR. Iterates
+// tiers in canonical order so the PR comment stream is stable.
 func printGitHubAnnotations(v *verdict) {
-	for name, t := range v.Tiers {
+	fail := 0
+	inconclusive := 0
+	skipped := 0
+	for _, name := range orderedTierNames(v) {
+		t := v.Tiers[name]
 		switch t.Status {
 		case "fail":
+			fail++
 			fmt.Printf("::error title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
+		case "inconclusive":
+			inconclusive++
+			fmt.Printf("::warning title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
 		case "skipped":
+			skipped++
 			fmt.Printf("::notice title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
 		}
+	}
+	// Final summary line. Without it, a clean run prints nothing,
+	// which is indistinguishable from "the harness didn't run."
+	summary := fmt.Sprintf("verdict=%s fail=%d inconclusive=%d skipped=%d run_id=%s",
+		v.Verdict, fail, inconclusive, skipped, v.RunID)
+	if v.Verdict == "PASS" {
+		fmt.Printf("::notice title=lenny-test summary::%s\n", summary)
+	} else {
+		fmt.Printf("::error title=lenny-test summary::%s\n", summary)
 	}
 }
 
