@@ -146,6 +146,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/audit builds"},
 			{name: "unit", notes: "§11.7 ChainIntegrity, ComplianceProfile, OCSFTranslationState enums; §16.4 RetentionPreset → days mapping and compatibility matrix"},
 		}
+	case "phase-7-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/circuitbreaker builds"},
+			{name: "unit", notes: "§11.6 State, LimitTier, OperationType enums; per-tier Scope validation; Match function; FirstMatch; ScopeMatches"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

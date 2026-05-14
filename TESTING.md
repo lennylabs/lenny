@@ -1411,9 +1411,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.18 Phase 7 — Policy engine (quotas, budgets, audit hooks)
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/quota_enforcement_test.go` and `quota_recovery_test.go`.
-- `tests/tier4_integration/policy_audit_test.go` confirms policy decisions emit audit events (durable audit comes in Phase 13).
+**Test infrastructure delivered in Phase 7.**
+- `pkg/circuitbreaker` ships the §11.6 operator-managed circuit-breaker admission logic. The `State` enum (open, closed), `LimitTier` enum (runtime, pool, connector, operation_type), `OperationType` enum (uploads, delegation_depth, session_creation, message_injection), and per-tier `Scope` validator capture every shape the §11.6 admin POST /open body can take. The `Match` function implements the §11.6 AdmissionController evaluation rule: a breaker keys exclusively on its (`LimitTier`, `Scope`) pair, never on its `{name}`. `FirstMatch` picks the first open match in cache order; `ScopeMatches` enforces the §11.6 immutable-scope invariant when an operator reopens a previously-existing breaker.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/quota_enforcement_test.go` and `quota_recovery_test.go` are deferred. The Phase 5.75 `pkg/quota` arithmetic is the substrate; integration tests need the gateway, Redis, and the storage_quota_reserve.lua script.
+- `tests/tier4_integration/policy_audit_test.go` is deferred to the K8s-integration phase that ships the gateway's policy interceptors and the §11.7 audit-log writer.
+- The §11.6 Redis-backed cache with pub/sub propagation, the admin API handlers, the 5-second cache-stale fallback path, and the §11.6 sampling-under-breaker-storms audit emitter are deferred to the K8s-integration phase.
 
 ### 13.19 Phase 8 — Checkpoint/resume + drain-readiness webhook
 

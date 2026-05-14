@@ -142,6 +142,11 @@
       "unit": ["pkg/audit/..."],
       "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
     },
+    "pkg/circuitbreaker": {
+      "unit": ["pkg/circuitbreaker/..."],
+      "component": ["tests/tier2_component/policy/..."],
+      "integration": ["tests/tier4_integration/policy_gate_test.go"]
+    },
     "pkg/api/v1/session": {
       "unit": ["pkg/api/v1/session/..."],
       "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],

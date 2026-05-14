@@ -472,9 +472,23 @@
     "11.6": {
       "title": "Circuit Breakers",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestAllStatesIsExhaustive",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestAllTiersIsExhaustive",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestAllOperationTypesIsExhaustive",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestValidateAcceptsWellFormedBreakers",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestValidateRejectsMismatchedScope",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchClosedBreakerNeverRejects",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchRuntimeTier",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchPoolTier",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchConnectorTier",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestMatchOperationTypeTier",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestFirstMatchReturnsFirstOpenMatch",
+        "pkg/circuitbreaker/circuitbreaker_test.go::TestScopeMatches"
+      ],
       "packages": ["pkg/circuitbreaker"],
-      "blocked_until_phase": "4"
+      "blocked_until_phase": "7",
+      "notes": "Phase 7 ships the §11.6 operator-managed circuit-breaker admission logic: State enum, LimitTier enum (runtime/pool/connector/operation_type), OperationType enum, per-tier Scope validator, Match function, and the §11.6 immutable-scope invariant via ScopeMatches. The Redis-backed cache with pub/sub propagation, the admin API handlers, the 5-second cache-stale fallback path, and the §11.6 sampling-under-breaker-storms audit emitter are all deferred to the K8s-integration phase that ships the gateway and Redis."
     },
     "11.7": {
       "title": "Audit Logging",
