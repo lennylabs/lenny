@@ -26,7 +26,8 @@ import (
 // but the exit code reports the first failing run.
 func runStress(args []string) int {
 	fs := flag.NewFlagSet("stress", flag.ExitOnError)
-	testName := fs.String("test", "", "exact test name (regex) to run")
+	testName := fs.String("test", "", "exact test name to run (regex anchored with ^…$)")
+	pattern := fs.String("pattern", "", "regex of test names; multiple matching tests are stressed in the same run")
 	runs := fs.Int("runs", 50, "number of consecutive runs to attempt")
 	target := fs.String("pkg", "./...", "package selector")
 	tag := fs.String("tag", "", "optional build tag (e.g. component, contract, integration)")
@@ -34,8 +35,12 @@ func runStress(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *testName == "" {
-		fmt.Fprintln(os.Stderr, "stress: --test is required")
+	if *testName == "" && *pattern == "" {
+		fmt.Fprintln(os.Stderr, "stress: one of --test or --pattern is required")
+		return 2
+	}
+	if *testName != "" && *pattern != "" {
+		fmt.Fprintln(os.Stderr, "stress: --test and --pattern are mutually exclusive")
 		return 2
 	}
 	if *runs <= 0 {
@@ -43,7 +48,19 @@ func runStress(args []string) int {
 		return 2
 	}
 
-	fmt.Printf("lenny-test stress: %d consecutive runs of %q against %s", *runs, *testName, *target)
+	// Build the `-run` argument: --test anchors with ^…$, --pattern
+	// passes the regex through unanchored so multiple names match.
+	runArg := ""
+	label := ""
+	if *testName != "" {
+		runArg = "^" + *testName + "$"
+		label = *testName
+	} else {
+		runArg = *pattern
+		label = "pattern=" + *pattern
+	}
+
+	fmt.Printf("lenny-test stress: %d consecutive runs of %s against %s", *runs, label, *target)
 	if *tag != "" {
 		fmt.Printf(" (tag=%s)", *tag)
 	}
@@ -53,7 +70,7 @@ func runStress(args []string) int {
 	pass := 0
 	fail := 0
 	for i := 1; i <= *runs; i++ {
-		cmd := buildGoTestStressCmd(*testName, *target, *tag, *timeoutSec)
+		cmd := buildGoTestStressCmd(runArg, *target, *tag, *timeoutSec)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			fail++
@@ -79,8 +96,12 @@ func runStress(args []string) int {
 	return 0
 }
 
-func buildGoTestStressCmd(name, target, tag string, timeoutSec int) *exec.Cmd {
-	args := []string{"test", "-count=1", "-run", "^" + name + "$"}
+// buildGoTestStressCmd assembles `go test -count=1 -run <runArg>`
+// for a single stress iteration. runArg is already the anchored
+// regex (or unanchored pattern); the caller does not pass a bare
+// test name.
+func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int) *exec.Cmd {
+	args := []string{"test", "-count=1", "-run", runArg}
 	if timeoutSec > 0 {
 		args = append(args, fmt.Sprintf("-timeout=%ds", timeoutSec))
 	}
