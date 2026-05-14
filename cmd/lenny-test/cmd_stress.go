@@ -146,7 +146,7 @@ func listMatchingTests(runArg, target, tag string) ([]string, error) {
 	args = append(args, target)
 	out, err := exec.Command("go", args...).CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("go test -list: %v\n%s", err, out)
+		return nil, fmt.Errorf("go test -list: %w\n%s", err, out)
 	}
 	var matched []string
 	for _, line := range strings.Split(string(out), "\n") {

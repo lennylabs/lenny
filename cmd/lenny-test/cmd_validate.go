@@ -492,7 +492,7 @@ func readJSONInt(path, key string) (int, error) {
 	}
 	var n int
 	if err := json.Unmarshal(raw, &n); err != nil {
-		return 0, fmt.Errorf("key %q not an integer: %v", key, err)
+		return 0, fmt.Errorf("key %q not an integer: %w", key, err)
 	}
 	return n, nil
 }
