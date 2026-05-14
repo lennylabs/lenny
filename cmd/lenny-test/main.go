@@ -70,6 +70,8 @@ func main() {
 		os.Exit(runMutation(args[1:]))
 	case "coverage":
 		os.Exit(runCoverage(args[1:]))
+	case "report":
+		os.Exit(runReport(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
