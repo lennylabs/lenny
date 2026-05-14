@@ -44,21 +44,24 @@ jobs:
       - name: Install fmt tools
         if: contains(inputs.tools, 'fmt')
         run: |
-          which gofumpt   || go install mvdan.cc/gofumpt@latest
-          which goimports || go install golang.org/x/tools/cmd/goimports@latest
+          which gofumpt   || go install mvdan.cc/gofumpt@v0.10.0
+          which goimports || go install golang.org/x/tools/cmd/goimports@v0.45.0
       - name: Install lint tools
         if: contains(inputs.tools, 'lint')
         run: |
-          which golangci-lint || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          which golangci-lint || go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
       - name: Install buf
         if: contains(inputs.tools, 'buf')
         run: |
-          which buf || go install github.com/bufbuild/buf/cmd/buf@latest
+          which buf || go install github.com/bufbuild/buf/cmd/buf@v1.69.0
       - name: Install setup-envtest
         if: contains(inputs.tools, 'envtest')
         run: |
-          which setup-envtest || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+          which setup-envtest || go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
       - name: Install go-mutesting
         if: contains(inputs.tools, 'mutation')
         run: |
-          which go-mutesting || go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+          # go-mutesting predates the /v2 module-path convention; we
+          # pin to the upstream commit that the project standardized
+          # on instead of an unresolvable @v2.X.Y tag.
+          which go-mutesting || go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9

@@ -189,7 +189,9 @@ jobs:
             lenny-go-bin-v1-${{ runner.os }}-
       - name: Install go-mutesting
         if: steps.tools-cache.outputs.cache-hit != 'true'
-        run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+        # Commit pin: go-mutesting predates the /v2 module-path
+        # convention and has no resolvable @vX tag.
+        run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9
         continue-on-error: true
       - name: Add tool bin to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"

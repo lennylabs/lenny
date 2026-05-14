@@ -65,10 +65,10 @@ jobs:
       - name: Install static-tier tools
         if: steps.tools-cache.outputs.cache-hit != 'true'
         run: |
-          go install mvdan.cc/gofumpt@latest
-          go install golang.org/x/tools/cmd/goimports@latest
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-          go install github.com/bufbuild/buf/cmd/buf@latest
+          go install mvdan.cc/gofumpt@v0.10.0
+          go install golang.org/x/tools/cmd/goimports@v0.45.0
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          go install github.com/bufbuild/buf/cmd/buf@v1.69.0
       - name: Add tool bin to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test

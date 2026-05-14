@@ -2284,6 +2284,15 @@ Updates are managed by `.github/dependabot.yml`, which proposes weekly SHA + com
 
 The Tier 0 static gate enforces the rule via `scripts/check-action-pins.sh`. An unpinned external `uses:` line fails the gate.
 
+The same threat model applies to `go install <path>@latest` invocations inside workflow YAMLs. Every `go install` reference inside `.github/workflows/*.yml` pins to a tagged version (`@vX.Y.Z`) or, when the upstream module lacks a usable tag, to a full 40-character commit SHA:
+
+```yaml
+- run: go install mvdan.cc/gofumpt@v0.10.0
+- run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9
+```
+
+`scripts/setup-dev.sh` is exempt; local developer setup may resolve to upstream HEAD because operators invoke that script interactively. Workflow installs are enforced by `scripts/check-tool-pins.sh` in the same Tier 0 sweep.
+
 ### 20.17 Migration path off GHA
 
 The test infrastructure is GHA-agnostic by construction: every concrete piece of CI logic lives in `cmd/lenny-test/`, `scripts/`, and provider-specific reusable workflows. Migrating to Buildkite, Dagger, or another framework involves rewriting `.github/workflows/` and porting the reusable workflows. The harness, the verdict format, the spec-map, the change-graph, the test runtimes, and the per-tier suites are unaffected.

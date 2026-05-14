@@ -25,7 +25,7 @@ if ! command -v go-mutesting >/dev/null 2>&1; then
 mutation: go-mutesting not on PATH; skipping (the §19.3 mutation gate is informational today).
 
 To install:
-  go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+  go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9
 
 When installed, this script invokes:
   go-mutesting --debug=false --do-not-remove-tmp-folder=false ${PATTERN}
