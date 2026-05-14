@@ -66,6 +66,8 @@ func main() {
 		os.Exit(runBaseline(args[1:]))
 	case "comment":
 		os.Exit(runComment(args[1:]))
+	case "mutation":
+		os.Exit(runMutation(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
