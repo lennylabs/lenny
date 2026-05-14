@@ -53,7 +53,7 @@ jobs:
         with:
           name: verdict-weekly-${{ matrix.provider }}
           path: tests/results/latest.json
-          retention-days: 60
+          retention-days: 90
 
   weekly-rollup:
     name: weekly roll-up summary
@@ -105,4 +105,4 @@ jobs:
         with:
           name: verdict-load-full-system
           path: tests/results/latest.json
-          retention-days: 60
+          retention-days: 90

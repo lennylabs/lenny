@@ -32,6 +32,7 @@ func runRun(args []string) int {
 	sinceFlag := fs.String("since", "", "diff against the given git ref (e.g. main, HEAD~5) instead of the working tree")
 	specFlag := fs.String("spec", "", "comma-separated spec sections")
 	pkgFlag := fs.String("pkg", "", "comma-separated source packages")
+	subsetFlag := fs.String("subset", "", "comma-separated subset names (requires --tier)")
 	dryRunFlag := fs.Bool("dry-run", false, "resolve the selector and print what would run; do not execute")
 	continueFlag := fs.Bool("continue-on-failure", false, "do not stop at the first failing tier")
 	outputFlag := fs.String("output", "human", "json | junit | github-annotations | human | tap")
@@ -63,6 +64,7 @@ func runRun(args []string) int {
 		since:       *sinceFlag,
 		specs:       splitNonEmpty(*specFlag),
 		pkgs:        splitNonEmpty(*pkgFlag),
+		subsets:     splitNonEmpty(*subsetFlag),
 		dryRun:      *dryRunFlag,
 		continueErr: *continueFlag,
 		output:      *outputFlag,
@@ -99,6 +101,7 @@ type selector struct {
 	since       string // git ref to diff against; empty means working tree
 	specs       []string
 	pkgs        []string
+	subsets     []string // explicit subset filter when paired with --tier
 	dryRun      bool
 	continueErr bool
 	output      string
@@ -155,7 +158,7 @@ func (s selector) resolve() (resolvedSelector, error) {
 		if !contains(tiers, s.tier) {
 			return resolvedSelector{}, fmt.Errorf("unknown tier %q. Valid tiers: %s", s.tier, strings.Join(tiers, ", "))
 		}
-		raw = []tierPlan{{name: s.tier}}
+		raw = []tierPlan{{name: s.tier, subsets: s.subsets}}
 	case s.changed, len(s.specs) > 0, len(s.pkgs) > 0:
 		// Union the discovery selectors. Each contributes tiers; the
 		// union de-duplicates via planFromTierSet.

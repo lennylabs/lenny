@@ -52,7 +52,7 @@ jobs:
         with:
           name: verdict-e2e-kind-full
           path: tests/results/latest.json
-          retention-days: 30
+          retention-days: 90
 
   e2e-cloud-rotated:
     name: tier 6 — e2e cloud (rotated across providers)
@@ -74,14 +74,14 @@ jobs:
       - name: Run e2e cloud tier
         env:
           LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
-        run: ./bin/lenny-test --tier e2e_cloud --output github-annotations
+        run: ./bin/lenny-test --tier e2e_cloud --subset critical-path-rotated --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verdict-e2e-cloud-${{ matrix.provider }}
           path: tests/results/latest.json
-          retention-days: 30
+          retention-days: 90
 
   chaos:
     name: tier 8 — chaos
@@ -97,14 +97,14 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run chaos tier
-        run: ./bin/lenny-test --tier chaos --output github-annotations
+        run: ./bin/lenny-test --tier chaos --subset core --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verdict-chaos
           path: tests/results/latest.json
-          retention-days: 30
+          retention-days: 90
 
   security-full:
     name: tier 9 — security (full minus pentest)
@@ -120,14 +120,14 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run security tier
-        run: ./bin/lenny-test --tier security --output github-annotations
+        run: ./bin/lenny-test --tier security --subset full --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verdict-security
           path: tests/results/latest.json
-          retention-days: 30
+          retention-days: 90
 
   load-baseline:
     name: tier 7 — load (per-phase baseline)
@@ -143,14 +143,14 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run load tier
-        run: ./bin/lenny-test --tier load --output github-annotations
+        run: ./bin/lenny-test --tier load --subset per-phase-baseline --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verdict-load
           path: tests/results/latest.json
-          retention-days: 30
+          retention-days: 90
 
   dep-audit:
     name: dependency audit

@@ -210,7 +210,7 @@ jobs:
       - name: Run e2e-Kind critical-path subset
         # SkipUnlessAvailable gates on docker + kind; on ubuntu-latest
         # without setup-docker the suite skips cleanly.
-        run: ./bin/lenny-test --tier e2e_kind --output github-annotations
+        run: ./bin/lenny-test --tier e2e_kind --subset critical-path --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
@@ -233,7 +233,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run conformance tier
-        run: ./bin/lenny-test --tier conformance --output github-annotations
+        run: ./bin/lenny-test --tier conformance --subset bundled-runtimes --output github-annotations
       - name: Upload verdict
         if: always()
         uses: actions/upload-artifact@v4
