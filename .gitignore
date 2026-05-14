@@ -7,5 +7,6 @@ tmp/
 /lenny-test
 /lenny-compliance
 /echo
+/streaming-echo
 /startup_latency
 tests/results/

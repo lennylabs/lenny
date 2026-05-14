@@ -95,6 +95,12 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "unit", notes: "correlation, logging, tracing, metrics, alerting/rules — every primitive validated"},
 			{name: "component", subsets: []string{"observability"}, notes: "observability primitives wire together against the in-process collector"},
 		}
+	case "phase-2.8-gate":
+		return []tierPlan{
+			{name: "static", notes: "streaming-echo + lifecycle-events schema compile; examples validate"},
+			{name: "unit", notes: "no new unit packages — streaming-echo behaviour is covered by the conformance battery"},
+			{name: "conformance", subsets: []string{"full"}, notes: "lenny-compliance --level full against cmd/runtimes/streaming-echo"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

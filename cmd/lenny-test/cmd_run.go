@@ -265,7 +265,7 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, 1)
 			}
 		case "conformance":
-			st, msg := runConformanceTier()
+			st, msg := runConformanceTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix conformance-tier failures before moving to higher tiers.")
@@ -470,10 +470,13 @@ func componentTargets(subsets []string) ([]string, bool, error) {
 	return targets, needsDocker, nil
 }
 
-func runConformanceTier() (string, string) {
+func runConformanceTier(subsets []string) (string, string) {
 	// Tier 10 conformance exercises the runtime adapters against the
-	// lenny-compliance harness. Phase 2 ships the Basic-level battery
-	// against cmd/runtimes/echo.
+	// lenny-compliance harness. The subset names map to integration
+	// levels: "basic" → cmd/runtimes/echo at lenny-compliance --level
+	// basic; "full" → cmd/runtimes/streaming-echo at lenny-compliance
+	// --level full. An empty subset list runs every level whose target
+	// runtime is built.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
@@ -484,26 +487,46 @@ func runConformanceTier() (string, string) {
 	}
 	defer os.RemoveAll(tmpBase)
 
-	// Build both binaries into the temp dir.
-	binEcho := filepath.Join(tmpBase, "echo")
-	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
-	for _, b := range []struct{ out, pkg string }{
-		{binEcho, "./cmd/runtimes/echo"},
-		{binCompliance, "./cmd/lenny-compliance"},
-	} {
-		cmd := exec.Command("go", "build", "-o", b.out, b.pkg)
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "fail", fmt.Sprintf("build %s: %v\n%s", b.pkg, err, out)
-		}
+	type runtimeBuild struct {
+		level   string
+		runtime string
+		pkg     string
+	}
+	available := map[string]runtimeBuild{
+		"basic": {level: "basic", runtime: "echo", pkg: "./cmd/runtimes/echo"},
+		"full":  {level: "full", runtime: "streaming-echo", pkg: "./cmd/runtimes/streaming-echo"},
+	}
+	if len(subsets) == 0 {
+		subsets = []string{"basic", "full"}
 	}
 
-	cmd := exec.Command(binCompliance, "--binary", binEcho, "--level", "basic")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("conformance failed:\n%s", out)
+	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
+	cmd := exec.Command("go", "build", "-o", binCompliance, "./cmd/lenny-compliance")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "fail", fmt.Sprintf("build lenny-compliance: %v\n%s", err, out)
 	}
-	return "pass", strings.TrimSpace(string(out))
+
+	results := []string{}
+	for _, sub := range subsets {
+		rb, ok := available[sub]
+		if !ok {
+			return "fail", fmt.Sprintf("unknown conformance subset %q", sub)
+		}
+		binRuntime := filepath.Join(tmpBase, rb.runtime)
+		buildCmd := exec.Command("go", "build", "-o", binRuntime, rb.pkg)
+		buildCmd.Dir = root
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			return "fail", fmt.Sprintf("build %s: %v\n%s", rb.pkg, err, out)
+		}
+		runCmd := exec.Command(binCompliance, "--binary", binRuntime, "--level", rb.level)
+		out, err := runCmd.CombinedOutput()
+		if err != nil {
+			return "fail", fmt.Sprintf("conformance --level %s against %s failed:\n%s", rb.level, rb.runtime, out)
+		}
+		results = append(results, strings.TrimSpace(string(out)))
+	}
+	return "pass", strings.Join(results, "\n\n")
 }
 
 func runContractTier(subsets []string) (string, string) {

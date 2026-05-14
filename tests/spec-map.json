@@ -529,14 +529,40 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal"
       ],
-      "packages": ["cmd/runtimes/echo", "cmd/lenny-compliance"],
+      "packages": ["cmd/runtimes/echo", "cmd/runtimes/streaming-echo", "cmd/lenny-compliance"],
       "schemas": [
         "schemas/lenny-adapter.proto",
         "schemas/lenny-adapter-jsonl.schema.json",
+        "schemas/lifecycle-events.schema.json",
         "schemas/outputpart.schema.json"
       ],
       "blocked_until_phase": "1",
-      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
+      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the lifecycle-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
+    },
+    "15.4.3": {
+      "title": "Runtime Integration Levels — Full",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [
+        "tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate"
+      ],
+      "packages": ["cmd/runtimes/streaming-echo"],
+      "schemas": ["schemas/lifecycle-events.schema.json"],
+      "blocked_until_phase": "2.8",
+      "notes": "Phase 2.8 ships the Full-level reference runtime and the lifecycle-events schema. Full-level features (lifecycle channel, checkpoint, interrupt, credential rotation, deadline signal) are exercised via the lenny-compliance --level full battery."
+    },
+    "15.4.6": {
+      "title": "Conformance Test Suite",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [
+        "cmd/lenny-compliance/full.go::checkLifecycleHandshake",
+        "cmd/lenny-compliance/full.go::checkCheckpointQuiesce",
+        "cmd/lenny-compliance/full.go::checkInterruptAck",
+        "cmd/lenny-compliance/full.go::checkCredentialRotation",
+        "cmd/lenny-compliance/full.go::checkDeadlineSignal"
+      ],
+      "packages": ["cmd/lenny-compliance"],
+      "blocked_until_phase": "2.8",
+      "notes": "Phase 2.8 extends the conformance harness with the Full-level test categories from §15.4.6. The harness runs a Unix-socket lifecycle-channel server, points the runtime at it via the LENNY_ADAPTER_MANIFEST env var, and asserts each lifecycle event round-trip. Standard-level categories ship in Phase 9 alongside delegation-echo."
     },
     "6.3": {
       "title": "Startup Latency Analysis",

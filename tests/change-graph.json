@@ -247,8 +247,12 @@
     },
     "cmd/runtimes/streaming-echo/": {
       "unit": ["cmd/runtimes/streaming-echo/..."],
-      "conformance": ["tests/tier10_conformance/full/..."],
+      "conformance": ["cmd/lenny-compliance/..."],
       "integration": ["tests/tier4_integration/streaming_reconnect_test.go"]
+    },
+    "schemas/lifecycle-events.schema.json": {
+      "static": ["tests/tier0_static/schemas_test.go"],
+      "conformance": ["cmd/lenny-compliance/..."]
     },
     "cmd/runtimes/delegation-echo/": {
       "unit": ["cmd/runtimes/delegation-echo/..."],

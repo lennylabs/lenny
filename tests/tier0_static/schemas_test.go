@@ -34,6 +34,7 @@ func TestPhase1SchemasParse(t *testing.T) {
 		"schemas/outputpart.schema.json",
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
+		"schemas/lifecycle-events.schema.json",
 	}
 
 	for _, rel := range cases {
@@ -108,6 +109,38 @@ func TestOutputPartExamplesValidate(t *testing.T) {
 		"schemas/examples/outputpart.text.json",
 		"schemas/examples/outputpart.code.json",
 		"schemas/examples/outputpart.image_ref.json",
+	} {
+		name := name
+		t.Run(filepath.Base(name), func(t *testing.T) {
+			t.Parallel()
+			data := schematest.ReadJSON(t, filepath.Join(root, name))
+			if err := validator.Validate(data); err != nil {
+				t.Errorf("expected %s to validate, got: %v", name, err)
+			}
+		})
+	}
+}
+
+// spec: 15.4.3, 15.4.6
+// diagnosis: a lifecycle-events example failed to validate against
+//
+//	schemas/lifecycle-events.schema.json. Verify the envelope
+//	shape, the `type` discriminator, and the capability enum.
+func TestLifecycleEventExamplesValidate(t *testing.T) {
+	t.Parallel()
+	validator := schematest.Compile(t, "schemas/lifecycle-events.schema.json")
+
+	root := schematest.RepoRoot(t)
+	for _, name := range []string{
+		"schemas/examples/lifecycle.lifecycle_capabilities.json",
+		"schemas/examples/lifecycle.lifecycle_support.json",
+		"schemas/examples/lifecycle.checkpoint_request.json",
+		"schemas/examples/lifecycle.checkpoint_ready.json",
+		"schemas/examples/lifecycle.checkpoint_complete.json",
+		"schemas/examples/lifecycle.interrupt_request.json",
+		"schemas/examples/lifecycle.interrupt_acknowledged.json",
+		"schemas/examples/lifecycle.credentials_rotated.json",
+		"schemas/examples/lifecycle.deadline_signal.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {

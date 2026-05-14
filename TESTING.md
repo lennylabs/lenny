@@ -1269,10 +1269,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.5 Phase 2.8 — `streaming-echo` runtime
 
-**Test infrastructure to land.**
-- `cmd/runtimes/streaming-echo/` built; passes `lenny-compliance --level full`.
-- Phase 2 checkpoint baseline re-validated with cooperative quiescence overhead. Baseline JSON committed.
-- The integration `streaming_reconnect` suite is operational against `streaming-echo`.
+**Test infrastructure delivered in Phase 2.8.**
+- `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a lifecycle-channel client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
+- `schemas/lifecycle-events.schema.json` is the JSON Schema for the lifecycle-channel envelope. Example fixtures live under `schemas/examples/lifecycle.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`.
+- `cmd/lenny-compliance --level full` adds the Full-level conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). The harness opens a Unix-socket lifecycle server, writes a manifest pointing the runtime at it, and asserts each event round-trip.
+- `streaming-echo` passes both `lenny-compliance --level basic` (7/7) and `lenny-compliance --level full` (12/12).
+
+**Test infrastructure deferred to later phases.**
+- The integration `streaming_reconnect` suite is deferred to the phase that ships the gateway. The runtime can be checkpointed and restarted, but the reconnect flow runs through the gateway's stream proxy.
+- The Phase 2 checkpoint-duration baseline re-validation with cooperative quiescence overhead is deferred to Phase 8 (checkpoint/resume). The lifecycle channel handshake in Phase 2.8 demonstrates the quiescence protocol; the duration baseline requires the gateway's checkpoint manager.
 
 ### 13.6 Phase 3 — Pool scaling, delegation policy, runtime upgrade, mTLS
 

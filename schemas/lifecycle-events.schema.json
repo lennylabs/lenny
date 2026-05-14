@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lenny.dev/schemas/lifecycle-events.json",
+  "title": "Lenny runtime lifecycle events",
+  "description": "JSON envelopes exchanged on the gateway↔adapter lifecycle channel. The channel itself is the LifecycleChannel bidirectional stream defined in lenny-adapter.proto; the proto carries each envelope as opaque bytes. This schema is the source of truth for the envelope payloads. See spec/15_external-api-surface.md §15.4 and spec/4_system-components.md §4.7.",
+  "oneOf": [
+    { "$ref": "#/$defs/lifecycle_capabilities" },
+    { "$ref": "#/$defs/lifecycle_support" },
+    { "$ref": "#/$defs/checkpoint_request" },
+    { "$ref": "#/$defs/checkpoint_ready" },
+    { "$ref": "#/$defs/checkpoint_complete" },
+    { "$ref": "#/$defs/interrupt_request" },
+    { "$ref": "#/$defs/interrupt_acknowledged" },
+    { "$ref": "#/$defs/credentials_rotated" },
+    { "$ref": "#/$defs/deadline_signal" },
+    { "$ref": "#/$defs/deadline_approaching" },
+    { "$ref": "#/$defs/draining" }
+  ],
+  "$defs": {
+    "lifecycle_capabilities": {
+      "title": "lifecycle_capabilities",
+      "description": "Inbound (adapter → runtime), first message after the lifecycle channel opens. Advertises the set of lifecycle event types the adapter supports for this session. The runtime replies with lifecycle_support naming the subset it implements.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "lifecycle_capabilities" },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "checkpoint",
+              "interrupt",
+              "credential_rotation",
+              "deadline_signal",
+              "task_complete",
+              "draining"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "checkpoint_quiesce_deadline_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "Time the adapter will wait between checkpoint_request and checkpoint_ready before treating the runtime as unresponsive."
+        },
+        "interrupt_deadline_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "Time the adapter will wait between interrupt_request and interrupt_acknowledged before escalating to SIGTERM."
+        }
+      },
+      "required": ["type", "capabilities"],
+      "additionalProperties": false
+    },
+    "lifecycle_support": {
+      "title": "lifecycle_support",
+      "description": "Outbound (runtime → adapter), reply to lifecycle_capabilities. The runtime declares the subset of advertised capabilities it implements. The adapter records this on the LifecycleChannel handshake (§15.4.6 Full-level test: lifecycle channel opening).",
+      "type": "object",
+      "properties": {
+        "type": { "const": "lifecycle_support" },
+        "supported": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "checkpoint",
+              "interrupt",
+              "credential_rotation",
+              "deadline_signal",
+              "task_complete",
+              "draining"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "runtime_version": {
+          "type": "string",
+          "description": "Free-form version string used in the §16.4 runtime_version log field and the §15.4.6 conformance report."
+        }
+      },
+      "required": ["type", "supported"],
+      "additionalProperties": false
+    },
+    "checkpoint_request": {
+      "title": "checkpoint_request",
+      "description": "Inbound (adapter → runtime). Asks the runtime to reach a quiescent state so the adapter can take a consistent snapshot. The runtime replies with checkpoint_ready when output has been flushed and no in-flight tool calls are pending. See spec §15.4.3 Full level checkpoint/restore.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_request" },
+        "checkpoint_id": { "type": "string", "minLength": 1 },
+        "deadline_ms": { "type": "integer", "minimum": 100 },
+        "level": { "enum": ["basic", "standard", "full"] }
+      },
+      "required": ["type", "checkpoint_id", "deadline_ms"],
+      "additionalProperties": false
+    },
+    "checkpoint_ready": {
+      "title": "checkpoint_ready",
+      "description": "Outbound (runtime → adapter). The runtime has quiesced and is holding new work until checkpoint_complete arrives.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_ready" },
+        "checkpoint_id": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "checkpoint_id"],
+      "additionalProperties": false
+    },
+    "checkpoint_complete": {
+      "title": "checkpoint_complete",
+      "description": "Inbound (adapter → runtime). Releases the runtime from quiescence. The runtime resumes normal processing.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "checkpoint_complete" },
+        "checkpoint_id": { "type": "string", "minLength": 1 },
+        "outcome": { "enum": ["success", "failed", "aborted"] }
+      },
+      "required": ["type", "checkpoint_id", "outcome"],
+      "additionalProperties": false
+    },
+    "interrupt_request": {
+      "title": "interrupt_request",
+      "description": "Inbound (adapter → runtime). Asks the runtime to reach a safe stop point and acknowledge with interrupt_acknowledged within the deadline. The runtime SHOULD stop producing new output and flush any pending output before acknowledging.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "interrupt_request" },
+        "interrupt_id": { "type": "string", "minLength": 1 },
+        "deadline_ms": { "type": "integer", "minimum": 100 },
+        "reason": { "type": "string" }
+      },
+      "required": ["type", "interrupt_id", "deadline_ms"],
+      "additionalProperties": false
+    },
+    "interrupt_acknowledged": {
+      "title": "interrupt_acknowledged",
+      "description": "Outbound (runtime → adapter). The runtime has reached a safe stop point. The original interrupt_id is echoed.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "interrupt_acknowledged" },
+        "interrupt_id": { "type": "string", "minLength": 1 }
+      },
+      "required": ["type", "interrupt_id"],
+      "additionalProperties": false
+    },
+    "credentials_rotated": {
+      "title": "credentials_rotated",
+      "description": "Inbound (adapter → runtime). The adapter has updated the credentials available to the runtime (typically by rewriting the adapter manifest). Runtimes that declared credential_rotation in lifecycle_support MUST re-read credentials from the manifest path or env before serving the next request.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "credentials_rotated" },
+        "lease_id": { "type": "string", "minLength": 1 },
+        "trigger": {
+          "enum": [
+            "proactive_renewal",
+            "fault_rate_limited",
+            "fault_auth_expired",
+            "fault_provider_unavailable",
+            "emergency_revocation",
+            "user_credential_rotated",
+            "user_credential_revoked"
+          ]
+        }
+      },
+      "required": ["type", "lease_id", "trigger"],
+      "additionalProperties": false
+    },
+    "deadline_signal": {
+      "title": "deadline_signal",
+      "description": "Inbound (adapter → runtime). The session deadline has been reached. The runtime SHOULD emit a final response (possibly with error.code=\"DEADLINE_EXCEEDED\") and exit cleanly before deadline_ms elapses.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "deadline_signal" },
+        "deadline_ms": { "type": "integer", "minimum": 100 }
+      },
+      "required": ["type", "deadline_ms"],
+      "additionalProperties": false
+    },
+    "deadline_approaching": {
+      "title": "deadline_approaching",
+      "description": "Inbound (adapter → runtime). The session deadline is within deadline_warning_ms of expiry. The runtime SHOULD wrap up in-flight work and prepare a final response.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "deadline_approaching" },
+        "remaining_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "remaining_ms"],
+      "additionalProperties": false
+    },
+    "draining": {
+      "title": "draining",
+      "description": "Inbound (adapter → runtime). The pod is entering a graceful drain. The runtime SHOULD complete in-flight work and avoid starting new tool calls. A shutdown stdin message follows when the drain budget expires.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "draining" },
+        "drain_budget_ms": { "type": "integer", "minimum": 100 }
+      },
+      "required": ["type", "drain_budget_ms"],
+      "additionalProperties": false
+    }
+  }
+}

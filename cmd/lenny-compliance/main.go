@@ -33,7 +33,7 @@ import (
 	"time"
 )
 
-const harnessVersion = "0.2.0-phase2"
+const harnessVersion = "0.3.0-phase2.8"
 
 func main() {
 	var (
@@ -49,17 +49,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "lenny-compliance: --binary is required")
 		os.Exit(2)
 	}
+	var report Report
 	switch *level {
 	case "basic":
-	case "standard", "full":
-		fmt.Fprintf(os.Stderr, "lenny-compliance: --level=%s ships in a later phase (Phase 2 covers basic only)\n", *level)
+		report = runBasicBattery(*binaryPath, *timeout, *verbose)
+	case "full":
+		report = runFullBattery(*binaryPath, *timeout, *verbose)
+	case "standard":
+		fmt.Fprintln(os.Stderr, "lenny-compliance: --level=standard ships in a later phase (Phase 2.8 covers full; Phase 9 ships standard alongside delegation-echo)")
 		os.Exit(2)
 	default:
 		fmt.Fprintf(os.Stderr, "lenny-compliance: unknown --level %q (basic|standard|full)\n", *level)
 		os.Exit(2)
 	}
 
-	report := runBasicBattery(*binaryPath, *timeout, *verbose)
 	emit(report, *jsonOut)
 	os.Exit(report.failedCount())
 }
@@ -118,26 +121,8 @@ func runBasicBattery(binary string, timeout time.Duration, verbose bool) Report 
 	}
 
 	for _, c := range cases {
-		start := time.Now()
 		detail, err := c.fn(binary, timeout, verbose)
-		entry := Check{
-			Name:     c.name,
-			Spec:     c.spec,
-			Duration: time.Since(start).Round(time.Millisecond).String(),
-			Detail:   detail,
-		}
-		if err == nil {
-			entry.Pass = true
-			r.Summary.Passed++
-		} else {
-			entry.Pass = false
-			if entry.Detail != "" {
-				entry.Detail += " :: "
-			}
-			entry.Detail += err.Error()
-			r.Summary.Failed++
-		}
-		r.Checks = append(r.Checks, entry)
+		r.recordCheck(c.name, c.spec, detail, err)
 	}
 	r.Summary.Total = len(r.Checks)
 	r.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
