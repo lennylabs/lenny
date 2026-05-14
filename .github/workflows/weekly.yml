@@ -36,14 +36,44 @@ jobs:
       matrix:
         provider: [gke, eks, aks]
     steps:
-      - run: |
-          echo "Phase 0 placeholder. Full cloud suite ships Phase 13+; TESTING.md §12.6."
-          echo "matrix provider: ${{ matrix.provider }}"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run e2e cloud tier
+        env:
+          LENNY_CLOUD_PROVIDER: ${{ matrix.provider }}
+        run: ./bin/lenny-test --tier e2e_cloud
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-weekly-${{ matrix.provider }}
+          path: tests/results/latest.json
+          retention-days: 60
 
   load-full-system:
-    name: tier 7 — load (full-system, placeholder)
+    name: tier 7 — load (full-system)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: [nightly-suite]
     steps:
-      - run: 'echo "full-system load ships Phase 13.5; see TESTING.md §13.29"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run full-system load tier
+        run: ./bin/lenny-test --group phase-13.5-gate
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-load-full-system
+          path: tests/results/latest.json
+          retention-days: 60
