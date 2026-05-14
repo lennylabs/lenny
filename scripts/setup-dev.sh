@@ -631,6 +631,18 @@ if want_group sdk-typescript; then echo; lenny_log_info "installing TypeScript S
 if want_group docs;       then echo; lenny_log_info "installing documentation toolchain"; install_docs; fi
 
 echo
+lenny_log_info "installing repository binaries (lenny-test, lenny-compliance)"
+if command -v go >/dev/null 2>&1; then
+  if go install ./cmd/lenny-test ./cmd/lenny-compliance; then
+    lenny_log_ok "lenny-test installed at $(go env GOPATH)/bin/lenny-test"
+  else
+    lenny_log_warn "go install ./cmd/lenny-test failed; rerun manually before invoking 'lenny-test'"
+  fi
+else
+  lenny_log_warn "go not on PATH; cannot install lenny-test. Add Go to PATH and run 'go install ./cmd/lenny-test ./cmd/lenny-compliance'."
+fi
+
+echo
 lenny_log_ok "done. Run scripts/preflight.sh to verify."
 if (( LENNY_RESOLVED_VIA_FALLBACK )); then
   lenny_path_advice

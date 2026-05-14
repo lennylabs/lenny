@@ -34,16 +34,21 @@ git clone https://github.com/lennylabs/lenny.git
 cd lenny
 git checkout test-infrastructure
 
-# 2. Install core dependencies (tiers 0–4)
+# 2. Install core dependencies (tiers 0–4) AND lenny-test itself.
+#    setup-dev.sh installs the harness into $(go env GOPATH)/bin
+#    after the external toolchain is set up.
 ./scripts/setup-dev.sh
 
 # 3. Verify
 ./scripts/preflight.sh
 
-# 4. Start the cached container daemon (one-time, persists across runs)
+# 4. Confirm lenny-test is on PATH (add $(go env GOPATH)/bin if not).
+command -v lenny-test
+
+# 5. Start the cached container daemon (one-time, persists across runs)
 lenny-test infra up --profile containers
 
-# 5. Run the developer inner loop
+# 6. Run the developer inner loop
 lenny-test --group pr-fast
 ```
 
