@@ -37,9 +37,21 @@ func runRun(args []string) int {
 	verdictFile := fs.String("verdict-file", "tests/results/latest.json", "path to write the JSON verdict")
 	cachedFlag := fs.Bool("cached", false, "use the cached container daemon if available")
 	noInfraFlag := fs.Bool("no-infra", false, "skip infrastructure provisioning")
+	updateGoldenFlag := fs.Bool("update-golden", false, "rewrite golden files from test output (sets GOLDEN_UPDATE=1)")
+	updateBaselineFlag := fs.Bool("update-baseline", false, "rewrite load baselines from test output (sets LENNY_UPDATE_BASELINE=1)")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// Propagate update flags via environment so test binaries pick
+	// them up. Side-effecting `os.Setenv` here is fine because the
+	// run command is the top-level invocation.
+	if *updateGoldenFlag {
+		_ = os.Setenv("GOLDEN_UPDATE", "1")
+	}
+	if *updateBaselineFlag {
+		_ = os.Setenv("LENNY_UPDATE_BASELINE", "1")
 	}
 
 	sel := selector{
