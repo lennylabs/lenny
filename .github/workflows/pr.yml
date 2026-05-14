@@ -93,48 +93,122 @@ jobs:
           path: tests/results/latest.json
           retention-days: 30
 
-  # The remaining tiers are scaffolded as TODO jobs. Each is added in the
-  # phase that first implements its tier. See TESTING.md §13.
-
   component:
-    name: tier 2 — component (placeholder)
+    name: tier 2 — component
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     needs: [unit]
     steps:
-      - run: 'echo "component tier ships in Phase 1.5+; see TESTING.md §13.2"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run component tier
+        run: ./bin/lenny-test --tier component
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-component
+          path: tests/results/latest.json
+          retention-days: 30
 
   contract:
-    name: tier 3 — contract (placeholder)
+    name: tier 3 — contract
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [unit]
     steps:
-      - run: 'echo "contract tier ships in Phase 5; see TESTING.md §13.10"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run contract tier
+        run: ./bin/lenny-test --tier contract
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-contract
+          path: tests/results/latest.json
+          retention-days: 30
 
   integration:
-    name: tier 4 — integration (placeholder)
+    name: tier 4 — integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [component, contract]
     steps:
-      - run: 'echo "integration tier ships in Phase 4; see TESTING.md §13.8"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run integration tier
+        run: ./bin/lenny-test --tier integration
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-integration
+          path: tests/results/latest.json
+          retention-days: 30
 
   e2e-kind-critical:
-    name: tier 5 — e2e Kind (critical-path, placeholder)
+    name: tier 5 — e2e Kind (critical-path)
     runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
     timeout-minutes: 30
     needs: [integration]
     steps:
-      - run: 'echo "e2e Kind ships in Phase 3.5; see TESTING.md §13.7"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run e2e-Kind critical-path subset
+        # SkipUnlessAvailable gates on docker + kind; on ubuntu-latest
+        # without setup-docker the suite skips cleanly.
+        run: ./bin/lenny-test --tier e2e_kind
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-e2e-kind
+          path: tests/results/latest.json
+          retention-days: 30
 
   conformance-bundled:
-    name: tier 10 — conformance (bundled runtimes, placeholder)
+    name: tier 10 — conformance (bundled runtimes)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [unit]
     steps:
-      - run: 'echo "conformance tier ships in Phase 2; see TESTING.md §13.3"'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Run conformance tier
+        run: ./bin/lenny-test --tier conformance
+      - name: Upload verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdict-conformance
+          path: tests/results/latest.json
+          retention-days: 30
 
   docs:
     name: tier 11 — documentation
