@@ -544,9 +544,20 @@
     "15.1": {
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
-      "packages": ["pkg/gateway/rest"],
-      "blocked_until_phase": "4"
+      "tests": [
+        "pkg/api/v1/session/session_test.go::TestAllStatesCountMatchesSpec",
+        "pkg/api/v1/session/session_test.go::TestIsTerminalCoversFourStates",
+        "pkg/api/v1/session/session_test.go::TestFailureClassEnumIsExhaustive",
+        "pkg/api/v1/session/session_test.go::TestValidateFinalizeAdmitsCreatedOnly",
+        "pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunningOnly",
+        "pkg/api/v1/session/session_test.go::TestValidateTerminateAdmitsEveryNonTerminal",
+        "pkg/api/v1/session/session_test.go::TestValidateUploadMidSessionGated",
+        "pkg/api/v1/session/session_test.go::TestValidateDeriveAllowStaleGated",
+        "pkg/api/v1/session/session_test.go::TestPreconditionErrorEnvelope"
+      ],
+      "packages": ["pkg/api/v1/session", "pkg/gateway/rest"],
+      "blocked_until_phase": "4",
+      "notes": "Phase 4 ships the §15.1 externally-visible SessionState enum, the §7.1 FailureClass enum, and the §15.1 state-mutating-endpoint precondition table as a Go-callable Validate function. The OpenAPI document, the per-endpoint request/response shapes, and the gateway binary that serves them are deferred to the K8s-integration phase."
     },
     "15.2": {
       "title": "MCP API",

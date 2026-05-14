@@ -1320,10 +1320,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.8 Phase 4 — Session manager + REST
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/session_lifecycle_test.go` exercises create → upload → attach → complete against the compose stack.
-- The Tier 4 integration profile is operational: `docker compose --profile default up` brings up gateway, controller-sim, stores.
-- `tests/tier2_component/gateway_subsystems/session_orchestrator_test.go` covers the orchestrator in isolation.
+**Test infrastructure delivered in Phase 4.**
+- `pkg/api/v1/session` ships the externally-visible Session API surface from §15.1: the twelve-state `State` enum, `IsTerminal`, the §7.1 `FailureClass` enum, and the §15.1 state-mutating endpoint precondition table as a Go-callable `Validate` function. The validator returns `*PreconditionError` whose `Code()` and `ErrorCode()` match the spec's HTTP 409 INVALID_STATE_TRANSITION envelope, including the `details.allowedStates` slice for the gateway to echo back to clients.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/session_lifecycle_test.go` (`create → upload → attach → complete` against the compose stack) is deferred. It needs the gateway binary plus the docker-compose integration profile.
+- The Tier 4 integration profile (`docker compose --profile default up` bringing up gateway, controller-sim, stores) is deferred to the K8s-integration phase. The fixtures it composes do not exist yet.
+- `tests/tier2_component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server) is deferred to the K8s-integration phase. The Go-callable precondition validator from Phase 4 is the substrate; the orchestrator binary that drives it lands with the gateway.
+- The OpenAPI document served at `GET /openapi.yaml` and the per-endpoint request/response shapes (CreateSessionRequest, SessionResponse, etc.) are deferred. They require the gateway binary so the served spec reflects the binary's release version.
 
 ### 13.9 Phase 4.5 — Admin API foundation + authentication + bootstrap
 

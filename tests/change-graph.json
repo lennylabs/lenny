@@ -125,6 +125,12 @@
     "pkg/admission/ownership": {
       "unit": ["pkg/admission/ownership/..."]
     },
+    "pkg/api/v1/session": {
+      "unit": ["pkg/api/v1/session/..."],
+      "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
+      "contract": ["tests/tier3_contract/rest_mcp/..."],
+      "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+    },
     "pkg/admission/drain_readiness": {
       "unit": ["pkg/admission/drain_readiness/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/drain_readiness_webhook_test.go"],

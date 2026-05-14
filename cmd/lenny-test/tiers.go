@@ -111,6 +111,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "admission decision packages build"},
 			{name: "unit", notes: "§4.6.1 sandboxclaim_guard, §17.2 label_immutability, §4.6.3 ownership matrix — every rule asserted"},
 		}
+	case "phase-4-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/api/v1/session builds; precondition table parses"},
+			{name: "unit", notes: "§15.1 SessionState + FailureClass enums; §15.1 state-mutating endpoint precondition table"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does
