@@ -72,8 +72,14 @@ func TestHashBodyIsStable(t *testing.T) {
 	}
 }
 
+// testNow is the deterministic anchor every idempotency test uses
+// in place of time.Now(). DetectReuse and IsExpired accept the
+// caller's "now" as an explicit argument, so a fixed value
+// disconnects the suite from wall-clock without losing semantics.
+var testNow = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
 func TestDetectReuseStoreNewWhenNoPrior(t *testing.T) {
-	action, err := DetectReuse(Record{}, HashBody([]byte("body")), time.Now())
+	action, err := DetectReuse(Record{}, HashBody([]byte("body")), testNow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,9 +92,9 @@ func TestDetectReuseReplayWhenMatch(t *testing.T) {
 	stored := Record{
 		Key:      Key{TenantID: "acme", Value: "abc"},
 		BodyHash: HashBody([]byte("body")),
-		StoredAt: time.Now(),
+		StoredAt: testNow,
 	}
-	action, err := DetectReuse(stored, HashBody([]byte("body")), time.Now())
+	action, err := DetectReuse(stored, HashBody([]byte("body")), testNow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,9 +107,9 @@ func TestDetectReuseRejectsKeyReusedWithDifferentBody(t *testing.T) {
 	stored := Record{
 		Key:      Key{TenantID: "acme", Value: "abc"},
 		BodyHash: HashBody([]byte("original-body")),
-		StoredAt: time.Now(),
+		StoredAt: testNow,
 	}
-	action, err := DetectReuse(stored, HashBody([]byte("different-body")), time.Now())
+	action, err := DetectReuse(stored, HashBody([]byte("different-body")), testNow)
 	if action != ActionReject {
 		t.Errorf("want reject, got %q", action)
 	}
@@ -123,9 +129,9 @@ func TestDetectReuseTreatsExpiredAsNoPrior(t *testing.T) {
 	stored := Record{
 		Key:      Key{TenantID: "acme", Value: "abc"},
 		BodyHash: HashBody([]byte("body")),
-		StoredAt: time.Now().Add(-25 * time.Hour), // outside the 24h TTL
+		StoredAt: testNow.Add(-25 * time.Hour), // outside the 24h TTL
 	}
-	action, err := DetectReuse(stored, HashBody([]byte("different-body")), time.Now())
+	action, err := DetectReuse(stored, HashBody([]byte("different-body")), testNow)
 	if err != nil {
 		t.Fatalf("expired key reused with different body should not error, got %v", err)
 	}
@@ -135,7 +141,7 @@ func TestDetectReuseTreatsExpiredAsNoPrior(t *testing.T) {
 }
 
 func TestRecordIsExpired(t *testing.T) {
-	now := time.Now()
+	now := testNow
 	fresh := Record{StoredAt: now.Add(-1 * time.Hour)}
 	expired := Record{StoredAt: now.Add(-25 * time.Hour)}
 	if fresh.IsExpired(now) {
@@ -150,7 +156,7 @@ func TestRecordZeroStoredAtIsNotExpired(t *testing.T) {
 	// A zero StoredAt means "no record at all"; IsExpired returns
 	// false so DetectReuse falls through to store_new via the
 	// empty-key branch rather than the expired branch.
-	if (Record{}).IsExpired(time.Now()) {
+	if (Record{}).IsExpired(testNow) {
 		t.Errorf("zero Record must not report IsExpired")
 	}
 }

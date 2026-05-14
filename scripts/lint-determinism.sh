@@ -54,10 +54,18 @@ fi
 check_pattern() {
     local rule="$1" pattern="$2"
     while IFS= read -r match; do
-        # match format: file:line:content. Per-line escape hatch:
-        # any match whose content includes "lint-determinism:exempt"
-        # is intentionally skipped. The marker must appear on the
-        # same physical line as the flagged call.
+        # match format: file:line:content. Two escape hatches:
+        #   (a) lines that are pure // comments are documentation,
+        #       not source — skip them.
+        #   (b) per-line "lint-determinism:exempt" markers — skip.
+        # The content portion sits after the second colon. Strip
+        # leading whitespace before deciding.
+        content="${match#*:}"        # drop file:
+        content="${content#*:}"      # drop line:
+        trimmed="${content#"${content%%[![:space:]]*}"}"
+        case "${trimmed}" in
+            //*) continue ;;
+        esac
         case "${match}" in
             *lint-determinism:exempt*) continue ;;
         esac

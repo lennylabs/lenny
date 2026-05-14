@@ -42,9 +42,9 @@ func FuzzValidateDoesNotPanic(f *testing.F) {
 			Caller:        caller,
 			Subject:       subject,
 			Requested:     Token{TenantID: tenant, Subject: subjectSub, Typ: TypeUserBearer},
-			RequestedExp:  time.Now().Add(time.Hour),
+			RequestedExp:  time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC),
 			PerDialectCap: time.Hour,
-			Now:           time.Now(),
+			Now:           time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		}
 		_, _ = Validate(req)
 	})

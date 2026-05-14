@@ -100,7 +100,7 @@ func TestOpenOperationTypeBreakerRejects(t *testing.T) {
 			Name:      "session-creation-paused",
 			State:     circuitbreaker.StateOpen,
 			Reason:    "incident-2026-05-13",
-			OpenedAt:  time.Now().UTC(),
+			OpenedAt:  time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC),
 			LimitTier: circuitbreaker.TierOperationType,
 			Scope:     circuitbreaker.Scope{OperationType: circuitbreaker.OpSessionCreation},
 		},

@@ -38,13 +38,24 @@ func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	return ts, signer
 }
 
+// Token-claim anchors. The jwt package compares Expiry against real
+// wall-clock during Verify, so a far-future Expiry stays valid for
+// any plausible test-run timestamp. IssuedAt sits an hour before
+// Expiry to maintain the not-before invariant.
+var (
+	farFutureExpiry  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farFutureIssued  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
+	farPastExpiry    = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	beyond24hExpiry  = time.Date(2099, 1, 1, 48, 0, 0, 0, time.UTC).Unix()
+)
+
 func mint(t *testing.T, signer *jwt.HMACSigner, c jwt.Claims) string {
 	t.Helper()
 	if c.Expiry == 0 {
-		c.Expiry = time.Now().Add(time.Hour).Unix()
+		c.Expiry = farFutureExpiry
 	}
 	if c.IssuedAt == 0 {
-		c.IssuedAt = time.Now().Unix()
+		c.IssuedAt = farFutureIssued
 	}
 	if c.Audience == nil {
 		c.Audience = []string{"lenny-gateway"}
@@ -228,7 +239,7 @@ func TestExpiredSubjectRejected(t *testing.T) {
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
 		Typ: auth.TokenUserBearer, Scope: "sessions:read",
-		Expiry: time.Now().Add(-time.Hour).Unix(),
+		Expiry: farPastExpiry,
 	})
 	resp, body := exchange(t, ts, caller, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -337,7 +348,7 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
 		Typ: auth.TokenUserBearer, Scope: "sessions:read",
-		Expiry: time.Now().Add(48 * time.Hour).Unix(), // beyond 24h dialect cap
+		Expiry: beyond24hExpiry, // beyond 24h dialect cap
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",

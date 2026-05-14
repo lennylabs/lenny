@@ -9,10 +9,25 @@ import (
 	"time"
 )
 
+// testTime is the deterministic anchor every test uses in place of
+// time.Now(). The exact value is arbitrary; only relative offsets
+// matter for the denylist's TTL semantics.
+var testTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// newFakeClockAt returns a fakeClock pinned at testTime for tests
+// that pair WithClock(clock.Now) with the same time source they
+// compare expiries against.
+func newFakeClockAt(at time.Time) *fakeClock {
+	c := &fakeClock{t: atomicTime{}}
+	c.t.Store(at)
+	return c
+}
+
 func TestAddAndContains(t *testing.T) {
-	d := New()
+	clock := newFakeClockAt(testTime)
+	d := New(WithClock(clock.Now))
 	uri := "spiffe://td/agent/p/pod-1"
-	d.Add(uri, time.Now().Add(time.Hour))
+	d.Add(uri, testTime.Add(time.Hour))
 	if !d.Contains(uri) {
 		t.Errorf("Contains: want true for fresh entry")
 	}
@@ -22,26 +37,27 @@ func TestAddAndContains(t *testing.T) {
 }
 
 func TestAddIgnoresAlreadyExpired(t *testing.T) {
-	d := New()
+	clock := newFakeClockAt(testTime)
+	d := New(WithClock(clock.Now))
 	uri := "spiffe://td/agent/p/pod-1"
-	d.Add(uri, time.Now().Add(-time.Hour))
+	d.Add(uri, testTime.Add(-time.Hour))
 	if d.Contains(uri) {
 		t.Errorf("already-expired entry should not be added")
 	}
 }
 
 func TestAddIgnoresEmptyURI(t *testing.T) {
-	d := New()
-	d.Add("", time.Now().Add(time.Hour))
+	clock := newFakeClockAt(testTime)
+	d := New(WithClock(clock.Now))
+	d.Add("", testTime.Add(time.Hour))
 	if d.Size() != 0 {
 		t.Errorf("empty URI should be ignored, Size=%d", d.Size())
 	}
 }
 
 func TestContainsExpiresEntries(t *testing.T) {
-	now := time.Now()
-	clock := &fakeClock{t: atomicTime{}}
-	clock.t.Store(now)
+	now := testTime
+	clock := newFakeClockAt(now)
 	d := New(WithClock(clock.Now))
 
 	uri := "spiffe://td/agent/p/pod-1"
@@ -59,9 +75,8 @@ func TestContainsExpiresEntries(t *testing.T) {
 }
 
 func TestAddIgnoresEarlierExpiryRepublish(t *testing.T) {
-	now := time.Now()
-	clock := &fakeClock{t: atomicTime{}}
-	clock.t.Store(now)
+	now := testTime
+	clock := newFakeClockAt(now)
 	d := New(WithClock(clock.Now))
 
 	uri := "spiffe://td/agent/p/pod-1"
@@ -76,9 +91,8 @@ func TestAddIgnoresEarlierExpiryRepublish(t *testing.T) {
 }
 
 func TestAddExtendsLifetimeOnLaterExpiry(t *testing.T) {
-	now := time.Now()
-	clock := &fakeClock{t: atomicTime{}}
-	clock.t.Store(now)
+	now := testTime
+	clock := newFakeClockAt(now)
 	d := New(WithClock(clock.Now))
 
 	uri := "spiffe://td/agent/p/pod-1"
@@ -91,9 +105,8 @@ func TestAddExtendsLifetimeOnLaterExpiry(t *testing.T) {
 }
 
 func TestSweepEvictsAllExpired(t *testing.T) {
-	now := time.Now()
-	clock := &fakeClock{t: atomicTime{}}
-	clock.t.Store(now)
+	now := testTime
+	clock := newFakeClockAt(now)
 	d := New(WithClock(clock.Now))
 
 	for i := 0; i < 5; i++ {
@@ -110,12 +123,13 @@ func TestSweepEvictsAllExpired(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	d := New()
+	clock := newFakeClockAt(testTime)
+	d := New(WithClock(clock.Now))
 	uri := "spiffe://td/agent/p/pod-1"
 	if d.Remove(uri) {
 		t.Errorf("Remove of missing entry should return false")
 	}
-	d.Add(uri, time.Now().Add(time.Hour))
+	d.Add(uri, testTime.Add(time.Hour))
 	if !d.Remove(uri) {
 		t.Errorf("Remove of present entry should return true")
 	}
@@ -125,14 +139,15 @@ func TestRemove(t *testing.T) {
 }
 
 func TestConcurrentAddContainsSafe(t *testing.T) {
-	d := New()
+	clock := newFakeClockAt(testTime)
+	d := New(WithClock(clock.Now))
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		i := i
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			d.Add(fakeURI(i), time.Now().Add(time.Hour))
+			d.Add(fakeURI(i), testTime.Add(time.Hour))
 		}()
 		go func() {
 			defer wg.Done()

@@ -21,7 +21,7 @@ func FuzzBreakerValidate(f *testing.F) {
 			Name:      name,
 			State:     State(state),
 			Reason:    reason,
-			OpenedAt:  time.Now(),
+			OpenedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			LimitTier: LimitTier(tier),
 			Scope: Scope{
 				Runtime:       runtime,

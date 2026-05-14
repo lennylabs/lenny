@@ -10,13 +10,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 )
 
+// JWT tests pin expiry values against a fixed-far-future anchor so
+// the suite is reproducible regardless of wall-clock. Verify's
+// internal time.Now check still uses real time; both farFutureExpiry
+// (year 2099) and farPastExpiry (year 2000) sit far enough on either
+// side of any plausible test-run timestamp that the comparisons stay
+// stable.
+var (
+	farFutureExpiry = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farFutureIssued = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
+	farPastExpiry   = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+)
+
 func TestSignVerifyRoundTrip(t *testing.T) {
 	s := NewHMACSigner("dev-key-1", []byte("test-secret"))
 	in := Claims{
 		Subject:   "alice@acme.com",
 		Audience:  []string{"lenny-gateway"},
-		Expiry:    time.Now().Add(time.Hour).Unix(),
-		IssuedAt:  time.Now().Unix(),
+		Expiry:    farFutureExpiry,
+		IssuedAt:  farFutureIssued,
 		JWTID:     "jti-1",
 		TenantID:  "acme",
 		SessionID: "sess_1",
@@ -37,7 +49,7 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 
 func TestVerifyRejectsTamperedSignature(t *testing.T) {
 	s := NewHMACSigner("k", []byte("secret"))
-	tok, _ := s.Sign(Claims{Subject: "alice", Expiry: time.Now().Add(time.Hour).Unix()})
+	tok, _ := s.Sign(Claims{Subject: "alice", Expiry: farFutureExpiry})
 	// Flip the last char of the signature.
 	tampered := tok[:len(tok)-1]
 	if tok[len(tok)-1] == 'A' {
@@ -54,7 +66,7 @@ func TestVerifyRejectsTamperedSignature(t *testing.T) {
 
 func TestVerifyRejectsExpired(t *testing.T) {
 	s := NewHMACSigner("k", []byte("secret"))
-	tok, _ := s.Sign(Claims{Subject: "alice", Expiry: time.Now().Add(-10 * time.Second).Unix()})
+	tok, _ := s.Sign(Claims{Subject: "alice", Expiry: farPastExpiry})
 	_, err := s.Verify(tok)
 	if !IsExpired(err) {
 		t.Errorf("expected expired, got %v", err)
@@ -64,7 +76,7 @@ func TestVerifyRejectsExpired(t *testing.T) {
 func TestVerifyAdmitsWithinSkew(t *testing.T) {
 	s := NewHMACSigner("k", []byte("secret"))
 	// Expired by 500ms — within §13.3 ±1s skew.
-	exp := time.Now().Unix() // truncates to current whole second; "just expired"
+	exp := time.Now().Unix() // lint-determinism:exempt — §13.3 skew boundary requires the wall-clock "now"
 	tok, _ := s.Sign(Claims{Subject: "alice", Expiry: exp})
 	if _, err := s.Verify(tok); err != nil {
 		t.Errorf("token at boundary should admit per §13.3 skew, got %v", err)
@@ -98,7 +110,7 @@ func TestSignerKeyID(t *testing.T) {
 func TestNoSecretLeakAcrossSigners(t *testing.T) {
 	a := NewHMACSigner("ka", []byte("secret-a"))
 	b := NewHMACSigner("kb", []byte("secret-b"))
-	tok, _ := a.Sign(Claims{Subject: "alice", Expiry: time.Now().Add(time.Hour).Unix()})
+	tok, _ := a.Sign(Claims{Subject: "alice", Expiry: farFutureExpiry})
 	_, err := b.Verify(tok)
 	var ve *VerifyError
 	if !errors.As(err, &ve) || ve.Reason != "signature_mismatch" {

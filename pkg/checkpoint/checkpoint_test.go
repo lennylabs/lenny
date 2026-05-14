@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// testNow is the deterministic anchor every checkpoint test uses
+// in place of time.Now(). FreshnessCheck accepts the caller's
+// "now" as an explicit argument, so a fixed value disconnects the
+// suite from wall-clock without losing semantics.
+var testNow = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
 func TestAllLevelsIsExhaustive(t *testing.T) {
 	if got := len(AllLevels()); got != 4 {
 		t.Errorf("AllLevels() returned %d, want 4 per §4.4", got)
@@ -143,7 +149,7 @@ func TestWorkspaceSizePreCheckUnconfigured(t *testing.T) {
 }
 
 func TestFreshnessCheckAdmitsWithinInterval(t *testing.T) {
-	now := time.Now()
+	now := testNow
 	for _, age := range []time.Duration{0, time.Minute, 9 * time.Minute, 10 * time.Minute} {
 		if err := FreshnessCheck(now, now.Add(-age), 10*time.Minute); err != nil {
 			t.Errorf("age %v within 10m interval: want nil, got %v", age, err)
@@ -152,7 +158,7 @@ func TestFreshnessCheckAdmitsWithinInterval(t *testing.T) {
 }
 
 func TestFreshnessCheckRejectsStale(t *testing.T) {
-	now := time.Now()
+	now := testNow
 	err := FreshnessCheck(now, now.Add(-11*time.Minute), 10*time.Minute)
 	var se *StaleCheckpointError
 	if !errors.As(err, &se) {
@@ -164,7 +170,7 @@ func TestFreshnessCheckRejectsStale(t *testing.T) {
 }
 
 func TestFreshnessCheckRejectsNeverCheckpointed(t *testing.T) {
-	err := FreshnessCheck(time.Now(), time.Time{}, 10*time.Minute)
+	err := FreshnessCheck(testNow, time.Time{}, 10*time.Minute)
 	var se *StaleCheckpointError
 	if !errors.As(err, &se) {
 		t.Fatalf("never-checkpointed session should be flagged, got %v", err)
@@ -175,7 +181,7 @@ func TestFreshnessCheckRejectsNeverCheckpointed(t *testing.T) {
 }
 
 func TestFreshnessCheckTreatsZeroIntervalAsUnbounded(t *testing.T) {
-	if err := FreshnessCheck(time.Now(), time.Time{}, 0); err != nil {
+	if err := FreshnessCheck(testNow, time.Time{}, 0); err != nil {
 		t.Errorf("zero interval should be unbounded, got %v", err)
 	}
 }

@@ -165,7 +165,7 @@ func TestScopeMatches(t *testing.T) {
 // itself does not interpret it but tests serve as a check that the
 // field exists on the public API.
 func TestBreakerOpenedAtField(t *testing.T) {
-	when := time.Now().UTC()
+	when := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	b := Breaker{Name: "x", State: StateOpen, LimitTier: TierRuntime, Scope: Scope{Runtime: "r"}, OpenedAt: when}
 	if !b.OpenedAt.Equal(when) {
 		t.Errorf("OpenedAt round-trip lost: %v vs %v", b.OpenedAt, when)

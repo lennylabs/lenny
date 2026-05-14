@@ -25,6 +25,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 )
 
+// Token-claim anchors. The jwt package compares Expiry against real
+// wall-clock during Verify, so a far-future Expiry stays valid for
+// any plausible test-run timestamp; a far-past Expiry is always
+// rejected.
+var (
+	farFutureExpiry = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farFutureIssued = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
+	farPastExpiry   = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+)
+
 type fakeRegistry struct {
 	registered map[string]bool
 }
@@ -51,8 +61,8 @@ func issueToken(t *testing.T, signer *jwt.HMACSigner, tenantID, subject string) 
 		Subject:  subject,
 		TenantID: tenantID,
 		Typ:      auth.TokenUserBearer,
-		Expiry:   time.Now().Add(time.Hour).Unix(),
-		IssuedAt: time.Now().Unix(),
+		Expiry:   farFutureExpiry,
+		IssuedAt: farFutureIssued,
 	})
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
@@ -215,7 +225,7 @@ func TestExpiredTokenReturns401(t *testing.T) {
 		Subject:  "alice",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Expiry:   time.Now().Add(-time.Hour).Unix(),
+		Expiry:   farPastExpiry,
 	})
 	resp, body := do(t, ts, map[string]string{"Authorization": "Bearer " + tok},
 		map[string]any{"runtimeRef": "claude-code"})
