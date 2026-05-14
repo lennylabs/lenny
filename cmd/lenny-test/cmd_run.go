@@ -601,6 +601,14 @@ func runStaticTier() (string, string) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{"scripts/check-action-pins.sh", func() (string, error) {
+			script := filepath.Join(repoRoot(), "scripts", "check-action-pins.sh")
+			if _, err := os.Stat(script); err != nil {
+				return "check-action-pins.sh not present; skipping", nil
+			}
+			out, err := exec.Command("bash", script).CombinedOutput()
+			return string(out), err
+		}},
 		{"scripts/lint-determinism.sh", func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "lint-determinism.sh")
 			if _, err := os.Stat(script); err != nil {

@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: MIT
+#
+# Dependabot configuration.
+#
+# Updates GitHub Action SHA pins weekly. Pin discipline is specified
+# in TESTING.md §20.16 and enforced by scripts/check-action-pins.sh.
+# Dependabot rewrites the pinned SHA and the trailing version comment
+# in a single PR; the static-tier gate verifies the new pin still
+# matches the 40-char hex pattern before the change can land.
+#
+# The Go module ecosystem is on the same weekly cadence so toolchain
+# pins (postgres/redis image tags, kindest/node, etc.) drift visibly
+# rather than silently rotting.
+
+version: 2
+
+updates:
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: github-actions
+    directory: /.github/workflows/reusable
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
+      include: scope
+    labels:
+      - dependencies
+      - go

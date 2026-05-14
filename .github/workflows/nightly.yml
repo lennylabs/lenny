@@ -37,8 +37,8 @@ jobs:
     timeout-minutes: 60
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -48,7 +48,7 @@ jobs:
         run: ./bin/lenny-test --tier e2e_kind --output github-annotations
       - name: Upload verdict
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: verdict-e2e-kind-full
           path: tests/results/latest.json
@@ -64,8 +64,8 @@ jobs:
       matrix:
         provider: [gke, eks, aks]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -77,7 +77,7 @@ jobs:
         run: ./bin/lenny-test --tier e2e_cloud --subset critical-path-rotated --output github-annotations
       - name: Upload verdict
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: verdict-e2e-cloud-${{ matrix.provider }}
           path: tests/results/latest.json
@@ -89,8 +89,8 @@ jobs:
     timeout-minutes: 45
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -100,7 +100,7 @@ jobs:
         run: ./bin/lenny-test --tier chaos --subset core --output github-annotations
       - name: Upload verdict
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: verdict-chaos
           path: tests/results/latest.json
@@ -112,8 +112,8 @@ jobs:
     timeout-minutes: 30
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -123,7 +123,7 @@ jobs:
         run: ./bin/lenny-test --tier security --subset full --output github-annotations
       - name: Upload verdict
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: verdict-security
           path: tests/results/latest.json
@@ -135,8 +135,8 @@ jobs:
     timeout-minutes: 30
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -146,7 +146,7 @@ jobs:
         run: ./bin/lenny-test --tier load --subset per-phase-baseline --output github-annotations
       - name: Upload verdict
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: verdict-load
           path: tests/results/latest.json
@@ -158,8 +158,8 @@ jobs:
     timeout-minutes: 10
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
       - name: go mod verify
@@ -174,14 +174,14 @@ jobs:
     timeout-minutes: 30
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Restore tool cache (~/go/bin)
         id: tools-cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/go/bin
           key: lenny-go-bin-v1-${{ runner.os }}-${{ hashFiles('go.sum') }}
@@ -214,8 +214,8 @@ jobs:
     timeout-minutes: 5
     needs: [pr-suite]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
@@ -237,15 +237,15 @@ jobs:
     needs: [e2e-kind-full, e2e-cloud-rotated, chaos, security-full, load-baseline]
     if: always()
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Download every verdict
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           path: tests/results/
           pattern: verdict-*

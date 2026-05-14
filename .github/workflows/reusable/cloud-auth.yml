@@ -38,21 +38,21 @@ jobs:
 
       - name: GCP — Workload Identity Federation
         if: inputs.provider == 'gke'
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@140bb5113ffb6b65a7e9b937a81fa96cf5064462  # v2.1.11
         with:
           workload_identity_provider: ${{ vars.GCP_WIP }}
           service_account: ${{ vars.GCP_SA }}
 
       - name: AWS — assume role via OIDC
         if: inputs.provider == 'eks'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b630c47ddd6a73dab53a8e  # v4.2.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Azure — OIDC login
         if: inputs.provider == 'aks'
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5  # v2.3.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
