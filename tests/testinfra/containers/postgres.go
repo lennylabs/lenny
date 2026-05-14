@@ -63,7 +63,7 @@ type Postgres struct {
 // StartPostgres provisions a Postgres container, optionally applies
 // migrations, and returns a Postgres handle. The cleanup hook stops the
 // container at test end.
-func StartPostgres(t *testing.T, opts PostgresOptions) *Postgres {
+func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	t.Helper()
 	if opts.Image == "" {
 		opts.Image = defaultImage
@@ -161,7 +161,7 @@ func applyMigrations(dsn, dir string) error {
 
 // MigrateTo applies migrations up to (and including) the given version.
 // Useful for stepwise tests that interleave assertions between migrations.
-func (p *Postgres) MigrateTo(t *testing.T, migrationsDir string, version uint) {
+func (p *Postgres) MigrateTo(t testing.TB, migrationsDir string, version uint) {
 	t.Helper()
 	abs, err := filepath.Abs(migrationsDir)
 	if err != nil {
@@ -190,7 +190,7 @@ func (p *Postgres) MigrateTo(t *testing.T, migrationsDir string, version uint) {
 
 // MigrateDown rolls every applied migration back to the bottom. Returns
 // migrate.ErrNoChange (wrapped) silently if there is nothing to undo.
-func (p *Postgres) MigrateDown(t *testing.T, migrationsDir string) {
+func (p *Postgres) MigrateDown(t testing.TB, migrationsDir string) {
 	t.Helper()
 	abs, err := filepath.Abs(migrationsDir)
 	if err != nil {

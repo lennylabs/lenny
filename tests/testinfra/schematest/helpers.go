@@ -23,14 +23,14 @@ import (
 )
 
 // Compile loads a schema from a path relative to the repository root.
-func Compile(t *testing.T, rel string) *jsonschema.Schema {
+func Compile(t testing.TB, rel string) *jsonschema.Schema {
 	t.Helper()
 	c := NewCompiler(t)
 	return MustCompile(t, c, rel)
 }
 
 // NewCompiler returns a JSON-Schema-2020 compiler.
-func NewCompiler(t *testing.T) *jsonschema.Compiler {
+func NewCompiler(t testing.TB) *jsonschema.Compiler {
 	t.Helper()
 	c := jsonschema.NewCompiler()
 	c.Draft = jsonschema.Draft2020
@@ -38,7 +38,7 @@ func NewCompiler(t *testing.T) *jsonschema.Compiler {
 }
 
 // MustCompile compiles a schema or fails the test.
-func MustCompile(t *testing.T, c *jsonschema.Compiler, rel string) *jsonschema.Schema {
+func MustCompile(t testing.TB, c *jsonschema.Compiler, rel string) *jsonschema.Schema {
 	t.Helper()
 	full := filepath.Join(RepoRoot(t), rel)
 	s, err := c.Compile(full)
@@ -50,7 +50,7 @@ func MustCompile(t *testing.T, c *jsonschema.Compiler, rel string) *jsonschema.S
 
 // MustAddLocalSchema teaches the compiler that a remote $id URL is
 // satisfied by a local file. Used to keep Tier 0 tests offline.
-func MustAddLocalSchema(t *testing.T, c *jsonschema.Compiler, url, rel string) {
+func MustAddLocalSchema(t testing.TB, c *jsonschema.Compiler, url, rel string) {
 	t.Helper()
 	full := filepath.Join(RepoRoot(t), rel)
 	f, err := os.Open(full)
@@ -64,7 +64,7 @@ func MustAddLocalSchema(t *testing.T, c *jsonschema.Compiler, url, rel string) {
 }
 
 // ReadJSON loads and unmarshals a JSON file relative to absolute path.
-func ReadJSON(t *testing.T, path string) any {
+func ReadJSON(t testing.TB, path string) any {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {

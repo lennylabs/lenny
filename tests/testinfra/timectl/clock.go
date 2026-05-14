@@ -60,7 +60,7 @@ type waiter struct {
 // initial is non-zero. The cleanup hook calls Close() to unblock pending
 // Sleep waiters when the test ends, so a leaked goroutine cannot keep
 // the test alive past its own return.
-func NewFake(t *testing.T, initial time.Time) *Fake {
+func NewFake(t testing.TB, initial time.Time) *Fake {
 	t.Helper()
 	f := &Fake{now: initial}
 	t.Cleanup(f.Close)

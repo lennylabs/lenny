@@ -42,7 +42,7 @@ type Rand interface {
 //
 // The deterministic stream is intended for test fixtures. Do not use
 // this RNG for cryptographic operations under test.
-func New(t *testing.T) Rand {
+func New(t testing.TB) Rand {
 	t.Helper()
 	return NewSeeded(deriveSeed(t.Name()))
 }

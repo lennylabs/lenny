@@ -34,7 +34,7 @@ var ErrPredicate = errors.New("predicate error")
 // which is fast enough to keep tests responsive without burning the
 // scheduler. On failure For calls t.Fatalf with the reason and the
 // supplied message.
-func For(t *testing.T, timeout time.Duration, message string, cond Condition) {
+func For(t testing.TB, timeout time.Duration, message string, cond Condition) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
@@ -55,7 +55,7 @@ func For(t *testing.T, timeout time.Duration, message string, cond Condition) {
 // ForResult is For with a returned value. On success returns the
 // payload the predicate captured. The predicate signals readiness by
 // returning (payload, true, nil).
-func ForResult[T any](t *testing.T, timeout time.Duration, message string, cond func() (T, bool, error)) T {
+func ForResult[T any](t testing.TB, timeout time.Duration, message string, cond func() (T, bool, error)) T {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
