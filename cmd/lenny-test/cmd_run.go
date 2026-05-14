@@ -658,18 +658,78 @@ func runE2ECloudTier() (string, string) {
 // to short-circuit when docker / kind / a reachable docker daemon
 // are absent, so the tier reports `pass` (with skipped sub-tests)
 // on hosts without the e2e prerequisites.
+//
+// When subsets is non-empty the runner narrows execution to the
+// matching tests via -run. The subset→test mapping mirrors the
+// names in groups.subsets.yaml.
 func runE2EKindTier(subsets []string) (string, string) {
-	_ = subsets // future: subset → -run regex
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
-	args := []string{"test", "-count=1", "-timeout=600s", "-tags=e2e_kind", "./tests/tier5_e2e_kind/..."}
+	args := []string{"test", "-count=1", "-timeout=600s", "-tags=e2e_kind"}
+	if pattern, err := e2eKindSubsetPattern(subsets); err != nil {
+		return "fail", err.Error()
+	} else if pattern != "" {
+		args = append(args, "-run", pattern)
+	}
+	args = append(args, "./tests/tier5_e2e_kind/...")
 	cmd := exec.Command("go", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "fail", fmt.Sprintf("e2e_kind suite failed:\n%s", out)
 	}
 	return "pass", ""
+}
+
+// e2eKindSubsetPattern joins the subset → test-name mapping into a
+// regex suitable for `go test -run`. An empty subsets slice returns
+// "" so the runner executes the full suite.
+func e2eKindSubsetPattern(subsets []string) (string, error) {
+	if len(subsets) == 0 {
+		return "", nil
+	}
+	mapping := map[string][]string{
+		"critical-path": {
+			"TestWarmPool", "TestSandboxClaim", "TestPodLifecycle",
+			"TestMTLSEnforcement", "TestAdmissionPolicy",
+			"TestAdmissionInventory", "TestLennyOpsFirstDeploy",
+			"TestBootstrapFirstInstall",
+		},
+		"admission-critical-path": {
+			"TestAdmissionPolicy", "TestAdmissionInventory",
+			"TestLabelImmutability", "TestSandboxClaim",
+		},
+		"pool-upgrade":                 {"TestPoolUpgrade"},
+		"mtls":                         {"TestMTLSEnforcement"},
+		"etcd-encryption":              {"TestEtcdEncryption"},
+		"bootstrap-first-install":      {"TestBootstrapFirstInstall"},
+		"llm-proxy-proxy-mode":         {"TestLLMProxyProxyMode", "TestAdmissionDirectModeIsolation"},
+		"drain-readiness":              {"TestDrainReadinessWebhook"},
+		"checkpoint-resume":            {"TestPodLifecycle", "TestNodeDrain"},
+		"concurrent-modes":             {"TestConcurrentModes"},
+		"audit-pipeline":               {"TestAuditPipeline"},
+		"backup-restore":               {"TestBackupRestore"},
+		"data-residency":               {"TestAdmissionDataResidency"},
+		"t4-node-isolation":            {"TestAdmissionT4NodeIsolation"},
+		"cross-environment-delegation": {"TestCrossEnvironmentDelegation"},
+		"image-signing":                {"TestImageSigning"},
+	}
+	names := []string{}
+	seen := map[string]bool{}
+	for _, sub := range subsets {
+		tests, ok := mapping[sub]
+		if !ok {
+			return "", fmt.Errorf("unknown e2e_kind subset %q", sub)
+		}
+		for _, n := range tests {
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	return "^(" + strings.Join(names, "|") + ")$", nil
 }
 
 // runIntegrationTier runs the tier-4 integration tests under the
@@ -737,16 +797,21 @@ func contractTargets(subsets []string) ([]string, error) {
 		return []string{"./tests/tier3_contract/..."}, nil
 	}
 	mapping := map[string]string{
-		"adapter-jsonl":       "./tests/tier3_contract/adapter_jsonl/...",
-		"workspaceplan":       "./tests/tier3_contract/workspaceplan/...",
-		"rest-sessions":       "./tests/tier3_contract/rest_sessions/...",
-		"rest-idempotency":    "./tests/tier3_contract/rest_idempotency/...",
-		"rest-circuitbreaker": "./tests/tier3_contract/rest_circuitbreaker/...",
-		"rest-auth":           "./tests/tier3_contract/rest_auth/...",
-		"oauth-token":         "./tests/tier3_contract/oauth_token/...",
-		"sdk-go":              "./tests/tier3_contract/sdks/...",
-		"sdk-python":          "./tests/tier3_contract/sdks/...",
-		"sdk-typescript":      "./tests/tier3_contract/sdks/...",
+		"adapter-jsonl":         "./tests/tier3_contract/adapter_jsonl/...",
+		"workspaceplan":         "./tests/tier3_contract/workspaceplan/...",
+		"rest-sessions":         "./tests/tier3_contract/rest_sessions/...",
+		"rest-idempotency":      "./tests/tier3_contract/rest_idempotency/...",
+		"rest-circuitbreaker":   "./tests/tier3_contract/rest_circuitbreaker/...",
+		"rest-auth":             "./tests/tier3_contract/rest_auth/...",
+		"oauth-token":           "./tests/tier3_contract/oauth_token/...",
+		"rest-mcp-consistency":  "./tests/tier3_contract/rest_mcp_consistency/...",
+		"rest-openai-chat":      "./tests/tier3_contract/rest_openai_chat/...",
+		"rest-openai-responses": "./tests/tier3_contract/rest_openai_responses/...",
+		"ocsf-audit":            "./tests/tier3_contract/ocsf_audit/...",
+		"cloudevents":           "./tests/tier3_contract/cloudevents/...",
+		"sdk-go":                "./tests/tier3_contract/sdks/...",
+		"sdk-python":            "./tests/tier3_contract/sdks/...",
+		"sdk-typescript":        "./tests/tier3_contract/sdks/...",
 	}
 	seen := map[string]bool{}
 	targets := []string{}
