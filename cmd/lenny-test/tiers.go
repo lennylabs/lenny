@@ -119,8 +119,9 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-4.5-gate":
 		return []tierPlan{
-			{name: "static", notes: "pkg/auth builds"},
-			{name: "unit", notes: "§10.2 TokenType + Role enums, tenant_id format, tenant-claim extraction"},
+			{name: "static", notes: "pkg/auth + pkg/auth/jwt + gateway/middleware/auth build"},
+			{name: "unit", notes: "§10.2 TokenType + Role enums, tenant_id format, tenant-claim extraction; HMAC-SHA256 sign/verify round-trip; tamper and expiry rejection with §13.3 ±1s skew"},
+			{name: "contract", subsets: []string{"rest-auth"}, notes: "§10.2 wire contract end-to-end: single- vs multi-tenant extraction, TENANT_CLAIM_MISSING/INVALID_FORMAT/NOT_FOUND envelopes, expired/tampered token rejection, dev-header transport"},
 		}
 	case "phase-5.5-gate":
 		return []tierPlan{

@@ -263,6 +263,11 @@ subsets:
     tests:
       - tests/tier3_contract/rest_circuitbreaker/...
 
+  rest-auth:
+    tier: contract
+    tests:
+      - tests/tier3_contract/rest_auth/...
+
   sdk-go:
     tier: contract
     tests:
