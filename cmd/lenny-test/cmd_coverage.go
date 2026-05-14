@@ -56,12 +56,12 @@ func reportSpecCoverage(threshold float64, jsonOut bool) int {
 	}
 	var doc struct {
 		Sections map[string]struct {
-			Title            string   `json:"title"`
-			SpecFile         string   `json:"spec_file"`
-			Tests            []string `json:"tests"`
-			Packages         []string `json:"packages"`
-			BlockedUntilPhase string  `json:"blocked_until_phase"`
-			Notes            string   `json:"notes"`
+			Title             string   `json:"title"`
+			SpecFile          string   `json:"spec_file"`
+			Tests             []string `json:"tests"`
+			Packages          []string `json:"packages"`
+			BlockedUntilPhase string   `json:"blocked_until_phase"`
+			Notes             string   `json:"notes"`
 		} `json:"sections"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -102,11 +102,11 @@ func reportSpecCoverage(threshold float64, jsonOut bool) int {
 
 	if jsonOut {
 		out, _ := json.MarshalIndent(map[string]any{
-			"leaf_sections":  totalLeaves,
-			"with_tests":     withTests,
-			"coverage_rate":  rate,
-			"threshold":      threshold,
-			"uncovered":      uncovered,
+			"leaf_sections": totalLeaves,
+			"with_tests":    withTests,
+			"coverage_rate": rate,
+			"threshold":     threshold,
+			"uncovered":     uncovered,
 		}, "", "  ")
 		fmt.Println(string(out))
 	} else {

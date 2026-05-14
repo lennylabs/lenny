@@ -71,11 +71,11 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 	// Extensions and the syntactic comment marker that may carry
 	// the SPDX header. Each entry: (ext, requiredPrefix).
 	exts := map[string]string{
-		".sh":  "# SPDX-License-Identifier:",
+		".sh":   "# SPDX-License-Identifier:",
 		".yaml": "# SPDX-License-Identifier:",
 		".yml":  "# SPDX-License-Identifier:",
-		".py":  "# SPDX-License-Identifier:",
-		".ts":  "// SPDX-License-Identifier:",
+		".py":   "# SPDX-License-Identifier:",
+		".ts":   "// SPDX-License-Identifier:",
 	}
 	// Files exempt from the header (generated, vendored, fixtures).
 	exempt := func(rel string) bool {
@@ -83,7 +83,7 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 			"tests/results/",
 			"tests/testdata/",
 			"sdks/vendor/",
-			"compose/otel-config.yaml", // upstream-style config; SPDX would clutter
+			"compose/otel-config.yaml",    // upstream-style config; SPDX would clutter
 			"tests/tier7_load/baselines/", // generated baselines
 		} {
 			if strings.HasPrefix(rel, prefix) {

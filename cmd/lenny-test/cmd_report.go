@@ -59,9 +59,9 @@ func runReport(args []string) int {
 }
 
 type verdictDoc struct {
-	RunID    string            `json:"run_id"`
-	Verdict  string            `json:"verdict"`
-	Duration int64             `json:"duration_ms"`
+	RunID    string `json:"run_id"`
+	Verdict  string `json:"verdict"`
+	Duration int64  `json:"duration_ms"`
 	Tiers    map[string]struct {
 		Status string `json:"status"`
 		Detail string `json:"detail"`
@@ -70,11 +70,11 @@ type verdictDoc struct {
 }
 
 type rolledUp struct {
-	OverallStatus   string                  `json:"verdict"`
-	GeneratedAt     string                  `json:"generated_at"`
-	TotalVerdicts   int                     `json:"total_verdicts"`
-	PerTier         map[string]tierRollup   `json:"per_tier"`
-	PerVerdict      []verdictRow            `json:"per_verdict"`
+	OverallStatus string                `json:"verdict"`
+	GeneratedAt   string                `json:"generated_at"`
+	TotalVerdicts int                   `json:"total_verdicts"`
+	PerTier       map[string]tierRollup `json:"per_tier"`
+	PerVerdict    []verdictRow          `json:"per_verdict"`
 }
 
 type tierRollup struct {
