@@ -1,0 +1,7 @@
+{
+  "id": "sess_01ABC",
+  "runtimeRef": "claude-code",
+  "state": "created",
+  "tenantId": "acme",
+  "userId": "alice@acme.com"
+}
