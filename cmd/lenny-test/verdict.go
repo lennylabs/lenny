@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,14 +46,25 @@ type infrastructureInfo struct {
 }
 
 type tierStat struct {
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	Reason     string `json:"reason,omitempty"`
-	Total      int    `json:"total,omitempty"`
-	Passed     int    `json:"passed,omitempty"`
-	Failed     int    `json:"failed,omitempty"`
-	Skipped    int    `json:"skipped,omitempty"`
-	Detail     string `json:"detail,omitempty"`
+	Status     string         `json:"status"`
+	DurationMS int64          `json:"duration_ms"`
+	Reason     string         `json:"reason,omitempty"`
+	Total      int            `json:"total,omitempty"`
+	Passed     int            `json:"passed,omitempty"`
+	Failed     int            `json:"failed,omitempty"`
+	Skipped    int            `json:"skipped,omitempty"`
+	Cached     int            `json:"cached,omitempty"`
+	Detail     string         `json:"detail,omitempty"`
+	Failures   []failureEntry `json:"failures,omitempty"`
+}
+
+// failureEntry captures one failed test with enough structure for a
+// PR comment to link to it.
+type failureEntry struct {
+	Test     string `json:"test"`
+	Package  string `json:"package,omitempty"`
+	Location string `json:"location,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 func newVerdict(s selector) *verdict {
@@ -133,14 +145,68 @@ func (v *verdict) write(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
+	// Rotate: write verdict-<run_id>.json alongside latest.json so
+	// recent runs survive. The latest.json file is overwritten with
+	// the same content for tools that consume the canonical path.
+	dir := filepath.Dir(path)
+	rotated := filepath.Join(dir, "verdict-"+v.RunID+".json")
+	for _, p := range []string{path, rotated} {
+		f, err := os.Create(p)
+		if err != nil {
+			return err
+		}
+		enc := json.NewEncoder(f)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(v); err != nil {
+			_ = f.Close()
+			return err
+		}
+		_ = f.Close()
 	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	// Bound the on-disk history: keep the 20 most recent rotated
+	// files; older verdicts are removed.
+	pruneOldVerdicts(dir, 20)
+	return nil
+}
+
+// pruneOldVerdicts deletes all but the `keep` most recent
+// verdict-<id>.json files in dir. Errors are ignored — rotation is
+// best-effort.
+func pruneOldVerdicts(dir string, keep int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	type rotated struct {
+		Path    string
+		ModTime time.Time
+	}
+	files := []rotated{}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, "verdict-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, rotated{Path: filepath.Join(dir, name), ModTime: info.ModTime()})
+	}
+	if len(files) <= keep {
+		return
+	}
+	// Sort by mtime descending; drop everything past `keep`.
+	for i := 0; i < len(files); i++ {
+		for j := i + 1; j < len(files); j++ {
+			if files[j].ModTime.After(files[i].ModTime) {
+				files[i], files[j] = files[j], files[i]
+			}
+		}
+	}
+	for _, f := range files[keep:] {
+		_ = os.Remove(f.Path)
+	}
 }
 
 func (v *verdict) json() string {
