@@ -38,7 +38,7 @@
 #     tables; we conservatively flag any JOIN missing the
 #     `<lhs>.tenant_id = <rhs>.tenant_id` pattern.
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # shellcheck source=lib/common.sh

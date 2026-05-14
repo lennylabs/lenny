@@ -36,7 +36,7 @@
 #     migrations; an index added in a later migration is checked in the
 #     migration that declares it.
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # shellcheck source=lib/common.sh

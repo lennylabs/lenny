@@ -11,7 +11,7 @@
 #
 # See TESTING_DEPENDENCIES.md §14 for the canonical usage.
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # shellcheck source=lib/common.sh

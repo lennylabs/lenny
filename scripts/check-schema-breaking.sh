@@ -18,7 +18,7 @@
 #   - no breaking changes detected
 # and non-zero with a per-file report when a breaking change is found.
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEMAS="${ROOT}/schemas"

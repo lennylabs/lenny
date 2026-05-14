@@ -8,7 +8,7 @@
 # When buf generate succeeds and produces no diff the script reports
 # clean; any diff fails with the file list.
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN_CONFIG="${ROOT}/schemas/buf.gen.yaml"
@@ -51,7 +51,7 @@ while IFS= read -r line; do
 done < <(grep -E "^\s*out:" "${GEN_CONFIG}")
 
 if [[ ${#gen_paths[@]} -eq 0 ]]; then
-    echo "check-proto-generated: ${GEN_CONFIG} has plugins but no `out:` paths to diff; skipping"
+    echo "check-proto-generated: ${GEN_CONFIG} has plugins but no 'out:' paths to diff; skipping"
     exit 0
 fi
 

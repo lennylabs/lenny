@@ -12,7 +12,7 @@
 #   0  all links valid (or skipped because markdown-link-check not present)
 #   1  one or more broken links
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

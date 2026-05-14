@@ -20,7 +20,7 @@
 #   0  no violations (or no test files to scan)
 #   N  N violations across all checks (counts file × rule)
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

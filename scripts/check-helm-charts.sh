@@ -8,7 +8,7 @@
 # reports and skips. When helm or conftest aren't on PATH it also
 # skips with a diagnosis.
 
-set -uo pipefail
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="${ROOT}/charts/lenny"

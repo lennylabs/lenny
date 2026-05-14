@@ -16,7 +16,7 @@
 # §19.3 sets a kill-rate threshold per critical package; that table
 # lives in lenny-test internals (cmd/lenny-test/cmd_mutation.go).
 
-set -uo pipefail
+set -euo pipefail
 
 PATTERN="${1:-pkg/...}"
 
