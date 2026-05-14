@@ -1,6 +1,6 @@
 # `tests/`
 
-Test infrastructure for Lenny. The architecture and conventions are defined in [`../TESTING.md`](../TESTING.md). The local install and setup steps are in [`../TESTING_DEPENDENCIES.md`](../TESTING_DEPENDENCIES.md).
+Test infrastructure for Lenny. The architecture and conventions are defined in [`../TESTING.md`](../TESTING.md). The developer-facing onramp is at [`../docs/testing/`](../docs/testing/index.md). Local install and setup is in [`../TESTING_DEPENDENCIES.md`](../TESTING_DEPENDENCIES.md).
 
 ## Files in this directory
 
@@ -47,9 +47,51 @@ lenny-test validate-maps
 # Validate that every component-and-up test has a diagnosis comment
 lenny-test validate-diagnosis
 
-# Bring up the cached container daemon
-lenny-test infra up --profile containers
+# Discovery
+lenny-test list --tier unit       # enumerate test functions
+lenny-test list --spec 4.2,12.3   # tests for spec sections
+lenny-test list --pkg pkg/quota   # tests covering a package
+lenny-test list --changed         # tests for the current diff
 
-# Status
+# Cached container daemon (compose profile)
+lenny-test infra up --profile compose
 lenny-test infra status
+
+# Watch
+lenny-test watch --tier unit
+lenny-test watch --changed
+
+# Stress (50 consecutive runs)
+lenny-test stress --test TestSandboxClaim --runs 50
+lenny-test stress --pattern 'TestSession.*' --runs 25
+
+# Coverage
+lenny-test coverage --go         # Go coverage from tests/results/cover.out
+lenny-test coverage --spec       # spec-section coverage
+
+# Baselines
+lenny-test baseline diff --before old.json --after new.json --threshold 0.15
+
+# Aggregate verdicts
+lenny-test report --dir tests/results --output markdown
+
+# PR comment
+lenny-test comment --verdict tests/results/latest.json
 ```
+
+The full list is in `lenny-test --help`.
+
+## Test data
+
+`testdata/` ships canonical fixtures:
+
+- `migrations/` — Phase 1.5 fixture migrations
+- `anthropic/`, `openai_chat/`, `openai_responses/` — translator
+  golden corpora (request + response pairs, including streaming)
+- `uploads/` — multipart and archive fixtures for §13.4 validators
+
+## Verdict outputs
+
+- `results/latest.json` — most recent verdict (overwritten every run)
+- `results/verdict-<run_id>.json` — rotated history (20 most recent retained)
+- `results/cover.out` — Go coverage profile from `runUnitTier`
