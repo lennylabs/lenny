@@ -299,3 +299,10 @@ subsets:
     tier: component
     tests:
       - tests/tier2_component/observability/...
+
+  # ---- Tier 4 integration subsets ----
+
+  session-lifecycle:
+    tier: integration
+    tests:
+      - tests/tier4_integration/session_lifecycle_test.go

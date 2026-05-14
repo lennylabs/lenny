@@ -116,6 +116,7 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/api/v1/session + sessionstore/memstore + sessionserver + cmd/lenny-gateway build"},
 			{name: "unit", notes: "§15.1 SessionState + precondition validator; memstore CRUD + tenant isolation"},
 			{name: "contract", subsets: []string{"rest-sessions"}, notes: "§15.1 REST session lifecycle against the minimal gateway: create / get / list / transitions / precondition rejections / cross-tenant 404 / INVALID_STATE_TRANSITION envelope"},
+			{name: "integration", subsets: []string{"session-lifecycle"}, notes: "§15.1 lifecycle end-to-end through the cmd/lenny-gateway subprocess: real HTTP listener, real binary, in-memory state machine survives round-trips"},
 		}
 	case "phase-4.5-gate":
 		return []tierPlan{

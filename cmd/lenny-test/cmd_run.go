@@ -275,6 +275,17 @@ func execute(s selector, r resolvedSelector) int {
 				}
 				return printSummary(s, v, overallStatus, 1)
 			}
+		case "integration":
+			st, msg := runIntegrationTier(t.subsets)
+			v.recordTier(t.name, st, time.Since(start), msg)
+			if st != "pass" && !s.continueErr {
+				v.next("Fix integration-tier failures before moving to higher tiers.")
+				overallStatus = "FAIL"
+				if writeErr := v.write(s.verdictFile); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
+				}
+				return printSummary(s, v, overallStatus, 1)
+			}
 		default:
 			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 		}
@@ -527,6 +538,42 @@ func runConformanceTier(subsets []string) (string, string) {
 		results = append(results, strings.TrimSpace(string(out)))
 	}
 	return "pass", strings.Join(results, "\n\n")
+}
+
+// runIntegrationTier runs the tier-4 integration tests under the
+// `integration` build tag. Each test boots cmd/lenny-gateway as a
+// subprocess (via tests/testinfra/gateway) and drives the real HTTP
+// surface end-to-end.
+func runIntegrationTier(subsets []string) (string, string) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "skipped", "go not on PATH"
+	}
+	targets := []string{"./tests/tier4_integration/..."}
+	if len(subsets) > 0 {
+		mapping := map[string]string{
+			"session-lifecycle": "./tests/tier4_integration/session_lifecycle_test.go",
+		}
+		targets = nil
+		seen := map[string]bool{}
+		for _, sub := range subsets {
+			p, ok := mapping[sub]
+			if !ok {
+				return "fail", fmt.Sprintf("unknown integration subset %q", sub)
+			}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			targets = append(targets, p)
+		}
+	}
+	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=integration"}, targets...)
+	cmd := exec.Command("go", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "fail", fmt.Sprintf("integration suite failed:\n%s", out)
+	}
+	return "pass", ""
 }
 
 func runContractTier(subsets []string) (string, string) {
