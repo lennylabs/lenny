@@ -72,6 +72,8 @@ func main() {
 		os.Exit(runCoverage(args[1:]))
 	case "report":
 		os.Exit(runReport(args[1:]))
+	case "watch":
+		os.Exit(runWatch(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
