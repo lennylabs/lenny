@@ -181,6 +181,36 @@ func triggerMode(s selector) string {
 	return "unknown"
 }
 
+// recordTierWithResult is the §7 counterpart of recordTier: it
+// stores per-tier total/passed/failed/skipped counts and the
+// per-test failure entries that came out of `go test -json`. Status
+// reclassification (FAIL → INCONCLUSIVE on infra-class detail) and
+// the overall verdict update happen in recordTier; this method
+// delegates to it for that bookkeeping.
+func (v *verdict) recordTierWithResult(name, status string, dur time.Duration, detail string, r *tierResult) {
+	v.recordTier(name, status, dur, detail)
+	if r == nil {
+		return
+	}
+	t := v.Tiers[name]
+	t.Total = r.Total
+	t.Passed = r.Passed
+	t.Failed = r.Failed
+	t.Skipped = r.Skipped
+	if len(r.Failures) > 0 {
+		t.Failures = r.Failures
+	}
+	v.Tiers[name] = t
+	// Promote per-failure spec sections to the verdict-level
+	// spec_section_status map per §7: each section with at least
+	// one failing test is reported FAIL.
+	for _, f := range r.Failures {
+		for _, s := range f.SpecSections {
+			v.SpecStatus[s] = "FAIL"
+		}
+	}
+}
+
 func (v *verdict) recordTier(name, status string, dur time.Duration, detail string) {
 	// Reclassify a "fail" whose detail looks like an infrastructure
 	// blow-up into "inconclusive" per §7 + §21.3. A genuine test

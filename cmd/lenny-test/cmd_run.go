@@ -313,8 +313,8 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "unit":
-			st, msg := runUnitTier()
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runUnitTier()
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("unit", "Fix unit-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -324,8 +324,8 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "component":
-			st, msg := runComponentTier(t.subsets)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runComponentTier(t.subsets)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("component", "Fix component-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -335,8 +335,8 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "contract":
-			st, msg := runContractTier(t.subsets)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runContractTier(t.subsets)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("contract", "Fix contract-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -346,8 +346,8 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "conformance":
-			st, msg := runConformanceTier(t.subsets)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runConformanceTier(t.subsets)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("conformance", "Fix conformance-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -361,8 +361,8 @@ func execute(s selector, r resolvedSelector) int {
 			// stack. Phase 0 uses the `default` profile; mtls is the
 			// only alternative and is opt-in via the kind tier.
 			v.Infra.ComposeProfile = "default"
-			st, msg := runIntegrationTier(t.subsets)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runIntegrationTier(t.subsets)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("integration", "Fix integration-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -380,8 +380,8 @@ func execute(s selector, r resolvedSelector) int {
 			} else {
 				v.Infra.KindCluster = "lenny"
 			}
-			st, msg := runE2EKindTier(t.subsets)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runE2EKindTier(t.subsets)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next(v.synthesizeNextAction("e2e_kind", "Fix e2e-Kind-tier failures before moving to higher tiers."))
 				overallStatus = v.Verdict
@@ -391,40 +391,40 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "load":
-			st, msg := runTaggedTier("load", "./tests/tier7_load/...", 600*time.Second)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runTaggedTier("load", "./tests/tier7_load/...", 600*time.Second)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix load-tier failures before moving to higher tiers.")
 				overallStatus = v.Verdict
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "chaos":
-			st, msg := runTaggedTier("chaos", "./tests/tier8_chaos/...", 600*time.Second)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runTaggedTier("chaos", "./tests/tier8_chaos/...", 600*time.Second)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix chaos-tier failures before moving to higher tiers.")
 				overallStatus = v.Verdict
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "security":
-			st, msg := runTaggedTier("security", "./tests/tier9_security/...", 600*time.Second)
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runTaggedTier("security", "./tests/tier9_security/...", 600*time.Second)
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix security-tier failures before moving to higher tiers.")
 				overallStatus = v.Verdict
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "docs":
-			st, msg := runDocsTier()
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runDocsTier()
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix docs-tier failures before moving to higher tiers.")
 				overallStatus = v.Verdict
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "e2e_cloud":
-			st, msg := runE2ECloudTier()
-			v.recordTier(t.name, st, time.Since(start), msg)
+			st, msg, result := runE2ECloudTier()
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix e2e-cloud-tier failures before moving to higher tiers.")
 				overallStatus = v.Verdict
@@ -729,30 +729,56 @@ func runStaticTier() (string, string) {
 	return "pass", ""
 }
 
-func runUnitTier() (string, string) {
+func runUnitTier() (string, string, *tierResult) {
 	// `go test ./...` over the repo. Race detection is on by default
 	// per §17.4. When LENNY_COVER_PROFILE is set, coverage is
 	// emitted to that path so `lenny-test coverage --go` can later
 	// roll it up.
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
 	if !hasGoCode() {
-		return "pass", "no Go packages under pkg/ yet"
+		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
-	args := []string{"test", "-race", "-count=1"}
+	extra := []string{"-race", "-count=1"}
 	if profile := coverProfilePath(); profile != "" {
 		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
-			args = append(args, "-coverprofile="+profile, "-covermode=atomic")
+			extra = append(extra, "-coverprofile="+profile, "-covermode=atomic")
 		}
 	}
-	args = append(args, "./...")
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("go test failed: %v\n%s", err, out)
+	extra = append(extra, "./...")
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		// go test exited non-zero but no per-test failure was recorded
+		// (build error, vet error, etc.). Surface the raw tail.
+		return "fail", fmt.Sprintf("go test failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
+}
+
+// summarizeFailures produces a one-line summary of a tier's failed
+// tests for the verdict.detail field. The full set lives in
+// tierStat.Failures[].
+func summarizeFailures(r *tierResult) string {
+	if r == nil || len(r.Failures) == 0 {
+		return ""
+	}
+	const max = 3
+	names := make([]string, 0, max)
+	for i, f := range r.Failures {
+		if i >= max {
+			break
+		}
+		names = append(names, f.Package+"::"+f.Test)
+	}
+	suffix := ""
+	if len(r.Failures) > max {
+		suffix = fmt.Sprintf(", ... (+%d more)", len(r.Failures)-max)
+	}
+	return fmt.Sprintf("%d failure(s): %s%s", len(r.Failures), strings.Join(names, ", "), suffix)
 }
 
 // planNeedsCompose reports whether any tier in r benefits from the
@@ -796,7 +822,7 @@ func resolveGoBin(name string) string {
 	return ""
 }
 
-func runComponentTier(subsets []string) (string, string) {
+func runComponentTier(subsets []string) (string, string, *tierResult) {
 	// Tier 2 component tests are guarded by the `component` build tag. Each
 	// subdirectory under tests/tier2_component/ targets a distinct subsystem;
 	// some need Docker (testcontainers-go), others run in-process. When
@@ -804,27 +830,29 @@ func runComponentTier(subsets []string) (string, string) {
 	// phase gate can run only the work in scope for that phase. When subsets
 	// is empty the runner executes every component directory.
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
 	targets, needsDocker, err := componentTargets(subsets)
 	if err != nil {
-		return "fail", err.Error()
+		return "fail", err.Error(), nil
 	}
 	if needsDocker {
 		if _, err := exec.LookPath("docker"); err != nil {
-			return "skipped", "docker not on PATH"
+			return "skipped", "docker not on PATH", nil
 		}
 		if err := exec.Command("docker", "info").Run(); err != nil {
-			return "skipped", "docker daemon not running; start Docker and retry"
+			return "skipped", "docker daemon not running; start Docker and retry", nil
 		}
 	}
-	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=component"}, targets...)
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("component suite failed:\n%s", out)
+	extra := append([]string{"-count=1", "-timeout=180s", "-tags=component"}, targets...)
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("component suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // componentTargets maps component subset names to (test package globs,
@@ -862,7 +890,7 @@ func componentTargets(subsets []string) ([]string, bool, error) {
 	return targets, needsDocker, nil
 }
 
-func runConformanceTier(subsets []string) (string, string) {
+func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	// Tier 10 conformance exercises the runtime adapters against the
 	// lenny-compliance harness. The subset names map to integration
 	// levels: "basic" → cmd/runtimes/echo at lenny-compliance --level
@@ -870,12 +898,12 @@ func runConformanceTier(subsets []string) (string, string) {
 	// --level full. An empty subset list runs every level whose target
 	// runtime is built.
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
 	root := repoRoot()
 	tmpBase, err := os.MkdirTemp("", "lenny-conformance-*")
 	if err != nil {
-		return "fail", fmt.Sprintf("mkdtemp: %v", err)
+		return "fail", fmt.Sprintf("mkdtemp: %v", err), nil
 	}
 	defer os.RemoveAll(tmpBase)
 
@@ -896,60 +924,80 @@ func runConformanceTier(subsets []string) (string, string) {
 	cmd := exec.Command("go", "build", "-o", binCompliance, "./cmd/lenny-compliance")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "fail", fmt.Sprintf("build lenny-compliance: %v\n%s", err, out)
+		return "fail", fmt.Sprintf("build lenny-compliance: %v\n%s", err, out), nil
 	}
 
 	results := []string{}
+	tr := &tierResult{}
 	for _, sub := range subsets {
 		rb, ok := available[sub]
 		if !ok {
-			return "fail", fmt.Sprintf("unknown conformance subset %q", sub)
+			return "fail", fmt.Sprintf("unknown conformance subset %q", sub), tr
 		}
 		binRuntime := filepath.Join(tmpBase, rb.runtime)
 		buildCmd := exec.Command("go", "build", "-o", binRuntime, rb.pkg)
 		buildCmd.Dir = root
 		if out, err := buildCmd.CombinedOutput(); err != nil {
-			return "fail", fmt.Sprintf("build %s: %v\n%s", rb.pkg, err, out)
+			tr.Total++
+			tr.Failed++
+			tr.Failures = append(tr.Failures, failureEntry{
+				Test: rb.runtime, Package: rb.pkg,
+				Error: fmt.Sprintf("build failed: %v", err), StdoutTail: string(out),
+				RerunCommand: fmt.Sprintf("go build -o /tmp/%s %s", rb.runtime, rb.pkg),
+			})
+			return "fail", fmt.Sprintf("build %s: %v\n%s", rb.pkg, err, out), tr
 		}
 		runCmd := exec.Command(binCompliance, "--binary", binRuntime, "--level", rb.level)
 		out, err := runCmd.CombinedOutput()
+		tr.Total++
 		if err != nil {
-			return "fail", fmt.Sprintf("conformance --level %s against %s failed:\n%s", rb.level, rb.runtime, out)
+			tr.Failed++
+			tr.Failures = append(tr.Failures, failureEntry{
+				Test: rb.runtime, Package: rb.pkg,
+				Error: fmt.Sprintf("conformance --level %s failed", rb.level), StdoutTail: string(out),
+				RerunCommand: fmt.Sprintf("%s --binary %s --level %s", binCompliance, binRuntime, rb.level),
+			})
+			return "fail", fmt.Sprintf("conformance --level %s against %s failed:\n%s", rb.level, rb.runtime, out), tr
 		}
+		tr.Passed++
 		results = append(results, strings.TrimSpace(string(out)))
 	}
-	return "pass", strings.Join(results, "\n\n")
+	return "pass", strings.Join(results, "\n\n"), tr
 }
 
 // runDocsTier runs the tier-11 documentation checks. No build tag —
 // these tests exercise repo state directly.
-func runDocsTier() (string, string) {
+func runDocsTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
-	cmd := exec.Command("go", "test", "-count=1", "-timeout=60s", "./tests/tier11_docs/...")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("docs suite failed:\n%s", out)
+	result, runErr := runGoTestJSON("-count=1", "-timeout=60s", "./tests/tier11_docs/...")
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("docs suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // runTaggedTier runs `go test` over targetGlob under the supplied
 // build tag. Used for tiers whose tests are mostly skip-bearing
 // scaffolds — load, chaos, security — so the tier reports `pass`
 // (with skipped sub-tests) until the backing infrastructure lands.
-func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, string) {
+func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
-	args := []string{"test", "-count=1", fmt.Sprintf("-timeout=%s", timeout), "-tags=" + tag, targetGlob}
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("%s suite failed:\n%s", tag, out)
+	extra := []string{"-count=1", fmt.Sprintf("-timeout=%s", timeout), "-tags=" + tag, targetGlob}
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("%s suite failed: %v\n%s", tag, runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // runE2ECloudTier runs the tier-6 cloud tests under the `e2e_cloud`
@@ -957,17 +1005,18 @@ func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, strin
 // per-provider auth surface; without that, every test skips with a
 // precise diagnosis. The tier reports `pass` (with skipped
 // sub-tests) on hosts that have not been bound to a cloud target.
-func runE2ECloudTier() (string, string) {
+func runE2ECloudTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
-	args := []string{"test", "-count=1", "-timeout=1800s", "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/..."}
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("e2e_cloud suite failed:\n%s", out)
+	result, runErr := runGoTestJSON("-count=1", "-timeout=1800s", "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/...")
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("e2e_cloud suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // runE2EKindTier runs the tier-5 e2e tests under the `e2e_kind`
@@ -979,23 +1028,25 @@ func runE2ECloudTier() (string, string) {
 // When subsets is non-empty the runner narrows execution to the
 // matching tests via -run. The subset→test mapping mirrors the
 // names in groups.subsets.yaml.
-func runE2EKindTier(subsets []string) (string, string) {
+func runE2EKindTier(subsets []string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
-	args := []string{"test", "-count=1", "-timeout=600s", "-tags=e2e_kind"}
+	extra := []string{"-count=1", "-timeout=600s", "-tags=e2e_kind"}
 	if pattern, err := e2eKindSubsetPattern(subsets); err != nil {
-		return "fail", err.Error()
+		return "fail", err.Error(), nil
 	} else if pattern != "" {
-		args = append(args, "-run", pattern)
+		extra = append(extra, "-run", pattern)
 	}
-	args = append(args, "./tests/tier5_e2e_kind/...")
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("e2e_kind suite failed:\n%s", out)
+	extra = append(extra, "./tests/tier5_e2e_kind/...")
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("e2e_kind suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // e2eKindSubsetPattern joins the subset → test-name mapping into a
@@ -1054,9 +1105,9 @@ func e2eKindSubsetPattern(subsets []string) (string, error) {
 // subprocess (via tests/testinfra/gateway) and drives the real HTTP
 // surface end-to-end. When subsets is non-empty the runner uses
 // -run with the canonical regex for that subset.
-func runIntegrationTier(subsets []string) (string, string) {
+func runIntegrationTier(subsets []string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
 	runArgs := []string{}
 	if len(subsets) > 0 {
@@ -1068,23 +1119,25 @@ func runIntegrationTier(subsets []string) (string, string) {
 		for _, sub := range subsets {
 			p, ok := mapping[sub]
 			if !ok {
-				return "fail", fmt.Sprintf("unknown integration subset %q", sub)
+				return "fail", fmt.Sprintf("unknown integration subset %q", sub), nil
 			}
 			parts = append(parts, p)
 		}
 		runArgs = []string{"-run", strings.Join(parts, "|")}
 	}
-	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=integration"}, runArgs...)
-	args = append(args, "./tests/tier4_integration/...")
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("integration suite failed:\n%s", out)
+	extra := append([]string{"-count=1", "-timeout=180s", "-tags=integration"}, runArgs...)
+	extra = append(extra, "./tests/tier4_integration/...")
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("integration suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
-func runContractTier(subsets []string) (string, string) {
+func runContractTier(subsets []string) (string, string, *tierResult) {
 	// Tier 3 contract tests are guarded by the `contract` build tag. Each
 	// subdirectory under tests/tier3_contract/ targets a distinct contract
 	// surface (adapter_jsonl, workspaceplan, ...). When subsets is non-empty
@@ -1092,19 +1145,21 @@ func runContractTier(subsets []string) (string, string) {
 	// only the contracts in scope for that phase. When subsets is empty the
 	// runner exercises every contract directory.
 	if _, err := exec.LookPath("go"); err != nil {
-		return "skipped", "go not on PATH"
+		return "skipped", "go not on PATH", nil
 	}
 	targets, err := contractTargets(subsets)
 	if err != nil {
-		return "fail", err.Error()
+		return "fail", err.Error(), nil
 	}
-	args := append([]string{"test", "-count=1", "-tags=contract"}, targets...)
-	cmd := exec.Command("go", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "fail", fmt.Sprintf("contract suite failed:\n%s", out)
+	extra := append([]string{"-count=1", "-tags=contract"}, targets...)
+	result, runErr := runGoTestJSON(extra...)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("contract suite failed: %v\n%s", runErr, result.RawOut), result
 	}
-	return "pass", ""
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	return "pass", "", result
 }
 
 // contractTargets maps contract subset names to the package globs the runner
