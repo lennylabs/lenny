@@ -124,17 +124,29 @@
       "chaos": ["tests/tier8_chaos/minio_outage_during_checkpoint_test.go"],
       "load": ["tests/tier7_load/scenarios/checkpoint_duration.go"]
     },
+    "pkg/observability/correlation": {
+      "unit": ["pkg/observability/correlation/..."],
+      "component": ["tests/tier2_component/observability/..."]
+    },
+    "pkg/observability/logging": {
+      "unit": ["pkg/observability/logging/..."],
+      "component": ["tests/tier2_component/observability/..."]
+    },
     "pkg/observability/metrics": {
       "unit": ["pkg/observability/metrics/..."],
-      "component": ["tests/tier2_component/observability/metrics_test.go"]
+      "component": ["tests/tier2_component/observability/..."]
     },
     "pkg/observability/tracing": {
       "unit": ["pkg/observability/tracing/..."],
-      "component": ["tests/tier2_component/observability/tracing_test.go"]
+      "component": ["tests/tier2_component/observability/..."]
     },
     "pkg/alerting/rules": {
       "unit": ["pkg/alerting/rules/..."],
       "component": ["tests/tier2_component/alerting/..."]
+    },
+    "tests/testinfra/mocks/otelcollector": {
+      "unit": ["tests/testinfra/mocks/otelcollector/..."],
+      "component": ["tests/tier2_component/observability/..."]
     },
     "pkg/recommendations/rules": {
       "unit": ["pkg/recommendations/rules/..."],

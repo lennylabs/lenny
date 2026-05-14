@@ -590,30 +590,57 @@
     "16.1": {
       "title": "Metrics",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/observability/metrics/metrics_test.go::TestValidateAcceptsCanonicalNames",
+        "pkg/observability/metrics/metrics_test.go::TestValidateRejectsForbiddenLabels",
+        "pkg/observability/metrics/metrics_test.go::TestValidateAccumulatesMultipleViolations",
+        "pkg/observability/metrics/metrics_test.go::TestForbiddenLabelsCatalog"
+      ],
       "packages": ["pkg/observability/metrics"],
-      "blocked_until_phase": "2.5"
+      "blocked_until_phase": "2.5",
+      "notes": "Phase 2.5 ships the label-hygiene validator that enforces §16.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. The full metrics catalog (lenny_warmpool_idle_pods, lenny_session_startup_duration_seconds, etc.) lands incrementally with each feature that emits the metric."
     },
     "16.3": {
       "title": "Distributed Tracing",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
-      "packages": ["pkg/observability/tracing"],
-      "blocked_until_phase": "2.5"
+      "tests": [
+        "pkg/observability/correlation/correlation_test.go::TestFromHTTPHeaderRoundTrip",
+        "pkg/observability/correlation/correlation_test.go::TestFromGRPCMetadataLowerCaseKeys",
+        "pkg/observability/tracing/tracing_test.go::TestStartProjectsCorrelationFieldsAsAttributes",
+        "pkg/observability/tracing/tracing_test.go::TestRecordErrorAttachesCategoryAttribute",
+        "pkg/observability/tracing/tracing_test.go::TestSpanNamesCatalogIsExhaustive",
+        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether"
+      ],
+      "packages": ["pkg/observability/correlation", "pkg/observability/tracing", "tests/testinfra/mocks/otelcollector"],
+      "blocked_until_phase": "2.5",
+      "notes": "Phase 2.5 ships the correlation context, the OTel tracer wrapper with the §16.3 span catalog, and the §16.3 error taxonomy. Trace propagation through actual gateway/pod/controller binaries lands with each component."
     },
     "16.4": {
       "title": "Logging",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/observability/logging/logging_test.go::TestHandlerEmitsRequiredSlogKeys",
+        "pkg/observability/logging/logging_test.go::TestHandlerProjectsCorrelationFieldsFromContext",
+        "pkg/observability/logging/logging_test.go::TestHandlerSkipsEmptyCorrelationFields",
+        "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether"
+      ],
       "packages": ["pkg/observability/logging"],
-      "blocked_until_phase": "2.5"
+      "blocked_until_phase": "2.5",
+      "notes": "Phase 2.5 ships the slog handler that auto-attaches correlation fields. Per-component log emission (gateway, lenny-ops, etc.) lands with each component."
     },
     "16.5": {
       "title": "Alerting Rules and SLOs",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/alerting/rules/rules_test.go::TestRuleValidateAcceptsWellFormed",
+        "pkg/alerting/rules/rules_test.go::TestRuleValidateRejectsBadPromQL",
+        "pkg/alerting/rules/rules_test.go::TestRuleValidateCriticalRequiresRunbook",
+        "pkg/alerting/rules/rules_test.go::TestCatalogValidates",
+        "pkg/alerting/rules/rules_test.go::TestCatalogCoversCanonicalAlerts"
+      ],
       "packages": ["pkg/alerting/rules"],
-      "blocked_until_phase": "2.5"
+      "blocked_until_phase": "2.5",
+      "notes": "Phase 2.5 ships the typed Rule, the PromQL validator, and a representative catalog (WarmPoolExhausted, PostgresReplicationLagHigh, CredentialPoolLow, WarmPoolLow, CertExpiryImminent). The full §16.5 catalog lands incrementally with each feature that emits the underlying metric."
     },
     "17.2": {
       "title": "Namespace Layout",

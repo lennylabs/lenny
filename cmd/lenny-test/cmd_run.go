@@ -243,7 +243,7 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, 1)
 			}
 		case "component":
-			st, msg := runComponentTier()
+			st, msg := runComponentTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix component-tier failures before moving to higher tiers.")
@@ -404,26 +404,70 @@ func resolveGoBin(name string) string {
 	return ""
 }
 
-func runComponentTier() (string, string) {
-	// Tier 2 component tests are guarded by the `component` build tag and
-	// require Docker for testcontainers-go. The runner does a soft probe
-	// for Docker and returns skipped (not failed) when the daemon is not
-	// reachable, so developers without Docker can still pass other tiers.
+func runComponentTier(subsets []string) (string, string) {
+	// Tier 2 component tests are guarded by the `component` build tag. Each
+	// subdirectory under tests/tier2_component/ targets a distinct subsystem;
+	// some need Docker (testcontainers-go), others run in-process. When
+	// subsets is non-empty the runner scopes to those subdirectories so a
+	// phase gate can run only the work in scope for that phase. When subsets
+	// is empty the runner executes every component directory.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return "skipped", "docker not on PATH"
+	targets, needsDocker, err := componentTargets(subsets)
+	if err != nil {
+		return "fail", err.Error()
 	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		return "skipped", "docker daemon not running; start Docker and retry"
+	if needsDocker {
+		if _, err := exec.LookPath("docker"); err != nil {
+			return "skipped", "docker not on PATH"
+		}
+		if err := exec.Command("docker", "info").Run(); err != nil {
+			return "skipped", "docker daemon not running; start Docker and retry"
+		}
 	}
-	cmd := exec.Command("go", "test", "-count=1", "-timeout=180s", "-tags=component", "./tests/tier2_component/...", "./tests/testinfra/containers/...")
+	args := append([]string{"test", "-count=1", "-timeout=180s", "-tags=component"}, targets...)
+	cmd := exec.Command("go", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "fail", fmt.Sprintf("component suite failed:\n%s", out)
 	}
 	return "pass", ""
+}
+
+// componentTargets maps component subset names to (test package globs,
+// needsDocker). An empty subset list resolves to every component directory
+// plus the testinfra/containers package.
+func componentTargets(subsets []string) ([]string, bool, error) {
+	if len(subsets) == 0 {
+		return []string{"./tests/tier2_component/...", "./tests/testinfra/containers/..."}, true, nil
+	}
+	type entry struct {
+		path        string
+		needsDocker bool
+	}
+	mapping := map[string]entry{
+		"migrations":    {"./tests/tier2_component/migrations/...", true},
+		"observability": {"./tests/tier2_component/observability/...", false},
+	}
+	seen := map[string]bool{}
+	targets := []string{}
+	needsDocker := false
+	for _, s := range subsets {
+		e, ok := mapping[s]
+		if !ok {
+			return nil, false, fmt.Errorf("unknown component subset %q", s)
+		}
+		if seen[e.path] {
+			continue
+		}
+		seen[e.path] = true
+		targets = append(targets, e.path)
+		if e.needsDocker {
+			needsDocker = true
+		}
+	}
+	return targets, needsDocker, nil
 }
 
 func runConformanceTier() (string, string) {

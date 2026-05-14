@@ -1246,16 +1246,26 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.4 Phase 2.5 — Observability foundation + shared rule packages
 
-**Spec/18 components.** Structured logging with correlation fields. OTel trace propagation. Shared `pkg/alerting/rules` and `pkg/recommendations/rules`.
+**Spec/18 components.** Structured logging with correlation fields. OTel trace propagation. Shared `pkg/alerting/rules`.
 
-**Test infrastructure to land.**
-- `tests/tier1_unit/` covers correlation-field propagation and trace-context injection.
-- `tests/tier2_component/observability/` validates that every component emits the documented log fields and trace spans.
-- The shared rule packages have unit tests for every rule (every alert, every recommendation formula).
-- `tests/testinfra/mocks/otel-collector/` is operational. Integration tests assert spans land at the collector.
+**Test infrastructure delivered in Phase 2.5.**
+- `pkg/observability/correlation` carries the correlation Fields (trace_id, span_id, session_id, task_id, tenant_id, request_id, operation_id, agent_name, component, runtime_class, pool) on a `context.Context` and across HTTP headers and gRPC metadata. Unit tests cover round-trip via headers, merge semantics, and the §25.4 agent-operability headers.
+- `pkg/observability/logging` is the slog handler that auto-attaches the correlation fields to every JSON record and enforces the §16.4 required keys (ts RFC 3339 UTC, level, msg, component). Tests cover required-key emission, attribute projection, level gating, and `With()` preservation.
+- `pkg/observability/tracing` wraps `go.opentelemetry.io/otel/trace` with the §16.3 span-name catalog (`session.create`, `delegation.spawn_child`, etc.) and the §16.3 error taxonomy (`TRANSIENT`, `PERMANENT`, `POLICY`, `UPSTREAM`). Tests cover attribute projection, error categorisation, and catalog hygiene.
+- `pkg/observability/metrics` is the typed Counter/Gauge/Histogram constructor with the §16.1.1 label-hygiene validator. The validator rejects metric names without the `lenny_` prefix and rejects any of the forbidden high-cardinality labels (`session_id`, `operation_id`, `root_session_id`, `credential_id`, `user_id`, `lease_id`, `request_id`).
+- `pkg/alerting/rules` is the typed `Rule` struct plus a PromQL validator (parsed via `prometheus/prometheus/promql/parser`) and a representative catalog (`WarmPoolExhausted`, `PostgresReplicationLagHigh`, `CredentialPoolLow`, `WarmPoolLow`, `CertExpiryImminent`). Tests cover validation, catalog hygiene, and the critical-severity-requires-runbook rule.
+- `tests/testinfra/mocks/otelcollector` is the in-process tracer-provider helper. It returns spans recorded synchronously so unit and component tests can assert what was emitted.
+- `tests/tier2_component/observability/integration_test.go` wires the correlation context, the slog handler, and the tracer wrapper together against the in-process collector and asserts that span attributes and log fields share the same correlation values.
+
+**Test infrastructure deferred to later phases.**
+- "Every component emits the documented log fields and trace spans" is deferred to the phases that ship those components. The gateway, controllers, runtime adapter, token service, and `lenny-ops` do not exist yet; their per-component log-and-span assertions land alongside each binary.
+- The full §16.1 metrics catalog is deferred. Phase 2.5 ships the registration pattern (label validator plus typed constructors); each metric is registered as the feature that emits it lands.
+- The full §16.5 alert catalog is deferred. Phase 2.5 ships the `Rule` type plus a representative subset; each alert is added as the underlying metric and feature ship together.
+- The OTLP-over-gRPC receiver harness is deferred to the phase that ships the first OTLP-emitting binary (Phase 4 or later). The in-process collector in `tests/testinfra/mocks/otelcollector` satisfies the Phase 2.5 obligation for tests that exercise the tracer wrapper directly.
+- `pkg/recommendations/rules` is deferred. Spec §16 does not define a recommendations package; the surface is implied by §10.7 (experiment primitives) and lands with that phase.
 
 **Test group gating Phase 2.5 → Phase 2.8.**
-- `phase-2.5-gate`: every component emits correlated logs and traces; rule packages compile and pass unit tests.
+- `phase-2.5-gate`: static, unit, and the observability component subset pass. Every observability primitive validates against the spec contracts above.
 
 ### 13.5 Phase 2.8 — `streaming-echo` runtime
 

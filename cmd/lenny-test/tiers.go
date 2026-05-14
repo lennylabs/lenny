@@ -89,6 +89,12 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "contract", subsets: []string{"adapter-jsonl"}, notes: "adapter JSONL contract round-trips against cmd/runtimes/echo (workspaceplan parser is a separate Phase 2 sub-track per spec §14)"},
 			{name: "conformance", subsets: []string{"basic"}, notes: "lenny-compliance --level basic against echo"},
 		}
+	case "phase-2.5-gate":
+		return []tierPlan{
+			{name: "static", notes: "observability + alerting packages build; PromQL parses"},
+			{name: "unit", notes: "correlation, logging, tracing, metrics, alerting/rules — every primitive validated"},
+			{name: "component", subsets: []string{"observability"}, notes: "observability primitives wire together against the in-process collector"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does

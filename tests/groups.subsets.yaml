@@ -269,3 +269,8 @@ subsets:
     tier: component
     tests:
       - tests/tier2_component/migrations/...
+
+  observability:
+    tier: component
+    tests:
+      - tests/tier2_component/observability/...

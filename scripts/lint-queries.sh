@@ -72,11 +72,14 @@ rel = sys.argv[2]
 text = path.read_text(errors="replace")
 lines = text.splitlines()
 
-# Tokenise each JOIN occurrence (skip LEFT/RIGHT/INNER/OUTER prefixes;
-# the keyword we care about is JOIN itself).
-join_re = re.compile(r'\bJOIN\b', re.IGNORECASE)
+# Tokenise each JOIN occurrence. Matching is case-sensitive on the
+# uppercase SQL-keyword form so the rule does not collide with Go
+# identifiers such as strings.Join. .sql files use uppercase keywords
+# by project convention; SQL strings embedded in .go code follow the
+# same convention.
+join_re = re.compile(r'\bJOIN\b')
 on_re = re.compile(
-    r'(?i)\bON\b\s*[^;]*?(\b[\w]+)\.tenant_id\s*=\s*(\b[\w]+)\.tenant_id'
+    r'\bON\b\s*[^;]*?(\b[\w]+)\.tenant_id\s*=\s*(\b[\w]+)\.tenant_id'
 )
 allow_annot = "-- platform-admin-cross-tenant-allowed"
 just_annot = "-- platform-admin-cross-tenant-justification:"
