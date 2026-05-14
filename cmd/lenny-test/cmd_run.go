@@ -156,17 +156,24 @@ func (s selector) resolve() (resolvedSelector, error) {
 			}
 		}
 	case s.changed:
-		// Phase 0 stub: run static and unit. Phase 1 wires git-diff
-		// inspection and change-graph lookup.
-		plan.tiers = []tierPlan{
-			{name: "static", notes: "phase-0-stub: full static lint"},
-			{name: "unit", notes: "phase-0-stub: full unit suite (change-graph lookup pending)"},
+		plan.tiers = resolveChangedPlan()
+		if len(plan.tiers) == 0 {
+			// No applicable changes; default to static + unit so the
+			// developer at least gets a clean lint pass.
+			plan.tiers = []tierPlan{
+				{name: "static", notes: "no changes detected; running static only"},
+			}
 		}
 	case len(s.specs) > 0:
-		// Phase 0 stub: signal the spec sections; tier resolution comes later.
-		plan.tiers = []tierPlan{{name: "static", notes: fmt.Sprintf("phase-0-stub: spec-map lookup for sections %s", strings.Join(s.specs, ","))}}
+		plan.tiers = resolveSpecsPlan(s.specs)
+		if len(plan.tiers) == 0 {
+			return plan, fmt.Errorf("no tier resolved for spec sections %s", strings.Join(s.specs, ","))
+		}
 	case len(s.pkgs) > 0:
-		plan.tiers = []tierPlan{{name: "unit", notes: fmt.Sprintf("phase-0-stub: change-graph lookup for packages %s", strings.Join(s.pkgs, ","))}}
+		plan.tiers = resolvePkgsPlan(s.pkgs)
+		if len(plan.tiers) == 0 {
+			return plan, fmt.Errorf("no tier resolved for packages %s", strings.Join(s.pkgs, ","))
+		}
 	}
 
 	return plan, nil
