@@ -58,6 +58,10 @@ func main() {
 		os.Exit(runRun(args[1:]))
 	case "stress":
 		os.Exit(runStress(args[1:]))
+	case "conformance":
+		os.Exit(runConformanceSubcommand(args[1:]))
+	case "preflight":
+		os.Exit(runPreflightSubcommand(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
@@ -78,6 +82,11 @@ Usage:
   lenny-test infra <up|down|status|prune>  Manage cached test infrastructure.
   lenny-test stress --test <name> [flags]  Run a single test N times to detect
                                            flakes (§17.10).
+  lenny-test conformance --image <ref>     Run the §12.10 conformance battery
+                          --level <basic|standard|full>
+                                           against a third-party runtime image.
+  lenny-test preflight --cluster <path>    Check a target cluster's readiness
+                                           to host Lenny (wraps preflight.sh).
   lenny-test version                       Print the version.
   lenny-test help                          This message.
 
