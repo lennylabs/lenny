@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: MIT
+
+// Package compose wraps the §10.3 docker-compose profile. It exposes
+// Up / Down / WaitReady / Endpoints helpers so tier-3 contract and
+// tier-4 integration tests can ensure the backing stores are
+// running without each test orchestrating docker compose itself.
+//
+// The Go helper shells out to `docker compose` rather than a SDK so
+// the tooling matches what a developer runs interactively. The
+// helper is idempotent: Up returns immediately if the stack is
+// already running.
+//
+// Usage:
+//
+//	if compose.Available(t) {
+//	    stack := compose.Up(t)
+//	    pg := stack.PostgresDSN()
+//	    // ...
+//	}
+//
+// On hosts without docker or docker compose, Available reports false
+// and the test should t.Skip with a diagnosis.
+package compose
+
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// Profile selects a compose overlay.
+type Profile string
+
+const (
+	ProfileDefault Profile = "default"
+	ProfileMTLS    Profile = "mtls"
+)
+
+// Stack represents a running compose stack. The endpoints are
+// canonical per compose/default.yml.
+type Stack struct {
+	root    string
+	profile Profile
+}
+
+// Available reports whether docker and docker compose are reachable
+// on this host. Callers that want a hard skip can use:
+//
+//	if !compose.Available(t) {
+//	    t.Skip("docker compose not available")
+//	}
+func Available(t testing.TB) bool {
+	t.Helper()
+	if _, err := exec.LookPath("docker"); err != nil {
+		return false
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		return false
+	}
+	// `docker compose version` exits 0 when the v2 plugin is present.
+	return exec.Command("docker", "compose", "version").Run() == nil
+}
+
+// Up brings the stack up with the named profile. Registers a
+// t.Cleanup that brings it down on test exit. Returns a *Stack
+// pointing at the running services. Idempotent: when the stack is
+// already up the call simply returns the existing handle.
+func Up(t testing.TB, profile Profile) *Stack {
+	t.Helper()
+	if !Available(t) {
+		t.Skipf("compose.Up: docker compose not available on this host")
+	}
+	root := schematest.RepoRoot(t)
+	s := &Stack{root: root, profile: profile}
+	args := s.composeArgs("up", "-d")
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("compose up: %v\n%s", err, out)
+	}
+	t.Cleanup(func() {
+		down := s.composeArgs("down", "-v")
+		_, _ = exec.Command("docker", down...).CombinedOutput()
+	})
+	if err := s.WaitReady(60 * time.Second); err != nil {
+		t.Fatalf("compose up did not become ready: %v", err)
+	}
+	return s
+}
+
+// WaitReady polls each service's healthcheck until all report
+// healthy or the deadline expires.
+func (s *Stack) WaitReady(timeout time.Duration) error {
+	services := []string{"lenny-postgres", "lenny-redis", "lenny-minio"}
+	deadline := time.Now().Add(timeout)
+	for {
+		allHealthy := true
+		for _, svc := range services {
+			out, err := exec.Command("docker", "inspect", "--format", "{{.State.Health.Status}}", svc).Output()
+			if err != nil {
+				allHealthy = false
+				break
+			}
+			status := strings.TrimSpace(string(out))
+			if status != "healthy" {
+				allHealthy = false
+				break
+			}
+		}
+		if allHealthy {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("compose: services did not reach healthy state within deadline")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// Down brings the stack down. Normally invoked via the t.Cleanup Up
+// registered, but exposed for tests that want explicit teardown.
+func (s *Stack) Down(t testing.TB) {
+	t.Helper()
+	out, err := exec.Command("docker", s.composeArgs("down", "-v")...).CombinedOutput()
+	if err != nil {
+		t.Logf("compose down: %v\n%s", err, out)
+	}
+}
+
+// PostgresDSN returns a connection string suitable for pgx.Connect.
+func (s *Stack) PostgresDSN() string {
+	return "postgres://lenny:lenny@127.0.0.1:15432/lenny?sslmode=disable"
+}
+
+// RedisAddr returns the host:port for the Redis service.
+func (s *Stack) RedisAddr() string {
+	return "127.0.0.1:16379"
+}
+
+// MinIOEndpoint returns the S3-compatible endpoint URL.
+func (s *Stack) MinIOEndpoint() string {
+	return "http://127.0.0.1:19000"
+}
+
+// MinIOCredentials returns access + secret keys.
+func (s *Stack) MinIOCredentials() (access, secret string) {
+	return "lenny", "lenny-secret"
+}
+
+// OTLPEndpoint returns the OTLP gRPC endpoint URL.
+func (s *Stack) OTLPEndpoint() string {
+	return "127.0.0.1:14317"
+}
+
+// composeArgs builds `docker compose -f <file> ...` argument list.
+// When profile is mtls, the mtls overlay is layered on top.
+func (s *Stack) composeArgs(rest ...string) []string {
+	base := []string{"compose", "-f", filepath.Join(s.root, "compose", "default.yml")}
+	if s.profile == ProfileMTLS {
+		base = append(base, "-f", filepath.Join(s.root, "compose", "mtls.yml"))
+	}
+	return append(base, rest...)
+}
+
+// Status reports the docker-compose ps output. Used by `lenny-test
+// infra status`.
+func Status(profile Profile) (string, error) {
+	root, err := schematest.RepoRootCwd()
+	if err != nil {
+		return "", err
+	}
+	s := &Stack{root: root, profile: profile}
+	out, err := exec.Command("docker", s.composeArgs("ps")...).CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("compose ps: %w", err)
+	}
+	return string(out), nil
+}

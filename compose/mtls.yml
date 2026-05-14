@@ -1,0 +1,54 @@
+# Compose profile: mtls
+#
+# Overlay on default.yml that enables mTLS across the stack. Mounts
+# certificate material rendered by `scripts/dev-certs.sh` (which
+# does not yet exist; the mTLS bring-up is deferred to Phase 3).
+#
+# Usage:
+#   docker compose -f compose/default.yml -f compose/mtls.yml up -d
+#
+# Architecture: TESTING.md §10.3 profile=compose with mtls overlay.
+
+services:
+
+  postgres:
+    command:
+      - "postgres"
+      - "-c"
+      - "ssl=on"
+      - "-c"
+      - "ssl_cert_file=/certs/server.crt"
+      - "-c"
+      - "ssl_key_file=/certs/server.key"
+      - "-c"
+      - "ssl_ca_file=/certs/ca.crt"
+      - "-c"
+      - "ssl_min_protocol_version=TLSv1.3"
+    volumes:
+      - ./certs:/certs:ro
+
+  redis:
+    command:
+      - "redis-server"
+      - "--tls-port"
+      - "6379"
+      - "--port"
+      - "0"
+      - "--tls-cert-file"
+      - "/certs/server.crt"
+      - "--tls-key-file"
+      - "/certs/server.key"
+      - "--tls-ca-cert-file"
+      - "/certs/ca.crt"
+    volumes:
+      - ./certs:/certs:ro
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: lenny
+      MINIO_ROOT_PASSWORD: lenny-secret
+      MINIO_SERVER_URL: https://lenny-minio:9000
+    volumes:
+      - ./certs/minio/CAs:/root/.minio/certs/CAs:ro
+      - ./certs/minio/server.crt:/root/.minio/certs/public.crt:ro
+      - ./certs/minio/server.key:/root/.minio/certs/private.key:ro

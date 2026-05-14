@@ -1,0 +1,77 @@
+# Compose profile: default
+#
+# Provisions the backing stores the tier-3 contract and tier-4
+# integration suites depend on. The in-process stubs (OIDC, KMS,
+# mock LLM provider, SIEM) run inside the test process; they are
+# not part of the compose stack.
+#
+# Usage:
+#   docker compose -f compose/default.yml up -d
+#   docker compose -f compose/default.yml down
+#
+# Or, via lenny-test:
+#   lenny-test infra up   --profile compose
+#   lenny-test infra down --profile compose
+#
+# Architecture: TESTING.md §10.3 profile=compose.
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: lenny-postgres
+    environment:
+      POSTGRES_USER: lenny
+      POSTGRES_PASSWORD: lenny
+      POSTGRES_DB: lenny
+    ports: ["15432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lenny"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - lenny-postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: lenny-redis
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports: ["16379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: lenny-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: lenny
+      MINIO_ROOT_PASSWORD: lenny-secret
+    ports:
+      - "19000:9000"  # S3 API
+      - "19001:9001"  # console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - lenny-minio-data:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.105.0
+    container_name: lenny-otel
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "14317:4317"  # OTLP gRPC
+      - "14318:4318"  # OTLP HTTP
+
+volumes:
+  lenny-postgres-data:
+  lenny-minio-data:

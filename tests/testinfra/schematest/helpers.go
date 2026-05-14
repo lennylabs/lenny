@@ -14,6 +14,7 @@ package schematest
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,17 +79,27 @@ func ReadJSON(t *testing.T, path string) any {
 
 // RepoRoot walks upward from the test's working directory to find the
 // directory containing go.mod.
-func RepoRoot(t *testing.T) string {
+func RepoRoot(t testing.TB) string {
 	t.Helper()
+	root, err := RepoRootCwd()
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return root
+}
+
+// RepoRootCwd is the test-independent version of RepoRoot — usable
+// from non-test contexts (e.g., harness subcommands). Returns an
+// error rather than calling t.Fatalf.
+func RepoRootCwd() (string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
+		return "", fmt.Errorf("getwd: %w", err)
 	}
 	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
+			return d, nil
 		}
 	}
-	t.Fatalf("could not find repo root containing go.mod from %s", wd)
-	return ""
+	return "", fmt.Errorf("could not find repo root containing go.mod from %s", wd)
 }
