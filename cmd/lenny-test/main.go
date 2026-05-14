@@ -64,6 +64,8 @@ func main() {
 		os.Exit(runPreflightSubcommand(args[1:]))
 	case "baseline":
 		os.Exit(runBaseline(args[1:]))
+	case "comment":
+		os.Exit(runComment(args[1:]))
 	default:
 		// Default to run.
 		os.Exit(runRun(args))
