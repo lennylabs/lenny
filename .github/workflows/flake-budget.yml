@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT
+#
+# §17.10 flake-budget workflow. Runs `lenny-test stress --runs 50`
+# against the unit tier every week and surfaces any test that
+# failed at least once in the 50-iteration sweep.
+#
+# Cadence: Sundays 06:00 UTC, after the weekly suite finishes.
+# Manual trigger supported via workflow_dispatch.
+
+name: flake-budget
+
+on:
+  schedule:
+    - cron: '0 8 * * 0'    # 08:00 UTC Sunday
+  workflow_dispatch:
+
+concurrency:
+  group: flake-budget
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  stress:
+    name: §17.10 stress sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Stress every unit-tier test (50 iterations)
+        # The harness stops at the first failing iteration per test,
+        # so this caps total work even when a flaky test is present.
+        # Output goes to $GITHUB_STEP_SUMMARY so the weekly view
+        # surfaces the flaky test list.
+        run: |
+          ./bin/lenny-test stress \
+            --pattern 'Test.*' \
+            --runs 50 \
+            --pkg ./pkg/... \
+            --timeout-seconds 300 \
+            | tee stress.log
+          {
+            echo "## §17.10 flake-budget sweep"
+            echo ""
+            echo '```'
+            tail -100 stress.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+      - name: Upload stress log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flake-budget-log
+          path: stress.log
+          retention-days: 90

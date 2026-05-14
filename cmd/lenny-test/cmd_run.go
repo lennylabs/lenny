@@ -305,7 +305,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runStaticTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix static-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("static", "Fix static-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -316,7 +316,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runUnitTier()
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix unit-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("unit", "Fix unit-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -327,7 +327,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runComponentTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix component-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("component", "Fix component-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -338,7 +338,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runContractTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix contract-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("contract", "Fix contract-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -349,7 +349,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runConformanceTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix conformance-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("conformance", "Fix conformance-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -360,7 +360,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runIntegrationTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix integration-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("integration", "Fix integration-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)
@@ -371,7 +371,7 @@ func execute(s selector, r resolvedSelector) int {
 			st, msg := runE2EKindTier(t.subsets)
 			v.recordTier(t.name, st, time.Since(start), msg)
 			if st != "pass" && !s.continueErr {
-				v.next("Fix e2e-Kind-tier failures before moving to higher tiers.")
+				v.next(v.synthesizeNextAction("e2e_kind", "Fix e2e-Kind-tier failures before moving to higher tiers."))
 				overallStatus = "FAIL"
 				if writeErr := v.write(s.verdictFile); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict: %v\n", writeErr)

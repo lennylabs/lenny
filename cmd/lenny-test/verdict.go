@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -136,6 +137,50 @@ func reasonFromStatus(status, detail string) string {
 
 func (v *verdict) next(action string) {
 	v.NextAction = action
+}
+
+// synthesizeNextAction derives a §7-style next_action sentence from
+// the recorded failures when present. Format:
+//
+//	"Fix N <tier>-tier failure(s) in <packages>. See spec sections <ids>."
+//
+// Falls back to the generic message when no Failures are recorded
+// (the harness populates Failures only when go test -json output is
+// parsed; incremental work).
+func (v *verdict) synthesizeNextAction(tierName, fallback string) string {
+	t, ok := v.Tiers[tierName]
+	if !ok || len(t.Failures) == 0 {
+		return fallback
+	}
+	pkgs := map[string]bool{}
+	specs := map[string]bool{}
+	for _, f := range t.Failures {
+		if f.Package != "" {
+			pkgs[f.Package] = true
+		}
+		for _, s := range f.SpecSections {
+			specs[s] = true
+		}
+	}
+	pkgList := setToSortedSlice(pkgs)
+	specList := setToSortedSlice(specs)
+	msg := fmt.Sprintf("Fix %d %s-tier failure(s)", len(t.Failures), tierName)
+	if len(pkgList) > 0 {
+		msg += " in " + strings.Join(pkgList, ", ")
+	}
+	if len(specList) > 0 {
+		msg += ". See spec sections " + strings.Join(specList, ", ")
+	}
+	return msg + "."
+}
+
+func setToSortedSlice(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (v *verdict) finalize() {
