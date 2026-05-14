@@ -26,11 +26,30 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 const version = "0.0.1-phase0"
 
 func main() {
+	// Surface SIGINT/SIGTERM with a clear exit message and the
+	// conventional 128+signum status. Child processes are in the
+	// same process group on Unix and receive the same signal, so
+	// `go test`, `docker compose`, and other subprocesses tear
+	// down before this handler runs.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		fmt.Fprintf(os.Stderr, "\nlenny-test: interrupted (%s); cleaning up.\n", sig)
+		// 130 = 128 + SIGINT; 143 = 128 + SIGTERM.
+		if sig == syscall.SIGTERM {
+			os.Exit(143)
+		}
+		os.Exit(130)
+	}()
+
 	args := os.Args[1:]
 	if len(args) == 0 {
 		args = []string{"--help"}

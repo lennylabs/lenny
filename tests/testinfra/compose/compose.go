@@ -23,7 +23,6 @@
 package compose
 
 import (
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +84,10 @@ func Up(t testing.TB, profile Profile) *Stack {
 	}
 	t.Cleanup(func() {
 		down := s.composeArgs("down", "-v")
-		_, _ = exec.Command("docker", down...).CombinedOutput()
+		out, err := exec.Command("docker", down...).CombinedOutput()
+		if err != nil {
+			t.Logf("compose down (cleanup): %v\n%s", err, out)
+		}
 	})
 	if err := s.WaitReady(60 * time.Second); err != nil {
 		t.Fatalf("compose up did not become ready: %v", err)
@@ -98,15 +100,18 @@ func Up(t testing.TB, profile Profile) *Stack {
 func (s *Stack) WaitReady(timeout time.Duration) error {
 	services := []string{"lenny-postgres", "lenny-redis", "lenny-minio"}
 	deadline := time.Now().Add(timeout)
+	lastStatus := map[string]string{}
 	for {
 		allHealthy := true
 		for _, svc := range services {
 			out, err := exec.Command("docker", "inspect", "--format", "{{.State.Health.Status}}", svc).Output()
 			if err != nil {
+				lastStatus[svc] = fmt.Sprintf("inspect error: %v", err)
 				allHealthy = false
 				break
 			}
 			status := strings.TrimSpace(string(out))
+			lastStatus[svc] = status
 			if status != "healthy" {
 				allHealthy = false
 				break
@@ -116,7 +121,16 @@ func (s *Stack) WaitReady(timeout time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return errors.New("compose: services did not reach healthy state within deadline")
+			parts := make([]string, 0, len(services))
+			for _, svc := range services {
+				st := lastStatus[svc]
+				if st == "" {
+					st = "(never reported)"
+				}
+				parts = append(parts, fmt.Sprintf("%s=%s", svc, st))
+			}
+			return fmt.Errorf("compose: services did not reach healthy state within %s: %s",
+				timeout, strings.Join(parts, ", "))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
