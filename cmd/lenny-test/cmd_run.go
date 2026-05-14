@@ -557,20 +557,39 @@ func runStaticTier() (string, string) {
 }
 
 func runUnitTier() (string, string) {
-	// Phase 0: `go test ./...` over whatever exists. The repo has no
-	// production code yet, so this is a no-op pass.
+	// `go test ./...` over the repo. Race detection is on by default
+	// per §17.4. When LENNY_COVER_PROFILE is set, coverage is
+	// emitted to that path so `lenny-test coverage --go` can later
+	// roll it up.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH"
 	}
 	if !hasGoCode() {
 		return "pass", "no Go packages under pkg/ yet"
 	}
-	cmd := exec.Command("go", "test", "-race", "-count=1", "./...")
+	args := []string{"test", "-race", "-count=1"}
+	if profile := coverProfilePath(); profile != "" {
+		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
+			args = append(args, "-coverprofile="+profile, "-covermode=atomic")
+		}
+	}
+	args = append(args, "./...")
+	cmd := exec.Command("go", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "fail", fmt.Sprintf("go test failed: %v\n%s", err, out)
 	}
 	return "pass", ""
+}
+
+// coverProfilePath returns the canonical cover-profile location.
+// Set LENNY_COVER_PROFILE=path to override; set LENNY_COVER_PROFILE=
+// (empty) to disable.
+func coverProfilePath() string {
+	if v, ok := os.LookupEnv("LENNY_COVER_PROFILE"); ok {
+		return v
+	}
+	return filepath.Join(repoRoot(), "tests", "results", "cover.out")
 }
 
 // resolveGoBin looks up a tool by name. Returns its path on PATH, or the
