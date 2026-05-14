@@ -55,6 +55,35 @@ jobs:
           path: tests/results/latest.json
           retention-days: 60
 
+  weekly-rollup:
+    name: weekly roll-up summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [e2e-cloud-full]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Download every verdict
+        uses: actions/download-artifact@v4
+        with:
+          path: tests/results/
+          pattern: verdict-*
+          merge-multiple: false
+      - name: Aggregate into workflow summary
+        run: |
+          set -euo pipefail
+          find tests/results -name 'latest.json' -print0 \
+            | while IFS= read -r -d '' f; do
+                cp "$f" "tests/results/$(basename "$(dirname "$f")").json"
+              done
+          ./bin/lenny-test report --dir tests/results --output markdown >> "$GITHUB_STEP_SUMMARY"
+
   load-full-system:
     name: tier 7 — load (full-system)
     runs-on: ubuntu-latest

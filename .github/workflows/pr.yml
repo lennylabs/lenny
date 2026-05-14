@@ -230,3 +230,58 @@ jobs:
             markdown-link-check "$f" -q --config .markdown-link-check.json 2>/dev/null || fail=1
           done
           exit $fail
+
+  pr-summary:
+    name: PR roll-up comment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [static, unit, component, contract, integration, e2e-kind-critical, conformance-bundled, docs]
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build lenny-test
+        run: go build -o bin/lenny-test ./cmd/lenny-test
+      - name: Download all verdicts
+        uses: actions/download-artifact@v4
+        with:
+          path: tests/results/
+          pattern: verdict-*
+          merge-multiple: false
+      - name: Aggregate verdicts into one Markdown comment
+        run: |
+          set -euo pipefail
+          # The download step places each artifact in its own
+          # subdirectory; flatten into tests/results/ so report can
+          # walk them.
+          find tests/results -name 'latest.json' -print0 \
+            | while IFS= read -r -d '' f; do
+                cp "$f" "tests/results/$(basename "$(dirname "$f")").json"
+              done
+          ./bin/lenny-test report --dir tests/results --output markdown > pr-summary.md
+          echo "<!-- lenny-test:pr-summary -->" >> pr-summary.md
+          cat pr-summary.md
+      - name: Post or update comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Look for an existing comment carrying the sigil.
+          existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("<!-- lenny-test:pr-summary -->")) | .id' \
+            | head -1)
+          if [[ -n "${existing}" ]]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing}" \
+              -F body=@pr-summary.md
+            echo "updated comment ${existing}"
+          else
+            gh pr comment "${PR_NUMBER}" --body-file pr-summary.md
+            echo "posted new comment"
+          fi
