@@ -424,9 +424,25 @@
     "10.7": {
       "title": "Experiment Primitives",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
+      "tests": [
+        "pkg/experiment/experiment_test.go::TestAllStatusesIsExhaustive",
+        "pkg/experiment/experiment_test.go::TestStatusIsRoutable",
+        "pkg/experiment/experiment_test.go::TestAllTargetingModesIsExhaustive",
+        "pkg/experiment/experiment_test.go::TestAllStickyValuesIsExhaustive",
+        "pkg/experiment/experiment_test.go::TestAllPropagationsIsExhaustive",
+        "pkg/experiment/experiment_test.go::TestDefinitionValidateHappyPath",
+        "pkg/experiment/experiment_test.go::TestDefinitionRejectsReservedControlID",
+        "pkg/experiment/experiment_test.go::TestDefinitionRejectsBadWeights",
+        "pkg/experiment/experiment_test.go::TestDefinitionRejectsSumWeightsAtOrAboveOne",
+        "pkg/experiment/experiment_test.go::TestAssignVariantEmptyKeyReturnsControl",
+        "pkg/experiment/experiment_test.go::TestAssignVariantIsDeterministic",
+        "pkg/experiment/experiment_test.go::TestAssignVariantApproximatesWeightDistribution",
+        "pkg/experiment/experiment_test.go::TestAssignVariantHonoursDefinitionOrder",
+        "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey"
+      ],
       "packages": ["pkg/experiment"],
-      "blocked_until_phase": "16"
+      "blocked_until_phase": "16",
+      "notes": "Phase 16 ships the §10.7 experiment primitives: Status / TargetingMode / Sticky / Propagation enums, the Definition admission validator (reserved control id, Σ weights < 1, duplicate-id check), and the HMAC-SHA256 percentage-mode bucketing algorithm. The ExperimentRouter interceptor wiring, the OpenFeature/OFREP external-targeting integration, the variant pool minWarm coupling in the PoolScalingController, and the admin API surface are deferred to the K8s-integration phase."
     },
     "11.1": {
       "title": "Admission and Fairness",

@@ -1528,9 +1528,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.33 Phase 16 — Experiments + PoolScalingController integration
 
-**Test infrastructure to land.**
-- `tests/tier4_integration/experiment_routing_test.go`.
-- `tests/tier7_load/scenarios/experiment_active_under_load.go` operational.
+**Test infrastructure delivered in Phase 16.**
+- `pkg/experiment` ships the §10.7 experiment primitives: `Status` (active, paused, concluded) with `IsRoutable`, `TargetingMode` (percentage, external), `Sticky` (user, session, none), `Propagation` (inherit, control, independent). `Definition.Validate` enforces the admin-API admission rules — every variant id is unique, none equals the reserved `ControlVariantID`, each weight is in `(0, 1)`, and `Σ weights < 1` so a control group always exists. `AssignVariant` implements the §10.7 HMAC-SHA256 percentage-mode bucketing with the §10.7 anonymous-session rule (empty key → control). Tests cover determinism, the ±2% weight distribution over 10k trials, definition-order sensitivity, and experiment-id independence.
+
+**Test infrastructure deferred to later phases.**
+- `tests/tier4_integration/experiment_routing_test.go` is deferred. It needs the gateway, the ExperimentRouter interceptor wiring, and the PoolScalingController's variant-pool `minWarm` coupling.
+- `tests/tier7_load/scenarios/experiment_active_under_load.go` is deferred to the K8s-integration phase that ships the gateway and the load harness.
+- The OpenFeature / OFREP external-targeting integration, the §10.7 PSC variant-pool sizing path, and the §10.7 admin API surface (`POST /v1/admin/experiments`, etc.) are deferred to the same phase.
 
 ### 13.34 Phase 16.5 — Experiment load test SLO re-validation
 

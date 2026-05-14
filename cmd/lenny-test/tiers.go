@@ -151,6 +151,11 @@ func tiersForGroup(name string) []tierPlan {
 			{name: "static", notes: "pkg/circuitbreaker builds"},
 			{name: "unit", notes: "§11.6 State, LimitTier, OperationType enums; per-tier Scope validation; Match function; FirstMatch; ScopeMatches"},
 		}
+	case "phase-16-gate":
+		return []tierPlan{
+			{name: "static", notes: "pkg/experiment builds"},
+			{name: "unit", notes: "§10.7 Status, TargetingMode, Sticky, Propagation enums; Definition validation including reserved control id + Σ weights < 1; HMAC-SHA256 bucketing determinism + distribution + ordering + experiment-id independence"},
+		}
 	}
 
 	// Phase 0 stub: every other phase-<N>-gate is recognized so the CLI does
