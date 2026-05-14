@@ -52,16 +52,16 @@ func Apply(t testing.TB, cfg Config) error {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	_, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	if cfg.PostgresDSN != "" {
-		if err := seedPostgres(t, cfg.PostgresDSN); err != nil {
+		if err := seedPostgres(ctx, t, cfg.PostgresDSN); err != nil {
 			t.Logf("seed: postgres: %v", err)
 		}
 	}
 	if cfg.RedisAddr != "" {
-		if err := seedRedis(t, cfg.RedisAddr); err != nil {
+		if err := seedRedis(ctx, t, cfg.RedisAddr); err != nil {
 			t.Logf("seed: redis: %v", err)
 		}
 	}
@@ -78,8 +78,11 @@ func Apply(t testing.TB, cfg Config) error {
 //
 // For Phase 0 the function returns the SQL it would have run so
 // tests can pipe it to psql or assert on the script directly.
-func seedPostgres(t testing.TB, dsn string) error {
+func seedPostgres(ctx context.Context, t testing.TB, dsn string) error {
 	t.Helper()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("seedPostgres: %w", err)
+	}
 	statements := SeedPostgresStatements()
 	if dsn == "" {
 		return errors.New("seedPostgres: dsn is empty")
@@ -139,8 +142,11 @@ func SeedPostgresStatements() []string {
 // counters, breaker registry placeholders, etc. As with Postgres
 // the Phase 0 implementation emits the commands; real callers wire
 // in a redis client.
-func seedRedis(t testing.TB, addr string) error {
+func seedRedis(ctx context.Context, t testing.TB, addr string) error {
 	t.Helper()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("seedRedis: %w", err)
+	}
 	cmds := SeedRedisCommands()
 	t.Logf("seed: would apply %d Redis commands to %s", len(cmds), addr)
 	return nil

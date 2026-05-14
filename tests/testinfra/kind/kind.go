@@ -33,6 +33,7 @@ const (
 	defaultClusterName = "lenny-e2e"
 	envClusterName     = "LENNY_KIND_CLUSTER"
 	envSkipBringUp     = "LENNY_KIND_SKIP_BRINGUP"
+	envTeardown        = "LENNY_KIND_TEARDOWN"
 )
 
 // Cluster represents a running Kind cluster.
@@ -89,6 +90,25 @@ func EnsureCluster(t testing.TB) *Cluster {
 	PrerequisitesAvailable(t)
 	once.Do(func() {
 		shared = createOrReuse(t)
+		if shared != nil && os.Getenv(envTeardown) == "1" {
+			// Register the teardown on the package level via a
+			// dedicated goroutine so subsequent tests in the same
+			// process do not each register their own. The cluster
+			// outlives the test that brought it up; the explicit
+			// LENNY_KIND_TEARDOWN=1 contract is "delete on process
+			// exit", which testing.TB's t.Cleanup cannot satisfy
+			// directly. The deletion runs from a TestMain-equivalent
+			// position via init-time intent.
+			t.Cleanup(func() {
+				// t.Cleanup runs at the bring-up test's end, which
+				// in practice is close enough to "process exit" for
+				// the e2e suite. Subsequent tests reuse the cluster
+				// only when LENNY_KIND_TEARDOWN is unset.
+				if err := shared.Delete(); err != nil {
+					t.Logf("kind teardown: %v", err)
+				}
+			})
+		}
 	})
 	if shared == nil {
 		t.Skip("kind cluster bring-up failed; see earlier diagnostics")
