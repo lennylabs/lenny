@@ -1,6 +1,6 @@
 # Lenny Testing Infrastructure
 
-> Status: planning document. The infrastructure described here does not exist yet. This file is the build plan and the architecture reference for the test infrastructure that the platform will be built against.
+> Status: living specification. Phase 0 scaffolding is in place (the `lenny-test` harness, the `tests/testinfra/` helper packages, the spec-map and change-graph traceability layer, the Tier 0 static gate, and the GitHub Actions workflows). Later tiers and feature suites land per the §13 phase milestones. The document is the architecture reference the platform is built against.
 
 ## Table of Contents
 

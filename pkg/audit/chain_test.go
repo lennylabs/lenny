@@ -24,7 +24,7 @@ import (
 //	cause every chain to fail verification on the first row.
 func TestHashChainGenesisRow(t *testing.T) {
 	t.Parallel()
-	t.Skip("not implemented: §17.7 hash-chain primitive lives in a later phase")
+	t.Skip("not implemented: §12.1 unit-tier hash-chain primitive lives in a later phase")
 }
 
 // TestHashChainLinkInvariant — for any two consecutive rows R_n and
@@ -38,7 +38,7 @@ func TestHashChainGenesisRow(t *testing.T) {
 //	broken and fire AuditChainGap on healthy systems.
 func TestHashChainLinkInvariant(t *testing.T) {
 	t.Parallel()
-	t.Skip("not implemented: §17.7 hash-chain primitive lives in a later phase")
+	t.Skip("not implemented: §12.1 hash-chain primitive lives in a later phase")
 }
 
 // TestHashChainDetectsTamper — flipping a single byte in any non-tail
@@ -52,7 +52,7 @@ func TestHashChainLinkInvariant(t *testing.T) {
 //	supposed to provide.
 func TestHashChainDetectsTamper(t *testing.T) {
 	t.Parallel()
-	t.Skip("not implemented: §17.7 hash-chain primitive lives in a later phase")
+	t.Skip("not implemented: §12.1 hash-chain primitive lives in a later phase")
 }
 
 // TestHashChainPerTenantIsolation — chains for different tenants are
@@ -67,7 +67,7 @@ func TestHashChainDetectsTamper(t *testing.T) {
 //	non-repudiation.
 func TestHashChainPerTenantIsolation(t *testing.T) {
 	t.Parallel()
-	t.Skip("not implemented: §17.7 hash-chain primitive lives in a later phase")
+	t.Skip("not implemented: §12.1 hash-chain primitive lives in a later phase")
 }
 
 // TestHashChainRechainAfterRedaction — a §12.8 GDPR redaction
