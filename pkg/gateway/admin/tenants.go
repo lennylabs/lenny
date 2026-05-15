@@ -20,8 +20,19 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
+
+// rfc3339Nano serialises a time.Time using the shared RFC3339Nano
+// format every admin payload uses. Zero times serialise to empty so
+// optional `deletedAt` is omitted from the wire when absent.
+func rfc3339Nano(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
 
 // AuditSink receives §11.7 admin audit events. The router emits one
 // event per successful mutation (create / update / soft-delete);
@@ -58,12 +69,13 @@ type AuditEvent struct {
 }
 
 // Router is the §15.1 admin sub-router. The minimal admin API wires
-// only the tenant CRUD endpoints; future commits add users,
-// runtimes, pools, connectors, circuit breakers, etc.
+// only the resources the gateway has stores for; future commits add
+// users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants tenantstore.Store
-	clock   func() time.Time
-	audit   AuditSink
+	tenants  tenantstore.Store
+	runtimes runtimestore.Store
+	clock    func() time.Time
+	audit    AuditSink
 }
 
 // Options configures the Router.
@@ -112,6 +124,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("PUT /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateTenant)))
 		mux.Handle("DELETE /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteTenant)))
 	}
+	if r.runtimes != nil {
+		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
+		mux.Handle("GET /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleListRuntimes)))
+		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetRuntime)))
+		mux.Handle("PUT /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateRuntime)))
+		mux.Handle("DELETE /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteRuntime)))
+	}
 	return mux
 }
 
@@ -143,19 +162,16 @@ type TenantPayload struct {
 
 // fromTenant maps a stored row to the wire payload.
 func fromTenant(t tenantstore.Tenant) TenantPayload {
-	out := TenantPayload{
+	return TenantPayload{
 		ID:                  t.ID,
 		DisplayName:         t.DisplayName,
 		ComplianceProfile:   t.ComplianceProfile,
 		DataResidencyRegion: t.DataResidencyRegion,
 		WorkspaceTier:       t.WorkspaceTier,
-		CreatedAt:           t.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:           t.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		CreatedAt:           rfc3339Nano(t.CreatedAt),
+		UpdatedAt:           rfc3339Nano(t.UpdatedAt),
+		DeletedAt:           rfc3339Nano(t.DeletedAt),
 	}
-	if !t.DeletedAt.IsZero() {
-		out.DeletedAt = t.DeletedAt.UTC().Format(time.RFC3339Nano)
-	}
-	return out
 }
 
 // handleCreateTenant implements POST /v1/admin/tenants.
