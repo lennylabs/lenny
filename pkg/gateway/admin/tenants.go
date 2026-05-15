@@ -20,6 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -76,6 +77,7 @@ type Router struct {
 	tenants  tenantstore.Store
 	runtimes runtimestore.Store
 	users    userstore.Store
+	pools    poolstore.Store
 	clock    func() time.Time
 	audit    AuditSink
 }
@@ -139,6 +141,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleGetUser)))
 		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
 		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
+	}
+	if r.pools != nil {
+		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
+		mux.Handle("GET /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleListPools)))
+		mux.Handle("GET /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetPool)))
+		mux.Handle("PUT /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdatePool)))
+		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 	}
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
