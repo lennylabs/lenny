@@ -46,8 +46,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -148,6 +151,16 @@ func main() {
 	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{})
 	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
+	// ----- MCP adapter -----
+	delegationSvc := delegation.NewService(sessions, delegation.Options{})
+	mcpSrv := mcp.NewServer()
+	mcptools.Register(mcpSrv, mcptools.Deps{
+		Store:      sessions,
+		Executor:   exec,
+		Delegation: delegationSvc,
+		TenantID:   "default",
+	})
+
 	// ----- Admin API -----
 	// Every admin mutation is committed to a §11.7 per-tenant audit
 	// hash chain via the ChainAuditSink.
@@ -195,6 +208,7 @@ func main() {
 	mux.Handle("/v1/chat/completions", openaiHandler.Handler())
 	mux.Handle("/v1/responses", responsesHandler.Handler())
 	mux.Handle("/v1/responses/", responsesHandler.Handler())
+	mux.Handle("/mcp", mcpSrv.Handler())
 
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

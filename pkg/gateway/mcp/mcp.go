@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: MIT
+
+// Package mcp implements the §15.2 / §9.1 MCP adapter — the
+// Model Context Protocol surface the gateway exposes at `/mcp`.
+//
+// The adapter speaks JSON-RPC 2.0 over HTTP POST. v1 implements the
+// three core MCP methods:
+//
+//   - `initialize`  — capability negotiation + serverInfo.
+//   - `tools/list`  — the platform tool catalog (§8.5 delegation
+//     tools plus the session-lifecycle tools).
+//   - `tools/call`  — dispatch a tool invocation to the gateway.
+//
+// The MCP adapter is a thin translation layer: a `tools/call` for
+// `lenny/create_session` lands on the same session-creation path as
+// `POST /v1/sessions`. Building the adapter over the existing
+// gateway services keeps the REST and MCP surfaces in lockstep per
+// the §15.2.1 REST/MCP consistency contract.
+//
+// Streaming (the MCP Streamable-HTTP SSE channel) is post-v1 in this
+// minimal adapter — every method returns a single JSON-RPC response.
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+)
+
+// ProtocolVersion is the MCP protocol revision this adapter
+// implements.
+const ProtocolVersion = "2025-06-18"
+
+// jsonRPCRequest is the JSON-RPC 2.0 request envelope.
+type jsonRPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// jsonRPCResponse is the JSON-RPC 2.0 response envelope.
+type jsonRPCResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Result  any             `json:"result,omitempty"`
+	Error   *jsonRPCError   `json:"error,omitempty"`
+}
+
+// jsonRPCError is the JSON-RPC 2.0 error object.
+type jsonRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
+
+// JSON-RPC 2.0 + MCP error codes.
+const (
+	errParse          = -32700
+	errInvalidRequest = -32600
+	errMethodNotFound = -32601
+	errInvalidParams  = -32602
+	errInternal       = -32603
+)
+
+// Tool is one entry in the MCP tool catalog.
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
+// ToolResult is the §15.2 tool-call result content.
+type ToolResult struct {
+	Content []ToolContent `json:"content"`
+	IsError bool          `json:"isError,omitempty"`
+}
+
+// ToolContent is one content block in a tool result.
+type ToolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// ToolHandler executes a tool call. arguments is the raw JSON
+// `arguments` object from the `tools/call` params. The handler
+// returns the tool result or an error; a returned error is mapped
+// to a JSON-RPC error response.
+type ToolHandler func(ctx context.Context, arguments json.RawMessage) (ToolResult, error)
+
+// Server is the §15.2 MCP adapter.
+type Server struct {
+	tools    map[string]Tool
+	handlers map[string]ToolHandler
+	order    []string
+}
+
+// NewServer returns an empty MCP Server. Register tools with
+// RegisterTool before mounting Handler.
+func NewServer() *Server {
+	return &Server{
+		tools:    map[string]Tool{},
+		handlers: map[string]ToolHandler{},
+	}
+}
+
+// RegisterTool adds a tool to the catalog. A later RegisterTool with
+// the same name replaces the earlier registration.
+func (s *Server) RegisterTool(t Tool, h ToolHandler) {
+	if _, exists := s.tools[t.Name]; !exists {
+		s.order = append(s.order, t.Name)
+	}
+	s.tools[t.Name] = t
+	s.handlers[t.Name] = h
+}
+
+// Handler returns the http.Handler that serves POST /mcp.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mcp", s.handleRPC)
+	return mux
+}
+
+func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, 1<<20)
+	defer body.Close()
+
+	var req jsonRPCRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		s.writeError(w, nil, errParse, "request is not valid JSON")
+		return
+	}
+	if req.JSONRPC != "2.0" {
+		s.writeError(w, req.ID, errInvalidRequest, "jsonrpc must be \"2.0\"")
+		return
+	}
+
+	switch req.Method {
+	case "initialize":
+		s.writeResult(w, req.ID, map[string]any{
+			"protocolVersion": ProtocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "lenny-gateway", "version": "0.1.0"},
+		})
+	case "tools/list":
+		s.writeResult(w, req.ID, map[string]any{"tools": s.toolList()})
+	case "tools/call":
+		s.handleToolCall(w, r.Context(), req)
+	case "ping":
+		s.writeResult(w, req.ID, map[string]any{})
+	default:
+		s.writeError(w, req.ID, errMethodNotFound, "unknown method "+req.Method)
+	}
+}
+
+func (s *Server) toolList() []Tool {
+	out := make([]Tool, 0, len(s.order))
+	for _, name := range s.order {
+		out = append(out, s.tools[name])
+	}
+	return out
+}
+
+func (s *Server) handleToolCall(w http.ResponseWriter, ctx context.Context, req jsonRPCRequest) {
+	var params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeError(w, req.ID, errInvalidParams, "params is not a valid tools/call object")
+		return
+	}
+	handler, ok := s.handlers[params.Name]
+	if !ok {
+		s.writeError(w, req.ID, errMethodNotFound, "unknown tool "+params.Name)
+		return
+	}
+	result, err := handler(ctx, params.Arguments)
+	if err != nil {
+		// A tool execution failure is surfaced as an MCP tool result
+		// with isError=true rather than a JSON-RPC transport error,
+		// matching the MCP spec — the call reached the tool, the tool
+		// reported failure.
+		s.writeResult(w, req.ID, ToolResult{
+			Content: []ToolContent{{Type: "text", Text: err.Error()}},
+			IsError: true,
+		})
+		return
+	}
+	s.writeResult(w, req.ID, result)
+}
+
+func (s *Server) writeResult(w http.ResponseWriter, id json.RawMessage, result any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+	})
+}
+
+func (s *Server) writeError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	// JSON-RPC transport errors still return HTTP 200; the error is
+	// in the body. Parse errors are the exception — there is no id.
+	_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &jsonRPCError{Code: code, Message: message},
+	})
+}
+
+// internalError is kept for callers that need to signal a transport
+// failure (vs a tool failure). Unused by the v1 dispatch but exposed
+// so tool handlers can distinguish the two when richer error
+// mapping lands.
+var _ = errInternal
