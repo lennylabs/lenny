@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -45,6 +46,8 @@ type Server struct {
 	idFn            func() string
 	deriveAuditSink DeriveAuditSink
 	uploadIssuer    *uploadtoken.Issuer
+	uploadVerifier  *uploadtoken.Verifier
+	blobs           blobstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -74,6 +77,19 @@ type Options struct {
 	// so tokens survive a process restart.
 	UploadTokenIssuer *uploadtoken.Issuer
 
+	// UploadTokenVerifier validates the X-Lenny-Upload-Token header
+	// on POST /v1/sessions/{id}/upload calls. When nil, the upload
+	// handler skips validation — useful only in tests that pre-create
+	// session rows directly. Production wires this to the same
+	// KeyRing that backs UploadTokenIssuer.
+	UploadTokenVerifier *uploadtoken.Verifier
+
+	// Blobs is the §4.5 blob store backing
+	// `POST /v1/sessions/{id}/upload` and `GET /v1/blobs/{ref}`.
+	// When nil the upload + blob handlers return
+	// `503 BLOBSTORE_UNAVAILABLE`.
+	Blobs blobstore.Store
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -88,6 +104,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		idFn:            opts.IDFunc,
 		deriveAuditSink: opts.DeriveAuditSink,
 		uploadIssuer:    opts.UploadTokenIssuer,
+		uploadVerifier:  opts.UploadTokenVerifier,
+		blobs:           opts.Blobs,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -129,6 +147,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/resume", s.handleTransition(session.EndpointResume, transitionResume))
 	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
+	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
+	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }
 
