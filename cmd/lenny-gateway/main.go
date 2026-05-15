@@ -116,8 +116,9 @@ func main() {
 		Executor:            exec,
 	})
 
-	// ----- OpenAI Chat Completions translator -----
+	// ----- OpenAI Chat + Open Responses translators -----
 	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{})
+	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
 	// ----- Admin API -----
 	adminRouter := admin.NewRouter(tenants, admin.Options{}).
@@ -135,6 +136,8 @@ func main() {
 	mux.Handle("/v1/openapi.json", openapi.Handler())
 	mux.Handle("/v1/oauth/", tokSvc.Handler())
 	mux.Handle("/v1/chat/completions", openaiHandler.Handler())
+	mux.Handle("/v1/responses", responsesHandler.Handler())
+	mux.Handle("/v1/responses/", responsesHandler.Handler())
 
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
