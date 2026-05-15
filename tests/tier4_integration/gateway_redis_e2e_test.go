@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
@@ -67,4 +68,59 @@ func TestGatewayRedisBreakerE2E(t *testing.T) {
 	if !strings.Contains(stored, "echo") {
 		t.Errorf("Redis breaker record missing the runtime scope: %s", stored)
 	}
+}
+
+// TestGatewayRedisCoordinationE2E confirms the §10.1 lease
+// coordination sweeper is wired: a session created through the gateway
+// acquires its coordination lease in Redis within a sweep interval,
+// held by the gateway replica.
+func TestGatewayRedisCoordinationE2E(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	gw := gateway.StartWith(t, "--dev-mode",
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--coordination-interval=300ms")
+	ctx := context.Background()
+
+	body, _ := json.Marshal(map[string]any{
+		"runtimeRef": "echo",
+		"userId":     "alice@acme.com",
+	})
+	req, _ := http.NewRequest(http.MethodPost, gw.BaseURL()+"/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "default")
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create session: status %d, body=%s", resp.StatusCode, raw)
+	}
+	var created map[string]any
+	_ = json.Unmarshal(raw, &created)
+	sid, _ := created["id"].(string)
+	if sid == "" {
+		t.Fatal("session id missing")
+	}
+
+	// Within a few sweep intervals the coordination sweeper must have
+	// acquired the session's lease in Redis.
+	leaseKey := "t:default:lease:session:" + sid
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		holder, err := rd.Client.Get(ctx, leaseKey).Result()
+		if err == nil && holder != "" {
+			ttl, _ := rd.Client.TTL(ctx, leaseKey).Result()
+			if ttl <= 0 {
+				t.Errorf("coordination lease %s has no TTL", leaseKey)
+			}
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("coordination lease %s never appeared in Redis", leaseKey)
 }

@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
@@ -61,6 +62,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -107,6 +109,8 @@ func main() {
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used.")
+	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
+		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -163,10 +167,13 @@ func main() {
 
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
-	// consistent across replicas (§12.4).
+	// consistent across replicas (§12.4). The §10.1 session-
+	// coordination lease sweeper runs against the same Redis.
+	replica := resolveReplicaID()
 	var (
 		breakers    breakerRegistry
 		redisClient *redis.Client
+		coordinator *coordination.Sweeper
 	)
 	if *redisURL != "" {
 		opts, err := redis.ParseURL(*redisURL)
@@ -178,7 +185,10 @@ func main() {
 			log.Fatalf("lenny-gateway: redis: %v", err)
 		}
 		breakers = redisstore.New(redisClient)
-		log.Printf("lenny-gateway: circuit-breaker state persisted to Redis")
+		coordinator = coordination.NewSweeper(
+			tenantsLister{tenants}, sessions, leasestore.New(redisClient),
+			coordination.Options{ReplicaID: replica, Interval: *coordInterval})
+		log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
 	} else {
 		breakers = breakerstore.NewMemory()
 	}
@@ -275,6 +285,7 @@ func main() {
 				"gateway.runtimeBin":  *runtimeBin,
 				"gateway.postgres":    boolStr(*postgresDSN != ""),
 				"gateway.redis":       boolStr(*redisURL != ""),
+				"gateway.replicaId":   replica,
 			},
 		)
 
@@ -406,6 +417,13 @@ func main() {
 		}
 	})
 
+	// ----- §10.1 session-coordination lease sweeper -----
+	// Active only with Redis: it renews this replica's lease on every
+	// non-terminal session so a crashed replica's sessions free up.
+	if coordinator != nil {
+		go coordinator.Run(watchdogCtx)
+	}
+
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -454,6 +472,22 @@ func verifyPostgresSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("postgres: schema not migrated (the sessions table is absent); apply migrations/ before starting the gateway")
 	}
 	return nil
+}
+
+// resolveReplicaID returns this gateway replica's §10.1 coordination
+// identity: the LENNY_REPLICA_ID override, or the hostname plus a
+// random suffix so two replicas sharing a host still differ.
+func resolveReplicaID() string {
+	if id := os.Getenv("LENNY_REPLICA_ID"); id != "" {
+		return id
+	}
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "gateway"
+	}
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s-%x", host, b)
 }
 
 // permissiveRegistry accepts every tenant. The minimal gateway uses
