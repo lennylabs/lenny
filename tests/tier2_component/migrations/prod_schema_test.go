@@ -29,10 +29,11 @@ func prodMigrations(t *testing.T) string {
 	return filepath.Join(schematest.RepoRoot(t), "migrations")
 }
 
-// prodTables is every table the initial schema creates.
+// prodTables is every table the production migrations create.
 var prodTables = []string{
 	"tenants", "runtime_definitions", "sessions", "session_messages",
 	"audit_log", "billing_events", "issued_tokens", "agent_pod_state",
+	"users",
 }
 
 // execTenant runs sql inside a transaction that has set

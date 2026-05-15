@@ -78,6 +78,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -113,6 +114,7 @@ func main() {
 		tenants     tenantstore.Store
 		runtimes    runtimestore.Store
 		transcripts transcriptstore.Store
+		users       userstore.Store
 		pgPool      *pgxpool.Pool
 	)
 	if *postgresDSN != "" {
@@ -128,15 +130,16 @@ func main() {
 		tenants = tenantpg.New(pool)
 		runtimes = runtimepg.New(pool)
 		transcripts = transcriptpg.New(pool)
-		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, and runtimes to Postgres")
+		users = userpg.New(pool)
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, and users to Postgres")
 	} else {
 		sessions = memstore.New()
 		tenants = tenantstore.NewMemory()
 		runtimes = runtimestore.NewMemory()
 		transcripts = transcriptstore.NewMemory()
+		users = userstore.NewMemory()
 	}
 	blobs := blobstore.NewMemoryStore(nil)
-	users := userstore.NewMemory()
 	pools := poolstore.NewMemory()
 	breakers := breakerstore.NewMemory()
 	connectors := connectorstore.NewMemory()

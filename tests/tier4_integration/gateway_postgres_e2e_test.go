@@ -70,13 +70,17 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 		return n
 	}
 
-	// ---- admin: bootstrap a tenant + a minimal runtime ----
+	// ---- admin: bootstrap a tenant, a minimal runtime, and a user ----
 	// The runtime payload omits executionMode and integrationLevel;
 	// runtimestore.ApplyDefaults must fill them so the row satisfies
 	// the runtime_definitions CHECK constraints.
 	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
 		"tenants":  []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
 		"runtimes": []map[string]any{{"name": "echo", "image": "lenny/echo@sha256:abc"}},
+		"users": []map[string]any{{
+			"subject": "auth0|alice", "tenantId": "acme",
+			"email": "alice@acme.com", "roles": []string{"tenant-admin"},
+		}},
 	})
 	if code != http.StatusOK {
 		t.Fatalf("bootstrap: status %d", code)
@@ -86,6 +90,9 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	}
 	if n := dbCount(`SELECT COUNT(*) FROM runtime_definitions WHERE name = 'echo'`); n != 1 {
 		t.Errorf("runtime_definitions row count = %d, want 1", n)
+	}
+	if n := dbCount(`SELECT COUNT(*) FROM users WHERE tenant_id = 'acme' AND subject = 'auth0|alice'`); n != 1 {
+		t.Errorf("users row count = %d, want 1", n)
 	}
 
 	// ---- admin: the bootstrapped records read back through the API ----
