@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate", s.handleTransition(session.EndpointTerminate, transitionTerminate))
 	mux.HandleFunc("POST /v1/sessions/{id}/resume", s.handleTransition(session.EndpointResume, transitionResume))
 	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
+	mux.HandleFunc("POST /v1/sessions/{id}/replay", s.handleReplay)
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
