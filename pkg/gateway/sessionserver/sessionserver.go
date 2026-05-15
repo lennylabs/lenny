@@ -555,6 +555,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	s.recordSessionCompleted(r.Context(), updated)
 	s.writeSession(w, http.StatusOK, updated)
 }
 
@@ -589,6 +590,9 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 			return
+		}
+		if session.IsTerminal(updated.State) {
+			s.recordSessionCompleted(r.Context(), updated)
 		}
 		s.writeSession(w, http.StatusOK, updated)
 	}

@@ -65,3 +65,18 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 		})
 	}
 }
+
+// recordSessionCompleted emits the §11.2.1 `session.completed` billing
+// event for a session that has reached a terminal state. Best-effort:
+// a billing failure never fails the transition that triggered it.
+func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	if s.billing == nil {
+		return
+	}
+	_, _ = s.billing.Append(ctx, billingstore.Event{
+		TenantID:  sess.TenantID,
+		UserID:    sess.UserID,
+		SessionID: sess.ID,
+		EventType: billingstore.EventSessionCompleted,
+	})
+}

@@ -28,8 +28,14 @@ import (
 // added as the emitting code paths are built.
 type EventType string
 
-// EventSessionCreated is emitted when a new session is created.
-const EventSessionCreated EventType = "session.created"
+const (
+	// EventSessionCreated is emitted when a new session is created.
+	EventSessionCreated EventType = "session.created"
+
+	// EventSessionCompleted is emitted when a session reaches a
+	// terminal state (completed, failed, cancelled, or expired).
+	EventSessionCompleted EventType = "session.completed"
+)
 
 // defaultSchemaVersion is the §15.5 billing-event schema revision
 // stamped on an event whose SchemaVersion is left zero.
