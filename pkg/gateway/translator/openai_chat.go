@@ -357,9 +357,10 @@ func resolveTenant(r *http.Request) string {
 	return "default"
 }
 
-// defaultChatID returns a fresh `chatcmpl-<session>` id. We
-// piggy-back on the session id rather than minting a separate one so
-// the OpenAI ID round-trips through Lenny's session store.
+// defaultChatID returns a fresh §12.6 UUIDv8 session identifier. The
+// translator persists this as the session row id and echoes it to the
+// client as the response id, so the id round-trips through Lenny's
+// session store.
 func defaultChatID() string {
-	return "sess_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000"), ".", "_")
+	return session.NewID()
 }

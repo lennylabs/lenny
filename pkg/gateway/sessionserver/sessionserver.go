@@ -23,12 +23,10 @@ package sessionserver
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -722,13 +720,9 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	return out
 }
 
-// randomSessionID returns a 16-character lowercase-hex session id
-// prefixed with "sess_". 8 random bytes → 128 bits of entropy, plenty
-// for collision-free generation in the in-memory store.
+// randomSessionID returns a fresh §12.6 UUIDv8 session identifier.
 func randomSessionID() string {
-	var buf [8]byte
-	_, _ = rand.Read(buf[:])
-	return "sess_" + strings.ToLower(hex.EncodeToString(buf[:]))
+	return session.NewID()
 }
 
 // Now exposes the configured clock so callers that hold a reference

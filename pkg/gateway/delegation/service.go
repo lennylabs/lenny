@@ -248,7 +248,8 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 	return lineage, len(chain) - 1, nil
 }
 
-// randomChildID returns a fresh child session id.
+// randomChildID returns a fresh §12.6 UUIDv8 session identifier for a
+// delegated child session.
 func randomChildID() string {
-	return "sess_" + randomHex(8)
+	return session.NewID()
 }

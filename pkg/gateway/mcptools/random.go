@@ -2,14 +2,9 @@
 
 package mcptools
 
-import (
-	"crypto/rand"
-	"encoding/hex"
-)
+import "github.com/lennylabs/lenny/pkg/api/v1/session"
 
-// randomSessionID returns a fresh `sess_`-prefixed session id.
+// randomSessionID returns a fresh §12.6 UUIDv8 session identifier.
 func randomSessionID() string {
-	var buf [8]byte
-	_, _ = rand.Read(buf[:])
-	return "sess_" + hex.EncodeToString(buf[:])
+	return session.NewID()
 }

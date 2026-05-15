@@ -20,9 +20,24 @@
 package session
 
 import (
+	"crypto/rand"
 	"fmt"
 	"sort"
 )
+
+// NewID returns a fresh §12.6 session identifier: a UUIDv8 (RFC 9562)
+// whose first 32 bits are the shard routing prefix. A root session
+// gets a fully random prefix; in a single-shard v1 deployment the
+// prefix is not yet load-bearing, so child and derived sessions also
+// receive a fresh random identifier here. The version nibble is 8 and
+// the variant bits are 10, per the §12.6 bit layout.
+func NewID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x80
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 // State is the externally-visible session state from §15.1. Twelve
 // values; four are terminal.
