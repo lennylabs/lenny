@@ -50,6 +50,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
@@ -133,6 +135,7 @@ func main() {
 		transcripts transcriptstore.Store
 		users       userstore.Store
 		connectors  connectorstore.Store
+		billing     billingstore.Store
 		pgPool      *pgxpool.Pool
 	)
 	if *postgresDSN != "" {
@@ -160,7 +163,8 @@ func main() {
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
 		connectors = connectorpg.New(pool)
-		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, and connectors to Postgres")
+		billing = billingpg.New(pool)
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, connectors, and billing events to Postgres")
 	} else {
 		sessions = memstore.New()
 		tenants = tenantstore.NewMemory()
@@ -168,6 +172,7 @@ func main() {
 		transcripts = transcriptstore.NewMemory()
 		users = userstore.NewMemory()
 		connectors = connectorstore.NewMemory()
+		billing = billingstore.NewMemory()
 	}
 	blobs := blobstore.NewMemoryStore(nil)
 	pools := poolstore.NewMemory()
@@ -265,6 +270,7 @@ func main() {
 		Interactions:        interactionstore.NewMemory(),
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
+		Billing:             billing,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -91,6 +92,7 @@ type Server struct {
 	interactions    interactionstore.Store
 	usage           usagestore.Store
 	users           userstore.Store
+	billing         billingstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -176,6 +178,11 @@ type Options struct {
 	// When nil the check is skipped (unit tests that do not provision
 	// a user registry); the gateway always wires it.
 	Users userstore.Store
+
+	// Billing is the §11.2.1 billing event ledger. When set, the
+	// gateway appends a session.created event on every create. Nil
+	// disables billing emission.
+	Billing billingstore.Store
 }
 
 // New returns a Server bound to the supplied store.
@@ -194,6 +201,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interactions:    opts.Interactions,
 		usage:           opts.Usage,
 		users:           opts.Users,
+		billing:         opts.Billing,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -388,7 +396,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	s.recordSessionCreated(r.Context(), tenantID, row.RuntimeRef)
+	s.recordSessionCreated(r.Context(), row)
 
 	// §7.1 step 8: mint the single-use uploadToken stamped on the
 	// session creation response. TTL = maxCreatedStateTimeoutSeconds

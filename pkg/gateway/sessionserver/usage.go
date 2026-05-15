@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 )
 
@@ -42,16 +44,24 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(report)
 }
 
-// recordSessionCreated records a §15.1 usage event for a new
-// session. Best-effort — a metering write failure never fails the
-// create.
-func (s *Server) recordSessionCreated(ctx context.Context, tenantID, runtimeRef string) {
-	if s.usage == nil {
-		return
+// recordSessionCreated records the §15.1 usage event and the §11.2.1
+// `session.created` billing event for a new session. Both writes are
+// best-effort: a metering or billing failure is never allowed to fail
+// the session create.
+func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Session) {
+	if s.usage != nil {
+		_ = s.usage.Record(ctx, usagestore.Record{
+			TenantID: sess.TenantID,
+			Runtime:  sess.RuntimeRef,
+			Sessions: 1,
+		})
 	}
-	_ = s.usage.Record(ctx, usagestore.Record{
-		TenantID: tenantID,
-		Runtime:  runtimeRef,
-		Sessions: 1,
-	})
+	if s.billing != nil {
+		_, _ = s.billing.Append(ctx, billingstore.Event{
+			TenantID:  sess.TenantID,
+			UserID:    sess.UserID,
+			SessionID: sess.ID,
+			EventType: billingstore.EventSessionCreated,
+		})
+	}
 }
