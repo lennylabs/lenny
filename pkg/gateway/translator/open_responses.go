@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -132,12 +133,6 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 			"input is required")
 		return
 	}
-	if req.Stream {
-		writeOpenAIError(w, http.StatusBadRequest, "unsupported_value",
-			"stream=true is not supported by this gateway")
-		return
-	}
-
 	tenantID := resolveTenant(r)
 	runtimeRef := req.Model
 	if runtimeRef == "" {
@@ -183,10 +178,72 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		_ = err
 	}
 
+	if req.Stream {
+		writeOpenResponsesStream(w, sessionID, req.PreviousResponseID, now, out)
+		return
+	}
 	resp := buildOpenResponsesResponse(sessionID, runtimeRef, req.PreviousResponseID, now, out)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// writeOpenResponsesStream emits the Open Responses streaming form —
+// an SSE sequence of typed events:
+//
+//	response.created          — the response envelope opens.
+//	response.output_text.delta — one per whitespace-delimited token.
+//	response.completed        — the response envelope closes.
+//
+// The synchronous executor produces a complete response; the
+// translator chunks the text so streaming clients observe
+// incremental output.
+func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.Time, out []executor.OutputPart) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+			"response writer does not support streaming")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	emit := func(eventType string, payload any) {
+		b, _ := json.Marshal(payload)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, b)
+		flusher.Flush()
+	}
+
+	emit("response.created", map[string]any{
+		"type":     "response.created",
+		"response": map[string]any{"id": id, "status": "in_progress"},
+	})
+
+	full := ""
+	for _, p := range out {
+		if p.Type == "text" {
+			if full != "" {
+				full += "\n"
+			}
+			full += p.Text
+		}
+	}
+	for i, tok := range strings.Fields(full) {
+		chunk := tok
+		if i > 0 {
+			chunk = " " + tok
+		}
+		emit("response.output_text.delta", map[string]any{
+			"type":  "response.output_text.delta",
+			"delta": chunk,
+		})
+	}
+
+	emit("response.completed", map[string]any{
+		"type":     "response.completed",
+		"response": buildOpenResponsesResponse(id, "", prev, now, out),
+	})
 }
 
 func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request) {

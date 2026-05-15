@@ -90,15 +90,30 @@ func TestOpenResponsesRejectsMissingInput(t *testing.T) {
 	}
 }
 
-func TestOpenResponsesRejectsStream(t *testing.T) {
+func TestOpenResponsesStreamEmitsTypedEvents(t *testing.T) {
 	h, _ := newResponsesHandler(t)
 	rr := respPost(t, h.Handler(), map[string]any{
 		"model":  "echo",
-		"input":  "x",
+		"input":  "hello stream",
 		"stream": true,
 	})
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("stream=true: got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stream status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type: %q", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"event: response.created",
+		"event: response.output_text.delta",
+		"event: response.completed",
+		"hello",
+		"stream",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("stream body missing %q; body:\n%s", want, body)
+		}
 	}
 }
 
