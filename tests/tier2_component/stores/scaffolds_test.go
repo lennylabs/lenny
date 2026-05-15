@@ -31,12 +31,15 @@ import "testing"
 // in tests/tier2_component/leases against pkg/gateway/leasestore. The
 // §12.4 Redis-outage Postgres advisory-lock fallback is not yet built.
 
-// TestQuotaStoreContract — Redis + Postgres quota store. Coverage:
-// increment/decrement, sliding window, fail-open semantics, per-user
-// fraction, per-replica hard cap, cumulative timeout, MAX-rule
-// reconciliation, storage-quota pre-check, GC decrement.
+// TestQuotaStoreContract — Redis + Postgres quota store. The
+// fixed-window token-usage counter is implemented in
+// tests/tier2_component/quota against pkg/gateway/quotastore, and the
+// §11.2 arithmetic lives in pkg/quota. The remaining QuotaStore
+// surface — the rolling sliding window, the fail-open per-replica
+// accounting, the cumulative fail-open timer, and the MAX-rule
+// Postgres reconciliation — is not yet built.
 func TestQuotaStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 QuotaStore — pkg/quota arithmetic exists; this suite needs the Redis-backed counters and the MAX-rule reconciliation pipeline")
+	t.Skip("not implemented: §12.2.1 QuotaStore — the fixed-window counter and §11.2 arithmetic exist; the rolling window, fail-open accounting, and MAX-rule reconciliation pipeline remain")
 }
 
 // TestTokenStoreContract — Postgres encrypted token store. Coverage:
