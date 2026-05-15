@@ -318,6 +318,59 @@
         }
       }
     },
+    "/v1/sessions/{id}/messages": {
+      "post": {
+        "summary": "Inject a message batch into a session",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Delivered" }, "409": { "description": "Invalid state" } }
+      }
+    },
+    "/v1/sessions/{id}/transcript": {
+      "get": {
+        "summary": "Get the session conversation transcript (paginated)",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "afterSeq", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/tree": {
+      "get": {
+        "summary": "Get the delegation task tree rooted at a session",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/sessions/{id}/events": {
+      "get": {
+        "summary": "Server-Sent Events stream of session activity",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "Last-Event-ID", "in": "header", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "text/event-stream" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics scrape target",
+        "security": [],
+        "responses": { "200": { "description": "Prometheus exposition format" } }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "summary": "MCP adapter — JSON-RPC 2.0 (initialize, tools/list, tools/call)",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "JSON-RPC response" } }
+      }
+    },
     "/v1/sessions/{id}/extend-retention": {
       "post": {
         "summary": "Extend artifact retention TTL",
@@ -518,14 +571,6 @@
         "security": [{ "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateSessionRequest" } } } },
         "responses": { "201": { "description": "Created and started" } }
-      }
-    },
-    "/v1/sessions/{id}/messages": {
-      "post": {
-        "summary": "Inject a message batch into a session",
-        "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Delivered" }, "409": { "description": "Invalid state" } }
       }
     },
     "/v1/chat/completions": {
