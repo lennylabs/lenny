@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
@@ -217,6 +218,13 @@ func main() {
 		log.Fatalf("lenny-gateway: rand: %v", err)
 	}
 	jwtSigner := jwt.NewHMACSigner("boot", jwtSeed[:])
+	// With Postgres the §13.3 write-before-issue record is durable in
+	// the issued_tokens table; otherwise the Token Service keeps only
+	// its in-memory jti set.
+	var issuedTokens tokenservice.IssuedTokenStore
+	if pgPool != nil {
+		issuedTokens = issuedtokenstore.New(pgPool)
+	}
 	tokSvc := tokenservice.NewServer(tokenservice.Options{
 		Signer: jwtSigner,
 		Issuer: "https://lenny.dev.local/token",
@@ -225,6 +233,7 @@ func main() {
 			"lenny-ops":     1 * time.Hour,
 			"llm-proxy":     1 * time.Hour,
 		},
+		IssuedTokens: issuedTokens,
 	})
 
 	// ----- Session API + Executor -----

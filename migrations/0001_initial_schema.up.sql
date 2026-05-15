@@ -179,7 +179,11 @@ CREATE INDEX idx_billing_events_tenant_session ON billing_events (tenant_id, ses
 -- pins jti as the primary key and the three secondary indexes below.
 CREATE TABLE issued_tokens (
     jti            TEXT        PRIMARY KEY,
-    tenant_id      TEXT        NOT NULL REFERENCES tenants(id),
+    -- tenant_id is the token's operating tenant and the RLS scoping
+    -- column. It is NOT a foreign key to tenants: a §13.3 service
+    -- token can carry a platform or service identity that is not a
+    -- registered tenant row.
+    tenant_id      TEXT        NOT NULL,
     sub            TEXT        NOT NULL,
     -- token_hash is SHA-256 of the raw token bytes — never the token.
     token_hash     BYTEA       NOT NULL,

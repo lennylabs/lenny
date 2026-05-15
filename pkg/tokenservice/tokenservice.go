@@ -15,6 +15,8 @@
 package tokenservice
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,15 +26,25 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
 )
 
+// IssuedTokenStore records issued-token metadata. The §13.3
+// write-before-issue rule means the Token Service commits a record
+// here before it returns a minted token to the caller, so every live
+// token can be matched against its revocation state.
+type IssuedTokenStore interface {
+	Record(ctx context.Context, tok issuedtokenstore.IssuedToken) error
+}
+
 // Server is the §13.3 Token Service http handler.
 type Server struct {
-	signer     *jwt.HMACSigner
-	verifier   jwt.Verifier
-	issuer     string
-	perDialect map[string]time.Duration
+	signer       *jwt.HMACSigner
+	verifier     jwt.Verifier
+	issuer       string
+	perDialect   map[string]time.Duration
+	issuedTokens IssuedTokenStore
 
 	mu     sync.Mutex
 	issued map[string]bool // jti seen
@@ -48,6 +60,11 @@ type Options struct {
 	// by audience. Empty map means no cap (the validator falls
 	// through to min(requested, subject.exp, actor.exp)).
 	PerDialectCap map[string]time.Duration
+
+	// IssuedTokens, when set, records every minted token before it is
+	// returned (§13.3 write-before-issue). When nil, no durable
+	// issued-token record is kept.
+	IssuedTokens IssuedTokenStore
 }
 
 // NewServer returns a Server.
@@ -59,11 +76,12 @@ func NewServer(opts Options) *Server {
 		opts.PerDialectCap = map[string]time.Duration{}
 	}
 	return &Server{
-		signer:     opts.Signer,
-		verifier:   opts.Verifier,
-		issuer:     opts.Issuer,
-		perDialect: opts.PerDialectCap,
-		issued:     map[string]bool{},
+		signer:       opts.Signer,
+		verifier:     opts.Verifier,
+		issuer:       opts.Issuer,
+		perDialect:   opts.PerDialectCap,
+		issuedTokens: opts.IssuedTokens,
+		issued:       map[string]bool{},
 	}
 }
 
@@ -198,6 +216,29 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
+	}
+
+	// §13.3 write-before-issue: the issued-token metadata is recorded
+	// before the token is handed to the caller. The token is not
+	// returned when the record fails, so every live token is
+	// matchable against its revocation state.
+	if s.issuedTokens != nil {
+		hash := sha256.Sum256([]byte(signed))
+		rec := issuedtokenstore.IssuedToken{
+			JTI:       jti,
+			TenantID:  issued.TenantID,
+			Subject:   issued.Subject,
+			TokenHash: hash[:],
+			Scope:     issued.Scope,
+			Audience:  strings.Join(issued.Audience, " "),
+			IssuedAt:  now,
+			ExpiresAt: issued.Exp,
+		}
+		if err := s.issuedTokens.Record(r.Context(), rec); err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error",
+				"issued-token record failed: "+err.Error())
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, Response{
