@@ -70,7 +70,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	// R-01: tenant-scoped ledgers lead their primary index with tenant_id.
 	mustHavePKLeadingColumn(t, ctx, pg, "audit_log", "tenant_id")
 	mustHavePKLeadingColumn(t, ctx, pg, "billing_events", "tenant_id")
-	mustHavePKLeadingColumn(t, ctx, pg, "runtime_definitions", "tenant_id")
+	// runtime_definitions is platform-global (§5.1): keyed by name.
+	mustHavePKLeadingColumn(t, ctx, pg, "runtime_definitions", "name")
 	mustHaveIndex(t, ctx, pg, "sessions", "idx_sessions_tenant_created")
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_tenant_sub")
 	mustHaveIndex(t, ctx, pg, "agent_pod_state", "idx_agent_pod_state_pool_state")

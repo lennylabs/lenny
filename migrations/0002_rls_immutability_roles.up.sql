@@ -116,9 +116,6 @@ CREATE TRIGGER lenny_tenant_guard
     BEFORE INSERT OR UPDATE OR DELETE ON session_messages
     FOR EACH ROW EXECUTE FUNCTION lenny_tenant_guard();
 CREATE TRIGGER lenny_tenant_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON runtime_definitions
-    FOR EACH ROW EXECUTE FUNCTION lenny_tenant_guard();
-CREATE TRIGGER lenny_tenant_guard
     BEFORE INSERT OR UPDATE OR DELETE ON issued_tokens
     FOR EACH ROW EXECUTE FUNCTION lenny_tenant_guard();
 CREATE TRIGGER lenny_tenant_guard
@@ -143,7 +140,7 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        'sessions', 'session_messages', 'runtime_definitions',
+        'sessions', 'session_messages',
         'issued_tokens', 'audit_log', 'billing_events'
     ] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);

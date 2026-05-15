@@ -4,7 +4,6 @@
 
 DROP TRIGGER IF EXISTS lenny_tenant_guard ON sessions;
 DROP TRIGGER IF EXISTS lenny_tenant_guard ON session_messages;
-DROP TRIGGER IF EXISTS lenny_tenant_guard ON runtime_definitions;
 DROP TRIGGER IF EXISTS lenny_tenant_guard ON issued_tokens;
 DROP TRIGGER IF EXISTS lenny_tenant_guard ON audit_log;
 DROP TRIGGER IF EXISTS lenny_tenant_guard ON billing_events;
@@ -17,7 +16,7 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
-        'sessions', 'session_messages', 'runtime_definitions',
+        'sessions', 'session_messages',
         'issued_tokens', 'audit_log', 'billing_events'
     ] LOOP
         EXECUTE format('DROP POLICY IF EXISTS lenny_tenant_isolation ON %I', t);

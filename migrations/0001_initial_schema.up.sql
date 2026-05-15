@@ -36,10 +36,12 @@ CREATE TABLE tenants (
     deleted_at            TIMESTAMPTZ
 );
 
--- runtime_definitions is the §5.1 per-tenant runtime registry.
+-- runtime_definitions is the §5.1 runtime registry. Runtimes are
+-- platform-global records (§5.1); which tenants may use a runtime is
+-- a separate access-grant concern.
+-- platform-global
 CREATE TABLE runtime_definitions (
-    tenant_id         TEXT        NOT NULL REFERENCES tenants(id),
-    name              TEXT        NOT NULL,
+    name              TEXT        PRIMARY KEY,
     type              TEXT        NOT NULL DEFAULT 'agent',
     image             TEXT        NOT NULL,
     execution_mode    TEXT        NOT NULL,
@@ -49,7 +51,6 @@ CREATE TABLE runtime_definitions (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at        TIMESTAMPTZ,
-    PRIMARY KEY (tenant_id, name),
     CONSTRAINT runtime_definitions_type_check
         CHECK (type IN ('agent', 'mcp')),
     CONSTRAINT runtime_definitions_execution_mode_check
