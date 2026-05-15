@@ -186,3 +186,86 @@ func TestSyncPropagatesSourceError(t *testing.T) {
 		t.Fatal("Sync should return an error when the pool config source fails")
 	}
 }
+
+type fakeDemand struct {
+	demand poolscaling.Demand
+	err    error
+}
+
+func (f *fakeDemand) PoolDemand(context.Context, string) (poolscaling.Demand, error) {
+	return f.demand, f.err
+}
+
+// TestSyncUsesObservedDemandForMinWarm confirms that once a pool has
+// observed demand, the warm-pool minWarm is the §4.6.2 formula result
+// rather than the static bootstrap value. For the session-mode pool
+// with safetyFactor 1.5, failover 25s, podWarmup 10s, and demand
+// p95 0.1 / p99 0.2, the formula yields ceil(5.25 + 2.0) = 8.
+func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.1,
+		BurstP99Claims: 0.2,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 8 {
+		t.Errorf("warm pool minWarm = %d, want 8 (formula-derived)", got)
+	}
+}
+
+func TestSyncStaysAtBootstrapWithoutObservedDemand(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  99,
+		BurstP99Claims: 99,
+		Observed:       false,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// config()'s MinWarm is the bootstrap value; unconverged demand
+	// must not let the high observed rate above leak into the result.
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+		t.Errorf("warm pool minWarm = %d, want 3 (bootstrap, demand not observed)", got)
+	}
+}
+
+func TestSyncStaysAtBootstrapWithNoDemandSource(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+
+	// No Demand wired: the controller operates the pool in bootstrap.
+	r := &poolscaling.Reconciler{Client: c, Source: src}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+		t.Errorf("warm pool minWarm = %d, want 3 (bootstrap, no demand source)", got)
+	}
+}
+
+func TestSyncPropagatesDemandSourceError(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	demand := &fakeDemand{err: errors.New("prometheus unreachable")}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err == nil {
+		t.Fatal("Sync should return an error when the demand source fails")
+	}
+}
