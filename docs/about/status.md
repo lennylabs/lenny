@@ -49,8 +49,9 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Surface | Status | Notes |
 |:--------|:-------|:------|
 | Echo reference runtime | Shipped | Basic-level adapter at `cmd/runtimes/echo`. Driven by the conformance suite and by the gateway's subprocess executor. |
-| Gateway skeleton (session create / stream / complete) | In progress | `cmd/lenny-gateway` serves the §15.1 REST surface, the SSE event stream, and the §15.2 MCP and OpenAI adapters against in-memory stores. |
-| Session lifecycle + REST API end-to-end | In progress | Create, finalize, start, interrupt, terminate, resume, derive, upload, messages, transcript, tree, events all served. Postgres-backed persistence is pending. |
+| Gateway skeleton (session create / stream / complete) | In progress | `cmd/lenny-gateway` serves the §15.1 REST surface, the SSE event stream, and the §15.2 MCP and OpenAI adapters. It persists to Postgres and Redis when `--postgres-dsn` and `--redis-url` are set, and uses in-memory stores otherwise. |
+| Session lifecycle + REST API end-to-end | In progress | Create, finalize, start, interrupt, terminate, resume, derive, upload, messages, transcript, tree, and events are all served. Postgres-backed session, transcript, tenant, runtime, user, and connector stores are available via `--postgres-dsn`. |
+| Database schema and migrations | Shipped | The `migrations/` schema applied by the golang-migrate framework. Covers the §12 tables, the §12.3 row-level security and `lenny_tenant_guard` trigger, the §11.7 ledger-immutability triggers, and the `lenny_app` and `lenny_erasure` role separation. |
 | Warm pod pool controller | Not started | Keeps pods pre-warmed; handles claim, release, drain. |
 | Workspace materialization | In progress | The §14 workspace plan is parsed and validated on session creation; uploaded files are stored in the blob store. Pod-side materialization is pending the pod model. |
 | Credential leasing (Basic) | In progress | The §4.9 end-user credential registry and `/v1/credentials` endpoints are served. Lease assignment on session creation is pending. |
@@ -58,8 +59,8 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Checkpoint / resume | Not started | Sessions survive pod failure; artifacts retrievable. |
 | Recursive delegation | In progress | The §8 delegation service enforces cycle detection, isolation monotonicity, and the depth limit. Budgets and lease extension are pending. |
 | Recursive delegation with MCP semantics | In progress | `lenny/delegate_task` and the other §8.5 platform tools are served by the MCP adapter. |
-| Multi-tenancy (Postgres RLS, quotas, RBAC) | In progress | In-memory tenant isolation, RBAC role enforcement, and the §5.75 quota interceptor are active. Postgres RLS is pending. |
-| Audit log with hash-chain integrity + SIEM | In progress | The §11.7 per-tenant audit hash chain records every admin mutation and is queryable. SIEM streaming is pending. |
+| Multi-tenancy (Postgres RLS, quotas, RBAC) | In progress | RBAC role enforcement and the §5.75 quota interceptor are active. The §12.3 row-level security policies and the `lenny_tenant_guard` transaction-isolation trigger ship in the `migrations/` schema. |
+| Audit log with hash-chain integrity + SIEM | In progress | The §11.7 per-tenant audit hash chain records every admin mutation and is queryable. The chain is durable in the Postgres `audit_log` table under `--postgres-dsn`, the ledger-immutability triggers and the startup integrity check are active, and SIEM streaming is pending. |
 | Compliance controls (erasure receipts, legal holds, residency) | In progress | GDPR redaction receipts are modelled on the audit chain. The erasure pipeline and residency controls are pending. |
 | Security hardening (signed images, admission, pentest) | Not started | Sigstore/cosign + admission controller. |
 | SLO validation at Growth-sized load | Not started | Full security hardening active. |
@@ -68,10 +69,10 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 
 | Protocol | Status | Notes |
 |:---------|:-------|:------|
-| REST | In progress | The §15.1 session, blob, and admin endpoints are served end-to-end against in-memory stores. |
+| REST | In progress | The §15.1 session, blob, and admin endpoints are served end-to-end, against Postgres-backed or in-memory stores. |
 | MCP (Streamable HTTP) | In progress | The `/mcp` JSON-RPC adapter serves initialize, tools/list, and tools/call. Streaming over SSE is pending. |
-| OpenAI Chat Completions | In progress | `/v1/chat/completions` translates to the session surface. Streaming is pending. |
-| Open Responses / OpenAI Responses | In progress | `/v1/responses` translates to the session surface. Streaming is pending. |
+| OpenAI Chat Completions | In progress | `/v1/chat/completions` translates to the session surface, including streaming responses (`stream: true`). |
+| Open Responses / OpenAI Responses | In progress | `/v1/responses` translates to the session surface, including streaming responses (`stream: true`). |
 
 ### LLM routing in the gateway
 
@@ -86,7 +87,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Runtime | Status | Notes |
 |:--------|:-------|:------|
 | `echo` (compliance reference) | Shipped | Basic-level adapter embedded in the platform repo at `cmd/runtimes/echo`. |
-| `streaming-echo` (CI test runtime) | In progress | Full-level lifecycle runtime at `cmd/runtimes/streaming-echo`. |
+| `streaming-echo` (CI test runtime) | Shipped | Full-level lifecycle runtime at `cmd/runtimes/streaming-echo`. Passes the `lenny-compliance` Basic and Full conformance batteries. |
 | `chat` | Not started | Generic LLM chat, no tools. Standard integration level. |
 | `claude-code` | Not started | Anthropic Claude Code CLI under gVisor. |
 | `gemini-cli` | Not started | Google Gemini CLI under gVisor. |
@@ -113,7 +114,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 
 | Surface | Status | Notes |
 |:--------|:-------|:------|
-| Diagnostic endpoints | In progress | The gateway serves the §25.3 Platform Health API (`/v1/admin/health`) and the §25.4 self-introspection endpoints (`/v1/admin/me`). The remaining diagnostic endpoints are pending. |
+| Diagnostic endpoints | In progress | The gateway serves the §25.3 Platform Health API (`/v1/admin/health`), which probes the live Postgres and Redis backends, and the §25.4 self-introspection endpoints (`/v1/admin/me`). The remaining diagnostic endpoints are pending. |
 | Runbook catalog | Not started | Machine-readable and human-readable. |
 | Backup and restore APIs | Not started | Transient Jobs scheduled by `lenny-ops` (uses `lenny-backup` image). |
 | Drift detection | Not started | Compares observed cluster state to declared configuration. |
