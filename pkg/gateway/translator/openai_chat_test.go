@@ -97,20 +97,34 @@ func TestOpenAIChatRejectsEmptyMessages(t *testing.T) {
 	}
 }
 
-func TestOpenAIChatRejectsStream(t *testing.T) {
+func TestOpenAIChatStreamEmitsSSEChunks(t *testing.T) {
 	h, _ := newOpenAIHandler(t)
 	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
 		Model:    "echo",
 		Stream:   true,
-		Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "x"}},
+		Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "hello world"}},
 	})
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("stream=true: got %d, want 400", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("stream status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var env translator.OpenAIError
-	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	if env.Error.Type != "unsupported_value" {
-		t.Errorf("error type: %q", env.Error.Type)
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type: %q, want text/event-stream", ct)
+	}
+	body := rr.Body.String()
+	// First frame carries the assistant role.
+	if !strings.Contains(body, `"role":"assistant"`) {
+		t.Error("stream missing assistant role delta")
+	}
+	// Content frames carry the echoed input tokens.
+	if !strings.Contains(body, "hello") || !strings.Contains(body, "world") {
+		t.Errorf("stream content missing echoed tokens; body:\n%s", body)
+	}
+	// Final frame carries finish_reason=stop and the [DONE] sentinel.
+	if !strings.Contains(body, `"finish_reason":"stop"`) {
+		t.Error("stream missing finish_reason=stop")
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Error("stream missing [DONE] sentinel")
 	}
 }
 

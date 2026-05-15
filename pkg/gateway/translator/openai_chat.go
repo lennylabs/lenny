@@ -158,15 +158,6 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 			"messages must contain at least one entry")
 		return
 	}
-	if req.Stream {
-		// Streaming is post-v1 in this minimal translator. The
-		// non-streaming path returns immediately and is sufficient
-		// for the OpenAI SDK's non-stream client.
-		writeOpenAIError(w, http.StatusBadRequest, "unsupported_value",
-			"stream=true is not supported by this gateway")
-		return
-	}
-
 	tenantID := resolveTenant(r)
 	runtimeRef := req.Model
 	if runtimeRef == "" {
@@ -219,10 +210,94 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		_ = err
 	}
 
+	if req.Stream {
+		writeOpenAIStream(w, sessionID, runtimeRef, now, out)
+		return
+	}
 	resp := buildOpenAIResponse(sessionID, runtimeRef, now, out)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// chatCompletionChunk is the OpenAI `chat.completion.chunk` SSE
+// frame shape.
+type chatCompletionChunk struct {
+	ID      string             `json:"id"`
+	Object  string             `json:"object"`
+	Created int64              `json:"created"`
+	Model   string             `json:"model"`
+	Choices []chatCompletionChoiceDelta `json:"choices"`
+}
+
+type chatCompletionChoiceDelta struct {
+	Index        int         `json:"index"`
+	Delta        chatDelta   `json:"delta"`
+	FinishReason *string     `json:"finish_reason"`
+}
+
+type chatDelta struct {
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+// writeOpenAIStream emits the OpenAI Chat Completions streaming
+// response: an SSE sequence of `chat.completion.chunk` frames
+// terminated by `data: [DONE]`. The synchronous executor produces a
+// complete response; the translator chunks the text into
+// whitespace-delimited deltas so streaming clients observe
+// incremental output.
+func writeOpenAIStream(w http.ResponseWriter, sessionID, model string, now time.Time, out []executor.OutputPart) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+			"response writer does not support streaming")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	id := "chatcmpl-" + sessionID
+	emit := func(c chatCompletionChunk) {
+		b, _ := json.Marshal(c)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
+
+	// First frame: the assistant role delta.
+	emit(chatCompletionChunk{
+		ID: id, Object: "chat.completion.chunk", Created: now.Unix(), Model: model,
+		Choices: []chatCompletionChoiceDelta{{Index: 0, Delta: chatDelta{Role: "assistant"}}},
+	})
+	// Content frames: one per whitespace-delimited token.
+	full := ""
+	for _, p := range out {
+		if p.Type == "text" {
+			if full != "" {
+				full += "\n"
+			}
+			full += p.Text
+		}
+	}
+	for i, tok := range strings.Fields(full) {
+		chunk := tok
+		if i > 0 {
+			chunk = " " + tok
+		}
+		emit(chatCompletionChunk{
+			ID: id, Object: "chat.completion.chunk", Created: now.Unix(), Model: model,
+			Choices: []chatCompletionChoiceDelta{{Index: 0, Delta: chatDelta{Content: chunk}}},
+		})
+	}
+	// Final frame: the finish_reason.
+	stop := "stop"
+	emit(chatCompletionChunk{
+		ID: id, Object: "chat.completion.chunk", Created: now.Unix(), Model: model,
+		Choices: []chatCompletionChoiceDelta{{Index: 0, Delta: chatDelta{}, FinishReason: &stop}},
+	})
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 // buildOpenAIResponse maps the executor output parts to an OpenAI
