@@ -64,6 +64,12 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 // Update applies mutate to the row in-place under the store lock,
 // then writes the resulting row back. Returns ErrNotFound when the
 // row is missing or tenant-mismatched.
+//
+// UpdatedAt strictly advances on every successful Update — when the
+// host wall-clock has not advanced since the prior write (common on
+// fast machines), the new timestamp is clamped to the prior
+// UpdatedAt + 1ns so callers can rely on strict monotonicity for
+// change-detection and watch streams.
 func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -71,12 +77,23 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	if !ok || row.TenantID != tenantID {
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
+	prevUpdatedAt := row.UpdatedAt
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
 	}
-	row.UpdatedAt = time.Now().UTC()
+	row.UpdatedAt = monotonicNext(prevUpdatedAt, time.Now().UTC())
 	s.sessions[id] = row
 	return row, nil
+}
+
+// monotonicNext returns now clamped to prev+1ns when the wall-clock
+// has not advanced past prev. Used so UpdatedAt strictly advances on
+// every Update.
+func monotonicNext(prev, now time.Time) time.Time {
+	if !now.After(prev) {
+		return prev.Add(time.Nanosecond)
+	}
+	return now.UTC()
 }
 
 // List returns every row for the tenant in created-at descending

@@ -107,6 +107,42 @@ func TestSignerKeyID(t *testing.T) {
 	}
 }
 
+func TestClaimsRolesRoundTrip(t *testing.T) {
+	s := NewHMACSigner("k", []byte("secret"))
+	in := Claims{
+		Subject: "alice@acme.com",
+		Expiry:  farFutureExpiry,
+		Roles:   []auth.Role{auth.RolePlatformAdmin, auth.RoleUser},
+	}
+	tok, err := s.Sign(in)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	out, err := s.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(out.Roles) != 2 || out.Roles[0] != auth.RolePlatformAdmin || out.Roles[1] != auth.RoleUser {
+		t.Errorf("Roles round-trip: got %v, want [platform-admin user]", out.Roles)
+	}
+}
+
+func TestClaimsHasRole(t *testing.T) {
+	c := Claims{Roles: []auth.Role{auth.RoleTenantAdmin, auth.RoleUser}}
+	if !c.HasRole(auth.RoleTenantAdmin) {
+		t.Error("HasRole(tenant-admin) should be true")
+	}
+	if !c.HasRole(auth.RoleUser) {
+		t.Error("HasRole(user) should be true")
+	}
+	if c.HasRole(auth.RolePlatformAdmin) {
+		t.Error("HasRole(platform-admin) should be false")
+	}
+	if (Claims{}).HasRole(auth.RolePlatformAdmin) {
+		t.Error("HasRole on zero Claims should be false")
+	}
+}
+
 func TestNoSecretLeakAcrossSigners(t *testing.T) {
 	a := NewHMACSigner("ka", []byte("secret-a"))
 	b := NewHMACSigner("kb", []byte("secret-b"))

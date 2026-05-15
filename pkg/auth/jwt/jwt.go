@@ -58,6 +58,26 @@ type Claims struct {
 	DelegationDepth int            `json:"delegation_depth,omitempty"`
 	Scope           string         `json:"scope,omitempty"`
 	Typ             auth.TokenType `json:"typ,omitempty"`
+
+	// Roles carries the §10.2 RBAC role claim. Values are the closed
+	// auth.Role enum (`platform-admin`, `tenant-admin`, `tenant-viewer`,
+	// `billing-viewer`, `user`). The role claim is admission-time only;
+	// the gateway re-evaluates per-endpoint role requirements every
+	// request and does not persist roles in the session row.
+	Roles []auth.Role `json:"roles,omitempty"`
+}
+
+// HasRole reports whether c carries r in its Roles slice. Useful for
+// admin-gated endpoints that lift a precondition for callers holding a
+// specific role (e.g., the §7.1 derive `allowIsolationDowngrade`
+// override requires `platform-admin`).
+func (c Claims) HasRole(r auth.Role) bool {
+	for _, q := range c.Roles {
+		if q == r {
+			return true
+		}
+	}
+	return false
 }
 
 // ExpiryTime returns the Claims expiry as a time.Time. Zero when

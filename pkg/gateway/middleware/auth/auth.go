@@ -38,6 +38,23 @@ type Principal struct {
 	SessionID  string
 	CallerType string
 	Typ        auth.TokenType
+
+	// Roles carries the §10.2 RBAC roles claimed by this token, copied
+	// verbatim from the JWT roles claim (Bearer path) or parsed from
+	// the comma-separated X-Lenny-Roles dev header (dev-headers path).
+	Roles []auth.Role
+}
+
+// HasRole reports whether p holds r. Endpoints that gate behaviour on
+// a specific role (e.g. the §7.1 derive `allowIsolationDowngrade`
+// override requires `platform-admin`) call HasRole to authorise.
+func (p Principal) HasRole(r auth.Role) bool {
+	for _, q := range p.Roles {
+		if q == r {
+			return true
+		}
+	}
+	return false
 }
 
 type principalCtxKey struct{}
@@ -149,6 +166,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		SessionID:  claims.SessionID,
 		CallerType: claims.CallerType,
 		Typ:        claims.Typ,
+		Roles:      append([]auth.Role(nil), claims.Roles...),
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	// Echo the resolved tenant via the dev header path so handlers
@@ -173,11 +191,39 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	p := Principal{
 		Subject:  r.Header.Get("X-Lenny-User-ID"),
 		TenantID: tenant.TenantID,
+		Roles:    parseRolesHeader(r.Header.Get("X-Lenny-Roles")),
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	r = r.WithContext(ctx)
 	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
 	m.inner.ServeHTTP(w, r)
+}
+
+// parseRolesHeader parses the comma-separated X-Lenny-Roles dev header
+// value into a slice of auth.Role values. Whitespace and empty entries
+// are skipped; unknown role names are dropped silently — the dev
+// header is convenience only, not a security boundary, and the
+// downstream authorization check still rejects callers without the
+// required role regardless of what they claim.
+func parseRolesHeader(v string) []auth.Role {
+	if v == "" {
+		return nil
+	}
+	out := make([]auth.Role, 0, 1)
+	for _, raw := range strings.Split(v, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		role := auth.Role(name)
+		if role.IsValid() {
+			out = append(out, role)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func writeTenantError(w http.ResponseWriter, err error) {
