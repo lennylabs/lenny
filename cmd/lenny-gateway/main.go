@@ -31,6 +31,7 @@ import (
 	"context"
 	"crypto/rand"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +39,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -56,18 +59,22 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/openapi"
-	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	quotamw "github.com/lennylabs/lenny/pkg/gateway/middleware/quota"
+	"github.com/lennylabs/lenny/pkg/gateway/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -91,14 +98,44 @@ func main() {
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
+	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
+		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
 	// ----- Stores -----
-	sessions := memstore.New()
+	// session, transcript, tenant, and runtime state is persisted to
+	// Postgres when --postgres-dsn is set, and held in memory
+	// otherwise. The remaining stores are in-memory pending their
+	// Redis (circuit breakers, quota) or Postgres backings.
+	var (
+		sessions    sessionstore.Store
+		tenants     tenantstore.Store
+		runtimes    runtimestore.Store
+		transcripts transcriptstore.Store
+		pgPool      *pgxpool.Pool
+	)
+	if *postgresDSN != "" {
+		pool, err := pgxpool.New(context.Background(), *postgresDSN)
+		if err != nil {
+			log.Fatalf("lenny-gateway: postgres: %v", err)
+		}
+		if err := verifyPostgresSchema(context.Background(), pool); err != nil {
+			log.Fatalf("lenny-gateway: %v", err)
+		}
+		pgPool = pool
+		sessions = sessionpg.New(pool)
+		tenants = tenantpg.New(pool)
+		runtimes = runtimepg.New(pool)
+		transcripts = transcriptpg.New(pool)
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, and runtimes to Postgres")
+	} else {
+		sessions = memstore.New()
+		tenants = tenantstore.NewMemory()
+		runtimes = runtimestore.NewMemory()
+		transcripts = transcriptstore.NewMemory()
+	}
 	blobs := blobstore.NewMemoryStore(nil)
-	tenants := tenantstore.NewMemory()
-	runtimes := runtimestore.NewMemory()
 	users := userstore.NewMemory()
 	pools := poolstore.NewMemory()
 	breakers := breakerstore.NewMemory()
@@ -151,7 +188,7 @@ func main() {
 		UploadTokenVerifier: uploadVerifier,
 		Blobs:               blobs,
 		Executor:            exec,
-		Transcripts:         transcriptstore.NewMemory(),
+		Transcripts:         transcripts,
 		Events:              eventBus,
 		Interactions:        interactionstore.NewMemory(),
 		Usage:               usagestore.NewMemory(),
@@ -194,6 +231,7 @@ func main() {
 				"gateway.multiTenant": boolStr(*multiTenant),
 				"gateway.devMode":     boolStr(*devMode),
 				"gateway.runtimeBin":  *runtimeBin,
+				"gateway.postgres":    boolStr(*postgresDSN != ""),
 			},
 		)
 
@@ -340,6 +378,27 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
+	if pgPool != nil {
+		pgPool.Close()
+	}
+}
+
+// verifyPostgresSchema fails fast when the gateway is pointed at a
+// database that has not had the migrations/ schema applied. It probes
+// for the sessions table; the fuller §11.7 startup grant-verification
+// check lands with the audit pipeline.
+func verifyPostgresSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+		 WHERE table_schema = 'public' AND table_name = 'sessions')`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("postgres: schema probe failed: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("postgres: schema not migrated (the sessions table is absent); apply migrations/ before starting the gateway")
+	}
+	return nil
 }
 
 // permissiveRegistry accepts every tenant. The minimal gateway uses
@@ -351,12 +410,12 @@ type permissiveRegistry struct{}
 
 func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
 
-// tenantsLister adapts a tenantstore.Memory into a
+// tenantsLister adapts a tenantstore.Store into a
 // watchdog.TenantLister so the watchdog sweeps every registered
 // tenant. In single-tenant deployments it also returns "default" so
 // dev-mode sessions are bounded.
 type tenantsLister struct {
-	store *tenantstore.Memory
+	store tenantstore.Store
 }
 
 func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
