@@ -1166,7 +1166,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 **Built-in vs. registered runtimes.**
 - The three test runtimes (`echo`, `streaming-echo`, `delegation-echo`) run conformance on every PR.
-- The nine reference runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) run conformance on every nightly.
+- The nine reference runtimes (§spec/26.3–§spec/26.11: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) run conformance on every nightly. Each runtime declares its integration level (Basic / Standard / Full) per §spec/26.2; the harness asserts the level-specific battery passes and that the runtime advertises only the capabilities it actually implements.
 - Third-party runtimes register themselves via the `RegisterAdapterUnderTest(adapter)` mechanism in the harness.
 
 **Fidelity matrix.** A separate table-driven test asserts the documented OpenAI/Anthropic Completions/Responses translation fidelity. For each `OutputPart` type, the lossy fields are documented and the suite confirms the exact loss.
@@ -1720,7 +1720,7 @@ Coverage:
 
 ### 14.12 Web playground
 
-Coverage spans Tier 5 e2e (full chart with `playground.enabled: true`) and Tier 9 (security).
+Coverage spans Tier 5 e2e (full chart with `playground.enabled: true`) and Tier 9 (security). Maps to the §spec/27 surface (§spec/27.2 placement, §spec/27.3 authentication, §spec/27.6 lifecycle, §spec/27.7 CSP and asset serving, §spec/27.8 metrics, §spec/27.9 security). spec-map-exceptions.yaml exempts §spec/27 from §22.2 spec coverage as post-v1; this section names the test surface that lands when the feature unblocks.
 
 Notable cases:
 - Three auth modes: OIDC, API Key, Dev. Dev mode requires `global.devMode: true` and synthetic principal.
@@ -1805,7 +1805,7 @@ The operability surface is mandatory from Phase 3.5 onward (§spec/17.8.5, §spe
 
 ### 15.1 `lenny-ctl` command coverage
 
-Every documented subcommand in spec/24 has at least one Tier 4 integration test against the compose stack and, for cluster-affecting commands, a Tier 5 Kind test. The full list is enumerated in §spec/24; the test surface mirrors it.
+Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) has at least one Tier 4 integration test against the compose stack and, for cluster-affecting commands, a Tier 5 Kind test. The full list below mirrors the spec section IDs one-to-one; each command lands its tests in the phase that ships it per §13.
 
 - Bootstrap: idempotent re-run, dry-run shows accurate diff.
 - Preflight: DSN precedence (flags > env > values.yaml), probe timeouts respected.
@@ -1830,7 +1830,7 @@ Every documented subcommand in spec/24 has at least one Tier 4 integration test 
 
 ### 15.2 Runbook validation
 
-`docs/runbooks/` contains 56 runbooks. Each has a Tier 8 chaos test that:
+§spec/17.7 mandates that every operational runbook (`docs/runbooks/`) is executable end-to-end through the platform's APIs rather than ad-hoc `kubectl` commands. The repo currently carries 56 runbooks. Each has a Tier 8 chaos test that:
 1. Triggers the runbook's condition.
 2. Confirms the documented alert fires.
 3. Executes the runbook's documented remediation through the API (not kubectl).
