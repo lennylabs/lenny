@@ -90,11 +90,9 @@ type verdictRow struct {
 }
 
 func loadVerdicts(dir string) ([]verdictDoc, error) {
-	root := filepath.Join(repoRoot(), dir)
+	root := dir
 	if !filepath.IsAbs(dir) {
 		root = filepath.Join(repoRoot(), dir)
-	} else {
-		root = dir
 	}
 	out := []verdictDoc{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

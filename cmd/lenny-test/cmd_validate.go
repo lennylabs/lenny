@@ -559,12 +559,6 @@ func hasAnnotationBefore(lines []string, idx int, marker string) bool {
 	return false
 }
 
-// hasDiagnosisBefore is kept as a thin alias for back-compat with
-// any callers outside this file.
-func hasDiagnosisBefore(lines []string, idx int) bool {
-	return hasAnnotationBefore(lines, idx, "// diagnosis:")
-}
-
 // hasNotImplementedSkipAfter checks the 8 lines following the
 // function signature for a skip-style scaffold marker. Scaffolds
 // use one of:

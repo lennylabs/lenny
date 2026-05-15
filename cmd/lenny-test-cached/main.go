@@ -41,10 +41,6 @@ import (
 	"time"
 )
 
-const (
-	defaultTimeout = 30 * time.Second
-)
-
 func main() {
 	socketFlag := flag.String("socket", defaultSocketPath(), "Unix socket path")
 	composeFile := flag.String("compose", "compose/default.yml", "path to compose YAML, relative to repo root")
@@ -128,29 +124,32 @@ type response struct {
 
 func (d *daemon) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	// One request per connection. The protocol is a single JSON line
+	// followed by a single JSON response; clients reopen the socket
+	// for each call.
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 32*1024), 1<<20)
-	for scanner.Scan() {
-		var req request
-		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			writeResponse(conn, response{Error: "invalid JSON: " + err.Error()})
-			return
-		}
-		switch req.Op {
-		case "status":
-			writeResponse(conn, d.status())
-		case "ensure":
-			writeResponse(conn, d.ensure())
-		case "endpoints":
-			writeResponse(conn, response{OK: true, Endpoints: endpoints()})
-		case "shutdown":
-			writeResponse(conn, response{OK: true})
-			_ = d.shutdownCompose()
-			os.Exit(0)
-		default:
-			writeResponse(conn, response{Error: "unknown op: " + req.Op})
-		}
+	if !scanner.Scan() {
 		return
+	}
+	var req request
+	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+		writeResponse(conn, response{Error: "invalid JSON: " + err.Error()})
+		return
+	}
+	switch req.Op {
+	case "status":
+		writeResponse(conn, d.status())
+	case "ensure":
+		writeResponse(conn, d.ensure())
+	case "endpoints":
+		writeResponse(conn, response{OK: true, Endpoints: endpoints()})
+	case "shutdown":
+		writeResponse(conn, response{OK: true})
+		_ = d.shutdownCompose()
+		os.Exit(0)
+	default:
+		writeResponse(conn, response{Error: "unknown op: " + req.Op})
 	}
 }
 

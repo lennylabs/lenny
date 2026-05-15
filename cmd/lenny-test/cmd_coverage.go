@@ -55,7 +55,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 	root := repoRoot()
 	profile := os.Getenv("LENNY_COVER_PROFILE")
 	if profile == "" {
-		profile = filepath.Join(root, "tests", "results", "cover.out")
+		profile = filepath.Join(root, coverProfileFile)
 	}
 	if _, err := os.Stat(profile); err != nil {
 		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test --tier unit` first to emit %s.\n", err, profile)
@@ -241,7 +241,7 @@ func stripModulePrefix(p string) string {
 // count toward the threshold.
 func reportSpecCoverage(threshold float64, jsonOut bool) int {
 	root := repoRoot()
-	specMapPath := filepath.Join(root, "tests", "spec-map.json")
+	specMapPath := filepath.Join(root, specMapFile)
 	body, err := os.ReadFile(specMapPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "coverage --spec: %v\n", err)
@@ -342,7 +342,7 @@ func reportGoCoverage(threshold float64, jsonOut bool) int {
 	root := repoRoot()
 	profile := os.Getenv("LENNY_COVER_PROFILE")
 	if profile == "" {
-		profile = filepath.Join(root, "tests", "results", "cover.out")
+		profile = filepath.Join(root, coverProfileFile)
 	}
 	body, err := os.ReadFile(profile)
 	if err != nil {

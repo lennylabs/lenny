@@ -206,7 +206,7 @@ func knownGroups() []string {
 }
 
 func specSections() []string {
-	path := filepath.Join(repoRoot(), "tests", "spec-map.json")
+	path := filepath.Join(repoRoot(), specMapFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []string{fmt.Sprintf("(could not read spec-map.json: %v)", err)}

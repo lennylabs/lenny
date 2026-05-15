@@ -412,7 +412,7 @@ func (v *verdict) write(path string) error {
 	pruneOldVerdicts(dir, verdictRotationDepth)
 	// Append a one-line summary to history.jsonl per §21.2 so the
 	// flake root-cause analyzer has a stable, append-only source.
-	if err := appendHistory(filepath.Join(dir, "history.jsonl"), v); err != nil {
+	if err := appendHistory(filepath.Join(dir, verdictHistoryFile), v); err != nil {
 		// Non-fatal: history is observational, not gating.
 		_, _ = fmt.Fprintf(os.Stderr, "lenny-test: append history: %v\n", err)
 	}

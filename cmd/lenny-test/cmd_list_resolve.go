@@ -112,7 +112,7 @@ func testsForTier(tier string) []string {
 
 // testsForSpec resolves spec sections to test paths via spec-map.json.
 func testsForSpec(specs string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "spec-map.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), specMapFile))
 	if err != nil {
 		return nil
 	}
@@ -137,7 +137,7 @@ func testsForSpec(specs string) []string {
 
 // testsForPkg resolves package globs to test paths via change-graph.json.
 func testsForPkg(pkgs string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
 	if err != nil {
 		return nil
 	}
@@ -193,7 +193,7 @@ func testsForChanged() []string {
 		return nil
 	}
 	// Resolve each changed path through the change graph.
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
 	if err != nil {
 		return nil
 	}

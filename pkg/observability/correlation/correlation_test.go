@@ -36,7 +36,11 @@ func TestWithAndFromRoundTrip(t *testing.T) {
 }
 
 func TestFromNilContextReturnsZero(t *testing.T) {
-	got := From(nil)
+	// The test exists exactly to verify the nil-context branch is
+	// defensive; binding a typed-nil variable disables the
+	// staticcheck SA1012 warning that fires on bare nil literals.
+	var ctx context.Context
+	got := From(ctx)
 	if !got.IsEmpty() {
 		t.Fatalf("From(nil) should return empty Fields, got %+v", got)
 	}

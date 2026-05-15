@@ -409,7 +409,6 @@ func TestPruneOldVerdicts(t *testing.T) {
 	dir := t.TempDir()
 	// Seed 25 verdict files with monotonically increasing mtimes.
 	base := time.Now().Add(-25 * time.Minute)
-	names := []string{}
 	for i := 0; i < 25; i++ {
 		name := filepath.Join(dir, "verdict-"+padded(i)+".json")
 		if err := os.WriteFile(name, []byte("{}"), 0o644); err != nil {
@@ -419,7 +418,6 @@ func TestPruneOldVerdicts(t *testing.T) {
 		if err := os.Chtimes(name, ts, ts); err != nil {
 			t.Fatalf("chtimes: %v", err)
 		}
-		names = append(names, name)
 	}
 	// Drop a latest.json — pruneOldVerdicts must skip it.
 	latest := filepath.Join(dir, "latest.json")

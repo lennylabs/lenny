@@ -41,7 +41,7 @@ func resolveChangedPlanFor(ref string) []tierPlan {
 // spec-map.json. Each id contributes the tier of every test it
 // references (tier inferred from the test path).
 func resolveSpecsPlan(specs []string) []tierPlan {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "spec-map.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), specMapFile))
 	if err != nil {
 		return nil
 	}
@@ -74,7 +74,7 @@ func resolveSpecsPlan(specs []string) []tierPlan {
 
 // resolvePkgsPlan resolves package globs through the change graph.
 func resolvePkgsPlan(pkgs []string) []tierPlan {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
 	if err != nil {
 		return nil
 	}
@@ -98,12 +98,6 @@ func resolvePkgsPlan(pkgs []string) []tierPlan {
 		return nil
 	}
 	return planFromTierSet(tiers)
-}
-
-// changedPaths returns the union of staged + unstaged + untracked
-// changes per `git`. Equivalent to changedPathsFor("").
-func changedPaths() []string {
-	return changedPathsFor("")
 }
 
 // changedPathsFor returns the changed paths between `ref` and HEAD.
@@ -148,7 +142,7 @@ func changedPathsFor(ref string) []string {
 // tiersForChangedPath looks the path up in the change graph and
 // returns the set of tier names it implies.
 func tiersForChangedPath(path string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
 	if err != nil {
 		return nil
 	}
