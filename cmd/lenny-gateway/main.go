@@ -74,8 +74,11 @@ import (
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
+	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
+	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
@@ -121,6 +124,10 @@ func main() {
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
+	rlGlobalPerMin := flag.Int("rate-limit-global-per-min", 0,
+		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
+	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
+		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
 	flag.Parse()
 
 	// ----- Stores -----
@@ -188,6 +195,7 @@ func main() {
 		redisClient    *redis.Client
 		coordinator    *coordination.Sweeper
 		storageCounter storagequota.Counter = storagequota.NewMemory()
+		rateLimiter    ratelimit.Counter    = ratelimit.NewMemory()
 	)
 	if *redisURL != "" {
 		opts, err := redis.ParseURL(*redisURL)
@@ -209,6 +217,9 @@ func main() {
 		// The §11.2 storage-quota counter lives in Redis so the quota
 		// holds across replicas; its reserve is Lua-atomic.
 		storageCounter = storagequotaredis.New(redisClient)
+		// The §11.1 rate-limit counter is Redis-backed so requests-per-
+		// minute limits hold across replicas.
+		rateLimiter = ratelimitredis.New(redisClient)
 		log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
 	} else {
 		breakers = breakerstore.NewMemory()
@@ -416,6 +427,15 @@ func main() {
 	// so the admin /v1/admin/circuit-breakers endpoints share state
 	// with the request-path middleware.
 	handler = cbmw.Wrap(handler, breakers, cbmw.Options{})
+
+	// §11.1 rate limiting next — runs just after auth so the per-user
+	// scope sees the authenticated principal. Limits default to zero
+	// (disabled); operators set them via the rate-limit flags.
+	handler = ratelimitmw.Wrap(handler, ratelimitmw.Options{
+		Counter:          rateLimiter,
+		GlobalPerMinute:  *rlGlobalPerMin,
+		PerUserPerMinute: *rlPerUserPerMin,
+	})
 
 	// Auth next-to-outermost. AllowDevRoles is only honoured when the
 	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
