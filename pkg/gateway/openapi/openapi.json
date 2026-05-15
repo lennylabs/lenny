@@ -395,6 +395,27 @@
         }
       }
     },
+    "/v1/usage": {
+      "get": {
+        "summary": "Aggregated usage report",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/metering/events": {
+      "get": {
+        "summary": "Paginated billing event stream",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "since_sequence", "in": "query", "schema": { "type": "integer", "format": "int64" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "OK" },
+          "403": { "description": "Requires billing-viewer, tenant-admin, or platform-admin" }
+        }
+      }
+    },
     "/v1/admin/tenants": {
       "post": {
         "summary": "Create a tenant",
@@ -552,6 +573,36 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/users/{user_id}/invalidate": {
+      "post": {
+        "summary": "Invalidate a user (soft_disable, hard_disable, or full_revoke)",
+        "x-lenny-mcp-tool": "admin.invalidate_user",
+        "x-lenny-scope": "admin.users.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/admin/issued-tokens/{jti}/revoke": {
+      "post": {
+        "summary": "Revoke an issued token by jti",
+        "x-lenny-mcp-tool": "admin.revoke_token",
+        "x-lenny-scope": "admin.issued_tokens.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "jti", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Issued token not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/v1/admin/bootstrap": {
