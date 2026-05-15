@@ -22,9 +22,11 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
-	requestsTotal   *prometheus.CounterVec
-	requestDuration *prometheus.HistogramVec
-	activeSessions  prometheus.Gauge
+	requestsTotal     *prometheus.CounterVec
+	requestDuration   *prometheus.HistogramVec
+	activeSessions    prometheus.Gauge
+	storageQuotaUsed  *prometheus.GaugeVec
+	storageQuotaLimit *prometheus.GaugeVec
 }
 
 // New constructs and registers the gateway metric set against a
@@ -54,17 +56,41 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	storageQuotaUsed, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_storage_quota_bytes_used",
+		Help: "Per-tenant artifact storage bytes reserved-plus-committed (§11.2).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
+	storageQuotaLimit, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_tenant_storage_quota_bytes",
+		Help: "Per-tenant configured storage quota in bytes (§11.2 storageQuotaBytes).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
 
-	reg.MustRegister(requestsTotal, requestDuration)
+	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed, storageQuotaLimit)
 	gauge := activeSessions.WithLabelValues()
 	reg.MustRegister(activeSessions)
 
 	return &Metrics{
-		reg:             reg,
-		requestsTotal:   requestsTotal,
-		requestDuration: requestDuration,
-		activeSessions:  gauge,
+		reg:               reg,
+		requestsTotal:     requestsTotal,
+		requestDuration:   requestDuration,
+		activeSessions:    gauge,
+		storageQuotaUsed:  storageQuotaUsed,
+		storageQuotaLimit: storageQuotaLimit,
 	}, nil
+}
+
+// SetStorageQuota updates the §16.1 per-tenant storage-quota gauges:
+// the bytes currently reserved-plus-committed and the tenant's
+// configured quota. These drive the §16.5 StorageQuotaHigh alert.
+func (m *Metrics) SetStorageQuota(tenantID string, used, limit int64) {
+	m.storageQuotaUsed.WithLabelValues(tenantID).Set(float64(used))
+	m.storageQuotaLimit.WithLabelValues(tenantID).Set(float64(limit))
 }
 
 // Handler returns the Prometheus `/metrics` scrape handler over the

@@ -44,6 +44,29 @@ func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {
 	}
 }
 
+func TestSetStorageQuotaExposesGauges(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetStorageQuota("acme", 500, 1000)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_storage_quota_bytes_used{tenant_id="acme"} 500`,
+		`lenny_tenant_storage_quota_bytes{tenant_id="acme"} 1000`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestMiddlewareRecordsRequests(t *testing.T) {
 	m, _ := gatewaymetrics.New()
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

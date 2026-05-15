@@ -556,6 +556,23 @@ func main() {
 		}()
 	}
 
+	// ----- §16.1 storage-quota metrics export -----
+	// Refreshes the per-tenant storage-quota gauges so the §16.5
+	// StorageQuotaHigh alert has data.
+	exportStorageQuotaMetrics(context.Background(), tenants, storageCounter, gwMetrics)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-ticker.C:
+				exportStorageQuotaMetrics(watchdogCtx, tenants, storageCounter, gwMetrics)
+			}
+		}
+	}()
+
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -667,6 +684,28 @@ func sweepIdempotencyKeys(ctx context.Context, gc *idempgstore.Store, lister ten
 		if _, err := gc.DeleteExpired(ctx, tenant, cutoff); err != nil && ctx.Err() == nil {
 			log.Printf("lenny-gateway: idempotency GC: tenant %q sweep failed: %v", tenant, err)
 		}
+	}
+}
+
+// exportStorageQuotaMetrics refreshes the §16.1 per-tenant
+// storage-quota gauges from the tenant registry and the storage
+// counter. Only tenants with a configured quota are exported so the
+// §16.5 StorageQuotaHigh alert does not divide by a zero limit.
+func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, counter storagequota.Counter, m *gatewaymetrics.Metrics) {
+	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		log.Printf("lenny-gateway: storage-quota metrics: listing tenants failed: %v", err)
+		return
+	}
+	for _, t := range rows {
+		if t.StorageQuotaBytes <= 0 {
+			continue
+		}
+		used, err := counter.Used(ctx, t.ID)
+		if err != nil {
+			continue
+		}
+		m.SetStorageQuota(t.ID, used, t.StorageQuotaBytes)
 	}
 }
 
