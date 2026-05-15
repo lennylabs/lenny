@@ -11,3 +11,21 @@
 agentNamespaces:
   - name: lenny-agents
   - name: lenny-agents-kata
+
+# controller configures the lenny-controller Deployment, which runs
+# the §4.6.1 WarmPoolController. It runs with 2 replicas and leader
+# election so exactly one replica reconciles at a time.
+controller:
+  replicas: 2
+  image:
+    repository: ghcr.io/lennylabs/lenny-controller
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

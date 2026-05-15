@@ -1,0 +1,81 @@
+{{- /*
+RBAC for the lenny-controller ServiceAccount (§4.6, §5.2). The
+WarmPoolController watches SandboxWarmPool and SandboxTemplate
+resources across agent namespaces and creates Sandbox pods, so the
+cluster role grants cross-namespace read plus Sandbox create and the
+status-subresource writes the §4.6.3 ownership table assigns to the
+controller. Leader election uses a Lease in the release namespace,
+covered by the namespaced role. The ServiceAccount name is fixed:
+§5.2 authorizes it by the literal identity
+system:serviceaccount:lenny-system:lenny-controller.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-controller
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-controller
+subjects:
+  - kind: ServiceAccount
+    name: lenny-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-controller-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: lenny-controller
+    namespace: {{ .Release.Namespace }}

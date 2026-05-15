@@ -1,0 +1,44 @@
+suite: lenny-controller deployment
+templates:
+  - controller-deployment.yaml
+tests:
+  - it: renders a Deployment named lenny-controller
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: lenny-controller
+
+  - it: runs two replicas with leader election by default
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+
+  - it: runs under the lenny-controller service account
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-controller
+
+  - it: applies the restricted pod security posture
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: defaults the image tag to the chart appVersion
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-controller:0.1.0
