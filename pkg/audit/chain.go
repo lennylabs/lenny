@@ -116,6 +116,16 @@ func linkHash(prev Row) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// ComputeHash returns a row's §11.7 content hash. A Postgres-backed
+// audit store calls this to seal a row before persisting it, so the
+// stored chain uses the same hash construction as the in-memory one.
+func ComputeHash(r Row) string { return computeHash(r) }
+
+// LinkHash returns the prev_hash a row's successor must carry, given
+// that row. A Postgres-backed store calls this to chain a freshly
+// appended row to the persisted tail.
+func LinkHash(prev Row) string { return linkHash(prev) }
+
 // Chain is a per-tenant append-only audit hash chain. The zero
 // value is not usable; construct with NewChain.
 type Chain struct {
@@ -131,6 +141,18 @@ func NewChain(tenantID string) *Chain {
 		tenantID: tenantID,
 		receipts: map[uint64]RedactionReceipt{},
 	}
+}
+
+// ChainFromRows builds a Chain over an already-committed, sequence-
+// ordered set of rows. A Postgres-backed audit store loads a tenant's
+// persisted rows and calls Verify on the result, so the durable chain
+// is checked by exactly the same §11.7 walk as the in-memory one.
+// The returned Chain is intended for verification only.
+func ChainFromRows(tenantID string, rows []Row, receipts map[uint64]RedactionReceipt) *Chain {
+	if receipts == nil {
+		receipts = map[uint64]RedactionReceipt{}
+	}
+	return &Chain{tenantID: tenantID, rows: rows, receipts: receipts}
 }
 
 // TenantID returns the chain's tenant scope.
