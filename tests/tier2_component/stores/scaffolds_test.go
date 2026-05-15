@@ -27,12 +27,9 @@ import "testing"
 // which exercises the Postgres-backed pkg/gateway/sessionstore/pgstore
 // against a real container.
 
-// TestLeaseStoreContract — Redis + Postgres advisory store. Coverage:
-// acquire/renew/release, TTL expiry, Redis-outage fallback to advisory
-// lock, atomic re-acquisition after crash.
-func TestLeaseStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 LeaseStore — requires Redis lease primitives with pg_advisory_xact_lock fallback + crash-recovery re-acquisition path")
-}
+// TestLeaseStoreContract — the Redis lease primitives are implemented
+// in tests/tier2_component/leases against pkg/gateway/leasestore. The
+// §12.4 Redis-outage Postgres advisory-lock fallback is not yet built.
 
 // TestQuotaStoreContract — Redis + Postgres quota store. Coverage:
 // increment/decrement, sliding window, fail-open semantics, per-user
