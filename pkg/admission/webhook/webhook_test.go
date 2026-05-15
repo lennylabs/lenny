@@ -4,6 +4,7 @@ package webhook_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func decodeReview(t *testing.T, rr *httptest.ResponseRecorder) admissionv1.Admis
 }
 
 func TestHandlerAdmitsAndEchoesUID(t *testing.T) {
-	h := webhook.Handler(func(*admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	h := webhook.Handler(func(context.Context, *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		return webhook.Allow()
 	})
 	rr := postReview(t, h, admissionv1.AdmissionReview{
@@ -54,7 +55,7 @@ func TestHandlerAdmitsAndEchoesUID(t *testing.T) {
 }
 
 func TestHandlerRelaysDenial(t *testing.T) {
-	h := webhook.Handler(func(*admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	h := webhook.Handler(func(context.Context, *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		return webhook.Deny(http.StatusForbidden, "tenant_label_immutable")
 	})
 	rr := postReview(t, h, admissionv1.AdmissionReview{
@@ -79,7 +80,7 @@ func TestHandlerRelaysDenial(t *testing.T) {
 }
 
 func TestHandlerRejectsNonPost(t *testing.T) {
-	h := webhook.Handler(func(*admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	h := webhook.Handler(func(context.Context, *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		return webhook.Allow()
 	})
 	rr := httptest.NewRecorder()
@@ -90,7 +91,7 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 }
 
 func TestHandlerRejectsMalformedBody(t *testing.T) {
-	h := webhook.Handler(func(*admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	h := webhook.Handler(func(context.Context, *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		return webhook.Allow()
 	})
 	rr := httptest.NewRecorder()
@@ -102,7 +103,7 @@ func TestHandlerRejectsMalformedBody(t *testing.T) {
 
 func TestHandlerRejectsReviewWithoutRequest(t *testing.T) {
 	called := false
-	h := webhook.Handler(func(*admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	h := webhook.Handler(func(context.Context, *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		called = true
 		return webhook.Allow()
 	})

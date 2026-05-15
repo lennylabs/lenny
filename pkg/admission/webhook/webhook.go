@@ -14,6 +14,7 @@
 package webhook
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -28,9 +29,11 @@ import (
 const maxBodyBytes = 3 << 20
 
 // Decider renders the admission decision for one webhook. It receives
-// the decoded AdmissionRequest and returns the AdmissionResponse; the
-// Handler fills in the response UID.
-type Decider func(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse
+// the inbound request's context and the decoded AdmissionRequest and
+// returns the AdmissionResponse; the Handler fills in the response
+// UID. The context lets a Decider that queries the API server honor
+// the caller's deadline and cancellation.
+type Decider func(ctx context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse
 
 // Handler returns an http.Handler implementing the AdmissionReview
 // HTTP contract over decide. It decodes the review, dispatches to
@@ -57,7 +60,7 @@ func Handler(decide Decider) http.Handler {
 			return
 		}
 
-		resp := decide(review.Request)
+		resp := decide(r.Context(), review.Request)
 		resp.UID = review.Request.UID
 
 		out := admissionv1.AdmissionReview{

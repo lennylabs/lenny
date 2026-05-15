@@ -3,6 +3,7 @@
 package webhook_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -33,7 +34,7 @@ func podRaw(t *testing.T, labels map[string]string) runtime.RawExtension {
 }
 
 func TestLabelImmutabilityAllowsTenantAssignmentByGateway(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u1",
 		Operation: admissionv1.Create,
 		Object:    podRaw(t, map[string]string{labelimm.LabelTenantID: "acme"}),
@@ -45,7 +46,7 @@ func TestLabelImmutabilityAllowsTenantAssignmentByGateway(t *testing.T) {
 }
 
 func TestLabelImmutabilityRejectsTenantAssignmentByOtherUser(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u2",
 		Operation: admissionv1.Create,
 		Object:    podRaw(t, map[string]string{labelimm.LabelTenantID: "acme"}),
@@ -60,7 +61,7 @@ func TestLabelImmutabilityRejectsTenantAssignmentByOtherUser(t *testing.T) {
 }
 
 func TestLabelImmutabilityRejectsImmutableLabelChange(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u3",
 		Operation: admissionv1.Update,
 		OldObject: podRaw(t, map[string]string{labelimm.LabelManaged: "true"}),
@@ -77,7 +78,7 @@ func TestLabelImmutabilityRejectsImmutableLabelChange(t *testing.T) {
 
 func TestLabelImmutabilityAllowsUnchangedUpdate(t *testing.T) {
 	labels := map[string]string{labelimm.LabelManaged: "true", labelimm.LabelTenantID: "acme"}
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u4",
 		Operation: admissionv1.Update,
 		OldObject: podRaw(t, labels),
@@ -90,7 +91,7 @@ func TestLabelImmutabilityAllowsUnchangedUpdate(t *testing.T) {
 }
 
 func TestLabelImmutabilityRejectsCrossTenantChange(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u5",
 		Operation: admissionv1.Update,
 		OldObject: podRaw(t, map[string]string{labelimm.LabelTenantID: "acme"}),
@@ -106,7 +107,7 @@ func TestLabelImmutabilityRejectsCrossTenantChange(t *testing.T) {
 }
 
 func TestLabelImmutabilityAllowsPoolReturnByController(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u6",
 		Operation: admissionv1.Update,
 		OldObject: podRaw(t, map[string]string{labelimm.LabelTenantID: "acme"}),
@@ -119,7 +120,7 @@ func TestLabelImmutabilityAllowsPoolReturnByController(t *testing.T) {
 }
 
 func TestLabelImmutabilityRejectsMalformedObject(t *testing.T) {
-	resp := webhook.LabelImmutability()(&admissionv1.AdmissionRequest{
+	resp := webhook.LabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u7",
 		Operation: admissionv1.Create,
 		Object:    runtime.RawExtension{Raw: []byte("{not a pod")},

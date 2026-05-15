@@ -3,6 +3,7 @@
 package webhook
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -17,7 +18,7 @@ import (
 // the inbound and prior pod label maps and the authenticated username
 // from the AdmissionRequest and delegates to label_immutability.Decide.
 func LabelImmutability() Decider {
-	return func(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		newLabels, err := podLabels(req.Object.Raw)
 		if err != nil {
 			return Deny(http.StatusBadRequest, "decode pod object: "+err.Error())
