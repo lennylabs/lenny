@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -87,6 +88,7 @@ type Server struct {
 	executor        executor.Executor
 	transcripts     transcriptstore.Store
 	events          *events.Bus
+	interactions    interactionstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -149,6 +151,12 @@ type Options struct {
 	// event publication.
 	Events *events.Bus
 
+	// Interactions is the §6/§9.2 pending tool-call + elicitation
+	// store backing the §15.1 tool-use and elicitation endpoints.
+	// When nil those endpoints return
+	// `503 INTERACTIONS_UNAVAILABLE`.
+	Interactions interactionstore.Store
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -168,6 +176,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		executor:        opts.Executor,
 		transcripts:     opts.Transcripts,
 		events:          opts.Events,
+		interactions:    opts.Interactions,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -215,6 +224,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", s.handleEvents)
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", s.handleToolUseApprove)
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", s.handleToolUseDeny)
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", s.handleElicitationRespond)
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss", s.handleElicitationDismiss)
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }

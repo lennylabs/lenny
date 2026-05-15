@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
@@ -151,6 +152,7 @@ func main() {
 		Executor:            exec,
 		Transcripts:         transcriptstore.NewMemory(),
 		Events:              eventBus,
+		Interactions:        interactionstore.NewMemory(),
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
