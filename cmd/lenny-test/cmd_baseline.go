@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 )
 
@@ -76,12 +75,19 @@ func runBaselineDiff(args []string) int {
 		fmt.Printf("baseline diff: %s → %s (threshold %.1f%%)\n", *before, *after, *threshold*100)
 		for _, e := range diff {
 			marker := "  "
-			if e.Delta > *threshold {
+			switch {
+			case e.FirstData:
+				marker = "+ "
+			case e.Delta > *threshold:
 				marker = "✗ "
-			} else if e.Delta < 0 {
+			case e.Delta < 0:
 				marker = "↓ "
 			}
-			fmt.Printf("%s%-8s %.2fms → %.2fms (%+.1f%%)\n", marker, e.Key, e.Before, e.After, e.Delta*100)
+			if e.FirstData {
+				fmt.Printf("%s%-8s %.2fms → %.2fms (first data)\n", marker, e.Key, e.Before, e.After)
+			} else {
+				fmt.Printf("%s%-8s %.2fms → %.2fms (%+.1f%%)\n", marker, e.Key, e.Before, e.After, e.Delta*100)
+			}
 		}
 		fmt.Printf("\n%d regression(s) beyond threshold\n", regressions)
 	}
@@ -92,10 +98,11 @@ func runBaselineDiff(args []string) int {
 }
 
 type baselineEntry struct {
-	Key    string  `json:"key"`
-	Before float64 `json:"before"`
-	After  float64 `json:"after"`
-	Delta  float64 `json:"delta"`
+	Key       string  `json:"key"`
+	Before    float64 `json:"before"`
+	After     float64 `json:"after"`
+	Delta     float64 `json:"delta"`
+	FirstData bool    `json:"first_data,omitempty"` // before=0, after>0
 }
 
 func loadBaseline(path string) (map[string]float64, error) {
@@ -164,11 +171,19 @@ func computeBaselineDiff(a, b map[string]float64) []baselineEntry {
 }
 
 func makeEntry(key string, before, after float64) baselineEntry {
-	delta := 0.0
-	if before != 0 {
-		delta = (after - before) / before
-	} else if after != 0 {
-		delta = math.Inf(1)
+	// before=0 → no prior baseline; this is the first observation.
+	// Flag it explicitly so the report can render "first data" rather
+	// than +Inf%, and so the threshold check treats it as a
+	// non-regression (no prior to regress against).
+	if before == 0 {
+		return baselineEntry{
+			Key: key, Before: before, After: after,
+			Delta:     0,
+			FirstData: after != 0,
+		}
 	}
-	return baselineEntry{Key: key, Before: before, After: after, Delta: delta}
+	return baselineEntry{
+		Key: key, Before: before, After: after,
+		Delta: (after - before) / before,
+	}
 }
