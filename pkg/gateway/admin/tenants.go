@@ -240,27 +240,29 @@ func (r *Router) requireAdmin(next http.Handler) http.Handler {
 
 // TenantPayload is the §15.1 admin-tenant request/response body.
 type TenantPayload struct {
-	ID                  string `json:"id"`
-	DisplayName         string `json:"displayName,omitempty"`
-	ComplianceProfile   string `json:"complianceProfile,omitempty"`
-	DataResidencyRegion string `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier       string `json:"workspaceTier,omitempty"`
-	CreatedAt           string `json:"createdAt,omitempty"`
-	UpdatedAt           string `json:"updatedAt,omitempty"`
-	DeletedAt           string `json:"deletedAt,omitempty"`
+	ID                    string `json:"id"`
+	DisplayName           string `json:"displayName,omitempty"`
+	ComplianceProfile     string `json:"complianceProfile,omitempty"`
+	DataResidencyRegion   string `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier         string `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions int    `json:"maxConcurrentSessions,omitempty"`
+	CreatedAt             string `json:"createdAt,omitempty"`
+	UpdatedAt             string `json:"updatedAt,omitempty"`
+	DeletedAt             string `json:"deletedAt,omitempty"`
 }
 
 // fromTenant maps a stored row to the wire payload.
 func fromTenant(t tenantstore.Tenant) TenantPayload {
 	return TenantPayload{
-		ID:                  t.ID,
-		DisplayName:         t.DisplayName,
-		ComplianceProfile:   t.ComplianceProfile,
-		DataResidencyRegion: t.DataResidencyRegion,
-		WorkspaceTier:       t.WorkspaceTier,
-		CreatedAt:           rfc3339Nano(t.CreatedAt),
-		UpdatedAt:           rfc3339Nano(t.UpdatedAt),
-		DeletedAt:           rfc3339Nano(t.DeletedAt),
+		ID:                    t.ID,
+		DisplayName:           t.DisplayName,
+		ComplianceProfile:     t.ComplianceProfile,
+		DataResidencyRegion:   t.DataResidencyRegion,
+		WorkspaceTier:         t.WorkspaceTier,
+		MaxConcurrentSessions: t.MaxConcurrentSessions,
+		CreatedAt:             rfc3339Nano(t.CreatedAt),
+		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
+		DeletedAt:             rfc3339Nano(t.DeletedAt),
 	}
 }
 
@@ -281,14 +283,21 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "id"})
 		return
 	}
+	if body.MaxConcurrentSessions < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"maxConcurrentSessions must not be negative",
+			map[string]any{"field": "maxConcurrentSessions"})
+		return
+	}
 
 	t := tenantstore.Tenant{
-		ID:                  body.ID,
-		DisplayName:         body.DisplayName,
-		ComplianceProfile:   body.ComplianceProfile,
-		DataResidencyRegion: body.DataResidencyRegion,
-		WorkspaceTier:       body.WorkspaceTier,
-		CreatedAt:           r.clock(),
+		ID:                    body.ID,
+		DisplayName:           body.DisplayName,
+		ComplianceProfile:     body.ComplianceProfile,
+		DataResidencyRegion:   body.DataResidencyRegion,
+		WorkspaceTier:         body.WorkspaceTier,
+		MaxConcurrentSessions: body.MaxConcurrentSessions,
+		CreatedAt:             r.clock(),
 	}
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
@@ -310,10 +319,11 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.emit(req.Context(), principal, "admin.tenant.created", body.ID, map[string]any{
-		"displayName":         row.DisplayName,
-		"complianceProfile":   row.ComplianceProfile,
-		"dataResidencyRegion": row.DataResidencyRegion,
-		"workspaceTier":       row.WorkspaceTier,
+		"displayName":           row.DisplayName,
+		"complianceProfile":     row.ComplianceProfile,
+		"dataResidencyRegion":   row.DataResidencyRegion,
+		"workspaceTier":         row.WorkspaceTier,
+		"maxConcurrentSessions": row.MaxConcurrentSessions,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -358,10 +368,11 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 // the fields explicitly present are mutated; omitting a field leaves
 // the stored value untouched. Empty-string clears the field.
 type UpdateTenantRequest struct {
-	DisplayName         *string `json:"displayName,omitempty"`
-	ComplianceProfile   *string `json:"complianceProfile,omitempty"`
-	DataResidencyRegion *string `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier       *string `json:"workspaceTier,omitempty"`
+	DisplayName           *string `json:"displayName,omitempty"`
+	ComplianceProfile     *string `json:"complianceProfile,omitempty"`
+	DataResidencyRegion   *string `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier         *string `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions *int    `json:"maxConcurrentSessions,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -370,6 +381,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	var body UpdateTenantRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	if body.MaxConcurrentSessions != nil && *body.MaxConcurrentSessions < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"maxConcurrentSessions must not be negative",
+			map[string]any{"field": "maxConcurrentSessions"})
 		return
 	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
@@ -384,6 +401,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.WorkspaceTier != nil {
 			t.WorkspaceTier = *body.WorkspaceTier
+		}
+		if body.MaxConcurrentSessions != nil {
+			t.MaxConcurrentSessions = *body.MaxConcurrentSessions
 		}
 		return nil
 	})
@@ -426,6 +446,9 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.WorkspaceTier != nil {
 		out = append(out, "workspaceTier")
+	}
+	if b.MaxConcurrentSessions != nil {
+		out = append(out, "maxConcurrentSessions")
 	}
 	return out
 }

@@ -42,6 +42,11 @@ type Tenant struct {
 	// `T4`). Empty defaults to platform default at write time.
 	WorkspaceTier string
 
+	// MaxConcurrentSessions is the §11.2 per-tenant concurrent-session
+	// quota: the gateway rejects a session create once the tenant
+	// holds this many non-terminal sessions. Zero means unlimited.
+	MaxConcurrentSessions int
+
 	// CreatedAt is the UTC instant the tenant row was committed.
 	CreatedAt time.Time
 

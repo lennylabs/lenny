@@ -33,11 +33,12 @@ func TestTenantStoreContract(t *testing.T) {
 
 	t.Run("create and get round-trip", func(t *testing.T) {
 		want := tenantstore.Tenant{
-			ID:                  tenantID(t),
-			DisplayName:         "Acme Corporation",
-			ComplianceProfile:   "soc2",
-			DataResidencyRegion: "us-east-1",
-			WorkspaceTier:       "T2",
+			ID:                    tenantID(t),
+			DisplayName:           "Acme Corporation",
+			ComplianceProfile:     "soc2",
+			DataResidencyRegion:   "us-east-1",
+			WorkspaceTier:         "T2",
+			MaxConcurrentSessions: 25,
 		}
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -47,7 +48,8 @@ func TestTenantStoreContract(t *testing.T) {
 			t.Fatalf("Get: %v", err)
 		}
 		if got.DisplayName != want.DisplayName || got.ComplianceProfile != want.ComplianceProfile ||
-			got.DataResidencyRegion != want.DataResidencyRegion || got.WorkspaceTier != want.WorkspaceTier {
+			got.DataResidencyRegion != want.DataResidencyRegion || got.WorkspaceTier != want.WorkspaceTier ||
+			got.MaxConcurrentSessions != want.MaxConcurrentSessions {
 			t.Errorf("field mismatch:\n got %+v\nwant %+v", got, want)
 		}
 		if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
@@ -86,12 +88,14 @@ func TestTenantStoreContract(t *testing.T) {
 		updated, err := store.Update(ctx, id, func(tn *tenantstore.Tenant) error {
 			tn.DisplayName = "After"
 			tn.ComplianceProfile = "hipaa"
+			tn.MaxConcurrentSessions = 50
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("Update: %v", err)
 		}
-		if updated.DisplayName != "After" || updated.ComplianceProfile != "hipaa" {
+		if updated.DisplayName != "After" || updated.ComplianceProfile != "hipaa" ||
+			updated.MaxConcurrentSessions != 50 {
 			t.Errorf("Update result not applied: %+v", updated)
 		}
 		if !updated.UpdatedAt.After(before.UpdatedAt) {

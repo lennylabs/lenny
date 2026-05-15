@@ -105,6 +105,42 @@ func TestCreateTenantHappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateTenantWithConcurrentSessionQuota(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", MaxConcurrentSessions: 10})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.MaxConcurrentSessions != 10 {
+		t.Errorf("response maxConcurrentSessions: got %d, want 10", resp.MaxConcurrentSessions)
+	}
+	row, err := store.Get(req.Context(), "acme")
+	if err != nil {
+		t.Fatalf("store missing tenant: %v", err)
+	}
+	if row.MaxConcurrentSessions != 10 {
+		t.Errorf("stored maxConcurrentSessions: got %d, want 10", row.MaxConcurrentSessions)
+	}
+}
+
+func TestCreateTenantRejectsNegativeConcurrentSessionQuota(t *testing.T) {
+	router, _ := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", MaxConcurrentSessions: -1})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("negative maxConcurrentSessions: got %d, want 400", rr.Code)
+	}
+}
+
 func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "with space"})
