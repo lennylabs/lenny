@@ -22,6 +22,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
 // rfc3339Nano serialises a time.Time using the shared RFC3339Nano
@@ -74,6 +75,7 @@ type AuditEvent struct {
 type Router struct {
 	tenants  tenantstore.Store
 	runtimes runtimestore.Store
+	users    userstore.Store
 	clock    func() time.Time
 	audit    AuditSink
 }
@@ -130,6 +132,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetRuntime)))
 		mux.Handle("PUT /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateRuntime)))
 		mux.Handle("DELETE /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteRuntime)))
+	}
+	if r.users != nil {
+		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))
+		mux.Handle("GET /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleListUsers)))
+		mux.Handle("GET /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleGetUser)))
+		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
+		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
 	}
 	return mux
 }
