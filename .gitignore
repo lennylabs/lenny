@@ -6,6 +6,7 @@ tmp/
 # package directories.
 /lenny-test
 /lenny-test-cached
+/lenny-adapter
 /lenny-compliance
 /lenny-controller
 /lenny-gateway
