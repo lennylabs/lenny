@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -89,6 +90,7 @@ type Server struct {
 	events          *events.Bus
 	interactions    interactionstore.Store
 	usage           usagestore.Store
+	users           userstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -167,6 +169,13 @@ type Options struct {
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
 	DefaultIsolationProfile isolation.Profile
+
+	// Users is the §10.2 user registry consulted to enforce §11.4 user
+	// invalidation on the session-creation path: a soft-disabled,
+	// hard-disabled, or fully-revoked user is denied new sessions.
+	// When nil the check is skipped (unit tests that do not provision
+	// a user registry); the gateway always wires it.
+	Users userstore.Store
 }
 
 // New returns a Server bound to the supplied store.
@@ -184,6 +193,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		events:          opts.Events,
 		interactions:    opts.Interactions,
 		usage:           opts.Usage,
+		users:           opts.Users,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -318,6 +328,9 @@ type errorBody struct {
 // handleCreate implements POST /v1/sessions. Returns 201 with the
 // CreateSessionResponse envelope on success.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.requireActiveUser(w, r) {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 
 	var req CreateSessionRequest

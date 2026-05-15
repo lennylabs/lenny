@@ -117,6 +117,9 @@ type DeriveIsolationDowngradeEvent struct {
 // `gateway.persistDeriveFailureRows: true` is also deferred to the
 // phase that ships the Postgres-backed store.
 func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
+	if !s.requireActiveUser(w, r) {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 	sourceID := r.PathValue("id")
 

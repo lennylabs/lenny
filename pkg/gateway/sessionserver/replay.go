@@ -62,6 +62,9 @@ type ReplayResponse struct {
 // target pool's isolation profile differs from the source session's
 // — the platform-admin override mirrors the derive path.
 func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
+	if !s.requireActiveUser(w, r) {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 	sourceID := r.PathValue("id")
 

@@ -258,6 +258,7 @@ func main() {
 		Events:              eventBus,
 		Interactions:        interactionstore.NewMemory(),
 		Usage:               usagestore.NewMemory(),
+		Users:               users,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

@@ -37,6 +37,9 @@ type CreateAndStartResponse = CreateSessionResponse
 // extra work here is just to advance the row through the §15.1
 // precondition table to running before returning.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
+	if !s.requireActiveUser(w, r) {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 
 	var req CreateAndStartRequest
