@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
@@ -106,13 +107,17 @@ func main() {
 		},
 	})
 
-	// ----- Session API -----
+	// ----- Session API + Executor -----
+	exec := executor.NewEchoExecutor()
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
 		Blobs:               blobs,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            exec,
 	})
+
+	// ----- OpenAI Chat Completions translator -----
+	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{})
 
 	// ----- Admin API -----
 	adminRouter := admin.NewRouter(tenants, admin.Options{}).
@@ -129,6 +134,7 @@ func main() {
 	mux.Handle("/openapi.yaml", openapi.Handler())
 	mux.Handle("/v1/openapi.json", openapi.Handler())
 	mux.Handle("/v1/oauth/", tokSvc.Handler())
+	mux.Handle("/v1/chat/completions", openaiHandler.Handler())
 
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
