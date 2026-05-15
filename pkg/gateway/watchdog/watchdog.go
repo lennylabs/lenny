@@ -19,12 +19,14 @@
 //	ready      → 300 s (gateway.maxReadyTimeoutSeconds)
 //	starting   → 120 s (gateway.maxStartingTimeoutSeconds)
 //
-// The watchdog applies two §11.3 controls. The per-state budgets above
-// bound a session stuck in a pre-running state and transition it to
-// `failed`. The maxSessionAge cap bounds the total lifetime of any
-// non-terminal session, measured from its creation, and transitions an
-// over-age session to `expired`. The watchdog never operates on
-// terminal sessions.
+// The watchdog applies the §11.3 session-lifetime controls. The
+// per-state budgets above bound a session stuck in a pre-running state
+// and transition it to `failed`. The maxSessionAge cap bounds the
+// total lifetime of any non-terminal session, measured from its
+// creation, and transitions an over-age session to `expired`. The
+// maxAwaitingClientAction deadline bounds the awaiting_client_action
+// state and likewise transitions an over-deadline session to
+// `expired`. The watchdog never operates on terminal sessions.
 package watchdog
 
 import (
@@ -46,12 +48,13 @@ const (
 
 // Default budgets per §11.3.
 const (
-	DefaultMaxCreatedStateSeconds    = 300
-	DefaultMaxFinalizingStateSeconds = 600
-	DefaultMaxReadyStateSeconds      = 300
-	DefaultMaxStartingStateSeconds   = 120
-	DefaultMaxSessionAgeSeconds      = 7200
-	DefaultTickInterval              = 5 * time.Second
+	DefaultMaxCreatedStateSeconds         = 300
+	DefaultMaxFinalizingStateSeconds      = 600
+	DefaultMaxReadyStateSeconds           = 300
+	DefaultMaxStartingStateSeconds        = 120
+	DefaultMaxSessionAgeSeconds           = 7200
+	DefaultMaxAwaitingClientActionSeconds = 900
+	DefaultTickInterval                   = 5 * time.Second
 )
 
 // Config holds the §11.3 budgets plus the sweep cadence. A zero value
@@ -65,7 +68,11 @@ type Config struct {
 	// non-terminal session alive longer than this, measured from its
 	// creation, is expired regardless of its current state.
 	MaxSessionAgeSeconds int
-	TickInterval         time.Duration
+	// MaxAwaitingClientActionSeconds is the §11.3 deadline for the
+	// awaiting_client_action state: a session that has waited this
+	// long for client action is expired.
+	MaxAwaitingClientActionSeconds int
+	TickInterval                   time.Duration
 }
 
 // withDefaults returns a copy of c with unset fields filled from the
@@ -85,6 +92,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxSessionAgeSeconds <= 0 {
 		c.MaxSessionAgeSeconds = DefaultMaxSessionAgeSeconds
+	}
+	if c.MaxAwaitingClientActionSeconds <= 0 {
+		c.MaxAwaitingClientActionSeconds = DefaultMaxAwaitingClientActionSeconds
 	}
 	if c.MaxFinalizingSeconds < c.MaxStartingSeconds {
 		// Spec §6.2 finalizing footnote: maxFinalizingTimeoutSeconds
@@ -150,7 +160,7 @@ type Result struct {
 	// by this sweep.
 	ForcedFailures int
 	// Expirations is the count of sessions transitioned to `expired`
-	// by the §11.3 maxSessionAge sweep.
+	// by the §11.3 maxSessionAge and maxAwaitingClientAction sweeps.
 	Expirations int
 	// PerReason records the count per FailureReason for observability.
 	PerReason map[string]int
@@ -211,8 +221,46 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 		if err := w.sweepMaxAge(ctx, tenant, now, &res); err != nil {
 			return res, err
 		}
+		if err := w.sweepAwaitingClientAction(ctx, tenant, now, &res); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
+}
+
+// sweepAwaitingClientAction expires every session for the tenant that
+// has waited in awaiting_client_action longer than the §11.3
+// maxAwaitingClientAction deadline, measured from the row's UpdatedAt
+// (the instant it entered the state). §7.3 governs the transition:
+// awaiting_client_action → expired when the deadline is exhausted.
+func (w *Watchdog) sweepAwaitingClientAction(ctx context.Context, tenant string, now time.Time, res *Result) error {
+	rows, err := w.store.List(ctx, tenant,
+		sessionstore.ListFilter{State: session.StateAwaitingClientAction})
+	if err != nil {
+		return err
+	}
+	deadline := time.Duration(w.cfg.MaxAwaitingClientActionSeconds) * time.Second
+	for _, row := range rows {
+		if now.Sub(row.UpdatedAt) <= deadline {
+			continue
+		}
+		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+			if r.State != session.StateAwaitingClientAction {
+				// Concurrent transition — leave the new state alone.
+				return nil
+			}
+			r.State = session.StateExpired
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if updated.State == session.StateExpired {
+			res.Expirations++
+			w.recordCompleted(ctx, updated)
+		}
+	}
+	return nil
 }
 
 // sweepMaxAge expires every non-terminal session for the tenant whose

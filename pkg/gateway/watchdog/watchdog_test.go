@@ -159,6 +159,45 @@ func TestMaxSessionAgeEmitsBillingEvent(t *testing.T) {
 	}
 }
 
+func TestTickExpiresStuckAwaitingClientAction(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_awaiting", "acme", session.StateAwaitingClientAction, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+
+	// The default maxAwaitingClientAction is 900s; sweep 20 minutes in.
+	res, err := w.Tick(context.Background(), born.Add(20*time.Minute))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 1 {
+		t.Errorf("Expirations: got %d, want 1", res.Expirations)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_awaiting")
+	if row.State != session.StateExpired {
+		t.Errorf("state: got %q, want expired", row.State)
+	}
+}
+
+func TestTickLeavesRecentAwaitingClientAction(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_awaiting", "acme", session.StateAwaitingClientAction, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+
+	res, err := w.Tick(context.Background(), born.Add(10*time.Minute)) // under 900s
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 0 {
+		t.Errorf("a session waiting under the deadline must not expire: Expirations=%d", res.Expirations)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_awaiting")
+	if row.State != session.StateAwaitingClientAction {
+		t.Errorf("state: got %q, want awaiting_client_action", row.State)
+	}
+}
+
 func TestTickRespectsBudgetForEveryState(t *testing.T) {
 	store := memstore.New()
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -207,15 +246,16 @@ func TestTickIgnoresPostRunningStates(t *testing.T) {
 		seedRow(t, store, "sess_"+string(st), "acme", st, t0)
 	}
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
-	// Within the maxSessionAge window neither sweep touches a
-	// post-running session; the maxSessionAge sweep is exercised
-	// separately by TestTickExpiresOverAgeSession.
-	res, err := w.Tick(context.Background(), t0.Add(time.Hour))
+	// Within every §11.3 deadline (maxAwaitingClientAction 900s,
+	// maxSessionAge 7200s) the watchdog leaves a post-running session
+	// alone. Those deadline sweeps are exercised separately by
+	// TestTickExpiresOverAgeSession and TestTickExpiresStuckAwaitingClientAction.
+	res, err := w.Tick(context.Background(), t0.Add(10*time.Minute))
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
 	if res.ForcedFailures != 0 || res.Expirations != 0 {
-		t.Errorf("post-running states must not be touched within maxSessionAge: %+v", res)
+		t.Errorf("post-running states must not be touched within their deadlines: %+v", res)
 	}
 }
 
