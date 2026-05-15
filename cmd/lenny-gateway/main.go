@@ -39,6 +39,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
@@ -51,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -83,6 +85,25 @@ func main() {
 	uploadTracker := uploadtoken.NewMemoryTracker()
 	uploadVerifier := uploadtoken.NewVerifier(ring, uploadTracker, nil)
 
+	// ----- §13.3 Token Service -----
+	// Ephemeral JWT HMAC signer per process. Production wires the
+	// KMS-backed signer with the §12a envelope. The token-service
+	// handler mounted below serves POST /v1/oauth/token (RFC 8693).
+	var jwtSeed [32]byte
+	if _, err := rand.Read(jwtSeed[:]); err != nil {
+		log.Fatalf("lenny-gateway: rand: %v", err)
+	}
+	jwtSigner := jwt.NewHMACSigner("boot", jwtSeed[:])
+	tokSvc := tokenservice.NewServer(tokenservice.Options{
+		Signer: jwtSigner,
+		Issuer: "https://lenny.dev.local/token",
+		PerDialectCap: map[string]time.Duration{
+			"lenny-gateway": 24 * time.Hour,
+			"lenny-ops":     1 * time.Hour,
+			"llm-proxy":     1 * time.Hour,
+		},
+	})
+
 	// ----- Session API -----
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
@@ -104,6 +125,7 @@ func main() {
 	mux.Handle("/v1/admin/", adminRouter.Handler())
 	mux.Handle("/openapi.yaml", openapi.Handler())
 	mux.Handle("/v1/openapi.json", openapi.Handler())
+	mux.Handle("/v1/oauth/", tokSvc.Handler())
 
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
