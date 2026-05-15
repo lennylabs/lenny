@@ -1,0 +1,41 @@
+{{- /*
+RBAC for the lenny-webhook ServiceAccount shared by every admission
+webhook Deployment (§17.2). The lenny-sandboxclaim-guard route reads
+the referenced Sandbox phase and sibling SandboxClaims during
+admission, so the ServiceAccount needs read access to those CRDs. The
+label-immutability route reads only the AdmissionReview payload and
+needs no cluster access.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-webhook
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxes", "sandboxclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-webhook
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-webhook
+subjects:
+  - kind: ServiceAccount
+    name: lenny-webhook
+    namespace: {{ .Release.Namespace }}

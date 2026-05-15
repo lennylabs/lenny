@@ -1,0 +1,16 @@
+{{- /*
+Self-signed cert-manager Issuer for the admission webhook serving
+certificates (§17.2). Each webhook's Certificate is issued by this
+Issuer; cert-manager's CA injector copies the resulting CA into the
+ValidatingWebhookConfiguration caBundle via the
+cert-manager.io/inject-ca-from annotation.
+*/ -}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lenny-webhook-selfsign
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}

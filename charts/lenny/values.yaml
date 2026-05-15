@@ -29,3 +29,30 @@ controller:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# admissionWebhooks configures the ValidatingAdmissionWebhook
+# Deployments under templates/admission-policies/ (§17.2). Each webhook
+# is its own Deployment + Service + PodDisruptionBudget running the
+# lenny-webhook image; cert-manager issues each serving certificate.
+admissionWebhooks:
+  replicas: 2
+  image:
+    repository: ghcr.io/lennylabs/lenny-webhook
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# features gates the optional admission webhooks (§17.2 feature-gated
+# chart inventory). The Phase 3.5 baseline webhooks render
+# unconditionally; these flags add the later-phase webhooks.
+features:
+  llmProxy: false
+  drainReadiness: false
+  compliance: false

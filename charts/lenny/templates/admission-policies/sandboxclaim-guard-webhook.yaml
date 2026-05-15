@@ -1,0 +1,40 @@
+{{- /*
+lenny-sandboxclaim-guard ValidatingAdmissionWebhook (§17.2 item 7,
+§4.6.1 ADR-007). Prevents duplicate claims on CREATE and stale writes
+on UPDATE against SandboxClaim resources. Scoped to agent namespaces;
+fail-closed.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-sandboxclaim-guard") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-sandboxclaim-guard
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-sandboxclaim-guard
+webhooks:
+  - name: sandboxclaim-guard.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: ["lenny.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxclaims"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-sandboxclaim-guard
+        namespace: {{ .Release.Namespace }}
+        path: /sandboxclaim-guard
+        port: 443

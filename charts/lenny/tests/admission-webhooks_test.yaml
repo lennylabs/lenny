@@ -1,0 +1,101 @@
+suite: admission webhooks
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: renders the workload and webhook config for label-immutability
+    template: admission-policies/label-immutability-webhook.yaml
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: runs the label-immutability webhook with two replicas
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  - it: protects the label-immutability webhook with a PodDisruptionBudget
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 1
+
+  - it: issues a serving certificate for the label-immutability webhook
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: spec.secretName
+          value: lenny-label-immutability-tls
+
+  - it: configures the label-immutability webhook fail-closed with CA injection
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /label-immutability
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: lenny-system/lenny-label-immutability
+
+  - it: targets pods from the label-immutability webhook
+    template: admission-policies/label-immutability-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: pods
+
+  - it: targets sandboxclaims from the sandboxclaim-guard webhook
+    template: admission-policies/sandboxclaim-guard-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].rules[0].apiGroups[0]
+          value: lenny.dev
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: sandboxclaims
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /sandboxclaim-guard
+
+  - it: renders a self-signed issuer for webhook certificates
+    template: admission-policies/webhook-cert-issuer.yaml
+    asserts:
+      - isKind:
+          of: Issuer
+      - equal:
+          path: metadata.name
+          value: lenny-webhook-selfsign
+
+  - it: grants the webhook service account read access to the pod-fabric CRDs
+    template: admission-policies/webhook-rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 3

@@ -1,0 +1,39 @@
+{{- /*
+lenny-label-immutability ValidatingAdmissionWebhook (§17.2 item 5,
+§5.2 NET-003). Enforces the immutable agent-pod labels and the
+tenant-id transition rules. Scoped to agent namespaces; fail-closed.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-label-immutability") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-label-immutability
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-label-immutability
+webhooks:
+  - name: label-immutability.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-label-immutability
+        namespace: {{ .Release.Namespace }}
+        path: /label-immutability
+        port: 443
