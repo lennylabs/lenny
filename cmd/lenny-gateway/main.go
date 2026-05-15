@@ -46,6 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
@@ -145,6 +146,18 @@ func main() {
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
 	mux.Handle("/v1/blobs/", sessionSrv.Handler())
 	mux.Handle("/v1/admin/", adminRouter.Handler())
+
+	// §25.3 Platform Health API. Registered at the specific
+	// /v1/admin/health* paths so Go's ServeMux routes them to the
+	// health handler ahead of the /v1/admin/ admin catch-all.
+	healthAgg := health.NewAggregator()
+	healthAgg.Register(staticHealthy("gateway"))
+	healthAgg.Register(staticHealthy("sessionstore"))
+	healthAgg.Register(staticHealthy("blobstore"))
+	healthAgg.Register(staticHealthy("executor"))
+	healthHandler := health.Handler(healthAgg)
+	mux.Handle("/v1/admin/health", healthHandler)
+	mux.Handle("/v1/admin/health/", healthHandler)
 	mux.Handle("/openapi.yaml", openapi.Handler())
 	mux.Handle("/v1/openapi.json", openapi.Handler())
 	mux.Handle("/v1/oauth/", tokSvc.Handler())
@@ -256,6 +269,20 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 		out = append(out, row.ID)
 	}
 	return out, nil
+}
+
+// staticHealthy returns a §25.3 health Checker that always reports
+// the named component healthy. The minimal gateway uses these
+// because every subsystem is an in-process in-memory store with no
+// failure mode; production swaps in checkers that probe Postgres /
+// Redis / MinIO connectivity.
+func staticHealthy(name string) health.Checker {
+	return health.CheckerFunc{
+		ComponentName: name,
+		Fn: func(context.Context) health.Component {
+			return health.Component{Name: name, Status: health.StatusHealthy}
+		},
+	}
 }
 
 // envFlag returns true when the env var name is set to a truthy
