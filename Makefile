@@ -32,6 +32,13 @@ build: ## Build every cmd/ binary into ./bin
 		go build -o bin/$$name ./$$d || exit 1; \
 	done
 
+.PHONY: generate
+generate: ## Regenerate DeepCopy + CRD manifests via controller-gen
+	@echo "  controller-gen object → pkg/apis DeepCopy"
+	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1/...
+	@echo "  controller-gen crd → charts/lenny/crds"
+	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1/... output:crd:dir=charts/lenny/crds
+
 .PHONY: install
 install: ## Install lenny-test + lenny-compliance into $(go env GOPATH)/bin
 	@echo "  install lenny-test → $(GOPATH_BIN)"

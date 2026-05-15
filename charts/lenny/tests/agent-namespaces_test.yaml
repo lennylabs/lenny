@@ -1,0 +1,36 @@
+suite: agent namespaces
+templates:
+  - agent-namespaces.yaml
+tests:
+  - it: renders one Namespace per configured agent namespace
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+        - name: lenny-agents-kata
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: names and labels the agent namespace
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    asserts:
+      - isKind:
+          of: Namespace
+      - equal:
+          path: metadata.name
+          value: lenny-agents
+      - equal:
+          path: metadata.labels["lenny.dev/agent-namespace"]
+          value: "true"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  - it: renders nothing when no agent namespaces are configured
+    set:
+      agentNamespaces: []
+    asserts:
+      - hasDocuments:
+          count: 0

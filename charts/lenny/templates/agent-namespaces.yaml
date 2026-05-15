@@ -1,0 +1,16 @@
+{{- /*
+Agent pod namespaces (§17.2). One Namespace per .Values.agentNamespaces
+entry. These namespaces form the isolation boundary between agent pods
+and the control plane; admission policies and NetworkPolicies target
+them via the lenny.dev/agent-namespace label.
+*/ -}}
+{{- range $ns := .Values.agentNamespaces }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/agent-namespace: "true"
+{{- end }}

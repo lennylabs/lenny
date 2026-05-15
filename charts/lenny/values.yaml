@@ -1,0 +1,13 @@
+# Default values for the lenny chart.
+#
+# The control plane (gateway, token service, controllers, lenny-ops,
+# stores) runs in the Helm release namespace, lenny-system by default.
+# Agent pods run in the dedicated namespaces listed below.
+
+# agentNamespaces declares the namespaces that hold agent pods (§17.2).
+# Each entry is an object so per-namespace ResourceQuota and LimitRange
+# overrides can be attached as the chart grows. Admission policies and
+# NetworkPolicies scope themselves to the namespaces named here.
+agentNamespaces:
+  - name: lenny-agents
+  - name: lenny-agents-kata
