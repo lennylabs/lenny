@@ -511,6 +511,298 @@
         "security": [{ "BearerAuth": [] }],
         "responses": { "200": { "description": "Applied" }, "207": { "description": "Partial success" } }
       }
+    },
+    "/v1/sessions/start": {
+      "post": {
+        "summary": "Create, finalize, and start a session in one call",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateSessionRequest" } } } },
+        "responses": { "201": { "description": "Created and started" } }
+      }
+    },
+    "/v1/sessions/{id}/messages": {
+      "post": {
+        "summary": "Inject a message batch into a session",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Delivered" }, "409": { "description": "Invalid state" } }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "OpenAI Chat Completions translator",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" }, "400": { "description": "Invalid request" } }
+      }
+    },
+    "/v1/responses": {
+      "post": {
+        "summary": "Open Responses translator",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" }, "400": { "description": "Invalid request" } }
+      }
+    },
+    "/v1/responses/{id}": {
+      "get": {
+        "summary": "Get an Open Responses response",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "delete": {
+        "summary": "Delete an Open Responses response",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/oauth/token": {
+      "post": {
+        "summary": "RFC 8693 token exchange",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Token issued" }, "400": { "description": "Invalid grant" } }
+      }
+    },
+    "/v1/admin/pools": {
+      "post": {
+        "summary": "Create a pool",
+        "x-lenny-mcp-tool": "admin.create_pool",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "summary": "List pools",
+        "x-lenny-mcp-tool": "admin.list_pools",
+        "x-lenny-scope": "admin.pools.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}": {
+      "get": {
+        "summary": "Get a pool",
+        "x-lenny-mcp-tool": "admin.get_pool",
+        "x-lenny-scope": "admin.pools.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Update a pool",
+        "x-lenny-mcp-tool": "admin.update_pool",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Soft-delete a pool",
+        "x-lenny-mcp-tool": "admin.soft_delete_pool",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/connectors": {
+      "post": {
+        "summary": "Create a connector",
+        "x-lenny-mcp-tool": "admin.create_connector",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "summary": "List connectors",
+        "x-lenny-mcp-tool": "admin.list_connectors",
+        "x-lenny-scope": "admin.connectors.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/connectors/{id}": {
+      "get": {
+        "summary": "Get a connector",
+        "x-lenny-mcp-tool": "admin.get_connector",
+        "x-lenny-scope": "admin.connectors.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Update a connector",
+        "x-lenny-mcp-tool": "admin.update_connector",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Soft-delete a connector",
+        "x-lenny-mcp-tool": "admin.soft_delete_connector",
+        "x-lenny-scope": "admin.connectors.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "connector-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/circuit-breakers": {
+      "get": {
+        "summary": "List circuit breakers",
+        "x-lenny-mcp-tool": "admin.list_circuit_breakers",
+        "x-lenny-scope": "admin.circuit_breakers.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/circuit-breakers/{name}": {
+      "get": {
+        "summary": "Get a circuit breaker",
+        "x-lenny-mcp-tool": "admin.get_circuit_breaker",
+        "x-lenny-scope": "admin.circuit_breakers.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/circuit-breakers/{name}/open": {
+      "post": {
+        "summary": "Open a circuit breaker",
+        "x-lenny-mcp-tool": "admin.open_circuit_breaker",
+        "x-lenny-scope": "admin.circuit_breakers.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Opened" }, "422": { "description": "INVALID_BREAKER_SCOPE" } }
+      }
+    },
+    "/v1/admin/circuit-breakers/{name}/close": {
+      "post": {
+        "summary": "Close a circuit breaker",
+        "x-lenny-mcp-tool": "admin.close_circuit_breaker",
+        "x-lenny-scope": "admin.circuit_breakers.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Closed" } }
+      }
+    },
+    "/v1/admin/audit-events": {
+      "get": {
+        "summary": "List audit events",
+        "x-lenny-mcp-tool": "admin.list_audit_events",
+        "x-lenny-scope": "admin.audit.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/audit-events/{seq}": {
+      "get": {
+        "summary": "Get an audit event by sequence",
+        "x-lenny-mcp-tool": "admin.get_audit_event",
+        "x-lenny-scope": "admin.audit.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "seq", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/v1/admin/audit-events/verify": {
+      "get": {
+        "summary": "Verify the audit hash chain integrity",
+        "x-lenny-mcp-tool": "admin.verify_audit_chain",
+        "x-lenny-scope": "admin.audit.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Chain integrity verdict" } }
+      }
+    },
+    "/v1/admin/health": {
+      "get": {
+        "summary": "Platform health report",
+        "x-lenny-mcp-tool": "admin.health",
+        "x-lenny-scope": "admin.health.read",
+        "x-lenny-required-role": "tenant-viewer",
+        "x-lenny-category": "operability",
+        "security": [],
+        "responses": { "200": { "description": "Healthy or degraded" }, "503": { "description": "Unhealthy" } }
+      }
+    },
+    "/v1/admin/health/summary": {
+      "get": {
+        "summary": "Platform health summary",
+        "x-lenny-mcp-tool": "admin.health_summary",
+        "x-lenny-scope": "admin.health.read",
+        "x-lenny-required-role": "tenant-viewer",
+        "x-lenny-category": "operability",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/health/{component}": {
+      "get": {
+        "summary": "Single-component health",
+        "x-lenny-mcp-tool": "admin.health_component",
+        "x-lenny-scope": "admin.health.read",
+        "x-lenny-required-role": "tenant-viewer",
+        "x-lenny-category": "operability",
+        "security": [],
+        "parameters": [{ "name": "component", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Unknown component" } }
+      }
+    },
+    "/v1/admin/me": {
+      "get": {
+        "summary": "Identity + role grants for the calling principal",
+        "x-lenny-mcp-tool": "admin.me",
+        "x-lenny-scope": "admin.me.read",
+        "x-lenny-required-role": "user",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" }, "401": { "description": "Unauthenticated" } }
+      }
+    },
+    "/v1/admin/me/authorized-tools": {
+      "get": {
+        "summary": "Admin tools the caller's roles authorize",
+        "x-lenny-mcp-tool": "admin.me_authorized_tools",
+        "x-lenny-scope": "admin.me.read",
+        "x-lenny-required-role": "user",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
     }
   }
 }
