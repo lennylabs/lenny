@@ -96,7 +96,7 @@ Lenny uses an eleven-layer model. Each layer has a scoped responsibility, a defi
 
 ### Gate hierarchy
 
-A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e` runs tiers 0 through 5 and stops at the first failing tier. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
+A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs tiers 0 through 5 and stops at the first failing tier. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
 
 ### What "component" means
 
