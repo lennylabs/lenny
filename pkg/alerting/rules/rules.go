@@ -22,11 +22,6 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-// promqlParser is the package-wide PromQL parser instance. It is safe to
-// construct once because parser.Parser does not retain per-parse state
-// across ParseExpr calls.
-var promqlParser = parser.NewParser(parser.Options{})
-
 // Severity is the alert severity enum from §16.5.
 type Severity string
 
@@ -91,7 +86,7 @@ func (r Rule) Validate() error {
 	}
 	if strings.TrimSpace(r.Expr) == "" {
 		v = append(v, "Expr is required")
-	} else if _, err := promqlParser.ParseExpr(r.Expr); err != nil {
+	} else if _, err := parser.ParseExpr(r.Expr); err != nil {
 		v = append(v, fmt.Sprintf("Expr does not parse as PromQL: %v", err))
 	}
 	if !r.Severity.IsValid() {

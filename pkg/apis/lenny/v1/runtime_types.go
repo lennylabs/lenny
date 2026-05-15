@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: MIT
+
+package v1
+
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// RuntimeSpec is the desired state of a registered agent Runtime
+// (§5.1). The gateway mirrors the registered runtimes into its
+// runtime_definitions registry; the CRD is the declarative source.
+type RuntimeSpec struct {
+	// Type is the runtime kind: `agent` runs an interactive agent,
+	// `mcp` exposes an MCP server.
+	// +kubebuilder:validation:Enum=agent;mcp
+	// +kubebuilder:validation:Required
+	Type string `json:"type"`
+
+	// Image is the OCI image reference the warm pool launches.
+	// +kubebuilder:validation:Required
+	Image string `json:"image"`
+
+	// IntegrationLevel is the §5.1 conformance level the runtime
+	// implements.
+	// +kubebuilder:validation:Enum=basic;standard;full
+	// +kubebuilder:validation:Required
+	IntegrationLevel string `json:"integrationLevel"`
+
+	// ExecutionMode is the §5.2 pod-reuse mode. Empty defaults to
+	// `session` at registration time.
+	// +kubebuilder:validation:Enum=session;task;concurrent
+	// +optional
+	ExecutionMode string `json:"executionMode,omitempty"`
+
+	// IsolationProfile is the §5.3 default sandbox isolation profile.
+	// +kubebuilder:validation:Enum=standard;sandboxed;microvm
+	// +optional
+	IsolationProfile string `json:"isolationProfile,omitempty"`
+
+	// AllowedResourceClasses lists the §5 resource classes a session
+	// of this runtime may request.
+	// +optional
+	AllowedResourceClasses []string `json:"allowedResourceClasses,omitempty"`
+
+	// SupportedProviders lists the LLM providers the runtime accepts
+	// leased credentials for.
+	// +optional
+	SupportedProviders []string `json:"supportedProviders,omitempty"`
+}
+
+// RuntimeStatus is the observed state of a Runtime.
+type RuntimeStatus struct {
+	// ObservedGeneration is the .metadata.generation the controller
+	// last reconciled into the gateway registry.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions is the standard Kubernetes condition list. The
+	// controller sets a `Registered` condition once the runtime is
+	// mirrored into the gateway.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster,shortName=rt
+// +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Level",type=string,JSONPath=`.spec.integrationLevel`
+
+// Runtime is the lenny.dev/v1 declaration of a registered agent
+// runtime (§5.1). Runtimes are platform-global, so the resource is
+// cluster-scoped.
+type Runtime struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   RuntimeSpec   `json:"spec,omitempty"`
+	Status RuntimeStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// RuntimeList is a list of Runtime resources.
+type RuntimeList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Runtime `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&Runtime{}, &RuntimeList{})
+}

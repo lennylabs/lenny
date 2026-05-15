@@ -389,7 +389,8 @@ install_go_tools() {
     "migrate -tags=postgres github.com/golang-migrate/migrate/v4/cmd/migrate@latest" \
     "protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go@latest" \
     "protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest" \
-    "oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest"; do
+    "oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest" \
+    "controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5"; do
     # shellcheck disable=SC2086
     set -- $spec
     local cmd="$1"; shift
