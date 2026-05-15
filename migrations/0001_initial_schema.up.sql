@@ -59,11 +59,13 @@ CREATE TABLE runtime_definitions (
         CHECK (integration_level IN ('basic', 'standard', 'full'))
 );
 
--- sessions is the §4.2 SessionStore root table. Distributed by the
--- 32-bit routing prefix embedded in the UUIDv8 session ID (§12.6), so
--- all sessions in a delegation tree co-locate on one shard. The
--- (tenant_id, created_at) secondary index serves the tenant-wide
+-- sessions is the §4.2 SessionStore root table, distributed by the
+-- 32-bit routing prefix embedded in the UUIDv8 session ID (§12.6).
+-- The (tenant_id, created_at) secondary index serves the tenant-wide
 -- scatter-gather path (GET /v1/sessions, GDPR erasure).
+-- session-sharded-justification: primary access is single-session
+--   lookup by the embedded routing prefix; a delegation tree shares
+--   one prefix and co-locates on a single shard.
 -- session-sharded
 CREATE TABLE sessions (
     id                        UUID        PRIMARY KEY,
@@ -91,13 +93,13 @@ CREATE TABLE sessions (
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_sessions_tenant_created
-    ON sessions (tenant_id, created_at DESC);
-CREATE INDEX idx_sessions_root
-    ON sessions (root_session_id);
+CREATE INDEX idx_sessions_tenant_created ON sessions (tenant_id, created_at DESC);
+CREATE INDEX idx_sessions_root ON sessions (root_session_id);
 
--- session_messages holds the §7.2 transcript. session-sharded via the
--- FK to sessions(id); co-locates with its parent session.
+-- session_messages holds the §7.2 transcript.
+-- session-sharded-justification: every row carries session_id with a
+--   foreign key to sessions(id); rows co-locate with the parent
+--   session on the same shard.
 -- session-sharded
 CREATE TABLE session_messages (
     id         UUID        PRIMARY KEY,
@@ -112,8 +114,7 @@ CREATE TABLE session_messages (
     CONSTRAINT session_messages_seq_unique UNIQUE (session_id, seq)
 );
 
-CREATE INDEX idx_session_messages_tenant_session
-    ON session_messages (tenant_id, session_id);
+CREATE INDEX idx_session_messages_tenant_session ON session_messages (tenant_id, session_id);
 
 -- audit_log is the §11.7 append-only audit ledger. sequence_number is
 -- the per-tenant authoritative total order for hash-chain
@@ -145,8 +146,7 @@ CREATE TABLE audit_log (
             ('pending', 'retry_pending', 'published', 'failed'))
 );
 
-CREATE INDEX idx_audit_log_tenant_created
-    ON audit_log (tenant_id, created_at);
+CREATE INDEX idx_audit_log_tenant_created ON audit_log (tenant_id, created_at);
 
 -- billing_events is the §11.2.1 append-only billing ledger.
 CREATE TABLE billing_events (
@@ -164,8 +164,7 @@ CREATE TABLE billing_events (
     PRIMARY KEY (tenant_id, sequence_number)
 );
 
-CREATE INDEX idx_billing_events_tenant_session
-    ON billing_events (tenant_id, session_id);
+CREATE INDEX idx_billing_events_tenant_session ON billing_events (tenant_id, session_id);
 
 -- issued_tokens is the §13.3 issued-token metadata index for
 -- revocation lookup and write-before-issue atomicity. The §12.2 schema
@@ -186,12 +185,9 @@ CREATE TABLE issued_tokens (
     parent_jti     TEXT
 );
 
-CREATE INDEX idx_issued_tokens_tenant_sub
-    ON issued_tokens (tenant_id, sub);
-CREATE INDEX idx_issued_tokens_revoked
-    ON issued_tokens (revoked_at) WHERE revoked_at IS NOT NULL;
-CREATE INDEX idx_issued_tokens_exp
-    ON issued_tokens (exp);
+CREATE INDEX idx_issued_tokens_tenant_sub ON issued_tokens (tenant_id, sub);
+CREATE INDEX idx_issued_tokens_revoked ON issued_tokens (revoked_at) WHERE revoked_at IS NOT NULL;
+CREATE INDEX idx_issued_tokens_exp ON issued_tokens (exp);
 
 -- agent_pod_state mirrors Sandbox CRD status (§12.6). Platform-global:
 -- tenant_id is a denormalized convenience column set on claim, not an
@@ -210,9 +206,6 @@ CREATE TABLE agent_pod_state (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_agent_pod_state_pool_state
-    ON agent_pod_state (pool_id, state);
-CREATE INDEX idx_agent_pod_state_session
-    ON agent_pod_state (session_id) WHERE session_id IS NOT NULL;
-CREATE INDEX idx_agent_pod_state_tenant
-    ON agent_pod_state (tenant_id) WHERE tenant_id IS NOT NULL;
+CREATE INDEX idx_agent_pod_state_pool_state ON agent_pod_state (pool_id, state);
+CREATE INDEX idx_agent_pod_state_session ON agent_pod_state (session_id) WHERE session_id IS NOT NULL;
+CREATE INDEX idx_agent_pod_state_tenant ON agent_pod_state (tenant_id) WHERE tenant_id IS NOT NULL;

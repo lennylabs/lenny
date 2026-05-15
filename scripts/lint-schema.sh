@@ -120,10 +120,13 @@ while i < len(text):
     # Preceding 5 lines for annotation pickup.
     pre_start = max(0, line_no - 6)
     annotations = "|".join(comments_by_line[pre_start:line_no - 1])
-    # Output single line: lineno\tname\tannotations\tbody
-    # Use a sentinel for newlines in body.
+    # Output one record per table. Fields are separated by the ASCII
+    # unit separator (0x1f) rather than TAB: TAB is an IFS-whitespace
+    # character, so bash `read` collapses consecutive TABs and an empty
+    # annotations field would let the body shift into the wrong
+    # variable. 0x1f is not whitespace, so empty fields survive.
     body_oneline = body.replace("\n", " ")
-    print(f"{line_no}\t{tbl_name}\t{annotations}\t{body_oneline}")
+    print(f"{line_no}\x1f{tbl_name}\x1f{annotations}\x1f{body_oneline}")
     i = j + 1
 PY
 }
@@ -133,8 +136,9 @@ lint_migration_file() {
   local f="$1"
   local rel="${f#"$REPO_ROOT"/}"
 
-  # Iterate each CREATE TABLE found.
-  while IFS=$'\t' read -r line_no tbl_name annotations body; do
+  # Iterate each CREATE TABLE found. Fields are 0x1f-separated; see the
+  # find_create_tables output note for why TAB is not used here.
+  while IFS=$'\x1f' read -r line_no tbl_name annotations body; do
     [[ -z "$tbl_name" ]] && continue
 
     # Does the body declare a tenant_id column?
