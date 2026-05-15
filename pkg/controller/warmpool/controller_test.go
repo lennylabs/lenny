@@ -106,6 +106,27 @@ func getPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
 	return p
 }
 
+func getTemplate(t *testing.T, c client.Client) lennyv1.SandboxTemplate {
+	t.Helper()
+	var tm lennyv1.SandboxTemplate
+	if err := c.Get(context.Background(),
+		client.ObjectKey{Namespace: testNS, Name: testPool}, &tm); err != nil {
+		t.Fatalf("get template: %v", err)
+	}
+	return tm
+}
+
+func warmingUpCondition(t *testing.T, tm lennyv1.SandboxTemplate) metav1.Condition {
+	t.Helper()
+	for _, c := range tm.Status.Conditions {
+		if c.Type == "PoolWarmingUp" {
+			return c
+		}
+	}
+	t.Fatalf("template carries no PoolWarmingUp condition; conditions = %+v", tm.Status.Conditions)
+	return metav1.Condition{}
+}
+
 func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(s, template(), pool(3, 10))
@@ -250,6 +271,50 @@ func TestReconcilePoolNotFound(t *testing.T) {
 	if res.Requeue || res.RequeueAfter != 0 {
 		t.Errorf("Reconcile of a deleted pool should not requeue, got %+v", res)
 	}
+}
+
+func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
+	t.Run("provisioning while fresh pods warm", func(t *testing.T) {
+		s := newScheme(t)
+		c := newClient(s, template(), pool(3, 10))
+
+		reconcile(t, c, s)
+
+		cond := warmingUpCondition(t, getTemplate(t, c))
+		if cond.Status != metav1.ConditionTrue || cond.Reason != "Provisioning" {
+			t.Errorf("condition = %s/%s, want True/Provisioning", cond.Status, cond.Reason)
+		}
+	})
+
+	t.Run("available once idle pods exist", func(t *testing.T) {
+		s := newScheme(t)
+		c := newClient(s, template(), pool(3, 10),
+			idleSandbox("sb-a"), idleSandbox("sb-b"), idleSandbox("sb-c"))
+
+		reconcile(t, c, s)
+
+		cond := warmingUpCondition(t, getTemplate(t, c))
+		if cond.Status != metav1.ConditionFalse || cond.Reason != "Available" {
+			t.Errorf("condition = %s/%s, want False/Available", cond.Status, cond.Reason)
+		}
+	})
+
+	t.Run("drained when a hot pool has no pods at all", func(t *testing.T) {
+		s := newScheme(t)
+		// minWarm 3 with maxWarm 0: the ceiling caps creation at zero,
+		// leaving the hot pool with no idle and no warming pods.
+		c := newClient(s, template(), pool(3, 0))
+
+		reconcile(t, c, s)
+
+		if got := len(poolSandboxes(t, c)); got != 0 {
+			t.Fatalf("created %d sandboxes, want 0 (maxWarm 0 caps creation)", got)
+		}
+		cond := warmingUpCondition(t, getTemplate(t, c))
+		if cond.Status != metav1.ConditionFalse || cond.Reason != "Drained" {
+			t.Errorf("condition = %s/%s, want False/Drained", cond.Status, cond.Reason)
+		}
+	})
 }
 
 func TestReconcileIsIdempotent(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -24,6 +25,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
+
+// conditionPoolWarmingUp is the §5.2 bootstrap condition the
+// WarmPoolController maintains on SandboxTemplate.status.
+const conditionPoolWarmingUp = "PoolWarmingUp"
 
 // Label keys the controller stamps on every Sandbox it creates. The
 // pool label scopes the per-pool List; the managed label marks the
@@ -54,6 +59,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// The SandboxTemplate is required: it supplies the pod spec for
+	// created Sandboxes and hosts the PoolWarmingUp condition.
+	tmpl, err := r.poolTemplate(ctx, &pool)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	var sandboxes lennyv1.SandboxList
 	if err := r.Client.List(ctx, &sandboxes,
 		client.InNamespace(pool.Namespace),
@@ -71,15 +83,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	decision := plan.Compute(in)
 
-	if decision.Create > 0 {
-		tmpl, err := r.poolTemplate(ctx, &pool)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		for i := 0; i < decision.Create; i++ {
-			if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
-				return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
-			}
+	for i := 0; i < decision.Create; i++ {
+		if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
+			return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
 		}
 	}
 
@@ -91,6 +97,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	if err := r.updateStatus(ctx, &pool, decision); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
+	}
+	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision); err != nil {
+		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
 	}
 	return ctrl.Result{}, nil
 }
@@ -176,6 +185,60 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 	pool.Status.ReadyCount = ready
 	pool.Status.ObservedGeneration = pool.Generation
 	return r.Client.Status().Update(ctx, pool)
+}
+
+// updateTemplateCondition writes the §5.2 PoolWarmingUp condition to
+// the SandboxTemplate status. The condition is True while a pool with
+// a positive minWarm has no idle pods and at least one pod still
+// warming; the gateway reads it to answer session requests with a 503
+// during the bootstrap window. The write is skipped when neither the
+// condition nor the observed generation changed.
+func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool, decision plan.Plan) error {
+	drained := len(decision.Drain)
+	warm := decision.WarmCount + decision.Create - drained
+	ready := decision.ReadyCount - drained
+
+	cond := poolWarmingUpCondition(int(pool.Spec.MinWarm), warm, ready)
+	cond.ObservedGeneration = tmpl.Generation
+
+	changed := meta.SetStatusCondition(&tmpl.Status.Conditions, cond)
+	if tmpl.Status.ObservedGeneration != tmpl.Generation {
+		tmpl.Status.ObservedGeneration = tmpl.Generation
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.Client.Status().Update(ctx, tmpl)
+}
+
+// poolWarmingUpCondition derives the §5.2 PoolWarmingUp condition from
+// the pool's minWarm and its current warm and ready pod counts.
+func poolWarmingUpCondition(minWarm, warm, ready int) metav1.Condition {
+	warming := warm - ready
+	switch {
+	case minWarm > 0 && ready == 0 && warming > 0:
+		return metav1.Condition{
+			Type:    conditionPoolWarmingUp,
+			Status:  metav1.ConditionTrue,
+			Reason:  "Provisioning",
+			Message: fmt.Sprintf("Pool has no idle pods; %d warming.", warming),
+		}
+	case minWarm > 0 && ready == 0 && warming == 0:
+		return metav1.Condition{
+			Type:    conditionPoolWarmingUp,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Drained",
+			Message: "Pool has no idle or warming pods.",
+		}
+	default:
+		return metav1.Condition{
+			Type:    conditionPoolWarmingUp,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Available",
+			Message: fmt.Sprintf("Pool has %d idle pods.", ready),
+		}
+	}
 }
 
 // SetupWithManager registers the reconciler with the manager. It
