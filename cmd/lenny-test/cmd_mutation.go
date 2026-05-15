@@ -36,10 +36,15 @@ func runMutation(args []string) int {
 	}
 
 	script := filepath.Join(repoRoot(), "scripts", "mutation.sh")
+	if _, err := os.Stat(script); err != nil {
+		fmt.Fprintf(os.Stderr, "mutation: %s not present: %v\n", script, err)
+		return 1
+	}
 	cmd := exec.Command("bash", script, *pkg)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "mutation: %s %s failed: %v\n", script, *pkg, err)
 		return 1
 	}
 	score := extractMutationScore(string(out))
