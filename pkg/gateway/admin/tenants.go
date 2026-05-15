@@ -86,6 +86,10 @@ type Router struct {
 	auditChains *audit.ChainSet
 	clock       func() time.Time
 	audit       AuditSink
+
+	platformInfo   PlatformInfo
+	platformConfig map[string]string
+	platformWired  bool
 }
 
 // Options configures the Router.
@@ -177,6 +181,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))
 		mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))
 		mux.Handle("GET /v1/admin/audit-events/{seq}", r.requireAuditReader(http.HandlerFunc(r.handleGetAuditEvent)))
+	}
+	if r.platformWired {
+		// §25.3 platform introspection. Version + config are
+		// platform-admin gated (config can carry sensitive
+		// operational detail even with secrets redacted).
+		mux.Handle("GET /v1/admin/platform/version", r.requireAdmin(http.HandlerFunc(r.handlePlatformVersion)))
+		mux.Handle("GET /v1/admin/platform/config", r.requireAdmin(http.HandlerFunc(r.handlePlatformConfig)))
 	}
 	// §25.4 self-introspection — available to any authenticated
 	// caller, no role gate. Returns the calling principal's identity

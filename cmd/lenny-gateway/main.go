@@ -64,6 +64,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
+// Build metadata, overridable at link time via -ldflags
+// "-X main.buildVersion=... -X main.buildCommit=... -X main.buildDate=...".
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+	buildDate    = "unknown"
+)
+
 func main() {
 	addr := flag.String("addr", ":8080", "address to bind (host:port)")
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
@@ -149,7 +157,16 @@ func main() {
 		WithPools(pools).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
-		WithAuditChains(auditChains)
+		WithAuditChains(auditChains).
+		WithPlatformInfo(
+			admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
+			map[string]string{
+				"gateway.addr":        *addr,
+				"gateway.multiTenant": boolStr(*multiTenant),
+				"gateway.devMode":     boolStr(*devMode),
+				"gateway.runtimeBin":  *runtimeBin,
+			},
+		)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
@@ -294,6 +311,15 @@ func staticHealthy(name string) health.Checker {
 			return health.Component{Name: name, Status: health.StatusHealthy}
 		},
 	}
+}
+
+// boolStr renders a bool as the lowercase string the §25.3
+// platform-config endpoint surfaces.
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // envFlag returns true when the env var name is set to a truthy
