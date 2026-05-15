@@ -130,7 +130,7 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 	defer cancel()
 
 	inputs := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"ping"}]}`,
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[{"schemaVersion":1,"type":"text","inline":"ping"}]}`,
 		`{"type":"heartbeat","ts":1}`,
 	}
 	lines, exit := driveEcho(t, ctx, inputs, 2)
@@ -248,9 +248,9 @@ func TestAdapterSequentialMessagesHandled(t *testing.T) {
 	defer cancel()
 
 	inputs := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"three"}]}`,
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"input":[{"schemaVersion":1,"type":"text","inline":"one"}]}`,
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"input":[{"schemaVersion":1,"type":"text","inline":"two"}]}`,
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"input":[{"schemaVersion":1,"type":"text","inline":"three"}]}`,
 	}
 	lines, exit := driveEcho(t, ctx, inputs, 3)
 	if exit != 0 {

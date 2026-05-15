@@ -63,7 +63,7 @@
       "description": "Delivery status. `streaming` for in-flight chunks, `complete` for fully delivered, `failed` for parts that errored mid-stream."
     }
   },
-  "required": ["type"],
+  "required": ["schemaVersion", "type"],
   "allOf": [
     {
       "description": "Exactly one of inline or ref must be present unless the part is a pure container (parts is non-empty and the type allows nesting, e.g., execution_result).",

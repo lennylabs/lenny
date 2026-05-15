@@ -25,7 +25,7 @@
       "title": "message",
       "description": "Inbound content delivery from gateway → adapter → agent. The unified envelope used for client prompts, inter-session messages, and platform-injected control text. See spec/15_external-api-surface.md §15.4.1.",
       "type": "object",
-      "required": ["type", "id", "from", "input"],
+      "required": ["schemaVersion", "type", "id", "from", "input"],
       "properties": {
         "schemaVersion": {
           "type": "integer",

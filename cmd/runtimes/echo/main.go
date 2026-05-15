@@ -159,15 +159,23 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 	n := seq.Add(1)
 	out := make([]outputPart, 0, len(inbound.Input))
 	for _, p := range inbound.Input {
+		// §15.4.1 producer obligation: schemaVersion MUST be set on every
+		// emitted OutputPart. Stamp v1 unconditionally so passthrough parts
+		// that arrived without a version are forward-compatible.
+		if p.SchemaVersion == 0 {
+			p.SchemaVersion = 1
+		}
 		if p.Type == "text" && p.Inline != "" {
 			out = append(out, outputPart{
-				Type:    "text",
-				Inline:  fmt.Sprintf("[echo seq=%d] %s", n, p.Inline),
-				ID:      p.ID,
-				MimeTyp: p.MimeTyp,
+				SchemaVersion: 1,
+				Type:          "text",
+				Inline:        fmt.Sprintf("[echo seq=%d] %s", n, p.Inline),
+				ID:            p.ID,
+				MimeTyp:       p.MimeTyp,
 			})
 		} else {
-			// Non-text or ref'd parts: pass through verbatim.
+			// Non-text or ref'd parts: pass through verbatim (with the
+			// stamped schemaVersion above).
 			out = append(out, p)
 		}
 	}
@@ -210,14 +218,16 @@ func handleShutdown(_ context.Context, _ *writer, line []byte, cancel context.Ca
 // outputPart mirrors the wire JSON Schema for OutputPart, restricted to
 // the fields Basic-level echo actually reads or writes. Unknown fields
 // are tolerated on the inbound side via standard json decoder behaviour.
+// SchemaVersion is mandatory per §15.4.1; the echo runtime stamps v1.
 type outputPart struct {
-	Type        string         `json:"type"`
-	ID          string         `json:"id,omitempty"`
-	Inline      string         `json:"inline,omitempty"`
-	Ref         string         `json:"ref,omitempty"`
-	MimeTyp     string         `json:"mimeType,omitempty"`
-	Annotations map[string]any `json:"annotations,omitempty"`
-	Status      string         `json:"status,omitempty"`
+	SchemaVersion int            `json:"schemaVersion"`
+	Type          string         `json:"type"`
+	ID            string         `json:"id,omitempty"`
+	Inline        string         `json:"inline,omitempty"`
+	Ref           string         `json:"ref,omitempty"`
+	MimeTyp       string         `json:"mimeType,omitempty"`
+	Annotations   map[string]any `json:"annotations,omitempty"`
+	Status        string         `json:"status,omitempty"`
 }
 
 type response struct {
