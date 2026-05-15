@@ -470,7 +470,8 @@ func main() {
 	// Sweeps every 5 s; transitions stuck sessions to failed.
 	// Tenants list is sourced from the in-memory store so newly
 	// registered tenants are picked up on the next tick.
-	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil)
+	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil).
+		WithBilling(billing)
 	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
 	defer watchdogCancel()
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {

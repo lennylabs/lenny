@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
@@ -48,6 +49,33 @@ func TestTickForcesCreatedTimeout(t *testing.T) {
 	}
 	if row.FailureReason != watchdog.ReasonCreatedTimeout {
 		t.Errorf("failureReason: got %q, want CREATED_TIMEOUT", row.FailureReason)
+	}
+}
+
+func TestTickEmitsSessionCompletedBillingEvent(t *testing.T) {
+	store := memstore.New()
+	billing := billingstore.NewMemory()
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_stuck", "acme", session.StateCreated, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithBilling(billing)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("billing events after a forced fail: got %d, want 1", len(events))
+	}
+	if events[0].EventType != billingstore.EventSessionCompleted {
+		t.Errorf("event type: got %q, want session.completed", events[0].EventType)
+	}
+	if events[0].SessionID != "sess_stuck" {
+		t.Errorf("session id: got %q, want sess_stuck", events[0].SessionID)
 	}
 }
 

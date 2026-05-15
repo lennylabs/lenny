@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
@@ -109,6 +110,7 @@ type Watchdog struct {
 	tenants TenantLister
 	cfg     Config
 	clock   func() time.Time
+	billing billingstore.Store
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -123,6 +125,13 @@ func New(store sessionstore.Store, tenants TenantLister, cfg Config, clock func(
 		cfg:     cfg.withDefaults(),
 		clock:   clock,
 	}
+}
+
+// WithBilling wires the §11.2.1 billing ledger so the watchdog emits a
+// session.completed event for every session it forces to `failed`.
+func (w *Watchdog) WithBilling(b billingstore.Store) *Watchdog {
+	w.billing = b
+	return w
 }
 
 // Result captures the outcome of a sweep.
@@ -182,6 +191,7 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 				if updated.State == session.StateFailed && updated.FailureReason == reason {
 					res.ForcedFailures++
 					res.PerReason[reason]++
+					w.recordCompleted(ctx, updated)
 				}
 			}
 		}
@@ -206,6 +216,21 @@ func (w *Watchdog) Run(ctx context.Context, onTick func(Result, error)) {
 			}
 		}
 	}
+}
+
+// recordCompleted emits the §11.2.1 session.completed billing event
+// for a session the watchdog forced to `failed`. Best-effort: a
+// billing failure must not abort the sweep.
+func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Session) {
+	if w.billing == nil {
+		return
+	}
+	_, _ = w.billing.Append(ctx, billingstore.Event{
+		TenantID:  sess.TenantID,
+		UserID:    sess.UserID,
+		SessionID: sess.ID,
+		EventType: billingstore.EventSessionCompleted,
+	})
 }
 
 // elapsed reports whether row (currently in state st) has been in
