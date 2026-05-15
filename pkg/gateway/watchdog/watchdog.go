@@ -19,10 +19,12 @@
 //	ready      → 300 s (gateway.maxReadyTimeoutSeconds)
 //	starting   → 120 s (gateway.maxStartingTimeoutSeconds)
 //
-// The watchdog never operates on terminal sessions and never on
-// running, suspended, resume_pending, or awaiting_client_action —
-// those states are bounded by `maxSessionAge` (a separate, later
-// phase) and by client action respectively.
+// The watchdog applies two §11.3 controls. The per-state budgets above
+// bound a session stuck in a pre-running state and transition it to
+// `failed`. The maxSessionAge cap bounds the total lifetime of any
+// non-terminal session, measured from its creation, and transitions an
+// over-age session to `expired`. The watchdog never operates on
+// terminal sessions.
 package watchdog
 
 import (
@@ -36,10 +38,10 @@ import (
 
 // FailureReason constants — §6.2 / §11.3 pre-running timeouts.
 const (
-	ReasonCreatedTimeout    = "CREATED_TIMEOUT"
-	ReasonFinalizeTimeout   = "FINALIZE_TIMEOUT"
-	ReasonReadyTimeout      = "READY_TIMEOUT"
-	ReasonStartingTimeout   = "STARTING_TIMEOUT"
+	ReasonCreatedTimeout  = "CREATED_TIMEOUT"
+	ReasonFinalizeTimeout = "FINALIZE_TIMEOUT"
+	ReasonReadyTimeout    = "READY_TIMEOUT"
+	ReasonStartingTimeout = "STARTING_TIMEOUT"
 )
 
 // Default budgets per §11.3.
@@ -48,16 +50,21 @@ const (
 	DefaultMaxFinalizingStateSeconds = 600
 	DefaultMaxReadyStateSeconds      = 300
 	DefaultMaxStartingStateSeconds   = 120
+	DefaultMaxSessionAgeSeconds      = 7200
 	DefaultTickInterval              = 5 * time.Second
 )
 
-// Config holds the four §11.3 budgets plus the sweep cadence. A zero
-// value yields the defaults.
+// Config holds the §11.3 budgets plus the sweep cadence. A zero value
+// yields the defaults.
 type Config struct {
 	MaxCreatedSeconds    int
 	MaxFinalizingSeconds int
 	MaxReadySeconds      int
 	MaxStartingSeconds   int
+	// MaxSessionAgeSeconds is the §11.3 total-lifetime cap: a
+	// non-terminal session alive longer than this, measured from its
+	// creation, is expired regardless of its current state.
+	MaxSessionAgeSeconds int
 	TickInterval         time.Duration
 }
 
@@ -75,6 +82,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxStartingSeconds <= 0 {
 		c.MaxStartingSeconds = DefaultMaxStartingStateSeconds
+	}
+	if c.MaxSessionAgeSeconds <= 0 {
+		c.MaxSessionAgeSeconds = DefaultMaxSessionAgeSeconds
 	}
 	if c.MaxFinalizingSeconds < c.MaxStartingSeconds {
 		// Spec §6.2 finalizing footnote: maxFinalizingTimeoutSeconds
@@ -139,6 +149,9 @@ type Result struct {
 	// ForcedFailures is the count of sessions transitioned to `failed`
 	// by this sweep.
 	ForcedFailures int
+	// Expirations is the count of sessions transitioned to `expired`
+	// by the §11.3 maxSessionAge sweep.
+	Expirations int
 	// PerReason records the count per FailureReason for observability.
 	PerReason map[string]int
 }
@@ -195,8 +208,45 @@ func (w *Watchdog) Tick(ctx context.Context, now time.Time) (Result, error) {
 				}
 			}
 		}
+		if err := w.sweepMaxAge(ctx, tenant, now, &res); err != nil {
+			return res, err
+		}
 	}
 	return res, nil
+}
+
+// sweepMaxAge expires every non-terminal session for the tenant whose
+// total lifetime, measured from CreatedAt, exceeds the §11.3
+// maxSessionAge cap. The pre-running per-state budgets are tighter and
+// run first, so this sweep effectively bounds the long-lived states
+// (running, suspended, resume_pending, awaiting_client_action).
+func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time, res *Result) error {
+	rows, err := w.store.List(ctx, tenant, sessionstore.ListFilter{})
+	if err != nil {
+		return err
+	}
+	maxAge := time.Duration(w.cfg.MaxSessionAgeSeconds) * time.Second
+	for _, row := range rows {
+		if session.IsTerminal(row.State) || now.Sub(row.CreatedAt) <= maxAge {
+			continue
+		}
+		updated, err := w.store.Update(ctx, tenant, row.ID, func(r *sessionstore.Session) error {
+			if session.IsTerminal(r.State) {
+				// Concurrent transition — leave the new state alone.
+				return nil
+			}
+			r.State = session.StateExpired
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if updated.State == session.StateExpired {
+			res.Expirations++
+			w.recordCompleted(ctx, updated)
+		}
+	}
+	return nil
 }
 
 // Run drives the watchdog with a time.Ticker until ctx is cancelled.

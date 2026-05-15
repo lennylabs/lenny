@@ -79,13 +79,93 @@ func TestTickEmitsSessionCompletedBillingEvent(t *testing.T) {
 	}
 }
 
+func TestTickExpiresOverAgeSession(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_old", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+
+	// The default maxSessionAge is 7200s; sweep three hours after birth.
+	res, err := w.Tick(context.Background(), born.Add(3*time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 1 {
+		t.Errorf("Expirations: got %d, want 1", res.Expirations)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_old")
+	if row.State != session.StateExpired {
+		t.Errorf("state: got %q, want expired", row.State)
+	}
+}
+
+func TestTickLeavesYoungSessionUnexpired(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_young", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+
+	res, err := w.Tick(context.Background(), born.Add(time.Hour)) // well under 7200s
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if res.Expirations != 0 {
+		t.Errorf("a one-hour-old session must not expire: Expirations=%d", res.Expirations)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_young")
+	if row.State != session.StateRunning {
+		t.Errorf("state: got %q, want running", row.State)
+	}
+}
+
+func TestPreRunningTimeoutTakesPrecedenceOverMaxAge(t *testing.T) {
+	store := memstore.New()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_stuck", "acme", session.StateCreated, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
+
+	// Three hours is past both the 300s created budget and 7200s maxAge.
+	res, err := w.Tick(context.Background(), born.Add(3*time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_stuck")
+	if row.State != session.StateFailed {
+		t.Errorf("a stuck created session must fail, not expire: got %q", row.State)
+	}
+	if res.ForcedFailures != 1 || res.Expirations != 0 {
+		t.Errorf("result: ForcedFailures=%d Expirations=%d, want 1/0",
+			res.ForcedFailures, res.Expirations)
+	}
+}
+
+func TestMaxSessionAgeEmitsBillingEvent(t *testing.T) {
+	store := memstore.New()
+	billing := billingstore.NewMemory()
+	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, "sess_old", "acme", session.StateRunning, born)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithBilling(billing)
+
+	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	events, err := billing.Since(context.Background(), "acme", 0, 0)
+	if err != nil {
+		t.Fatalf("Since: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != billingstore.EventSessionCompleted {
+		t.Fatalf("an expired session must emit session.completed: %+v", events)
+	}
+}
+
 func TestTickRespectsBudgetForEveryState(t *testing.T) {
 	store := memstore.New()
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
-		state   session.State
-		budget  time.Duration
-		reason  string
+		state  session.State
+		budget time.Duration
+		reason string
 	}{
 		{session.StateCreated, time.Duration(watchdog.DefaultMaxCreatedStateSeconds) * time.Second, watchdog.ReasonCreatedTimeout},
 		{session.StateFinalizing, time.Duration(watchdog.DefaultMaxFinalizingStateSeconds) * time.Second, watchdog.ReasonFinalizeTimeout},
@@ -127,12 +207,15 @@ func TestTickIgnoresPostRunningStates(t *testing.T) {
 		seedRow(t, store, "sess_"+string(st), "acme", st, t0)
 	}
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil)
-	res, err := w.Tick(context.Background(), t0.Add(48*time.Hour))
+	// Within the maxSessionAge window neither sweep touches a
+	// post-running session; the maxSessionAge sweep is exercised
+	// separately by TestTickExpiresOverAgeSession.
+	res, err := w.Tick(context.Background(), t0.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if res.ForcedFailures != 0 {
-		t.Errorf("post-running states must not be touched: %+v", res)
+	if res.ForcedFailures != 0 || res.Expirations != 0 {
+		t.Errorf("post-running states must not be touched within maxSessionAge: %+v", res)
 	}
 }
 
