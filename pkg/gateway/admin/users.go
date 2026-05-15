@@ -33,6 +33,25 @@ type UpdateUserRequest struct {
 	Disabled    *bool        `json:"disabled,omitempty"`
 }
 
+// §11.4 user-invalidation modes, in ascending severity. soft_disable
+// denies new sessions; hard_disable also blocks new delegated tasks;
+// full_revoke additionally terminates active sessions and denies
+// reconnects. soft_disable sets the disabled flag; hard_disable and
+// full_revoke also raise the deleted_at tombstone.
+const (
+	InvalidateSoftDisable = "soft_disable"
+	InvalidateHardDisable = "hard_disable"
+	InvalidateFullRevoke  = "full_revoke"
+)
+
+// InvalidateUserRequest is the §11.4 POST
+// /v1/admin/users/{user_id}/invalidate body.
+type InvalidateUserRequest struct {
+	TenantID string `json:"tenantId,omitempty"`
+	Mode     string `json:"mode"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // fromUser maps a stored row to the wire payload.
 func fromUser(u userstore.User) UserPayload {
 	return UserPayload{
@@ -243,7 +262,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.emit(req.Context(), principal, "admin.user.updated", subject, map[string]any{
-		"tenantId": tenant,
+		"tenantId":      tenant,
 		"changedFields": changedUserFields(body),
 	})
 	w.Header().Set("Content-Type", "application/json")
@@ -270,6 +289,65 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 		"tenantId": tenant,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleInvalidateUser implements POST /v1/admin/users/{user_id}/invalidate
+// — the §11.4 three-tier user invalidation. soft_disable sets the
+// disabled flag so the user is denied new sessions; hard_disable and
+// full_revoke also raise the deleted_at tombstone so the user is
+// blocked from delegated tasks. The §11.4 full_revoke runtime fan-out
+// (active-session termination, cached-auth invalidation) lands with
+// the Token Service KMS hardening; this handler ships the request
+// path and the durable user-state tiers.
+func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) {
+	subject := req.PathValue("user_id")
+	var body InvalidateUserRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	switch body.Mode {
+	case InvalidateSoftDisable, InvalidateHardDisable, InvalidateFullRevoke:
+	default:
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"mode must be one of soft_disable, hard_disable, or full_revoke",
+			map[string]any{"field": "mode"})
+		return
+	}
+	tenant, _, err := r.authorizedTenantForUser(req, body.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
+		return
+	}
+	at := r.clock()
+	updated, err := r.users.Update(req.Context(), tenant, subject, func(u *userstore.User) error {
+		u.Disabled = true
+		if body.Mode != InvalidateSoftDisable && u.DeletedAt.IsZero() {
+			u.DeletedAt = at
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, userstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "user not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.user.invalidated", subject, map[string]any{
+		"tenantId": tenant,
+		"mode":     body.Mode,
+		"reason":   body.Reason,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"subject":  subject,
+		"tenantId": tenant,
+		"mode":     body.Mode,
+		"user":     fromUser(updated),
+	})
 }
 
 func changedUserFields(b UpdateUserRequest) []string {

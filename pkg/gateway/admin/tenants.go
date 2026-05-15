@@ -151,6 +151,7 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleListUsers)))
 		mux.Handle("GET /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleGetUser)))
 		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
+		mux.Handle("POST /v1/admin/users/{user_id}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
 		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
 	}
 	if r.pools != nil {
