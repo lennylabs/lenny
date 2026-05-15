@@ -59,6 +59,7 @@ func runReport(args []string) int {
 }
 
 type verdictDoc struct {
+	Version  int    `json:"version"`
 	RunID    string `json:"run_id"`
 	Verdict  string `json:"verdict"`
 	Duration int64  `json:"duration_ms"`
@@ -68,6 +69,12 @@ type verdictDoc struct {
 	} `json:"tiers"`
 	Source string `json:"-"` // populated by loader; the file name
 }
+
+// supportedVerdictVersion is the §7 schema version this harness was
+// built to consume. The report subcommand warns when a verdict
+// carries a version higher than this so silently-incompatible
+// aggregation doesn't go unnoticed when v2 ships.
+const supportedVerdictVersion = 1
 
 type rolledUp struct {
 	OverallStatus string                `json:"verdict"`
@@ -119,6 +126,11 @@ func loadVerdicts(dir string) ([]verdictDoc, error) {
 		var v verdictDoc
 		if err := json.Unmarshal(body, &v); err != nil {
 			return nil
+		}
+		if v.Version > supportedVerdictVersion {
+			fmt.Fprintf(os.Stderr,
+				"report: %s carries verdict version %d but this harness supports up to %d; aggregation may misread newer fields\n",
+				path, v.Version, supportedVerdictVersion)
 		}
 		v.Source = filepath.Base(path)
 		out = append(out, v)
