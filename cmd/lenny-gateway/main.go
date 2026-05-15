@@ -43,7 +43,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -75,7 +74,6 @@ import (
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
-	quotamw "github.com/lennylabs/lenny/pkg/gateway/middleware/quota"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
@@ -399,28 +397,9 @@ func main() {
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
 
-	// §5.75 QuotaEvaluator innermost — counts the tenant's active
-	// sessions in the store and rejects session creation over the
-	// ceiling. The minimal gateway uses a generous per-tenant limit
-	// (1000 active sessions); production resolves per-tenant limits
-	// from the tenant policy.
-	quotaCounter := quotamw.StoreActiveCounter{
-		List: func(ctx context.Context, tenantID string) ([]session.State, error) {
-			rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
-			if err != nil {
-				return nil, err
-			}
-			states := make([]session.State, 0, len(rows))
-			for _, row := range rows {
-				states = append(states, row.State)
-			}
-			return states, nil
-		},
-	}
-	handler = quotamw.Wrap(handler, quotamw.Options{
-		Counter: quotaCounter,
-		Limits:  quotamw.StaticLimit(1000),
-	})
+	// The §11.2 per-tenant concurrent-session quota is enforced inside
+	// the session-creation handlers (sessionserver.requireSessionQuota)
+	// against each tenant's configured MaxConcurrentSessions.
 
 	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).
