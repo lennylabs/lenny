@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MIT
 
 // Command lenny-ctl is the operator CLI for the Lenny gateway. It
-// wraps the §15.1 admin API surface with a §24-style command tree.
+// wraps the §15.1 admin API surface with the §24 command tree.
 //
-// v1 covers the resource-management subset:
+// Resource management lives under the `admin` group:
+//
+//	lenny-ctl admin tenants list|get|create
+//	lenny-ctl admin runtimes list|get
+//	lenny-ctl admin circuit-breakers list|open|close
+//
+// Standalone commands:
 //
 //	lenny-ctl health
 //	lenny-ctl version
-//	lenny-ctl tenants list|get|create
-//	lenny-ctl runtimes list|get
 //	lenny-ctl bootstrap --from-values <file>
 //
 // Auth: pass --bearer <token> for a clustered gateway, or rely on
@@ -21,7 +25,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
@@ -31,7 +37,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr *os.File) int {
+func run(args []string, stdout, stderr io.Writer) int {
 	flags, rest := parseGlobalFlags(args)
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, usage)
@@ -51,12 +57,10 @@ func run(args []string, stdout, stderr *os.File) int {
 		return cmdHealth(ctx, client, stdout, stderr)
 	case "version":
 		return cmdVersion(ctx, client, stdout, stderr)
-	case "tenants":
-		return cmdTenants(ctx, client, rest[1:], stdout, stderr)
-	case "runtimes":
-		return cmdRuntimes(ctx, client, rest[1:], stdout, stderr)
 	case "bootstrap":
 		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr)
+	case "admin":
+		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 		return 0
@@ -78,14 +82,17 @@ Global flags:
   --dev-roles <roles>  Dev-header roles, comma-separated (Embedded Mode)
 
 Commands:
-  health                       Print the platform health report
-  version                      Print the gateway version
-  tenants list                 List tenants
-  tenants get <id>             Get a tenant
-  tenants create <id> [name]   Create a tenant
-  runtimes list                List runtimes
-  runtimes get <name>          Get a runtime
-  bootstrap --from-values <f>  Apply a seed file (tenants/runtimes/users)`
+  health                                Print the platform health report
+  version                               Print the gateway version
+  bootstrap --from-values <f>           Apply a seed file (tenants/runtimes/users)
+  admin tenants list                    List tenants
+  admin tenants get <id>                Get a tenant
+  admin tenants create <id> [name]      Create a tenant
+  admin runtimes list                   List runtimes
+  admin runtimes get <name>             Get a runtime
+  admin circuit-breakers list           List circuit breakers
+  admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
+  admin circuit-breakers close <name>   Close a circuit breaker`
 
 type globalFlags struct {
 	apiURL    string
@@ -131,7 +138,7 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 	return f, args[i:]
 }
 
-func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr *os.File) int {
+func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int {
 	var report map[string]any
 	if err := c.Do(ctx, "GET", "/v1/admin/health", nil, &report); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -144,7 +151,7 @@ func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr *os.File) int 
 	return 0
 }
 
-func cmdVersion(ctx context.Context, c *ctl.Client, stdout, stderr *os.File) int {
+func cmdVersion(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int {
 	var v map[string]any
 	if err := c.Do(ctx, "GET", "/v1/admin/platform/version", nil, &v); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -154,7 +161,26 @@ func cmdVersion(ctx context.Context, c *ctl.Client, stdout, stderr *os.File) int
 	return 0
 }
 
-func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr *os.File) int {
+// cmdAdmin dispatches the §24 `admin` resource-management group.
+func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|circuit-breakers)")
+		return 2
+	}
+	switch args[0] {
+	case "tenants":
+		return cmdTenants(ctx, c, args[1:], stdout, stderr)
+	case "runtimes":
+		return cmdRuntimes(ctx, c, args[1:], stdout, stderr)
+	case "circuit-breakers":
+		return cmdCircuitBreakers(ctx, c, args[1:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown admin resource %q\n", args[0])
+		return 2
+	}
+}
+
+func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: tenants requires a subcommand (list|get|create)")
 		return 2
@@ -200,7 +226,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 	return 0
 }
 
-func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stderr *os.File) int {
+func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: runtimes requires a subcommand (list|get)")
 		return 2
@@ -231,7 +257,91 @@ func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 	return 0
 }
 
-func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr *os.File) int {
+// cmdCircuitBreakers implements the §24.7 circuit-breaker commands.
+func cmdCircuitBreakers(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "lenny-ctl: circuit-breakers requires a subcommand (list|open|close)")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		var out map[string]any
+		if err := c.Do(ctx, "GET", "/v1/admin/circuit-breakers", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "open":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: circuit-breakers open requires <name>")
+			return 2
+		}
+		body, err := parseOpenBreaker(args[2:])
+		if err != nil {
+			fmt.Fprintf(stderr, "lenny-ctl: %v\n", err)
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/circuit-breakers/"+args[1]+"/open", body, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	case "close":
+		if len(args) < 2 {
+			fmt.Fprintln(stderr, "lenny-ctl: circuit-breakers close requires <name>")
+			return 2
+		}
+		var out map[string]any
+		if err := c.Do(ctx, "POST", "/v1/admin/circuit-breakers/"+args[1]+"/close", nil, &out); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		printJSON(stdout, out)
+	default:
+		fmt.Fprintf(stderr, "lenny-ctl: unknown circuit-breakers subcommand %q\n", args[0])
+		return 2
+	}
+	return 0
+}
+
+// parseOpenBreaker builds the §15.1 open-breaker request body from the
+// --limit-tier, --scope, and --reason flags.
+func parseOpenBreaker(args []string) (map[string]any, error) {
+	var reason, limitTier string
+	scope := map[string]string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--reason":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--reason requires a value")
+			}
+			reason, i = args[i+1], i+1
+		case "--limit-tier":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--limit-tier requires a value")
+			}
+			limitTier, i = args[i+1], i+1
+		case "--scope":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--scope requires a <key>=<value> pair")
+			}
+			k, v, ok := strings.Cut(args[i+1], "=")
+			if !ok || k == "" {
+				return nil, fmt.Errorf("--scope must be <key>=<value>, got %q", args[i+1])
+			}
+			scope[k], i = v, i+1
+		default:
+			return nil, fmt.Errorf("unknown flag %q", args[i])
+		}
+	}
+	if limitTier == "" {
+		return nil, fmt.Errorf("circuit-breakers open requires --limit-tier")
+	}
+	return map[string]any{"reason": reason, "limit_tier": limitTier, "scope": scope}, nil
+}
+
+func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	var fromValues string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--from-values" && i+1 < len(args) {
@@ -262,7 +372,7 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	return 0
 }
 
-func printJSON(w *os.File, v any) {
+func printJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
