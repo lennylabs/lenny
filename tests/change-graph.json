@@ -67,6 +67,18 @@
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
       "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
     },
+    "pkg/gateway/middleware/auth": {
+      "unit": ["pkg/gateway/middleware/auth/..."],
+      "contract": ["tests/tier3_contract/rest_auth/..."]
+    },
+    "pkg/gateway/middleware/idempotency": {
+      "unit": ["pkg/gateway/middleware/idempotency/..."],
+      "contract": ["tests/tier3_contract/rest_idempotency/..."]
+    },
+    "pkg/gateway/middleware/circuitbreaker": {
+      "unit": ["pkg/gateway/middleware/circuitbreaker/..."],
+      "contract": ["tests/tier3_contract/rest_circuitbreaker/..."]
+    },
     "pkg/controller/warmpool": {
       "unit": ["pkg/controller/warmpool/..."],
       "component": ["tests/tier2_component/controllers/warmpool_test.go"],
