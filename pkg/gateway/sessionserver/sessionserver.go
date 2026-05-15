@@ -181,6 +181,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
+	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)
 	mux.HandleFunc("GET /v1/sessions", s.handleList)
 	mux.HandleFunc("GET /v1/sessions/{id}", s.handleGet)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.handleDelete)
