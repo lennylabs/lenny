@@ -1,17 +1,20 @@
 version: v2
 
-# Code generation is deferred to Phase 2 (when the gateway and runtime
-# adapter components are implemented). This file is committed at Phase 1
-# so the configuration surface is reviewed once and the Phase 2 patch is
-# a one-line opt-in. The plugins below are commented out by intent.
+# Generates the Go bindings for the gateway <-> adapter gRPC contract.
+# The locally-installed protoc-gen-go / protoc-gen-go-grpc plugins
+# (installed by scripts/setup-dev.sh) are used so codegen needs no
+# Buf Schema Registry network access. `make generate-proto` runs this
+# and prepends the SPDX header the generated files would otherwise lack.
+# The single proto declares go_package .../pkg/proto/adapter/v1, so the
+# output directory is pinned to match that import path.
 
 plugins:
-  # - remote: buf.build/protocolbuffers/go
-  #   out: ../pkg/proto
-  #   opt:
-  #     - paths=source_relative
-  # - remote: buf.build/grpc/go
-  #   out: ../pkg/proto
-  #   opt:
-  #     - paths=source_relative
-  #     - require_unimplemented_servers=false
+  - local: protoc-gen-go
+    out: ../pkg/proto/adapter/v1
+    opt:
+      - paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: ../pkg/proto/adapter/v1
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false

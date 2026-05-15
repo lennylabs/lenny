@@ -39,6 +39,15 @@ generate: ## Regenerate DeepCopy + CRD manifests via controller-gen
 	@echo "  controller-gen crd → charts/lenny/crds"
 	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1/... output:crd:dir=charts/lenny/crds
 
+.PHONY: generate-proto
+generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
+	@echo "  buf generate → pkg/proto"
+	@cd schemas && PATH="$(GOPATH_BIN):$$PATH" buf generate
+	@for f in pkg/proto/adapter/v1/*.go; do \
+		head -1 "$$f" | grep -q SPDX-License-Identifier || \
+		{ printf '// SPDX-License-Identifier: MIT\n\n' | cat - "$$f" > "$$f.tmp" && mv "$$f.tmp" "$$f"; }; \
+	done
+
 .PHONY: install
 install: ## Install lenny-test + lenny-compliance into $(go env GOPATH)/bin
 	@echo "  install lenny-test → $(GOPATH_BIN)"
