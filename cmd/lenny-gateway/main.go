@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
@@ -210,6 +211,13 @@ func main() {
 	mux.Handle("/v1/responses/", responsesHandler.Handler())
 	mux.Handle("/mcp", mcpSrv.Handler())
 
+	// ----- §16.1 Prometheus metrics -----
+	gwMetrics, err := gatewaymetrics.New()
+	if err != nil {
+		log.Fatalf("lenny-gateway: metrics: %v", err)
+	}
+	mux.Handle("GET /metrics", gwMetrics.Handler())
+
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -252,8 +260,8 @@ func main() {
 	// with the request-path middleware.
 	handler = cbmw.Wrap(handler, breakers, cbmw.Options{})
 
-	// Auth outermost. AllowDevRoles is only honoured when the dev
-	// flag is set (LENNY_DEV_MODE=true or --dev-mode); production
+	// Auth next-to-outermost. AllowDevRoles is only honoured when the
+	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
 	// deployments leave it off so X-Lenny-Roles cannot self-grant
 	// platform-admin.
 	authOpts := authmw.Options{
@@ -269,6 +277,11 @@ func main() {
 	}
 	authOpts.Registry = permissiveRegistry{}
 	handler = authmw.Wrap(handler, authOpts)
+
+	// §16.1 request metrics, outermost wrap so every request — including
+	// auth rejections — is counted. The route label collapses
+	// high-cardinality path segments to a stable template.
+	handler = gwMetrics.Middleware(handler, routeTemplate)
 
 	httpSrv := &http.Server{
 		Addr:              *addr,
@@ -350,6 +363,32 @@ func staticHealthy(name string) health.Checker {
 		Fn: func(context.Context) health.Component {
 			return health.Component{Name: name, Status: health.StatusHealthy}
 		},
+	}
+}
+
+// routeTemplate collapses a request path to a stable §16.1.1
+// low-cardinality route label so the request metric does not
+// explode into one series per session id / blob ref.
+func routeTemplate(r *http.Request) string {
+	p := r.URL.Path
+	switch {
+	case p == "/healthz", p == "/metrics", p == "/v1/sessions",
+		p == "/v1/sessions/start", p == "/v1/chat/completions",
+		p == "/v1/responses", p == "/mcp", p == "/openapi.yaml",
+		p == "/v1/openapi.json":
+		return p
+	case strings.HasPrefix(p, "/v1/sessions/"):
+		return "/v1/sessions/{id}/*"
+	case strings.HasPrefix(p, "/v1/blobs/"):
+		return "/v1/blobs/{ref}"
+	case strings.HasPrefix(p, "/v1/responses/"):
+		return "/v1/responses/{id}"
+	case strings.HasPrefix(p, "/v1/admin/"):
+		return "/v1/admin/*"
+	case strings.HasPrefix(p, "/v1/oauth/"):
+		return "/v1/oauth/*"
+	default:
+		return "other"
 	}
 }
 
