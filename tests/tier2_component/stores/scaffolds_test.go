@@ -49,12 +49,8 @@ func TestTokenStoreContract(t *testing.T) {
 	t.Skip("not implemented: §12.2.1 TokenStore — requires Postgres token table + KMS-envelope writer + revocation index migration")
 }
 
-// TestTokenIssuanceStoreContract — Postgres token-issuance store.
-// Coverage: JTI uniqueness, revocation index, parent-jti tracking,
-// expired-row GC.
-func TestTokenIssuanceStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 TokenIssuanceStore — requires the token-issuance ledger schema and the parent-jti relationship for delegation lineage")
-}
+// TestTokenIssuanceStoreContract is implemented in
+// issuedtokenstore_test.go against pkg/gateway/issuedtokenstore.
 
 // TestArtifactStoreContract — MinIO artifact store. Coverage:
 // tenant-prefix validation, SSE-KMS for T3/T4, per-tenant key for T4,
