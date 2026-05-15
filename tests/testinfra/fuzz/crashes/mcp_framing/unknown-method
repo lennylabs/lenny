@@ -1,0 +1,3 @@
+Content-Length: 68
+
+{"jsonrpc":"2.0","id":4,"method":"definitely/not/a/method","params":{}}
