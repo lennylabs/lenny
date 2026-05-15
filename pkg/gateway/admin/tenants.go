@@ -140,6 +140,9 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
 		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
 	}
+	if r.tenants != nil || r.runtimes != nil || r.users != nil {
+		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
+	}
 	return mux
 }
 
