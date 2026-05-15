@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"time"
 )
 
 // runPreflightSubcommand checks a cluster's readiness to host Lenny
@@ -25,9 +28,9 @@ func runPreflightSubcommand(args []string) int {
 		return 2
 	}
 
-	script := repoRoot() + "/scripts/preflight.sh"
+	script := filepath.Join(repoRoot(), "scripts", "preflight.sh")
 	if _, err := os.Stat(script); err != nil {
-		fmt.Fprintf(os.Stderr, "preflight: scripts/preflight.sh not present in %s\n", script)
+		fmt.Fprintf(os.Stderr, "preflight: %s not present: %v\n", script, err)
 		return 1
 	}
 
@@ -35,11 +38,21 @@ func runPreflightSubcommand(args []string) int {
 	if *cluster != "" {
 		env = append(env, "KUBECONFIG="+*cluster)
 	}
-	cmd := exec.Command("bash", script)
+	// Preflight should be quick; a hung script means the
+	// cluster's API server stopped responding. Cap at 5 minutes
+	// so the gate fails clearly rather than blocking the workflow.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", script)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		fmt.Fprintln(os.Stderr, "preflight: timed out after 5 minutes")
+		return 1
+	}
+	if err != nil {
 		return 1
 	}
 	return 0
