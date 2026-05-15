@@ -183,12 +183,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 				Description:      p.Description,
 				CreatedAt:        r.clock(),
 			}
-			if row.Type == "" {
-				row.Type = runtimestore.TypeAgent
-			}
-			if row.IsolationProfile == "" {
-				row.IsolationProfile = isolation.Default()
-			}
+			runtimestore.ApplyDefaults(&row)
 			row.UpdatedAt = row.CreatedAt
 			if err := r.runtimes.Create(req.Context(), row); err != nil {
 				out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})

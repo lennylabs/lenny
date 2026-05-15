@@ -57,8 +57,10 @@ CREATE TABLE runtime_definitions (
         CHECK (execution_mode IN ('session', 'task', 'concurrent')),
     CONSTRAINT runtime_definitions_isolation_check
         CHECK (isolation_profile IN ('standard', 'sandboxed', 'microvm')),
+    -- integration_level is empty for type: mcp runtimes (§5.1: the
+    -- field is meaningful only on type: agent runtimes).
     CONSTRAINT runtime_definitions_level_check
-        CHECK (integration_level IN ('basic', 'standard', 'full'))
+        CHECK (integration_level IN ('', 'basic', 'standard', 'full'))
 );
 
 -- sessions is the §4.2 SessionStore root table, distributed by the

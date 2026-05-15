@@ -114,12 +114,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		Description:      body.Description,
 		CreatedAt:        r.clock(),
 	}
-	if rt.Type == "" {
-		rt.Type = runtimestore.TypeAgent
-	}
-	if rt.IsolationProfile == "" {
-		rt.IsolationProfile = isolation.Default()
-	}
+	runtimestore.ApplyDefaults(&rt)
 	rt.UpdatedAt = rt.CreatedAt
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
