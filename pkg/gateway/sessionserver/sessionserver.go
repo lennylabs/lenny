@@ -40,6 +40,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -89,6 +90,7 @@ type Server struct {
 	transcripts     transcriptstore.Store
 	events          *events.Bus
 	interactions    interactionstore.Store
+	usage           usagestore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -157,6 +159,12 @@ type Options struct {
 	// `503 INTERACTIONS_UNAVAILABLE`.
 	Interactions interactionstore.Store
 
+	// Usage is the §15.1 usage / metering accumulator. When set, the
+	// gateway records a session-created event on create and the
+	// `GET /v1/usage` endpoint serves the aggregated report. Nil
+	// disables metering (GET /v1/usage returns an empty report).
+	Usage usagestore.Store
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -177,6 +185,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		transcripts:     opts.Transcripts,
 		events:          opts.Events,
 		interactions:    opts.Interactions,
+		usage:           opts.Usage,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -224,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
+	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", s.handleEvents)
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", s.handleToolUseApprove)
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", s.handleToolUseDeny)
@@ -367,6 +377,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	s.recordSessionCreated(r.Context(), tenantID, row.RuntimeRef)
 
 	// §7.1 step 8: mint the single-use uploadToken stamped on the
 	// session creation response. TTL = maxCreatedStateTimeoutSeconds

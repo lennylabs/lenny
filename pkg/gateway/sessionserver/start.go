@@ -87,6 +87,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	s.recordSessionCreated(r.Context(), tenantID, row.RuntimeRef)
 
 	// §7.1 step 8: mint the uploadToken — useful even for the
 	// /sessions/start path because clients may follow up with

@@ -69,6 +69,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
@@ -153,6 +154,7 @@ func main() {
 		Transcripts:         transcriptstore.NewMemory(),
 		Events:              eventBus,
 		Interactions:        interactionstore.NewMemory(),
+		Usage:               usagestore.NewMemory(),
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
