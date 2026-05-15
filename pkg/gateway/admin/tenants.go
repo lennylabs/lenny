@@ -246,6 +246,7 @@ type TenantPayload struct {
 	DataResidencyRegion   string `json:"dataResidencyRegion,omitempty"`
 	WorkspaceTier         string `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions int    `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes     int64  `json:"storageQuotaBytes,omitempty"`
 	CreatedAt             string `json:"createdAt,omitempty"`
 	UpdatedAt             string `json:"updatedAt,omitempty"`
 	DeletedAt             string `json:"deletedAt,omitempty"`
@@ -260,6 +261,7 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 		DataResidencyRegion:   t.DataResidencyRegion,
 		WorkspaceTier:         t.WorkspaceTier,
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
+		StorageQuotaBytes:     t.StorageQuotaBytes,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
@@ -289,6 +291,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "maxConcurrentSessions"})
 		return
 	}
+	if body.StorageQuotaBytes < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"storageQuotaBytes must not be negative",
+			map[string]any{"field": "storageQuotaBytes"})
+		return
+	}
 
 	t := tenantstore.Tenant{
 		ID:                    body.ID,
@@ -297,6 +305,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		DataResidencyRegion:   body.DataResidencyRegion,
 		WorkspaceTier:         body.WorkspaceTier,
 		MaxConcurrentSessions: body.MaxConcurrentSessions,
+		StorageQuotaBytes:     body.StorageQuotaBytes,
 		CreatedAt:             r.clock(),
 	}
 	t.UpdatedAt = t.CreatedAt
@@ -324,6 +333,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		"dataResidencyRegion":   row.DataResidencyRegion,
 		"workspaceTier":         row.WorkspaceTier,
 		"maxConcurrentSessions": row.MaxConcurrentSessions,
+		"storageQuotaBytes":     row.StorageQuotaBytes,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -373,6 +383,7 @@ type UpdateTenantRequest struct {
 	DataResidencyRegion   *string `json:"dataResidencyRegion,omitempty"`
 	WorkspaceTier         *string `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions *int    `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes     *int64  `json:"storageQuotaBytes,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -387,6 +398,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"maxConcurrentSessions must not be negative",
 			map[string]any{"field": "maxConcurrentSessions"})
+		return
+	}
+	if body.StorageQuotaBytes != nil && *body.StorageQuotaBytes < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"storageQuotaBytes must not be negative",
+			map[string]any{"field": "storageQuotaBytes"})
 		return
 	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
@@ -404,6 +421,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.MaxConcurrentSessions != nil {
 			t.MaxConcurrentSessions = *body.MaxConcurrentSessions
+		}
+		if body.StorageQuotaBytes != nil {
+			t.StorageQuotaBytes = *body.StorageQuotaBytes
 		}
 		return nil
 	})
@@ -449,6 +469,9 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.MaxConcurrentSessions != nil {
 		out = append(out, "maxConcurrentSessions")
+	}
+	if b.StorageQuotaBytes != nil {
+		out = append(out, "storageQuotaBytes")
 	}
 	return out
 }

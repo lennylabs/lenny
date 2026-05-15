@@ -47,6 +47,12 @@ type Tenant struct {
 	// holds this many non-terminal sessions. Zero means unlimited.
 	MaxConcurrentSessions int
 
+	// StorageQuotaBytes is the §11.2 per-tenant storage quota: the
+	// gateway rejects an upload once the tenant's reserved-plus-
+	// committed artifact bytes would exceed this value. Zero means
+	// unlimited.
+	StorageQuotaBytes int64
+
 	// CreatedAt is the UTC instant the tenant row was committed.
 	CreatedAt time.Time
 

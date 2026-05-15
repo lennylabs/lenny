@@ -141,6 +141,42 @@ func TestCreateTenantRejectsNegativeConcurrentSessionQuota(t *testing.T) {
 	}
 }
 
+func TestCreateTenantWithStorageQuota(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", StorageQuotaBytes: 5 << 30})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.StorageQuotaBytes != 5<<30 {
+		t.Errorf("response storageQuotaBytes: got %d, want %d", resp.StorageQuotaBytes, 5<<30)
+	}
+	row, err := store.Get(req.Context(), "acme")
+	if err != nil {
+		t.Fatalf("store missing tenant: %v", err)
+	}
+	if row.StorageQuotaBytes != 5<<30 {
+		t.Errorf("stored storageQuotaBytes: got %d, want %d", row.StorageQuotaBytes, 5<<30)
+	}
+}
+
+func TestCreateTenantRejectsNegativeStorageQuota(t *testing.T) {
+	router, _ := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", StorageQuotaBytes: -1})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("negative storageQuotaBytes: got %d, want 400", rr.Code)
+	}
+}
+
 func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "with space"})

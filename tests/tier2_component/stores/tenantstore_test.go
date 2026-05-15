@@ -39,6 +39,7 @@ func TestTenantStoreContract(t *testing.T) {
 			DataResidencyRegion:   "us-east-1",
 			WorkspaceTier:         "T2",
 			MaxConcurrentSessions: 25,
+			StorageQuotaBytes:     1 << 30,
 		}
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -49,7 +50,8 @@ func TestTenantStoreContract(t *testing.T) {
 		}
 		if got.DisplayName != want.DisplayName || got.ComplianceProfile != want.ComplianceProfile ||
 			got.DataResidencyRegion != want.DataResidencyRegion || got.WorkspaceTier != want.WorkspaceTier ||
-			got.MaxConcurrentSessions != want.MaxConcurrentSessions {
+			got.MaxConcurrentSessions != want.MaxConcurrentSessions ||
+			got.StorageQuotaBytes != want.StorageQuotaBytes {
 			t.Errorf("field mismatch:\n got %+v\nwant %+v", got, want)
 		}
 		if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
@@ -89,13 +91,14 @@ func TestTenantStoreContract(t *testing.T) {
 			tn.DisplayName = "After"
 			tn.ComplianceProfile = "hipaa"
 			tn.MaxConcurrentSessions = 50
+			tn.StorageQuotaBytes = 2 << 30
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("Update: %v", err)
 		}
 		if updated.DisplayName != "After" || updated.ComplianceProfile != "hipaa" ||
-			updated.MaxConcurrentSessions != 50 {
+			updated.MaxConcurrentSessions != 50 || updated.StorageQuotaBytes != 2<<30 {
 			t.Errorf("Update result not applied: %+v", updated)
 		}
 		if !updated.UpdatedAt.After(before.UpdatedAt) {
