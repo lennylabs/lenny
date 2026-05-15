@@ -280,6 +280,102 @@ func describe(s selector) string {
 //   - static  → invokes `go vet ./...`. (golangci-lint is the future Phase 1 addition.)
 //   - unit    → invokes `go test ./...` if there is any Go code under pkg/.
 //   - others  → recorded as skipped with reason "phase-0-not-implemented".
+// tierExecFn runs one tier and returns (status, detail, *tierResult).
+// All tier-specific executors implement this signature; runStaticTier
+// (which has no tierResult) is wrapped to fit.
+type tierExecFn func(subsets []string) (string, string, *tierResult)
+
+// tierStep is one entry in the execute() dispatch table. It pairs a
+// tier-name string with the executor that runs it, an optional
+// infra-field setup hook that stamps v.Infra before the executor
+// fires, and a synthesizeNextAction fallback that names what the
+// developer should fix.
+type tierStep struct {
+	name           string
+	exec           tierExecFn
+	infraSetup     func(v *verdict)
+	nextActionHint string
+	useSynthesize  bool // call v.synthesizeNextAction; otherwise use the literal hint
+}
+
+// tierSteps returns the table of executors for every canonical tier.
+// Building the table here keeps execute()'s loop body small and the
+// per-tier wiring readable from one place.
+func tierSteps() map[string]tierStep {
+	wrapStatic := func(subsets []string) (string, string, *tierResult) {
+		st, msg := runStaticTier()
+		return st, msg, nil
+	}
+	return map[string]tierStep{
+		tierStatic: {
+			name: tierStatic, exec: wrapStatic, useSynthesize: true,
+			nextActionHint: "Fix static-tier failures before moving to higher tiers.",
+		},
+		tierUnit: {
+			name: tierUnit, exec: func(_ []string) (string, string, *tierResult) { return runUnitTier() }, useSynthesize: true,
+			nextActionHint: "Fix unit-tier failures before moving to higher tiers.",
+		},
+		tierComponent: {
+			name: tierComponent, exec: runComponentTier, useSynthesize: true,
+			nextActionHint: "Fix component-tier failures before moving to higher tiers.",
+		},
+		tierContract: {
+			name: tierContract, exec: runContractTier, useSynthesize: true,
+			nextActionHint: "Fix contract-tier failures before moving to higher tiers.",
+		},
+		tierConformance: {
+			name: tierConformance, exec: runConformanceTier, useSynthesize: true,
+			nextActionHint: "Fix conformance-tier failures before moving to higher tiers.",
+		},
+		tierIntegration: {
+			name: tierIntegration, exec: runIntegrationTier, useSynthesize: true,
+			nextActionHint: "Fix integration-tier failures before moving to higher tiers.",
+			infraSetup: func(v *verdict) {
+				// §7 infra fields: Phase 0 uses the default profile;
+				// mtls is opt-in via the kind tier.
+				v.Infra.ComposeProfile = "default"
+			},
+		},
+		tierE2EKind: {
+			name: tierE2EKind, exec: runE2EKindTier, useSynthesize: true,
+			nextActionHint: "Fix e2e-Kind-tier failures before moving to higher tiers.",
+			infraSetup: func(v *verdict) {
+				if name := os.Getenv("LENNY_KIND_CLUSTER"); name != "" {
+					v.Infra.KindCluster = name
+				} else {
+					v.Infra.KindCluster = "lenny"
+				}
+			},
+		},
+		tierLoad: {
+			name: tierLoad, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("load", "./tests/tier7_load/...", tierLongTimeout)
+			},
+			nextActionHint: "Fix load-tier failures before moving to higher tiers.",
+		},
+		tierChaos: {
+			name: tierChaos, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout)
+			},
+			nextActionHint: "Fix chaos-tier failures before moving to higher tiers.",
+		},
+		tierSecurity: {
+			name: tierSecurity, exec: func(_ []string) (string, string, *tierResult) {
+				return runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout)
+			},
+			nextActionHint: "Fix security-tier failures before moving to higher tiers.",
+		},
+		tierDocs: {
+			name: tierDocs, exec: func(_ []string) (string, string, *tierResult) { return runDocsTier() },
+			nextActionHint: "Fix docs-tier failures before moving to higher tiers.",
+		},
+		tierE2ECloud: {
+			name: tierE2ECloud, exec: func(_ []string) (string, string, *tierResult) { return runE2ECloudTier() },
+			nextActionHint: "Fix e2e-cloud-tier failures before moving to higher tiers.",
+		},
+	}
+}
+
 func execute(s selector, r resolvedSelector) int {
 	v := newVerdict(s)
 
@@ -297,142 +393,40 @@ func execute(s selector, r resolvedSelector) int {
 		}
 	}
 
+	steps := tierSteps()
 	overallStatus := verdictPASS
+
 	for _, t := range r.tiers {
 		start := time.Now()
-		switch t.name {
-		case "static":
-			st, msg := runStaticTier()
-			v.recordTier(t.name, st, time.Since(start), msg)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("static", "Fix static-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "unit":
-			st, msg, result := runUnitTier()
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("unit", "Fix unit-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "component":
-			st, msg, result := runComponentTier(t.subsets)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("component", "Fix component-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "contract":
-			st, msg, result := runContractTier(t.subsets)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("contract", "Fix contract-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "conformance":
-			st, msg, result := runConformanceTier(t.subsets)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("conformance", "Fix conformance-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "integration":
-			// §7 infra fields: integration runs against the compose
-			// stack. Phase 0 uses the `default` profile; mtls is the
-			// only alternative and is opt-in via the kind tier.
-			v.Infra.ComposeProfile = "default"
-			st, msg, result := runIntegrationTier(t.subsets)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("integration", "Fix integration-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "e2e_kind":
-			// §7 infra fields: record the kind cluster name the tier
-			// will use. testinfra/kind reads LENNY_KIND_CLUSTER with
-			// the same fallback to "lenny".
-			if name := os.Getenv("LENNY_KIND_CLUSTER"); name != "" {
-				v.Infra.KindCluster = name
-			} else {
-				v.Infra.KindCluster = "lenny"
-			}
-			st, msg, result := runE2EKindTier(t.subsets)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next(v.synthesizeNextAction("e2e_kind", "Fix e2e-Kind-tier failures before moving to higher tiers."))
-				overallStatus = v.Verdict
-				if writeErr := v.write(s.verdictFile); writeErr != nil {
-					fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
-				}
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "load":
-			st, msg, result := runTaggedTier("load", "./tests/tier7_load/...", tierLongTimeout)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next("Fix load-tier failures before moving to higher tiers.")
-				overallStatus = v.Verdict
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "chaos":
-			st, msg, result := runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next("Fix chaos-tier failures before moving to higher tiers.")
-				overallStatus = v.Verdict
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "security":
-			st, msg, result := runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout)
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next("Fix security-tier failures before moving to higher tiers.")
-				overallStatus = v.Verdict
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "docs":
-			st, msg, result := runDocsTier()
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next("Fix docs-tier failures before moving to higher tiers.")
-				overallStatus = v.Verdict
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		case "e2e_cloud":
-			st, msg, result := runE2ECloudTier()
-			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
-			if st != "pass" && !s.continueErr {
-				v.next("Fix e2e-cloud-tier failures before moving to higher tiers.")
-				overallStatus = v.Verdict
-				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
-			}
-		default:
-			v.recordTier(t.name, "skipped", time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
+		step, ok := steps[t.name]
+		if !ok {
+			v.recordTier(t.name, statusSkipped, time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
+			continue
 		}
+		if step.infraSetup != nil {
+			step.infraSetup(v)
+		}
+		st, msg, result := step.exec(t.subsets)
+		if result != nil {
+			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
+		} else {
+			v.recordTier(t.name, st, time.Since(start), msg)
+		}
+		if st == statusPass || s.continueErr {
+			continue
+		}
+		// Failure path: synthesize the next-action message, write the
+		// verdict, and return the failure summary.
+		if step.useSynthesize {
+			v.next(v.synthesizeNextAction(step.name, step.nextActionHint))
+		} else {
+			v.next(step.nextActionHint)
+		}
+		overallStatus = v.Verdict
+		if writeErr := v.write(s.verdictFile); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "lenny-test: failed to write verdict to %s: %v\n", s.verdictFile, writeErr)
+		}
+		return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 	}
 
 	// printSummary fills in "not-selected" for every tier the
