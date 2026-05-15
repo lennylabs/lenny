@@ -17,7 +17,7 @@ nav_order: 2
 
 ---
 
-Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The documentation throughout this site describes the **v1 target surface** — the shape of the platform once the build sequence in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) lands.
+Lenny is in **early implementation**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The documentation throughout this site describes the **v1 target surface** — the shape of the platform once the build sequence in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) lands.
 
 This page tracks what is actually wired up today, so you know which parts of the docs describe running code and which parts describe work ahead.
 
@@ -41,26 +41,26 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Surface | Status | Notes |
 |:--------|:-------|:------|
 | Embedded Mode — `lenny up` single-binary stack | Not started | Single binary: embedded k3s, Postgres, Redis, KMS, OIDC, object storage. Same binaries as production, only external dependencies swapped. Reference runtimes pre-installed. |
-| Source Mode — `make run` contributor mode | Not started | SQLite + in-memory + local FS; gateway, controller-sim, and echo runtime run as goroutines in one process. |
+| Source Mode — `make run` contributor mode | In progress | `make run` builds the echo runtime and the gateway and runs the gateway in dev mode with in-memory stores and the echo runtime wired as a subprocess. |
 | Compose Mode — `docker compose up` | Not started | Production-like local stack with real Postgres, Redis, MinIO. Integration testing and TLS exercise. |
 
 ### Core runtime
 
 | Surface | Status | Notes |
 |:--------|:-------|:------|
-| Echo reference runtime | Not started | Basic adapter. Used by the compliance suite. |
-| Gateway skeleton (session create / stream / complete) | Not started | First working slice against the wire-contract schemas. |
-| Session lifecycle + REST API end-to-end | Not started | Full create → upload → attach → complete flow. |
+| Echo reference runtime | Shipped | Basic-level adapter at `cmd/runtimes/echo`. Driven by the conformance suite and by the gateway's subprocess executor. |
+| Gateway skeleton (session create / stream / complete) | In progress | `cmd/lenny-gateway` serves the §15.1 REST surface, the SSE event stream, and the §15.2 MCP and OpenAI adapters against in-memory stores. |
+| Session lifecycle + REST API end-to-end | In progress | Create, finalize, start, interrupt, terminate, resume, derive, upload, messages, transcript, tree, events all served. Postgres-backed persistence is pending. |
 | Warm pod pool controller | Not started | Keeps pods pre-warmed; handles claim, release, drain. |
-| Workspace materialization | Not started | Files delivered through the gateway; no shared mounts. |
-| Credential leasing (Basic) | Not started | Short-lived leases; raw keys never enter the pod. |
+| Workspace materialization | In progress | The §14 workspace plan is parsed and validated on session creation; uploaded files are stored in the blob store. Pod-side materialization is pending the pod model. |
+| Credential leasing (Basic) | In progress | The §4.9 end-user credential registry and `/v1/credentials` endpoints are served. Lease assignment on session creation is pending. |
 | Credential rotation (Full integration level) | Not started | Zero-downtime rotation over the lifecycle channel. |
 | Checkpoint / resume | Not started | Sessions survive pod failure; artifacts retrievable. |
-| Recursive delegation | Not started | Parent spawns child; budgets, permissions, cycle detection. |
-| Recursive delegation with MCP semantics | Not started | Delegation reachable through MCP hosts. |
-| Multi-tenancy (Postgres RLS, quotas, RBAC) | Not started | Auth foundation first; RBAC + environments follow. |
-| Audit log with hash-chain integrity + SIEM | Not started | Durable append-only audit trail with integrity controls. |
-| Compliance controls (erasure receipts, legal holds, residency) | Not started | GDPR-style erasure with cryptographic receipt. |
+| Recursive delegation | In progress | The §8 delegation service enforces cycle detection, isolation monotonicity, and the depth limit. Budgets and lease extension are pending. |
+| Recursive delegation with MCP semantics | In progress | `lenny/delegate_task` and the other §8.5 platform tools are served by the MCP adapter. |
+| Multi-tenancy (Postgres RLS, quotas, RBAC) | In progress | In-memory tenant isolation, RBAC role enforcement, and the §5.75 quota interceptor are active. Postgres RLS is pending. |
+| Audit log with hash-chain integrity + SIEM | In progress | The §11.7 per-tenant audit hash chain records every admin mutation and is queryable. SIEM streaming is pending. |
+| Compliance controls (erasure receipts, legal holds, residency) | In progress | GDPR redaction receipts are modelled on the audit chain. The erasure pipeline and residency controls are pending. |
 | Security hardening (signed images, admission, pentest) | Not started | Sigstore/cosign + admission controller. |
 | SLO validation at Growth-sized load | Not started | Full security hardening active. |
 
@@ -68,10 +68,10 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 
 | Protocol | Status | Notes |
 |:---------|:-------|:------|
-| REST | Not started | First end-to-end session protocol. |
-| MCP (Streamable HTTP) | Not started | Interactive streaming and MCP hosts. |
-| OpenAI Chat Completions | Not started | Drop-in base-URL swap for existing OpenAI SDK code. |
-| Open Responses / OpenAI Responses | Not started | Any Responses-API client. |
+| REST | In progress | The §15.1 session, blob, and admin endpoints are served end-to-end against in-memory stores. |
+| MCP (Streamable HTTP) | In progress | The `/mcp` JSON-RPC adapter serves initialize, tools/list, and tools/call. Streaming over SSE is pending. |
+| OpenAI Chat Completions | In progress | `/v1/chat/completions` translates to the session surface. Streaming is pending. |
+| Open Responses / OpenAI Responses | In progress | `/v1/responses` translates to the session surface. Streaming is pending. |
 
 ### LLM routing in the gateway
 
@@ -85,8 +85,8 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 
 | Runtime | Status | Notes |
 |:--------|:-------|:------|
-| `echo` (compliance reference) | Not started | Embedded in the platform repo. |
-| `streaming-echo` (CI test runtime) | Not started | Simulated streaming, usage reporting, Full-level lifecycle. |
+| `echo` (compliance reference) | Shipped | Basic-level adapter embedded in the platform repo at `cmd/runtimes/echo`. |
+| `streaming-echo` (CI test runtime) | In progress | Full-level lifecycle runtime at `cmd/runtimes/streaming-echo`. |
 | `chat` | Not started | Generic LLM chat, no tools. Standard integration level. |
 | `claude-code` | Not started | Anthropic Claude Code CLI under gVisor. |
 | `gemini-cli` | Not started | Google Gemini CLI under gVisor. |
@@ -104,7 +104,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Go SDK | Not started | Official client SDK. |
 | TypeScript SDK | Not started | Official client SDK. |
 | Python SDK | Not started | Official client SDK. |
-| `lenny` / `lenny-ctl` CLI (same binary) | Not started | `lenny up` / `lenny down` / session ops (short name) and operator-facing subcommands (long name). |
+| `lenny` / `lenny-ctl` CLI (same binary) | In progress | `lenny-ctl` serves the resource-management subset (health, version, tenants, runtimes, bootstrap) over the admin API. The `lenny up` / `lenny down` Embedded Mode commands are pending. |
 | `lenny runtime init` / `publish` scaffolder | Not started | Scaffolds a working runtime from a template; publishes image and registers it in one step. |
 | `lenny-ctl install` wizard | Not started | Cluster inspection, guided questions, Helm values output, diff preview, smoke test. Reusable answer file. |
 | `lenny-ctl doctor --fix` | Not started | Idempotent remediations for common misconfigurations. |
@@ -113,11 +113,11 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 
 | Surface | Status | Notes |
 |:--------|:-------|:------|
-| Diagnostic endpoints | Not started | Structured endpoints — no `kubectl`-scraping required. |
+| Diagnostic endpoints | In progress | The gateway serves the §25.3 Platform Health API (`/v1/admin/health`) and the §25.4 self-introspection endpoints (`/v1/admin/me`). The remaining diagnostic endpoints are pending. |
 | Runbook catalog | Not started | Machine-readable and human-readable. |
 | Backup and restore APIs | Not started | Transient Jobs scheduled by `lenny-ops` (uses `lenny-backup` image). |
 | Drift detection | Not started | Compares observed cluster state to declared configuration. |
-| Prometheus alerting rules + OpenSLO + Grafana dashboard | Not started | Bundled artifacts drop into any standard observability stack. |
+| Prometheus alerting rules + OpenSLO + Grafana dashboard | In progress | The gateway serves a Prometheus `/metrics` scrape target; the bundled alerting rules and dashboards are pending. |
 | `EventEmitter` + correlated traces/logs | Not started | Correlation fields across all components. |
 
 ### User-facing extras
