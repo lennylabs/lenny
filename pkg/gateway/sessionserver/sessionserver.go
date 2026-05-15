@@ -204,6 +204,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
+	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }
