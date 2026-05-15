@@ -25,6 +25,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 )
 
+// §13.3 timing tolerances. ClockDriftTolerance is the maximum
+// pairwise NTP drift the spec permits between gateway replicas;
+// the §16.1 lenny_time_drift_seconds metric alerts when observed
+// drift exceeds this value. JWTSkewAllowance is the symmetric
+// ±N-second fudge Verify applies when comparing exp against the
+// local clock; it must be larger than ClockDriftTolerance so a
+// token whose exp lands on a clock boundary is never observed
+// inconsistently across replicas.
+const (
+	ClockDriftTolerance = 500 * time.Millisecond
+	JWTSkewAllowance    = 1 * time.Second
+)
+
 // Claims are the §10.2 JWT payload claims this package recognises.
 // Unknown claims are preserved through Marshal so callers can carry
 // additional values.
@@ -136,8 +149,8 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	}
 	if claims.Expiry > 0 {
 		now := time.Now().Unix()
-		// §13.3 ±1s skew allowance.
-		if claims.Expiry+1 < now {
+		// §13.3 ±JWTSkewAllowance skew allowance.
+		if claims.Expiry+int64(JWTSkewAllowance/time.Second) < now {
 			return Claims{}, &VerifyError{Reason: "expired"}
 		}
 	}
