@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -64,6 +65,7 @@ func main() {
 	blobs := blobstore.NewMemoryStore(nil)
 	tenants := tenantstore.NewMemory()
 	runtimes := runtimestore.NewMemory()
+	users := userstore.NewMemory()
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
@@ -87,7 +89,8 @@ func main() {
 
 	// ----- Admin API -----
 	adminRouter := admin.NewRouter(tenants, admin.Options{}).
-		WithRuntimes(runtimes)
+		WithRuntimes(runtimes).
+		WithUsers(users)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
