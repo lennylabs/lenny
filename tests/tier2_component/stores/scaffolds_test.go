@@ -23,13 +23,9 @@ package stores_test
 
 import "testing"
 
-// TestSessionStoreContract — Postgres-backed session store. Coverage:
-// CRUD, state machine, concurrent claim via SELECT ... FOR UPDATE
-// SKIP LOCKED, RLS, delegation-tree co-location, lineage, orphan
-// reconciliation, retry-state persistence, FK cascade.
-func TestSessionStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 SessionStore — requires Postgres-backed pkg/sessionstore implementation + RLS migrations + claim-with-SKIP-LOCKED transaction helper")
-}
+// TestSessionStoreContract is implemented in sessionstore_test.go,
+// which exercises the Postgres-backed pkg/gateway/sessionstore/pgstore
+// against a real container.
 
 // TestLeaseStoreContract — Redis + Postgres advisory store. Coverage:
 // acquire/renew/release, TTL expiry, Redis-outage fallback to advisory
