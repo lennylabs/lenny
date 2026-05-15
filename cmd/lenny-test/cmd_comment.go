@@ -125,8 +125,8 @@ func renderComment(v map[string]any) string {
 			marker = status
 		}
 		oneLineDetail := strings.ReplaceAll(detail, "\n", " ")
-		if len(oneLineDetail) > 120 {
-			oneLineDetail = oneLineDetail[:120] + "…"
+		if len(oneLineDetail) > commentDetailMaxChars {
+			oneLineDetail = oneLineDetail[:commentDetailMaxChars] + "…"
 		}
 		// Escape pipe in detail to avoid breaking the markdown table.
 		oneLineDetail = strings.ReplaceAll(oneLineDetail, "|", "\\|")

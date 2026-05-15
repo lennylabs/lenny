@@ -409,7 +409,7 @@ func (v *verdict) write(path string) error {
 	}
 	// Bound the on-disk history: keep the 20 most recent rotated
 	// files; older verdicts are removed.
-	pruneOldVerdicts(dir, 20)
+	pruneOldVerdicts(dir, verdictRotationDepth)
 	// Append a one-line summary to history.jsonl per §21.2 so the
 	// flake root-cause analyzer has a stable, append-only source.
 	if err := appendHistory(filepath.Join(dir, "history.jsonl"), v); err != nil {

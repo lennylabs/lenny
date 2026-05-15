@@ -391,7 +391,7 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "load":
-			st, msg, result := runTaggedTier("load", "./tests/tier7_load/...", 600*time.Second)
+			st, msg, result := runTaggedTier("load", "./tests/tier7_load/...", tierLongTimeout)
 			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix load-tier failures before moving to higher tiers.")
@@ -399,7 +399,7 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "chaos":
-			st, msg, result := runTaggedTier("chaos", "./tests/tier8_chaos/...", 600*time.Second)
+			st, msg, result := runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout)
 			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix chaos-tier failures before moving to higher tiers.")
@@ -407,7 +407,7 @@ func execute(s selector, r resolvedSelector) int {
 				return printSummary(s, v, overallStatus, exitCodeFor(v.Verdict))
 			}
 		case "security":
-			st, msg, result := runTaggedTier("security", "./tests/tier9_security/...", 600*time.Second)
+			st, msg, result := runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout)
 			v.recordTierWithResult(t.name, st, time.Since(start), msg, result)
 			if st != "pass" && !s.continueErr {
 				v.next("Fix security-tier failures before moving to higher tiers.")
@@ -844,7 +844,7 @@ func runComponentTier(subsets []string) (string, string, *tierResult) {
 			return "skipped", "docker daemon not running; start Docker and retry", nil
 		}
 	}
-	extra := append([]string{"-count=1", "-timeout=180s", "-tags=component"}, targets...)
+	extra := append([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}, targets...)
 	result, runErr := runGoTestJSON(extra...)
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("component suite failed: %v\n%s", runErr, result.RawOut), result
@@ -971,7 +971,7 @@ func runDocsTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	result, runErr := runGoTestJSON("-count=1", "-timeout=60s", "./tests/tier11_docs/...")
+	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierDocsTimeout), "./tests/tier11_docs/...")
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("docs suite failed: %v\n%s", runErr, result.RawOut), result
 	}
@@ -1009,7 +1009,7 @@ func runE2ECloudTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	result, runErr := runGoTestJSON("-count=1", "-timeout=1800s", "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/...")
+	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierE2ECloudTimeout), "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/...")
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("e2e_cloud suite failed: %v\n%s", runErr, result.RawOut), result
 	}
@@ -1032,7 +1032,7 @@ func runE2EKindTier(subsets []string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	extra := []string{"-count=1", "-timeout=600s", "-tags=e2e_kind"}
+	extra := []string{"-count=1", fmt.Sprintf("-timeout=%s", tierE2EKindTimeout), "-tags=e2e_kind"}
 	if pattern, err := e2eKindSubsetPattern(subsets); err != nil {
 		return "fail", err.Error(), nil
 	} else if pattern != "" {
@@ -1125,7 +1125,7 @@ func runIntegrationTier(subsets []string) (string, string, *tierResult) {
 		}
 		runArgs = []string{"-run", strings.Join(parts, "|")}
 	}
-	extra := append([]string{"-count=1", "-timeout=180s", "-tags=integration"}, runArgs...)
+	extra := append([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}, runArgs...)
 	extra = append(extra, "./tests/tier4_integration/...")
 	result, runErr := runGoTestJSON(extra...)
 	if runErr != nil && result.Failed == 0 {
