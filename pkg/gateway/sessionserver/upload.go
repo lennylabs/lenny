@@ -13,6 +13,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -112,11 +114,27 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		mimeType = "application/octet-stream"
 	}
 
+	// §11.2 storage quota: reserve the declared upload size against the
+	// tenant's quota before any blob bytes are committed.
+	reservation, ok := s.reserveStorageQuota(w, r, tenantID)
+	if !ok {
+		return
+	}
+
 	// §13.4 body cap: refuse uploads that exceed the per-entry
 	// ceiling before any blob bytes are committed. http.MaxBytesReader
 	// short-circuits Read once the cap is reached.
 	body := http.MaxBytesReader(w, r.Body, UploadMaxBodyBytes)
 	defer body.Close()
+
+	// §11.2 hard stream cap: when a quota reservation is held, cap the
+	// inbound stream one byte past the headroom so a client that
+	// under-declared Content-Length cannot stream past its quota. The
+	// extra byte makes an over-stream detectable after the read.
+	var src io.Reader = body
+	if reservation != nil {
+		src = &io.LimitedReader{R: body, N: reservation.headroom + 1}
+	}
 
 	uri := blobstore.URI{
 		TenantID:  tenantID,
@@ -124,9 +142,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		PartID:    blobstore.NewPartID(),
 		TTL:       UploadDefaultTTL,
 	}
-	bytesRead := &countingReader{r: body}
+	bytesRead := &countingReader{r: src}
 	ref, err := s.blobs.Put(uri, mimeType, bytesRead)
 	if err != nil {
+		if reservation != nil {
+			// The upload failed: release the whole reservation.
+			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
+		}
 		// http.MaxBytesReader surfaces oversize as *http.MaxBytesError.
 		// We cannot import that type directly without bringing in
 		// net/http internals; the wrapper detects via interface
@@ -149,6 +171,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if reservation != nil {
+		if bytesRead.n > reservation.headroom {
+			// The client streamed past the quota headroom: abort and
+			// release the reservation. The orphaned blob ages out on
+			// its TTL.
+			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
+			s.writeError(w, http.StatusTooManyRequests, "STORAGE_QUOTA_EXCEEDED",
+				"the upload exceeded the tenant's storage quota", nil)
+			return
+		}
+		// Reconcile the reservation to the bytes actually written.
+		_ = s.storageQuota.Adjust(r.Context(), tenantID, bytesRead.n-reservation.reserved)
+	}
+
 	resp := UploadResponse{
 		UploadRef: ref,
 		MimeType:  mimeType,
@@ -157,6 +193,56 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// quotaReservation records a held §11.2 storage-quota reservation: the
+// byte count reserved (the declared Content-Length) and the headroom
+// the stream may not exceed (the tenant's quota minus prior usage).
+type quotaReservation struct {
+	reserved int64
+	headroom int64
+}
+
+// reserveStorageQuota runs the §11.2 pre-upload reservation. It returns
+// a non-nil reservation when the tenant has an active storage quota,
+// (nil, true) when the tenant is unlimited or the quota is unwired,
+// and (nil, false) — after writing the error response — when the
+// upload must be rejected.
+func (s *Server) reserveStorageQuota(w http.ResponseWriter, r *http.Request, tenantID string) (*quotaReservation, bool) {
+	if s.storageQuota == nil || s.tenants == nil {
+		return nil, true
+	}
+	tenant, err := s.tenants.Get(r.Context(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return nil, true
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"storage-quota check failed: "+err.Error(), nil)
+		return nil, false
+	}
+	if tenant.StorageQuotaBytes <= 0 {
+		return nil, true // the tenant has no storage limit
+	}
+	incoming := r.ContentLength
+	if incoming < 0 {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"a Content-Length header is required for uploads under a storage quota", nil)
+		return nil, false
+	}
+	priorUsed, err := s.storageQuota.Reserve(r.Context(), tenantID, incoming, tenant.StorageQuotaBytes)
+	if errors.Is(err, storagequota.ErrQuotaExceeded) {
+		s.writeError(w, http.StatusTooManyRequests, "STORAGE_QUOTA_EXCEEDED",
+			"the upload would exceed the tenant's storage quota",
+			map[string]any{"currentBytes": priorUsed, "limitBytes": tenant.StorageQuotaBytes})
+		return nil, false
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"storage-quota reservation failed: "+err.Error(), nil)
+		return nil, false
+	}
+	return &quotaReservation{reserved: incoming, headroom: tenant.StorageQuotaBytes - priorUsed}, true
 }
 
 // handleBlob implements GET /v1/blobs/{ref} per §15.1.

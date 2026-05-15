@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
@@ -95,6 +96,7 @@ type Server struct {
 	users           userstore.Store
 	billing         billingstore.Store
 	tenants         tenantstore.Store
+	storageQuota    storagequota.Counter
 	defaultIsoProf  isolation.Profile
 }
 
@@ -190,6 +192,12 @@ type Options struct {
 	// per-tenant concurrent-session quota. When nil the quota check is
 	// skipped; the gateway always wires it.
 	Tenants tenantstore.Store
+
+	// StorageQuota is the §11.2 per-tenant storage byte counter. When
+	// set, the upload handler reserves the declared upload size against
+	// the tenant's storageQuotaBytes limit. Nil disables the storage
+	// quota.
+	StorageQuota storagequota.Counter
 }
 
 // New returns a Server bound to the supplied store.
@@ -210,6 +218,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		users:           opts.Users,
 		billing:         opts.Billing,
 		tenants:         opts.Tenants,
+		storageQuota:    opts.StorageQuota,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {

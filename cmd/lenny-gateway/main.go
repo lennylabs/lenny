@@ -85,6 +85,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -183,10 +185,11 @@ func main() {
 	// coordination lease sweeper runs against the same Redis.
 	replica := resolveReplicaID()
 	var (
-		breakers     breakerRegistry
-		breakerCache *cachingstore.Store
-		redisClient  *redis.Client
-		coordinator  *coordination.Sweeper
+		breakers       breakerRegistry
+		breakerCache   *cachingstore.Store
+		redisClient    *redis.Client
+		coordinator    *coordination.Sweeper
+		storageCounter storagequota.Counter = storagequota.NewMemory()
 	)
 	if *redisURL != "" {
 		opts, err := redis.ParseURL(*redisURL)
@@ -205,6 +208,9 @@ func main() {
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leasestore.New(redisClient),
 			coordination.Options{ReplicaID: replica, Interval: *coordInterval})
+		// The §11.2 storage-quota counter lives in Redis so the quota
+		// holds across replicas; its reserve is Lua-atomic.
+		storageCounter = storagequotaredis.New(redisClient)
 		log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
 	} else {
 		breakers = breakerstore.NewMemory()
@@ -272,6 +278,7 @@ func main() {
 		Users:               users,
 		Billing:             billing,
 		Tenants:             tenants,
+		StorageQuota:        storageCounter,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
