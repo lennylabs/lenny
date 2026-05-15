@@ -46,6 +46,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -155,6 +157,9 @@ func main() {
 	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{})
 	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
+	// ----- §4.9 end-user credential registry -----
+	credServer := credentialserver.New(credentialstore.NewMemory(nil))
+
 	// ----- MCP adapter -----
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
 	mcpSrv := mcp.NewServer()
@@ -213,6 +218,8 @@ func main() {
 	mux.Handle("/v1/responses", responsesHandler.Handler())
 	mux.Handle("/v1/responses/", responsesHandler.Handler())
 	mux.Handle("/mcp", mcpSrv.Handler())
+	mux.Handle("/v1/credentials", credServer.Handler())
+	mux.Handle("/v1/credentials/", credServer.Handler())
 
 	// ----- §16.1 Prometheus metrics -----
 	gwMetrics, err := gatewaymetrics.New()
