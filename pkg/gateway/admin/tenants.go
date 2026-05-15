@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -76,15 +76,17 @@ type AuditEvent struct {
 // only the resources the gateway has stores for; future commits add
 // users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants     tenantstore.Store
-	runtimes    runtimestore.Store
-	users       userstore.Store
-	pools       poolstore.Store
-	breakers    breakerstore.Store
-	connectors  connectorstore.Store
-	auditLog    AuditLog
-	clock       func() time.Time
-	audit       AuditSink
+	tenants         tenantstore.Store
+	runtimes        runtimestore.Store
+	users           userstore.Store
+	pools           poolstore.Store
+	breakers        breakerstore.Store
+	connectors      connectorstore.Store
+	auditLog        AuditLog
+	tokenRevoker    IssuedTokenRevoker
+	revocationCache RevocationCache
+	clock           func() time.Time
+	audit           AuditSink
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -173,6 +175,11 @@ func (r *Router) Handler() http.Handler {
 	}
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
+	}
+	if r.tokenRevoker != nil {
+		// §13.3 operator-initiated token revocation.
+		mux.Handle("POST /v1/admin/issued-tokens/{jti}/revoke",
+			r.requireAdmin(http.HandlerFunc(r.handleRevokeToken)))
 	}
 	if r.auditLog != nil {
 		// §25.9 Audit Log Query API. The verify route is registered

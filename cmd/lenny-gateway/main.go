@@ -74,6 +74,7 @@ import (
 	quotamw "github.com/lennylabs/lenny/pkg/gateway/middleware/quota"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -274,6 +275,11 @@ func main() {
 		TenantID:   "default",
 	})
 
+	// §13.3 revocation cache: the auth middleware rejects a token
+	// whose jti is in this set. It is rehydrated from the Postgres
+	// issued-token index below.
+	revCache := revocation.NewCache()
+
 	// ----- Admin API -----
 	// Every admin mutation is committed to a §11.7 per-tenant audit
 	// hash chain. With Postgres the chain is durable (auditstore);
@@ -298,6 +304,11 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors)
 	adminRouter = wireAudit(adminRouter)
+	if pgPool != nil {
+		// §13.3 operator-initiated token revocation, durable in the
+		// issued-token index and reflected in the revocation cache.
+		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(pgPool), revCache)
+	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
 		map[string]string{
@@ -410,6 +421,7 @@ func main() {
 		AllowDevHeaders: true,
 		AllowDevRoles:   *devMode,
 		Verifier:        jwtSigner,
+		Revocations:     revCache,
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the
@@ -452,6 +464,31 @@ func main() {
 	// non-terminal session so a crashed replica's sessions free up.
 	if coordinator != nil {
 		go coordinator.Run(watchdogCtx)
+	}
+
+	// ----- §13.3 revocation-cache rehydration -----
+	// Loads revoked-token jtis from the issued-token index so a
+	// revocation survives a restart and propagates across replicas.
+	if pgPool != nil {
+		issued := issuedtokenstore.New(pgPool)
+		lister := tenantsLister{tenants}
+		if err := revCache.Rehydrate(context.Background(), lister, issued); err != nil {
+			log.Printf("lenny-gateway: initial revocation rehydration failed: %v", err)
+		}
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchdogCtx.Done():
+					return
+				case <-ticker.C:
+					if err := revCache.Rehydrate(context.Background(), lister, issued); err != nil && watchdogCtx.Err() == nil {
+						log.Printf("lenny-gateway: revocation rehydration failed: %v", err)
+					}
+				}
+			}
+		}()
 	}
 
 	stopCh := make(chan os.Signal, 1)

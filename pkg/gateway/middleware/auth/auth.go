@@ -113,6 +113,16 @@ type Options struct {
 	// When false, unauthenticated requests pass through with no
 	// Principal on the context — useful for /healthz and similar.
 	RequireAuth bool
+
+	// Revocations, when set, is consulted after a Bearer JWT verifies:
+	// a token whose jti has been revoked is rejected even though its
+	// signature and expiry are still valid (§13.3 token revocation).
+	Revocations RevocationChecker
+}
+
+// RevocationChecker reports whether a token's jti has been revoked.
+type RevocationChecker interface {
+	IsRevoked(jti string) bool
 }
 
 // Wrap returns the auth middleware around inner.
@@ -162,6 +172,13 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			return
 		}
 		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID", err.Error(), nil)
+		return
+	}
+	// §13.3 revocation: a signature- and expiry-valid token is still
+	// rejected when its jti has been revoked.
+	if m.opts.Revocations != nil && m.opts.Revocations.IsRevoked(claims.JWTID) {
+		writeError(w, http.StatusUnauthorized, "TOKEN_REVOKED",
+			"the presented token has been revoked", nil)
 		return
 	}
 	tenant, terr := auth.ExtractTenant(auth.ExtractRequest{
