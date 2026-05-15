@@ -39,6 +39,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
@@ -49,11 +50,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	quotamw "github.com/lennylabs/lenny/pkg/gateway/middleware/quota"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -201,7 +204,30 @@ func main() {
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
 
-	// Idempotency innermost (after auth + circuit; needs the
+	// §5.75 QuotaEvaluator innermost — counts the tenant's active
+	// sessions in the store and rejects session creation over the
+	// ceiling. The minimal gateway uses a generous per-tenant limit
+	// (1000 active sessions); production resolves per-tenant limits
+	// from the tenant policy.
+	quotaCounter := quotamw.StoreActiveCounter{
+		List: func(ctx context.Context, tenantID string) ([]session.State, error) {
+			rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+			if err != nil {
+				return nil, err
+			}
+			states := make([]session.State, 0, len(rows))
+			for _, row := range rows {
+				states = append(states, row.State)
+			}
+			return states, nil
+		},
+	}
+	handler = quotamw.Wrap(handler, quotamw.Options{
+		Counter: quotaCounter,
+		Limits:  quotamw.StaticLimit(1000),
+	})
+
+	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).
 	idemStore := idemmw.NewMemoryStore()
 	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{})
