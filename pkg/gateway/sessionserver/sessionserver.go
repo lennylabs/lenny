@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -93,6 +94,7 @@ type Server struct {
 	usage           usagestore.Store
 	users           userstore.Store
 	billing         billingstore.Store
+	tenants         tenantstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -183,6 +185,11 @@ type Options struct {
 	// gateway appends a session.created event on every create. Nil
 	// disables billing emission.
 	Billing billingstore.Store
+
+	// Tenants is the tenant registry consulted to enforce the §11.2
+	// per-tenant concurrent-session quota. When nil the quota check is
+	// skipped; the gateway always wires it.
+	Tenants tenantstore.Store
 }
 
 // New returns a Server bound to the supplied store.
@@ -202,6 +209,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		usage:           opts.Usage,
 		users:           opts.Users,
 		billing:         opts.Billing,
+		tenants:         opts.Tenants,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -341,6 +349,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := s.resolveTenant(r)
+	if !s.requireSessionQuota(w, r, tenantID) {
+		return
+	}
 
 	var req CreateSessionRequest
 	body := jsonReader(w, r)

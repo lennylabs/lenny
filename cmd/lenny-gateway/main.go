@@ -271,6 +271,7 @@ func main() {
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
 		Billing:             billing,
+		Tenants:             tenants,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
