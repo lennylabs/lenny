@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
@@ -120,6 +121,7 @@ func main() {
 		UploadTokenVerifier: uploadVerifier,
 		Blobs:               blobs,
 		Executor:            exec,
+		Transcripts:         transcriptstore.NewMemory(),
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

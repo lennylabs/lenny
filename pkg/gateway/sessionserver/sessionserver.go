@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -83,6 +84,7 @@ type Server struct {
 	uploadVerifier  *uploadtoken.Verifier
 	blobs           blobstore.Store
 	executor        executor.Executor
+	transcripts     transcriptstore.Store
 	defaultIsoProf  isolation.Profile
 }
 
@@ -133,6 +135,12 @@ type Options struct {
 	// pods.
 	Executor executor.Executor
 
+	// Transcripts records the §15.1 session conversation history.
+	// When nil, message injection still works but
+	// `GET /v1/sessions/{id}/transcript` returns
+	// `404 RESOURCE_NOT_FOUND` for every session.
+	Transcripts transcriptstore.Store
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -150,6 +158,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		uploadVerifier:  opts.UploadTokenVerifier,
 		blobs:           opts.Blobs,
 		executor:        opts.Executor,
+		transcripts:     opts.Transcripts,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -194,6 +203,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
+	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }

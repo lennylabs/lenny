@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 )
 
 // spec: §7.2 message injection; §15.1 POST /v1/sessions/{id}/messages.
@@ -25,7 +26,8 @@ func newMessagesServer(t *testing.T) (*sessionserver.Server, sessionstore.Store)
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor: executor.NewEchoExecutor(),
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
 	})
 	return srv, store
 }
@@ -122,6 +124,66 @@ func TestMessagesRejectsWhenExecutorUnwired(t *testing.T) {
 	})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no executor: got %d, want 503", rr.Code)
+	}
+}
+
+func TestMessagesRecordsTranscript(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_tr")
+
+	rr := sendMessageRequest(t, srv.Handler(), "sess_tr", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Role: "user", Content: "hello"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("send: %d", rr.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_tr/transcript", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	tr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tr, req)
+	if tr.Code != http.StatusOK {
+		t.Fatalf("transcript: %d, body=%s", tr.Code, tr.Body.String())
+	}
+	var resp sessionserver.TranscriptResponse
+	_ = json.Unmarshal(tr.Body.Bytes(), &resp)
+	// One user entry + one assistant entry.
+	if len(resp.Entries) != 2 {
+		t.Fatalf("transcript entries: got %d, want 2 (%+v)", len(resp.Entries), resp.Entries)
+	}
+	if resp.Entries[0].Role != "user" || !strings.Contains(resp.Entries[0].Content, "hello") {
+		t.Errorf("entry[0]: %+v", resp.Entries[0])
+	}
+	if resp.Entries[1].Role != "assistant" {
+		t.Errorf("entry[1] role: %q", resp.Entries[1].Role)
+	}
+}
+
+func TestTranscriptMissingSession(t *testing.T) {
+	srv, _ := newMessagesServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/transcript", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("missing session: got %d, want 404", rr.Code)
+	}
+}
+
+func TestTranscriptEmptyForFreshSession(t *testing.T) {
+	srv, store := newMessagesServer(t)
+	seedRunningSession(t, store, "sess_fresh")
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_fresh/transcript", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("fresh session transcript: %d", rr.Code)
+	}
+	var resp sessionserver.TranscriptResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Entries) != 0 {
+		t.Errorf("fresh session should have empty transcript: %+v", resp.Entries)
 	}
 }
 
