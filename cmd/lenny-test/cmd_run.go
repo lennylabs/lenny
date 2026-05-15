@@ -297,7 +297,7 @@ func execute(s selector, r resolvedSelector) int {
 		}
 	}
 
-	overallStatus := "PASS"
+	overallStatus := verdictPASS
 	for _, t := range r.tiers {
 		start := time.Now()
 		switch t.name {
@@ -450,9 +450,9 @@ func execute(s selector, r resolvedSelector) int {
 // infra-class failure is distinguishable from a real test failure.
 func exitCodeFor(verdict string) int {
 	switch verdict {
-	case "PASS":
+	case verdictPASS:
 		return 0
-	case "INCONCLUSIVE":
+	case verdictINCONCLUSIVE:
 		return 2
 	default:
 		return 1
@@ -1342,7 +1342,7 @@ func printGitHubAnnotations(v *verdict) {
 	// which is indistinguishable from "the harness didn't run."
 	summary := fmt.Sprintf("verdict=%s fail=%d inconclusive=%d skipped=%d run_id=%s",
 		v.Verdict, fail, inconclusive, skipped, v.RunID)
-	if v.Verdict == "PASS" {
+	if v.Verdict == verdictPASS {
 		fmt.Printf("::notice title=lenny-test summary::%s\n", summary)
 	} else {
 		fmt.Printf("::error title=lenny-test summary::%s\n", summary)

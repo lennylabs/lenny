@@ -15,6 +15,23 @@ import (
 	"time"
 )
 
+// §7 tier-status values. Every tierStat.Status field carries one
+// of these, and the verdict-level Verdict carries one of the
+// corresponding PASS/FAIL/INCONCLUSIVE summary strings. Treating
+// them as constants keeps callsites consistent and gives IDEs
+// a real symbol to rename through.
+const (
+	statusPass         = "pass"
+	statusFail         = "fail"
+	statusSkipped      = "skipped"
+	statusInconclusive = "inconclusive"
+	statusNotSelected  = "not-selected"
+
+	verdictPASS         = "PASS"
+	verdictFAIL         = "FAIL"
+	verdictINCONCLUSIVE = "INCONCLUSIVE"
+)
+
 // verdict is the §7 JSON shape, simplified for Phase 0.
 type verdict struct {
 	Version    int                 `json:"version"`
@@ -86,7 +103,7 @@ func newVerdict(s selector) *verdict {
 		Trigger:    trigger{Mode: triggerMode(s)},
 		Infra:      infrastructureInfo{ContainerCache: "cold"},
 		Tiers:      map[string]tierStat{},
-		Verdict:    "PASS",
+		Verdict:    verdictPASS,
 		SpecStatus: map[string]string{},
 		startedAt:  now,
 	}
@@ -206,7 +223,7 @@ func (v *verdict) recordTierWithResult(name, status string, dur time.Duration, d
 	// one failing test is reported FAIL.
 	for _, f := range r.Failures {
 		for _, s := range f.SpecSections {
-			v.SpecStatus[s] = "FAIL"
+			v.SpecStatus[s] = verdictFAIL
 		}
 	}
 }
@@ -216,8 +233,8 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 	// blow-up into "inconclusive" per §7 + §21.3. A genuine test
 	// failure stays FAIL; a docker-daemon crash or a kind bring-up
 	// timeout does not.
-	if status == "fail" && classifyInfraFailure(detail) {
-		status = "inconclusive"
+	if status == statusFail && classifyInfraFailure(detail) {
+		status = statusInconclusive
 	}
 	v.Tiers[name] = tierStat{
 		Status:     status,
@@ -226,25 +243,25 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 		Detail:     detail,
 	}
 	switch status {
-	case "fail":
-		v.Verdict = "FAIL"
-	case "inconclusive":
+	case statusFail:
+		v.Verdict = verdictFAIL
+	case statusInconclusive:
 		// FAIL outranks INCONCLUSIVE; a real failure earlier in the
 		// run stays surfaced.
-		if v.Verdict != "FAIL" {
-			v.Verdict = "INCONCLUSIVE"
+		if v.Verdict != verdictFAIL {
+			v.Verdict = verdictINCONCLUSIVE
 		}
 	}
 }
 
 func reasonFromStatus(status, detail string) string {
 	switch status {
-	case "skipped":
+	case statusSkipped:
 		if detail != "" {
 			return detail
 		}
-		return "skipped"
-	case "inconclusive":
+		return statusSkipped
+	case statusInconclusive:
 		if detail != "" {
 			return detail
 		}
@@ -361,7 +378,7 @@ func (v *verdict) fillNotSelected() {
 			continue
 		}
 		v.Tiers[name] = tierStat{
-			Status: "not-selected",
+			Status: statusNotSelected,
 			Reason: "outside the resolved selector",
 		}
 	}
