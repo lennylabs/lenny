@@ -51,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
@@ -177,9 +178,10 @@ func main() {
 	// coordination lease sweeper runs against the same Redis.
 	replica := resolveReplicaID()
 	var (
-		breakers    breakerRegistry
-		redisClient *redis.Client
-		coordinator *coordination.Sweeper
+		breakers     breakerRegistry
+		breakerCache *cachingstore.Store
+		redisClient  *redis.Client
+		coordinator  *coordination.Sweeper
 	)
 	if *redisURL != "" {
 		opts, err := redis.ParseURL(*redisURL)
@@ -190,7 +192,11 @@ func main() {
 		if err := redisClient.Ping(context.Background()).Err(); err != nil {
 			log.Fatalf("lenny-gateway: redis: %v", err)
 		}
-		breakers = redisstore.New(redisClient)
+		// The §11.6 breaker registry lives in Redis; the cachingstore
+		// keeps a local open-breaker snapshot so the request-path check
+		// never round-trips to Redis and survives a Redis outage.
+		breakerCache = cachingstore.New(redisstore.New(redisClient), redisClient)
+		breakers = breakerCache
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leasestore.New(redisClient),
 			coordination.Options{ReplicaID: replica, Interval: *coordInterval})
@@ -472,6 +478,13 @@ func main() {
 	// non-terminal session so a crashed replica's sessions free up.
 	if coordinator != nil {
 		go coordinator.Run(watchdogCtx)
+	}
+
+	// ----- §11.6 circuit-breaker cache refresh -----
+	// Active only with Redis: keeps the local open-breaker snapshot
+	// current via pub/sub and a periodic refresh.
+	if breakerCache != nil {
+		go breakerCache.Run(watchdogCtx)
 	}
 
 	// ----- §13.3 revocation-cache rehydration -----
