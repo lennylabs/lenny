@@ -136,7 +136,8 @@ func main() {
 		WithUsers(users).
 		WithPools(pools).
 		WithBreakers(breakers).
-		WithConnectors(connectors)
+		WithConnectors(connectors).
+		WithAuditChains(auditChains)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()

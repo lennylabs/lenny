@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
@@ -76,14 +77,15 @@ type AuditEvent struct {
 // only the resources the gateway has stores for; future commits add
 // users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants    tenantstore.Store
-	runtimes   runtimestore.Store
-	users      userstore.Store
-	pools      poolstore.Store
-	breakers   breakerstore.Store
-	connectors connectorstore.Store
-	clock      func() time.Time
-	audit      AuditSink
+	tenants     tenantstore.Store
+	runtimes    runtimestore.Store
+	users       userstore.Store
+	pools       poolstore.Store
+	breakers    breakerstore.Store
+	connectors  connectorstore.Store
+	auditChains *audit.ChainSet
+	clock       func() time.Time
+	audit       AuditSink
 }
 
 // Options configures the Router.
@@ -169,6 +171,13 @@ func (r *Router) Handler() http.Handler {
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
 	}
+	if r.auditChains != nil {
+		// §25.9 Audit Log Query API. The verify route is registered
+		// before the {seq} route so "verify" is not parsed as a seq.
+		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))
+		mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))
+		mux.Handle("GET /v1/admin/audit-events/{seq}", r.requireAuditReader(http.HandlerFunc(r.handleGetAuditEvent)))
+	}
 	// §25.4 self-introspection — available to any authenticated
 	// caller, no role gate. Returns the calling principal's identity
 	// + role grants so a freshly-onboarded admin agent can discover
@@ -176,6 +185,25 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/me", r.handleMe)
 	mux.HandleFunc("GET /v1/admin/me/authorized-tools", r.handleAuthorizedTools)
 	return mux
+}
+
+// requireAuditReader gates the §25.9 audit-query endpoints on
+// platform-admin or tenant-admin (the per-tenant scoping is applied
+// inside auditTenant).
+func (r *Router) requireAuditReader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		p, ok := authmw.FromContext(req.Context())
+		if !ok {
+			writeError(w, http.StatusForbidden, "FORBIDDEN", "endpoint requires authentication", nil)
+			return
+		}
+		if !p.HasRole(auth.RolePlatformAdmin) && !p.HasRole(auth.RoleTenantAdmin) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"audit query requires platform-admin or tenant-admin", nil)
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
 }
 
 // requireAdmin gates every admin endpoint on the §10.2 platform-admin
