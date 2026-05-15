@@ -152,7 +152,7 @@ func (s selector) resolve() (resolvedSelector, error) {
 	case s.group != "":
 		raw = tiersForGroup(s.group)
 		if len(raw) == 0 {
-			return resolvedSelector{}, fmt.Errorf("unknown group %q. Run `lenny-test list --groups` to see available groups.", s.group)
+			return resolvedSelector{}, fmt.Errorf("unknown group %q: run `lenny-test list --groups` to see available groups", s.group)
 		}
 	case s.tier != "":
 		if !contains(tiers, s.tier) {

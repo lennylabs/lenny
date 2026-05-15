@@ -134,10 +134,10 @@ func (s *Stub) handleAnthropic(w http.ResponseWriter, r *http.Request, body []by
 	echo := extractLastUserMessage(body)
 	if streaming {
 		writeSSE(w, []string{
-			fmt.Sprintf(`event: message_start
-data: {"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","content":[],"model":"claude-stub","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`),
-			fmt.Sprintf(`event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`),
+			`event: message_start
+data: {"type":"message_start","message":{"id":"msg-1","type":"message","role":"assistant","content":[],"model":"claude-stub","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}`,
+			`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 			fmt.Sprintf(`event: content_block_delta
 data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, echo),
 			`event: content_block_stop
