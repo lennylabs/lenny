@@ -26,12 +26,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // Server is the §15.1 session HTTP handler.
@@ -40,6 +44,8 @@ type Server struct {
 	clock           func() time.Time
 	idFn            func() string
 	deriveAuditSink DeriveAuditSink
+	uploadIssuer    *uploadtoken.Issuer
+	defaultIsoProf  isolation.Profile
 }
 
 // Options configures the Server at construction.
@@ -60,6 +66,18 @@ type Options struct {
 	// to the §11.7 audit pipeline; nil disables the emission (and the
 	// override still applies).
 	DeriveAuditSink DeriveAuditSink
+
+	// UploadTokenIssuer mints the §7.1 uploadToken stamped on every
+	// successful POST /v1/sessions response. When nil, the server
+	// constructs a default issuer backed by a freshly-generated
+	// random key — production callers always supply their own issuer
+	// so tokens survive a process restart.
+	UploadTokenIssuer *uploadtoken.Issuer
+
+	// DefaultIsolationProfile is the §5.3 fallback profile applied to
+	// a session whose pool resolution did not name one. When unset
+	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
+	DefaultIsolationProfile isolation.Profile
 }
 
 // New returns a Server bound to the supplied store.
@@ -69,12 +87,29 @@ func New(store sessionstore.Store, opts Options) *Server {
 		clock:           opts.Clock,
 		idFn:            opts.IDFunc,
 		deriveAuditSink: opts.DeriveAuditSink,
+		uploadIssuer:    opts.UploadTokenIssuer,
+		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
 	if s.idFn == nil {
 		s.idFn = randomSessionID
+	}
+	if s.uploadIssuer == nil {
+		// Default to a freshly-generated random key so the server is
+		// useful in tests. Production callers always wire their own
+		// keyring with the §7.1 rotation timers.
+		var seed [32]byte
+		_, _ = rand.Read(seed[:])
+		ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{
+			KeyID:  "default",
+			Secret: seed[:],
+		})
+		s.uploadIssuer = uploadtoken.NewIssuer(ring, s.clock)
+	}
+	if !isolation.IsValid(s.defaultIsoProf) {
+		s.defaultIsoProf = isolation.Default()
 	}
 	return s
 }
@@ -97,12 +132,20 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// CreateSessionRequest is the §15.1 POST /v1/sessions body. The
-// minimal gateway accepts only runtimeRef and userId; later phases
-// extend this with workspacePlan, env, timeouts, etc.
+// CreateSessionRequest is the §15.1 POST /v1/sessions body. Each
+// optional field is validated when present; only `runtimeRef` is
+// required by the minimal gateway. Future phases add `env`,
+// `timeouts`, `credentialPolicy`, `delegationPolicy`, etc.
 type CreateSessionRequest struct {
-	RuntimeRef string `json:"runtimeRef"`
-	UserID     string `json:"userId"`
+	RuntimeRef    string          `json:"runtimeRef"`
+	UserID        string          `json:"userId,omitempty"`
+	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
+
+	// IsolationProfile is an optional override that pins the session
+	// to a specific §5.3 profile. Production resolves this from the
+	// `targetPool`'s pool definition; the minimal gateway accepts it
+	// from the body so SEC-001 monotonicity tests have a knob to drive.
+	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 }
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
@@ -118,6 +161,40 @@ type SessionResponse struct {
 	FailureClass string `json:"failureClass,omitempty"`
 }
 
+// CreateSessionResponse is the §15.1 POST /v1/sessions response
+// envelope. Carries the regular session fields plus the §7.1
+// uploadToken and the §7.1 sessionIsolationLevel.
+type CreateSessionResponse struct {
+	SessionResponse
+
+	// UploadToken is the §7.1 single-use HMAC uploadToken the client
+	// supplies on every `POST /v1/sessions/{id}/upload` and
+	// `POST /v1/sessions/{id}/upload-archive` until the session is
+	// finalized. Treat as a secret per §7.1.
+	UploadToken string `json:"uploadToken"`
+
+	// SessionIsolationLevel echoes the §7.1 isolation-level object
+	// (executionMode, isolationProfile, podReuse, scrubPolicy,
+	// residualStateWarning). The minimal gateway populates
+	// isolationProfile + executionMode + residualStateWarning;
+	// scrubPolicy/podReuse default to the §7.1 single-session values.
+	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
+
+	// WorkspacePlanWarnings echoes any §14 consumer-advisory
+	// warnings (unknown source type, path collisions) the parser
+	// raised. Empty when the plan is omitted or pristine.
+	WorkspacePlanWarnings []workspaceplan.Warning `json:"workspacePlanWarnings,omitempty"`
+}
+
+// SessionIsolationLevel mirrors the §7.1 sessionIsolationLevel object.
+type SessionIsolationLevel struct {
+	ExecutionMode        string `json:"executionMode"`
+	IsolationProfile     string `json:"isolationProfile"`
+	PodReuse             bool   `json:"podReuse"`
+	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
+	ResidualStateWarning bool   `json:"residualStateWarning"`
+}
+
 // errorEnvelope is the §15.1 error response shape.
 type errorEnvelope struct {
 	Error errorBody `json:"error"`
@@ -130,7 +207,7 @@ type errorBody struct {
 }
 
 // handleCreate implements POST /v1/sessions. Returns 201 with the
-// SessionResponse envelope on success.
+// CreateSessionResponse envelope on success.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 
@@ -144,20 +221,123 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §5.3 isolation profile: explicit override > §5.3 default. The
+	// minimal gateway does not yet resolve pools, so any explicit
+	// value is taken at face value (production validates against the
+	// resolved pool's profile).
+	isoProf := req.IsolationProfile
+	if isoProf == "" {
+		isoProf = s.defaultIsoProf
+	}
+	if !isolation.IsValid(isoProf) {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			fmt.Sprintf("isolationProfile %q is not a recognised §5.3 profile", isoProf),
+			map[string]any{"fields": []map[string]string{{"field": "isolationProfile"}}})
+		return
+	}
+
+	// §14 workspace plan: parse + validate when present. Absent plan
+	// is admitted (the session starts with an empty workspace, the
+	// minimal gateway uses this for tests that exercise pure
+	// state-machine paths).
+	var planWarnings []workspaceplan.Warning
+	if len(req.WorkspacePlan) > 0 && !isJSONNull(req.WorkspacePlan) {
+		_, warnings, err := workspaceplan.Parse(req.WorkspacePlan)
+		if err != nil {
+			s.writeWorkspacePlanError(w, err)
+			return
+		}
+		planWarnings = warnings
+	}
+
 	row := sessionstore.Session{
-		ID:         s.idFn(),
-		TenantID:   tenantID,
-		UserID:     req.UserID,
-		RuntimeRef: req.RuntimeRef,
-		State:      session.StateCreated,
-		CreatedAt:  s.clock(),
+		ID:               s.idFn(),
+		TenantID:         tenantID,
+		UserID:           req.UserID,
+		RuntimeRef:       req.RuntimeRef,
+		State:            session.StateCreated,
+		IsolationProfile: isoProf,
+		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
 	if err := s.store.Create(r.Context(), row); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	s.writeSession(w, http.StatusCreated, row)
+
+	// §7.1 step 8: mint the single-use uploadToken stamped on the
+	// session creation response. TTL = maxCreatedStateTimeoutSeconds
+	// (uploadtoken.DefaultTTL — 300 s).
+	tok, err := s.uploadIssuer.Issue(row.ID, 0)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			fmt.Sprintf("upload token issuance failed: %v", err), nil)
+		return
+	}
+
+	resp := CreateSessionResponse{
+		SessionResponse:       toResponse(row),
+		UploadToken:           tok,
+		SessionIsolationLevel: defaultIsolationLevel(isoProf),
+		WorkspacePlanWarnings: planWarnings,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// defaultIsolationLevel returns the §7.1 sessionIsolationLevel
+// envelope the minimal gateway populates. The minimal gateway runs
+// in `executionMode: session` (no pod reuse) so podReuse is false,
+// scrubPolicy is empty, and residualStateWarning is false. Future
+// phases that ship the §5.2 task / concurrent modes recompute these
+// fields from the resolved pool configuration.
+func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
+	return SessionIsolationLevel{
+		ExecutionMode:        "session",
+		IsolationProfile:     string(p),
+		PodReuse:             false,
+		ScrubPolicy:          "",
+		ResidualStateWarning: false,
+	}
+}
+
+// writeWorkspacePlanError translates a workspaceplan.ValidationError
+// into the §15.1 `400 WORKSPACE_PLAN_INVALID` envelope.
+func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
+	var ve *workspaceplan.ValidationError
+	if !errors.As(err, &ve) {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	details := map[string]any{}
+	if ve.Field != "" {
+		details["field"] = ve.Field
+	}
+	if ve.Reason != "" {
+		details["reason"] = ve.Reason
+	}
+	if len(ve.SubErrs) > 0 {
+		subs := make([]map[string]any, 0, len(ve.SubErrs))
+		for _, se := range ve.SubErrs {
+			subs = append(subs, map[string]any{
+				"sourceIndex": se.SourceIndex,
+				"field":       se.Field,
+				"reason":      se.Reason,
+				"message":     se.Message,
+			})
+		}
+		details["subErrors"] = subs
+	}
+	s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID", ve.Error(), details)
+}
+
+// isJSONNull reports whether the supplied raw JSON is the literal
+// `null` token (RFC 8259 §3) ignoring leading / trailing whitespace.
+// Used to distinguish `{"workspacePlan": null}` from an omitted
+// field.
+func isJSONNull(raw json.RawMessage) bool {
+	return string(raw) == "null"
 }
 
 // handleGet implements GET /v1/sessions/{id}.
