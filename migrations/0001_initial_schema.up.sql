@@ -28,11 +28,12 @@ CREATE TABLE tenants (
     -- genesis_nonce seeds the per-tenant audit hash chain (§11.7
     -- item 3). 256 bits from crypto/rand, generated at tenant create.
     genesis_nonce         BYTEA       NOT NULL,
-    status                TEXT        NOT NULL DEFAULT 'active',
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT tenants_status_check
-        CHECK (status IN ('active', 'suspended', 'deleting'))
+    -- deleted_at marks a soft-deleted tenant (§12.8 tenant lifecycle).
+    -- The row stays queryable for audit until the deletion controller
+    -- fully erases it. NULL for active tenants.
+    deleted_at            TIMESTAMPTZ
 );
 
 -- runtime_definitions is the §5.1 per-tenant runtime registry.

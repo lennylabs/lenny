@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -46,28 +47,6 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
 	upload_token_digest, upload_token_expiry, created_at, updated_at`
-
-// withTenant runs fn inside a transaction that has set
-// app.current_tenant to tenantID (§12.3). fn's error is returned
-// verbatim so callers can errors.Is against the store sentinels.
-func (s *Store) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx) error) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("pgstore: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
-		return fmt.Errorf("pgstore: set tenant context: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("pgstore: commit: %w", err)
-	}
-	return nil
-}
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -93,14 +72,14 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$11, $12, $13, $14, $15, $16, $17, $18, $19
 	)`
 
-	err := s.withTenant(ctx, sess.TenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
 			string(sess.FailureClass), sess.FailureReason,
-			ref, src, nullTime(at), sess.ParentWorkspaceRef,
-			nullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
-			nullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt)
+			ref, src, pgtenant.NullTime(at), sess.ParentWorkspaceRef,
+			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
+			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -114,7 +93,7 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 // miss is indistinguishable from a missing row (§4.2 isolation).
 func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	var out sessionstore.Session
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
 			id, tenantID)
@@ -146,7 +125,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2 FOR UPDATE`,
 			id, tenantID)
@@ -163,9 +142,9 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if _, err := tx.Exec(ctx, updateSQL,
 			id, tenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
-			string(sess.FailureClass), sess.FailureReason, ref, src, nullTime(at),
-			sess.ParentWorkspaceRef, nullTime(sess.RetentionExpiresAt),
-			sess.UploadTokenDigest, nullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
+			string(sess.FailureClass), sess.FailureReason, ref, src, pgtenant.NullTime(at),
+			sess.ParentWorkspaceRef, pgtenant.NullTime(sess.RetentionExpiresAt),
+			sess.UploadTokenDigest, pgtenant.NullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
 		); err != nil {
 			return err
 		}
@@ -197,7 +176,7 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 	q += ` ORDER BY created_at DESC, id`
 
 	var out []sessionstore.Session
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
 			return err
@@ -220,7 +199,7 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 
 // Delete removes the session row. session_messages rows cascade.
 func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`DELETE FROM sessions WHERE id = $1::uuid AND tenant_id = $2`, id, tenantID)
 		if err != nil {
@@ -279,14 +258,6 @@ func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.
 		return "", "", time.Time{}
 	}
 	return ws.Ref, string(ws.Source), ws.Timestamp
-}
-
-// nullTime maps a zero time.Time to a SQL NULL.
-func nullTime(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
 
 // monotonicNext returns now (UTC, truncated to the Postgres

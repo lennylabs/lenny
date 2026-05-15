@@ -16,12 +16,13 @@ package issuedtokenstore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
 
 // Sentinel errors.
@@ -75,27 +76,6 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 const selectList = `jti, tenant_id, sub, token_hash, scope, audience,
 	issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti`
 
-// withTenant runs fn inside a transaction that has set
-// app.current_tenant to tenantID (§12.3).
-func (s *Store) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx) error) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("issuedtokenstore: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.current_tenant', $1, true)", tenantID); err != nil {
-		return fmt.Errorf("issuedtokenstore: set tenant context: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("issuedtokenstore: commit: %w", err)
-	}
-	return nil
-}
-
 // Record persists issued-token metadata. It returns ErrAlreadyExists
 // when the JTI is already recorded — the JTI primary key is what
 // makes write-before-issue idempotent under retry.
@@ -105,11 +85,11 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
-	err := s.withTenant(ctx, tok.TenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, insertSQL,
 			tok.JTI, tok.TenantID, tok.Subject, tok.TokenHash, scopeArg(tok.Scope),
-			tok.Audience, tok.IssuedAt, tok.ExpiresAt, nullTime(tok.RevokedAt),
-			nullString(tok.RevokedReason), nullString(tok.ActSubject), nullString(tok.ParentJTI))
+			tok.Audience, tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
+			pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -123,7 +103,7 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 // A cross-tenant miss is indistinguishable from a missing row.
 func (s *Store) Get(ctx context.Context, tenantID, jti string) (IssuedToken, error) {
 	var out IssuedToken
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
 			jti, tenantID)
@@ -150,11 +130,11 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
 			 WHERE jti = $1 AND tenant_id = $2`,
-			jti, tenantID, at, nullString(reason))
+			jti, tenantID, at, pgtenant.NullString(reason))
 		if err != nil {
 			return err
 		}
@@ -170,7 +150,7 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 // by revocation instant.
 func (s *Store) ListRevoked(ctx context.Context, tenantID string) ([]IssuedToken, error) {
 	var out []IssuedToken
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT `+selectList+` FROM issued_tokens
 			 WHERE tenant_id = $1 AND revoked_at IS NOT NULL
@@ -200,7 +180,7 @@ func (s *Store) ListRevoked(ctx context.Context, tenantID string) ([]IssuedToken
 // since an expired token cannot be presented regardless.
 func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	var deleted int
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`DELETE FROM issued_tokens WHERE tenant_id = $1 AND exp <= $2`,
 			tenantID, cutoff)
@@ -251,21 +231,4 @@ func scopeArg(scope []string) []string {
 		return []string{}
 	}
 	return scope
-}
-
-// nullTime maps a zero time.Time to a SQL NULL.
-func nullTime(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
-}
-
-// nullString maps an empty string to a SQL NULL so the nullable
-// columns distinguish "absent" from "empty".
-func nullString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
