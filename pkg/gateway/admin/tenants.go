@@ -20,6 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -78,6 +79,7 @@ type Router struct {
 	runtimes runtimestore.Store
 	users    userstore.Store
 	pools    poolstore.Store
+	breakers breakerstore.Store
 	clock    func() time.Time
 	audit    AuditSink
 }
@@ -148,6 +150,12 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetPool)))
 		mux.Handle("PUT /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdatePool)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
+	}
+	if r.breakers != nil {
+		mux.Handle("GET /v1/admin/circuit-breakers", r.requireAdmin(http.HandlerFunc(r.handleListBreakers)))
+		mux.Handle("GET /v1/admin/circuit-breakers/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetBreaker)))
+		mux.Handle("POST /v1/admin/circuit-breakers/{name}/open", r.requireAdmin(http.HandlerFunc(r.handleOpenBreaker)))
+		mux.Handle("POST /v1/admin/circuit-breakers/{name}/close", r.requireAdmin(http.HandlerFunc(r.handleCloseBreaker)))
 	}
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))

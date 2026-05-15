@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -74,6 +75,7 @@ func main() {
 	runtimes := runtimestore.NewMemory()
 	users := userstore.NewMemory()
 	pools := poolstore.NewMemory()
+	breakers := breakerstore.NewMemory()
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
@@ -124,7 +126,8 @@ func main() {
 	adminRouter := admin.NewRouter(tenants, admin.Options{}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
-		WithPools(pools)
+		WithPools(pools).
+		WithBreakers(breakers)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
@@ -153,9 +156,10 @@ func main() {
 	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{})
 
 	// Circuit breaker next: rejects requests when any open breaker
-	// matches. Empty registry = no breakers configured = pass-through.
-	cbRegistry := cbmw.NewMemoryRegistry()
-	handler = cbmw.Wrap(handler, cbRegistry, cbmw.Options{})
+	// matches. The shared breakerstore.Memory satisfies cbmw.Registry
+	// so the admin /v1/admin/circuit-breakers endpoints share state
+	// with the request-path middleware.
+	handler = cbmw.Wrap(handler, breakers, cbmw.Options{})
 
 	// Auth outermost. AllowDevRoles is only honoured when the dev
 	// flag is set (LENNY_DEV_MODE=true or --dev-mode); production
