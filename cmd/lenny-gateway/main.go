@@ -61,6 +61,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
+	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -304,6 +305,14 @@ func main() {
 	healthAgg.Register(staticHealthy("sessionstore"))
 	healthAgg.Register(staticHealthy("blobstore"))
 	healthAgg.Register(staticHealthy("executor"))
+	// When a backing service is wired, the §25.3 health API reports
+	// its real reachability instead of a static verdict.
+	if pgPool != nil {
+		healthAgg.Register(backends.Postgres(pgPool, "postgres"))
+	}
+	if redisClient != nil {
+		healthAgg.Register(backends.Redis(redisClient, "redis"))
+	}
 	healthHandler := health.Handler(healthAgg)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)

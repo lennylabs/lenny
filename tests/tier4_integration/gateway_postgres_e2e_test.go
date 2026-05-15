@@ -163,6 +163,22 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	if state != "cancelled" {
 		t.Errorf("session state after DELETE = %q, want cancelled", state)
 	}
+
+	// ---- health: the §25.3 API reports the live Postgres backend ----
+	code, healthResp := do(http.MethodGet, "/v1/admin/health", "", nil)
+	if code != http.StatusOK {
+		t.Fatalf("health: status %d", code)
+	}
+	components, _ := healthResp["components"].([]any)
+	var pgStatus string
+	for _, c := range components {
+		if m, ok := c.(map[string]any); ok && m["name"] == "postgres" {
+			pgStatus, _ = m["status"].(string)
+		}
+	}
+	if pgStatus != "healthy" {
+		t.Errorf("health: postgres component status = %q, want healthy", pgStatus)
+	}
 }
 
 // TestGatewayPostgresIntegrityWarningStartup confirms the §11.7
