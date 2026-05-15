@@ -51,6 +51,13 @@ func SkipUnlessAvailable(t testing.TB) {
 // returns when /v1/sessions is responsive. Skips the test when go is
 // not on PATH (CI environments without Go).
 func Start(t testing.TB) *Process {
+	return StartWith(t)
+}
+
+// StartWith is Start with additional cmd/lenny-gateway flags appended
+// after the bind address — e.g. StartWith(t, "--dev-mode") so a test
+// can exercise the dev-header RBAC path.
+func StartWith(t testing.TB, extraArgs ...string) *Process {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("go not on PATH: %v", err)
@@ -82,7 +89,7 @@ func Start(t testing.TB) *Process {
 		t.Fatalf("create stderr log: %v", err)
 	}
 
-	cmd := exec.Command(binary, "--addr", addr)
+	cmd := exec.Command(binary, append([]string{"--addr", addr}, extraArgs...)...)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
