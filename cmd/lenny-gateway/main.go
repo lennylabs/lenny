@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -49,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
@@ -103,6 +105,8 @@ func main() {
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
+	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -156,7 +160,28 @@ func main() {
 	}
 	blobs := blobstore.NewMemoryStore(nil)
 	pools := poolstore.NewMemory()
-	breakers := breakerstore.NewMemory()
+
+	// Circuit-breaker state goes to Redis when --redis-url is set, so
+	// an operator-opened breaker survives a restart and stays
+	// consistent across replicas (§12.4).
+	var (
+		breakers    breakerRegistry
+		redisClient *redis.Client
+	)
+	if *redisURL != "" {
+		opts, err := redis.ParseURL(*redisURL)
+		if err != nil {
+			log.Fatalf("lenny-gateway: redis url: %v", err)
+		}
+		redisClient = redis.NewClient(opts)
+		if err := redisClient.Ping(context.Background()).Err(); err != nil {
+			log.Fatalf("lenny-gateway: redis: %v", err)
+		}
+		breakers = redisstore.New(redisClient)
+		log.Printf("lenny-gateway: circuit-breaker state persisted to Redis")
+	} else {
+		breakers = breakerstore.NewMemory()
+	}
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
@@ -249,6 +274,7 @@ func main() {
 				"gateway.devMode":     boolStr(*devMode),
 				"gateway.runtimeBin":  *runtimeBin,
 				"gateway.postgres":    boolStr(*postgresDSN != ""),
+				"gateway.redis":       boolStr(*redisURL != ""),
 			},
 		)
 
@@ -398,6 +424,18 @@ func main() {
 	if pgPool != nil {
 		pgPool.Close()
 	}
+	if redisClient != nil {
+		_ = redisClient.Close()
+	}
+}
+
+// breakerRegistry is the breaker-store surface the gateway wires: the
+// breakerstore.Store admin operations plus the cbmw.Registry snapshot
+// the circuit-breaker middleware reads. Both the in-memory and the
+// Redis-backed breaker stores satisfy it.
+type breakerRegistry interface {
+	breakerstore.Store
+	cbmw.Registry
 }
 
 // verifyPostgresSchema fails fast when the gateway is pointed at a
