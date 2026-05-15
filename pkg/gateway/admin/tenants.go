@@ -152,6 +152,12 @@ func (r *Router) Handler() http.Handler {
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
 	}
+	// §25.4 self-introspection — available to any authenticated
+	// caller, no role gate. Returns the calling principal's identity
+	// + role grants so a freshly-onboarded admin agent can discover
+	// what operations it is permitted to invoke.
+	mux.HandleFunc("GET /v1/admin/me", r.handleMe)
+	mux.HandleFunc("GET /v1/admin/me/authorized-tools", r.handleAuthorizedTools)
 	return mux
 }
 
