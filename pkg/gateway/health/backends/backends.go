@@ -12,6 +12,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,6 +24,11 @@ import (
 // probeTimeout bounds a health ping so a hung backend cannot stall the
 // §25.3 health request path.
 const probeTimeout = 2 * time.Second
+
+// breakerCacheStaleAfter is the §11.7 staleness budget for the
+// circuit-breaker cache: a snapshot older than this is reported
+// degraded because the cache has stopped reconciling with Redis.
+const breakerCacheStaleAfter = 5 * time.Second
 
 // Postgres returns a health.Checker that pings the Postgres pool.
 func Postgres(pool *pgxpool.Pool, name string) health.Checker {
@@ -69,6 +75,50 @@ func Redis(client redis.UniversalClient, name string) health.Checker {
 				Name:   name,
 				Status: health.StatusHealthy,
 				Detail: "redis reachable",
+			}
+		},
+	}
+}
+
+// BreakerCache is the freshness view of the §11.6 circuit-breaker
+// cache. *cachingstore.Store satisfies it.
+type BreakerCache interface {
+	LastRefresh() time.Time
+}
+
+// CircuitBreakerCache returns a health.Checker that reports the
+// freshness of the §11.6 circuit-breaker cache. When the cache has not
+// reconciled with Redis within the §11.7 5-second budget the component
+// is degraded rather than unhealthy: the gateway keeps admitting
+// requests against the last known snapshot, which §11.7 states is
+// strictly better than reporting nothing during a Redis outage.
+func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
+	return health.CheckerFunc{
+		ComponentName: name,
+		Fn: func(context.Context) health.Component {
+			last := cache.LastRefresh()
+			if last.IsZero() {
+				return health.Component{
+					Name:            name,
+					Status:          health.StatusDegraded,
+					Detail:          "circuit-breaker cache has not completed its first refresh",
+					SuggestedAction: "verify Redis reachability; the gateway admits requests against an empty breaker snapshot until the first refresh succeeds",
+					RunbookRef:      "redis-failure",
+				}
+			}
+			if age := time.Since(last); age > breakerCacheStaleAfter {
+				return health.Component{
+					Name:            name,
+					Status:          health.StatusDegraded,
+					Detail:          fmt.Sprintf("circuit-breaker cache is %s stale; serving the last known snapshot", age.Round(time.Second)),
+					SuggestedAction: "verify Redis reachability; the gateway admits requests against a stale breaker snapshot until the cache refreshes",
+					RunbookRef:      "redis-failure",
+				}
+			}
+			return health.Component{
+				Name:   name,
+				Status: health.StatusHealthy,
+				Detail: "circuit-breaker cache fresh",
 			}
 		},
 	}

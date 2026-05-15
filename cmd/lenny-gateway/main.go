@@ -354,6 +354,9 @@ func main() {
 	if redisClient != nil {
 		healthAgg.Register(backends.Redis(redisClient, "redis"))
 	}
+	if breakerCache != nil {
+		healthAgg.Register(backends.CircuitBreakerCache(breakerCache, "circuit-breaker-cache"))
+	}
 	healthHandler := health.Handler(healthAgg)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)
