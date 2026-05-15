@@ -1,0 +1,185 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+// Contract test for the platform tenant registry, exercising the
+// Postgres-backed pkg/gateway/tenantstore/pgstore against a real
+// container. Covers CRUD, id validation, soft-delete (and its
+// idempotency), the IncludeDeleted list filter, and the
+// auth.TenantRegistry IsRegistered probe.
+package stores_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
+	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
+)
+
+func tenantID(t *testing.T) string {
+	t.Helper()
+	return "acme-" + newUUID(t)[:8]
+}
+
+func TestTenantStoreContract(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := tenantpg.New(pg.Pool)
+	ctx := context.Background()
+
+	t.Run("create and get round-trip", func(t *testing.T) {
+		want := tenantstore.Tenant{
+			ID:                  tenantID(t),
+			DisplayName:         "Acme Corporation",
+			ComplianceProfile:   "soc2",
+			DataResidencyRegion: "us-east-1",
+			WorkspaceTier:       "T2",
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.DisplayName != want.DisplayName || got.ComplianceProfile != want.ComplianceProfile ||
+			got.DataResidencyRegion != want.DataResidencyRegion || got.WorkspaceTier != want.WorkspaceTier {
+			t.Errorf("field mismatch:\n got %+v\nwant %+v", got, want)
+		}
+		if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+			t.Error("Create did not default the audit timestamps")
+		}
+		if !got.IsActive() {
+			t.Error("freshly created tenant reports inactive")
+		}
+	})
+
+	t.Run("duplicate and invalid ids are rejected", func(t *testing.T) {
+		id := tenantID(t)
+		if err := store.Create(ctx, tenantstore.Tenant{ID: id}); err != nil {
+			t.Fatalf("first Create: %v", err)
+		}
+		if err := store.Create(ctx, tenantstore.Tenant{ID: id}); !errors.Is(err, tenantstore.ErrAlreadyExists) {
+			t.Errorf("duplicate Create: got %v, want ErrAlreadyExists", err)
+		}
+		if err := store.Create(ctx, tenantstore.Tenant{ID: "bad id with spaces"}); err == nil {
+			t.Error("Create with an invalid tenant id should be rejected")
+		}
+	})
+
+	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
+		if _, err := store.Get(ctx, tenantID(t)); !errors.Is(err, tenantstore.ErrNotFound) {
+			t.Errorf("Get missing: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("update mutates and advances updated_at", func(t *testing.T) {
+		id := tenantID(t)
+		if err := store.Create(ctx, tenantstore.Tenant{ID: id, DisplayName: "Before"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		before, _ := store.Get(ctx, id)
+		updated, err := store.Update(ctx, id, func(tn *tenantstore.Tenant) error {
+			tn.DisplayName = "After"
+			tn.ComplianceProfile = "hipaa"
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if updated.DisplayName != "After" || updated.ComplianceProfile != "hipaa" {
+			t.Errorf("Update result not applied: %+v", updated)
+		}
+		if !updated.UpdatedAt.After(before.UpdatedAt) {
+			t.Errorf("UpdatedAt did not advance: before=%v after=%v", before.UpdatedAt, updated.UpdatedAt)
+		}
+		got, _ := store.Get(ctx, id)
+		if got.DisplayName != "After" {
+			t.Errorf("persisted DisplayName = %q, want After", got.DisplayName)
+		}
+		if _, err := store.Update(ctx, tenantID(t), func(*tenantstore.Tenant) error {
+			return nil
+		}); !errors.Is(err, tenantstore.ErrNotFound) {
+			t.Errorf("Update missing: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("soft delete is idempotent and reflected in list", func(t *testing.T) {
+		marker := newUUID(t)[:8]
+		base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+		ids := []string{marker + "-a", marker + "-b", marker + "-c"}
+		for i, id := range ids {
+			if err := store.Create(ctx, tenantstore.Tenant{
+				ID: id, CreatedAt: base.Add(time.Duration(i) * time.Minute),
+			}); err != nil {
+				t.Fatalf("Create %s: %v", id, err)
+			}
+		}
+		countMarked := func(filter tenantstore.ListFilter) int {
+			t.Helper()
+			all, err := store.List(ctx, filter)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			n := 0
+			for _, tn := range all {
+				if strings.HasPrefix(tn.ID, marker) {
+					n++
+				}
+			}
+			return n
+		}
+		if n := countMarked(tenantstore.ListFilter{}); n != 3 {
+			t.Fatalf("List before delete: %d marked tenants, want 3", n)
+		}
+
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		if err := store.SoftDelete(ctx, ids[0], at); err != nil {
+			t.Fatalf("SoftDelete: %v", err)
+		}
+		// Idempotent: a second soft-delete is a no-op success.
+		if err := store.SoftDelete(ctx, ids[0], at.Add(time.Minute)); err != nil {
+			t.Errorf("idempotent SoftDelete: %v", err)
+		}
+		if err := store.SoftDelete(ctx, tenantID(t), at); !errors.Is(err, tenantstore.ErrNotFound) {
+			t.Errorf("SoftDelete missing: got %v, want ErrNotFound", err)
+		}
+
+		deleted, err := store.Get(ctx, ids[0])
+		if err != nil {
+			t.Fatalf("Get soft-deleted: %v", err)
+		}
+		if deleted.IsActive() || deleted.DeletedAt.IsZero() {
+			t.Errorf("soft-deleted tenant still active: %+v", deleted)
+		}
+		if n := countMarked(tenantstore.ListFilter{}); n != 2 {
+			t.Errorf("List default after delete: %d marked, want 2", n)
+		}
+		if n := countMarked(tenantstore.ListFilter{IncludeDeleted: true}); n != 3 {
+			t.Errorf("List IncludeDeleted after delete: %d marked, want 3", n)
+		}
+	})
+
+	t.Run("is registered tracks tenant lifecycle", func(t *testing.T) {
+		id := tenantID(t)
+		if reg, err := store.IsRegistered(id); err != nil || reg {
+			t.Errorf("IsRegistered before create: got %v,%v want false,nil", reg, err)
+		}
+		if err := store.Create(ctx, tenantstore.Tenant{ID: id}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if reg, err := store.IsRegistered(id); err != nil || !reg {
+			t.Errorf("IsRegistered after create: got %v,%v want true,nil", reg, err)
+		}
+		if err := store.SoftDelete(ctx, id, time.Now().UTC()); err != nil {
+			t.Fatalf("SoftDelete: %v", err)
+		}
+		if reg, err := store.IsRegistered(id); err != nil || reg {
+			t.Errorf("IsRegistered after soft-delete: got %v,%v want false,nil", reg, err)
+		}
+	})
+}

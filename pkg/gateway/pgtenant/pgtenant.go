@@ -57,3 +57,16 @@ func NullString(s string) *string {
 	}
 	return &s
 }
+
+// MonotonicNext returns now (UTC, truncated to the Postgres
+// timestamptz microsecond resolution) when it is strictly after prev,
+// and prev + 1µs otherwise. Stores use it for updated_at columns so
+// the value strictly advances even when two writes land within the
+// same microsecond.
+func MonotonicNext(prev, now time.Time) time.Time {
+	now = now.UTC().Truncate(time.Microsecond)
+	if now.After(prev) {
+		return now
+	}
+	return prev.Add(time.Microsecond)
+}

@@ -137,7 +137,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if err := mutate(&sess); err != nil {
 			return err
 		}
-		sess.UpdatedAt = monotonicNext(prevUpdated, time.Now())
+		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
 		if _, err := tx.Exec(ctx, updateSQL,
 			id, tenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
@@ -258,17 +258,6 @@ func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.
 		return "", "", time.Time{}
 	}
 	return ws.Ref, string(ws.Source), ws.Timestamp
-}
-
-// monotonicNext returns now (UTC, truncated to the Postgres
-// timestamptz microsecond resolution) when it is strictly after prev,
-// and prev + 1µs otherwise.
-func monotonicNext(prev, now time.Time) time.Time {
-	now = now.UTC().Truncate(time.Microsecond)
-	if now.After(prev) {
-		return now
-	}
-	return prev.Add(time.Microsecond)
 }
 
 // normalizeMiss maps pgx.ErrNoRows and the invalid-UUID-text error to
