@@ -104,6 +104,81 @@ func TestRequestRecording(t *testing.T) {
 	}
 }
 
+// spec: 15.3 (Google / Gemini provider in the multi-provider LLM proxy)
+// diagnosis: A request to the Gemini :generateContent endpoint
+//
+//	must return the documented candidates[].content.parts[].text
+//	shape with the echo of the user message.
+func TestGoogleEchoesUser(t *testing.T) {
+	t.Parallel()
+	llm := llmprovider.New(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{
+			{
+				"role":  "user",
+				"parts": []map[string]any{{"text": "hello gemini"}},
+			},
+		},
+	})
+	resp, err := http.Post(llm.URL()+"/v1/models/gemini-1.5-pro:generateContent",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v\nbody: %s", err, raw)
+	}
+	cands, _ := out["candidates"].([]any)
+	if len(cands) != 1 {
+		t.Fatalf("candidates length: want 1, got %d", len(cands))
+	}
+	cand, _ := cands[0].(map[string]any)
+	content, _ := cand["content"].(map[string]any)
+	parts, _ := content["parts"].([]any)
+	if len(parts) != 1 {
+		t.Fatalf("parts length: want 1, got %d", len(parts))
+	}
+	first, _ := parts[0].(map[string]any)
+	if first["text"] != "hello gemini" {
+		t.Errorf("echo: want %q, got %v", "hello gemini", first["text"])
+	}
+	if cand["finishReason"] != "STOP" {
+		t.Errorf("finishReason: want STOP, got %v", cand["finishReason"])
+	}
+}
+
+// spec: 15.3 (Google streaming endpoint)
+// diagnosis: :streamGenerateContent must emit NDJSON candidate
+//
+//	updates the Gemini SDK can parse.
+func TestGoogleStreaming(t *testing.T) {
+	t.Parallel()
+	llm := llmprovider.New(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{
+			{"role": "user", "parts": []map[string]any{{"text": "stream me"}}},
+		},
+	})
+	resp, err := http.Post(llm.URL()+"/v1/models/gemini-1.5-pro:streamGenerateContent",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"text":"stream me"`) {
+		t.Errorf("streaming body missing echoed text: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"finishReason":"STOP"`) {
+		t.Errorf("streaming body missing terminal frame: %s", raw)
+	}
+}
+
 // spec: 12.2.3 (response override drives error / non-default paths)
 // diagnosis: SetResponseOverride did not intercept; the override
 //

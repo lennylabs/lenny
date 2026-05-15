@@ -121,9 +121,94 @@ func (s *Stub) handle(w http.ResponseWriter, r *http.Request) {
 		s.handleOpenAIChat(w, r, body)
 	case strings.Contains(r.URL.Path, "/v1/responses"):
 		s.handleOpenAIResponses(w, r, body)
+	case strings.Contains(r.URL.Path, ":generateContent"),
+		strings.Contains(r.URL.Path, ":streamGenerateContent"):
+		s.handleGoogle(w, r, body)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleGoogle echoes the last user message in the Gemini /
+// Vertex AI generateContent shape. The path looks like:
+//
+//	/v1/models/<model>:generateContent
+//	/v1/models/<model>:streamGenerateContent
+//
+// Streaming uses chunked transfer encoding with newline-delimited
+// JSON candidate updates, matching the Vertex AI / Gemini API
+// conventions.
+func (s *Stub) handleGoogle(w http.ResponseWriter, r *http.Request, body []byte) {
+	echo := extractLastUserGoogleMessage(body)
+	if echo == "" {
+		echo = extractLastUserMessage(body) // fall back to the OpenAI/Anthropic extractor
+	}
+	streaming := strings.Contains(r.URL.Path, ":streamGenerateContent") || isStreaming(r, body)
+
+	if streaming {
+		w.Header().Set("Content-Type", "application/json")
+		flusher, _ := w.(http.Flusher)
+		chunk := fmt.Sprintf(`{"candidates":[{"content":{"parts":[{"text":%q}],"role":"model"},"index":0}]}`+"\n", echo)
+		_, _ = io.WriteString(w, chunk)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		final := `{"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}` + "\n"
+		_, _ = io.WriteString(w, final)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"candidates": []any{
+			map[string]any{
+				"content": map[string]any{
+					"parts": []any{map[string]any{"text": echo}},
+					"role":  "model",
+				},
+				"finishReason": "STOP",
+				"index":        0,
+			},
+		},
+		"usageMetadata": map[string]any{
+			"promptTokenCount":     1,
+			"candidatesTokenCount": 1,
+			"totalTokenCount":      2,
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// extractLastUserGoogleMessage walks the Gemini request body for
+// the last `parts[].text` under the user role. Returns "" when
+// no user message is found.
+func extractLastUserGoogleMessage(body []byte) string {
+	var req struct {
+		Contents []struct {
+			Role  string `json:"role"`
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"contents"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return ""
+	}
+	for i := len(req.Contents) - 1; i >= 0; i-- {
+		c := req.Contents[i]
+		if c.Role != "" && c.Role != "user" {
+			continue
+		}
+		for j := len(c.Parts) - 1; j >= 0; j-- {
+			if c.Parts[j].Text != "" {
+				return c.Parts[j].Text
+			}
+		}
+	}
+	return ""
 }
 
 // handleAnthropic echoes the last user message in the Anthropic
