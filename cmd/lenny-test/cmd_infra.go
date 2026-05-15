@@ -67,9 +67,20 @@ func infraDown(args []string) int {
 	case "kind":
 		return kindDown()
 	case "all":
-		composeDown("compose")
-		composeDown("compose-mtls")
-		return kindDown()
+		// Collect the worst exit code across all three sub-teardowns
+		// so a partial failure surfaces as a non-zero exit instead
+		// of being masked by the kind teardown's status.
+		worst := 0
+		if rc := composeDown("compose"); rc != 0 {
+			worst = rc
+		}
+		if rc := composeDown("compose-mtls"); rc != 0 && rc > worst {
+			worst = rc
+		}
+		if rc := kindDown(); rc != 0 && rc > worst {
+			worst = rc
+		}
+		return worst
 	default:
 		fmt.Fprintf(os.Stderr, "lenny-test: unknown profile %q\n", profile)
 		return 2
