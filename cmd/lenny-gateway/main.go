@@ -71,6 +71,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	quotamw "github.com/lennylabs/lenny/pkg/gateway/middleware/quota"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -90,6 +91,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
+	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -398,7 +400,12 @@ func main() {
 
 	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).
-	idemStore := idemmw.NewMemoryStore()
+	// The §11.5 key cache is durable under --postgres-dsn so an
+	// idempotent retry replays across gateway replicas and restarts.
+	var idemStore idemmw.Store = idemmw.NewMemoryStore()
+	if pgPool != nil {
+		idemStore = idempgstore.New(pgPool)
+	}
 	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{})
 
 	// Circuit breaker next: rejects requests when any open breaker
@@ -486,6 +493,27 @@ func main() {
 					if err := revCache.Rehydrate(context.Background(), lister, issued); err != nil && watchdogCtx.Err() == nil {
 						log.Printf("lenny-gateway: revocation rehydration failed: %v", err)
 					}
+				}
+			}
+		}()
+	}
+
+	// ----- §11.5 idempotency-key TTL garbage collection -----
+	// Reclaims idempotency_keys rows past the 24-hour retention window
+	// so the durable key cache stays bounded.
+	if pgPool != nil {
+		idemGC := idempgstore.New(pgPool)
+		lister := tenantsLister{tenants}
+		sweepIdempotencyKeys(context.Background(), idemGC, lister)
+		go func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchdogCtx.Done():
+					return
+				case <-ticker.C:
+					sweepIdempotencyKeys(watchdogCtx, idemGC, lister)
 				}
 			}
 		}()
@@ -585,6 +613,24 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 		out = append(out, row.ID)
 	}
 	return out, nil
+}
+
+// sweepIdempotencyKeys runs one §11.5 TTL garbage-collection pass,
+// deleting idempotency_keys rows older than the 24-hour retention
+// window. The sweep is per-tenant because the lenny_tenant_guard
+// trigger fires for every DELETE.
+func sweepIdempotencyKeys(ctx context.Context, gc *idempgstore.Store, lister tenantsLister) {
+	tenants, err := lister.ListTenants(ctx)
+	if err != nil {
+		log.Printf("lenny-gateway: idempotency GC: listing tenants failed: %v", err)
+		return
+	}
+	cutoff := time.Now().Add(-idempotency.TTL)
+	for _, tenant := range tenants {
+		if _, err := gc.DeleteExpired(ctx, tenant, cutoff); err != nil && ctx.Err() == nil {
+			log.Printf("lenny-gateway: idempotency GC: tenant %q sweep failed: %v", tenant, err)
+		}
+	}
 }
 
 // staticHealthy returns a §25.3 health Checker that always reports

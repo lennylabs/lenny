@@ -33,7 +33,7 @@ func prodMigrations(t *testing.T) string {
 var prodTables = []string{
 	"tenants", "runtime_definitions", "sessions", "session_messages",
 	"audit_log", "billing_events", "issued_tokens", "agent_pod_state",
-	"users", "connectors",
+	"users", "connectors", "idempotency_keys",
 }
 
 // execTenant runs sql inside a transaction that has set
@@ -73,6 +73,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHavePKLeadingColumn(t, ctx, pg, "billing_events", "tenant_id")
 	// runtime_definitions is platform-global (§5.1): keyed by name.
 	mustHavePKLeadingColumn(t, ctx, pg, "runtime_definitions", "name")
+	// idempotency_keys is tenant-scoped (§11.5): PK leads with tenant_id.
+	mustHavePKLeadingColumn(t, ctx, pg, "idempotency_keys", "tenant_id")
 	mustHaveIndex(t, ctx, pg, "sessions", "idx_sessions_tenant_created")
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_tenant_sub")
 	mustHaveIndex(t, ctx, pg, "agent_pod_state", "idx_agent_pod_state_pool_state")
