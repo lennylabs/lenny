@@ -144,20 +144,36 @@ lenny/
     ├── groups.yaml                # Named test selection groups
     ├── results/                   # Latest verdict, kept under .gitignore
     │   └── latest.json
-    ├── testinfra/                 # Shared infrastructure
-    │   ├── containers/            # testcontainers-go wrappers
-    │   ├── kind/                  # Kind cluster lifecycle helpers
-    │   ├── compose/               # docker-compose harness
-    │   ├── fixtures/              # Seeded tenants, users, runtimes, pools
-    │   ├── mocks/                 # LLM provider mocks, OAuth mocks
+    ├── testinfra/                 # Shared infrastructure (see tests/testinfra/README.md)
     │   ├── assertions/            # Cross-cutting assertions (RLS, state machine)
-    │   ├── matrix/                # Contract-test matrix runner
     │   ├── chaos/                 # Failure injection primitives
+    │   ├── cloud/                 # Tier 6 cloud-provider lifecycle
+    │   ├── compose/               # docker-compose harness
+    │   ├── containers/            # testcontainers-go wrappers
+    │   ├── envtest/               # controller-runtime envtest for Tier 2 K8s
+    │   ├── fixtures/              # Seeded tenants, users, runtimes, pools
+    │   ├── fuzz/                  # §19.2 fuzz-crash corpus mirror
+    │   ├── gateway/               # cmd/lenny-gateway subprocess for Tier 4
+    │   ├── golden/                # Golden-file roundtrip helpers
+    │   ├── goleak/                # Per-test goroutine-leak detection
+    │   ├── kind/                  # Kind cluster lifecycle helpers
     │   ├── load/                  # k6 / vegeta wrappers
-    │   ├── timectl/               # Deterministic time control
+    │   ├── matrix/                # Contract-test matrix runner
+    │   ├── mocks/                 # LLM provider mocks, OAuth mocks
+    │   ├── ports/                 # Random free-port allocator
     │   ├── randctl/               # Seeded RNG
-    │   ├── diagnosis/             # Diagnosis extraction
-    │   └── verdict/               # JSON verdict producer
+    │   ├── runtimes/              # Test runtime images + conformance fixtures
+    │   ├── schematest/            # JSON Schema + protobuf roundtrip helpers
+    │   ├── sdkhelper/             # Per-language SDK conformance scaffolding
+    │   ├── security/              # SBOM, cosign, ZAP, trivy, kube-bench wrappers
+    │   ├── stubs/                 # In-process fault models (KMS, OIDC, SIEM)
+    │   ├── timectl/               # Deterministic time control
+    │   └── wait/                  # Polling helpers (For, ForResult)
+    │
+    │   # Diagnosis extraction and verdict production live in
+    │   # cmd/lenny-test/ (cmd_validate.go validate-diagnosis,
+    │   # verdict.go) rather than as separate testinfra packages;
+    │   # both are exposed through the harness's subcommands.
     ├── tier0_static/
     ├── tier1_unit/                # Co-located with packages; this is the index
     ├── tier2_component/
