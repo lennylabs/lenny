@@ -7,6 +7,7 @@ tmp/
 /lenny-test
 /lenny-test-cached
 /lenny-compliance
+/lenny-controller
 /lenny-gateway
 /lenny-token-service
 /echo
