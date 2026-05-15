@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -76,6 +77,7 @@ func main() {
 	users := userstore.NewMemory()
 	pools := poolstore.NewMemory()
 	breakers := breakerstore.NewMemory()
+	connectors := connectorstore.NewMemory()
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
@@ -127,7 +129,8 @@ func main() {
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
-		WithBreakers(breakers)
+		WithBreakers(breakers).
+		WithConnectors(connectors)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
