@@ -10,6 +10,7 @@ tmp/
 /lenny-controller
 /lenny-gateway
 /lenny-token-service
+/lenny-webhook
 /echo
 /streaming-echo
 /startup_latency
