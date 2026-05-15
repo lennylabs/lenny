@@ -36,6 +36,14 @@ type Session struct {
 	// otherwise.
 	FailureClass session.FailureClass
 
+	// FailureReason is the coded reason string the gateway attaches
+	// when the session is transitioned to `failed`. Per §6.2 / §11.3
+	// these include `CREATED_TIMEOUT`, `FINALIZE_TIMEOUT`,
+	// `READY_TIMEOUT`, `STARTING_TIMEOUT`, plus the §7.1 failure
+	// causes. Distinct from FailureClass: the class is a coarse
+	// audit bucket, the reason is a specific cause string.
+	FailureReason string
+
 	// RuntimeRef identifies the runtime this session targets. Stored
 	// at create-time and immutable across the session lifetime.
 	RuntimeRef string
