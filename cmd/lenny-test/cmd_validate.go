@@ -565,32 +565,55 @@ func hasDiagnosisBefore(lines []string, idx int) bool {
 	return hasAnnotationBefore(lines, idx, "// diagnosis:")
 }
 
-// hasNotImplementedSkipAfter checks the 8 lines following the function
-// signature for a skip-style scaffold marker. Scaffolds use one of:
+// hasNotImplementedSkipAfter checks the 8 lines following the
+// function signature for a skip-style scaffold marker. Scaffolds
+// use one of:
 //
-//   - t.Skip("not implemented: …")          → carry the diagnosis inline
-//   - kind.SkipUnlessAvailable(t)           → tier-5 e2e_kind one-liner
-//   - cloud.SkipUnlessAuthorized(t)         → future tier-6 helper
+//   - t.Skip("not implemented: …")        → standard scaffold
+//   - t.Skipf("not implemented: …", …)    → Skipf variant
+//   - t.Skip("phase-gated: …")            → blocked behind a phase
+//   - t.Skip("flaky-time: …")              → §17.10 quarantine
+//   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
+//   - cloud.SkipUnlessAuthorized(t)       → tier-6 helper
 //   - any *.SkipUnless* harness helper that gates the test on an
 //     infrastructure precondition
 //
-// Either form is acceptable: the skip message names the spec section
-// and the missing implementation, which is exactly the information
-// `// diagnosis:` is meant to carry, and it has the additional
-// benefit that the harness sees it at runtime too. When the scaffold
-// is replaced with a real test, the author writes the canonical
-// `// spec:` and `// diagnosis:` annotations above the function.
+// Either form is acceptable: the skip message names the spec
+// section and the missing implementation, which is exactly the
+// information `// diagnosis:` is meant to carry, and it has the
+// additional benefit that the harness sees it at runtime too. When
+// the scaffold is replaced with a real test, the author writes the
+// canonical `// spec:` and `// diagnosis:` annotations above the
+// function.
 func hasNotImplementedSkipAfter(lines []string, idx int) bool {
 	end := idx + 8
 	if end >= len(lines) {
 		end = len(lines) - 1
 	}
+	// Both t.Skip(...) and t.Skipf(...) are acceptable. The prefix
+	// list names every reason category §17.9 allows on a scaffold.
+	prefixes := []string{
+		"\"not implemented:",
+		"\"phase-gated:",
+		"\"not-yet-applicable:",
+		"\"not yet applicable:",
+		"\"flaky-time:",
+		"\"flaky-network:",
+		"\"flaky-ordering:",
+		"\"quarantined:",
+	}
 	for i := idx; i <= end; i++ {
-		if containsSubstr(lines[i], "t.Skip(\"not implemented:") {
-			return true
+		line := lines[i]
+		if !containsSubstr(line, "t.Skip(") && !containsSubstr(line, "t.Skipf(") {
+			if containsSubstr(line, ".SkipUnless") {
+				return true
+			}
+			continue
 		}
-		if containsSubstr(lines[i], ".SkipUnless") {
-			return true
+		for _, p := range prefixes {
+			if containsSubstr(line, p) {
+				return true
+			}
 		}
 	}
 	return false
