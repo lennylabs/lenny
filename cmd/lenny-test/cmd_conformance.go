@@ -35,13 +35,18 @@ func runConformanceSubcommand(args []string) int {
 		return 2
 	}
 
-	// Locate cmd/lenny-compliance.
+	// Locate cmd/lenny-compliance. The harness exists today as a
+	// stub; the full Standard-and-Full battery ships in the Phase
+	// 2.8 deliverable per TESTING.md §13. Report that staging
+	// explicitly so users don't think the missing binary is an
+	// install bug.
 	if _, err := exec.LookPath("lenny-compliance"); err != nil {
 		fmt.Fprintf(os.Stderr,
-			"conformance: lenny-compliance not on PATH.\n"+
-				"  Per TESTING.md §12.10, cmd/lenny-compliance ships the conformance harness.\n"+
-				"  Build it with `go build -o lenny-compliance ./cmd/lenny-compliance` once the\n"+
-				"  binary lands in the repository.\n")
+			"conformance: lenny-compliance is not yet available.\n"+
+				"  The conformance harness ships in TESTING.md §13.x phases 2 (Basic), 2.8 (Full),\n"+
+				"  and 9 (Standard via delegation-echo). Build the in-repo skeleton with\n"+
+				"  `go build -o $(go env GOPATH)/bin/lenny-compliance ./cmd/lenny-compliance`\n"+
+				"  and rerun. Run `make install` to set this up alongside lenny-test.\n")
 		return 1
 	}
 
