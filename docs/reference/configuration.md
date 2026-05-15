@@ -414,7 +414,7 @@ Feature-gated Helm values control which admission webhooks and subsystem templat
 | `features.drainReadiness` | bool | `false` | Enable pre-drain MinIO health check before pod eviction. | `lenny-drain-readiness` admission webhook | Phase 8 |
 | `features.compliance` | bool | `false` | Enable data residency and T4 node isolation validators for regulated-tenant workloads. | `lenny-data-residency-validator`, `lenny-t4-node-isolation` admission webhooks | Phase 13 |
 
-Four webhooks are unconditionally rendered and always expected regardless of flag state: `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, and the `lenny-crd-conversion` conversion webhook. These form the Phase 3.5 baseline.
+Five webhooks are unconditionally rendered and always expected regardless of flag state: `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, the `lenny-crd-conversion` conversion webhook, and `lenny-ephemeral-container-cred-guard`. These form the Phase 3.5 baseline per [§17.2](../../spec/17_deployment-topology.md#172-namespace-layout).
 
 ---
 

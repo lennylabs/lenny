@@ -158,15 +158,15 @@ Lenny uses the **Developer Certificate of Origin (DCO)**: contributors certify a
 
 ### Milestone-gated development
 
-Lenny follows a milestone-gated development process where each milestone has defined deliverables and exit criteria. The current plan lives in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) and is directional — ordering and timing will shift as implementation surfaces new constraints. Governance-relevant gates include:
+Lenny follows a milestone-gated development process where each milestone has defined deliverables and exit criteria. The full plan lives in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) and enumerates Phase 0 through Phase 17b. The sequence is directional — ordering and timing will shift as implementation surfaces new constraints. The governance-relevant gates map to specific spec/18 phases:
 
-| Milestone | Key deliverables |
-|:----------|:-----------------|
-| **Foundation** | License (ADR-008), repository setup, CI pipeline. |
-| **First working slice** | `make run` local dev mode, echo runtime, `CONTRIBUTING.md`, `GOVERNANCE.md` draft, benchmark harness. |
-| **Pre-hardening baselines** | Load tests at Growth-sized deployment load, pre-hardening performance baselines. |
-| **SLO validation** | Full security hardening active, SLO compliance gate. |
-| **Community launch** | Documentation review, governance finalization, comparison guides, community onboarding. |
+| Milestone | Spec/18 phase | Key deliverables |
+|:----------|:--------------|:-----------------|
+| **Foundation** | Phase 0 | License (ADR-008), ADR-007 verification, repository setup, branch-protection and DCO policy, CI pipeline. |
+| **First working slice** | Phase 2 | `make run` local dev mode, echo runtime, `cmd/lenny-compliance --level basic`, runtime-author SDKs (Go, Python, TypeScript), `CONTRIBUTING.md`, `GOVERNANCE.md` draft, startup-latency benchmark. |
+| **Pre-hardening baselines** | Phase 13.5 | Tier 7 cloud load scenarios, Postgres write-pattern benchmark, HPA/KEDA pipeline, Tier 1→2 and Tier 2→3 promotion-gate validation. |
+| **SLO validation** | Phase 14.5 | Full security hardening active (Phase 14: pod-security webhook, release-time cosign signing, JWT signing-key rotation, NetworkPolicy parity audits), Phase 13.5 scenarios re-run under hardening. |
+| **Community launch** | Phase 17a | Reference runtime catalog (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`), `lenny-ctl install` wizard, `kubectl-lenny` krew plugin, embedded mode (`lenny up`), web playground, `GOVERNANCE.md` finalized, BDfN → steering committee transition. |
 
 ### Release cadence
 

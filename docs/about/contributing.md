@@ -31,7 +31,7 @@ Lenny is in the **design phase**. The [technical specification](https://github.c
 
 ### Code pull requests
 
-Large code contributions against core platform components are not the best fit yet — there is no merged codebase for PRs to land against, and the early build sequence is tightly coupled. Small fixes (typos, broken links, documentation improvements) are welcome anytime. Code PRs against the core open up once the [first working slice](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) lands. This section will be updated the day that changes.
+Large code contributions against core platform components are not the best fit yet — there is no merged codebase for PRs to land against, and the early build sequence is tightly coupled. Small fixes (typos, broken links, documentation improvements) are welcome anytime. Code PRs against the core open up once the first working slice — Phase 2 in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) (`make run` local dev mode plus the echo runtime) — lands. Until then, the early phases (Phase 0 through Phase 2) are maintainer-driven; unsolicited PRs against core platform components will not be reviewed or merged. This section will be updated the day that changes.
 
 ---
 

@@ -21,7 +21,7 @@ Lenny is in the **design phase**. The [technical specification](https://github.c
 
 This page tracks what is actually wired up today, so you know which parts of the docs describe running code and which parts describe work ahead.
 
-The build sequence itself is directional. Surface ordering and timing will shift as implementation surfaces new constraints; treat `spec/18_build-sequence.md` as the authoritative but evolving source.
+The build sequence enumerates the v1 application-code phases from Phase 0 (repository bootstrap) through Phase 17b (memory, semantic caching, eval hooks), with Deliverables, Prerequisites, and Exit criteria for each. The sequence is directional: surface ordering and timing will shift as implementation surfaces new constraints. Treat [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) as the authoritative but evolving source.
 
 ## Legend
 
