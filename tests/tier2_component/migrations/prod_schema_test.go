@@ -33,7 +33,7 @@ func prodMigrations(t *testing.T) string {
 var prodTables = []string{
 	"tenants", "runtime_definitions", "sessions", "session_messages",
 	"audit_log", "billing_events", "issued_tokens", "agent_pod_state",
-	"users",
+	"users", "connectors",
 }
 
 // execTenant runs sql inside a transaction that has set

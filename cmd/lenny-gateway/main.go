@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
@@ -116,6 +117,7 @@ func main() {
 		runtimes    runtimestore.Store
 		transcripts transcriptstore.Store
 		users       userstore.Store
+		connectors  connectorstore.Store
 		pgPool      *pgxpool.Pool
 	)
 	if *postgresDSN != "" {
@@ -142,18 +144,19 @@ func main() {
 		runtimes = runtimepg.New(pool)
 		transcripts = transcriptpg.New(pool)
 		users = userpg.New(pool)
-		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, and users to Postgres")
+		connectors = connectorpg.New(pool)
+		log.Printf("lenny-gateway: persisting sessions, transcripts, tenants, runtimes, users, and connectors to Postgres")
 	} else {
 		sessions = memstore.New()
 		tenants = tenantstore.NewMemory()
 		runtimes = runtimestore.NewMemory()
 		transcripts = transcriptstore.NewMemory()
 		users = userstore.NewMemory()
+		connectors = connectorstore.NewMemory()
 	}
 	blobs := blobstore.NewMemoryStore(nil)
 	pools := poolstore.NewMemory()
 	breakers := breakerstore.NewMemory()
-	connectors := connectorstore.NewMemory()
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
