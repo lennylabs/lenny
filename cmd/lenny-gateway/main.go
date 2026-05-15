@@ -39,6 +39,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
@@ -125,7 +126,12 @@ func main() {
 	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
 	// ----- Admin API -----
-	adminRouter := admin.NewRouter(tenants, admin.Options{}).
+	// Every admin mutation is committed to a §11.7 per-tenant audit
+	// hash chain via the ChainAuditSink.
+	auditChains := audit.NewChainSet()
+	adminRouter := admin.NewRouter(tenants, admin.Options{
+		Audit: admin.NewChainAuditSink(auditChains, nil),
+	}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
