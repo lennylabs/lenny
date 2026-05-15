@@ -41,6 +41,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -98,6 +99,8 @@ func main() {
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
 	mux.Handle("/v1/blobs/", sessionSrv.Handler())
 	mux.Handle("/v1/admin/", adminRouter.Handler())
+	mux.Handle("/openapi.yaml", openapi.Handler())
+	mux.Handle("/v1/openapi.json", openapi.Handler())
 
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
