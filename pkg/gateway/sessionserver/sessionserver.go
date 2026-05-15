@@ -250,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
+	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", s.handleEvents)
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", s.handleToolUseApprove)
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", s.handleToolUseDeny)
