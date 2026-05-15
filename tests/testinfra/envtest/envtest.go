@@ -1,130 +1,133 @@
 // SPDX-License-Identifier: MIT
 
 // Package envtest wraps sigs.k8s.io/controller-runtime/pkg/envtest so
-// tier-2 controller tests can drive a fake Kubernetes API server.
-// The package depends on the KUBEBUILDER_ASSETS environment variable
-// (the path to the kube-apiserver + etcd binaries) and a tier-2
-// controller binary; when either is absent, SkipUnlessAvailable
-// short-circuits the test.
+// tier-2 controller tests can drive a real kube-apiserver and etcd
+// without provisioning a full cluster. Start boots the API server,
+// installs the lenny.dev CRDs from charts/lenny/crds, and returns a
+// *rest.Config the caller hands to client-go.
 //
-// The wrapper is intentionally minimal — it exposes Start/Stop and a
-// *rest.Config the caller passes to client-go. The §12.2.4
-// controllers (Warm Pool, Pool Scaling, Token Service) chain this
-// with their own reconciliation drivers.
+// The kube-apiserver and etcd binaries are located in this order: the
+// KUBEBUILDER_ASSETS environment variable when set (authoritative),
+// otherwise the setup-envtest cache. When neither resolves, Start and
+// SkipUnlessAvailable skip the test so the suite runs cleanly on hosts
+// without the binaries. Install them with scripts/setup-dev.sh or
+// directly with `setup-envtest use 1.31.0`.
 //
 // Usage:
 //
 //	env := envtest.Start(t)
-//	cfg := env.RESTConfig()
-//	cl, _ := client.New(cfg, client.Options{})
+//	cl, _ := client.New(env.RESTConfig(), client.Options{Scheme: scheme})
 //	// ... reconcile ...
-//
-// # Environment variables
-//
-//	KUBEBUILDER_ASSETS  Path to the kube-apiserver + etcd binaries
-//	                    that envtest spawns. Set by `setup-envtest
-//	                    use 1.31.x` (a controller-runtime tool).
-//	                    Required; SkipUnlessAvailable short-circuits
-//	                    when unset and no fallback location resolves.
-//	LENNY_ENVTEST_REAL  When set to "1", forces envtest to run even
-//	                    if a faster in-process fake would suffice.
-//	                    Default (unset) lets the package choose.
 package envtest
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"k8s.io/client-go/rest"
+	crenvtest "sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// ErrKubebuilderAssetsMissing signals that the KUBEBUILDER_ASSETS
-// environment variable is unset and no fallback path resolves to an
-// installed asset bundle.
-var ErrKubebuilderAssetsMissing = errors.New("envtest: KUBEBUILDER_ASSETS unset and no fallback assets found")
+// k8sVersion is the envtest Kubernetes version. It tracks the
+// Kubernetes line controller-runtime v0.19 is built against.
+const k8sVersion = "1.31.0"
 
-// Environment represents a running envtest control plane.
-type Environment struct {
-	t       testing.TB
-	assets  string
-	apiHost string
-	apiPort int
-
-	// cmd is the kube-apiserver subprocess. envtest also starts
-	// etcd; for the Phase 0 scaffold we keep the surface minimal
-	// (callers that need richer control use Real). The cmd is nil
-	// in scaffold mode.
-	cmd *exec.Cmd
+// hasAPIServer reports whether dir holds the kube-apiserver binary.
+func hasAPIServer(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, "kube-apiserver"))
+	return err == nil
 }
 
-// SkipUnlessAvailable skips the test when KUBEBUILDER_ASSETS is unset
-// and the canonical fallback paths are absent.
-func SkipUnlessAvailable(t testing.TB) string {
-	t.Helper()
-	assets := os.Getenv("KUBEBUILDER_ASSETS")
-	if assets != "" {
-		if _, err := os.Stat(filepath.Join(assets, "kube-apiserver")); err == nil {
-			return assets
+// resolveAssets locates the directory holding the kube-apiserver and
+// etcd binaries. An explicitly-set KUBEBUILDER_ASSETS is authoritative:
+// when present it is used as-is and no fallback is attempted, so a
+// caller can point at a known-bad path to exercise the skip path. When
+// KUBEBUILDER_ASSETS is unset, the setup-envtest cache is queried.
+func resolveAssets() (string, bool) {
+	if v, ok := os.LookupEnv("KUBEBUILDER_ASSETS"); ok {
+		return v, hasAPIServer(v)
+	}
+	dir := setupEnvtestPath()
+	return dir, hasAPIServer(dir)
+}
+
+// setupEnvtestPath queries the setup-envtest cache for an installed
+// asset bundle. It returns "" when setup-envtest is not installed or
+// no bundle for k8sVersion is cached.
+func setupEnvtestPath() string {
+	bin := "setup-envtest"
+	if _, err := exec.LookPath(bin); err != nil {
+		out, err := exec.Command("go", "env", "GOPATH").Output()
+		if err != nil {
+			return ""
 		}
-	}
-	// Common fallback installed by `setup-envtest use 1.31.x`.
-	candidate := defaultAssetsPath()
-	if _, err := os.Stat(filepath.Join(candidate, "kube-apiserver")); err == nil {
-		return candidate
-	}
-	t.Skipf("envtest.SkipUnlessAvailable: KUBEBUILDER_ASSETS unset and no fallback at %s. Install via `go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest && setup-envtest use 1.31.x`.", candidate)
-	return ""
-}
-
-// Start brings up envtest and returns an *Environment with a
-// t.Cleanup that stops it. The scaffold implementation today
-// short-circuits to Skip until callers explicitly opt in via
-// LENNY_ENVTEST_REAL=1 — most tier-2 controller tests are still
-// scaffolds, so we don't pay the ~3s envtest startup cost on every
-// invocation.
-//
-// When LENNY_ENVTEST_REAL=1 is set, this function would spawn
-// kube-apiserver + etcd via sigs.k8s.io/controller-runtime/pkg/envtest.
-// That dependency is not yet vendored; the function emits a clear
-// "not yet wired" diagnosis pointing at the integration task.
-func Start(t testing.TB) *Environment {
-	t.Helper()
-	assets := SkipUnlessAvailable(t)
-	if os.Getenv("LENNY_ENVTEST_REAL") != "1" {
-		t.Skip("envtest.Start: scaffold mode (set LENNY_ENVTEST_REAL=1 to enable; requires controller-runtime/pkg/envtest in go.mod)")
-	}
-	env := &Environment{t: t, assets: assets}
-	t.Cleanup(func() {
-		if env.cmd != nil && env.cmd.Process != nil {
-			_ = env.cmd.Process.Kill()
+		cand := filepath.Join(strings.TrimSpace(string(out)), "bin", "setup-envtest")
+		if _, err := os.Stat(cand); err != nil {
+			return ""
 		}
-	})
-	return env
-}
-
-// RESTConfig returns the kube-apiserver *rest.Config — but the type
-// surface is abstracted as map[string]string here to avoid pulling
-// in client-go at the testinfra layer. Real callers should pull
-// k8s.io/client-go/rest themselves and construct a config from the
-// (host, port, ca-cert) tuple Environment exposes.
-func (e *Environment) Endpoint() string {
-	if e.apiHost == "" || e.apiPort == 0 {
-		return ""
+		bin = cand
 	}
-	return fmt.Sprintf("https://%s:%d", e.apiHost, e.apiPort)
-}
-
-// AssetsPath returns the resolved KUBEBUILDER_ASSETS path.
-func (e *Environment) AssetsPath() string { return e.assets }
-
-// defaultAssetsPath is the conventional install location for
-// setup-envtest under ~/.local/share/kubebuilder-envtest.
-func defaultAssetsPath() string {
-	home, err := os.UserHomeDir()
+	// -i restricts the lookup to already-installed versions and errors
+	// out rather than reaching the network when none is cached.
+	out, err := exec.Command(bin, "use", k8sVersion, "-i", "-p", "path").Output()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".local", "share", "kubebuilder-envtest", "k8s", "current")
+	return strings.TrimSpace(string(out))
+}
+
+// SkipUnlessAvailable resolves the envtest assets directory, skipping
+// the test when the binaries are not installed. It returns the
+// resolved directory.
+func SkipUnlessAvailable(t testing.TB) string {
+	t.Helper()
+	dir, ok := resolveAssets()
+	if !ok {
+		t.Skipf("envtest: kube-apiserver/etcd binaries unavailable; set KUBEBUILDER_ASSETS or run `setup-envtest use %s` (scripts/setup-dev.sh installs them)", k8sVersion)
+	}
+	return dir
+}
+
+// Environment is a running envtest control plane with the lenny.dev
+// CRDs installed.
+type Environment struct {
+	cfg    *rest.Config
+	assets string
+}
+
+// RESTConfig returns the rest config addressing the test API server.
+func (e *Environment) RESTConfig() *rest.Config { return e.cfg }
+
+// AssetsPath returns the resolved kube-apiserver/etcd binary directory.
+func (e *Environment) AssetsPath() string { return e.assets }
+
+// Start boots an envtest API server and etcd, installs the lenny.dev
+// CRDs from charts/lenny/crds, and registers a t.Cleanup that stops
+// them. It skips the test when the envtest binaries are not installed.
+func Start(t testing.TB) *Environment {
+	t.Helper()
+	assets := SkipUnlessAvailable(t)
+	env := &crenvtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")},
+		ErrorIfCRDPathMissing: true,
+		BinaryAssetsDirectory: assets,
+	}
+	cfg, err := env.Start()
+	if err != nil {
+		t.Fatalf("envtest: start API server: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := env.Stop(); err != nil {
+			t.Logf("envtest: stop API server: %v", err)
+		}
+	})
+	return &Environment{cfg: cfg, assets: assets}
 }

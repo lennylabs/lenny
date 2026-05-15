@@ -10,12 +10,8 @@ package controllers_test
 
 import "testing"
 
-// TestWarmPoolController — reconciliation loop against a fake
-// client-go lister, then against envtest. Pool grows to target warm
-// count, scales down on idle, respects PDB, recovers leader election.
-func TestWarmPoolController(t *testing.T) {
-	t.Skip("not implemented: §12.2.4 Warm Pool Controller — requires the controller binary + the pool-warm/sdk-warm CRD + envtest fixture")
-}
+// TestWarmPoolController is implemented in warmpool_test.go: it runs
+// the reconciler against an envtest API server.
 
 // TestPoolScalingController — scaling-formula computation,
 // admission-denied retry-with-backoff, PoolScalingAdmissionStuck alert

@@ -390,7 +390,8 @@ install_go_tools() {
     "protoc-gen-go google.golang.org/protobuf/cmd/protoc-gen-go@latest" \
     "protoc-gen-go-grpc google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest" \
     "oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest" \
-    "controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5"; do
+    "controller-gen sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5" \
+    "setup-envtest sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19"; do
     # shellcheck disable=SC2086
     set -- $spec
     local cmd="$1"; shift
@@ -407,6 +408,30 @@ install_go_tools() {
   done
 }
 
+install_envtest_assets() {
+  # The controller integration tests run against envtest, which needs a
+  # kube-apiserver + etcd pair. setup-envtest downloads them into a
+  # local cache; the tests discover the cache with `setup-envtest use
+  # -p path`. The Kubernetes version tracks controller-runtime v0.19.
+  local envtest_k8s_version="1.31.0"
+  if ! have_cmd go; then
+    lenny_log_warn "skipping envtest assets: go is not on PATH"
+    return
+  fi
+  local setup_envtest
+  setup_envtest="$(go env GOPATH)/bin/setup-envtest"
+  if [[ ! -x "$setup_envtest" ]]; then
+    lenny_log_warn "skipping envtest assets: setup-envtest is not installed"
+    return
+  fi
+  if ! (( FORCE )) && "$setup_envtest" use "$envtest_k8s_version" -i -p path >/dev/null 2>&1; then
+    lenny_log_ok "envtest assets ($envtest_k8s_version)"
+    return
+  fi
+  lenny_log_miss "envtest assets ($envtest_k8s_version): downloading"
+  run_or_dry "$setup_envtest" use "$envtest_k8s_version"
+}
+
 install_core() {
   install_go
   install_docker_check
@@ -420,6 +445,7 @@ install_core() {
   install_conftest
   install_golangci_lint
   install_go_tools
+  install_envtest_assets
 }
 
 # ---- Kubernetes toolchain (tier 5) ----
