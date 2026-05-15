@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -224,11 +225,14 @@ func flattenTiers(tiers map[string][]string) []string {
 
 // listSubsets returns the subset names from groups.subsets.yaml.
 // A minimal YAML reader (key:-prefix lines at depth 2) is used so
-// we don't depend on yaml.v3 in cmd_list.go.
-func listSubsets() []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "groups.subsets.yaml"))
+// we don't depend on yaml.v3 in cmd_list.go. Missing or malformed
+// files fail loudly rather than returning a synthesized
+// "(could not read ...)" row.
+func listSubsets() ([]string, error) {
+	path := filepath.Join(repoRoot(), groupsSubsetsFile)
+	body, err := os.ReadFile(path)
 	if err != nil {
-		return []string{"(could not read groups.subsets.yaml: " + err.Error() + ")"}
+		return nil, fmt.Errorf("read %s: %w", groupsSubsetsFile, err)
 	}
 	out := []string{}
 	for _, line := range strings.Split(string(body), "\n") {
@@ -244,5 +248,5 @@ func listSubsets() []string {
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }

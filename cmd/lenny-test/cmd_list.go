@@ -56,10 +56,20 @@ func runList(args []string) int {
 		out["tiers"] = allTiers()
 	}
 	if *subsetsOnly {
-		out["subsets"] = listSubsets()
+		subsets, err := listSubsets()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			return 1
+		}
+		out["subsets"] = subsets
 	}
 	if *specsOnly {
-		out["specs"] = specSections()
+		specs, err := specSections()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			return 1
+		}
+		out["specs"] = specs
 	}
 
 	if *jsonOut {
@@ -205,22 +215,26 @@ func knownGroups() []string {
 	}
 }
 
-func specSections() []string {
+// specSections returns the spec section IDs from spec-map.json.
+// The catalog file is required: missing or malformed files fail
+// loudly instead of returning a synthesized "(could not read ...)"
+// row that would pollute downstream JSON consumers.
+func specSections() ([]string, error) {
 	path := filepath.Join(repoRoot(), specMapFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return []string{fmt.Sprintf("(could not read spec-map.json: %v)", err)}
+		return nil, fmt.Errorf("read %s: %w", specMapFile, err)
 	}
 	var doc struct {
 		Sections map[string]any `json:"sections"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return []string{fmt.Sprintf("(could not parse spec-map.json: %v)", err)}
+		return nil, fmt.Errorf("parse %s: %w", specMapFile, err)
 	}
 	out := make([]string, 0, len(doc.Sections))
 	for k := range doc.Sections {
 		out = append(out, k)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
