@@ -73,6 +73,17 @@ func TestParserRejectsUnsupportedSchemaVersion(t *testing.T) {
 	t.Skip("not-yet-applicable: phase-2 — schema-version gate per spec §14.1")
 }
 
+// spec: 14.1 (proto3 default 0 must be rejected at ingress)
+// diagnosis: WorkspacePlan.schema_version is proto3 int32 with default
+//
+//	0; a producer that forgets to stamp the version sends 0
+//	on the wire. The gateway validator MUST reject this with
+//	400 WORKSPACE_PLAN_INVALID rather than silently treating
+//	it as "unset → v1".
+func TestParserRejectsZeroSchemaVersion(t *testing.T) {
+	t.Skip("not-yet-applicable: phase-2 — schema-version-zero guard per spec §14.1 / schemas/lenny-adapter.proto")
+}
+
 // spec: 14
 // diagnosis: An unknown source.type must be skipped, not rejected, with a
 //

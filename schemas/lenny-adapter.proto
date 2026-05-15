@@ -197,6 +197,14 @@ message SlotId {
 // WorkspacePlan is the proto-encoded form of the JSON Schema in
 // workspaceplan-v1.json. The gateway translates between JSON and proto;
 // the wire schema is authoritative.
+//
+// schema_version MUST be > 0 on every WorkspacePlan the gateway emits or
+// accepts. Per §14.1 the only currently-valid value is 1; a 0 value
+// (the proto3 default for an unset field) is rejected by the gateway
+// validator at ingress with WORKSPACE_PLAN_INVALID. Consumers that
+// receive a value > 1 they don't recognize follow the §15.4.1
+// forward-read rule: keep the field, log a degraded-fidelity event,
+// and proceed.
 message WorkspacePlan {
   int32 schema_version = 1;
   repeated WorkspaceSource sources = 2;
