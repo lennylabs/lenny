@@ -36,7 +36,7 @@ func runRun(args []string) int {
 	dryRunFlag := fs.Bool("dry-run", false, "resolve the selector and print what would run; do not execute")
 	continueFlag := fs.Bool("continue-on-failure", false, "do not stop at the first failing tier")
 	outputFlag := fs.String("output", "human", "json | junit | github-annotations | human | tap")
-	verdictFile := fs.String("verdict-file", "tests/results/latest.json", "path to write the JSON verdict")
+	verdictFile := fs.String("verdict-file", latestVerdictFile, "path to write the JSON verdict")
 	cachedFlag := fs.Bool("cached", false, "use the cached container daemon if available")
 	noInfraFlag := fs.Bool("no-infra", false, "skip infrastructure provisioning")
 	updateGoldenFlag := fs.Bool("update-golden", false, "rewrite golden files from test output (sets GOLDEN_UPDATE=1)")

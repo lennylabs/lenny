@@ -25,7 +25,7 @@ import (
 //	lenny-test report --dir tests/results --output json
 func runReport(args []string) int {
 	fs_ := flag.NewFlagSet("report", flag.ExitOnError)
-	dir := fs_.String("dir", "tests/results", "directory containing verdict JSON files")
+	dir := fs_.String("dir", resultsDir, "directory containing verdict JSON files")
 	output := fs_.String("output", "human", "human | markdown | json")
 	if err := fs_.Parse(args); err != nil {
 		return 2

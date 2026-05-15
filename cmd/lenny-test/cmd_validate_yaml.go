@@ -418,12 +418,13 @@ func summarizeProblems(problems []string) string {
 }
 
 // yamlPaths returns the canonical paths to the YAML config files
-// under tests/. validate-maps validates each in turn.
+// under tests/. validate-maps validates each in turn. The repo-
+// relative names live in paths.go.
 func yamlPaths(root string) (groups, subsets, exceptions, flakeBudget, parityMatrix string) {
-	groups = filepath.Join(root, "tests", "groups.yaml")
-	subsets = filepath.Join(root, "tests", "groups.subsets.yaml")
-	exceptions = filepath.Join(root, "tests", "spec-map-exceptions.yaml")
-	flakeBudget = filepath.Join(root, "tests", "flake-budget.yaml")
-	parityMatrix = filepath.Join(root, "tests", "tier6_e2e_cloud", "parity-matrix.yaml")
+	groups = filepath.Join(root, groupsFile)
+	subsets = filepath.Join(root, groupsSubsetsFile)
+	exceptions = filepath.Join(root, specMapExceptionsFile)
+	flakeBudget = filepath.Join(root, flakeBudgetFile)
+	parityMatrix = filepath.Join(root, parityMatrixFile)
 	return
 }

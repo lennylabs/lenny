@@ -30,7 +30,7 @@ import (
 //	lenny-test comment --verdict latest.json --output comment.md
 func runComment(args []string) int {
 	fs := flag.NewFlagSet("comment", flag.ExitOnError)
-	verdictPath := fs.String("verdict", "tests/results/latest.json", "path to the verdict JSON")
+	verdictPath := fs.String("verdict", latestVerdictFile, "path to the verdict JSON")
 	out := fs.String("output", "", "write to this file (default: stdout)")
 	if err := fs.Parse(args); err != nil {
 		return 2
