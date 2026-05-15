@@ -70,7 +70,13 @@ clean: ## Remove ./bin and the test results directory
 	@rm -rf bin tests/results
 
 .PHONY: run
-run: ## (Future) Native-process dev loop with SQLite + in-memory stores
-	@echo "make run: cmd/lenny-dev is a later-phase deliverable per TESTING.md §17.4."
-	@echo "Today: use 'make test' for the unit tier or 'make pr' for the PR group."
-	@exit 1
+run: ## Native-process dev loop: gateway + in-memory stores + echo runtime
+	@mkdir -p bin
+	@echo "  build echo runtime"
+	@go build -o bin/echo ./cmd/runtimes/echo
+	@echo "  build lenny-gateway"
+	@go build -o bin/lenny-gateway ./cmd/lenny-gateway
+	@echo "  starting gateway on :8080 (dev mode, echo runtime, in-memory stores)"
+	@echo "  POST http://localhost:8080/v1/sessions/start to drive a session;"
+	@echo "  GET  http://localhost:8080/healthz for liveness; Ctrl-C to stop."
+	@./bin/lenny-gateway --addr :8080 --dev-mode --runtime-bin ./bin/echo

@@ -69,6 +69,8 @@ func main() {
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
+	runtimeBin := flag.String("runtime-bin", "",
+		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -115,7 +117,14 @@ func main() {
 	})
 
 	// ----- Session API + Executor -----
-	exec := executor.NewEchoExecutor()
+	// Default: the in-process echo executor. With --runtime-bin, the
+	// gateway dispatches to a child process speaking the §15.4.1
+	// adapter protocol — the `make run` developer loop.
+	var exec executor.Executor = executor.NewEchoExecutor()
+	if *runtimeBin != "" {
+		exec = executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: *runtimeBin})
+		log.Printf("lenny-gateway: dispatching sessions to runtime binary %s", *runtimeBin)
+	}
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,

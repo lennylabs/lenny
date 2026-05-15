@@ -51,14 +51,14 @@ type OutputPart struct {
 	// Type is the §15.4.1 content type: `text`, `tool_call`,
 	// `tool_result`, etc. The minimal echo executor emits only
 	// `text`.
-	Type string
+	Type string `json:"type"`
 
 	// Text carries the inline text content when Type == "text".
-	Text string
+	Text string `json:"text,omitempty"`
 
 	// Ref carries the §4.5 lenny-blob:// reference when the content
 	// is bound by a blob.
-	Ref string
+	Ref string `json:"ref,omitempty"`
 }
 
 // Executor is the gateway-side abstraction for routing a session's
