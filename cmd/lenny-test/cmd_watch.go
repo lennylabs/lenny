@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -10,8 +11,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -75,26 +78,40 @@ func runWatch(args []string) int {
 	fmt.Printf("lenny-test watch: %s\n", strings.Join(cmdArgs, " "))
 	fmt.Printf("polling: %s; dirs: %s\n", *interval, strings.Join(dirs, ", "))
 
+	// signal.NotifyContext cancels on SIGINT/SIGTERM so the watch
+	// loop exits cleanly and any in-flight child process gets
+	// the same signal via shared process group.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// First run immediately.
-	runOnce(self, cmdArgs)
+	runOnce(ctx, self, cmdArgs)
 	prev := snapshotTree(dirs)
 
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
 	for {
-		time.Sleep(*interval)
+		select {
+		case <-ctx.Done():
+			fmt.Println("\nwatch: interrupted")
+			return 130
+		case <-ticker.C:
+		}
 		cur := snapshotTree(dirs)
 		if cur != prev {
 			fmt.Println()
 			fmt.Printf("watch: change detected at %s\n", time.Now().Format("15:04:05"))
-			runOnce(self, cmdArgs)
+			runOnce(ctx, self, cmdArgs)
 			prev = cur
 		}
 	}
 }
 
 // runOnce invokes lenny-test in the foreground and prints its
-// output as a pass-through.
-func runOnce(self string, args []string) {
-	c := exec.Command(self, args...)
+// output as a pass-through. The context is honored: when canceled
+// the child process is signaled via the cmd's Process.Signal.
+func runOnce(ctx context.Context, self string, args []string) {
+	c := exec.CommandContext(ctx, self, args...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	_ = c.Run()
