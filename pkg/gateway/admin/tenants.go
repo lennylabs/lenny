@@ -196,7 +196,13 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	row, _ := r.tenants.Get(req.Context(), body.ID)
-	principal, _ := authmw.FromContext(req.Context())
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		// requireAdmin should have caught this; defensive assertion.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
 	r.emit(req.Context(), principal, "admin.tenant.created", body.ID, map[string]any{
 		"displayName":         row.DisplayName,
 		"complianceProfile":   row.ComplianceProfile,
@@ -283,7 +289,13 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	principal, _ := authmw.FromContext(req.Context())
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		// requireAdmin should have caught this; defensive assertion.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
 	r.emit(req.Context(), principal, "admin.tenant.updated", id, map[string]any{
 		"changedFields": changedFields(body),
 	})
@@ -325,7 +337,13 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	principal, _ := authmw.FromContext(req.Context())
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		// requireAdmin should have caught this; defensive assertion.
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
 	r.emit(req.Context(), principal, "admin.tenant.soft_deleted", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }

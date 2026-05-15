@@ -32,12 +32,45 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
+
+// getPrincipal exposes the auth middleware's Principal lookup so the
+// session handlers stay decoupled from the middleware package's
+// internal context key naming.
+func getPrincipal(r *http.Request) (authmw.Principal, bool) {
+	return authmw.FromContext(r.Context())
+}
+
+// authValidateTenantID re-exports auth.ValidateTenantID under a name
+// that does not collide with the local `auth` middleware alias.
+func authValidateTenantID(s string) error { return auth.ValidateTenantID(s) }
+
+// MaxJSONBodyBytes is the platform cap on JSON request bodies for
+// every endpoint that decodes JSON (create, derive, extend-retention,
+// admin mutations). Spec §13.4 fixes the per-archive ceilings; this
+// constant covers the smaller per-request control plane and
+// matches the typical CRD admission body size. 1 MiB is well above
+// realistic envelopes (a populous workspacePlan is ~32 KiB) while
+// preventing memory-exhaustion DoS on the gateway.
+const MaxJSONBodyBytes int64 = 1024 * 1024
+
+// jsonReader returns r.Body wrapped in http.MaxBytesReader so JSON
+// decoders see io.EOF / *http.MaxBytesError on oversize inputs
+// before any allocation. Handlers using json.Decoder must wrap their
+// body with this helper.
+func jsonReader(w http.ResponseWriter, r *http.Request) interface {
+	Read(p []byte) (int, error)
+	Close() error
+} {
+	return http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
+}
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
@@ -140,7 +173,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions", s.handleList)
 	mux.HandleFunc("GET /v1/sessions/{id}", s.handleGet)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.handleDelete)
-	mux.HandleFunc("POST /v1/sessions/{id}/finalize", s.handleTransition(session.EndpointFinalize, transitionFinalize))
+	mux.HandleFunc("POST /v1/sessions/{id}/finalize", s.handleFinalize)
 	mux.HandleFunc("POST /v1/sessions/{id}/start", s.handleTransition(session.EndpointStart, transitionStart))
 	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", s.handleTransition(session.EndpointInterrupt, transitionInterrupt))
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate", s.handleTransition(session.EndpointTerminate, transitionTerminate))
@@ -232,7 +265,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 
 	var req CreateSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body := jsonReader(w, r)
+	defer body.Close()
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
@@ -287,13 +322,26 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	// §7.1 step 8: mint the single-use uploadToken stamped on the
 	// session creation response. TTL = maxCreatedStateTimeoutSeconds
-	// (uploadtoken.DefaultTTL — 300 s).
-	tok, err := s.uploadIssuer.Issue(row.ID, 0)
+	// (uploadtoken.DefaultTTL — 300 s). The digest + expiry are
+	// stored on the row so the finalize handler can consume the
+	// token through the §7.1 single-use tracker.
+	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, 0)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			fmt.Sprintf("upload token issuance failed: %v", err), nil)
 		return
 	}
+	if _, err := s.store.Update(r.Context(), tenantID, row.ID, func(row *sessionstore.Session) error {
+		row.UploadTokenDigest = parsed.Digest
+		row.UploadTokenExpiry = parsed.Expiry
+		return nil
+	}); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			fmt.Sprintf("session row update failed: %v", err), nil)
+		return
+	}
+	row.UploadTokenDigest = parsed.Digest
+	row.UploadTokenExpiry = parsed.Expiry
 
 	resp := CreateSessionResponse{
 		SessionResponse:       toResponse(row),
@@ -472,6 +520,52 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 // the materialisation step and goes straight to ready.
 func transitionFinalize(row *sessionstore.Session) { row.State = session.StateReady }
 
+// handleFinalize wraps the §15.1 finalize transition with §7.1
+// uploadToken single-use invalidation. After the row transitions to
+// ready (the upload window closes), the digest stamped at create is
+// marked consumed via the ConsumedTracker so a captured token cannot
+// be replayed against /upload after finalize.
+//
+// The token consumption fires after the state mutation succeeds — if
+// the mutation is rejected (precondition or store error), the token
+// remains valid so the client can retry. Idempotent finalize calls
+// (the row is already ready) hit the §15.1 precondition rejection
+// before reaching the consume step.
+func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointFinalize,
+		CurrentState: row.State,
+	}); err != nil {
+		s.writePreconditionError(w, err)
+		return
+	}
+	updated, err := s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
+		transitionFinalize(r)
+		return nil
+	})
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// §7.1 single-use uploadToken invalidation: once the upload
+	// window closes, the digest cannot mint another upload.
+	if s.uploadVerifier != nil && updated.UploadTokenDigest != "" {
+		_ = s.uploadVerifier.ConsumeDigest(updated.UploadTokenDigest, updated.UploadTokenExpiry)
+	}
+	s.writeSession(w, http.StatusOK, updated)
+}
+
 // transitionStart: per §15.1, /start transitions ready → starting →
 // running. Short-circuits to running.
 func transitionStart(row *sessionstore.Session) { row.State = session.StateRunning }
@@ -489,11 +583,28 @@ func transitionTerminate(row *sessionstore.Session) { row.State = session.StateC
 // gateway short-circuits to running.
 func transitionResume(row *sessionstore.Session) { row.State = session.StateRunning }
 
-// resolveTenant reads the dev-mode X-Lenny-Tenant-ID header, falling
-// back to "default" per §10.2 single-tenant mode.
+// resolveTenant returns the tenant id for this request, preferring
+// the §10.2 authenticated Principal over any client-supplied header.
+// The order is:
+//
+//  1. Principal.TenantID from auth middleware (canonical).
+//  2. X-Lenny-Tenant-ID dev header — only honoured when its value
+//     passes the §10.2 format check; rejected values fall through
+//     so the request lands on the default tenant instead of
+//     reaching the store with an attacker-controlled identifier.
+//  3. "default" per §10.2 single-tenant mode.
+//
+// The returned tenant id is always either a §10.2-valid identifier
+// or `default`. Handlers can therefore use it directly in store
+// queries and §4.5 blob URIs without re-validating.
 func (s *Server) resolveTenant(r *http.Request) string {
+	if p, ok := getPrincipal(r); ok && p.TenantID != "" {
+		return p.TenantID
+	}
 	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-		return v
+		if err := authValidateTenantID(v); err == nil {
+			return v
+		}
 	}
 	return "default"
 }

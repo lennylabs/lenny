@@ -564,6 +564,14 @@ func validateGitClone(v *GitClone, i int) *SubErr {
 			Reason: ReasonGitNonHTTPS,
 			Message: "gitClone v1 accepts HTTPS URLs only; SSH and git:// are deferred post-V1"}
 	}
+	if u.User != nil {
+		// §14 / §13.5: in-URL credentials bypass the credential-lease
+		// path that gates HTTPS clone auth. Reject so the only path
+		// to authenticated clones is via gitClone.auth.leaseScope.
+		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
+			Reason: ReasonGitInvalidURL,
+			Message: "gitClone url must not embed userinfo; use gitClone.auth.leaseScope for authenticated clones"}
+	}
 	if v.Ref == "" {
 		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].ref", i),
 			Reason: ReasonMissingRequired, Message: "ref is required"}
@@ -647,7 +655,8 @@ func validateMode(mode string, i int, field string, allowSticky bool) *SubErr {
 
 // validatePath enforces §13.4-derived path invariants for any
 // workspace-relative path supplied in a plan: no absolute paths, no
-// `..` segments, bounded depth and length.
+// `..` segments, no backslash / NUL / control bytes, bounded depth
+// and length.
 func validatePath(p string, i int, field string) *SubErr {
 	if len(p) > MaxPathLength {
 		return &SubErr{
@@ -663,6 +672,29 @@ func validatePath(p string, i int, field string) *SubErr {
 			Field:       fmt.Sprintf("sources[%d].%s", i, field),
 			Reason:      ReasonAbsolutePath,
 			Message:     "absolute paths are prohibited; supply a workspace-relative path",
+		}
+	}
+	// Reject control / NUL / backslash bytes. NUL terminates strings
+	// in C path APIs and would truncate the materialised path;
+	// backslash is the Windows separator and a runtime that splits on
+	// `\` could escape the workspace via `foo\..\..\etc`.
+	for j := 0; j < len(p); j++ {
+		c := p[j]
+		if c == 0 || c < 0x20 || c == 0x7f {
+			return &SubErr{
+				SourceIndex: i,
+				Field:       fmt.Sprintf("sources[%d].%s", i, field),
+				Reason:      ReasonPathTraversal,
+				Message:     fmt.Sprintf("path contains a forbidden control byte (0x%02x)", c),
+			}
+		}
+		if c == '\\' {
+			return &SubErr{
+				SourceIndex: i,
+				Field:       fmt.Sprintf("sources[%d].%s", i, field),
+				Reason:      ReasonPathTraversal,
+				Message:     "path contains a backslash; use forward slashes only",
+			}
 		}
 	}
 	segs := strings.Split(p, "/")

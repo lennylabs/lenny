@@ -95,6 +95,19 @@ type Options struct {
 	// surface.
 	AllowDevHeaders bool
 
+	// AllowDevRoles, when true, additionally honours the
+	// X-Lenny-Roles dev header so dev-mode callers can claim RBAC
+	// roles. SECURITY: This MUST be false in production —
+	// X-Lenny-Roles is an unauthenticated client-controlled value
+	// and admits self-claiming `platform-admin`. Production
+	// deployments leave this false (the dev-header path silently
+	// drops Roles) so RBAC is anchored to the Bearer JWT only.
+	//
+	// AllowDevHeaders without AllowDevRoles is the recommended dev
+	// mode: tenant + user_id round-trip through headers for
+	// convenience, but role claims remain authenticated.
+	AllowDevRoles bool
+
 	// RequireAuth, when true, rejects requests that carry neither a
 	// Bearer token nor (under AllowDevHeaders) the dev tenant header.
 	// When false, unauthenticated requests pass through with no
@@ -191,7 +204,9 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	p := Principal{
 		Subject:  r.Header.Get("X-Lenny-User-ID"),
 		TenantID: tenant.TenantID,
-		Roles:    parseRolesHeader(r.Header.Get("X-Lenny-Roles")),
+	}
+	if m.opts.AllowDevRoles {
+		p.Roles = parseRolesHeader(r.Header.Get("X-Lenny-Roles"))
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	r = r.WithContext(ctx)

@@ -241,22 +241,39 @@ func NewIssuer(ring *KeyRing, clock func() time.Time) *Issuer {
 // Issue mints a new uploadToken for sessionID with the supplied TTL.
 // When ttl is zero, DefaultTTL is used.
 func (i *Issuer) Issue(sessionID string, ttl time.Duration) (string, error) {
+	tok, _, err := i.IssueDetailed(sessionID, ttl)
+	return tok, err
+}
+
+// IssueDetailed mints a new uploadToken and additionally returns the
+// parsed form so the caller can persist the digest + expiry alongside
+// the session row. The minted token is identical to what Issue
+// returns; the parsed form is computed in-place.
+func (i *Issuer) IssueDetailed(sessionID string, ttl time.Duration) (string, ParsedToken, error) {
 	if sessionID == "" {
-		return "", fmt.Errorf("uploadtoken: empty session id")
+		return "", ParsedToken{}, fmt.Errorf("uploadtoken: empty session id")
 	}
 	if strings.ContainsAny(sessionID, ".") {
 		// The wire format uses `.` as the field separator, so session
 		// ids must not contain dots. The §15.1 session-id pattern is
 		// `sess_<hex>` and never contains dots; reject anything else
 		// at the issuance boundary.
-		return "", fmt.Errorf("uploadtoken: session id %q contains a forbidden \".\"", sessionID)
+		return "", ParsedToken{}, fmt.Errorf("uploadtoken: session id %q contains a forbidden \".\"", sessionID)
 	}
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
-	expiry := i.clock().Add(ttl).Unix()
-	signed := sign(i.ring.Active(), sessionID, expiry)
-	return signed, nil
+	now := i.clock()
+	expiry := now.Add(ttl).Unix()
+	active := i.ring.Active()
+	signed := sign(active, sessionID, expiry)
+	parsed := ParsedToken{
+		SessionID: sessionID,
+		Expiry:    time.Unix(expiry, 0).UTC(),
+		Digest:    digestToken(signed),
+		KeyID:     active.KeyID,
+	}
+	return signed, parsed, nil
 }
 
 // Verify validates the token bytes against the supplied sessionID
@@ -314,6 +331,18 @@ func (v *Verifier) Consume(parsed ParsedToken) error {
 		return nil
 	}
 	return v.tracker.MarkConsumed(parsed.Digest, parsed.Expiry)
+}
+
+// ConsumeDigest marks the supplied digest as consumed without
+// requiring a Verify call first. Useful for callers that persisted
+// the digest at issuance time (e.g., the session row) and need to
+// invalidate a token from a context where the original token string
+// is no longer available.
+func (v *Verifier) ConsumeDigest(digest string, expiry time.Time) error {
+	if v.tracker == nil {
+		return nil
+	}
+	return v.tracker.MarkConsumed(digest, expiry)
 }
 
 // parseAndVerifyHMAC tries every key in ring (active first, then

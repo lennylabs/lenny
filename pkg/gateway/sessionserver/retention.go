@@ -11,13 +11,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 )
 
+// ExtendRetentionMaxSeconds is the §7.1 hard upper bound the
+// minimal gateway accepts on `ttlSeconds`. Production deployers can
+// lower this via tenant policy; raising past this ceiling is
+// prohibited so a client cannot pin GC indefinitely. The value here
+// (90 days) is a reasonable default that exceeds the §7.1 7-day
+// retention default by an order of magnitude while staying within
+// audit-recoverability windows.
+const ExtendRetentionMaxSeconds = int64(90 * 24 * 60 * 60)
+
 // ExtendRetentionRequest is the §15.1
 // POST /v1/sessions/{id}/extend-retention body.
 type ExtendRetentionRequest struct {
 	// TTLSeconds is the number of seconds, measured from "now" (the
 	// gateway clock), the session's artifacts should remain eligible
 	// for retrieval before the GC job becomes eligible to delete
-	// them. Must be > 0. Spec: §7.1 artifact retention.
+	// them. Must be > 0 and <= ExtendRetentionMaxSeconds.
+	// Spec: §7.1 artifact retention.
 	TTLSeconds int64 `json:"ttlSeconds"`
 }
 
@@ -48,7 +58,9 @@ func (s *Server) handleExtendRetention(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req ExtendRetentionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	body := jsonReader(w, r)
+	defer body.Close()
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
@@ -56,6 +68,15 @@ func (s *Server) handleExtendRetention(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"ttlSeconds must be > 0",
 			map[string]any{"fields": []map[string]string{{"field": "ttlSeconds"}}})
+		return
+	}
+	if req.TTLSeconds > ExtendRetentionMaxSeconds {
+		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"ttlSeconds exceeds the platform retention ceiling",
+			map[string]any{
+				"fields":     []map[string]string{{"field": "ttlSeconds"}},
+				"maxSeconds": ExtendRetentionMaxSeconds,
+			})
 		return
 	}
 

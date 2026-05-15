@@ -68,32 +68,57 @@ func captureHandler() (http.Handler, *Principal) {
 	return h, captured
 }
 
-func TestDevHeadersPropagatesRoles(t *testing.T) {
-	inner, got := captureHandler()
-	h := Wrap(inner, Options{
-		MultiTenant:     true,
-		AllowDevHeaders: true,
-		Registry:        permissiveRegistry{},
-	})
+func TestDevHeadersPropagatesRolesOnlyWhenAllowDevRolesIsSet(t *testing.T) {
+	// AllowDevRoles=true: X-Lenny-Roles is honoured (dev mode).
+	{
+		inner, got := captureHandler()
+		h := Wrap(inner, Options{
+			MultiTenant:     true,
+			AllowDevHeaders: true,
+			AllowDevRoles:   true,
+			Registry:        permissiveRegistry{},
+		})
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
-	req.Header.Set("X-Lenny-Roles", "platform-admin, user")
+		req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+		req.Header.Set("X-Lenny-Roles", "platform-admin, user")
 
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("dev-header request: status = %d, want 204", rr.Code)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("dev-mode request: status = %d, want 204", rr.Code)
+		}
+		if !got.HasRole(pkgauth.RolePlatformAdmin) || !got.HasRole(pkgauth.RoleUser) {
+			t.Errorf("dev-mode roles: got %v", got.Roles)
+		}
 	}
-	if got.TenantID != "acme" || got.Subject != "alice@acme.com" {
-		t.Errorf("dev-header principal: got %+v", got)
-	}
-	if !got.HasRole(pkgauth.RolePlatformAdmin) {
-		t.Errorf("dev-header roles missing platform-admin: got %v", got.Roles)
-	}
-	if !got.HasRole(pkgauth.RoleUser) {
-		t.Errorf("dev-header roles missing user: got %v", got.Roles)
+
+	// AllowDevRoles=false (default): X-Lenny-Roles is dropped so a
+	// caller cannot self-claim platform-admin even when dev headers
+	// are otherwise on.
+	{
+		inner, got := captureHandler()
+		h := Wrap(inner, Options{
+			MultiTenant:     true,
+			AllowDevHeaders: true,
+			AllowDevRoles:   false,
+			Registry:        permissiveRegistry{},
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+		req.Header.Set("X-Lenny-Roles", "platform-admin")
+
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("hardened request: status = %d, want 204", rr.Code)
+		}
+		if got.HasRole(pkgauth.RolePlatformAdmin) {
+			t.Errorf("X-Lenny-Roles must be dropped when AllowDevRoles is false; got %v", got.Roles)
+		}
 	}
 }
 
