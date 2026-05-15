@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -81,6 +82,7 @@ type Server struct {
 	uploadIssuer    *uploadtoken.Issuer
 	uploadVerifier  *uploadtoken.Verifier
 	blobs           blobstore.Store
+	executor        executor.Executor
 	defaultIsoProf  isolation.Profile
 }
 
@@ -123,6 +125,14 @@ type Options struct {
 	// `503 BLOBSTORE_UNAVAILABLE`.
 	Blobs blobstore.Store
 
+	// Executor routes session messages to a runtime. When nil the
+	// /v1/sessions/{id}/messages handler returns
+	// `503 EXECUTOR_UNAVAILABLE`. The minimal gateway wires an
+	// in-process echo executor; production swaps in the
+	// adapter-protocol-backed executor that dispatches to claimed
+	// pods.
+	Executor executor.Executor
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -139,6 +149,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		uploadIssuer:    opts.UploadTokenIssuer,
 		uploadVerifier:  opts.UploadTokenVerifier,
 		blobs:           opts.Blobs,
+		executor:        opts.Executor,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -181,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
+	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }

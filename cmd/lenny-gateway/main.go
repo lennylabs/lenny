@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
@@ -110,6 +111,7 @@ func main() {
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
 		Blobs:               blobs,
+		Executor:            executor.NewEchoExecutor(),
 	})
 
 	// ----- Admin API -----
