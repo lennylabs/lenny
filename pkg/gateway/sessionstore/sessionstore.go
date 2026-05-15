@@ -68,6 +68,13 @@ type Session struct {
 	// parent session's workspace object. Audit / observability only;
 	// not a reference-counted dependency.
 	ParentWorkspaceRef string
+
+	// RetentionExpiresAt is the §7.1 artifact retention deadline at
+	// which the background GC job is eligible to delete this
+	// session's workspace, transcript, and logs. Zero when retention
+	// has not been set or has been cleared. Updated by
+	// `POST /v1/sessions/{id}/extend-retention` per §15.1.
+	RetentionExpiresAt time.Time
 }
 
 // WorkspaceSnapshot describes a stored workspace artifact attached to
