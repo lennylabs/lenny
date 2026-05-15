@@ -75,18 +75,20 @@ type Store interface {
 	Since(ctx context.Context, tenantID string, since uint64, limit int) ([]Event, error)
 }
 
-// validate reports the §11.2.1 minimum-field requirements.
-func validate(e Event) error {
+// Validate reports the §11.2.1 minimum-field requirements. Every Store
+// implementation runs it before committing an event.
+func Validate(e Event) error {
 	if e.TenantID == "" || e.EventType == "" {
 		return ErrInvalidEvent
 	}
 	return nil
 }
 
-// stamp fills the server-assigned fields of an event before it is
-// committed: the schema version and the creation timestamp.
-func stamp(e Event, seq uint64, now time.Time) Event {
-	e.SequenceNumber = seq
+// Normalize fills the server-assigned defaults on an event before it
+// is committed: the §15.5 schema version and the creation timestamp.
+// It does not assign SequenceNumber, which each Store derives from its
+// own per-tenant counter.
+func Normalize(e Event, now time.Time) Event {
 	if e.SchemaVersion == 0 {
 		e.SchemaVersion = defaultSchemaVersion
 	}
@@ -115,13 +117,13 @@ func NewMemory() *Memory {
 
 // Append implements Store.
 func (m *Memory) Append(_ context.Context, e Event) (Event, error) {
-	if err := validate(e); err != nil {
+	if err := Validate(e); err != nil {
 		return Event{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	seq := uint64(len(m.events[e.TenantID])) + 1
-	committed := stamp(e, seq, m.now())
+	committed := Normalize(e, m.now())
+	committed.SequenceNumber = uint64(len(m.events[e.TenantID])) + 1
 	m.events[e.TenantID] = append(m.events[e.TenantID], committed)
 	return committed, nil
 }

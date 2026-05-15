@@ -1,0 +1,156 @@
+//go:build component
+
+// SPDX-License-Identifier: MIT
+
+// Contract test for the §11.2.1 billing event ledger, exercising the
+// Postgres-backed pkg/gateway/billingstore/pgstore against a real
+// container. Covers the append/round-trip path, the monotonic
+// per-tenant sequence_number, the Since replay query with its limit,
+// cross-tenant isolation, and the minimum-field validation.
+package stores_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
+)
+
+func TestBillingStoreContract(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := billingpg.New(pg.Pool)
+	ctx := context.Background()
+
+	t.Run("append and round-trip an event", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		want := billingstore.Event{
+			TenantID:     tenant,
+			UserID:       "alice@acme.com",
+			SessionID:    newUUID(t),
+			ExperimentID: "exp-1",
+			VariantID:    "variant-a",
+			EventType:    billingstore.EventSessionCreated,
+			TokensInput:  120,
+			TokensOutput: 45,
+		}
+		committed, err := store.Append(ctx, want)
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		if committed.SequenceNumber != 1 {
+			t.Errorf("first event sequence: got %d, want 1", committed.SequenceNumber)
+		}
+		got, err := store.Since(ctx, tenant, 0, 0)
+		if err != nil {
+			t.Fatalf("Since: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Since: got %d events, want 1", len(got))
+		}
+		e := got[0]
+		if e.UserID != want.UserID || e.SessionID != want.SessionID ||
+			e.ExperimentID != want.ExperimentID || e.VariantID != want.VariantID ||
+			e.EventType != want.EventType || e.TokensInput != want.TokensInput ||
+			e.TokensOutput != want.TokensOutput {
+			t.Errorf("event mismatch:\n got %+v\nwant %+v", e, want)
+		}
+		if e.SchemaVersion != 1 {
+			t.Errorf("SchemaVersion: got %d, want 1", e.SchemaVersion)
+		}
+		if e.CreatedAt.IsZero() {
+			t.Error("CreatedAt was not persisted")
+		}
+	})
+
+	t.Run("sequence is monotonic and per-tenant", func(t *testing.T) {
+		tenantA := freshTenant(t, ctx, pg)
+		tenantB := freshTenant(t, ctx, pg)
+		for want := uint64(1); want <= 3; want++ {
+			got, err := store.Append(ctx, billingstore.Event{
+				TenantID: tenantA, EventType: billingstore.EventSessionCreated,
+			})
+			if err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+			if got.SequenceNumber != want {
+				t.Errorf("tenant A event: seq %d, want %d", got.SequenceNumber, want)
+			}
+		}
+		first, err := store.Append(ctx, billingstore.Event{
+			TenantID: tenantB, EventType: billingstore.EventSessionCreated,
+		})
+		if err != nil {
+			t.Fatalf("Append tenant B: %v", err)
+		}
+		if first.SequenceNumber != 1 {
+			t.Errorf("tenant B's first event: seq %d, want 1 (sequence is per-tenant)", first.SequenceNumber)
+		}
+	})
+
+	t.Run("Since returns events after a sequence", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		for i := 0; i < 5; i++ {
+			if _, err := store.Append(ctx, billingstore.Event{
+				TenantID: tenant, EventType: billingstore.EventSessionCreated,
+			}); err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+		}
+		got, err := store.Since(ctx, tenant, 2, 0)
+		if err != nil {
+			t.Fatalf("Since: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("Since(2): got %d events, want 3", len(got))
+		}
+		for i, e := range got {
+			if e.SequenceNumber != uint64(i+3) {
+				t.Errorf("event %d: seq %d, want %d", i, e.SequenceNumber, i+3)
+			}
+		}
+	})
+
+	t.Run("Since respects the limit", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		for i := 0; i < 6; i++ {
+			store.Append(ctx, billingstore.Event{
+				TenantID: tenant, EventType: billingstore.EventSessionCreated,
+			})
+		}
+		got, err := store.Since(ctx, tenant, 0, 2)
+		if err != nil {
+			t.Fatalf("Since: %v", err)
+		}
+		if len(got) != 2 {
+			t.Errorf("Since with limit 2: got %d events, want 2", len(got))
+		}
+	})
+
+	t.Run("the ledger is isolated per tenant", func(t *testing.T) {
+		tenantA := freshTenant(t, ctx, pg)
+		tenantB := freshTenant(t, ctx, pg)
+		if _, err := store.Append(ctx, billingstore.Event{
+			TenantID: tenantA, EventType: billingstore.EventSessionCreated,
+		}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		got, err := store.Since(ctx, tenantB, 0, 0)
+		if err != nil {
+			t.Fatalf("Since: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("tenant B must not see tenant A's events, got %d", len(got))
+		}
+	})
+
+	t.Run("append rejects an event with no event type", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		_, err := store.Append(ctx, billingstore.Event{TenantID: tenant})
+		if !errors.Is(err, billingstore.ErrInvalidEvent) {
+			t.Errorf("append without an event type: got %v, want ErrInvalidEvent", err)
+		}
+	})
+}
