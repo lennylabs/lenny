@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MIT
+
+package webhook
+
+import (
+	"encoding/json"
+	"net/http"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	labelimm "github.com/lennylabs/lenny/pkg/admission/label_immutability"
+)
+
+// LabelImmutability returns the Decider for the lenny-label-immutability
+// ValidatingAdmissionWebhook (§17.2 item 5, §5.2 NET-003). It extracts
+// the inbound and prior pod label maps and the authenticated username
+// from the AdmissionRequest and delegates to label_immutability.Decide.
+func LabelImmutability() Decider {
+	return func(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+		newLabels, err := podLabels(req.Object.Raw)
+		if err != nil {
+			return Deny(http.StatusBadRequest, "decode pod object: "+err.Error())
+		}
+		// OldObject is empty on CREATE; a nil OldLabels tells Decide to
+		// apply only the tenant-id authorization rule.
+		var oldLabels map[string]string
+		if len(req.OldObject.Raw) > 0 {
+			oldLabels, err = podLabels(req.OldObject.Raw)
+			if err != nil {
+				return Deny(http.StatusBadRequest, "decode prior pod object: "+err.Error())
+			}
+		}
+
+		decision, err := labelimm.Decide(labelimm.Request{
+			OldLabels:        oldLabels,
+			NewLabels:        newLabels,
+			UserInfoUsername: req.UserInfo.Username,
+		})
+		if err != nil {
+			return Deny(http.StatusBadRequest, err.Error())
+		}
+		if decision.Allowed {
+			return Allow()
+		}
+		return Deny(int32(decision.Code), decision.Reason)
+	}
+}
+
+// podLabels unmarshals a raw pod object and returns its label map. A
+// successfully-parsed pod with no labels yields a non-nil empty map so
+// label_immutability.Decide treats it as a real (labelless) write
+// rather than a missing-input error.
+func podLabels(raw []byte) (map[string]string, error) {
+	var pod corev1.Pod
+	if err := json.Unmarshal(raw, &pod); err != nil {
+		return nil, err
+	}
+	if pod.Labels == nil {
+		return map[string]string{}, nil
+	}
+	return pod.Labels, nil
+}
