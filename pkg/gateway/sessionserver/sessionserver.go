@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -85,6 +86,7 @@ type Server struct {
 	blobs           blobstore.Store
 	executor        executor.Executor
 	transcripts     transcriptstore.Store
+	events          *events.Bus
 	defaultIsoProf  isolation.Profile
 }
 
@@ -141,6 +143,12 @@ type Options struct {
 	// `404 RESOURCE_NOT_FOUND` for every session.
 	Transcripts transcriptstore.Store
 
+	// Events is the §15.1 session event bus backing the SSE stream.
+	// When nil, `GET /v1/sessions/{id}/events` returns
+	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
+	// event publication.
+	Events *events.Bus
+
 	// DefaultIsolationProfile is the §5.3 fallback profile applied to
 	// a session whose pool resolution did not name one. When unset
 	// the server uses isolation.Default() (sandboxed/gVisor) per §5.3.
@@ -159,6 +167,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		blobs:           opts.Blobs,
 		executor:        opts.Executor,
 		transcripts:     opts.Transcripts,
+		events:          opts.Events,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
 	}
 	if s.clock == nil {
@@ -205,6 +214,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
+	mux.HandleFunc("GET /v1/sessions/{id}/events", s.handleEvents)
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }

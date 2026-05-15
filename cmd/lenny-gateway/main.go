@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
@@ -140,12 +141,14 @@ func main() {
 		exec = executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: *runtimeBin})
 		log.Printf("lenny-gateway: dispatching sessions to runtime binary %s", *runtimeBin)
 	}
+	eventBus := events.NewBus(0)
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
 		Blobs:               blobs,
 		Executor:            exec,
 		Transcripts:         transcriptstore.NewMemory(),
+		Events:              eventBus,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
