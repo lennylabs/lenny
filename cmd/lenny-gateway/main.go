@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -556,10 +557,14 @@ func main() {
 		}()
 	}
 
-	// ----- §16.1 storage-quota metrics export -----
-	// Refreshes the per-tenant storage-quota gauges so the §16.5
-	// StorageQuotaHigh alert has data.
-	exportStorageQuotaMetrics(context.Background(), tenants, storageCounter, gwMetrics)
+	// ----- §16.1 metrics export -----
+	// Refreshes the gauge metrics (storage quota, circuit breakers)
+	// that the §16.5 alerts read.
+	exportGaugeMetrics := func(ctx context.Context) {
+		exportStorageQuotaMetrics(ctx, tenants, storageCounter, gwMetrics)
+		exportCircuitBreakerMetrics(ctx, breakers, breakerCache, gwMetrics)
+	}
+	exportGaugeMetrics(context.Background())
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -568,7 +573,7 @@ func main() {
 			case <-watchdogCtx.Done():
 				return
 			case <-ticker.C:
-				exportStorageQuotaMetrics(watchdogCtx, tenants, storageCounter, gwMetrics)
+				exportGaugeMetrics(watchdogCtx)
 			}
 		}
 	}()
@@ -707,6 +712,28 @@ func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, c
 		}
 		m.SetStorageQuota(t.ID, used, t.StorageQuotaBytes)
 	}
+}
+
+// exportCircuitBreakerMetrics refreshes the §16.1 circuit-breaker
+// gauges: the per-breaker open state and the cache freshness. In
+// in-memory mode there is no cache, so it reports the registry as
+// always-current and initialized.
+func exportCircuitBreakerMetrics(ctx context.Context, breakers breakerRegistry, cache *cachingstore.Store, m *gatewaymetrics.Metrics) {
+	if rows, err := breakers.List(ctx); err == nil {
+		for _, b := range rows {
+			m.SetCircuitBreakerOpen(b.Name, b.State == circuitbreaker.StateOpen)
+		}
+	}
+	if cache == nil {
+		m.SetCircuitBreakerCache(0, true)
+		return
+	}
+	last := cache.LastRefresh()
+	if last.IsZero() {
+		m.SetCircuitBreakerCache(0, false)
+		return
+	}
+	m.SetCircuitBreakerCache(time.Since(last).Seconds(), true)
 }
 
 // staticHealthy returns a §25.3 health Checker that always reports

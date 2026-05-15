@@ -67,6 +67,33 @@ func TestSetStorageQuotaExposesGauges(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerMetricsExposeGauges(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetCircuitBreakerOpen("rt-emergency", true)
+	m.SetCircuitBreakerOpen("rt-calm", false)
+	m.SetCircuitBreakerCache(0, true)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`lenny_circuit_breaker_open{circuit_name="rt-emergency"} 1`,
+		`lenny_circuit_breaker_open{circuit_name="rt-calm"} 0`,
+		`lenny_circuit_breaker_cache_stale_seconds 0`,
+		`lenny_circuit_breaker_cache_initialized 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+		}
+	}
+}
+
 func TestMiddlewareRecordsRequests(t *testing.T) {
 	m, _ := gatewaymetrics.New()
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

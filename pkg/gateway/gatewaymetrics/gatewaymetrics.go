@@ -22,11 +22,14 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
-	requestsTotal     *prometheus.CounterVec
-	requestDuration   *prometheus.HistogramVec
-	activeSessions    prometheus.Gauge
-	storageQuotaUsed  *prometheus.GaugeVec
-	storageQuotaLimit *prometheus.GaugeVec
+	requestsTotal      *prometheus.CounterVec
+	requestDuration    *prometheus.HistogramVec
+	activeSessions     prometheus.Gauge
+	storageQuotaUsed   *prometheus.GaugeVec
+	storageQuotaLimit  *prometheus.GaugeVec
+	circuitBreakerOpen *prometheus.GaugeVec
+	cbCacheStale       prometheus.Gauge
+	cbCacheInitialized prometheus.Gauge
 }
 
 // New constructs and registers the gateway metric set against a
@@ -70,19 +73,68 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	circuitBreakerOpen, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_circuit_breaker_open",
+		Help: "1 when the named §11.6 circuit breaker is open, 0 when closed.",
+	}, []string{"circuit_name"})
+	if err != nil {
+		return nil, err
+	}
+	cbCacheStale, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_circuit_breaker_cache_stale_seconds",
+		Help: "Wall seconds since the circuit-breaker cache last refreshed from Redis.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	cbCacheInitialized, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_circuit_breaker_cache_initialized",
+		Help: "1 once the circuit-breaker cache has completed its first refresh.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed, storageQuotaLimit)
+	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
+		storageQuotaLimit, circuitBreakerOpen)
 	gauge := activeSessions.WithLabelValues()
-	reg.MustRegister(activeSessions)
+	cbStale := cbCacheStale.WithLabelValues()
+	cbInit := cbCacheInitialized.WithLabelValues()
+	reg.MustRegister(activeSessions, cbCacheStale, cbCacheInitialized)
 
 	return &Metrics{
-		reg:               reg,
-		requestsTotal:     requestsTotal,
-		requestDuration:   requestDuration,
-		activeSessions:    gauge,
-		storageQuotaUsed:  storageQuotaUsed,
-		storageQuotaLimit: storageQuotaLimit,
+		reg:                reg,
+		requestsTotal:      requestsTotal,
+		requestDuration:    requestDuration,
+		activeSessions:     gauge,
+		storageQuotaUsed:   storageQuotaUsed,
+		storageQuotaLimit:  storageQuotaLimit,
+		circuitBreakerOpen: circuitBreakerOpen,
+		cbCacheStale:       cbStale,
+		cbCacheInitialized: cbInit,
 	}, nil
+}
+
+// SetCircuitBreakerOpen updates the §16.1 per-breaker open gauge: 1
+// when the named breaker is open, 0 when closed.
+func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
+	v := 0.0
+	if open {
+		v = 1
+	}
+	m.circuitBreakerOpen.WithLabelValues(name).Set(v)
+}
+
+// SetCircuitBreakerCache updates the §16.1 circuit-breaker cache
+// gauges: the seconds since the last refresh and whether the cache has
+// completed its first refresh.
+func (m *Metrics) SetCircuitBreakerCache(staleSeconds float64, initialized bool) {
+	m.cbCacheStale.Set(staleSeconds)
+	if initialized {
+		m.cbCacheInitialized.Set(1)
+	} else {
+		m.cbCacheInitialized.Set(0)
+	}
 }
 
 // SetStorageQuota updates the §16.1 per-tenant storage-quota gauges:
