@@ -4,9 +4,11 @@ package admin_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,13 +18,34 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
+// recordingAudit captures admin audit events so tests can verify
+// emission shape per §11.7.
+type recordingAudit struct {
+	mu     sync.Mutex
+	events []admin.AuditEvent
+}
+
+func (r *recordingAudit) EmitAdminEvent(_ context.Context, ev admin.AuditEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, ev)
+}
+
+func (r *recordingAudit) snapshot() []admin.AuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]admin.AuditEvent(nil), r.events...)
+}
+
 // spec: §15.1 admin tenant CRUD + §10.2 platform-admin gating.
 
 func newAdminServer(t *testing.T) (*admin.Router, *tenantstore.Memory) {
 	t.Helper()
 	store := tenantstore.NewMemory()
-	router := admin.NewRouter(store, func() time.Time {
-		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time {
+			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		},
 	})
 	return router, store
 }
@@ -266,5 +289,98 @@ func TestEveryEndpointRejectsAnonymous(t *testing.T) {
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("anonymous: got %d, want 403", rr.Code)
+	}
+}
+
+func TestAuditEmissionOnTenantMutations(t *testing.T) {
+	store := tenantstore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	})
+
+	// Create
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", DisplayName: "Acme"})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Update
+	dn := "Acme Inc"
+	body, _ = json.Marshal(admin.UpdateTenantRequest{DisplayName: &dn})
+	rr = httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)),
+	))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Delete
+	rr = httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodDelete, "/v1/admin/tenants/acme", nil),
+	))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete: status %d", rr.Code)
+	}
+
+	events := audit.snapshot()
+	if len(events) != 3 {
+		t.Fatalf("expected 3 audit events, got %d (%+v)", len(events), events)
+	}
+	want := []string{"admin.tenant.created", "admin.tenant.updated", "admin.tenant.soft_deleted"}
+	for i, w := range want {
+		if events[i].Type != w {
+			t.Errorf("events[%d].Type: got %q, want %q", i, events[i].Type, w)
+		}
+		if events[i].TargetResource != "acme" {
+			t.Errorf("events[%d].TargetResource: got %q", i, events[i].TargetResource)
+		}
+		if events[i].ActorSubject != "admin@acme.com" {
+			t.Errorf("events[%d].ActorSubject: got %q", i, events[i].ActorSubject)
+		}
+	}
+}
+
+func TestNoAuditEmissionOnReads(t *testing.T) {
+	store := tenantstore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{Audit: audit})
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme"})
+
+	for _, m := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/admin/tenants"},
+		{http.MethodGet, "/v1/admin/tenants/acme"},
+	} {
+		rr := httptest.NewRecorder()
+		router.Handler().ServeHTTP(rr, withAdminPrincipal(httptest.NewRequest(m.method, m.path, nil)))
+	}
+	if got := len(audit.snapshot()); got != 0 {
+		t.Errorf("audit emission on reads: got %d events, want 0", got)
+	}
+}
+
+func TestNoAuditEmissionOnFailures(t *testing.T) {
+	store := tenantstore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{Audit: audit})
+
+	// Invalid ID — Create fails.
+	body, _ := json.Marshal(admin.TenantPayload{ID: "with space"})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("create failure: status %d", rr.Code)
+	}
+	if got := len(audit.snapshot()); got != 0 {
+		t.Errorf("audit on failure: got %d events, want 0", got)
 	}
 }

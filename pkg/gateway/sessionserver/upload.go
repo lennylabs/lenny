@@ -23,6 +23,18 @@ import (
 // window of completed sessions.
 const UploadDefaultTTL = 7 * 24 * time.Hour
 
+// UploadMaxBodyBytes caps the request body the upload handler will
+// admit. The cap matches the §13.4 per-entry ceiling so a single
+// uploaded blob cannot exceed the largest archive entry the
+// gateway would later accept under uploadArchive. Production
+// deployments lower this via the configured tier policy; raising
+// past the §13.4 normative cap is prohibited.
+//
+// The handler uses http.MaxBytesReader so requests that exceed the
+// cap fail with `413 PAYLOAD_TOO_LARGE` before the gateway commits
+// any blob.
+const UploadMaxBodyBytes int64 = 64 * 1024 * 1024 // 64 MiB
+
 // UploadResponse is the §15.1 POST /v1/sessions/{id}/upload reply.
 type UploadResponse struct {
 	// UploadRef is the §4.5 `lenny-blob://` URI clients pass as
@@ -100,15 +112,32 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		mimeType = "application/octet-stream"
 	}
 
+	// §13.4 body cap: refuse uploads that exceed the per-entry
+	// ceiling before any blob bytes are committed. http.MaxBytesReader
+	// short-circuits Read once the cap is reached.
+	body := http.MaxBytesReader(w, r.Body, UploadMaxBodyBytes)
+	defer body.Close()
+
 	uri := blobstore.URI{
 		TenantID:  tenantID,
 		SessionID: row.ID,
 		PartID:    blobstore.NewPartID(),
 		TTL:       UploadDefaultTTL,
 	}
-	bytesRead := &countingReader{r: r.Body}
+	bytesRead := &countingReader{r: body}
 	ref, err := s.blobs.Put(uri, mimeType, bytesRead)
 	if err != nil {
+		// http.MaxBytesReader surfaces oversize as *http.MaxBytesError.
+		// We cannot import that type directly without bringing in
+		// net/http internals; the wrapper detects via interface
+		// fallthrough.
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			s.writeError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE",
+				"upload exceeds the per-blob size cap",
+				map[string]any{"maxBytes": UploadMaxBodyBytes})
+			return
+		}
 		if errors.Is(err, blobstore.ErrConflict) {
 			// part_id collision — exceptionally rare, but treated as
 			// retryable.

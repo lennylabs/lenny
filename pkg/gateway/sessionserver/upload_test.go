@@ -262,6 +262,40 @@ func TestBlobGetReturns400ForMalformedURI(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsOversizedBody(t *testing.T) {
+	srv, issuer, _, _, store, _ := newUploadServer(t)
+	seedCreatedSession(t, store, "sess_upload", "acme")
+	tok, _ := issuer.Issue("sess_upload", 0)
+
+	// One byte past the platform cap.
+	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes)+1)
+	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, body, "application/octet-stream")
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status: got %d, want 413; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Code != "PAYLOAD_TOO_LARGE" {
+		t.Errorf("error code: got %q, want PAYLOAD_TOO_LARGE", env.Error.Code)
+	}
+}
+
+func TestUploadAdmitsBodyAtCap(t *testing.T) {
+	srv, issuer, _, _, store, _ := newUploadServer(t)
+	seedCreatedSession(t, store, "sess_upload", "acme")
+	tok, _ := issuer.Issue("sess_upload", 0)
+
+	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes))
+	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", tok, body, "application/octet-stream")
+	if rr.Code != http.StatusCreated {
+		t.Errorf("at-cap upload should be admitted: status=%d", rr.Code)
+	}
+}
+
 func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	// Upload a file, then GET it back via the blob endpoint.
 	srv, issuer, _, _, store, _ := newUploadServer(t)

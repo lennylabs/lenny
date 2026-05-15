@@ -12,6 +12,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,21 +23,83 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
+// AuditSink receives §11.7 admin audit events. The router emits one
+// event per successful mutation (create / update / soft-delete);
+// reads do not emit. Implementations must be non-blocking — the
+// admin handler does not wait for delivery.
+type AuditSink interface {
+	EmitAdminEvent(ctx context.Context, event AuditEvent)
+}
+
+// AuditEvent is the §11.7 admin-event payload. Fields match the
+// canonical OCSF mapping used by the §11.7 hash-chain audit
+// pipeline.
+type AuditEvent struct {
+	// Type is the §11.7 event type (e.g., `admin.tenant.created`).
+	Type string
+
+	// ActorSubject is the JWT `sub` of the calling user.
+	ActorSubject string
+
+	// ActorTenantID is the JWT `tenant_id` of the calling user
+	// (usually `platform` for platform-admin calls).
+	ActorTenantID string
+
+	// TargetResource is the resource the operation affects (e.g.,
+	// the tenant id).
+	TargetResource string
+
+	// Detail carries event-specific fields the auditor records
+	// verbatim in the hash-chain entry.
+	Detail map[string]any
+
+	// At is the gateway clock instant the audit event fired.
+	At time.Time
+}
+
 // Router is the §15.1 admin sub-router. The minimal admin API wires
 // only the tenant CRUD endpoints; future commits add users,
 // runtimes, pools, connectors, circuit breakers, etc.
 type Router struct {
 	tenants tenantstore.Store
 	clock   func() time.Time
+	audit   AuditSink
 }
 
-// NewRouter returns a Router. Pass nil for `clock` to default to
-// time.Now.
-func NewRouter(tenants tenantstore.Store, clock func() time.Time) *Router {
+// Options configures the Router.
+type Options struct {
+	// Clock overrides time.Now. Pass nil for production.
+	Clock func() time.Time
+
+	// Audit, when set, receives one event per successful admin
+	// mutation per §11.7. Nil disables emission (the operation still
+	// succeeds).
+	Audit AuditSink
+}
+
+// NewRouter returns a Router. Pass nil for opts to use the defaults.
+func NewRouter(tenants tenantstore.Store, opts Options) *Router {
+	clock := opts.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Router{tenants: tenants, clock: clock}
+	return &Router{tenants: tenants, clock: clock, audit: opts.Audit}
+}
+
+// emit fires an audit event when an AuditSink is wired. Never
+// blocks the caller — sinks must do their own async delivery.
+func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resource string, detail map[string]any) {
+	if r.audit == nil {
+		return
+	}
+	r.audit.EmitAdminEvent(ctx, AuditEvent{
+		Type:           eventType,
+		ActorSubject:   p.Subject,
+		ActorTenantID:  p.TenantID,
+		TargetResource: resource,
+		Detail:         detail,
+		At:             r.clock(),
+	})
 }
 
 // Handler returns an http.Handler routing the wired admin endpoints.
@@ -133,6 +196,13 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	row, _ := r.tenants.Get(req.Context(), body.ID)
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.tenant.created", body.ID, map[string]any{
+		"displayName":         row.DisplayName,
+		"complianceProfile":   row.ComplianceProfile,
+		"dataResidencyRegion": row.DataResidencyRegion,
+		"workspaceTier":       row.WorkspaceTier,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromTenant(row))
@@ -213,8 +283,33 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.tenant.updated", id, map[string]any{
+		"changedFields": changedFields(body),
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromTenant(updated))
+}
+
+// changedFields returns the list of body fields the caller set so the
+// audit event records the intent without leaking the new value
+// (values are still on the row response; the audit detail captures
+// the change list for compact mutation history).
+func changedFields(b UpdateTenantRequest) []string {
+	var out []string
+	if b.DisplayName != nil {
+		out = append(out, "displayName")
+	}
+	if b.ComplianceProfile != nil {
+		out = append(out, "complianceProfile")
+	}
+	if b.DataResidencyRegion != nil {
+		out = append(out, "dataResidencyRegion")
+	}
+	if b.WorkspaceTier != nil {
+		out = append(out, "workspaceTier")
+	}
+	return out
 }
 
 // handleDeleteTenant implements DELETE /v1/admin/tenants/{id}. The
@@ -230,6 +325,8 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.tenant.soft_deleted", id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
