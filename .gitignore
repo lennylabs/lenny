@@ -5,10 +5,15 @@ tmp/
 # subdirectories. The names match the cmd/ and tests/tier7_load/scenarios/
 # package directories.
 /lenny-test
+/lenny-test-cached
 /lenny-compliance
 /lenny-gateway
 /lenny-token-service
 /echo
 /streaming-echo
 /startup_latency
+
+# Makefile `build` target output directory.
+/bin/
+
 tests/results/
