@@ -1,0 +1,152 @@
+# Build progress
+
+This file audits the Lenny implementation against the phased build sequence in
+[`spec/18_build-sequence.md`](spec/18_build-sequence.md). It records which phases are
+complete, which are partial, and what remains.
+
+Audited 2026-05-15, branch `impl/v1-initial`, head commit `48adf0a`.
+
+## Summary
+
+The implementation has broad coverage of the per-phase logic packages and the gateway
+request surface, plus a recently-built Kubernetes control plane. It does not yet run an
+agent session on a Kubernetes pod end to end.
+
+The platform currently serves the REST and admin API against in-memory, Postgres, and
+Redis stores, and runs a runtime as a local subprocess through `make run`. It cannot yet
+claim a warm pod, materialize a workspace into it, or run a session on it, because the
+Sandbox-to-Pod reconciler, the pod-spec builder, and the runtime adapter server are not
+built.
+
+## How the build diverged from the build sequence
+
+The build did not follow the §18 phase order. Two tracks were built ahead of the
+Kubernetes layer: the gateway request-handling surface (session lifecycle, admin API,
+stores, translators) and the per-phase pure-logic Go packages that §18 lists as
+deliverables (`pkg/checkpoint`, `pkg/elicitation`, `pkg/environment`, `pkg/experiment`,
+`pkg/podsecurity`, `pkg/credential`, and others). The Kubernetes control plane (the
+CRDs, the WarmPoolController, the PoolScalingController) was built most recently.
+
+The consequence is that most later phases are partially complete: the logic substrate
+for a phase exists as a tested Go package, while the controller, binary, or gateway
+integration that consumes it does not. The phase table below uses "Substrate only" for
+this state.
+
+## Phase status
+
+| Phase | Title                                                        | Status         | Notes                                                                                                                                                                                                                                                                                                                                        |
+| :---- | :----------------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap the infrastructure repo                            | Partial        | Repo layout, CI, `LICENSE`, and the ADR template are present. ADR-007 and ADR-008 are not committed under `docs/adr/`.                                                                                                                                                                                                                       |
+| 1     | Core types and wire contracts                                | Mostly done    | The `lenny.dev/v1` CRD types, the task records, the session state machines, and the `schemas/` wire contracts exist. The adapter proto Go stubs are generated.                                                                                                                                                                               |
+| 1.5   | Database migration framework                                 | Mostly done    | Migrations 0001 through 0007 cover the §12 tables including `agent_pod_state`; the RLS guard, the immutability triggers, the role separation, and the schema linters are present. There is no dedicated `cmd/lenny-migrate`; `golang-migrate` is used.                                                                                       |
+| 2     | Adapter protocol, make run, ImageResolver                    | Partial        | The adapter binary protocol, the `echo` runtime, `lenny-compliance`, and `make run` are present. The runtime-author SDKs and the `lenny-ctl runtime init` scaffolder are not.                                                                                                                                                                |
+| 2.5   | Observability foundation                                     | Partial        | `pkg/observability` and `pkg/alerting/rules` exist. `pkg/recommendations/rules` and the Helm `ServiceMonitor`/`PrometheusRule` templates are not.                                                                                                                                                                                            |
+| 2.8   | streaming-echo runtime                                       | Done           | The `streaming-echo` runtime and the full-level compliance battery pass.                                                                                                                                                                                                                                                                     |
+| 3     | Pool scaling, delegation policy, runtime upgrade, mTLS       | Partial        | The PoolScalingController and the `RuntimeUpgrade` state substrate exist. The `DelegationPolicy` CRD, the `agent_pod_state` mirror write path, CIDR-drift detection, and the SDK-warm circuit-breaker logic are not built. `pkg/mtls` exists; the cert-manager PKI wiring is partial.                                                        |
+| 3.5   | Admission policies, lenny-ops first deploy                   | Partial        | The `pkg/admission` decision packages and two baseline webhooks (label-immutability and sandboxclaim-guard) are built and deployable. `pool-config-validator`, `crd-conversion`, `ephemeral-container-cred-guard`, the default-deny NetworkPolicy, the phase-stamp ConfigMap, `lenny-ops`, `lenny-preflight`, and `lenny-bootstrap` are not. |
+| 4     | Session manager, REST                                        | Mostly done    | The session store, the REST session surface, derive, blob dereference, the upload pipeline, `uploadToken`, and `cmd/lenny-gateway` are built. The Postgres fallback claim path depends on the unbuilt `agent_pod_state` mirror writer.                                                                                                       |
+| 4.5   | Admin API, authentication, bootstrap                         | Mostly done    | The admin API, `pkg/auth`, JWT validation, the connector resource, and `lenny-ctl bootstrap` are built.                                                                                                                                                                                                                                      |
+| 5     | ExternalAdapterRegistry, MCP/Completions/Open Responses      | Partial        | The MCP adapter, the OpenAI Chat translator, the Open Responses translator, and the OpenAPI document are built. The `gitClone` materializer and the `type: mcp` gateway endpoints need confirmation.                                                                                                                                         |
+| 5.4   | etcd encryption at rest                                      | Not started    | No `EncryptionConfiguration` manifest in the chart.                                                                                                                                                                                                                                                                                          |
+| 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
+| 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
+| 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Not started    | There is no LLM proxy subsystem, no `anthropic_direct` translator, and no `lenny-direct-mode-isolation` webhook.                                                                                                                                                                                                                             |
+| 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
+| 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Substrate only | `pkg/checkpoint` exists. The gateway checkpoint-and-resume orchestration and the `lenny-drain-readiness` webhook are not built.                                                                                                                                                                                                              |
+| 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
+| 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
+| 11    | Advanced credentials, multi-provider translators, revocation | Partial        | The revocation cache exists. The `aws_bedrock`, `vertex_ai`, and `azure_openai` translators and the proactive renewal worker are not.                                                                                                                                                                                                        |
+| 11.5  | Incremental load test (credential lifecycle)                 | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 12a   | Token Service hardening (KMS envelope, OAuth)                | Substrate only | `pkg/tokenexchange` exists. KMS envelope encryption and the full OAuth connector flow are not.                                                                                                                                                                                                                                               |
+| 12b   | type: mcp runtime support                                    | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 12c   | Concurrent execution modes                                   | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 13    | Full observability, audit, lenny-backup, compliance          | Substrate only | `pkg/audit` and the audit hash chain exist. The `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the GDPR erasure pipeline, and the full observability catalog are not.                                                                                                                                                         |
+| 13.5  | Pre-hardening full-system load baseline                      | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
+| 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 15    | Environment resource, RBAC                                   | Substrate only | `pkg/environment` exists. The environment admin API and the cross-environment delegation resolver are not.                                                                                                                                                                                                                                   |
+| 16    | Experiments, PoolScalingController integration               | Substrate only | `pkg/experiment` exists. The experiment router, the experiment admin API, and the variant-pool sizing path are not.                                                                                                                                                                                                                          |
+| 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
+| 17b   | Memory, semantic caching, eval hooks                         | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+
+## Implemented surface
+
+The following are built and tested at the unit tier.
+
+- **Gateway request surface.** Session lifecycle and REST endpoints, the admin API,
+  derive, blob dereference, the upload pipeline, `uploadToken`, OIDC and OAuth JWT
+  validation, the OpenAPI document, the MCP adapter, the OpenAI Chat and Open Responses
+  translators, rate limiting, idempotency, circuit breakers, quotas, billing events,
+  user invalidation, and the watchdog timers.
+- **Storage.** Postgres-backed stores for sessions, transcripts, tenants, runtimes,
+  users, connectors, billing events, issued tokens, and the audit hash chain; Redis
+  layers for circuit breakers, session-coordination leases, quota counters, and storage
+  quotas; migrations 0001 through 0007 with RLS, immutability triggers, and role
+  separation.
+- **Kubernetes control plane.** The five `lenny.dev/v1` CRDs with generated manifests;
+  the WarmPoolController (the pure planner, the reconciler, the `PoolWarmingUp`
+  condition, an envtest integration test) with the `lenny-controller` binary; the
+  PoolScalingController (config sync, demand-driven minWarm, the periodic runnable); the
+  Helm chart with the controller Deployment and RBAC, the agent namespaces, and two
+  admission webhooks; the `lenny-webhook` binary.
+- **Pure-logic substrate.** Tested Go packages exist for the warm-pod state machine,
+  the isolation profiles, the sandbox-claim state, the scaling formula, the warm-pool
+  and lifecycle planners, checkpoint enums, delegation cycle and lease arithmetic,
+  elicitation, environment RBAC, experiments, idempotency, circuit breakers, quotas,
+  the token-exchange invariants, the runtime-upgrade state machine, podsecurity
+  validation, mTLS SPIFFE parsing, and the admission-decision packages.
+- **Reference runtimes and tooling.** The `echo` and `streaming-echo` runtimes,
+  `lenny-compliance`, `lenny-ctl`, the Token Service binary, the adapter gRPC
+  contract with generated bindings, and the `tests/testinfra` harnesses for Kind,
+  envtest, and Helm.
+
+## Principal gaps
+
+The implementation cannot run a Kubernetes-hosted session. The blocking gaps, in
+dependency order, are below.
+
+- **Runtime adapter server.** `schemas/lenny-adapter.proto` defines the gateway-adapter
+  contract and the Go bindings are generated, but there is no adapter server
+  implementation and no `cmd/lenny-adapter` binary or container image.
+- **Pod-spec builder.** Nothing translates a `Sandbox`, its `SandboxTemplate`, and its
+  `Runtime` into a `corev1.PodSpec`. A faithful agent pod carries an adapter container
+  and a runtime container with the §13.1 security context, the §6.1 volumes, and the
+  §5.3 RuntimeClass.
+- **Sandbox-to-Pod reconciler.** The warm-path lifecycle planner exists, but no
+  reconciler creates the backing Pod, advances `warming` to `idle`, or drives
+  `draining` to `terminated`.
+- **Gateway pod-claim path.** The gateway does not claim a pod through a `SandboxClaim`
+  or drive the `idle` through `attached` session transitions.
+- **LLM Proxy.** Proxy-mode sessions cannot reach a provider; the LLM proxy subsystem
+  and the `anthropic_direct` translator are not built.
+- **Operational services.** `lenny-ops`, `lenny-backup`, and the `lenny-preflight` Job
+  do not exist.
+
+Phases 13 through 17b are largely unbuilt beyond their logic substrate. The audit
+pipeline, the compliance webhooks, the GDPR erasure pipeline, the backup and restore
+surface, concurrent execution modes, the environment and experiment integrations, the
+client SDKs, the first-party reference runtimes, and the web playground all remain.
+
+## Critical path to an end-to-end Kubernetes session
+
+The shortest route to running one real session on a warm pod:
+
+1. Build the §4.7 runtime adapter server (`cmd/lenny-adapter` and a `pkg/adapter`
+   implementing `adapterv1.AdapterServer`), and a container image for it.
+2. Build the pod-spec builder.
+3. Build the Sandbox-to-Pod reconciler that wraps the existing lifecycle planner.
+4. Build the gateway pod-claim path against `SandboxClaim`.
+5. Wire workspace materialization and session start from the gateway to the adapter.
+6. Build the LLM Proxy so a credential-proxied session can reach a provider.
+
+## Test status
+
+The unit test tier is green. The component, contract, integration, end-to-end, load,
+chaos, and security tiers exist as directory structures with scaffolds; most are skipped
+without the corresponding infrastructure. The WarmPoolController has an envtest
+integration test that runs against a real Kubernetes API server.
