@@ -44,6 +44,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
@@ -124,6 +125,16 @@ func main() {
 		}
 		if err := verifyPostgresSchema(context.Background(), pool); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
+		}
+		// §11.7 startup integrity check: the append-only ledgers must
+		// keep their grants, triggers, and erasure guard intact.
+		// Production refuses to start on a violation; other
+		// environments log a warning and continue.
+		if err := integrity.Verify(context.Background(), pool); err != nil {
+			if os.Getenv("LENNY_ENV") == "production" {
+				log.Fatalf("lenny-gateway: audit integrity check failed: %v", err)
+			}
+			log.Printf("lenny-gateway: WARNING: audit integrity check failed (non-production, continuing): %v", err)
 		}
 		pgPool = pool
 		sessions = sessionpg.New(pool)

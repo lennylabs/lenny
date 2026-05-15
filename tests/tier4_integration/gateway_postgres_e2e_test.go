@@ -164,3 +164,31 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 		t.Errorf("session state after DELETE = %q, want cancelled", state)
 	}
 }
+
+// TestGatewayPostgresIntegrityWarningStartup confirms the §11.7
+// startup integrity check is wired: against a tampered database in a
+// non-production environment the gateway logs a warning and still
+// starts, so StartWith — which waits for the process to become
+// responsive — succeeds.
+func TestGatewayPostgresIntegrityWarningStartup(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	// Disable an integrity trigger before the gateway boots.
+	if _, err := pg.Pool.Exec(context.Background(),
+		`ALTER TABLE audit_log DISABLE TRIGGER lenny_audit_immutability`); err != nil {
+		t.Fatalf("tamper: %v", err)
+	}
+
+	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	resp, err := http.Get(gw.BaseURL() + "/healthz")
+	if err != nil {
+		t.Fatalf("healthz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz status = %d, want 200", resp.StatusCode)
+	}
+}
