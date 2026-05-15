@@ -478,9 +478,15 @@ func main() {
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {
 		if err != nil {
 			log.Printf("lenny-gateway: watchdog sweep error: %v", err)
-		} else if res.ForcedFailures > 0 {
+			return
+		}
+		if res.ForcedFailures > 0 {
 			log.Printf("lenny-gateway: watchdog forced %d sessions to failed: %v",
 				res.ForcedFailures, res.PerReason)
+		}
+		if res.Expirations > 0 {
+			log.Printf("lenny-gateway: watchdog expired %d sessions past their §11.3 deadline",
+				res.Expirations)
 		}
 	})
 
