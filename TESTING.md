@@ -327,7 +327,7 @@ lenny-test conformance --image <runtime-image> --level <basic|standard|full>
 lenny-test preflight   --cluster <kubeconfig>
 
 # Output
-lenny-test --output json|junit|tap|human
+lenny-test --output json|junit|tap|human|github-annotations
 lenny-test --verdict-file tests/results/<name>.json
 ```
 
