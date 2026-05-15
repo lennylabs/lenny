@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -169,6 +170,22 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// ----- §6.2 / §11.3 pre-running watchdog -----
+	// Sweeps every 5 s; transitions stuck sessions to failed.
+	// Tenants list is sourced from the in-memory store so newly
+	// registered tenants are picked up on the next tick.
+	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil)
+	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
+	defer watchdogCancel()
+	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {
+		if err != nil {
+			log.Printf("lenny-gateway: watchdog sweep error: %v", err)
+		} else if res.ForcedFailures > 0 {
+			log.Printf("lenny-gateway: watchdog forced %d sessions to failed: %v",
+				res.ForcedFailures, res.PerReason)
+		}
+	})
+
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -194,6 +211,27 @@ func main() {
 type permissiveRegistry struct{}
 
 func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
+
+// tenantsLister adapts a tenantstore.Memory into a
+// watchdog.TenantLister so the watchdog sweeps every registered
+// tenant. In single-tenant deployments it also returns "default" so
+// dev-mode sessions are bounded.
+type tenantsLister struct {
+	store *tenantstore.Memory
+}
+
+func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
+	rows, err := t.store.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows)+1)
+	out = append(out, "default")
+	for _, row := range rows {
+		out = append(out, row.ID)
+	}
+	return out, nil
+}
 
 // envFlag returns true when the env var name is set to a truthy
 // value (1, true, yes — case-insensitive). Used to default the
