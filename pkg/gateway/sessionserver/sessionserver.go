@@ -36,9 +36,10 @@ import (
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
-	store sessionstore.Store
-	clock func() time.Time
-	idFn  func() string
+	store           sessionstore.Store
+	clock           func() time.Time
+	idFn            func() string
+	deriveAuditSink DeriveAuditSink
 }
 
 // Options configures the Server at construction.
@@ -51,11 +52,24 @@ type Options struct {
 	// deterministic generator; production leaves this nil and the
 	// server uses a crypto/rand-backed hex generator.
 	IDFunc func() string
+
+	// DeriveAuditSink, when set, receives the
+	// `derive.isolation_downgrade` audit event per §7.1 derive rule 5
+	// whenever a platform-admin exercises the
+	// `allowIsolationDowngrade: true` override. Production wires this
+	// to the §11.7 audit pipeline; nil disables the emission (and the
+	// override still applies).
+	DeriveAuditSink DeriveAuditSink
 }
 
 // New returns a Server bound to the supplied store.
 func New(store sessionstore.Store, opts Options) *Server {
-	s := &Server{store: store, clock: opts.Clock, idFn: opts.IDFunc}
+	s := &Server{
+		store:           store,
+		clock:           opts.Clock,
+		idFn:            opts.IDFunc,
+		deriveAuditSink: opts.DeriveAuditSink,
+	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -78,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", s.handleTransition(session.EndpointInterrupt, transitionInterrupt))
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate", s.handleTransition(session.EndpointTerminate, transitionTerminate))
 	mux.HandleFunc("POST /v1/sessions/{id}/resume", s.handleTransition(session.EndpointResume, transitionResume))
+	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
 	return mux
 }
 

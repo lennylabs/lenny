@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // Session is the per-row payload the store persists. Mirrors the
@@ -38,7 +39,75 @@ type Session struct {
 	// RuntimeRef identifies the runtime this session targets. Stored
 	// at create-time and immutable across the session lifetime.
 	RuntimeRef string
+
+	// PoolRef identifies the `SandboxWarmPool` this session was
+	// scheduled against. Optional; left blank when the row is created
+	// before the gateway has resolved a pool (every primary
+	// `POST /v1/sessions` row populates this at admission).
+	PoolRef string
+
+	// IsolationProfile is the §5.3 sandbox isolation profile the
+	// session is bound to. Used by the §7.1 derive monotonicity check,
+	// the §8.3 delegation monotonicity check, and the §15.1 replay
+	// monotonicity check. Empty for sessions whose pool has not yet
+	// been resolved.
+	IsolationProfile isolation.Profile
+
+	// WorkspaceSnapshot is the §7.1 / §15.1 workspace snapshot ref
+	// resolved for this session — nil when no snapshot exists yet
+	// (e.g., a `created` session before finalize, or a session whose
+	// pod never sealed a workspace). Populated by checkpoint, seal, or
+	// derive-copy success paths.
+	WorkspaceSnapshot *WorkspaceSnapshot
+
+	// ParentSessionID is the source session a derive copied from, per
+	// §7.1 derive copy semantics. Set only on derived sessions.
+	ParentSessionID string
+
+	// ParentWorkspaceRef is the §4.5 metadata lineage pointer to the
+	// parent session's workspace object. Audit / observability only;
+	// not a reference-counted dependency.
+	ParentWorkspaceRef string
 }
+
+// WorkspaceSnapshot describes a stored workspace artifact attached to
+// a session. Mirrors the §7.1 derive response fields
+// (`workspaceSnapshotSource`, `workspaceSnapshotTimestamp`) plus the
+// underlying object reference the gateway uses to materialise the
+// snapshot onto a new pod.
+type WorkspaceSnapshot struct {
+	// Ref is the object-store key (§4.5 MinIO path
+	// `/{tenant_id}/{object_type}/{session_id}/...`) the snapshot
+	// resolves to. Empty when no snapshot exists.
+	Ref string
+
+	// Source records how the snapshot was produced: `sealed`,
+	// `checkpoint`, or `live`. The §7.1 derive response echoes this
+	// value as `workspaceSnapshotSource`.
+	Source WorkspaceSnapshotSource
+
+	// Timestamp is the moment the snapshot was committed to object
+	// storage. The §7.1 derive response echoes this as
+	// `workspaceSnapshotTimestamp`.
+	Timestamp time.Time
+}
+
+// WorkspaceSnapshotSource is the closed §7.1 enum recording how a
+// workspace snapshot was produced.
+type WorkspaceSnapshotSource string
+
+const (
+	// WorkspaceSnapshotSealed is the post-completion seal artifact.
+	WorkspaceSnapshotSealed WorkspaceSnapshotSource = "sealed"
+	// WorkspaceSnapshotCheckpoint is the latest periodic checkpoint
+	// artifact (the §7.1 `allowStale` derive path resolves to this).
+	WorkspaceSnapshotCheckpoint WorkspaceSnapshotSource = "checkpoint"
+	// WorkspaceSnapshotLive is the live-pod export path. Only valid
+	// when the source pod is currently attached; the derive code path
+	// never observes this value because derive runs against
+	// at-rest snapshots only.
+	WorkspaceSnapshotLive WorkspaceSnapshotSource = "live"
+)
 
 // Store is the §4.2 SessionStore interface. Every method is
 // goroutine-safe. The context is used for cancellation only; production
