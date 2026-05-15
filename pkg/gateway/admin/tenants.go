@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
@@ -83,7 +82,7 @@ type Router struct {
 	pools       poolstore.Store
 	breakers    breakerstore.Store
 	connectors  connectorstore.Store
-	auditChains *audit.ChainSet
+	auditLog    AuditLog
 	clock       func() time.Time
 	audit       AuditSink
 
@@ -175,7 +174,7 @@ func (r *Router) Handler() http.Handler {
 	if r.tenants != nil || r.runtimes != nil || r.users != nil {
 		mux.Handle("POST /v1/admin/bootstrap", r.requireAdmin(http.HandlerFunc(r.handleBootstrap)))
 	}
-	if r.auditChains != nil {
+	if r.auditLog != nil {
 		// §25.9 Audit Log Query API. The verify route is registered
 		// before the {seq} route so "verify" is not parsed as a seq.
 		mux.Handle("GET /v1/admin/audit-events/verify", r.requireAuditReader(http.HandlerFunc(r.handleVerifyAuditChain)))

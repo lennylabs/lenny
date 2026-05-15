@@ -179,6 +179,22 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	if pgStatus != "healthy" {
 		t.Errorf("health: postgres component status = %q, want healthy", pgStatus)
 	}
+
+	// ---- audit: the admin bootstrap is in the durable Postgres §11.7
+	//      hash chain (on the actor's tenant chain), and it verifies ----
+	code, verify := do(http.MethodGet, "/v1/admin/audit-events/verify?tenantId=acme", "platform-admin", nil)
+	if code != http.StatusOK {
+		t.Fatalf("audit verify: status %d", code)
+	}
+	if verify["integrity"] != "verified" {
+		t.Errorf("audit chain integrity = %v, want verified", verify["integrity"])
+	}
+	if rc, _ := verify["rowCount"].(float64); rc < 1 {
+		t.Errorf("audit rowCount = %v, want >= 1 (the bootstrap mutation)", verify["rowCount"])
+	}
+	if n := dbCount(`SELECT COUNT(*) FROM audit_log WHERE tenant_id = 'acme'`); n < 1 {
+		t.Errorf("audit_log row count for acme = %d, want >= 1", n)
+	}
 }
 
 // TestGatewayPostgresIntegrityWarningStartup confirms the §11.7

@@ -105,10 +105,3 @@ func TestChainAuditSinkEmitDirect(t *testing.T) {
 	}
 }
 
-func TestChainAuditSinkExposesChainSet(t *testing.T) {
-	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
-	if sink.ChainSet() != chains {
-		t.Error("ChainSet() should return the underlying set")
-	}
-}

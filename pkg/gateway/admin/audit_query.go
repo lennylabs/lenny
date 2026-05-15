@@ -34,10 +34,18 @@ type AuditVerifyResponse struct {
 }
 
 // WithAuditChains wires the §25.9 Audit Log Query API onto the
-// Router. The supplied ChainSet is the same one the ChainAuditSink
+// Router over an in-memory ChainSet — the same one the ChainAuditSink
 // writes to.
 func (r *Router) WithAuditChains(chains *audit.ChainSet) *Router {
-	r.auditChains = chains
+	r.auditLog = chainSetAuditLog{chains: chains, clock: r.clock}
+	return r
+}
+
+// WithAuditLog wires the §25.9 Audit Log Query API onto the Router
+// over any AuditLog — used for the Postgres-backed audit chain so the
+// query and verify endpoints read the durable trail.
+func (r *Router) WithAuditLog(auditLog AuditLog) *Router {
+	r.auditLog = auditLog
 	return r
 }
 
@@ -80,10 +88,11 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	if !ok {
 		return
 	}
-	chain := r.auditChains.Chain(tenant)
-	rows := []audit.Row{}
-	if chain != nil {
-		rows = chain.Rows()
+	rows, err := r.auditLog.Rows(req.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit query failed: "+err.Error(), nil)
+		return
 	}
 
 	afterSeq := uint64(0)
@@ -127,12 +136,13 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
 		return
 	}
-	chain := r.auditChains.Chain(tenant)
-	if chain == nil {
-		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "audit event not found", nil)
+	rows, err := r.auditLog.Rows(req.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit query failed: "+err.Error(), nil)
 		return
 	}
-	for _, row := range chain.Rows() {
+	for _, row := range rows {
 		if row.Seq == seq {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(auditRowPayload(row))
@@ -150,17 +160,24 @@ func (r *Router) handleVerifyAuditChain(w http.ResponseWriter, req *http.Request
 	if !ok {
 		return
 	}
-	chain := r.auditChains.Chain(tenant)
-	resp := AuditVerifyResponse{TenantID: tenant}
-	if chain == nil {
-		resp.Integrity = string(audit.ChainVerified)
-		resp.RowCount = 0
-	} else {
-		res := chain.Verify()
-		resp.Integrity = string(res.Integrity)
-		resp.BreakSeq = res.BreakSeq
-		resp.Detail = res.Detail
-		resp.RowCount = chain.Len()
+	res, err := r.auditLog.Verify(req.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit verify failed: "+err.Error(), nil)
+		return
+	}
+	rows, err := r.auditLog.Rows(req.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"audit query failed: "+err.Error(), nil)
+		return
+	}
+	resp := AuditVerifyResponse{
+		TenantID:  tenant,
+		Integrity: string(res.Integrity),
+		BreakSeq:  res.BreakSeq,
+		Detail:    res.Detail,
+		RowCount:  len(rows),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

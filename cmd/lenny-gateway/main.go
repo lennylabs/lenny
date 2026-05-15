@@ -49,6 +49,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
@@ -266,29 +267,40 @@ func main() {
 
 	// ----- Admin API -----
 	// Every admin mutation is committed to a §11.7 per-tenant audit
-	// hash chain via the ChainAuditSink.
-	auditChains := audit.NewChainSet()
-	adminRouter := admin.NewRouter(tenants, admin.Options{
-		Audit: admin.NewChainAuditSink(auditChains, nil),
-	}).
+	// hash chain. With Postgres the chain is durable (auditstore);
+	// otherwise it is in-memory and lost on restart.
+	var (
+		auditSink admin.AuditSink
+		wireAudit func(*admin.Router) *admin.Router
+	)
+	if pgPool != nil {
+		pgAudit := auditstore.New(pgPool)
+		auditSink = admin.NewAuditLogSink(pgAudit, nil)
+		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
+	} else {
+		auditChains := audit.NewChainSet()
+		auditSink = admin.NewChainAuditSink(auditChains, nil)
+		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
+	}
+	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
 		WithBreakers(breakers).
-		WithConnectors(connectors).
-		WithAuditChains(auditChains).
-		WithPlatformInfo(
-			admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
-			map[string]string{
-				"gateway.addr":        *addr,
-				"gateway.multiTenant": boolStr(*multiTenant),
-				"gateway.devMode":     boolStr(*devMode),
-				"gateway.runtimeBin":  *runtimeBin,
-				"gateway.postgres":    boolStr(*postgresDSN != ""),
-				"gateway.redis":       boolStr(*redisURL != ""),
-				"gateway.replicaId":   replica,
-			},
-		)
+		WithConnectors(connectors)
+	adminRouter = wireAudit(adminRouter)
+	adminRouter = adminRouter.WithPlatformInfo(
+		admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
+		map[string]string{
+			"gateway.addr":        *addr,
+			"gateway.multiTenant": boolStr(*multiTenant),
+			"gateway.devMode":     boolStr(*devMode),
+			"gateway.runtimeBin":  *runtimeBin,
+			"gateway.postgres":    boolStr(*postgresDSN != ""),
+			"gateway.redis":       boolStr(*redisURL != ""),
+			"gateway.replicaId":   replica,
+		},
+	)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()

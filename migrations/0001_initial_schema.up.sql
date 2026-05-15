@@ -128,7 +128,11 @@ CREATE INDEX idx_session_messages_tenant_session ON session_messages (tenant_id,
 -- pg_jcs_canonicalize() is installed; v1 application code computes the
 -- canonical form before insert.
 CREATE TABLE audit_log (
-    tenant_id              TEXT        NOT NULL REFERENCES tenants(id),
+    -- tenant_id is the §11.7 per-tenant chain selector. It is NOT a
+    -- foreign key to tenants: platform-admin actions are recorded on
+    -- the "platform" chain, a pseudo-tenant that is not a registered
+    -- tenant row. RLS and lenny_tenant_guard still scope every row.
+    tenant_id              TEXT        NOT NULL,
     sequence_number        BIGINT      NOT NULL,
     id                     UUID        NOT NULL DEFAULT gen_random_uuid(),
     prev_hash              BYTEA,
