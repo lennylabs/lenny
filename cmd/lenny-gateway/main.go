@@ -267,10 +267,16 @@ func main() {
 	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
 	// deployments leave it off so X-Lenny-Roles cannot self-grant
 	// platform-admin.
+	//
+	// The §10.2 Bearer path is verified with the same HMAC key the
+	// in-process Token Service signs with, so a token minted by
+	// POST /v1/oauth/token round-trips through the gateway. Production
+	// swaps in the OIDC JWKS verifier.
 	authOpts := authmw.Options{
 		MultiTenant:     *multiTenant,
 		AllowDevHeaders: true,
 		AllowDevRoles:   *devMode,
+		Verifier:        jwtSigner,
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the
