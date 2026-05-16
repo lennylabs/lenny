@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e9ad1ce` — `allow-admission-webhooks` NetworkPolicy (§13.2). Re-admits
+  kube-apiserver ingress and kube-system CoreDNS egress for the admission webhook
+  pods under the `lenny-system` default-deny; `webhookIngressCIDR` value added.
 - `8b72d0b` — `lenny-system` `default-deny-all` NetworkPolicy (§13.2). The fail-closed
   control-plane network baseline for the release namespace; the §13.2 component
   allow-lists remain.
