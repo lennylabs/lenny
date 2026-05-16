@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `258c320` — Gateway and Token Service metrics-scrape NetworkPolicies (§13.2). Admit
+  Prometheus scrape from the monitoring namespace to those components' metrics ports
+  under the `lenny-system` default-deny.
 - `4aa16c7` — `allow-dedicated-coredns` NetworkPolicy (§13.2). Re-admits the dedicated
   CoreDNS ingress (agent-namespace DNS, monitoring scrape) and kube-system CoreDNS
   egress under the `lenny-system` default-deny.
