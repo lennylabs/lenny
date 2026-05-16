@@ -133,6 +133,42 @@ func TestTickRenewalSucceedsAfterTransientFailure(t *testing.T) {
 	}
 }
 
+func TestRevokeDropsBoundLeases(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	var exhausted []string
+	w := credrenewal.New(r, credrenewal.Options{
+		OnExhausted: func(l credrenewal.Lease) { exhausted = append(exhausted, l.LeaseID) },
+	})
+	// Two leases on the revoked credential, one on a healthy credential.
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-a", CredentialID: "key-1",
+		RenewBefore: base.Add(time.Hour), ExpiresAt: base.Add(2 * time.Hour),
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-b", CredentialID: "key-1",
+		RenewBefore: base.Add(time.Hour), ExpiresAt: base.Add(2 * time.Hour),
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-c", CredentialID: "key-2",
+		RenewBefore: base.Add(time.Hour), ExpiresAt: base.Add(2 * time.Hour),
+	})
+
+	w.Revoke("key-1")
+	w.Tick(context.Background(), base)
+
+	// Both key-1 leases dropped even though their renewBefore is far off.
+	if len(exhausted) != 2 {
+		t.Fatalf("exhausted %d leases, want 2 (both bound to the revoked credential)", len(exhausted))
+	}
+	if w.Tracked() != 1 {
+		t.Errorf("tracked = %d, want 1 — only the healthy lease remains", w.Tracked())
+	}
+	// The Renewer is not invoked for a revoked credential's leases.
+	if r.calls != 0 {
+		t.Errorf("Renewer called %d times, want 0 — a revoked lease is not renewed", r.calls)
+	}
+}
+
 func TestForgetStopsTracking(t *testing.T) {
 	w := credrenewal.New(&fakeRenewer{ttl: time.Hour}, credrenewal.Options{})
 	w.Track(credrenewal.Lease{LeaseID: "lease-1", RenewBefore: base, ExpiresAt: base.Add(time.Hour)})

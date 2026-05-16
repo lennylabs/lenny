@@ -35,6 +35,9 @@ type Lease struct {
 	LeaseID string
 	// SessionID is the session the lease was assigned to.
 	SessionID string
+	// CredentialID identifies the underlying pool credential the lease
+	// is bound to. A §4.9 emergency revocation targets this id.
+	CredentialID string
 	// RenewBefore is the §4.9 deadline at which proactive renewal
 	// should issue a replacement lease.
 	RenewBefore time.Time
@@ -70,6 +73,7 @@ type Worker struct {
 
 	mu      sync.Mutex
 	tracked map[string]*trackedLease
+	revoked map[string]bool
 }
 
 // trackedLease pairs a lease with its proactive-renewal retry count.
@@ -86,6 +90,7 @@ func New(renewer Renewer, opts Options) *Worker {
 		clock:       opts.Clock,
 		onExhausted: opts.OnExhausted,
 		tracked:     map[string]*trackedLease{},
+		revoked:     map[string]bool{},
 	}
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
@@ -119,23 +124,43 @@ func (w *Worker) Tracked() int {
 	return len(w.tracked)
 }
 
-// Tick runs one renewal sweep at now: every tracked lease whose
-// renewBefore has passed is processed. An already-expired lease cannot
-// be renewed (the §4.9 expiresAt guard) — it is dropped and signals
-// OnExhausted. A live lease is renewed via the Renewer; on success the
-// replacement lease is tracked under its new renewBefore, and on
-// failure the lease is retried on later ticks up to MaxRenewalRetries
-// before being dropped with an OnExhausted signal. Tick returns the
-// count of leases successfully renewed.
+// Revoke marks a pool credential as revoked per §4.9 emergency
+// revocation. On the next sweep every tracked lease bound to the
+// credential is dropped and signals OnExhausted, so the affected
+// sessions fall through to fault rotation onto a fresh credential.
+func (w *Worker) Revoke(credentialID string) {
+	w.mu.Lock()
+	w.revoked[credentialID] = true
+	w.mu.Unlock()
+}
+
+// Tick runs one renewal sweep at now. A tracked lease bound to a
+// revoked credential is dropped immediately (the §4.9 emergency
+// revocation path) and signals OnExhausted. Otherwise, every lease
+// whose renewBefore has passed is processed: an already-expired lease
+// cannot be renewed (the §4.9 expiresAt guard) — it is dropped and
+// signals OnExhausted; a live lease is renewed via the Renewer, and on
+// failure is retried on later ticks up to MaxRenewalRetries before
+// being dropped with an OnExhausted signal. Tick returns the count of
+// leases successfully renewed.
 func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 	w.mu.Lock()
 	due := make([]*trackedLease, 0)
+	revokedLeases := make([]Lease, 0)
 	for _, tl := range w.tracked {
+		if w.revoked[tl.lease.CredentialID] {
+			revokedLeases = append(revokedLeases, tl.lease)
+			continue
+		}
 		if !now.Before(tl.lease.RenewBefore) {
 			due = append(due, tl)
 		}
 	}
 	w.mu.Unlock()
+
+	for _, lease := range revokedLeases {
+		w.exhaust(lease)
+	}
 
 	renewed := 0
 	for _, tl := range due {
