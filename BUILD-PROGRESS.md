@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `889e4ad` — `cmd/lenny-webhook` serves the `/drain-readiness` route (§12.5). The
+  `lenny-drain-readiness` admission route on the `pods/eviction` subresource, built from
+  the cluster client and an `HTTPDrainProbe` pointed at the gateway endpoint via the new
+  `--gateway-drain-readiness-url` flag.
 - `54725dd` — `webhook.DrainReadiness` handler (§12.5). The `lenny-drain-readiness`
   Decider for the `pods/eviction` subresource: it resolves the evicted pod's node,
   reads the `lenny.dev/drain-force` override, queries the gateway drain-readiness
@@ -387,7 +391,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook has its decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint (`pkg/gateway/drainreadiness`), and the AdmissionReview handler (`webhook.DrainReadiness`). The `cmd/lenny-webhook` route, the Helm manifest, the gateway endpoint wiring, and the gateway checkpoint-and-resume orchestration are not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook is built and served by `cmd/lenny-webhook`: the decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint handler (`pkg/gateway/drainreadiness`), the AdmissionReview handler (`webhook.DrainReadiness`), and the `/drain-readiness` route. The feature-gated Helm manifest, the `cmd/lenny-gateway` mounting of the endpoint, and the gateway checkpoint-and-resume orchestration are not built; the endpoint's MinIO probe needs the production MinIO-backed blobstore, which is also unbuilt.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -497,12 +501,14 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Wire the `lenny-drain-readiness` webhook into `cmd/lenny-webhook`: the
-`/drain-readiness` route on the `pods/eviction` subresource, built from the existing
-cluster client and a `--gateway-drain-readiness-url` flag for the `HTTPDrainProbe`.
-Then render the feature-gated `ValidatingWebhookConfiguration` Helm manifest (gated on
-`features.drainReadiness`) and mount the `drainreadiness.Handler` on the gateway's
-internal port in `cmd/lenny-gateway`. Those three steps complete the §12.5 webhook.
+Render the `lenny-drain-readiness` `ValidatingWebhookConfiguration` Helm manifest,
+gated on `features.drainReadiness`, scoped to the `pods/eviction` subresource in agent
+namespaces, fail-closed — following the `direct-mode-isolation-webhook.yaml` pattern.
+The shared admission-webhook Deployment template passes `--gateway-drain-readiness-url`
+from a Helm value. Mounting the `drainreadiness.Handler` at `GET /internal/drain-readiness`
+in `cmd/lenny-gateway` is the remaining piece; its MinIO probe needs the production
+MinIO-backed `blobstore` implementation (currently `MemoryStore`-only), so the
+MinIO-backed blobstore is the dependency to build alongside it.
 
 ## Test status
 
