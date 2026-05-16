@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3440833` — `pkg/gateway/podsession.Binder`. `Bind` joins the gateway↔pod path: it
+  claims an idle Sandbox, resolves the bound pod's adapter address from
+  `status.podIP`, performs the §15.5 version handshake, and starts the session on the
+  pod's adapter. The claim-and-start half of critical-path items 4 and 5; the
+  remaining work is constructing the Binder in the gateway binary and calling it from
+  the session-creation handler.
 - `55bbd9d` — `Sandbox.status.podIP`. The Sandbox reconciler records the backing pod's
   cluster IP as it observes the pod. The gateway needs this address to reach a claimed
   pod's §4.7 adapter; it unblocks the gateway-side integration of critical-path
@@ -208,24 +214,24 @@ progress; see the progress log.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
-4. Build the gateway pod-claim path against `SandboxClaim`. Partly done — the
-   `pkg/gateway/podclaim.Claimer` claim logic is built; the gateway binary must gain
-   a Kubernetes client and call the Claimer from the session-creation handler.
+4. Build the gateway pod-claim path against `SandboxClaim`. Done as a component —
+   `pkg/gateway/podclaim.Claimer`.
 5. Wire workspace materialization and session start from the gateway to the adapter.
-   The gateway-side client is built — `pkg/gateway/adapterclient` — so the remaining
-   work is calling it from the gateway session path against a claimed pod's address.
+   Done as a component — `pkg/gateway/adapterclient` plus `pkg/gateway/podsession.Binder`,
+   which claims a pod and runs the handshake and StartSession against it. Items 4 and
+   5 now need only the gateway-binary wiring: a controller-runtime Kubernetes client
+   and a session-creation handler that calls `Binder.Bind`.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 ## Next step
 
-Wire the Kubernetes-backed session path into the gateway. The gateway binary needs a
-controller-runtime Kubernetes client; the session-creation handler must call
-`podclaim.Claimer.Claim` to bind a pod (retrying against `ErrNoIdlePod` within
-`podClaimQueueTimeout`), resolve the bound `Sandbox`'s `status.podIP`, and drive that
-pod through `adapterclient` — `NegotiateVersion`, then `StartSession` with the
-WorkspacePlan. The claim path, the adapter client, and the pod address are now all
-in place; the remaining work is the gateway-binary wiring that joins them. This
-completes critical-path items 4 and 5 together.
+Wire `podsession.Binder` into the gateway binary. `cmd/lenny-gateway` needs a
+controller-runtime Kubernetes client and must construct a `Binder` from it; the
+session-creation handler then calls `Binder.Bind` (retrying against `ErrNoIdlePod`
+within `podClaimQueueTimeout`) to place the session on a warm pod. This completes
+critical-path items 4 and 5 and connects the REST session surface to the warm-pod
+fabric. The claim, handshake, and StartSession are already covered by `Binder`; the
+remaining work is the gateway binary's client construction and handler call.
 
 ## Test status
 
