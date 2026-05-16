@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c7810e9`, `ca0c364` — Sandbox-to-Pod reconciler. The controller-runtime Reconciler
+  materializes each Sandbox into a backing Pod via `podspec.Build`, advances the §6.2
+  warm-path phase from the `lifecycle.Decide` plan, and runs the draining teardown. It
+  is registered in `cmd/lenny-controller` with the adapter image supplied by
+  `--adapter-image`; the controller ClusterRole gained Pod create/delete and Runtime
+  read. Critical-path item 3.
 - `dd5d3fc` — Agent pod-spec builder. `podspec.Build` translates a Sandbox,
   SandboxTemplate, and Runtime into the backing `corev1.Pod`: the §4.7 two-container
   sidecar pod with the §13.1 security posture, the §6.1 volumes, and the §5.3
@@ -174,20 +180,20 @@ progress; see the progress log.
    (`SendMessage`, `Shutdown`, the credential RPCs, `Interrupt`, `Checkpoint`,
    `DemoteSDK`, `LifecycleChannel`) and a container image.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
-3. Build the Sandbox-to-Pod reconciler that wraps the existing lifecycle planner.
+3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
+   in `cmd/lenny-controller`.
 4. Build the gateway pod-claim path against `SandboxClaim`.
 5. Wire workspace materialization and session start from the gateway to the adapter.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 ## Next step
 
-Build the Sandbox-to-Pod reconciler — critical-path item 3. A controller-runtime
-reconciler that watches `Sandbox` resources, resolves each Sandbox's `SandboxTemplate`
-and `Runtime`, and applies the existing `lifecycle.Decide` plan: create the backing
-Pod from `podspec.Build` while warming, advance `Sandbox.status.phase` to `idle` once
-the Pod is Ready, and run the `draining` → delete-Pod → `terminated` teardown. The
-Pod carries an owner reference to the Sandbox for garbage collection. This makes a
-warm pod actually materialize in the cluster.
+Build the gateway pod-claim path — critical-path item 4. The gateway must claim an
+idle `Sandbox` by creating a `SandboxClaim` with optimistic-locking semantics (§4.6.1,
+ADR-007), so exactly one gateway replica binds a contested pod, and then drive the
+`idle` → `claimed` → ... → `attached` session transitions on the `Sandbox` status. The
+`lenny-sandboxclaim-guard` admission webhook already backstops double-claims; this
+item is the gateway-side claim logic.
 
 ## Test status
 
