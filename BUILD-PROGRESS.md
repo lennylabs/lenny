@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `6ee9fd9` — Gateway pod-claim `Claimer` (`pkg/gateway/podclaim`). Binds a session to
+  an idle Sandbox: flips it to `claimed` under an optimistic-locking status update and
+  creates the binding `SandboxClaim`; a conflict skips to the next idle pod. The
+  claim logic of critical-path item 4; the gateway-binary integration remains.
 - `c7810e9`, `ca0c364` — Sandbox-to-Pod reconciler. The controller-runtime Reconciler
   materializes each Sandbox into a backing Pod via `podspec.Build`, advances the §6.2
   warm-path phase from the `lifecycle.Decide` plan, and runs the draining teardown. It
@@ -182,18 +186,20 @@ progress; see the progress log.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
-4. Build the gateway pod-claim path against `SandboxClaim`.
+4. Build the gateway pod-claim path against `SandboxClaim`. Partly done — the
+   `pkg/gateway/podclaim.Claimer` claim logic is built; the gateway binary must gain
+   a Kubernetes client and call the Claimer from the session-creation handler.
 5. Wire workspace materialization and session start from the gateway to the adapter.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 ## Next step
 
-Build the gateway pod-claim path — critical-path item 4. The gateway must claim an
-idle `Sandbox` by creating a `SandboxClaim` with optimistic-locking semantics (§4.6.1,
-ADR-007), so exactly one gateway replica binds a contested pod, and then drive the
-`idle` → `claimed` → ... → `attached` session transitions on the `Sandbox` status. The
-`lenny-sandboxclaim-guard` admission webhook already backstops double-claims; this
-item is the gateway-side claim logic.
+Wire the `podclaim.Claimer` into the gateway. The gateway binary needs a
+controller-runtime Kubernetes client, and the session-creation handler must call
+`Claimer.Claim` to bind a pod (retrying against `ErrNoIdlePod` within
+`podClaimQueueTimeout`) instead of the current in-process executor path. This
+completes critical-path item 4 and connects the REST session surface to the
+warm-pod fabric.
 
 ## Test status
 
