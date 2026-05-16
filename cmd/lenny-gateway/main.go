@@ -403,6 +403,11 @@ func main() {
 	// One §8.10 tree archive shared by the sessionserver (which archives
 	// children on terminal transitions) and the platform MCP tools.
 	treeArchive := treearchive.NewMemory()
+	// One §9.2 interaction store shared by the sessionserver (which
+	// serves the respond/dismiss endpoints) and the platform MCP tools
+	// (lenny/request_elicitation), so an elicitation a tool records is
+	// resolvable through the REST surface.
+	interactions := interactionstore.NewMemory()
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -410,7 +415,7 @@ func main() {
 		Executor:            exec,
 		Transcripts:         transcripts,
 		Events:              eventBus,
-		Interactions:        interactionstore.NewMemory(),
+		Interactions:        interactions,
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
 		Billing:             billing,
@@ -442,6 +447,7 @@ func main() {
 		Events:       eventBus,
 		InputWaits:   inputwait.NewRegistry(),
 		TreeArchive:  treeArchive,
+		Interactions: interactions,
 		TenantID:     "default",
 	})
 

@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
@@ -40,11 +41,12 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:      store,
-		Executor:   executor.NewEchoExecutor(),
-		Runtimes:   runtimes,
-		Events:     events.NewBus(0),
-		InputWaits: inputwait.NewRegistry(),
+		Store:        store,
+		Executor:     executor.NewEchoExecutor(),
+		Runtimes:     runtimes,
+		Events:       events.NewBus(0),
+		InputWaits:   inputwait.NewRegistry(),
+		Interactions: interactionstore.NewMemory(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -89,6 +91,37 @@ func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchiv
 		TenantID:    "acme",
 	})
 	return srv, store, archive
+}
+
+// newMCPForElicitation builds the MCP server with a §9.2 interaction
+// store and the given maxElicitationWait, returning the store.
+func newMCPForElicitation(t *testing.T, timeout time.Duration) (*mcp.Server, sessionstore.Store, interactionstore.Store) {
+	t.Helper()
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:              store,
+		Interactions:       interactions,
+		ElicitationTimeout: timeout,
+		Clock:              func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:             func() string { return "elic_gen" },
+		TenantID:           "acme",
+	})
+	return srv, store, interactions
+}
+
+// waitElicitation blocks until an elicitation is recorded, or fails.
+func waitElicitation(t *testing.T, interactions interactionstore.Store, sessionID, id string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := interactions.Get(context.Background(), "acme", sessionID, "", id); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("elicitation %s was never recorded", id)
 }
 
 // waitPending blocks until a request is registered, or fails the test.
@@ -864,6 +897,97 @@ func TestAwaitChildrenFailedChildCarriesError(t *testing.T) {
 	}
 }
 
+func TestRequestElicitationResolvedByResponse(t *testing.T) {
+	srv, store, interactions := newMCPForElicitation(t, 5*time.Second)
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+	}()
+	waitElicitation(t, interactions, "sess_e", "elic_x")
+
+	// A human responds — the path the §15.1 respond endpoint drives.
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+		func(i *interactionstore.Interaction) error {
+			i.Phase = interactionstore.PhaseResponded
+			i.Response = "option-A"
+			return nil
+		}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	select {
+	case resp := <-got:
+		if text := resultText(t, resp); !strings.Contains(text, "option-A") {
+			t.Errorf("request_elicitation result = %q, want the human response", text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request_elicitation did not return after the response")
+	}
+}
+
+func TestRequestElicitationDismissed(t *testing.T) {
+	srv, store, interactions := newMCPForElicitation(t, 5*time.Second)
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+	}()
+	waitElicitation(t, interactions, "sess_e", "elic_x")
+
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+		func(i *interactionstore.Interaction) error {
+			i.Phase = interactionstore.PhaseDismissed
+			return nil
+		}); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	select {
+	case resp := <-got:
+		if text := resultText(t, resp); !strings.Contains(text, "dismissed") {
+			t.Errorf("request_elicitation result = %q, want a dismissed result", text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request_elicitation did not return after the dismissal")
+	}
+}
+
+func TestRequestElicitationTimeout(t *testing.T) {
+	srv, store, _ := newMCPForElicitation(t, 40*time.Millisecond)
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_e","message":"pick one","elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("a timed-out elicitation should be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if msg, _ := c0["text"].(string); !strings.Contains(msg, "ELICITATION_TIMEOUT") {
+		t.Errorf("timeout error = %q, want ELICITATION_TIMEOUT", msg)
+	}
+}
+
+func TestRequestElicitationRejectsTerminalSession(t *testing.T) {
+	srv, store, _ := newMCPForElicitation(t, time.Second)
+	mkSession(t, store, "sess_done", session.StateCompleted, "")
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_done","message":"x","elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("a terminal session should be a tool error: %+v", resp)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -883,7 +1007,8 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 		"lenny/create_session", "lenny/send_message",
 		"lenny/get_task_tree", "lenny/cancel_child", "lenny/await_children",
 		"lenny/discover_agents", "lenny/set_tracing_context",
-		"lenny/output", "lenny/request_input", "lenny/delegate_task",
+		"lenny/output", "lenny/request_input", "lenny/request_elicitation",
+		"lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)

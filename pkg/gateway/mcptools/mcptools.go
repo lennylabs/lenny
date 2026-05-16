@@ -17,6 +17,7 @@
 //   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
 //   - `lenny/output`              — emit output parts to the event stream.
 //   - `lenny/request_input`       — block until a peer provides input.
+//   - `lenny/request_elicitation` — block until a human responds (§9.2).
 //   - `lenny/delegate_task`       — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
@@ -39,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -85,6 +87,15 @@ type Deps struct {
 	// §11.3 maxRequestInputWaitSeconds limit. Zero selects the default.
 	RequestInputTimeout time.Duration
 
+	// Interactions is the §9.2 pending-interaction store backing
+	// lenny/request_elicitation. Optional — when nil, the tool is not
+	// registered.
+	Interactions interactionstore.Store
+
+	// ElicitationTimeout caps a lenny/request_elicitation block per the
+	// §9.1 maxElicitationWait limit. Zero selects the default.
+	ElicitationTimeout time.Duration
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -99,6 +110,10 @@ type Deps struct {
 // defaultRequestInputTimeout is the §11.3 maxRequestInputWaitSeconds
 // default applied when Deps.RequestInputTimeout is zero.
 const defaultRequestInputTimeout = 600 * time.Second
+
+// defaultElicitationTimeout is the §9.1 maxElicitationWait default
+// applied when Deps.ElicitationTimeout is zero.
+const defaultElicitationTimeout = 600 * time.Second
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
@@ -496,6 +511,108 @@ func Register(srv *mcp.Server, deps Deps) {
 			case <-ctx.Done():
 				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
 				return mcp.ToolResult{}, ctx.Err()
+			}
+		})
+	}
+
+	if deps.Interactions != nil {
+		elicitationTimeout := deps.ElicitationTimeout
+		if elicitationTimeout <= 0 {
+			elicitationTimeout = defaultElicitationTimeout
+		}
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/request_elicitation",
+			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				SessionID     string          `json:"sessionId"`
+				Message       string          `json:"message"`
+				Schema        json.RawMessage `json:"schema"`
+				ElicitationID string          `json:"elicitationId"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
+			if in.SessionID == "" || in.Message == "" {
+				return mcp.ToolResult{}, errors.New("sessionId and message are required")
+			}
+			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			}
+			if session.IsTerminal(row.State) {
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			}
+			elicitationID := in.ElicitationID
+			if elicitationID == "" {
+				elicitationID = idFn()
+			}
+			detail := map[string]any{"message": in.Message}
+			if len(in.Schema) > 0 {
+				var schema any
+				if json.Unmarshal(in.Schema, &schema) == nil {
+					detail["schema"] = schema
+				}
+			}
+			if err := deps.Interactions.Put(ctx, interactionstore.Interaction{
+				ID:        elicitationID,
+				Kind:      interactionstore.KindElicitation,
+				SessionID: in.SessionID,
+				TenantID:  tenant,
+				UserID:    row.UserID,
+				Phase:     interactionstore.PhasePending,
+				Detail:    detail,
+			}); err != nil {
+				return mcp.ToolResult{}, err
+			}
+			// §9.2: surface the elicitation on the session event stream so
+			// the human responder (and the elicitation chain) can see it.
+			if deps.Events != nil {
+				data, _ := json.Marshal(struct {
+					ElicitationID string `json:"elicitationId"`
+					Message       string `json:"message"`
+				}{ElicitationID: elicitationID, Message: in.Message})
+				deps.Events.Publish(in.SessionID, "elicitation_requested", string(data), clock())
+			}
+			// Block until a human resolves the elicitation or the §9.1
+			// maxElicitationWait timeout fires.
+			ticker := time.NewTicker(awaitPollInterval)
+			defer ticker.Stop()
+			timeout := time.After(elicitationTimeout)
+			for {
+				cur, err := deps.Interactions.Get(ctx, tenant, in.SessionID, row.UserID, elicitationID)
+				if err != nil {
+					return mcp.ToolResult{}, fmt.Errorf("elicitation lookup: %w", err)
+				}
+				switch cur.Phase {
+				case interactionstore.PhaseResponded:
+					body, _ := json.Marshal(struct {
+						ElicitationID string `json:"elicitationId"`
+						Response      any    `json:"response"`
+					}{ElicitationID: elicitationID, Response: cur.Response})
+					return textResult(string(body)), nil
+				case interactionstore.PhaseDismissed:
+					return textResult(fmt.Sprintf(`{"elicitationId":%q,"dismissed":true}`, elicitationID)), nil
+				}
+				select {
+				case <-ctx.Done():
+					return mcp.ToolResult{}, ctx.Err()
+				case <-timeout:
+					// §9.1: on timeout the elicitation is dismissed and the
+					// agent receives a timeout error.
+					_, _ = deps.Interactions.Resolve(ctx, tenant, in.SessionID, row.UserID, elicitationID,
+						func(i *interactionstore.Interaction) error {
+							if i.Phase == interactionstore.PhasePending {
+								i.Phase = interactionstore.PhaseDismissed
+								i.Reason = "ELICITATION_TIMEOUT"
+							}
+							return nil
+						})
+					return mcp.ToolResult{}, fmt.Errorf(
+						"ELICITATION_TIMEOUT: no response for %s within %s", elicitationID, elicitationTimeout)
+				case <-ticker.C:
+				}
 			}
 		})
 	}
