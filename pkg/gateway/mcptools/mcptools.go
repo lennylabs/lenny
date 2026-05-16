@@ -11,6 +11,7 @@
 //   - `lenny/create_session`  — create a session.
 //   - `lenny/send_message`    — deliver a message to a session.
 //   - `lenny/get_task_tree`   — read the §8 delegation task tree.
+//   - `lenny/cancel_child`    — cancel a child session and cascade.
 //   - `lenny/delegate_task`   — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
@@ -23,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -164,6 +166,52 @@ func Register(srv *mcp.Server, deps Deps) {
 		return textResult(string(body)), nil
 	})
 
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/cancel_child",
+		Description: "Cancel a child session and cascade the cancellation to its descendants (§8.5).",
+		InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","childSessionId"],"properties":{"parentSessionId":{"type":"string"},"childSessionId":{"type":"string"}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		var in struct {
+			ParentSessionID string `json:"parentSessionId"`
+			ChildSessionID  string `json:"childSessionId"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if in.ParentSessionID == "" || in.ChildSessionID == "" {
+			return mcp.ToolResult{}, errors.New("parentSessionId and childSessionId are required")
+		}
+		if in.ParentSessionID == in.ChildSessionID {
+			return mcp.ToolResult{}, errors.New("a session cannot cancel itself as its own child")
+		}
+		child, err := deps.Store.Get(ctx, tenant, in.ChildSessionID)
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("child session lookup: %w", err)
+		}
+		all, err := deps.Store.List(ctx, tenant, sessionstore.ListFilter{})
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		// Authorization: the caller may cancel only sessions inside its
+		// own §8 delegation subtree.
+		if !isDescendant(child, in.ParentSessionID, all) {
+			return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s",
+				in.ChildSessionID, in.ParentSessionID)
+		}
+		if session.IsTerminal(child.State) {
+			return mcp.ToolResult{}, fmt.Errorf("child session %s is already terminal (%s)",
+				in.ChildSessionID, child.State)
+		}
+		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all)
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		body, _ := json.Marshal(struct {
+			Cancelled []string `json:"cancelled"`
+		}{Cancelled: cancelled})
+		return textResult(string(body)), nil
+	})
+
 	if deps.Delegation != nil {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/delegate_task",
@@ -220,6 +268,70 @@ func walk(s sessionstore.Session, byParent map[string][]sessionstore.Session, se
 		node.Children = append(node.Children, walk(c, byParent, seen))
 	}
 	return node
+}
+
+// isDescendant reports whether child sits in the §8 delegation subtree
+// rooted at parentID. It walks the ParentSessionID chain upward from
+// child; the seen set guards against a malformed cyclic chain.
+func isDescendant(child sessionstore.Session, parentID string, all []sessionstore.Session) bool {
+	byID := make(map[string]sessionstore.Session, len(all))
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	seen := map[string]bool{}
+	cur := child
+	for cur.ParentSessionID != "" && !seen[cur.ID] {
+		seen[cur.ID] = true
+		if cur.ParentSessionID == parentID {
+			return true
+		}
+		next, ok := byID[cur.ParentSessionID]
+		if !ok {
+			return false
+		}
+		cur = next
+	}
+	return false
+}
+
+// cancelSubtree transitions child and every non-terminal session in the
+// subtree rooted at it to `cancelled` — the default §8 cascade policy.
+// Already-terminal sessions are left untouched, but the traversal still
+// descends through them to reach any non-terminal descendants. It
+// returns the ids it cancelled, sorted for a deterministic result.
+func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
+	child sessionstore.Session, all []sessionstore.Session) ([]string, error) {
+
+	byParent := map[string][]sessionstore.Session{}
+	for _, s := range all {
+		if s.ParentSessionID != "" {
+			byParent[s.ParentSessionID] = append(byParent[s.ParentSessionID], s)
+		}
+	}
+	var cancelled []string
+	seen := map[string]bool{}
+	queue := []sessionstore.Session{child}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if seen[cur.ID] {
+			continue
+		}
+		seen[cur.ID] = true
+		queue = append(queue, byParent[cur.ID]...)
+		if session.IsTerminal(cur.State) {
+			continue
+		}
+		if _, err := store.Update(ctx, tenant, cur.ID, func(row *sessionstore.Session) error {
+			row.State = session.StateCancelled
+			return nil
+		}); err != nil {
+			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
+		}
+		cancelled = append(cancelled, cur.ID)
+	}
+	sort.Strings(cancelled)
+	return cancelled, nil
 }
 
 func textResult(s string) mcp.ToolResult {

@@ -184,6 +184,102 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	}
 }
 
+// mkSession inserts a session row for the cancel_child tree tests.
+func mkSession(t *testing.T, store sessionstore.Store, id string, state session.State, parent string) {
+	t.Helper()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: state, ParentSessionID: parent,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed session %s: %v", id, err)
+	}
+}
+
+func TestCancelChildTool(t *testing.T) {
+	srv, store := newMCP(t)
+	// sess_root → sess_a → {sess_a1 (running), sess_a2 (completed) → sess_a2x (running)}
+	// sess_root → sess_b is a sibling of sess_a, outside the cancelled subtree.
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_a", session.StateRunning, "sess_root")
+	mkSession(t, store, "sess_a1", session.StateRunning, "sess_a")
+	mkSession(t, store, "sess_a2", session.StateCompleted, "sess_a")
+	mkSession(t, store, "sess_a2x", session.StateRunning, "sess_a2")
+	mkSession(t, store, "sess_b", session.StateRunning, "sess_root")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_a"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"sess_a", "sess_a1", "sess_a2x"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("cancel_child result %q missing %q", text, want)
+		}
+	}
+
+	// The child and every non-terminal descendant are cancelled — the
+	// traversal descends through the terminal sess_a2 to reach sess_a2x.
+	for _, id := range []string{"sess_a", "sess_a1", "sess_a2x"} {
+		row, err := store.Get(context.Background(), "acme", id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if row.State != session.StateCancelled {
+			t.Errorf("%s state = %q, want cancelled", id, row.State)
+		}
+	}
+	// The already-terminal descendant keeps its terminal state.
+	if row, _ := store.Get(context.Background(), "acme", "sess_a2"); row.State != session.StateCompleted {
+		t.Errorf("sess_a2 state = %q, want completed unchanged", row.State)
+	}
+	// The calling parent and the untouched sibling stay running.
+	for _, id := range []string{"sess_root", "sess_b"} {
+		if row, _ := store.Get(context.Background(), "acme", id); row.State != session.StateRunning {
+			t.Errorf("%s state = %q, want running unchanged", id, row.State)
+		}
+	}
+}
+
+func TestCancelChildToolRejectsNonDescendant(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_unrelated", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_unrelated"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("cancelling a non-descendant should be a tool error: %+v", resp)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_unrelated"); row.State != session.StateRunning {
+		t.Errorf("non-descendant state = %q, want running unchanged", row.State)
+	}
+}
+
+func TestCancelChildToolRejectsTerminalChild(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_done", session.StateCompleted, "sess_root")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_done"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("cancelling a terminal child should be a tool error: %+v", resp)
+	}
+}
+
+func TestCancelChildToolRejectsSelf(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_root"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("cancelling self should be a tool error: %+v", resp)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -201,7 +297,7 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 	}
 	for _, want := range []string{
 		"lenny/create_session", "lenny/send_message",
-		"lenny/get_task_tree", "lenny/delegate_task",
+		"lenny/get_task_tree", "lenny/cancel_child", "lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)
