@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c683a1a` — Adapter `DemoteSDK` RPC. The §4.7 SDK-warm demotion RPC; a pod-warm
+  adapter is not preConnect-capable, so `DemoteSDK` returns `Unimplemented` with a
+  precise message, the behavior §4.7 specifies for non-preConnect pods. Critical-path
+  item 1 work.
 - `2d4d7eb` — `crd-conversion` identity webhook (§17.2). The conversion webhook
   handler — every `lenny.dev` CRD is single-version, so conversion is the identity —
   plus the `/crd-conversion` route on `cmd/lenny-webhook`. The CRD `spec.conversion`
@@ -243,9 +247,9 @@ progress; see the progress log.
 
 1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`,
    `StartSession`, `SendMessage`, `Shutdown`, `NegotiateVersion`, the credential RPCs
-   (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), and `Interrupt` are
-   done; the remaining RPCs are `Checkpoint`, `ReportUsage`, `ExtendLease`,
-   `DemoteSDK`, and `LifecycleChannel`, plus a container image.
+   (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), `Interrupt`, and
+   `DemoteSDK` are done; the remaining RPCs are `Checkpoint`, `ReportUsage`,
+   `ExtendLease`, and `LifecycleChannel`, plus a container image.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
