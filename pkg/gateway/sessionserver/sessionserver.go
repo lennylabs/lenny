@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -106,6 +107,7 @@ type Server struct {
 	sealer          Sealer
 	treeArchive     treearchive.Store
 	maxOrphanTasks  int
+	evals           evalstore.Store
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -188,6 +190,11 @@ type Options struct {
 	// `503 INTERACTIONS_UNAVAILABLE`.
 	Interactions interactionstore.Store
 
+	// Evals is the §10.7 built-in eval-result store backing
+	// POST /v1/sessions/{id}/eval. When nil the endpoint returns
+	// `503 EVAL_UNAVAILABLE`.
+	Evals evalstore.Store
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -263,6 +270,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		blobs:           opts.Blobs,
 		executor:        opts.Executor,
 		transcripts:     opts.Transcripts,
+		evals:           opts.Evals,
 		events:          opts.Events,
 		interactions:    opts.Interactions,
 		usage:           opts.Usage,
@@ -322,6 +330,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
 	mux.HandleFunc("POST /v1/sessions/{id}/replay", s.handleReplay)
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
+	mux.HandleFunc("POST /v1/sessions/{id}/eval", s.handleEval)
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)

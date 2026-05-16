@@ -74,6 +74,7 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/sessions/{id}/tree",
 		"/v1/sessions/{id}/events",
 		"/v1/sessions/{id}/extend-retention",
+		"/v1/sessions/{id}/eval",
 		"/v1/blobs/{ref}",
 		"/v1/usage",
 		"/v1/metering/events",

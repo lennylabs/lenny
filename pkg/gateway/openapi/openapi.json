@@ -383,6 +383,19 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/sessions/{id}/eval": {
+      "post": {
+        "summary": "Submit an eval score for a session",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "201": { "description": "Eval result stored" },
+          "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "422": { "description": "Session not eval-eligible", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "429": { "description": "Per-session eval quota exceeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/blobs/{ref}": {
       "get": {
         "summary": "Resolve a lenny-blob:// reference",

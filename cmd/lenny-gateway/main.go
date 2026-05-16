@@ -78,6 +78,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
@@ -413,6 +414,7 @@ func main() {
 	// (lenny/request_elicitation), so an elicitation a tool records is
 	// resolvable through the REST surface.
 	interactions := interactionstore.NewMemory()
+	evals := evalstore.NewMemory(0, nil)
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -421,6 +423,7 @@ func main() {
 		Transcripts:         transcripts,
 		Events:              eventBus,
 		Interactions:        interactions,
+		Evals:               evals,
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
 		Billing:             billing,
@@ -510,6 +513,8 @@ func main() {
 			sessionScoped = append(sessionScoped,
 				erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
 		}
+		sessionScoped = append(sessionScoped,
+			erasure.SessionEraser{Name: "eval_results", DeleteBySession: evals.DeleteBySession})
 		erasureOrch := erasure.New(erasure.Config{
 			Sessions: func(ctx context.Context, tenantID, userID string) ([]string, error) {
 				rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
