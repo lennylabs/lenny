@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f129dce` — `podsession.ResolvePool` (§5). Resolves a runtime and §5.3 isolation
+  profile to the matching `SandboxWarmPool` by inspecting each pool's template — the
+  pool-resolution the gateway session-start handler needs to choose which pool to
+  claim from. The last gateway↔pod component dependency.
 - `258c320` — Gateway and Token Service metrics-scrape NetworkPolicies (§13.2). Admit
   Prometheus scrape from the monitoring namespace to those components' metrics ports
   under the `lenny-system` default-deny.
