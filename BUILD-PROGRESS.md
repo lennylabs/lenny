@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5f3f268` — Gateway wires the checkpointer as the §7.1 session sealer.
+  `cmd/lenny-gateway` passes the `Checkpointer` as the `sessionserver` `Sealer`, so a
+  completing session's workspace is sealed on the session-completion path.
+- `46aade9` — Seal-and-export on session completion (§7.1). `recordSessionCompleted`
+  invokes the optional `Sealer` when a session reaches a terminal state, before
+  `executor.Close` releases the pod, so the final snapshot is taken while the pod
+  adapter is still reachable.
+- `3abab51` — `checkpointer.Seal` (§7.1). The seal-and-export snapshot — a checkpoint
+  recorded with `WorkspaceSnapshot` source `sealed` rather than `checkpoint`.
 - `bbebbe1` — Gateway runs the §4.4 periodic-checkpoint loop. `cmd/lenny-gateway` starts
   `Checkpointer.Run` as a background runnable when `--agent-namespace` is set, on the
   `--checkpoint-interval` cadence (default 5m).
@@ -430,7 +439,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end. The periodic-checkpoint path is complete: `workspace.Archive`, the adapter `Checkpoint` RPC, `adapterclient.Checkpoint`, `checkpointer.Checkpointer` with its `Run`/`Sweep` loop, and the `cmd/lenny-gateway` wiring on `--checkpoint-interval`. The §7.1 seal-and-export on session completion and the resume-from-snapshot path are not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Mostly done    | The `lenny-drain-readiness` webhook is complete end to end. The §4.4 periodic-checkpoint path and the §7.1 seal-and-export are complete: `workspace.Archive`, the adapter `Checkpoint` RPC, `adapterclient.Checkpoint`, `checkpointer.Checkpointer` with its `Run`/`Sweep` loop and `Seal`, the `sessionserver` `Sealer` hook on session completion, and the `cmd/lenny-gateway` wiring. The §7.1 resume-from-snapshot path (materializing a session's stored `WorkspaceSnapshot` onto a fresh pod) is not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -540,12 +549,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §7.1 seal-and-export on session completion. When a session reaches a
-terminal state the gateway takes one final workspace snapshot and records it as the
-sealed final workspace (`WorkspaceSnapshot` with source `sealed`). `checkpointer`
-gains a `Seal` method — a checkpoint that records source `sealed` rather than
-`checkpoint` — and the session-completion path (`recordSessionCompleted`) invokes it.
-After seal-and-export, the resume-from-snapshot path completes Phase 8.
+Build the §7.1 resume-from-snapshot path. `POST /v1/sessions/{id}/resume` currently
+short-circuits a session to `running` via the generic `handleTransition`. The full
+path, like the dedicated `handleStart`, claims a fresh warm pod and materializes the
+session's stored `WorkspaceSnapshot` into it before the row transitions to running.
+This needs the adapter to materialize a workspace from an archive (a snapshot source
+the adapter does not yet restore) and a dedicated `handleResume` handler. It is the
+last Phase 8 deliverable.
 
 ## Test status
 
