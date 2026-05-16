@@ -3,7 +3,9 @@
 // Command lenny-controller runs the Lenny control-plane controllers
 // against a Kubernetes API server. It hosts the §4.6.1
 // WarmPoolController, which reconciles each SandboxWarmPool toward its
-// minWarm/maxWarm target by creating and draining Sandbox resources.
+// minWarm/maxWarm target by creating and draining Sandbox resources,
+// and the Sandbox-to-Pod reconciler, which materializes each Sandbox
+// into a backing Pod and drives the §6.2 warm-path lifecycle.
 //
 // The binary builds a controller-runtime manager: a shared client
 // cache, leader election so only one replica reconciles at a time, a
@@ -35,6 +37,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
 
@@ -62,6 +65,7 @@ func main() {
 		probeAddr     string
 		leaderElect   bool
 		leaderElectNS string
+		adapterImage  string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -71,6 +75,8 @@ func main() {
 		"run leader election so only one replica reconciles at a time")
 	flag.StringVar(&leaderElectNS, "leader-election-namespace", "lenny-system",
 		"namespace that holds the leader-election Lease")
+	flag.StringVar(&adapterImage, "adapter-image", "",
+		"the lenny-adapter sidecar image stamped into agent pods")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -99,6 +105,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up WarmPoolController: %v", err)
+	}
+
+	if err := (&sandbox.Reconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		AdapterImage: adapterImage,
+	}).SetupWithManager(mgr); err != nil {
+		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
