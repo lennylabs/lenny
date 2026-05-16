@@ -137,9 +137,11 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 func TestGRPCServerReportsUnimplementedForUnbuiltRPCs(t *testing.T) {
 	client, _ := adapterClient(t, adapter.New("served"))
 
-	_, err := client.StartSession(context.Background(), &adapterv1.StartSessionRequest{})
+	// SendMessage is not yet implemented; the embedded
+	// UnimplementedAdapterServer answers with codes.Unimplemented.
+	_, err := client.SendMessage(context.Background(), &adapterv1.SendMessageRequest{})
 	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("StartSession error code = %v, want Unimplemented", status.Code(err))
+		t.Errorf("SendMessage error code = %v, want Unimplemented", status.Code(err))
 	}
 }
 

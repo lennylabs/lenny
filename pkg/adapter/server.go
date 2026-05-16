@@ -14,6 +14,7 @@ package adapter
 
 import (
 	"context"
+	"sync"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -37,6 +38,20 @@ type Server struct {
 	Capabilities []string
 	// Version is the adapter build version, surfaced for observability.
 	Version string
+
+	// WorkspaceRoot is the directory StartSession materializes the
+	// session workspace into — the pod's /workspace/current.
+	WorkspaceRoot string
+	// Runtime manages the pod's runtime process. StartSession starts it
+	// once the workspace is prepared.
+	Runtime RuntimeProcess
+
+	// mu guards sessionID.
+	mu sync.Mutex
+	// sessionID is the session currently assigned to the pod, empty
+	// when the pod is idle. Per §6.1 a session-mode pod is
+	// one-session-only.
+	sessionID string
 }
 
 // New returns a Server advertising the given build version and the v1

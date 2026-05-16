@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
 )
 
 // version is the adapter build version, reported during gateway
@@ -41,6 +42,10 @@ func main() {
 	keyFile := flag.String("tls-key-file", "", "path to the adapter server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
+	workspaceRoot := flag.String("workspace-root", "/workspace/current",
+		"directory the session workspace is materialized into")
+	runtimeBin := flag.String("runtime-bin", "",
+		"path to the runtime binary the adapter starts at session start")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -52,7 +57,14 @@ func main() {
 		opts = append(opts, tlsOpt)
 	}
 
-	srv := adapter.NewGRPCServer(adapter.New(version), opts...)
+	adapterSrv := adapter.New(version)
+	adapterSrv.WorkspaceRoot = *workspaceRoot
+	if *runtimeBin != "" {
+		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
+			BinPath: *runtimeBin,
+		})
+	}
+	srv := adapter.NewGRPCServer(adapterSrv, opts...)
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {

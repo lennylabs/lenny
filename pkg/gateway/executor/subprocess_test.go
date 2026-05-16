@@ -121,6 +121,39 @@ func TestSubprocessExecutorCloseUnopenedIsNoOp(t *testing.T) {
 	}
 }
 
+func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath:     echoBinary,
+		SendTimeout: 10 * time.Second,
+	})
+	defer exec.Close(context.Background(), "eager")
+
+	if err := exec.Start(context.Background(), "eager"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// A second Start for the same session is a no-op, not a respawn.
+	if err := exec.Start(context.Background(), "eager"); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	// The eagerly-started process handles a message without a respawn.
+	out, err := exec.Send(context.Background(), "eager", []executor.Message{{Content: "ping"}})
+	if err != nil {
+		t.Fatalf("Send after Start: %v", err)
+	}
+	if len(out) != 1 || !strings.Contains(out[0].Text, "ping") {
+		t.Errorf("Send after Start output: %+v", out)
+	}
+}
+
+func TestSubprocessExecutorStartBadBinaryErrors(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath: "/nonexistent/runtime/binary",
+	})
+	if err := exec.Start(context.Background(), "sess_bad"); err == nil {
+		t.Error("Start against a missing binary should error")
+	}
+}
+
 func TestSubprocessExecutorBadBinaryErrors(t *testing.T) {
 	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
 		BinPath: "/nonexistent/runtime/binary",

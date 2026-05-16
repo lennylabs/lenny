@@ -105,6 +105,16 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 	return out, nil
 }
 
+// Start eagerly spawns the runtime child process for sessionID without
+// sending a message. The §6.1 pod-warm flow starts the runtime at
+// session start, so the §4.7 adapter calls Start from StartSession and
+// the process is live before the first message arrives. Start is
+// idempotent: a second call for an already-started session is a no-op.
+func (e *SubprocessExecutor) Start(_ context.Context, sessionID string) error {
+	_, err := e.session(sessionID)
+	return err
+}
+
 // readResponse scans stdout for the next `response` envelope. The
 // echo runtime may interleave `heartbeat_ack` and `status` frames;
 // those are skipped. Bounded by the executor's SendTimeout.
