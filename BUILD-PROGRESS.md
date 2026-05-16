@@ -451,7 +451,7 @@ this state.
 | 8     | Checkpoint/resume, drain-readiness webhook                   | Done           | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume is complete: `adapterclient.Resume` drives the pod adapter's `Resume` RPC, `Binder.Resume` claims a fresh pod and restores onto it, and `handleResume` serves `POST /v1/sessions/{id}/resume` — valid only from `awaiting_client_action` per §15.1, restoring from the §7.1 `WorkspaceSnapshot` or rebuilding from the stored §14 `WorkspacePlan`.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation/cycle`, `pkg/delegation/lease`, `pkg/delegation/tracing`, and the gateway delegation service are built. The §8.5 platform MCP tool surface is complete: `lenny/create_session`, `lenny/send_message` (with `inReplyTo` input resolution), `lenny/get_task_tree`, `lenny/delegate_task`, `lenny/cancel_child`, `lenny/await_children`, `lenny/discover_agents`, `lenny/set_tracing_context`, `lenny/output`, and `lenny/request_input` (`pkg/gateway/inputwait` registry, §11.3 timeout). The delegation service propagates a parent's §8.3 tracingContext onto each child. The §4 `RequestInterceptor` chain framework (`pkg/gateway/interceptor`) is built and the `PreMessageDelivery` phase is wired into `lenny/send_message`. The §8.10 `session_tree_archive` store (`pkg/gateway/treearchive`) is built with the archive-and-replay loop wired: child sessions are archived on every terminal transition (`lenny/cancel_child`, the sessionserver terminate / `DELETE` / start-failure paths, and the watchdog forced-failure and expiry sweeps), and `lenny/await_children` replays an archived child when its live session row is gone. The §8.10 `cascadeOnFailure` policy is applied on every terminal transition (`cancel_all` default cancels descendants, `detach` / `await_completion` leave them running, per-node policy honored), a resumed parent with active children receives the §7.1 `children_reattached` event, the §8.10 orphan-cleanup job (`pkg/gateway/orphancleanup`) sweeps every 60s to terminate orphans past the `cascadeTimeoutSeconds` window, and a `detach` cascade falls back to `cancel_all` when the tenant is over the `maxOrphanTasksPerTenant` cap, and the §8.10 bottom-up reattach traversal (`pkg/delegation/recovery`) groups failed tree nodes by depth and recovers them leaves-first under the `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` deadlines. Not built: the `delegation-echo` runtime, the `PreDelegation` and `PreExportMaterialization` interceptor wiring, external gRPC interceptors, and the `ExtendLease` lease-extension control plane.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
+| 10    | MCP fabric, elicitation chain                                | Partial        | `pkg/elicitation` is built (`EnforcementMode` with `ResolveEffective`, `DepthPolicy` with `ShouldSuppress`, `InitiatorType`, `Content.Digest` / `VerifyContent`, `Provenance.Validate`). The `lenny/request_elicitation` platform MCP tool records a pending §9.2 elicitation in the shared interaction store and blocks until a human resolves it via the §15.1 respond/dismiss endpoints or the §9.1 `maxElicitationWait` timeout fires. Not built: the gateway virtual MCP server, the hop-by-hop elicitation chain (forwarding up the task tree, depth suppression, content-integrity binding), `maxElicitationsPerSession` budget enforcement, and the tenant elicitation-content-integrity admin endpoints. |
 | 11    | Advanced credentials, multi-provider translators, revocation | Partial        | The revocation cache exists. The `aws_bedrock`, `vertex_ai`, and `azure_openai` translators and the proactive renewal worker are not.                                                                                                                                                                                                        |
 | 11.5  | Incremental load test (credential lifecycle)                 | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 12a   | Token Service hardening (KMS envelope, OAuth)                | Substrate only | `pkg/tokenexchange` exists. KMS envelope encryption and the full OAuth connector flow are not.                                                                                                                                                                                                                                               |
@@ -562,37 +562,28 @@ still behind the Phase-1 skeleton (the embedded `UnimplementedAdapterServer` ans
 
 ## Next step
 
-Phase 9 (§18.23) is in progress. Done: the complete §8.5 platform MCP tool surface
-(ten tools, including `lenny/await_children` in `all`/`any`/`settled` modes); the §4
-`RequestInterceptor` chain framework (`pkg/gateway/interceptor`); the
-`PreMessageDelivery` interceptor wiring on `lenny/send_message`; the §4.7
-`ReportUsage` adapter RPC; and the §8.10 `session_tree_archive` store
-(`pkg/gateway/treearchive`) with its archive-and-replay loop wired (archive on the
-terminate / cancel / `cancel_child` terminal paths, replay in `lenny/await_children`).
-Remaining Phase 9 work: the `delegation-echo` reference runtime, the `ExtendLease`
-lease-extension control plane, and the rest of delegation-tree recovery.
-
-Each remaining Phase 9 item carries a dependency to scope first:
-
-- Delegation-tree recovery (§8.10) is built: archive-on-terminal across every
-  terminal path, the archive-and-replay loop, the `cascadeOnFailure` policy with the
-  `maxOrphanTasksPerTenant` cap, the `children_reattached` event, the orphan-cleanup
-  job, and the bottom-up reattach traversal (`pkg/delegation/recovery`). A
-  gateway-internal orchestrator that detects pod-crashed trees and drives the
-  traversal could wire `pkg/delegation/recovery` to the resume machinery later; the
-  §8.10 algorithm itself is complete and tested.
+Phase 9 (§18.23) is substantially built — the §8.5 platform MCP tool surface, the §4
+`RequestInterceptor` chain framework, the §4.7 `ReportUsage` adapter RPC, and the full
+§8.10 delegation-tree recovery (archive-and-replay, `cascadeOnFailure` with the orphan
+cap, `children_reattached`, orphan-cleanup job, bottom-up reattach traversal). Three
+Phase 9 items remain blocked on infra or a spec ambiguity and are deferred:
 
 - `delegation-echo` is a Standard-level runtime — §15.4.3 requires it to connect to the
   adapter's local platform MCP server over an abstract Unix socket with the manifest
-  `mcpNonce` handshake. That intra-pod MCP-server infrastructure is not built; audit it
-  before starting the runtime.
-- `ExtendLease` and `LifecycleChannel` are the last two adapter proto RPCs.
-  `ExtendLease`'s direction needs settling: the proto places it in the `Adapter`
+  `mcpNonce` handshake. That intra-pod MCP-server infrastructure is not built.
+- `ExtendLease`'s direction needs settling: the proto places it in the `Adapter`
   service (gateway → pod) but the §8.6 prose describes the adapter requesting budget
   from the gateway.
 - The `PreDelegation` and `PreExportMaterialization` interceptor phases reuse the built
   chain framework but need their phase-specific payload plumbing (task input for
   `PreDelegation`, the §8.7 file export model for `PreExportMaterialization`).
+
+Phase 10 (§18.25, MCP fabric / elicitation chain) is in progress. `pkg/elicitation`
+and the `lenny/request_elicitation` tool are built. The next chunk is the rest of
+Phase 10: the gateway virtual MCP server (§9.1), the hop-by-hop elicitation chain that
+forwards an elicitation up the task tree applying depth suppression and content
+integrity, `maxElicitationsPerSession` budget enforcement, and the tenant
+elicitation-content-integrity admin endpoints.
 
 ## Test status
 
