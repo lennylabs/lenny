@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3764c4a` — LLM proxy SSE streaming wired into the handler (§4.9). `Forwarder.ForwardStream`
+  gates a streaming upstream call through the breaker and returns the live 2xx response;
+  the `Handler` dispatches on the request `stream` field, relays the upstream SSE stream
+  to the agent pod via `RelayStream`, and records the authoritative token usage through
+  the optional `UsageRecorder` on both the streaming and non-streaming paths.
+- `730d4da` — `llmproxy.RelayStream` (§4.9). The SSE relay copies an upstream Anthropic
+  Messages event stream to the agent pod line by line with per-line flush, without
+  buffering, and extracts the authoritative token usage from the `message_start` and
+  `message_delta` events. A mid-stream failure is tagged `streaming_interrupted`.
 - `d210138` — `llmproxy.Handler` (§4.9). The LLM reverse proxy HTTP handler for the
   Anthropic Messages dialect: it resolves the agent pod's bearer lease token through
   `credleasestore`, runs the per-request lease checks, translates and credential-injects
@@ -336,7 +345,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The non-streaming LLM proxy path is built end to end in `pkg/gateway/llmproxy`: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, and the `Handler` that composes them with the `pkg/credential` lease model and the `pkg/gateway/credleasestore` lease store. The `lenny-direct-mode-isolation` webhook is deployable end to end. The SSE relay for streaming responses, the Token Service credential cache, the §4.9 deny list, and the `cmd/lenny-gateway` wiring are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The LLM proxy path is built in `pkg/gateway/llmproxy` for both streaming and non-streaming responses: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, the SSE relay, and the `Handler` composing them with the `pkg/credential` lease model and the `pkg/gateway/credleasestore` lease store. The `lenny-direct-mode-isolation` webhook is deployable end to end. The Token Service credential cache (`CredentialResolver`), the §4.9 deny list (`DenyList`), and the `cmd/lenny-gateway` wiring that mounts the proxy are not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -450,13 +459,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 LLM proxy SSE relay for streaming responses. The Anthropic Messages
-endpoint has a streaming variant; the proxy must relay the upstream Server-Sent Events
-stream to the agent pod chunk by chunk without buffering the full response, extracting
-the authoritative token usage from the terminal `message_delta` SSE event. A mid-stream
-upstream failure surfaces as the §4.9 `streaming_interrupted` error. After the relay,
-the Token Service credential cache, the §4.9 deny list, and the `cmd/lenny-gateway`
-wiring that mounts the proxy `Handler` complete Phase 5.8.
+Build the §4.9 Token Service in-memory credential cache: the `CredentialResolver`
+implementation that holds real upstream API keys keyed by a lease's credential
+identity (`{poolId, credentialId}` or `{tenantId, credentialRef}`). §4.9 places real
+keys only in this in-process cache, never on disk. Rotation refreshes a cache entry
+atomically, so the next proxy request reads the new key with no reload. After the
+cache, the §4.9 deny list and the `cmd/lenny-gateway` wiring that mounts the proxy
+`Handler` make the LLM proxy deployable.
 
 ## Test status
 
