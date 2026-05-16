@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -85,6 +86,8 @@ type Router struct {
 	auditLog        AuditLog
 	tokenRevoker    IssuedTokenRevoker
 	revocationCache RevocationCache
+	erasureRunner   ErasureRunner
+	erasureJobs     erasurejob.Store
 	clock           func() time.Time
 	audit           AuditSink
 
@@ -157,6 +160,16 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("PUT /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
 		mux.Handle("POST /v1/admin/users/{user_id}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
 		mux.Handle("DELETE /v1/admin/users/{user_id}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
+		if r.erasureRunner != nil {
+			// §12.8 GDPR user erasure.
+			mux.Handle("POST /v1/admin/users/{user_id}/erase",
+				r.requireUserAdmin(http.HandlerFunc(r.handleEraseUser)))
+		}
+	}
+	if r.erasureJobs != nil {
+		// §12.8 erasure-job status query.
+		mux.Handle("GET /v1/admin/erasure-jobs/{job_id}",
+			r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))

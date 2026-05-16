@@ -590,6 +590,36 @@
         }
       }
     },
+    "/v1/admin/users/{user_id}/erase": {
+      "post": {
+        "summary": "Initiate a GDPR erasure job for a user",
+        "x-lenny-mcp-tool": "admin.erase_user",
+        "x-lenny-scope": "admin.users.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "user_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "202": { "description": "Erasure job accepted" },
+          "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/admin/erasure-jobs/{job_id}": {
+      "get": {
+        "summary": "Get the status of a GDPR erasure job",
+        "x-lenny-mcp-tool": "admin.get_erasure_job",
+        "x-lenny-scope": "admin.users.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "user-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "job_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Erasure job not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
         "summary": "Revoke an issued token by jti",
