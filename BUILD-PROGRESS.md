@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `26e1a3b` — §10.7 experiment results aggregation. `GET
+  /v1/admin/experiments/{name}/results` reports, for each variant plus the implicit
+  control group, the distinct-session sample count and the per-scorer count, mean,
+  p50, and p95. `evalstore.ListByExperiment` feeds the aggregation. The per-dimension
+  `scores` breakdown and the `breakdown_by` / `delegation_depth` filters are deferred.
 - `ba67d93`, `bf78359` — §10.7 built-in eval endpoint. `evalstore` is the per-session
   EvalResult registry; `POST /v1/sessions/{id}/eval` validates the submission, checks
   the session is eval-eligible (running/completed/failed), enforces the per-session
@@ -535,7 +540,7 @@ this state.
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 15    | Environment resource, RBAC                                   | Partial        | `pkg/environment` (the §10.6 Role enum and the tag-based Selector evaluator) and the environment admin API are built: `environmentstore` is the per-tenant Environment registry, and `/v1/admin/environments` serves POST/GET/list/PUT/DELETE with §10.6 resource validation (members, RBAC roles, runtime/connector selectors, mcp capability filters, bilateral cross-environment declarations). The cross-environment delegation resolver, OIDC-group resolution, the transparent-filtering middleware, and the `/usage`, `/access-report`, and `/runtime-exposure` sub-endpoints are not built.                                                                                                                                                                                                                                   |
-| 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The §10.7 built-in eval endpoint is built: `evalstore` is the per-session EvalResult registry (with the `maxEvalsPerSession` storage bound and the §12.8 erasure adapter), and `POST /v1/sessions/{id}/eval` ingests scores. The experiment router (`ExperimentRouter` interceptor), the variant-pool sizing path, the `GET /v1/admin/experiments/{name}/results` aggregation endpoint, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
+| 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The §10.7 built-in eval surface is built: `evalstore` is the per-session EvalResult registry (with the `maxEvalsPerSession` storage bound and the §12.8 erasure adapter), `POST /v1/sessions/{id}/eval` ingests scores, and `GET /v1/admin/experiments/{name}/results` aggregates eval scores by variant (per-scorer count, mean, p50, p95). The experiment router (`ExperimentRouter` interceptor), the variant-pool sizing path, the per-dimension `scores` breakdown and `breakdown_by` filters on the results API, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
 | 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
 | 17b   | Memory, semantic caching, eval hooks                         | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -692,15 +697,14 @@ SessionStore-side steps are built: non-terminal sessions are transitioned to
 `Terminate` fan-out, Redis cached-auth invalidation, and credential-lease revocation
 remain infrastructure-bound.
 
-The Phase 16 experiment admin API, the Phase 15 environment admin API, and the §10.7
-built-in eval ingestion endpoint are built (`experimentstore` + `/v1/admin/experiments`;
-`environmentstore` + `/v1/admin/environments`; `evalstore` + `POST /v1/sessions/{id}/eval`).
-The remaining §10.7 eval surface is the `GET /v1/admin/experiments/{name}/results`
-aggregation endpoint, which groups eval scores by variant — it depends on the
-`EvalResult` carrying experiment attribution, which in turn depends on the session
-`experimentContext` the `ExperimentRouter` populates. The next chunk is therefore the
-session `experimentContext` field plus the `ExperimentRouter` interceptor that assigns
-a variant at session creation, after which eval attribution and `/results` can follow.
+The Phase 15 environment admin API and the Phase 16 experiment surface are built: the
+experiment admin CRUD, the §10.7 built-in eval endpoints (`POST /v1/sessions/{id}/eval`
+ingestion and `GET /v1/admin/experiments/{name}/results` by-variant aggregation), and
+the environment admin CRUD. The next chunk is the session `experimentContext` field
+plus the `ExperimentRouter` interceptor that assigns a variant at session creation —
+once a session carries an experiment context, the gateway can auto-populate
+`EvalResult` attribution and the `/results` aggregation will report per-variant
+breakdowns rather than aggregating every score into the control group.
 
 ## Test status
 
