@@ -111,12 +111,13 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	}
 	result, _ := json.Marshal(archivedTaskResult(sess))
 	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
-		TenantID:      sess.TenantID,
-		RootSessionID: s.treeRoot(ctx, sess),
-		NodeSessionID: sess.ID,
-		State:         string(sess.State),
-		Result:        string(result),
-		SettledAt:     s.clock(),
+		TenantID:        sess.TenantID,
+		RootSessionID:   s.treeRoot(ctx, sess),
+		NodeSessionID:   sess.ID,
+		ParentSessionID: sess.ParentSessionID,
+		State:           string(sess.State),
+		Result:          string(result),
+		SettledAt:       s.clock(),
 	})
 }
 

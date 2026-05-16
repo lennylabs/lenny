@@ -803,6 +803,54 @@ func TestAwaitChildrenRejectsNonChild(t *testing.T) {
 	}
 }
 
+func TestAwaitChildrenReplaysArchivedChild(t *testing.T) {
+	srv, store, archive := newMCPForArchive(t)
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	// The child's live row is gone; only the §8.10 archive has it.
+	if err := archive.Archive(context.Background(), treearchive.ArchivedNode{
+		TenantID:        "acme",
+		RootSessionID:   "sess_parent",
+		NodeSessionID:   "sess_gone",
+		ParentSessionID: "sess_parent",
+		State:           "completed",
+		Result:          `{"schemaVersion":1,"taskId":"sess_gone","state":"completed"}`,
+		SettledAt:       time.Now(),
+	}); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_parent","childIds":["sess_gone"],"mode":"all"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "sess_gone") || !strings.Contains(text, "completed") {
+		t.Errorf("await_children result %q should replay the archived child", text)
+	}
+}
+
+func TestAwaitChildrenRejectsArchivedNonChild(t *testing.T) {
+	srv, store, archive := newMCPForArchive(t)
+	mkSession(t, store, "sess_parent", session.StateRunning, "")
+	// The archived child belongs to a different parent.
+	if err := archive.Archive(context.Background(), treearchive.ArchivedNode{
+		TenantID:        "acme",
+		RootSessionID:   "other_root",
+		NodeSessionID:   "sess_gone",
+		ParentSessionID: "other_parent",
+		State:           "completed",
+		Result:          `{"taskId":"sess_gone"}`,
+		SettledAt:       time.Now(),
+	}); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_parent","childIds":["sess_gone"],"mode":"all"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("awaiting an archived non-child should be a tool error: %+v", resp)
+	}
+}
+
 func TestAwaitChildrenFailedChildCarriesError(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_p", session.StateRunning, "")

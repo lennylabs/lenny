@@ -286,7 +286,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		// result. Archiving is best-effort observability — the
 		// cancellation itself has already committed.
 		if deps.TreeArchive != nil {
-			archiveCancelled(ctx, deps.TreeArchive, tenant, treeRoot(child, all), cancelled, clock())
+			archiveCancelled(ctx, deps.TreeArchive, tenant, treeRoot(child, all), cancelled, all, clock())
 		}
 		body, _ := json.Marshal(struct {
 			Cancelled []string `json:"cancelled"`
@@ -321,13 +321,15 @@ func Register(srv *mcp.Server, deps Deps) {
 			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
 		}
 		// Authorization: every awaited id must be a direct child of the
-		// caller — a session may only await children it delegated.
+		// caller — a session may only await children it delegated. A
+		// child whose live row is gone is resolved from the §8.10
+		// archive so a resumed parent can still re-await it.
 		for _, cid := range in.ChildIDs {
-			child, err := deps.Store.Get(ctx, tenant, cid)
+			oc, err := resolveChild(ctx, deps.Store, deps.TreeArchive, tenant, cid)
 			if err != nil {
-				return mcp.ToolResult{}, fmt.Errorf("child %s lookup: %w", cid, err)
+				return mcp.ToolResult{}, err
 			}
-			if child.ParentSessionID != in.SessionID {
+			if oc.parentID != in.SessionID {
 				return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s", cid, in.SessionID)
 			}
 		}
@@ -335,7 +337,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
 		for {
-			results, settled, err := collectChildResults(ctx, deps.Store, tenant, in.ChildIDs, mode)
+			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, tenant, in.ChildIDs, mode)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -615,23 +617,67 @@ func toTaskResult(s sessionstore.Session) taskResult {
 	return tr
 }
 
+// childOutcome is a child's resolved state for lenny/await_children,
+// sourced from the live session row or, when the row is gone, from the
+// §8.10 archive.
+type childOutcome struct {
+	parentID string
+	state    session.State
+	result   taskResult
+}
+
+// resolveChild resolves a child to its current outcome. It reads the
+// live session row, falling back to the §8.10 archive when the row is
+// gone — a child that settled and was reclaimed, or whose pod failed
+// while its resumed parent re-awaits it.
+func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
+	tenant, childID string) (childOutcome, error) {
+
+	row, err := store.Get(ctx, tenant, childID)
+	if err == nil {
+		return childOutcome{
+			parentID: row.ParentSessionID,
+			state:    row.State,
+			result:   toTaskResult(row),
+		}, nil
+	}
+	if !errors.Is(err, sessionstore.ErrNotFound) || archive == nil {
+		return childOutcome{}, fmt.Errorf("child %s lookup: %w", childID, err)
+	}
+	node, archiveErr := archive.GetByNode(ctx, tenant, childID)
+	if archiveErr != nil {
+		return childOutcome{}, fmt.Errorf("child %s lookup: %w", childID, err)
+	}
+	var tr taskResult
+	_ = json.Unmarshal([]byte(node.Result), &tr)
+	if tr.TaskID == "" {
+		tr.TaskID = childID
+	}
+	return childOutcome{
+		parentID: node.ParentSessionID,
+		state:    session.State(node.State),
+		result:   tr,
+	}, nil
+}
+
 // collectChildResults reads the awaited children and reports whether
 // the mode's settle condition holds. For `all` and `settled` the
 // condition is every child terminal; for `any` it is at least one
 // child terminal, and only the first such child (in childIDs order) is
-// returned.
-func collectChildResults(ctx context.Context, store sessionstore.Store, tenant string,
-	childIDs []string, mode string) ([]taskResult, bool, error) {
+// returned. A child whose live row is gone is resolved from the §8.10
+// archive.
+func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
+	tenant string, childIDs []string, mode string) ([]taskResult, bool, error) {
 
 	var terminal []taskResult
 	allTerminal := true
 	for _, cid := range childIDs {
-		child, err := store.Get(ctx, tenant, cid)
+		oc, err := resolveChild(ctx, store, archive, tenant, cid)
 		if err != nil {
-			return nil, false, fmt.Errorf("child %s lookup: %w", cid, err)
+			return nil, false, err
 		}
-		if session.IsTerminal(child.State) {
-			terminal = append(terminal, toTaskResult(child))
+		if session.IsTerminal(oc.state) {
+			terminal = append(terminal, oc.result)
 		} else {
 			allTerminal = false
 		}
@@ -760,8 +806,12 @@ func treeRoot(start sessionstore.Session, all []sessionstore.Session) string {
 // is best-effort: an archive error does not undo the cancellation, so
 // the error is dropped.
 func archiveCancelled(ctx context.Context, archive treearchive.Store,
-	tenant, rootSessionID string, cancelled []string, now time.Time) {
+	tenant, rootSessionID string, cancelled []string, all []sessionstore.Session, now time.Time) {
 
+	parentOf := make(map[string]string, len(all))
+	for _, s := range all {
+		parentOf[s.ID] = s.ParentSessionID
+	}
 	for _, id := range cancelled {
 		result, _ := json.Marshal(taskResult{
 			SchemaVersion: 1,
@@ -773,12 +823,13 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 			},
 		})
 		_ = archive.Archive(ctx, treearchive.ArchivedNode{
-			TenantID:      tenant,
-			RootSessionID: rootSessionID,
-			NodeSessionID: id,
-			State:         string(session.StateCancelled),
-			Result:        string(result),
-			SettledAt:     now,
+			TenantID:        tenant,
+			RootSessionID:   rootSessionID,
+			NodeSessionID:   id,
+			ParentSessionID: parentOf[id],
+			State:           string(session.StateCancelled),
+			Result:          string(result),
+			SettledAt:       now,
 		})
 	}
 }

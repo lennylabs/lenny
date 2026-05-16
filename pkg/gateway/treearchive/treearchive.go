@@ -30,6 +30,11 @@ type ArchivedNode struct {
 	RootSessionID string
 	// NodeSessionID is the settled child session.
 	NodeSessionID string
+	// ParentSessionID is the node's direct parent. The archive keys by
+	// the tree root, but the parent is recorded so a resumed parent's
+	// lenny/await_children can authorize a replayed child without its
+	// live session row.
+	ParentSessionID string
 	// State is the node's terminal session state (`completed`,
 	// `failed`, `cancelled`, or `expired`).
 	State string
@@ -63,6 +68,13 @@ type Store interface {
 	// Get returns one archived node. ErrNotFound is returned when no
 	// matching node exists within tenantID.
 	Get(ctx context.Context, tenantID, rootSessionID, nodeSessionID string) (ArchivedNode, error)
+
+	// GetByNode returns the archived node with nodeSessionID within
+	// tenantID, regardless of which tree it belongs to. A node session
+	// id is globally unique, so this resolves a settled child without
+	// knowing its tree root. ErrNotFound is returned when no matching
+	// node exists.
+	GetByNode(ctx context.Context, tenantID, nodeSessionID string) (ArchivedNode, error)
 }
 
 // Memory is the in-memory Store implementation. The minimal gateway
@@ -118,4 +130,16 @@ func (m *Memory) Get(_ context.Context, tenantID, rootSessionID, nodeSessionID s
 		return ArchivedNode{}, ErrNotFound
 	}
 	return n, nil
+}
+
+// GetByNode implements Store.
+func (m *Memory) GetByNode(_ context.Context, tenantID, nodeSessionID string) (ArchivedNode, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, n := range m.nodes {
+		if n.TenantID == tenantID && n.NodeSessionID == nodeSessionID {
+			return n, nil
+		}
+	}
+	return ArchivedNode{}, ErrNotFound
 }

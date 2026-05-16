@@ -13,12 +13,13 @@ import (
 
 func node(root, id, state string, settledAt time.Time) treearchive.ArchivedNode {
 	return treearchive.ArchivedNode{
-		TenantID:      "acme",
-		RootSessionID: root,
-		NodeSessionID: id,
-		State:         state,
-		Result:        `{"taskId":"` + id + `"}`,
-		SettledAt:     settledAt,
+		TenantID:        "acme",
+		RootSessionID:   root,
+		NodeSessionID:   id,
+		ParentSessionID: root,
+		State:           state,
+		Result:          `{"taskId":"` + id + `"}`,
+		SettledAt:       settledAt,
 	}
 }
 
@@ -81,6 +82,27 @@ func TestGetUnknownReturnsNotFound(t *testing.T) {
 	store := treearchive.NewMemory()
 	if _, err := store.Get(context.Background(), "acme", "root", "absent"); !errors.Is(err, treearchive.ErrNotFound) {
 		t.Errorf("Get of an unknown node err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGetByNodeResolvesWithoutTheRoot(t *testing.T) {
+	store := treearchive.NewMemory()
+	now := time.Now()
+	_ = store.Archive(context.Background(), node("root", "c1", "completed", now))
+
+	got, err := store.GetByNode(context.Background(), "acme", "c1")
+	if err != nil {
+		t.Fatalf("GetByNode: %v", err)
+	}
+	if got.RootSessionID != "root" || got.NodeSessionID != "c1" {
+		t.Errorf("GetByNode returned %+v, want the c1 node", got)
+	}
+	if _, err := store.GetByNode(context.Background(), "acme", "absent"); !errors.Is(err, treearchive.ErrNotFound) {
+		t.Errorf("GetByNode of an unknown node err = %v, want ErrNotFound", err)
+	}
+	// Cross-tenant GetByNode finds nothing.
+	if _, err := store.GetByNode(context.Background(), "globex", "c1"); !errors.Is(err, treearchive.ErrNotFound) {
+		t.Errorf("cross-tenant GetByNode err = %v, want ErrNotFound", err)
 	}
 }
 
