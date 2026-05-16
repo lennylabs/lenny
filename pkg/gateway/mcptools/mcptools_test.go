@@ -1008,6 +1008,46 @@ func TestRequestElicitationBudgetExceeded(t *testing.T) {
 	}
 }
 
+// fakeElicitationMetrics records the §9.1 elicitation drop reasons.
+type fakeElicitationMetrics struct{ reasons []string }
+
+func (f *fakeElicitationMetrics) RecordElicitationDrop(reason string) {
+	f.reasons = append(f.reasons, reason)
+}
+
+func TestRequestElicitationDropRecordsMetric(t *testing.T) {
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	rec := &fakeElicitationMetrics{}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:                     store,
+		Interactions:              interactions,
+		ElicitationMetrics:        rec,
+		MaxElicitationsPerSession: 1,
+		Clock:                     func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:                    func() string { return "elic_gen" },
+		TenantID:                  "acme",
+	})
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+	// One elicitation already recorded fills the cap of 1.
+	if err := interactions.Put(context.Background(), interactionstore.Interaction{
+		ID: "elic_0", Kind: interactionstore.KindElicitation, SessionID: "sess_e", TenantID: "acme",
+	}); err != nil {
+		t.Fatalf("seed elicitation: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_e","message":"over budget","elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("an over-budget elicitation should be a tool error: %+v", resp)
+	}
+	if len(rec.reasons) != 1 || rec.reasons[0] != "budget_exceeded" {
+		t.Errorf("recorded drop reasons = %v, want [budget_exceeded]", rec.reasons)
+	}
+}
+
 func TestRequestElicitationRejectsTerminalSession(t *testing.T) {
 	srv, store, _ := newMCPForElicitation(t, time.Second)
 	mkSession(t, store, "sess_done", session.StateCompleted, "")

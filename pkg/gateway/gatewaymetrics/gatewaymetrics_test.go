@@ -149,3 +149,25 @@ func TestSetActiveSessions(t *testing.T) {
 		t.Errorf("active sessions gauge not set; body:\n%s", rr.Body.String())
 	}
 }
+
+func TestRecordElicitationDropExposesCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.RecordElicitationDrop("budget_exceeded")
+	m.RecordElicitationDrop("budget_exceeded")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "lenny_elicitation_dropped_total") {
+		t.Fatalf("/metrics output missing lenny_elicitation_dropped_total:\n%s", body)
+	}
+	if !strings.Contains(body, `lenny_elicitation_dropped_total{reason="budget_exceeded"} 2`) {
+		t.Errorf("/metrics output missing the budget_exceeded count of 2:\n%s", body)
+	}
+}

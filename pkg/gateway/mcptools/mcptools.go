@@ -100,6 +100,10 @@ type Deps struct {
 	// count per §9.1. Zero selects the default.
 	MaxElicitationsPerSession int
 
+	// ElicitationMetrics, when set, receives a §9.1 drop event for
+	// every elicitation the gateway drops. Optional.
+	ElicitationMetrics ElicitationDropRecorder
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -122,6 +126,17 @@ const defaultElicitationTimeout = 600 * time.Second
 // defaultMaxElicitationsPerSession is the §9.1 per-session elicitation
 // budget applied when Deps.MaxElicitationsPerSession is zero.
 const defaultMaxElicitationsPerSession = 50
+
+// elicitationDropBudgetExceeded is the §9.1 lenny_elicitation_dropped_total
+// `reason` label for a drop caused by the per-session budget.
+const elicitationDropBudgetExceeded = "budget_exceeded"
+
+// ElicitationDropRecorder records a §9.1 elicitation drop for the
+// lenny_elicitation_dropped_total counter. pkg/gateway/gatewaymetrics
+// satisfies it.
+type ElicitationDropRecorder interface {
+	RecordElicitationDrop(reason string)
+}
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
@@ -564,6 +579,9 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, err
 			}
 			if count >= maxElicitations {
+				if deps.ElicitationMetrics != nil {
+					deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropBudgetExceeded)
+				}
 				return mcp.ToolResult{}, fmt.Errorf(
 					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
 					in.SessionID, maxElicitations)

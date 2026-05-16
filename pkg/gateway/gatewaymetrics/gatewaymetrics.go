@@ -30,6 +30,7 @@ type Metrics struct {
 	circuitBreakerOpen *prometheus.GaugeVec
 	cbCacheStale       prometheus.Gauge
 	cbCacheInitialized prometheus.Gauge
+	elicitationDropped *prometheus.CounterVec
 }
 
 // New constructs and registers the gateway metric set against a
@@ -94,9 +95,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	elicitationDropped, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_elicitation_dropped_total",
+		Help: "Total elicitations the gateway dropped, labelled by drop reason (§9.1).",
+	}, []string{"reason"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
-		storageQuotaLimit, circuitBreakerOpen)
+		storageQuotaLimit, circuitBreakerOpen, elicitationDropped)
 	gauge := activeSessions.WithLabelValues()
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
@@ -112,7 +120,14 @@ func New() (*Metrics, error) {
 		circuitBreakerOpen: circuitBreakerOpen,
 		cbCacheStale:       cbStale,
 		cbCacheInitialized: cbInit,
+		elicitationDropped: elicitationDropped,
 	}, nil
+}
+
+// RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total
+// counter for the given drop reason (for example `budget_exceeded`).
+func (m *Metrics) RecordElicitationDrop(reason string) {
+	m.elicitationDropped.WithLabelValues(reason).Inc()
 }
 
 // SetCircuitBreakerOpen updates the §16.1 per-breaker open gauge: 1

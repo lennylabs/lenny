@@ -435,20 +435,27 @@ func main() {
 	// ----- §4.9 end-user credential registry -----
 	credServer := credentialserver.New(credentialstore.NewMemory(nil))
 
+	// ----- §16.1 Prometheus metrics -----
+	gwMetrics, err := gatewaymetrics.New()
+	if err != nil {
+		log.Fatalf("lenny-gateway: metrics: %v", err)
+	}
+
 	// ----- MCP adapter -----
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:        sessions,
-		Executor:     exec,
-		Delegation:   delegationSvc,
-		Runtimes:     runtimes,
-		Interceptors: interceptor.NewChain(),
-		Events:       eventBus,
-		InputWaits:   inputwait.NewRegistry(),
-		TreeArchive:  treeArchive,
-		Interactions: interactions,
-		TenantID:     "default",
+		Store:              sessions,
+		Executor:           exec,
+		Delegation:         delegationSvc,
+		Runtimes:           runtimes,
+		Interceptors:       interceptor.NewChain(),
+		Events:             eventBus,
+		InputWaits:         inputwait.NewRegistry(),
+		TreeArchive:        treeArchive,
+		Interactions:       interactions,
+		ElicitationMetrics: gwMetrics,
+		TenantID:           "default",
 	})
 
 	// §13.3 revocation cache: the auth middleware rejects a token
@@ -538,10 +545,6 @@ func main() {
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
 	// ----- §16.1 Prometheus metrics -----
-	gwMetrics, err := gatewaymetrics.New()
-	if err != nil {
-		log.Fatalf("lenny-gateway: metrics: %v", err)
-	}
 	mux.Handle("GET /metrics", gwMetrics.Handler())
 
 	// ----- Healthz (unauthenticated) -----
