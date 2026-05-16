@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `90048bf` — `podsession.WorkspacePlanToProto`. Converts a parsed §14 WorkspacePlan
+  into the `adapterv1.WorkspacePlan` the gateway sends in `StartSession` — the
+  conversion the session-start path needs to feed `Binder.Bind` a workspace plan.
 - `77c00ef` — Gateway closes the executor on session completion.
   `recordSessionCompleted` now calls `executor.Close`, fixing a latent leak (a
   SubprocessExecutor child outlived its session) and giving the pod-backed
