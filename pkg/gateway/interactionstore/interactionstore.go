@@ -89,6 +89,12 @@ type Store interface {
 	// §9.1 maxElicitationsPerSession budget is a per-session lifetime
 	// cap, so already-resolved elicitations count toward it.
 	CountElicitations(ctx context.Context, tenantID, sessionID string) (int, error)
+
+	// DeleteByUser removes every interaction directed at userID within
+	// tenantID and returns the count deleted — the §12.8 GDPR-erasure
+	// per-store adapter. Erasing a user with no interactions is a
+	// no-op returning (0, nil).
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -163,4 +169,18 @@ func (m *Memory) CountElicitations(_ context.Context, tenantID, sessionID string
 		}
 	}
 	return n, nil
+}
+
+// DeleteByUser implements Store — the §12.8 GDPR-erasure adapter.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, in := range m.interactions {
+		if in.TenantID == tenantID && in.UserID == userID {
+			delete(m.interactions, k)
+			deleted++
+		}
+	}
+	return deleted, nil
 }

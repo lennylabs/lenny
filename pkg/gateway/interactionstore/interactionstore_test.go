@@ -100,3 +100,33 @@ func TestResolveRejectsWrongUser(t *testing.T) {
 		t.Errorf("wrong-user resolve: got %v, want ErrNotFound", err)
 	}
 }
+
+func TestDeleteByUserErasesUserInteractions(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	seed(t, s, "i1", "sess-1", "alice", interactionstore.KindElicitation)
+	seed(t, s, "i2", "sess-2", "alice", interactionstore.KindToolUse)
+	seed(t, s, "i3", "sess-3", "bob", interactionstore.KindElicitation)
+
+	deleted, err := s.DeleteByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	if _, err := s.Get(ctx, "acme", "sess-1", "alice", "i1"); !errors.Is(err, interactionstore.ErrNotFound) {
+		t.Error("alice's interaction i1 should be erased")
+	}
+	if _, err := s.Get(ctx, "acme", "sess-3", "bob", "i3"); err != nil {
+		t.Errorf("bob's interaction must survive alice's erasure: %v", err)
+	}
+}
+
+func TestDeleteByUserNoInteractionsIsNoOp(t *testing.T) {
+	s := interactionstore.NewMemory()
+	deleted, err := s.DeleteByUser(context.Background(), "acme", "nobody")
+	if err != nil || deleted != 0 {
+		t.Errorf("DeleteByUser of a user with no interactions = (%d, %v), want (0, nil)", deleted, err)
+	}
+}
