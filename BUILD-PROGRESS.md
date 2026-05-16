@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e65f804` — `credleasestore.Store` (§4.9). The in-memory, per-replica store of issued
+  credential leases, indexed by lease ID and by the opaque proxy lease token so the LLM
+  reverse proxy resolves an agent pod's request to its lease on the upstream hot path.
+- `e15d457` — `credential.Lease` data model (§4.9). The CredentialLease as a Go type:
+  the pool/user tagged union, the proxy-mode materializedConfig, structural validation,
+  the source-aware deny-list key, and `ValidateProxyRequest` (expiry, revocation,
+  SPIFFE-binding) — the per-request checks the LLM proxy runs against a resolved lease.
 - `15634ed` — `lenny-direct-mode-isolation` Helm manifest (§4.9, §13.2). The fail-closed
   `ValidatingWebhookConfiguration` scoped to `sandboxtemplates` in agent namespaces,
   rendered only when `features.llmProxy` is enabled. `values.yaml` gained `tenancy.mode`
@@ -322,7 +329,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy), the upstream circuit breaker, and the breaker-gated upstream forwarder. The `lenny-direct-mode-isolation` webhook is deployable end to end (decision logic, HTTP handler, `cmd/lenny-webhook` route, feature-gated Helm manifest). The proxy HTTP handler, lease-token validation, and the SSE relay are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy), the upstream circuit breaker, and the breaker-gated upstream forwarder. The §4.9 credential-lease data model (`pkg/credential`) and the gateway-replica lease store (`pkg/gateway/credleasestore`) are built. The `lenny-direct-mode-isolation` webhook is deployable end to end. The proxy HTTP handler and the SSE relay are not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -436,12 +443,14 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 credential-lease store: the `CredentialLease` data model and the store
-that mints and validates proxy-mode lease tokens, recording each token's issuing-pod
-SPIFFE URI. This is the remaining dependency for the LLM Proxy HTTP handler, which
-must validate the agent pod's lease token (lookup, expiry, revocation, SPIFFE-binding)
-before translating and forwarding the request. The translator, circuit breaker, and
-forwarder are built; the lease store plus the handler complete the §4.9 proxy path.
+Build the LLM Proxy HTTP handler (§4.9). The handler serves
+`POST {proxyUrl}/v1/messages`: it resolves the agent pod's bearer lease token through
+`credleasestore`, runs `Lease.ValidateProxyRequest` (expiry, revocation, SPIFFE-binding),
+runs the `AnthropicDirectTranslator`, injects the upstream credential, calls the
+breaker-gated `Forwarder`, and translates the response back. Every dependency — the
+translator, circuit breaker, forwarder, lease model, and lease store — is built; the
+handler composes them. The SSE relay for streaming responses remains after the
+non-streaming path is whole.
 
 ## Test status
 
