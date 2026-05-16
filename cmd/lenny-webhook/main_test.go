@@ -30,7 +30,7 @@ func TestBuildSchemeRegistersWebhookTypes(t *testing.T) {
 }
 
 func TestMuxHealthEndpoints(t *testing.T) {
-	mux := newMux(nil, "multi", false)
+	mux := newMux(nil, "multi", false, "")
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -64,7 +64,7 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
+	newMux(nil, "multi", false, "").ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /label-immutability = %d, want 200", rr.Code)
 	}
@@ -111,7 +111,7 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false).ServeHTTP(rr,
+	newMux(nil, "multi", false, "").ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/direct-mode-isolation", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /direct-mode-isolation = %d, want 200", rr.Code)
@@ -129,9 +129,47 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 	}
 }
 
+// TestMuxServesDrainReadiness posts an eviction AdmissionReview to the
+// drain-readiness route and confirms the mux dispatches it to the
+// webhook shim. With no gateway endpoint configured the §12.5 webhook
+// blocks the drain fail-closed.
+func TestMuxServesDrainReadiness(t *testing.T) {
+	review := admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID:         "review-3",
+			Operation:   admissionv1.Create,
+			Namespace:   "lenny-agents",
+			Name:        "agent-pod",
+			SubResource: "eviction",
+		},
+	}
+	body, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal review: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	newMux(nil, "multi", false, "").ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/drain-readiness", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /drain-readiness = %d, want 200", rr.Code)
+	}
+
+	var out admissionv1.AdmissionReview
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Response == nil || out.Response.Allowed {
+		t.Errorf("response = %+v, want a fail-closed rejection with no reachable endpoint", out.Response)
+	}
+	if out.Response.UID != "review-3" {
+		t.Errorf("response UID = %q, want review-3", out.Response.UID)
+	}
+}
+
 func TestMuxRejectsUnknownRoute(t *testing.T) {
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
+	newMux(nil, "multi", false, "").ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST /no-such-webhook = %d, want 404", rr.Code)
 	}
