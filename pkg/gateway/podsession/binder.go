@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
 // Binder places sessions on warm pods.
@@ -55,6 +56,8 @@ type BindRequest struct {
 
 // BindResult reports the pod a session was bound to.
 type BindResult struct {
+	// SessionID is the session the pod was claimed for.
+	SessionID string
 	// SandboxName is the claimed Sandbox.
 	SandboxName string
 	// PodIP is the bound pod's address.
@@ -110,7 +113,36 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (result *BindResult,
 	if err = cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan); err != nil {
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", claim.Spec.SandboxRef, err)
 	}
-	return &BindResult{SandboxName: claim.Spec.SandboxRef, PodIP: podIP, Adapter: cl}, nil
+	return &BindResult{
+		SessionID:   req.SessionID,
+		SandboxName: claim.Spec.SandboxRef,
+		PodIP:       podIP,
+		Adapter:     cl,
+	}, nil
+}
+
+// Release tears down a session that Bind placed on a pod: it shuts the
+// pod's runtime down through the adapter, closes the adapter
+// connection, and transitions the Sandbox to draining so the Sandbox
+// reconciler reclaims the pod (§6.2 claimed → draining → terminated).
+// The adapter Shutdown is best-effort — draining the Sandbox reclaims
+// the pod even if the runtime did not exit cleanly — so Release returns
+// only an error from the Sandbox transition.
+func (b *Binder) Release(ctx context.Context, result *BindResult) error {
+	if result.Adapter != nil {
+		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+		result.Adapter.Close()
+	}
+
+	var sb lennyv1.Sandbox
+	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: result.SandboxName}, &sb); err != nil {
+		return fmt.Errorf("podsession: get sandbox %s: %w", result.SandboxName, err)
+	}
+	sb.Status.Phase = string(state.Draining)
+	if err := b.Client.Status().Update(ctx, &sb); err != nil {
+		return fmt.Errorf("podsession: drain sandbox %s: %w", result.SandboxName, err)
+	}
+	return nil
 }
 
 // resolvePodIP reads the claimed Sandbox and returns its pod address.

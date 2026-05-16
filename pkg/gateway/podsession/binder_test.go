@@ -183,6 +183,59 @@ func TestBindFailsOnIncompatibleProtocolVersion(t *testing.T) {
 	}
 }
 
+func TestReleaseDrainsTheSandbox(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if err := binder.Release(context.Background(), res); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != "draining" {
+		t.Errorf("sandbox phase = %q, want draining after Release", sb.Status.Phase)
+	}
+}
+
+func TestReleaseFailsWhenSandboxGone(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if err := c.Delete(context.Background(), &sb); err != nil {
+		t.Fatalf("delete sandbox: %v", err)
+	}
+	if err := binder.Release(context.Background(), res); err == nil {
+		t.Error("Release succeeded though the Sandbox was deleted, want an error")
+	}
+}
+
 func TestBindFailsWhenStartSessionFails(t *testing.T) {
 	srv := adapter.New("adapter-test") // no WorkspaceRoot: StartSession fails
 
