@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `24785e2` — `allow-pod-egress-llm-proxy` NetworkPolicy (§13.2). The supplemental
+  agent-namespace egress that admits only proxy-mode pods (by the
+  `lenny.dev/delivery-mode: proxy` label) to the gateway LLM reverse-proxy port.
 - `f129dce` — `podsession.ResolvePool` (§5). Resolves a runtime and §5.3 isolation
   profile to the matching `SandboxWarmPool` by inspecting each pool's template — the
   pool-resolution the gateway session-start handler needs to choose which pool to
