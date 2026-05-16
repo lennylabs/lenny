@@ -104,8 +104,50 @@ func TestEraseUserInitiatesJob(t *testing.T) {
 	if job.Total != 4 {
 		t.Errorf("job Total = %d, want 4", job.Total)
 	}
-	if snap := audit.snapshot(); len(snap) != 1 || snap[0].Type != "admin.user.erasure_initiated" {
-		t.Errorf("audit: %+v", snap)
+	// The initiation event is emitted synchronously, so it is always
+	// present and first; the gdpr.erasure_completed receipt follows
+	// asynchronously once the job finishes.
+	if snap := audit.snapshot(); len(snap) == 0 || snap[0].Type != "admin.user.erasure_initiated" {
+		t.Errorf("audit: first event should be admin.user.erasure_initiated, got %+v", snap)
+	}
+}
+
+// awaitAuditEvent polls the recording audit sink until an event of the
+// given type appears, then returns it. The erasure receipt is emitted
+// from a background goroutine once the job completes.
+func awaitAuditEvent(t *testing.T, audit *recordingAudit, eventType string) admin.AuditEvent {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, ev := range audit.snapshot() {
+			if ev.Type == eventType {
+				return ev
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("audit event %q was not emitted", eventType)
+	return admin.AuditEvent{}
+}
+
+func TestEraseUserEmitsCompletionReceipt(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 6)}})
+	router, users, _, audit := newErasureAdmin(t, orch)
+	seedUser(t, users, "acme", "ivan@acme.com")
+
+	rr := eraseUser(t, router.Handler(), "ivan@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d", rr.Code)
+	}
+	// §12.8: a completed erasure writes a gdpr.erasure_completed receipt
+	// to the audit trail.
+	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
+	if receipt.TargetResource != "ivan@acme.com" {
+		t.Errorf("receipt target = %q, want ivan@acme.com", receipt.TargetResource)
+	}
+	if receipt.Detail["total"] != 6 {
+		t.Errorf("receipt total = %v, want 6", receipt.Detail["total"])
 	}
 }
 

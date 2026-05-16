@@ -85,23 +85,33 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		u.ErasureJobID = jobID
 		return nil
 	})
+	principal, _ := authmw.FromContext(req.Context())
 	// §12.8: the job runs in the background and the API returns the job
 	// id immediately. The job uses a detached context so it outlives
-	// the request. The processing restriction is lifted once the job
-	// completes; a failed job leaves it set for an operator to retry.
+	// the request. On completion the processing restriction is lifted
+	// and the §12.8 erasure receipt is written to the audit trail; a
+	// failed job leaves the restriction set for an operator to retry.
 	go func() {
 		_ = r.erasureRunner.Run(context.Background(), jobID)
 		job, err := r.erasureJobs.Get(context.Background(), jobID)
-		if err == nil && job.Phase == erasurejob.PhaseCompleted {
-			_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
-				u.ProcessingRestricted = false
-				u.ErasureJobID = ""
-				return nil
-			})
+		if err != nil || job.Phase != erasurejob.PhaseCompleted {
+			return
 		}
+		_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
+			u.ProcessingRestricted = false
+			u.ErasureJobID = ""
+			return nil
+		})
+		// §12.8 erasure receipt: the gdpr.* audit event is the
+		// authoritative proof that the erasure was carried out.
+		r.emit(context.Background(), principal, "gdpr.erasure_completed", subject, map[string]any{
+			"tenantId": tenant,
+			"jobId":    jobID,
+			"deleted":  job.Deleted,
+			"total":    job.Total,
+		})
 	}()
 
-	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.user.erasure_initiated", subject, map[string]any{
 		"tenantId": tenant,
 		"jobId":    jobID,
