@@ -66,10 +66,15 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 	}
 }
 
-// recordSessionCompleted emits the §11.2.1 `session.completed` billing
-// event for a session that has reached a terminal state. Best-effort:
-// a billing failure never fails the transition that triggered it.
+// recordSessionCompleted runs the side effects of a session reaching a
+// terminal state: it releases the session's executor state — for a
+// pod-backed session this shuts the runtime down and reclaims the pod —
+// and emits the §11.2.1 `session.completed` billing event. Both are
+// best-effort: a failure never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	if s.executor != nil {
+		_ = s.executor.Close(ctx, sess.ID)
+	}
 	if s.billing == nil {
 		return
 	}
