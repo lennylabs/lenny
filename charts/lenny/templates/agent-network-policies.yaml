@@ -83,4 +83,32 @@ spec:
         - protocol: TCP
           port: 53
   policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-llm-proxy
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # The lenny.dev/delivery-mode label is set only on pods in proxy-mode
+  # pools, so this supplemental egress reaches the gateway LLM proxy
+  # port for those pods alone; direct-mode pods cannot reach it (§13.2).
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+      lenny.dev/delivery-mode: proxy
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.gateway.llmProxyPort }}
+          protocol: TCP
+  policyTypes: [Egress]
 {{- end }}

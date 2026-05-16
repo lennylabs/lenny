@@ -115,6 +115,10 @@ gateway:
   # metricsPort is the port the gateway serves Prometheus metrics on
   # (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
+  # llmProxyPort is the gateway's LLM reverse-proxy port (§13.2). Only
+  # proxy-mode agent pods are admitted to it, by the supplemental
+  # allow-pod-egress-llm-proxy NetworkPolicy.
+  llmProxyPort: 8443
 
 # security carries platform-wide security posture settings.
 security:
