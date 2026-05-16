@@ -47,7 +47,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
-	upload_token_digest, upload_token_expiry, created_at, updated_at, workspace_plan`
+	upload_token_digest, upload_token_expiry, created_at, updated_at,
+	workspace_plan, legal_hold`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -66,11 +67,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		parent_session_id, root_session_id, failure_class, failure_reason,
 		workspace_snapshot_ref, workspace_snapshot_source, workspace_snapshot_at,
 		parent_workspace_ref, retention_expires_at, upload_token_digest,
-		upload_token_expiry, created_at, updated_at, workspace_plan
+		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
-		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb
+		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21
 	)`
 
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
@@ -81,7 +82,7 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			ref, src, pgtenant.NullTime(at), sess.ParentWorkspaceRef,
 			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
 			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt,
-			jsonbArg(sess.WorkspacePlan))
+			jsonbArg(sess.WorkspacePlan), sess.LegalHold)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -123,7 +124,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		failure_class = $9, failure_reason = $10, workspace_snapshot_ref = $11,
 		workspace_snapshot_source = $12, workspace_snapshot_at = $13,
 		parent_workspace_ref = $14, retention_expires_at = $15,
-		upload_token_digest = $16, upload_token_expiry = $17, updated_at = $18
+		upload_token_digest = $16, upload_token_expiry = $17, updated_at = $18,
+		legal_hold = $19
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -147,6 +149,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			string(sess.FailureClass), sess.FailureReason, ref, src, pgtenant.NullTime(at),
 			sess.ParentWorkspaceRef, pgtenant.NullTime(sess.RetentionExpiresAt),
 			sess.UploadTokenDigest, pgtenant.NullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
+			sess.LegalHold,
 		); err != nil {
 			return err
 		}
@@ -246,6 +249,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&isoProf, &s.ParentSessionID, &failCls, &s.FailureReason,
 		&wsRef, &wsSrc, &wsAt, &s.ParentWorkspaceRef, &retAt,
 		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
+		&s.LegalHold,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

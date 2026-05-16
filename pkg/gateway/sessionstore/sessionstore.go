@@ -117,6 +117,12 @@ type Session struct {
 	// minted at session creation. Recorded alongside the digest so
 	// the consumed-tracker entry can be GC'd after expiry.
 	UploadTokenExpiry time.Time
+
+	// LegalHold is the §12.8 legal-hold flag. When true, the artifact
+	// retention GC suspends all rotation for the session and a §12.8
+	// GDPR erasure of the session's owner is blocked by the legal-hold
+	// preflight. Set and cleared via POST /v1/admin/legal-hold.
+	LegalHold bool
 }
 
 // WorkspaceSnapshot describes a stored workspace artifact attached to
