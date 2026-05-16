@@ -98,8 +98,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	}
 	row.UpdatedAt = row.CreatedAt
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
-	// rewriting its runtime/pool before the row is persisted.
-	s.applyExperimentRouting(r.Context(), &row)
+	// rewriting its runtime/pool before the row is persisted. It fails
+	// the creation closed when the variant pool is less isolated than
+	// the session's profile.
+	if !s.routeExperiment(w, r, &row) {
+		return
+	}
 	if err := s.store.Create(r.Context(), row); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return

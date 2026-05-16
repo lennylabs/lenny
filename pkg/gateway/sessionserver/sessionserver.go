@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -110,6 +111,7 @@ type Server struct {
 	maxOrphanTasks  int
 	evals           evalstore.Store
 	experiments     experimentstore.Store
+	pools           poolstore.Store
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -202,6 +204,12 @@ type Options struct {
 	// no session is enrolled in an experiment.
 	Experiments experimentstore.Store
 
+	// Pools is the §5.2 warm-pool registry. The §10.7 ExperimentRouter
+	// consults it to enforce the isolation-monotonicity rule: a variant
+	// pool weaker than the session's profile fails the session closed.
+	// When nil the router skips the isolation check.
+	Pools poolstore.Store
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -279,6 +287,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		transcripts:     opts.Transcripts,
 		evals:           opts.Evals,
 		experiments:     opts.Experiments,
+		pools:           opts.Pools,
 		events:          opts.Events,
 		interactions:    opts.Interactions,
 		usage:           opts.Usage,
@@ -501,8 +510,12 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	row.UpdatedAt = row.CreatedAt
 	// §10.7: the ExperimentRouter may enroll the session in a variant,
-	// rewriting its runtime/pool before the row is persisted.
-	s.applyExperimentRouting(r.Context(), &row)
+	// rewriting its runtime/pool before the row is persisted. It fails
+	// the creation closed when the variant pool is less isolated than
+	// the session's profile.
+	if !s.routeExperiment(w, r, &row) {
+		return
+	}
 	if err := s.store.Create(r.Context(), row); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return

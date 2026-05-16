@@ -428,6 +428,7 @@ func main() {
 		Interactions:        interactions,
 		Evals:               evals,
 		Experiments:         experiments,
+		Pools:               pools,
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
 		Billing:             billing,
