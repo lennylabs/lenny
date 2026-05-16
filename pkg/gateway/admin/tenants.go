@@ -376,6 +376,46 @@ func (r *Router) emitBillingErasureExemptRegulated(ctx context.Context, p authmw
 	})
 }
 
+// EmitBillingErasureExemptRegulatedStartup scans every active tenant
+// and emits the §12.8 compliance.billing_erasure_exempt_regulated audit
+// event for each that combines billingErasurePolicy=exempt with a
+// regulated compliance profile. The gateway calls it once at startup so
+// the posture is re-surfaced in the audit trail and cannot silently
+// persist across redeployments. It is a no-op when no audit sink is
+// wired.
+func EmitBillingErasureExemptRegulatedStartup(ctx context.Context, tenants tenantstore.Store, sink AuditSink, clock func() time.Time) error {
+	if sink == nil {
+		return nil
+	}
+	if clock == nil {
+		clock = func() time.Time { return time.Now().UTC() }
+	}
+	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
+	if err != nil {
+		return err
+	}
+	for _, t := range rows {
+		if t.BillingErasurePolicy != tenantstore.BillingErasureExempt {
+			continue
+		}
+		if !regulatedComplianceProfiles[t.ComplianceProfile] {
+			continue
+		}
+		sink.EmitAdminEvent(ctx, AuditEvent{
+			Type:           "compliance.billing_erasure_exempt_regulated",
+			ActorTenantID:  t.ID,
+			TargetResource: t.ID,
+			Detail: map[string]any{
+				"tenant_id":            t.ID,
+				"complianceProfile":    t.ComplianceProfile,
+				"billingErasurePolicy": tenantstore.BillingErasureExempt,
+			},
+			At: clock(),
+		})
+	}
+	return nil
+}
+
 // handleCreateTenant implements POST /v1/admin/tenants.
 func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	var body TenantPayload

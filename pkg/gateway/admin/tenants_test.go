@@ -628,3 +628,49 @@ func TestUpdateTenantRejectsBadBillingErasurePolicy(t *testing.T) {
 		t.Errorf("invalid billingErasurePolicy on update: status %d, want 400", rr.Code)
 	}
 }
+
+func TestEmitBillingErasureExemptRegulatedStartup(t *testing.T) {
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	_ = tenants.Create(ctx, tenantstore.Tenant{ID: "acme", BillingErasurePolicy: "exempt", ComplianceProfile: "hipaa"})
+	_ = tenants.Create(ctx, tenantstore.Tenant{ID: "umbrella", BillingErasurePolicy: "exempt", ComplianceProfile: "fedramp"})
+	// gdpr is not a regulated profile; pseudonymize is not exempt — neither qualifies.
+	_ = tenants.Create(ctx, tenantstore.Tenant{ID: "globex", BillingErasurePolicy: "exempt", ComplianceProfile: "gdpr"})
+	_ = tenants.Create(ctx, tenantstore.Tenant{ID: "initech", BillingErasurePolicy: "pseudonymize", ComplianceProfile: "soc2"})
+	// A soft-deleted exempt+regulated tenant must be skipped.
+	_ = tenants.Create(ctx, tenantstore.Tenant{ID: "soylent", BillingErasurePolicy: "exempt", ComplianceProfile: "soc2"})
+	if err := tenants.SoftDelete(ctx, "soylent", time.Now()); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+
+	audit := &recordingAudit{}
+	if err := admin.EmitBillingErasureExemptRegulatedStartup(ctx, tenants, audit, nil); err != nil {
+		t.Fatalf("startup scan: %v", err)
+	}
+
+	got := map[string]bool{}
+	for _, ev := range audit.snapshot() {
+		if ev.Type != "compliance.billing_erasure_exempt_regulated" {
+			t.Errorf("unexpected event type %q", ev.Type)
+			continue
+		}
+		got[ev.TargetResource] = true
+	}
+	want := map[string]bool{"acme": true, "umbrella": true}
+	if len(got) != len(want) {
+		t.Fatalf("startup events emitted for %v, want exactly %v", got, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("no startup event for exempt+regulated tenant %q", id)
+		}
+	}
+}
+
+func TestEmitBillingErasureExemptRegulatedStartupNilSink(t *testing.T) {
+	// A nil audit sink is a no-op rather than a panic.
+	if err := admin.EmitBillingErasureExemptRegulatedStartup(
+		context.Background(), tenantstore.NewMemory(), nil, nil); err != nil {
+		t.Errorf("nil sink: got %v, want nil", err)
+	}
+}

@@ -443,6 +443,14 @@ func main() {
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
 	}
 
+	// §12.8: re-surface any tenant that combines billingErasurePolicy
+	// exempt with a regulated compliance profile so the retention
+	// posture cannot silently persist across redeployments.
+	if err := admin.EmitBillingErasureExemptRegulatedStartup(
+		context.Background(), tenants, auditSink, nil); err != nil {
+		log.Printf("lenny-gateway: WARNING: billing-erasure-exempt startup scan: %v", err)
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
