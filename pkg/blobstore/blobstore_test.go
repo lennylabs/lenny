@@ -45,9 +45,9 @@ func TestParseURIRejectsMalformed(t *testing.T) {
 	cases := []string{
 		"",
 		"http://acme/sess/part?ttl=1",
-		"lenny-blob://acme/sess?ttl=1",      // missing part
-		"lenny-blob:///sess/part?ttl=1",     // empty tenant
-		"lenny-blob://acme/sess/part",       // missing ttl
+		"lenny-blob://acme/sess?ttl=1",  // missing part
+		"lenny-blob:///sess/part?ttl=1", // empty tenant
+		"lenny-blob://acme/sess/part",   // missing ttl
 		"lenny-blob://acme/sess/part?ttl=0",
 		"lenny-blob://acme/sess/part?ttl=-5",
 		"lenny-blob://acme/sess/part?ttl=abc",

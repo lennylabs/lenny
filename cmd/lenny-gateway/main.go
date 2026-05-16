@@ -75,6 +75,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
+	"github.com/lennylabs/lenny/pkg/gateway/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
@@ -487,6 +489,47 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors)
 	adminRouter = wireAudit(adminRouter)
+	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
+	// wired stores and expose it behind the admin erasure endpoints.
+	// Session-scoped stores (transcripts, artifacts) are erased per
+	// session before the session-keyed user-scoped stores.
+	{
+		type sessionEraser interface {
+			DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+		}
+		sessionScoped := []erasure.SessionEraser{}
+		if te, ok := transcripts.(sessionEraser); ok {
+			sessionScoped = append(sessionScoped,
+				erasure.SessionEraser{Name: "transcripts", DeleteBySession: te.DeleteBySession})
+		}
+		if be, ok := blobs.(sessionEraser); ok {
+			sessionScoped = append(sessionScoped,
+				erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
+		}
+		erasureOrch := erasure.New(erasure.Config{
+			Sessions: func(ctx context.Context, tenantID, userID string) ([]string, error) {
+				rows, err := sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+				if err != nil {
+					return nil, err
+				}
+				ids := make([]string, 0, len(rows))
+				for _, s := range rows {
+					if s.UserID == userID {
+						ids = append(ids, s.ID)
+					}
+				}
+				return ids, nil
+			},
+			SessionScoped: sessionScoped,
+			UserScoped: []erasure.Eraser{
+				{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
+				{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
+			},
+		})
+		erasureJobs := erasurejob.NewMemory()
+		adminRouter = adminRouter.WithErasure(
+			erasurejob.NewRunner(erasureJobs, erasureOrch, nil), erasureJobs)
+	}
 	if pgPool != nil {
 		// §13.3 operator-initiated token revocation, durable in the
 		// issued-token index and reflected in the revocation cache.
