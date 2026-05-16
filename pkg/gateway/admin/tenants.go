@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -92,6 +93,7 @@ type Router struct {
 	erasureJobs     erasurejob.Store
 	sessions        sessionstore.Store
 	interactions    interactionstore.Store
+	experiments     experimentstore.Store
 	clock           func() time.Time
 	audit           AuditSink
 
@@ -179,6 +181,21 @@ func (r *Router) Handler() http.Handler {
 		// §12.8 legal hold set / clear.
 		mux.Handle("POST /v1/admin/legal-hold",
 			r.requireAdmin(http.HandlerFunc(r.handleSetLegalHold)))
+	}
+	if r.experiments != nil {
+		// §10.7 / §15.1 experiment admin CRUD.
+		mux.Handle("POST /v1/admin/experiments",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handleCreateExperiment)))
+		mux.Handle("GET /v1/admin/experiments",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handleListExperiments)))
+		mux.Handle("GET /v1/admin/experiments/{name}",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handleGetExperiment)))
+		mux.Handle("PUT /v1/admin/experiments/{name}",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handleUpdateExperiment)))
+		mux.Handle("PATCH /v1/admin/experiments/{name}",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handlePatchExperiment)))
+		mux.Handle("DELETE /v1/admin/experiments/{name}",
+			r.requireExperimentAdmin(http.HandlerFunc(r.handleDeleteExperiment)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))

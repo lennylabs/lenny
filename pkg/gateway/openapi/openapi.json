@@ -634,6 +634,83 @@
         }
       }
     },
+    "/v1/admin/experiments": {
+      "post": {
+        "summary": "Create an experiment",
+        "x-lenny-mcp-tool": "admin.create_experiment",
+        "x-lenny-scope": "admin.experiments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "201": { "description": "Created" },
+          "422": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "get": {
+        "summary": "List experiments",
+        "x-lenny-mcp-tool": "admin.list_experiments",
+        "x-lenny-scope": "admin.experiments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/experiments/{name}": {
+      "get": {
+        "summary": "Get an experiment",
+        "x-lenny-mcp-tool": "admin.get_experiment",
+        "x-lenny-scope": "admin.experiments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Experiment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "put": {
+        "summary": "Update an experiment",
+        "x-lenny-mcp-tool": "admin.update_experiment",
+        "x-lenny-scope": "admin.experiments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Experiment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "patch": {
+        "summary": "Transition an experiment's status",
+        "x-lenny-mcp-tool": "admin.patch_experiment",
+        "x-lenny-scope": "admin.experiments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "409": { "description": "Invalid status transition", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "summary": "Delete an experiment",
+        "x-lenny-mcp-tool": "admin.delete_experiment",
+        "x-lenny-scope": "admin.experiments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "404": { "description": "Experiment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
         "summary": "Revoke an issued token by jti",

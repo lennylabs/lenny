@@ -79,6 +79,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
@@ -490,7 +491,8 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors).
 		WithSessions(sessions).
-		WithInteractions(interactions)
+		WithInteractions(interactions).
+		WithExperiments(experimentstore.NewMemory())
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
