@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d67c6d4` — Adapter `Interrupt` lifecycle RPC. A clean interrupt sends SIGTERM, a
+  hard interrupt sends SIGKILL. `RuntimeProcess` gained an `Interrupt` method;
+  `SubprocessExecutor` signals the child without taking the stdin/stdout lock so an
+  interrupt reaches a busy runtime. `adapterclient` gained a matching method.
+  Critical-path item 1 work.
 - `37072e4` — Adapter credential RPCs (`AssignCredentials`, `RotateCredentials`,
   `RevokeCredentials`). Each materializes the §4.7 credential file from the session's
   per-provider lease set. The new `pkg/adapter/credfile` package writes
@@ -192,10 +197,10 @@ The shortest route to running one real session on a warm pod. The first item is 
 progress; see the progress log.
 
 1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`,
-   `StartSession`, `SendMessage`, `Shutdown`, and the credential RPCs
-   (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`) are done; the
-   remaining work is the lifecycle RPCs (`Interrupt`, `Checkpoint`, `DemoteSDK`,
-   `LifecycleChannel`) and a container image.
+   `StartSession`, `SendMessage`, `Shutdown`, `NegotiateVersion`, the credential RPCs
+   (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), and `Interrupt` are
+   done; the remaining RPCs are `Checkpoint`, `ReportUsage`, `ExtendLease`,
+   `DemoteSDK`, and `LifecycleChannel`, plus a container image.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
