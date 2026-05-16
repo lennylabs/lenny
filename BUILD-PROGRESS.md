@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d210138` — `llmproxy.Handler` (§4.9). The LLM reverse proxy HTTP handler for the
+  Anthropic Messages dialect: it resolves the agent pod's bearer lease token through
+  `credleasestore`, runs the per-request lease checks, translates and credential-injects
+  the request, forwards through the breaker-gated `Forwarder`, and translates the
+  response. The `CredentialResolver` and `DenyList` are interfaces so the Token Service
+  credential cache and the §4.9 deny list plug in later. The non-streaming proxy path
+  is whole; the SSE relay remains.
 - `e65f804` — `credleasestore.Store` (§4.9). The in-memory, per-replica store of issued
   credential leases, indexed by lease ID and by the opaque proxy lease token so the LLM
   reverse proxy resolves an agent pod's request to its lease on the upstream hot path.
@@ -329,7 +336,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy), the upstream circuit breaker, and the breaker-gated upstream forwarder. The §4.9 credential-lease data model (`pkg/credential`) and the gateway-replica lease store (`pkg/gateway/credleasestore`) are built. The `lenny-direct-mode-isolation` webhook is deployable end to end. The proxy HTTP handler and the SSE relay are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The non-streaming LLM proxy path is built end to end in `pkg/gateway/llmproxy`: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, and the `Handler` that composes them with the `pkg/credential` lease model and the `pkg/gateway/credleasestore` lease store. The `lenny-direct-mode-isolation` webhook is deployable end to end. The SSE relay for streaming responses, the Token Service credential cache, the §4.9 deny list, and the `cmd/lenny-gateway` wiring are not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -443,14 +450,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the LLM Proxy HTTP handler (§4.9). The handler serves
-`POST {proxyUrl}/v1/messages`: it resolves the agent pod's bearer lease token through
-`credleasestore`, runs `Lease.ValidateProxyRequest` (expiry, revocation, SPIFFE-binding),
-runs the `AnthropicDirectTranslator`, injects the upstream credential, calls the
-breaker-gated `Forwarder`, and translates the response back. Every dependency — the
-translator, circuit breaker, forwarder, lease model, and lease store — is built; the
-handler composes them. The SSE relay for streaming responses remains after the
-non-streaming path is whole.
+Build the §4.9 LLM proxy SSE relay for streaming responses. The Anthropic Messages
+endpoint has a streaming variant; the proxy must relay the upstream Server-Sent Events
+stream to the agent pod chunk by chunk without buffering the full response, extracting
+the authoritative token usage from the terminal `message_delta` SSE event. A mid-stream
+upstream failure surfaces as the §4.9 `streaming_interrupted` error. After the relay,
+the Token Service credential cache, the §4.9 deny list, and the `cmd/lenny-gateway`
+wiring that mounts the proxy `Handler` complete Phase 5.8.
 
 ## Test status
 
