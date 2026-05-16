@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f11558c` — Two-step §15.1 session start places sessions on warm pods. The granular
+  `create → finalize → start` lifecycle now claims a §5 warm pod at the start
+  transition, matching `POST /v1/sessions/start`. The §14 WorkspacePlan is persisted on
+  the session row (new `sessions.workspace_plan` jsonb column, migration `0008`) so the
+  dedicated `handleStart` re-parses it and materializes the workspace onto the claimed
+  pod. `handleStart` claims the pod before transitioning the row, leaving the session
+  `ready` and retryable on a claim failure.
 - `b2935cd` — Gateway↔pod session wiring complete (§15.1, §4.7). `POST /v1/sessions/start`
   claims a §5 warm pod through `podsession.Binder` and records the binding in
   `podsession.Registry` for the message and teardown paths; a claim failure marks the
@@ -239,11 +246,11 @@ request surface, plus the Kubernetes control plane and the gateway↔pod session
 The platform serves the REST and admin API against in-memory, Postgres, and Redis
 stores, and runs a runtime as a local subprocess through `make run`. With
 `--agent-namespace` set, `cmd/lenny-gateway` claims a §5 warm pod for a session started
-through `POST /v1/sessions/start`, materializes its workspace, and runs the session on
-the pod's §4.7 adapter — the runtime adapter server, the pod-spec builder, and the
-Sandbox-to-Pod reconciler are built. The two-step `create → finalize → start` path does
-not yet claim a pod, and credential-proxied sessions cannot reach a provider because the
-LLM Proxy is not built.
+through either `POST /v1/sessions/start` or the two-step `create → finalize → start`
+lifecycle, materializes its workspace, and runs the session on the pod's §4.7 adapter —
+the runtime adapter server, the pod-spec builder, and the Sandbox-to-Pod reconciler are
+built. Credential-proxied sessions cannot reach a provider because the LLM Proxy is not
+built.
 
 ## How the build diverged from the build sequence
 
@@ -271,7 +278,7 @@ this state.
 | 2.8   | streaming-echo runtime                                       | Done           | The `streaming-echo` runtime and the full-level compliance battery pass.                                                                                                                                                                                                                                                                     |
 | 3     | Pool scaling, delegation policy, runtime upgrade, mTLS       | Partial        | The PoolScalingController and the `RuntimeUpgrade` state substrate exist. The `DelegationPolicy` CRD, the `agent_pod_state` mirror write path, CIDR-drift detection, and the SDK-warm circuit-breaker logic are not built. `pkg/mtls` exists; the cert-manager PKI wiring is partial.                                                        |
 | 3.5   | Admission policies, lenny-ops first deploy                   | Partial        | The `pkg/admission` decision packages and three baseline webhooks (label-immutability, sandboxclaim-guard, ephemeral-container-cred-guard) are built and deployable — decision logic, `cmd/lenny-webhook` handler, and Helm manifest. The core §13.2 agent-namespace NetworkPolicies (`default-deny-all`, `allow-gateway-ingress`, `allow-pod-egress-base`) and the §17.2 `lenny-deployment-phase-stamp` ConfigMap are rendered. The `crd-conversion` webhook handler is served by `cmd/lenny-webhook`. `lenny-preflight` is deployable end to end — the `pkg/preflight` checks and `Run` layer, the `cmd/lenny-preflight` binary, and its pre-install Helm Job and RBAC — running three checks (admission-webhook inventory, phase-stamp consistency, §13.1 host-sharing). `pool-config-validator`, the `crd-conversion` CRD-wiring and manifest, `lenny-ops`, the remaining §17.9 preflight checks, and `lenny-bootstrap` are not. |
-| 4     | Session manager, REST                                        | Mostly done    | The session store, the REST session surface, derive, blob dereference, the upload pipeline, `uploadToken`, and `cmd/lenny-gateway` are built. `POST /v1/sessions/start` claims a §5 warm pod and runs the session on the pod's §4.7 adapter when the gateway runs with `--agent-namespace`. The two-step `create → finalize → start` path does not yet claim a pod. The Postgres fallback claim path depends on the unbuilt `agent_pod_state` mirror writer. |
+| 4     | Session manager, REST                                        | Mostly done    | The session store, the REST session surface, derive, blob dereference, the upload pipeline, `uploadToken`, and `cmd/lenny-gateway` are built. Both `POST /v1/sessions/start` and the two-step `create → finalize → start` lifecycle claim a §5 warm pod and run the session on the pod's §4.7 adapter when the gateway runs with `--agent-namespace`. The Postgres fallback claim path depends on the unbuilt `agent_pod_state` mirror writer. |
 | 4.5   | Admin API, authentication, bootstrap                         | Mostly done    | The admin API, `pkg/auth`, JWT validation, the connector resource, and `lenny-ctl bootstrap` are built.                                                                                                                                                                                                                                      |
 | 5     | ExternalAdapterRegistry, MCP/Completions/Open Responses      | Partial        | The MCP adapter, the OpenAI Chat translator, the Open Responses translator, and the OpenAPI document are built. The `gitClone` materializer and the `type: mcp` gateway endpoints need confirmation.                                                                                                                                         |
 | 5.4   | etcd encryption at rest                                      | Not started    | No `EncryptionConfiguration` manifest in the chart.                                                                                                                                                                                                                                                                                          |
@@ -334,12 +341,18 @@ The following are built and tested at the unit tier.
 
 ## Principal gaps
 
-The gateway↔pod session path runs end to end through `POST /v1/sessions/start`. The
-remaining gaps, in dependency order, are below.
+The gateway↔pod session path runs end to end through both `POST /v1/sessions/start` and
+the two-step §15.1 `create → finalize → start` lifecycle. The remaining gaps, in
+dependency order, are below.
 
-- **Two-step session start.** The granular §15.1 `create → finalize → start` path
-  transitions the row to `running` without claiming a pod. It needs a dedicated
-  `handleStart` and the §14 WorkspacePlan persisted on the session row at create.
+- **Workspace plan read-back.** `GET /v1/sessions/{id}` does not yet return the stored
+  `workspacePlan` (§15.1). The plan is persisted on the row; the handler must echo it.
+- **gitClone ref resolution.** §15.1 pins `gitClone.resolvedCommitSha` at session
+  creation. The gateway stores the submitted plan verbatim without resolving git refs.
+- **Adapter workspace-staging RPCs.** §15.4 mandates separate `PrepareWorkspace`,
+  `FinalizeWorkspace`, and `RunSetup` RPCs. The adapter bundles materialization, setup,
+  and runtime start into `StartSession`, so the §15.1 finalize step short-circuits
+  rather than materializing the workspace.
 - **Remaining adapter RPCs.** The adapter serves `NegotiateVersion`, `StartSession`,
   `SendMessage`, `Interrupt`, `Shutdown`, `Attach`, the credential RPCs, and `DemoteSDK`.
   `Checkpoint`, `ReportUsage`, `ExtendLease`, and the `LifecycleChannel` stream are not
@@ -388,14 +401,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Place sessions started through the two-step §15.1 path on warm pods. The convenience
-endpoint `POST /v1/sessions/start` now claims a pod, but the granular
-`create → finalize → start` path transitions the row to `running` through the shared
-`handleTransition` without claiming a pod. The fix is a dedicated `handleStart` that
-runs the transition and the `Binder.Bind` call, mirroring how `handleFinalize` is a
-dedicated handler for the finalize transition. This needs the §14 WorkspacePlan to
-survive from `POST /v1/sessions` to `/start`: persist the plan on the session row at
-create so `handleStart` can re-parse it.
+Return the stored `workspacePlan` from `GET /v1/sessions/{id}`. §15.1 specifies the
+response includes the stored plan with its gateway-written read-only fields populated.
+The plan is now persisted on the session row (`sessions.workspace_plan`); the `GET`
+handler and the `SessionResponse` envelope do not yet echo it. After that, the
+gateway↔pod path's open items are `gitClone.ref` resolution at create and the §15.4
+adapter-protocol reconciliation that separates the workspace-staging RPCs from the
+bundled `StartSession`.
 
 ## Test status
 
