@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8312655` — `make images` now builds `lenny-preflight`. The preflight Job's image
+  was missing from the target; verified the image builds via the parameterized
+  Dockerfile.
 - `0b5faea` — Host-sharing check wired into `preflight.Run`. `Run` now gathers the
   Lenny-managed Deployments, DaemonSets, and Jobs and runs `CheckHostSharing`, so the
   deployed `lenny-preflight` Job enforces three checks; the preflight Role gained
