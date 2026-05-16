@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b2935cd` — Gateway↔pod session wiring complete (§15.1, §4.7). `POST /v1/sessions/start`
+  claims a §5 warm pod through `podsession.Binder` and records the binding in
+  `podsession.Registry` for the message and teardown paths; a claim failure marks the
+  session row failed and returns a retryable 503. `cmd/lenny-gateway` gained
+  `--agent-namespace`: when set it builds a controller-runtime client, the `Binder`, the
+  `Registry`, and the `PodExecutor`, so the REST session surface runs a session on a warm
+  pod end to end. `adapter.TLSClientOption` builds the gateway's §4.7 mTLS dial option.
+  Critical-path items 4 and 5 are done.
 - `90048bf` — `podsession.WorkspacePlanToProto`. Converts a parsed §14 WorkspacePlan
   into the `adapterv1.WorkspacePlan` the gateway sends in `StartSession` — the
   conversion the session-start path needs to feed `Binder.Bind` a workspace plan.
@@ -226,14 +234,16 @@ Newest first. Each entry is one increment toward the critical path below.
 ## Summary
 
 The implementation has broad coverage of the per-phase logic packages and the gateway
-request surface, plus a recently-built Kubernetes control plane. It does not yet run an
-agent session on a Kubernetes pod end to end.
+request surface, plus the Kubernetes control plane and the gateway↔pod session path.
 
-The platform currently serves the REST and admin API against in-memory, Postgres, and
-Redis stores, and runs a runtime as a local subprocess through `make run`. It cannot yet
-claim a warm pod, materialize a workspace into it, or run a session on it, because the
-Sandbox-to-Pod reconciler, the pod-spec builder, and the runtime adapter server are not
-built.
+The platform serves the REST and admin API against in-memory, Postgres, and Redis
+stores, and runs a runtime as a local subprocess through `make run`. With
+`--agent-namespace` set, `cmd/lenny-gateway` claims a §5 warm pod for a session started
+through `POST /v1/sessions/start`, materializes its workspace, and runs the session on
+the pod's §4.7 adapter — the runtime adapter server, the pod-spec builder, and the
+Sandbox-to-Pod reconciler are built. The two-step `create → finalize → start` path does
+not yet claim a pod, and credential-proxied sessions cannot reach a provider because the
+LLM Proxy is not built.
 
 ## How the build diverged from the build sequence
 
@@ -261,7 +271,7 @@ this state.
 | 2.8   | streaming-echo runtime                                       | Done           | The `streaming-echo` runtime and the full-level compliance battery pass.                                                                                                                                                                                                                                                                     |
 | 3     | Pool scaling, delegation policy, runtime upgrade, mTLS       | Partial        | The PoolScalingController and the `RuntimeUpgrade` state substrate exist. The `DelegationPolicy` CRD, the `agent_pod_state` mirror write path, CIDR-drift detection, and the SDK-warm circuit-breaker logic are not built. `pkg/mtls` exists; the cert-manager PKI wiring is partial.                                                        |
 | 3.5   | Admission policies, lenny-ops first deploy                   | Partial        | The `pkg/admission` decision packages and three baseline webhooks (label-immutability, sandboxclaim-guard, ephemeral-container-cred-guard) are built and deployable — decision logic, `cmd/lenny-webhook` handler, and Helm manifest. The core §13.2 agent-namespace NetworkPolicies (`default-deny-all`, `allow-gateway-ingress`, `allow-pod-egress-base`) and the §17.2 `lenny-deployment-phase-stamp` ConfigMap are rendered. The `crd-conversion` webhook handler is served by `cmd/lenny-webhook`. `lenny-preflight` is deployable end to end — the `pkg/preflight` checks and `Run` layer, the `cmd/lenny-preflight` binary, and its pre-install Helm Job and RBAC — running three checks (admission-webhook inventory, phase-stamp consistency, §13.1 host-sharing). `pool-config-validator`, the `crd-conversion` CRD-wiring and manifest, `lenny-ops`, the remaining §17.9 preflight checks, and `lenny-bootstrap` are not. |
-| 4     | Session manager, REST                                        | Mostly done    | The session store, the REST session surface, derive, blob dereference, the upload pipeline, `uploadToken`, and `cmd/lenny-gateway` are built. The Postgres fallback claim path depends on the unbuilt `agent_pod_state` mirror writer.                                                                                                       |
+| 4     | Session manager, REST                                        | Mostly done    | The session store, the REST session surface, derive, blob dereference, the upload pipeline, `uploadToken`, and `cmd/lenny-gateway` are built. `POST /v1/sessions/start` claims a §5 warm pod and runs the session on the pod's §4.7 adapter when the gateway runs with `--agent-namespace`. The two-step `create → finalize → start` path does not yet claim a pod. The Postgres fallback claim path depends on the unbuilt `agent_pod_state` mirror writer. |
 | 4.5   | Admin API, authentication, bootstrap                         | Mostly done    | The admin API, `pkg/auth`, JWT validation, the connector resource, and `lenny-ctl bootstrap` are built.                                                                                                                                                                                                                                      |
 | 5     | ExternalAdapterRegistry, MCP/Completions/Open Responses      | Partial        | The MCP adapter, the OpenAI Chat translator, the Open Responses translator, and the OpenAPI document are built. The `gitClone` materializer and the `type: mcp` gateway endpoints need confirmation.                                                                                                                                         |
 | 5.4   | etcd encryption at rest                                      | Not started    | No `EncryptionConfiguration` manifest in the chart.                                                                                                                                                                                                                                                                                          |
@@ -324,28 +334,21 @@ The following are built and tested at the unit tier.
 
 ## Principal gaps
 
-The implementation cannot run a Kubernetes-hosted session. The blocking gaps, in
-dependency order, are below.
+The gateway↔pod session path runs end to end through `POST /v1/sessions/start`. The
+remaining gaps, in dependency order, are below.
 
-- **Runtime adapter server.** The gRPC scaffold, `NegotiateVersion`, the transport
-  wiring, `cmd/lenny-adapter`, and the core session RPCs `StartSession`, `SendMessage`,
-  and `Shutdown` are built. The remaining RPCs are not: the credential RPCs
-  (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), `Interrupt`,
-  `Checkpoint`, `DemoteSDK`, and the `LifecycleChannel` stream. The runtime-to-gateway
-  output path and a container image are also not built.
-- **Pod-spec builder.** Nothing translates a `Sandbox`, its `SandboxTemplate`, and its
-  `Runtime` into a `corev1.PodSpec`. A faithful agent pod carries an adapter container
-  and a runtime container with the §13.1 security context, the §6.1 volumes, and the
-  §5.3 RuntimeClass.
-- **Sandbox-to-Pod reconciler.** The warm-path lifecycle planner exists, but no
-  reconciler creates the backing Pod, advances `warming` to `idle`, or drives
-  `draining` to `terminated`.
-- **Gateway pod-claim path.** The gateway does not claim a pod through a `SandboxClaim`
-  or drive the `idle` through `attached` session transitions.
+- **Two-step session start.** The granular §15.1 `create → finalize → start` path
+  transitions the row to `running` without claiming a pod. It needs a dedicated
+  `handleStart` and the §14 WorkspacePlan persisted on the session row at create.
+- **Remaining adapter RPCs.** The adapter serves `NegotiateVersion`, `StartSession`,
+  `SendMessage`, `Interrupt`, `Shutdown`, `Attach`, the credential RPCs, and `DemoteSDK`.
+  `Checkpoint`, `ReportUsage`, `ExtendLease`, and the `LifecycleChannel` stream are not
+  built, and the adapter proto is still a Phase-1 skeleton behind §4.7 on the
+  workspace-staging RPCs.
 - **LLM Proxy.** Proxy-mode sessions cannot reach a provider; the LLM proxy subsystem
   and the `anthropic_direct` translator are not built.
-- **Operational services.** `lenny-ops`, `lenny-backup`, and the `lenny-preflight` Job
-  do not exist.
+- **Operational services.** `lenny-ops` and `lenny-backup` do not exist; `lenny-preflight`
+  is built and deployable.
 
 Phases 13 through 17b are largely unbuilt beyond their logic substrate. The audit
 pipeline, the compliance webhooks, the GDPR erasure pipeline, the backup and restore
@@ -366,33 +369,33 @@ progress; see the progress log.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
-4. Build the gateway pod-claim path against `SandboxClaim`. Done as a component —
-   `pkg/gateway/podclaim.Claimer`.
+4. Build the gateway pod-claim path against `SandboxClaim`. Done — `pkg/gateway/podclaim.Claimer`,
+   driven by `podsession.Binder` and wired into `cmd/lenny-gateway` behind `--agent-namespace`.
 5. Wire workspace materialization and session start from the gateway to the adapter.
-   Done as a component — `pkg/gateway/adapterclient` plus `pkg/gateway/podsession.Binder`,
-   which claims a pod and runs the handshake and StartSession against it. Items 4 and
-   5 now need only the gateway-binary wiring: a controller-runtime Kubernetes client
-   and a session-creation handler that calls `Binder.Bind`.
+   Done — `pkg/gateway/adapterclient` plus `pkg/gateway/podsession`, with the
+   `cmd/lenny-gateway` `--agent-namespace` wiring. `POST /v1/sessions/start` claims a
+   pod, runs the §15.5 handshake and StartSession, and records the binding.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 **The `Attach` content path.** The per-message agent-response round-trip uses the
-`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). It is built end to end
-as components: the proto RPC (`3128fa7`), the adapter-server handler (`a21b2bf`), and
-the gateway-side `adapterclient.Attach` (`3390203`). What remains is wiring `Attach`
-into the gateway session path. The proto is still a Phase-1 skeleton behind §4.7 on
-other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`,
-`CheckpointBarrier`, `CoordinatorFence`, `ExportPaths`, `Resume`, `Terminate` — which
-§15.4 mandates reconciling.
+`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). It is built end to end:
+the proto RPC (`3128fa7`), the adapter-server handler (`a21b2bf`), the gateway-side
+`adapterclient.Attach` (`3390203`), and `executor.PodExecutor` (`c11f002`), which the
+gateway selects as its `Executor` when `--agent-namespace` is set. The proto is still a
+Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`,
+`RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`, `CoordinatorFence`, `ExportPaths`,
+`Resume`, `Terminate` — which §15.4 mandates reconciling.
 
 ## Next step
 
-Wire `podsession.Binder` into the gateway binary. `cmd/lenny-gateway` needs a
-controller-runtime Kubernetes client and must construct a `Binder` from it; the
-session-creation handler then calls `Binder.Bind` (retrying against `ErrNoIdlePod`
-within `podClaimQueueTimeout`) to place the session on a warm pod. This completes
-critical-path items 4 and 5 and connects the REST session surface to the warm-pod
-fabric. The claim, handshake, and StartSession are already covered by `Binder`; the
-remaining work is the gateway binary's client construction and handler call.
+Place sessions started through the two-step §15.1 path on warm pods. The convenience
+endpoint `POST /v1/sessions/start` now claims a pod, but the granular
+`create → finalize → start` path transitions the row to `running` through the shared
+`handleTransition` without claiming a pod. The fix is a dedicated `handleStart` that
+runs the transition and the `Binder.Bind` call, mirroring how `handleFinalize` is a
+dedicated handler for the finalize transition. This needs the §14 WorkspacePlan to
+survive from `POST /v1/sessions` to `/start`: persist the plan on the session row at
+create so `handleStart` can re-parse it.
 
 ## Test status
 
