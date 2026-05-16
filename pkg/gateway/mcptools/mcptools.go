@@ -14,6 +14,7 @@
 //   - `lenny/cancel_child`        — cancel a child session and cascade.
 //   - `lenny/discover_agents`     — list §8 delegation targets.
 //   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
+//   - `lenny/output`              — emit output parts to the event stream.
 //   - `lenny/delegate_task`       — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
@@ -33,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -61,6 +63,10 @@ type Deps struct {
 	// non-nil, lenny/send_message runs the PreMessageDelivery phase
 	// over the message body before delivery.
 	Interceptors *interceptor.Chain
+
+	// Events is the §15.1 session event bus. Optional — when nil, the
+	// lenny/output tool is not registered.
+	Events *events.Bus
 
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
@@ -287,6 +293,47 @@ func Register(srv *mcp.Server, deps Deps) {
 		}{SessionID: updated.ID, TracingContext: updated.TracingContext})
 		return textResult(string(body)), nil
 	})
+
+	if deps.Events != nil {
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/output",
+			Description: "Emit output parts to a session's event stream (§8.5).",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","output"],"properties":{"sessionId":{"type":"string"},"output":{"type":"array","items":{"type":"object"}}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				SessionID string          `json:"sessionId"`
+				Output    json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
+			if in.SessionID == "" {
+				return mcp.ToolResult{}, errors.New("sessionId is required")
+			}
+			var parts []json.RawMessage
+			if err := json.Unmarshal(in.Output, &parts); err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("output must be an array of output parts: %w", err)
+			}
+			if len(parts) == 0 {
+				return mcp.ToolResult{}, errors.New("output must contain at least one part")
+			}
+			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			}
+			if session.IsTerminal(row.State) {
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			}
+			// §15.4.1: lenny/output parts are surfaced on the session's
+			// event stream as an agent_output event, the same stream the
+			// §15.1 GET /v1/sessions/{id}/events SSE relay reads.
+			data, _ := json.Marshal(struct {
+				Output []json.RawMessage `json:"output"`
+			}{Output: parts})
+			deps.Events.Publish(row.ID, "agent_output", string(data), clock())
+			return textResult(fmt.Sprintf(`{"emitted":%d}`, len(parts))), nil
+		})
+	}
 
 	if deps.Runtimes != nil {
 		srv.RegisterTool(mcp.Tool{

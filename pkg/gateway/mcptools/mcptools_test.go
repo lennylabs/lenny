@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -40,6 +41,7 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		Store:    store,
 		Executor: executor.NewEchoExecutor(),
 		Runtimes: runtimes,
+		Events:   events.NewBus(0),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -48,6 +50,24 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		TenantID: "acme",
 	})
 	return srv, store, runtimes
+}
+
+// newMCPForOutput builds the MCP server with a §15.1 event bus and
+// returns the bus so the lenny/output tests can read published events.
+func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *events.Bus) {
+	t.Helper()
+	store := memstore.New()
+	bus := events.NewBus(0)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:    store,
+		Executor: executor.NewEchoExecutor(),
+		Events:   bus,
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+	return srv, store, bus
 }
 
 func call(t *testing.T, h http.Handler, tool, args string) map[string]any {
@@ -503,6 +523,52 @@ func TestSetTracingContextToolRejectsTerminalSession(t *testing.T) {
 	}
 }
 
+func TestOutputTool(t *testing.T) {
+	srv, store, bus := newMCPForOutput(t)
+	mkSession(t, store, "sess_o", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/output",
+		`{"sessionId":"sess_o","output":[{"type":"text","inline":"hello"}]}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, `"emitted":1`) {
+		t.Errorf("output result = %q, want emitted:1", text)
+	}
+
+	hist := bus.History("sess_o", 0)
+	if len(hist) != 1 {
+		t.Fatalf("event history has %d events, want 1", len(hist))
+	}
+	if hist[0].Type != "agent_output" {
+		t.Errorf("event type = %q, want agent_output", hist[0].Type)
+	}
+	if !strings.Contains(hist[0].Data, "hello") {
+		t.Errorf("event data %q missing the emitted output", hist[0].Data)
+	}
+}
+
+func TestOutputToolRejectsTerminalSession(t *testing.T) {
+	srv, store, _ := newMCPForOutput(t)
+	mkSession(t, store, "sess_done", session.StateCompleted, "")
+
+	resp := call(t, srv.Handler(), "lenny/output",
+		`{"sessionId":"sess_done","output":[{"type":"text","inline":"x"}]}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("emitting output to a terminal session should be a tool error: %+v", resp)
+	}
+}
+
+func TestOutputToolRejectsEmptyOutput(t *testing.T) {
+	srv, store, _ := newMCPForOutput(t)
+	mkSession(t, store, "sess_o", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/output", `{"sessionId":"sess_o","output":[]}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("an empty output array should be a tool error: %+v", resp)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -522,7 +588,7 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 		"lenny/create_session", "lenny/send_message",
 		"lenny/get_task_tree", "lenny/cancel_child",
 		"lenny/discover_agents", "lenny/set_tracing_context",
-		"lenny/delegate_task",
+		"lenny/output", "lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)

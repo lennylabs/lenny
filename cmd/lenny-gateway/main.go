@@ -432,6 +432,7 @@ func main() {
 		Delegation:   delegationSvc,
 		Runtimes:     runtimes,
 		Interceptors: interceptor.NewChain(),
+		Events:       eventBus,
 		TenantID:     "default",
 	})
 
