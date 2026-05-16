@@ -72,6 +72,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
@@ -475,6 +476,15 @@ func main() {
 	// ----- Healthz (unauthenticated) -----
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+
+	// ----- §12.5 drain-readiness endpoint (unauthenticated) -----
+	// The lenny-drain-readiness webhook probes this before admitting a
+	// node-drain pod eviction. The in-memory artifact store is always
+	// process-local and reachable, so the probe reports ready; a
+	// MinIO-backed blobstore supplies a real HeadBucket probe.
+	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{
+		Prober: drainreadiness.ProberFunc(func(context.Context) error { return nil }),
 	})
 
 	// ----- Middleware stack -----
