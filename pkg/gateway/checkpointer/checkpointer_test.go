@@ -250,3 +250,38 @@ func TestRunPeriodicallySweeps(t *testing.T) {
 		}
 	}
 }
+
+func TestSealRecordsASealedSnapshot(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "seal-1"})
+
+	when := time.Date(2026, 5, 16, 18, 0, 0, 0, time.UTC)
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		Now:      func() time.Time { return when },
+	}
+	if err := cp.Seal(context.Background(), "acme", "s1"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	row, err := store.Get(context.Background(), "acme", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.WorkspaceSnapshot == nil {
+		t.Fatal("Seal recorded no WorkspaceSnapshot")
+	}
+	// A seal records source `sealed`, distinguishing the final
+	// workspace from a periodic `checkpoint` snapshot.
+	if row.WorkspaceSnapshot.Source != sessionstore.WorkspaceSnapshotSealed {
+		t.Errorf("snapshot source = %q, want sealed", row.WorkspaceSnapshot.Source)
+	}
+	if row.WorkspaceSnapshot.Ref != "seal-1" {
+		t.Errorf("snapshot ref = %q, want seal-1", row.WorkspaceSnapshot.Ref)
+	}
+	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
+		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
+	}
+}

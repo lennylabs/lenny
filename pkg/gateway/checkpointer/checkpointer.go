@@ -85,12 +85,27 @@ func (c *Checkpointer) interval() time.Duration {
 	return defaultInterval
 }
 
-// Checkpoint takes one §4.4 checkpoint of the session: it drives the
-// session's bound pod adapter to snapshot the workspace, then records
-// the checkpoint as the session's §7.1 WorkspaceSnapshot with source
-// `checkpoint`. It returns ErrNoBinding when this replica does not
-// coordinate the session.
+// Checkpoint takes one §4.4 periodic checkpoint of the session: it
+// drives the session's bound pod adapter to snapshot the workspace,
+// then records the result as the session's §7.1 WorkspaceSnapshot with
+// source `checkpoint`. It returns ErrNoBinding when this replica does
+// not coordinate the session.
 func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID string) error {
+	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint)
+}
+
+// Seal takes the §7.1 final workspace snapshot of a completing session
+// and records it with source `sealed`. It is the seal-and-export run
+// on session completion, distinguished from a periodic checkpoint only
+// by the recorded snapshot source.
+func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) error {
+	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed)
+}
+
+// snapshot drives the session's bound pod adapter to checkpoint its
+// workspace and records the result on the session row with the given
+// §7.1 snapshot source.
+func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string, source sessionstore.WorkspaceSnapshotSource) error {
 	binding, ok := c.Registry.Get(sessionID)
 	if !ok {
 		return ErrNoBinding
@@ -102,7 +117,7 @@ func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID strin
 	if _, err := c.Sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
 			Ref:       result.CheckpointID,
-			Source:    sessionstore.WorkspaceSnapshotCheckpoint,
+			Source:    source,
 			Timestamp: c.now(),
 		}
 		return nil
