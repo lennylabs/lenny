@@ -9,9 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
@@ -127,6 +132,110 @@ func TestInvalidateUserNotFound(t *testing.T) {
 		withAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown user: status %d, want 404", rr.Code)
+	}
+}
+
+// spec: §11.4 full_revoke — terminate the user's active sessions.
+
+func newUserAdminWithSessions(t *testing.T) (*admin.Router, userstore.Store, sessionstore.Store, *recordingAudit) {
+	t.Helper()
+	users := userstore.NewMemory()
+	sessions := memstore.New()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	}).WithUsers(users).WithSessions(sessions)
+	return router, users, sessions, audit
+}
+
+func TestFullRevokeTerminatesActiveSessions(t *testing.T) {
+	router, users, sessions, _ := newUserAdminWithSessions(t)
+	seedUser(t, users, "acme", "alice@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "run_1", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning,
+	})
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "run_2", TenantID: "acme", UserID: "alice@acme.com", State: session.StateAwaitingClientAction,
+	})
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "done", TenantID: "acme", UserID: "alice@acme.com", State: session.StateCompleted,
+	})
+
+	rr := invalidateUser(t, router.Handler(), "alice@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["sessionsTerminated"] != float64(2) {
+		t.Errorf("sessionsTerminated = %v, want 2", resp["sessionsTerminated"])
+	}
+	for _, id := range []string{"run_1", "run_2"} {
+		got, _ := sessions.Get(context.Background(), "acme", id)
+		if got.State != session.StateCancelled {
+			t.Errorf("session %s state = %q, want cancelled", id, got.State)
+		}
+	}
+	done, _ := sessions.Get(context.Background(), "acme", "done")
+	if done.State != session.StateCompleted {
+		t.Errorf("an already-terminal session was mutated: state = %q, want completed", done.State)
+	}
+}
+
+func TestFullRevokeLeavesOtherUsersSessions(t *testing.T) {
+	router, users, sessions, _ := newUserAdminWithSessions(t)
+	seedUser(t, users, "acme", "alice@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "alice_s", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning,
+	})
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "bob_s", TenantID: "acme", UserID: "bob@acme.com", State: session.StateRunning,
+	})
+
+	rr := invalidateUser(t, router.Handler(), "alice@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke: status %d", rr.Code)
+	}
+	bob, _ := sessions.Get(context.Background(), "acme", "bob_s")
+	if bob.State != session.StateRunning {
+		t.Errorf("another user's session was terminated: state = %q, want running", bob.State)
+	}
+}
+
+func TestSoftDisableLeavesSessionsRunning(t *testing.T) {
+	router, users, sessions, _ := newUserAdminWithSessions(t)
+	seedUser(t, users, "acme", "carol@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "carol_s", TenantID: "acme", UserID: "carol@acme.com", State: session.StateRunning,
+	})
+
+	rr := invalidateUser(t, router.Handler(), "carol@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateSoftDisable}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("soft_disable: status %d", rr.Code)
+	}
+	got, _ := sessions.Get(context.Background(), "acme", "carol_s")
+	if got.State != session.StateRunning {
+		t.Errorf("soft_disable terminated a session (state %q) — only full_revoke terminates sessions", got.State)
+	}
+}
+
+func TestFullRevokeWithNoActiveSessions(t *testing.T) {
+	router, users, _, _ := newUserAdminWithSessions(t)
+	seedUser(t, users, "acme", "dave@acme.com")
+
+	rr := invalidateUser(t, router.Handler(), "dave@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke with no sessions: status %d", rr.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["sessionsTerminated"] != float64(0) {
+		t.Errorf("sessionsTerminated = %v, want 0", resp["sessionsTerminated"])
 	}
 }
 

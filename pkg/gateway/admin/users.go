@@ -3,12 +3,15 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
@@ -291,14 +294,47 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// terminateUserSessions transitions every non-terminal session owned
+// by the user to `cancelled` — the §11.4 full_revoke SessionStore
+// step. It returns the count terminated. An already-terminal session
+// is left untouched, and a concurrent terminal transition is honored.
+// The forced transition mirrors the §8.10 orphan-cleanup sweep: an
+// administrative termination overrides the normal state machine.
+func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) (int, error) {
+	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return 0, err
+	}
+	terminated := 0
+	for _, row := range rows {
+		if row.UserID != userID || session.IsTerminal(row.State) {
+			continue
+		}
+		updated, err := r.sessions.Update(ctx, tenantID, row.ID, func(s *sessionstore.Session) error {
+			if session.IsTerminal(s.State) {
+				return nil
+			}
+			s.State = session.StateCancelled
+			return nil
+		})
+		if err != nil {
+			return terminated, err
+		}
+		if updated.State == session.StateCancelled {
+			terminated++
+		}
+	}
+	return terminated, nil
+}
+
 // handleInvalidateUser implements POST /v1/admin/users/{user_id}/invalidate
 // — the §11.4 three-tier user invalidation. soft_disable sets the
 // disabled flag so the user is denied new sessions; hard_disable and
 // full_revoke also raise the deleted_at tombstone so the user is
-// blocked from delegated tasks. The §11.4 full_revoke runtime fan-out
-// (active-session termination, cached-auth invalidation) lands with
-// the Token Service KMS hardening; this handler ships the request
-// path and the durable user-state tiers.
+// blocked from delegated tasks. full_revoke additionally transitions
+// the user's non-terminal sessions to `cancelled` in the SessionStore.
+// The §11.4 full_revoke pod-RPC `Terminate` fan-out and cached-auth
+// invalidation remain infrastructure-bound.
 func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) {
 	subject := req.PathValue("user_id")
 	var body InvalidateUserRequest
@@ -335,18 +371,32 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// §11.4 full_revoke: terminate the user's active sessions in the
+	// SessionStore. soft_disable and hard_disable leave running
+	// sessions alone — they only gate new work.
+	sessionsTerminated := 0
+	if body.Mode == InvalidateFullRevoke && r.sessions != nil {
+		sessionsTerminated, err = r.terminateUserSessions(req.Context(), tenant, subject)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"session termination failed: "+err.Error(), nil)
+			return
+		}
+	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.user.invalidated", subject, map[string]any{
-		"tenantId": tenant,
-		"mode":     body.Mode,
-		"reason":   body.Reason,
+		"tenantId":           tenant,
+		"mode":               body.Mode,
+		"reason":             body.Reason,
+		"sessionsTerminated": sessionsTerminated,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"subject":  subject,
-		"tenantId": tenant,
-		"mode":     body.Mode,
-		"user":     fromUser(updated),
+		"subject":            subject,
+		"tenantId":           tenant,
+		"mode":               body.Mode,
+		"sessionsTerminated": sessionsTerminated,
+		"user":               fromUser(updated),
 	})
 }
 
