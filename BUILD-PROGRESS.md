@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9d13f34` — `allow-pgbouncer` NetworkPolicy (§13.2). Re-admits PgBouncer ingress
+  from the gateway/Token Service/controller and its Postgres and CoreDNS egress under
+  the `lenny-system` default-deny; `postgres.cidr` value added.
 - `24785e2` — `allow-pod-egress-llm-proxy` NetworkPolicy (§13.2). The supplemental
   agent-namespace egress that admits only proxy-mode pods (by the
   `lenny.dev/delivery-mode: proxy` label) to the gateway LLM reverse-proxy port.
