@@ -139,6 +139,91 @@ func TestExperimentResultsEmptyExperiment(t *testing.T) {
 	}
 }
 
+func TestExperimentResultsDimensionBreakdown(t *testing.T) {
+	router, exps, evals := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_d")
+	for _, sc := range []map[string]float64{
+		{"coherence": 0.8, "safety": 1.0},
+		{"coherence": 0.9, "safety": 1.0},
+	} {
+		if _, err := evals.Put(context.Background(), evalstore.EvalResult{
+			TenantID: "acme", SessionID: "s", ExperimentID: "exp_d",
+			VariantID: "treatment", Scorer: "judge", Score: scorePtr(0.85), Scores: sc,
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_d/results?tenantId=acme", nil, withAdminPrincipal)
+	var res admin.ExperimentResults
+	_ = json.Unmarshal(rr.Body.Bytes(), &res)
+	var judge admin.ScorerStats
+	for _, v := range res.Variants {
+		if v.VariantID == "treatment" {
+			judge = v.Scorers["judge"]
+		}
+	}
+	if judge.Dimensions == nil {
+		t.Fatalf("scorer aggregate missing the per-dimension breakdown: %+v", judge)
+	}
+	if coh := judge.Dimensions["coherence"]; coh.Count != 2 || coh.Mean < 0.84 || coh.Mean > 0.86 {
+		t.Errorf("coherence dimension = %+v, want count 2 mean ~0.85", coh)
+	}
+	if safety := judge.Dimensions["safety"]; safety.Count != 2 || safety.Mean != 1.0 {
+		t.Errorf("safety dimension = %+v, want count 2 mean 1.0", safety)
+	}
+}
+
+func TestExperimentResultsDelegationDepthFilter(t *testing.T) {
+	router, exps, evals := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_f")
+	put := func(depth uint32) {
+		if _, err := evals.Put(context.Background(), evalstore.EvalResult{
+			TenantID: "acme", SessionID: "s", ExperimentID: "exp_f",
+			VariantID: "treatment", Scorer: "judge", Score: scorePtr(0.5),
+			DelegationDepth: depth,
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	put(0)
+	put(0)
+	put(1)
+
+	judgeCount := func(query string) int {
+		rr := doAdminReq(t, router.Handler(), http.MethodGet,
+			"/v1/admin/experiments/exp_f/results?tenantId=acme&"+query, nil, withAdminPrincipal)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("results (%s): status %d", query, rr.Code)
+		}
+		var res admin.ExperimentResults
+		_ = json.Unmarshal(rr.Body.Bytes(), &res)
+		for _, v := range res.Variants {
+			if v.VariantID == "treatment" {
+				return v.Scorers["judge"].Count
+			}
+		}
+		return -1
+	}
+	if got := judgeCount("delegation_depth=0"); got != 2 {
+		t.Errorf("delegation_depth=0 → judge count %d, want 2", got)
+	}
+	if got := judgeCount("delegation_depth=1"); got != 1 {
+		t.Errorf("delegation_depth=1 → judge count %d, want 1", got)
+	}
+}
+
+func TestExperimentResultsRejectsBadFilter(t *testing.T) {
+	router, exps, _ := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_bad")
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_bad/results?tenantId=acme&delegation_depth=notanumber",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed delegation_depth: status %d, want 400", rr.Code)
+	}
+}
+
 func TestExperimentResultsNotFound(t *testing.T) {
 	router, _, _ := newResultsAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodGet,
