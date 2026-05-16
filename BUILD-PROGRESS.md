@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `12afa28` — Gateway selects the MinIO-backed artifact store (§4.5, §12.5).
+  `cmd/lenny-gateway` gains `--minio-endpoint` and related flags; when set, the §4.5
+  blob store is `miniostore.Store` and `GET /internal/drain-readiness` runs a real
+  MinIO bucket probe instead of the always-ready stub.
 - `8a15fa4` — `miniostore` MinIO-backed blob store (§4.5, §12.5). The production
   `blobstore.Store`: Put (write-once), Get, Stat with §4.5 TTL expiry, backed by the
   minio-go SDK. It also satisfies the §12.5 drain-readiness `Prober` via a bucket-exists
@@ -403,7 +407,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook is built and deployable end to end: the decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint (`pkg/gateway/drainreadiness`, served by `cmd/lenny-gateway`), the AdmissionReview handler and route (`cmd/lenny-webhook`), and the feature-gated Helm manifest. The gateway checkpoint-and-resume orchestration is not built. The drain-readiness endpoint's probe reports ready against the in-memory blobstore; a real MinIO HeadBucket probe needs the production MinIO-backed blobstore, which is unbuilt.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end: the decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint (`pkg/gateway/drainreadiness`), the AdmissionReview handler and route (`cmd/lenny-webhook`), and the feature-gated Helm manifest. The endpoint runs a real §12.5 MinIO bucket probe when `cmd/lenny-gateway` is configured with `--minio-endpoint`. `pkg/checkpoint` exists; the gateway checkpoint-and-resume orchestration is not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -513,12 +517,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Wire `miniostore` into `cmd/lenny-gateway`. Add `--minio-endpoint` and related flags so
-the gateway selects the MinIO-backed `blobstore.Store` over `MemoryStore` when
-configured, and pass `miniostore.Store.Probe` as the `drainreadiness.Handler` prober so
-`GET /internal/drain-readiness` runs a real §12.5 bucket-existence check instead of the
-always-ready stub. This makes the §4.5 artifact store and the §12.5 drain-readiness
-check live in a deployed gateway.
+Build the Phase 8 gateway checkpoint-and-resume orchestration (§7.1, §8). `pkg/checkpoint`
+holds the substrate. The orchestration drives the periodic workspace checkpoint cadence
+for a running session, the seal-and-export on session completion, and the resume path
+that materializes a session from a stored workspace snapshot. It writes snapshots to
+the §4.5 blob store (now MinIO-capable) and records the `WorkspaceSnapshot` on the
+session row. This completes Phase 8.
 
 ## Test status
 
