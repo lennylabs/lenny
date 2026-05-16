@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `132b349` — §11.7 / §15.1 compliance-profile decommission endpoint.
+  `POST /v1/admin/tenants/{id}/compliance-profile/decommission` is the attested,
+  platform-admin-only path that lowers a regulated `complianceProfile`. It validates the
+  `acknowledgeDataRemediation` attestation, the required justification and remediation
+  attestations, the `previousProfile` concurrency guard (`409` on mismatch), and a
+  strictly lower ladder target; on success it emits the critical
+  `compliance.profile_decommissioned` audit event.
+- `6dbc31f` — §11.7 compliance-profile downgrade ratchet. `PUT /v1/admin/tenants/{id}`
+  rejects a `complianceProfile` transition that lowers the ratchet ordinal
+  (`none < soc2 < fedramp < hipaa`) with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED`,
+  carrying `currentProfile` / `requestedProfile` in `details`. An off-ladder profile
+  (`gdpr`) is not constrained by the ratchet.
 - `5507482` — §12.8 `compliance.billing_erasure_exempt_regulated` at gateway startup.
   `EmitBillingErasureExemptRegulatedStartup` scans active tenants and emits the event for
   each `exempt` tenant under a regulated compliance profile; `lenny-gateway` runs the
@@ -819,6 +831,16 @@ gateway startup. The only deferred pieces are infrastructure: the Postgres-backe
 `PseudonymizeUser` needs an UPDATE under the `lenny_erasure` role (the
 role-switched-connection infrastructure the audit-erasure path also needs), and KMS
 envelope encryption of the salt is part of Phase 12a.
+
+The §11.7 compliance-profile lifecycle is built: `PUT /v1/admin/tenants/{id}` enforces
+the one-way downgrade ratchet (`none < soc2 < fedramp < hipaa`), rejecting a lowering
+transition with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED`, and
+`POST /v1/admin/tenants/{id}/compliance-profile/decommission` is the attested,
+platform-admin-only wind-down path that emits `compliance.profile_decommissioned`. The
+parallel `workspaceTier` stricter-only ratchet is referenced by §15.1 and §11.7 but no
+error code is specified for a tenant-update downgrade rejection (§12.9 only defines the
+environment-override stricter-only rule and the write-time `CLASSIFICATION_CONTROL_VIOLATION`);
+that rejection is deferred pending the spec detail rather than inventing a code.
 
 ## Test status
 
