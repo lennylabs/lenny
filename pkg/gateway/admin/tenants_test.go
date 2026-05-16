@@ -674,3 +674,86 @@ func TestEmitBillingErasureExemptRegulatedStartupNilSink(t *testing.T) {
 		t.Errorf("nil sink: got %v, want nil", err)
 	}
 }
+
+// spec: §11.7 compliance profile downgrade ratchet
+// (none < soc2 < fedramp < hipaa).
+
+// putComplianceProfile issues a PUT that sets only complianceProfile.
+func putComplianceProfile(t *testing.T, h http.Handler, id, profile string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(admin.UpdateTenantRequest{ComplianceProfile: &profile})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/"+id, bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestUpdateTenantRejectsComplianceDowngrade(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+
+	rr := putComplianceProfile(t, router.Handler(), "acme", "soc2")
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("hipaa->soc2 downgrade: status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if env.Error.Code != "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED" {
+		t.Errorf("error code = %q, want COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED", env.Error.Code)
+	}
+	if env.Error.Details["currentProfile"] != "hipaa" || env.Error.Details["requestedProfile"] != "soc2" {
+		t.Errorf("details = %v, want currentProfile=hipaa requestedProfile=soc2", env.Error.Details)
+	}
+	// §11.7: the stored profile is unchanged by a rejected downgrade.
+	row, _ := store.Get(context.Background(), "acme")
+	if row.ComplianceProfile != "hipaa" {
+		t.Errorf("stored complianceProfile = %q, want hipaa (unchanged)", row.ComplianceProfile)
+	}
+}
+
+func TestUpdateTenantAllowsComplianceUpgrade(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "soc2"})
+
+	rr := putComplianceProfile(t, router.Handler(), "acme", "hipaa")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("soc2->hipaa upgrade: status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "acme")
+	if row.ComplianceProfile != "hipaa" {
+		t.Errorf("stored complianceProfile = %q, want hipaa", row.ComplianceProfile)
+	}
+}
+
+func TestUpdateTenantAllowsSameComplianceProfile(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "fedramp"})
+
+	// Re-asserting the same profile is not a downgrade.
+	rr := putComplianceProfile(t, router.Handler(), "acme", "fedramp")
+	if rr.Code != http.StatusOK {
+		t.Errorf("fedramp->fedramp re-assert: status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUpdateTenantComplianceRatchetIgnoresOffLadderProfile(t *testing.T) {
+	router, store := newAdminServer(t)
+	// gdpr is not on the none<soc2<fedramp<hipaa ladder, so the ratchet
+	// does not constrain transitions involving it.
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "gdpr"})
+	if rr := putComplianceProfile(t, router.Handler(), "acme", "none"); rr.Code != http.StatusOK {
+		t.Errorf("gdpr->none: status %d, want 200 (gdpr is off-ladder)", rr.Code)
+	}
+
+	_ = store.Create(nil, tenantstore.Tenant{ID: "globex", ComplianceProfile: "hipaa"})
+	if rr := putComplianceProfile(t, router.Handler(), "globex", "gdpr"); rr.Code != http.StatusOK {
+		t.Errorf("hipaa->gdpr: status %d, want 200 (gdpr is off-ladder)", rr.Code)
+	}
+}

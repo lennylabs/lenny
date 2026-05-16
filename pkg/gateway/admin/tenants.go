@@ -355,6 +355,31 @@ var regulatedComplianceProfiles = map[string]bool{
 	"soc2":    true,
 }
 
+// complianceProfileRank maps the §11.7 compliance ratchet ladder
+// (none < soc2 < fedramp < hipaa) to an ordinal. An empty value is
+// equivalent to none. A profile not on the ladder (for example gdpr)
+// is absent from the map and is not subject to the ratchet.
+var complianceProfileRank = map[string]int{
+	"":        0,
+	"none":    0,
+	"soc2":    1,
+	"fedramp": 2,
+	"hipaa":   3,
+}
+
+// isComplianceDowngrade reports whether a transition from current to
+// requested lowers the §11.7 compliance ratchet ordinal. The ratchet
+// is evaluated only between ladder profiles; a transition that
+// involves an off-ladder profile is not treated as a downgrade.
+func isComplianceDowngrade(current, requested string) bool {
+	cur, curOnLadder := complianceProfileRank[current]
+	req, reqOnLadder := complianceProfileRank[requested]
+	if !curOnLadder || !reqOnLadder {
+		return false
+	}
+	return req < cur
+}
+
 // emitBillingErasureExemptRegulated emits the §12.8
 // compliance.billing_erasure_exempt_regulated audit event when a tenant
 // combines billingErasurePolicy=exempt with a regulated compliance
@@ -583,6 +608,29 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			"billingErasurePolicy must be pseudonymize or exempt",
 			map[string]any{"field": "billingErasurePolicy"})
 		return
+	}
+	// §11.7 compliance ratchet: complianceProfile may be tightened in
+	// place but never lowered through the generic update endpoint.
+	if body.ComplianceProfile != nil {
+		current, err := r.tenants.Get(req.Context(), id)
+		if err != nil {
+			if errors.Is(err, tenantstore.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		if isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
+			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED",
+				"complianceProfile may be tightened in place but not lowered through this endpoint; "+
+					"use POST /v1/admin/tenants/{id}/compliance-profile/decommission for a legitimate wind-down",
+				map[string]any{
+					"currentProfile":   current.ComplianceProfile,
+					"requestedProfile": *body.ComplianceProfile,
+				})
+			return
+		}
 	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		if body.DisplayName != nil {
