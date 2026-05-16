@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `2a52365` — `pkg/preflight` host-sharing flag check (§13.1). `CheckHostSharing` fails
+  fail-closed when any Lenny-managed pod template enables `shareProcessNamespace`,
+  `hostPID`, `hostNetwork`, or `hostIPC`. A pure function; gathering Deployments,
+  DaemonSets, and Jobs into `Run` and the matching RBAC remain.
 - `9e48d8e` — `lenny-preflight` Helm Job and RBAC (§17.9). The pre-install/pre-upgrade
   hook Job at weight -10 with its read-only ServiceAccount, ClusterRole, and Role at
   -15. `lenny-preflight` is now deployable end to end (decision logic, `Run`, binary,
