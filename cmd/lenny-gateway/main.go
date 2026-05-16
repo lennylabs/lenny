@@ -94,6 +94,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
@@ -643,6 +644,21 @@ func main() {
 		if res.Expirations > 0 {
 			log.Printf("lenny-gateway: watchdog expired %d sessions past their §11.3 deadline",
 				res.Expirations)
+		}
+	})
+
+	// ----- §8.10 orphan-cleanup job -----
+	orphanSweeper := orphancleanup.New(sessions, tenantsLister{tenants}, orphancleanup.Options{
+		Archive: treeArchive,
+	})
+	go orphanSweeper.Run(watchdogCtx, func(terminated int, err error) {
+		if err != nil {
+			log.Printf("lenny-gateway: orphan-cleanup sweep error: %v", err)
+			return
+		}
+		if terminated > 0 {
+			log.Printf("lenny-gateway: orphan-cleanup terminated %d sessions past the §8.10 cascade timeout",
+				terminated)
 		}
 	})
 
