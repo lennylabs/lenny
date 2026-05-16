@@ -54,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
@@ -159,6 +160,16 @@ func main() {
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
 		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
+	minioEndpoint := flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
+		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
+	minioAccessKey := flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
+		"MinIO access key. Required when --minio-endpoint is set.")
+	minioSecretKey := flag.String("minio-secret-key", os.Getenv("LENNY_MINIO_SECRET_KEY"),
+		"MinIO secret key. Required when --minio-endpoint is set.")
+	minioBucket := flag.String("minio-bucket", os.Getenv("LENNY_MINIO_BUCKET"),
+		"MinIO bucket for §4.5 artifacts. Required when --minio-endpoint is set.")
+	minioUseSSL := flag.Bool("minio-use-ssl", envFlag("LENNY_MINIO_USE_SSL"),
+		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
 	flag.Parse()
 
 	// ----- Stores -----
@@ -212,7 +223,28 @@ func main() {
 		connectors = connectorstore.NewMemory()
 		billing = billingstore.NewMemory()
 	}
-	blobs := blobstore.NewMemoryStore(nil)
+	// §4.5 artifact store: MinIO-backed when --minio-endpoint is set,
+	// otherwise an in-memory store for the minimal gateway. blobProbe
+	// is the §12.5 drain-readiness liveness probe — a real MinIO
+	// bucket check with MinIO, an always-ready stub for the in-memory
+	// store, which is process-local and cannot degrade.
+	var blobs blobstore.Store = blobstore.NewMemoryStore(nil)
+	var blobProbe drainreadiness.Prober = drainreadiness.ProberFunc(func(context.Context) error { return nil })
+	if *minioEndpoint != "" {
+		ms, err := miniostore.New(miniostore.Config{
+			Endpoint:  *minioEndpoint,
+			AccessKey: *minioAccessKey,
+			SecretKey: *minioSecretKey,
+			Bucket:    *minioBucket,
+			UseSSL:    *minioUseSSL,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: minio: %v", err)
+		}
+		blobs = ms
+		blobProbe = ms
+		log.Printf("lenny-gateway: §4.5 artifact store is MinIO at %s (bucket %q)", *minioEndpoint, *minioBucket)
+	}
 	pools := poolstore.NewMemory()
 
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
@@ -480,12 +512,10 @@ func main() {
 
 	// ----- §12.5 drain-readiness endpoint (unauthenticated) -----
 	// The lenny-drain-readiness webhook probes this before admitting a
-	// node-drain pod eviction. The in-memory artifact store is always
-	// process-local and reachable, so the probe reports ready; a
-	// MinIO-backed blobstore supplies a real HeadBucket probe.
-	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{
-		Prober: drainreadiness.ProberFunc(func(context.Context) error { return nil }),
-	})
+	// node-drain pod eviction. blobProbe runs a real MinIO bucket check
+	// when the artifact store is MinIO-backed, and an always-ready stub
+	// for the process-local in-memory store.
+	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: blobProbe})
 
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
