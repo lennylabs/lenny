@@ -121,6 +121,22 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 	}, nil
 }
 
+// Resume asks the pod's adapter to restore the session workspace from
+// the named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
+// replacement-pod counterpart of StartSession. It returns the
+// uncompressed workspace bytes restored.
+func (c *Client) Resume(ctx context.Context, sessionID, runtimeName, checkpointID string) (int64, error) {
+	resp, err := c.rpc.Resume(ctx, &adapterv1.ResumeRequest{
+		SessionId:    &adapterv1.SessionId{Value: sessionID},
+		Runtime:      runtimeName,
+		CheckpointId: checkpointID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return resp.GetRestoredBytes(), nil
+}
+
 // AttachStream is a live §4.7 bidirectional content stream to a pod's
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
 // next agent-to-gateway envelope.

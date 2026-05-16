@@ -3,9 +3,12 @@
 package adapterclient_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 )
 
@@ -276,5 +280,51 @@ func TestCheckpointRejectsAnUnassignedSession(t *testing.T) {
 
 	if _, err := cl.Checkpoint(context.Background(), "sess-absent", 0); err == nil {
 		t.Error("Checkpoint on an unassigned session succeeded, want a failure")
+	}
+}
+
+// stubCheckpointSource is an adapter.CheckpointSource serving a fixed
+// checkpoint archive.
+type stubCheckpointSource struct{ archive []byte }
+
+func (s stubCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.archive)), nil
+}
+
+func TestResumeRestoresTheWorkspace(t *testing.T) {
+	// Build a one-file checkpoint archive to restore.
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "w.txt"), []byte("restored"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var archived bytes.Buffer
+	if _, err := workspace.Archive(src, &archived); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
+	cl := dialAdapter(t, srv)
+
+	n, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1")
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if n != int64(len("restored")) {
+		t.Errorf("restored bytes = %d, want %d", n, len("restored"))
+	}
+}
+
+func TestResumeRejectsAMissingCheckpointSource(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	// No Restorer configured: the adapter cannot restore a checkpoint.
+	cl := dialAdapter(t, srv)
+
+	if _, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1"); err == nil {
+		t.Error("Resume succeeded with no checkpoint source, want a failure")
 	}
 }
