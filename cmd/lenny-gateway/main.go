@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
@@ -170,6 +171,8 @@ func main() {
 		"MinIO bucket for §4.5 artifacts. Required when --minio-endpoint is set.")
 	minioUseSSL := flag.Bool("minio-use-ssl", envFlag("LENNY_MINIO_USE_SSL"),
 		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
+	checkpointInterval := flag.Duration("checkpoint-interval", 5*time.Minute,
+		"§4.4 periodic-checkpoint cadence. The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace.")
 	flag.Parse()
 
 	// ----- Stores -----
@@ -625,6 +628,22 @@ func main() {
 	// current via pub/sub and a periodic refresh.
 	if breakerCache != nil {
 		go breakerCache.Run(watchdogCtx)
+	}
+
+	// ----- §4.4 periodic-checkpoint loop -----
+	// Active only with --agent-namespace: snapshots every coordinated
+	// session's workspace on the checkpoint cadence so the §7.1
+	// WorkspaceSnapshot stays fresh against the §16.5 freshness SLO.
+	if podRegistry != nil {
+		cp := &checkpointer.Checkpointer{
+			Sessions: sessions,
+			Registry: podRegistry,
+			Interval: *checkpointInterval,
+			OnError: func(sessionID string, err error) {
+				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
+			},
+		}
+		go cp.Run(watchdogCtx)
 	}
 
 	// ----- §13.3 revocation-cache rehydration -----
