@@ -389,3 +389,81 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+---
+{{- /*
+allow-gateway-egress re-admits the gateway's in-cluster egress the
+§13.2 default-deny otherwise blocks (§13.2 line 216): the agent-pod
+adapters, the Token Service, PgBouncer, Redis, MinIO, the
+kube-apiserver, and kube-system CoreDNS. The external-HTTPS egress
+with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
+rendered with the LLM proxy.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: {{ .Values.adapter.grpcPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: token-service
+      ports:
+        - port: {{ .Values.tokenService.grpcPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ .Values.redis.tlsPort }}
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: minio
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
