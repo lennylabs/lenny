@@ -429,6 +429,7 @@ func main() {
 		Store:      sessions,
 		Executor:   exec,
 		Delegation: delegationSvc,
+		Runtimes:   runtimes,
 		TenantID:   "default",
 	})
 

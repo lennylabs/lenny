@@ -17,18 +17,28 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 func newMCP(t *testing.T) (*mcp.Server, sessionstore.Store) {
+	srv, store, _ := newMCPWithRuntimes(t)
+	return srv, store
+}
+
+// newMCPWithRuntimes builds the MCP server like newMCP and also returns
+// the §5.1 runtime registry so discover_agents tests can seed it.
+func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimestore.Store) {
 	t.Helper()
 	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Store:    store,
 		Executor: executor.NewEchoExecutor(),
+		Runtimes: runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -36,7 +46,7 @@ func newMCP(t *testing.T) (*mcp.Server, sessionstore.Store) {
 		IDFunc:   func() string { return "sess_mcp" },
 		TenantID: "acme",
 	})
-	return srv, store
+	return srv, store, runtimes
 }
 
 func call(t *testing.T, h http.Handler, tool, args string) map[string]any {
@@ -280,6 +290,69 @@ func TestCancelChildToolRejectsSelf(t *testing.T) {
 	}
 }
 
+// mkRuntime registers a runtime for the discover_agents tests.
+func mkRuntime(t *testing.T, runtimes runtimestore.Store, name string, typ runtimestore.RuntimeType) {
+	t.Helper()
+	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: name, Type: typ}); err != nil {
+		t.Fatalf("seed runtime %s: %v", name, err)
+	}
+}
+
+func TestDiscoverAgentsTool(t *testing.T) {
+	srv, _, runtimes := newMCPWithRuntimes(t)
+	mkRuntime(t, runtimes, "claude-agent", runtimestore.TypeAgent)
+	mkRuntime(t, runtimes, "gemini-agent", runtimestore.TypeAgent)
+	mkRuntime(t, runtimes, "filesystem-mcp", runtimestore.TypeMCP)
+
+	resp := call(t, srv.Handler(), "lenny/discover_agents", `{}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"claude-agent", "gemini-agent"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("discover_agents result %q missing agent %q", text, want)
+		}
+	}
+	// §8.5: type:mcp runtimes are never delegation targets.
+	if strings.Contains(text, "filesystem-mcp") {
+		t.Errorf("discover_agents result %q leaked a type:mcp runtime", text)
+	}
+}
+
+func TestDiscoverAgentsToolNameFilter(t *testing.T) {
+	srv, _, runtimes := newMCPWithRuntimes(t)
+	mkRuntime(t, runtimes, "claude-agent", runtimestore.TypeAgent)
+	mkRuntime(t, runtimes, "claude-haiku", runtimestore.TypeAgent)
+	mkRuntime(t, runtimes, "gemini-agent", runtimestore.TypeAgent)
+
+	resp := call(t, srv.Handler(), "lenny/discover_agents", `{"nameContains":"claude"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"claude-agent", "claude-haiku"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("filtered discover_agents %q missing %q", text, want)
+		}
+	}
+	if strings.Contains(text, "gemini-agent") {
+		t.Errorf("filtered discover_agents %q should exclude gemini-agent", text)
+	}
+}
+
+func TestDiscoverAgentsToolExcludesSoftDeleted(t *testing.T) {
+	srv, _, runtimes := newMCPWithRuntimes(t)
+	mkRuntime(t, runtimes, "live-agent", runtimestore.TypeAgent)
+	mkRuntime(t, runtimes, "retired-agent", runtimestore.TypeAgent)
+	if err := runtimes.SoftDelete(context.Background(), "retired-agent", time.Now()); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+
+	resp := call(t, srv.Handler(), "lenny/discover_agents", `{}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "live-agent") {
+		t.Errorf("discover_agents %q missing live-agent", text)
+	}
+	if strings.Contains(text, "retired-agent") {
+		t.Errorf("discover_agents %q leaked a soft-deleted runtime", text)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -297,7 +370,8 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 	}
 	for _, want := range []string{
 		"lenny/create_session", "lenny/send_message",
-		"lenny/get_task_tree", "lenny/cancel_child", "lenny/delegate_task",
+		"lenny/get_task_tree", "lenny/cancel_child",
+		"lenny/discover_agents", "lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)

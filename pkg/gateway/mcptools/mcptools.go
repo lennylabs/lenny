@@ -8,11 +8,12 @@
 //
 // v1 registers the core §8.5 tools:
 //
-//   - `lenny/create_session`  — create a session.
-//   - `lenny/send_message`    — deliver a message to a session.
-//   - `lenny/get_task_tree`   — read the §8 delegation task tree.
-//   - `lenny/cancel_child`    — cancel a child session and cascade.
-//   - `lenny/delegate_task`   — spawn a child session (§8.2).
+//   - `lenny/create_session`   — create a session.
+//   - `lenny/send_message`     — deliver a message to a session.
+//   - `lenny/get_task_tree`    — read the §8 delegation task tree.
+//   - `lenny/cancel_child`     — cancel a child session and cascade.
+//   - `lenny/discover_agents`  — list §8 delegation targets.
+//   - `lenny/delegate_task`    — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
 // endpoint so the REST and MCP surfaces stay in lockstep per the
@@ -25,12 +26,14 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -46,6 +49,10 @@ type Deps struct {
 	// Delegation is the §8 delegation service. Optional — when nil,
 	// the lenny/delegate_task tool is not registered.
 	Delegation *delegation.Service
+
+	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
+	// lenny/discover_agents tool is not registered.
+	Runtimes runtimestore.Store
 
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
@@ -212,6 +219,46 @@ func Register(srv *mcp.Server, deps Deps) {
 		return textResult(string(body)), nil
 	})
 
+	if deps.Runtimes != nil {
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/discover_agents",
+			Description: "List the agent runtimes available as §8 delegation targets.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				NameContains string `json:"nameContains"`
+			}
+			if len(args) > 0 {
+				if err := json.Unmarshal(args, &in); err != nil {
+					return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				}
+			}
+			// §8.5: discovery returns `type: agent` runtimes only —
+			// `type: mcp` runtimes are never delegation targets. The
+			// store filter also drops soft-deleted runtimes.
+			runtimes, err := deps.Runtimes.List(ctx, runtimestore.ListFilter{Type: runtimestore.TypeAgent})
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			needle := strings.ToLower(in.NameContains)
+			agents := make([]discoveredAgent, 0, len(runtimes))
+			for _, rt := range runtimes {
+				if needle != "" && !strings.Contains(strings.ToLower(rt.Name), needle) {
+					continue
+				}
+				agents = append(agents, discoveredAgent{
+					Name:             rt.Name,
+					IntegrationLevel: string(rt.IntegrationLevel),
+					Description:      rt.Description,
+				})
+			}
+			body, _ := json.Marshal(struct {
+				Agents []discoveredAgent `json:"agents"`
+			}{Agents: agents})
+			return textResult(string(body)), nil
+		})
+	}
+
 	if deps.Delegation != nil {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/delegate_task",
@@ -246,6 +293,13 @@ type treeNode struct {
 	SessionID string     `json:"sessionId"`
 	State     string     `json:"state"`
 	Children  []treeNode `json:"children"`
+}
+
+// discoveredAgent is one entry in the lenny/discover_agents result.
+type discoveredAgent struct {
+	Name             string `json:"name"`
+	IntegrationLevel string `json:"integrationLevel"`
+	Description      string `json:"description,omitempty"`
 }
 
 func buildTree(root sessionstore.Session, all []sessionstore.Session) treeNode {
