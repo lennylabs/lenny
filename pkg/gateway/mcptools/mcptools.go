@@ -12,6 +12,7 @@
 //   - `lenny/send_message`        — deliver a message to a session.
 //   - `lenny/get_task_tree`       — read the §8 delegation task tree.
 //   - `lenny/cancel_child`        — cancel a child session and cascade.
+//   - `lenny/await_children`      — wait for child sessions to settle.
 //   - `lenny/discover_agents`     — list §8 delegation targets.
 //   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
 //   - `lenny/output`              — emit output parts to the event stream.
@@ -281,6 +282,65 @@ func Register(srv *mcp.Server, deps Deps) {
 	})
 
 	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/await_children",
+		Description: "Wait for delegated child sessions to reach terminal states (§8.5).",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","childIds"],"properties":{"sessionId":{"type":"string"},"childIds":{"type":"array","items":{"type":"string"}},"mode":{"type":"string","enum":["all","any","settled"]}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		var in struct {
+			SessionID string   `json:"sessionId"`
+			ChildIDs  []string `json:"childIds"`
+			Mode      string   `json:"mode"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if in.SessionID == "" || len(in.ChildIDs) == 0 {
+			return mcp.ToolResult{}, errors.New("sessionId and a non-empty childIds are required")
+		}
+		mode := in.Mode
+		if mode == "" {
+			mode = "all"
+		}
+		if mode != "all" && mode != "any" && mode != "settled" {
+			return mcp.ToolResult{}, fmt.Errorf("mode %q is not one of all, any, or settled", mode)
+		}
+		if _, err := deps.Store.Get(ctx, tenant, in.SessionID); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+		}
+		// Authorization: every awaited id must be a direct child of the
+		// caller — a session may only await children it delegated.
+		for _, cid := range in.ChildIDs {
+			child, err := deps.Store.Get(ctx, tenant, cid)
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("child %s lookup: %w", cid, err)
+			}
+			if child.ParentSessionID != in.SessionID {
+				return mcp.ToolResult{}, fmt.Errorf("session %s is not a child of %s", cid, in.SessionID)
+			}
+		}
+		// Poll the child states until the mode's settle condition holds.
+		ticker := time.NewTicker(awaitPollInterval)
+		defer ticker.Stop()
+		for {
+			results, settled, err := collectChildResults(ctx, deps.Store, tenant, in.ChildIDs, mode)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			if settled {
+				body, _ := json.Marshal(struct {
+					Results []taskResult `json:"results"`
+				}{Results: results})
+				return textResult(string(body)), nil
+			}
+			select {
+			case <-ctx.Done():
+				return mcp.ToolResult{}, ctx.Err()
+			case <-ticker.C:
+			}
+		}
+	})
+
+	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/set_tracing_context",
 		Description: "Register §8.3 tracing identifiers on a session for propagation through delegation.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","context"],"properties":{"sessionId":{"type":"string"},"context":{"type":"object","additionalProperties":{"type":"string"}}}}`),
@@ -506,6 +566,73 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// awaitPollInterval is how often lenny/await_children re-reads its
+// children's states while waiting for the mode's settle condition.
+const awaitPollInterval = 25 * time.Millisecond
+
+// taskResult is the §8.8 TaskResult lenny/await_children returns for a
+// settled child. v1 reports the identity and terminal state; the §8.8
+// usage and treeUsage rollups are not yet tracked.
+type taskResult struct {
+	SchemaVersion int        `json:"schemaVersion"`
+	TaskID        string     `json:"taskId"`
+	State         string     `json:"state"`
+	Error         *taskError `json:"error,omitempty"`
+}
+
+// taskError is the §8.8 TaskResult.error payload for a non-completed
+// terminal child.
+type taskError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// toTaskResult builds the §8.8 TaskResult for a settled child session.
+func toTaskResult(s sessionstore.Session) taskResult {
+	tr := taskResult{SchemaVersion: 1, TaskID: s.ID, State: string(s.State)}
+	if s.State != session.StateCompleted {
+		code := s.FailureReason
+		if code == "" {
+			code = "CHILD_" + strings.ToUpper(string(s.State))
+		}
+		tr.Error = &taskError{Code: code, Message: "child session ended in state " + string(s.State)}
+	}
+	return tr
+}
+
+// collectChildResults reads the awaited children and reports whether
+// the mode's settle condition holds. For `all` and `settled` the
+// condition is every child terminal; for `any` it is at least one
+// child terminal, and only the first such child (in childIDs order) is
+// returned.
+func collectChildResults(ctx context.Context, store sessionstore.Store, tenant string,
+	childIDs []string, mode string) ([]taskResult, bool, error) {
+
+	var terminal []taskResult
+	allTerminal := true
+	for _, cid := range childIDs {
+		child, err := store.Get(ctx, tenant, cid)
+		if err != nil {
+			return nil, false, fmt.Errorf("child %s lookup: %w", cid, err)
+		}
+		if session.IsTerminal(child.State) {
+			terminal = append(terminal, toTaskResult(child))
+		} else {
+			allTerminal = false
+		}
+	}
+	if mode == "any" {
+		if len(terminal) > 0 {
+			return terminal[:1], true, nil
+		}
+		return nil, false, nil
+	}
+	if allTerminal {
+		return terminal, true, nil
+	}
+	return nil, false, nil
 }
 
 func buildTree(root sessionstore.Session, all []sessionstore.Session) treeNode {

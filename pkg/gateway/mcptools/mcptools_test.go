@@ -675,6 +675,100 @@ func TestSendMessageInReplyToFallsThroughWithoutPendingInput(t *testing.T) {
 	}
 }
 
+func TestAwaitChildrenAll(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c1", session.StateCompleted, "sess_p")
+	mkSession(t, store, "sess_c2", session.StateCompleted, "sess_p")
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_c1","sess_c2"],"mode":"all"}`)
+	text := resultText(t, resp)
+	for _, want := range []string{"sess_c1", "sess_c2", "completed"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("await_children result %q missing %q", text, want)
+		}
+	}
+}
+
+func TestAwaitChildrenAny(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_done", session.StateCompleted, "sess_p")
+	mkSession(t, store, "sess_running", session.StateRunning, "sess_p")
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_done","sess_running"],"mode":"any"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "sess_done") {
+		t.Errorf("await_children any %q should return the settled child", text)
+	}
+	if strings.Contains(text, "sess_running") {
+		t.Errorf("await_children any %q should not include a still-running child", text)
+	}
+}
+
+func TestAwaitChildrenBlocksUntilSettled(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_c", session.StateRunning, "sess_p")
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/await_children",
+			`{"sessionId":"sess_p","childIds":["sess_c"],"mode":"all"}`)
+	}()
+
+	// The call blocks while the child is still running.
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case <-got:
+		t.Fatal("await_children returned before the child reached a terminal state")
+	default:
+	}
+
+	if _, err := store.Update(context.Background(), "acme", "sess_c",
+		func(row *sessionstore.Session) error { row.State = session.StateCompleted; return nil }); err != nil {
+		t.Fatalf("settle child: %v", err)
+	}
+
+	select {
+	case resp := <-got:
+		if text := resultText(t, resp); !strings.Contains(text, "completed") {
+			t.Errorf("await_children result = %q, want the settled child", text)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("await_children did not return after the child settled")
+	}
+}
+
+func TestAwaitChildrenRejectsNonChild(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_orphan", session.StateCompleted, "")
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_orphan"],"mode":"all"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("awaiting a session that is not a child should be a tool error: %+v", resp)
+	}
+}
+
+func TestAwaitChildrenFailedChildCarriesError(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_p", session.StateRunning, "")
+	mkSession(t, store, "sess_failed", session.StateFailed, "sess_p")
+
+	resp := call(t, srv.Handler(), "lenny/await_children",
+		`{"sessionId":"sess_p","childIds":["sess_failed"],"mode":"all"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, `"error"`) {
+		t.Errorf("await_children result %q for a failed child should carry an error", text)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -692,7 +786,7 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 	}
 	for _, want := range []string{
 		"lenny/create_session", "lenny/send_message",
-		"lenny/get_task_tree", "lenny/cancel_child",
+		"lenny/get_task_tree", "lenny/cancel_child", "lenny/await_children",
 		"lenny/discover_agents", "lenny/set_tracing_context",
 		"lenny/output", "lenny/request_input", "lenny/delegate_task",
 	} {
