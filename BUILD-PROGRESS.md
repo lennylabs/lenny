@@ -449,7 +449,7 @@ this state.
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
 | 8     | Checkpoint/resume, drain-readiness webhook                   | Done           | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume is complete: `adapterclient.Resume` drives the pod adapter's `Resume` RPC, `Binder.Resume` claims a fresh pod and restores onto it, and `handleResume` serves `POST /v1/sessions/{id}/resume` — valid only from `awaiting_client_action` per §15.1, restoring from the §7.1 `WorkspaceSnapshot` or rebuilding from the stored §14 `WorkspacePlan`.                                                                                                                                              |
-| 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
+| 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation/cycle`, `pkg/delegation/lease`, and the gateway delegation service are built. The platform MCP tool surface has `lenny/create_session`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/delegate_task`, `lenny/cancel_child`, and `lenny/discover_agents`. Not built: `lenny/await_children`, `lenny/output`, `lenny/request_input`, `lenny/set_tracing_context`, the `delegation-echo` runtime, the `PreDelegation` / `PreMessageDelivery` / `PreExportMaterialization` interceptor phases, the `ExtendLease` lease-extension control plane, and delegation-tree recovery (`session_tree_archive`).                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
 | 11    | Advanced credentials, multi-provider translators, revocation | Partial        | The revocation cache exists. The `aws_bedrock`, `vertex_ai`, and `azure_openai` translators and the proactive renewal worker are not.                                                                                                                                                                                                        |
@@ -558,16 +558,17 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Phase 8 is complete. Move to Phase 9 (§18.23) — recursive delegation. The
-`pkg/delegation/cycle` and `pkg/delegation/lease` substrates and the gateway delegation
-service exist; the remaining work is the `delegation-echo` Standard-level reference
-runtime, the platform MCP tool surface (`lenny/delegate_task`, `lenny/await_children`,
-`lenny/cancel_child`, `lenny/discover_agents`, `lenny/get_task_tree`, `lenny/output`,
-`lenny/request_input`, `lenny/send_message`, `lenny/set_tracing_context`), the
-`PreDelegation` / `PreMessageDelivery` / `PreExportMaterialization` interceptor phases,
-the `ExtendLease` lease-extension control plane, and delegation-tree recovery
-(`session_tree_archive`). Start by auditing what `pkg/gateway/delegation/service.go`
-already covers so the new work targets the gaps.
+Phase 9 (§18.23) is in progress. The `lenny/cancel_child` and `lenny/discover_agents`
+platform MCP tools landed. Remaining Phase 9 MCP tools: `lenny/set_tracing_context`
+(tracing-context registration with the §8.3 `TRACING_CONTEXT_TOO_LARGE` /
+`TRACING_CONTEXT_SENSITIVE_KEY` / `TRACING_CONTEXT_URL_NOT_ALLOWED` validators, plus
+auto-propagation to children on `lenny/delegate_task`), `lenny/output`,
+`lenny/await_children`, and `lenny/request_input`. Then the `delegation-echo`
+Standard-level reference runtime (model it on `cmd/runtimes/echo`), the `PreDelegation`
+/ `PreMessageDelivery` / `PreExportMaterialization` interceptor phases, the
+`ExtendLease` lease-extension control plane, and delegation-tree recovery
+(`session_tree_archive`). Suggested order: `set_tracing_context` next — it is the
+last non-blocking tool and unblocks the §8.3 tracing-context propagation work.
 
 ## Test status
 
