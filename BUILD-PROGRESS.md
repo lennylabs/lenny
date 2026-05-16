@@ -4,7 +4,17 @@ This file audits the Lenny implementation against the phased build sequence in
 [`spec/18_build-sequence.md`](spec/18_build-sequence.md). It records which phases are
 complete, which are partial, and what remains.
 
-Audited 2026-05-15, branch `impl/v1-initial`, head commit `48adf0a`.
+Audited 2026-05-15, branch `impl/v1-initial`. First audited at commit `48adf0a`; the
+progress log records work since.
+
+## Progress log
+
+Newest first. Each entry is one increment toward the critical path below.
+
+- `d255c7f` — Runtime adapter gRPC server scaffold. `pkg/adapter.Server` implements the
+  generated `adapterv1.AdapterServer` contract with `NegotiateVersion` and the
+  TLS/mTLS transport wiring; `cmd/lenny-adapter` is the sidecar binary. The workspace,
+  session, credential, and lifecycle RPCs still return `Unimplemented`.
 
 ## Summary
 
@@ -110,9 +120,11 @@ The following are built and tested at the unit tier.
 The implementation cannot run a Kubernetes-hosted session. The blocking gaps, in
 dependency order, are below.
 
-- **Runtime adapter server.** `schemas/lenny-adapter.proto` defines the gateway-adapter
-  contract and the Go bindings are generated, but there is no adapter server
-  implementation and no `cmd/lenny-adapter` binary or container image.
+- **Runtime adapter server.** The gRPC scaffold, `NegotiateVersion`, the transport
+  wiring, and `cmd/lenny-adapter` are built (`d255c7f`). The substantive RPCs are not:
+  `StartSession` (workspace materialization, setup commands, runtime-process start),
+  `SendMessage`, the credential RPCs, `Interrupt`, `Checkpoint`, `DemoteSDK`, and the
+  `LifecycleChannel` stream. No container image is built.
 - **Pod-spec builder.** Nothing translates a `Sandbox`, its `SandboxTemplate`, and its
   `Runtime` into a `corev1.PodSpec`. A faithful agent pod carries an adapter container
   and a runtime container with the §13.1 security context, the §6.1 volumes, and the
@@ -134,15 +146,26 @@ client SDKs, the first-party reference runtimes, and the web playground all rema
 
 ## Critical path to an end-to-end Kubernetes session
 
-The shortest route to running one real session on a warm pod:
+The shortest route to running one real session on a warm pod. The first item is in
+progress; see the progress log.
 
-1. Build the §4.7 runtime adapter server (`cmd/lenny-adapter` and a `pkg/adapter`
-   implementing `adapterv1.AdapterServer`), and a container image for it.
+1. Build the §4.7 runtime adapter server. The gRPC scaffold and `cmd/lenny-adapter`
+   are done; the remaining work is the substantive RPCs (`StartSession` with
+   workspace materialization and runtime-process management, `SendMessage`, the
+   credential RPCs, `Interrupt`, `Checkpoint`, `DemoteSDK`, `LifecycleChannel`) and a
+   container image.
 2. Build the pod-spec builder.
 3. Build the Sandbox-to-Pod reconciler that wraps the existing lifecycle planner.
 4. Build the gateway pod-claim path against `SandboxClaim`.
 5. Wire workspace materialization and session start from the gateway to the adapter.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
+
+## Next step
+
+Implement the adapter `StartSession` RPC and the adapter-to-runtime process
+management: materialize the workspace from the `WorkspacePlan`, run the setup
+commands, and start the runtime binary over the existing adapter binary protocol
+(`pkg/gateway/executor` already speaks that protocol and is the reuse candidate).
 
 ## Test status
 
