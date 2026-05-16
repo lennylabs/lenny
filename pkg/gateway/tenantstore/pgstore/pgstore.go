@@ -43,7 +43,7 @@ var (
 
 const selectList = `id, display_name, compliance_profile, data_residency_region,
 	workspace_tier, max_concurrent_sessions, storage_quota_bytes,
-	created_at, updated_at, deleted_at`
+	created_at, updated_at, deleted_at, min_isolation_profile`
 
 // Create inserts a new tenant row. The §11.7 per-tenant audit genesis
 // nonce is generated here, at tenant-creation time. Returns
@@ -66,11 +66,11 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO tenants (
 		id, display_name, compliance_profile, data_residency_region,
 		workspace_tier, max_concurrent_sessions, storage_quota_bytes,
-		genesis_nonce, created_at, updated_at, deleted_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		genesis_nonce, created_at, updated_at, deleted_at, min_isolation_profile
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		t.ID, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
-		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt))
+		nonce, t.CreatedAt, t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return tenantstore.ErrAlreadyExists
@@ -120,10 +120,10 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 	if _, err := tx.Exec(ctx, `UPDATE tenants SET
 		display_name = $2, compliance_profile = $3, data_residency_region = $4,
 		workspace_tier = $5, max_concurrent_sessions = $6, storage_quota_bytes = $7,
-		updated_at = $8, deleted_at = $9 WHERE id = $1`,
+		updated_at = $8, deleted_at = $9, min_isolation_profile = $10 WHERE id = $1`,
 		id, t.DisplayName, t.ComplianceProfile, t.DataResidencyRegion,
 		t.WorkspaceTier, t.MaxConcurrentSessions, t.StorageQuotaBytes,
-		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt)); err != nil {
+		t.UpdatedAt, pgtenant.NullTime(t.DeletedAt), t.MinIsolationProfile); err != nil {
 		return tenantstore.Tenant{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -207,7 +207,7 @@ func scanTenant(row pgx.Row) (tenantstore.Tenant, error) {
 	if err := row.Scan(
 		&t.ID, &t.DisplayName, &t.ComplianceProfile, &t.DataResidencyRegion,
 		&t.WorkspaceTier, &t.MaxConcurrentSessions, &t.StorageQuotaBytes,
-		&t.CreatedAt, &t.UpdatedAt, &deletedAt,
+		&t.CreatedAt, &t.UpdatedAt, &deletedAt, &t.MinIsolationProfile,
 	); err != nil {
 		return tenantstore.Tenant{}, err
 	}

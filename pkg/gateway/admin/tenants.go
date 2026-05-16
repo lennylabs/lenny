@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // rfc3339Nano serialises a time.Time using the shared RFC3339Nano
@@ -312,6 +313,7 @@ type TenantPayload struct {
 	WorkspaceTier         string `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions int    `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     int64  `json:"storageQuotaBytes,omitempty"`
+	MinIsolationProfile   string `json:"minIsolationProfile,omitempty"`
 	CreatedAt             string `json:"createdAt,omitempty"`
 	UpdatedAt             string `json:"updatedAt,omitempty"`
 	DeletedAt             string `json:"deletedAt,omitempty"`
@@ -327,6 +329,7 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 		WorkspaceTier:         t.WorkspaceTier,
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
 		StorageQuotaBytes:     t.StorageQuotaBytes,
+		MinIsolationProfile:   t.MinIsolationProfile,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
@@ -362,6 +365,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "storageQuotaBytes"})
 		return
 	}
+	if body.MinIsolationProfile != "" && !isolation.IsValid(isolation.Profile(body.MinIsolationProfile)) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"minIsolationProfile must be standard, sandboxed, or microvm",
+			map[string]any{"field": "minIsolationProfile"})
+		return
+	}
 
 	t := tenantstore.Tenant{
 		ID:                    body.ID,
@@ -371,6 +380,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		WorkspaceTier:         body.WorkspaceTier,
 		MaxConcurrentSessions: body.MaxConcurrentSessions,
 		StorageQuotaBytes:     body.StorageQuotaBytes,
+		MinIsolationProfile:   body.MinIsolationProfile,
 		CreatedAt:             r.clock(),
 	}
 	t.UpdatedAt = t.CreatedAt
@@ -449,6 +459,7 @@ type UpdateTenantRequest struct {
 	WorkspaceTier         *string `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions *int    `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     *int64  `json:"storageQuotaBytes,omitempty"`
+	MinIsolationProfile   *string `json:"minIsolationProfile,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -471,6 +482,13 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "storageQuotaBytes"})
 		return
 	}
+	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
+		!isolation.IsValid(isolation.Profile(*body.MinIsolationProfile)) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"minIsolationProfile must be standard, sandboxed, or microvm",
+			map[string]any{"field": "minIsolationProfile"})
+		return
+	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		if body.DisplayName != nil {
 			t.DisplayName = *body.DisplayName
@@ -489,6 +507,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.StorageQuotaBytes != nil {
 			t.StorageQuotaBytes = *body.StorageQuotaBytes
+		}
+		if body.MinIsolationProfile != nil {
+			t.MinIsolationProfile = *body.MinIsolationProfile
 		}
 		return nil
 	})
@@ -537,6 +558,9 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.StorageQuotaBytes != nil {
 		out = append(out, "storageQuotaBytes")
+	}
+	if b.MinIsolationProfile != nil {
+		out = append(out, "minIsolationProfile")
 	}
 	return out
 }

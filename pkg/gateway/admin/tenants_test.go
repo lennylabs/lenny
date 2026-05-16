@@ -165,6 +165,42 @@ func TestCreateTenantWithStorageQuota(t *testing.T) {
 	}
 }
 
+func TestCreateTenantWithMinIsolationProfile(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", MinIsolationProfile: "sandboxed"})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.MinIsolationProfile != "sandboxed" {
+		t.Errorf("response minIsolationProfile = %q, want sandboxed", resp.MinIsolationProfile)
+	}
+	row, err := store.Get(req.Context(), "acme")
+	if err != nil {
+		t.Fatalf("store missing tenant: %v", err)
+	}
+	if row.MinIsolationProfile != "sandboxed" {
+		t.Errorf("stored minIsolationProfile = %q, want sandboxed", row.MinIsolationProfile)
+	}
+}
+
+func TestCreateTenantRejectsBadMinIsolationProfile(t *testing.T) {
+	router, _ := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", MinIsolationProfile: "ultra"})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid minIsolationProfile: status %d, want 400", rr.Code)
+	}
+}
+
 func TestCreateTenantRejectsNegativeStorageQuota(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", StorageQuotaBytes: -1})

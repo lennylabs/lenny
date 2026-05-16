@@ -60,6 +60,12 @@ type Tenant struct {
 	// applies.
 	ElicitationContentIntegrity string
 
+	// MinIsolationProfile is the §5.3 tenant isolation floor: the
+	// weakest §5.3 profile (`standard`, `sandboxed`, `microvm`) the
+	// tenant's sessions may run at. Empty means no tenant floor — the
+	// platform default applies.
+	MinIsolationProfile string
+
 	// CreatedAt is the UTC instant the tenant row was committed.
 	CreatedAt time.Time
 
