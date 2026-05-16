@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8a15fa4` — `miniostore` MinIO-backed blob store (§4.5, §12.5). The production
+  `blobstore.Store`: Put (write-once), Get, Stat with §4.5 TTL expiry, backed by the
+  minio-go SDK. It also satisfies the §12.5 drain-readiness `Prober` via a bucket-exists
+  probe. Pure logic is unit-tested; the S3 round-trip is a component-tier contract test
+  against a MinIO container behind a new `containers.StartMinIO` helper.
 - `5c7f1c1` — Gateway serves `GET /internal/drain-readiness` (§12.5). `cmd/lenny-gateway`
   mounts the `drainreadiness.Handler` so the `lenny-drain-readiness` webhook can run its
   pre-drain artifact-store health check. The §12.5 webhook is now complete end to end.
@@ -429,8 +434,8 @@ The following are built and tested at the unit tier.
 - **Storage.** Postgres-backed stores for sessions, transcripts, tenants, runtimes,
   users, connectors, billing events, issued tokens, and the audit hash chain; Redis
   layers for circuit breakers, session-coordination leases, quota counters, and storage
-  quotas; migrations 0001 through 0007 with RLS, immutability triggers, and role
-  separation.
+  quotas; the MinIO-backed §4.5 blob store (`pkg/blobstore/miniostore`); migrations 0001
+  through 0008 with RLS, immutability triggers, and role separation.
 - **Kubernetes control plane.** The five `lenny.dev/v1` CRDs with generated manifests;
   the WarmPoolController (the pure planner, the reconciler, the `PoolWarmingUp`
   condition, an envtest integration test) with the `lenny-controller` binary; the
@@ -508,13 +513,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the production MinIO-backed `blobstore.Store`. `pkg/blobstore` ships only
-`MemoryStore`; §12.5 and §7.1 need an S3/MinIO-backed implementation for workspace
-snapshots, checkpoints, and the drain-readiness `HeadBucket` probe. The implementation
-wraps the MinIO Go SDK behind the existing `blobstore.Store` interface (Put, Get, Stat)
-and adds the artifact-store liveness probe the §12.5 drain-readiness endpoint needs.
-This is a foundational dependency shared by Phase 8 checkpoint/resume and the §7.1
-workspace artifact path.
+Wire `miniostore` into `cmd/lenny-gateway`. Add `--minio-endpoint` and related flags so
+the gateway selects the MinIO-backed `blobstore.Store` over `MemoryStore` when
+configured, and pass `miniostore.Store.Probe` as the `drainreadiness.Handler` prober so
+`GET /internal/drain-readiness` runs a real §12.5 bucket-existence check instead of the
+always-ready stub. This makes the §4.5 artifact store and the §12.5 drain-readiness
+check live in a deployed gateway.
 
 ## Test status
 
