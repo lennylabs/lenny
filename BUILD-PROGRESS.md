@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c5db326` — `credential.SelectCredential` (§4.9). The pool credential assignment
+  strategies — least-loaded, round-robin, sticky-until-failure — each picking a healthy
+  credential, skipping unhealthy ones, and returning `ErrPoolExhausted` when none is
+  assignable.
+- `beb2e77` — `credential.MintLease` (§4.9). The CredentialLease minter: synthetic-TTL
+  resolution with the per-provider ceilings, `expiresAt`/`renewBefore` computation, and
+  opaque lease-ID and unguessable bearer-token generation.
 - `80039dc` — Gateway serves the §4.9 LLM reverse proxy. `cmd/lenny-gateway` gained
   `--llm-proxy-addr` and `--anthropic-version`; `newLLMProxyServer` builds the
   `llmproxy.Handler` over the credential-lease store, credential cache, deny list,
@@ -472,13 +479,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 credential-assignment path. At session start the gateway selects a
-pool credential, mints a `CredentialLease` (synthetic TTL, `expiresAt`/`renewBefore`),
-records it in `credleasestore`, caches the real upstream key in `credcache`, and — for
-a proxy-mode pool — returns the `proxyUrl`/`proxyDialect`/`leaseToken` to the agent
-pod. This populates the LLM proxy's stores so it serves real traffic, and feeds the
-adapter's `AssignCredentials` RPC. It is the remaining §4.9 piece before the LLM proxy
-is exercised end to end.
+Build the §4.9 credential-assignment orchestration. With `SelectCredential` and
+`MintLease` in place, the remaining piece is the `Assigner`: given a pool and a
+session, it selects a credential, mints the lease, records it in `credleasestore`,
+caches the real upstream key in `credcache`, and returns the lease's
+`materializedConfig` for delivery to the pod. It needs an in-memory `CredentialPool`
+holding each pool's credentials and their health state. This completes the §4.9
+credential-leasing path that populates the LLM proxy's stores.
 
 ## Test status
 
