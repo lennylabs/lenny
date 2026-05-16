@@ -4,13 +4,32 @@ This file audits the Lenny implementation against the phased build sequence in
 [`spec/18_build-sequence.md`](spec/18_build-sequence.md). It records which phases are
 complete, which are partial, and what remains.
 
-Audited 2026-05-15, branch `impl/v1-initial`. First audited at commit `48adf0a`; the
+Audited 2026-05-16, branch `impl/v1-initial`. First audited at commit `48adf0a`; the
 progress log records work since.
 
 ## Progress log
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `10bd520` — Gateway wires the §12.8 erasure orchestrator. `cmd/lenny-gateway` builds
+  the `DeleteByUser` orchestrator from its wired stores — a session lister over the
+  SessionStore, the transcript and blob stores as session-scoped erasers, the
+  interaction and session stores as user-scoped erasers — and exposes it behind the
+  admin erasure endpoints. The §12.8 erase path is now reachable in the running binary.
+- `343d6d3` — §12.8 user-erasure admin endpoints. `POST /v1/admin/users/{user_id}/erase`
+  initiates a background `DeleteByUser` job and returns its id; `GET
+  /v1/admin/erasure-jobs/{job_id}` reports the phase, an advisory completion
+  percentage, elapsed time, per-store deleted counts, and any failure. Both are gated
+  on platform-admin or tenant-admin; a job in another tenant reads as not-found.
+- `0bc2f53` — §12.8 erasure-job registry and runner (`pkg/gateway/erasurejob`). A `Job`
+  records the §12.8 phase field so a controller restart resumes from the persisted safe
+  point; the `Runner` drives a job `initiated → store_deleting → completed/failed`
+  while the erasure orchestrator deletes the user's data, preserving the fail-fast
+  partial result on a store error.
+- `348a9c6` — Blob store §12.8 `DeleteBySession` adapter. Both blob backends gained the
+  per-session GDPR-erasure adapter: `MemoryStore` scans its blob map; the MinIO store
+  lists and removes objects under the session prefix. A shared `sessionPrefix` helper
+  keeps the MinIO key layout in sync with `objectKey`.
 - `751efcf` — Adapter `Resume` RPC (§4.7, §7.1). Added to the adapter proto and
   implemented: the adapter claims the session, loads a checkpoint archive through a
   `CheckpointSource`, restores the workspace via `workspace.Extract`, and starts the
@@ -457,7 +476,7 @@ this state.
 | 12a   | Token Service hardening (KMS envelope, OAuth)                | Substrate only | `pkg/tokenexchange` exists. KMS envelope encryption and the full OAuth connector flow are not.                                                                                                                                                                                                                                               |
 | 12b   | type: mcp runtime support                                    | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 12c   | Concurrent execution modes                                   | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 13    | Full observability, audit, lenny-backup, compliance          | Substrate only | `pkg/audit` and the audit hash chain exist (the §11.7 `ChainIntegrity` / `ComplianceProfile` / `RetentionPreset` / `OCSFTranslationState` enums are built). The §12.8 GDPR erasure orchestrator (`pkg/gateway/erasure` — the dependency-ordered, fail-fast `DeleteByUser` job covering both user-scoped and session-scoped stores) is built, with per-store erasure adapters on the SessionStore (in-memory and Postgres), the interaction store (`DeleteByUser`), and the transcript store (`DeleteBySession`). The `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the tenant-deletion controller, and the full observability catalog are not.                                                                                                                                                         |
+| 13    | Full observability, audit, lenny-backup, compliance          | Partial        | `pkg/audit` and the audit hash chain exist (the §11.7 `ChainIntegrity` / `ComplianceProfile` / `RetentionPreset` / `OCSFTranslationState` enums are built). The §12.8 GDPR erasure path is wired end to end. The dependency-ordered, fail-fast `DeleteByUser` orchestrator (`pkg/gateway/erasure`) covers user-scoped and session-scoped stores, with per-store erasure adapters on the SessionStore (in-memory and Postgres), the interaction store (`DeleteByUser`), and the transcript and blob stores (`DeleteBySession`, both the in-memory and MinIO blob backends). The erasure-job registry and runner (`pkg/gateway/erasurejob`) track the §12.8 phase field and drive a job `initiated → store_deleting → completed/failed`; `POST /v1/admin/users/{user_id}/erase` initiates a background job and `GET /v1/admin/erasure-jobs/{job_id}` reports its status, both wired into the running gateway. Not built: the §12.8 legal-hold preflight, billing-event pseudonymization with the per-tenant `erasure_salt`, the processing-restriction flag, the `gdpr.erasure_completed` audit receipt, the `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the tenant-deletion controller, and the full observability catalog.                                                                                                                                                         |
 | 13.5  | Pre-hardening full-system load baseline                      | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -475,7 +494,7 @@ The following are built and tested at the unit tier.
   derive, blob dereference, the upload pipeline, `uploadToken`, OIDC and OAuth JWT
   validation, the OpenAPI document, the MCP adapter, the OpenAI Chat and Open Responses
   translators, rate limiting, idempotency, circuit breakers, quotas, billing events,
-  user invalidation, and the watchdog timers.
+  user invalidation, the §12.8 GDPR user-erasure endpoints, and the watchdog timers.
 - **Storage.** Postgres-backed stores for sessions, transcripts, tenants, runtimes,
   users, connectors, billing events, issued tokens, and the audit hash chain; Redis
   layers for circuit breakers, session-coordination leases, quota counters, and storage
@@ -598,14 +617,22 @@ handshake, and cross-replica revocation propagation needs Redis pub/sub.
 
 Phases 12–13: the pure substrate is already in place — `pkg/tokenexchange` (RFC 8693
 `Validate`), the `pkg/audit` §11.7 enums, and the audit hash chain are all built. The
-§12.8 GDPR erasure orchestrator (`pkg/gateway/erasure`) is built, covering both
-user-scoped stores (session, interaction) and session-scoped stores (transcript). The
-bulk of the remaining Phase 12–16 surface is infrastructure integration that requires
-external systems to realize authentically — KMS envelope encryption, the OAuth 2.1
-connector flow, Redis pub/sub propagation, Kubernetes concurrent-execution slots, the
-`lenny-backup` pipeline, SIEM streaming, and the security-hardening release pipeline.
-The next tractable pure-Go chunks are the blob store `DeleteBySession` adapter and
-wiring the erasure orchestrator behind the §11.4 `full_revoke` user-invalidation path.
+§12.8 GDPR erasure path is wired end to end: the `pkg/gateway/erasure` orchestrator
+covers user-scoped stores (session, interaction) and session-scoped stores (transcript,
+blob), the `pkg/gateway/erasurejob` registry and runner track the §12.8 phase field,
+and `POST /v1/admin/users/{user_id}/erase` plus `GET /v1/admin/erasure-jobs/{job_id}`
+are served by the running gateway. The bulk of the remaining Phase 12–16 surface is
+infrastructure integration that requires external systems to realize authentically —
+KMS envelope encryption, the OAuth 2.1 connector flow, Redis pub/sub propagation,
+Kubernetes concurrent-execution slots, the `lenny-backup` pipeline, SIEM streaming, and
+the security-hardening release pipeline.
+
+The next tractable pure-Go chunks are the §12.8 `processing_restricted` flag (GDPR
+Article 18 restriction-of-processing — a `userstore.User` field, the session-creation
+gate rejecting with `403 ERASURE_IN_PROGRESS`, and the runner setting it on initiation
+and clearing it on completion) and the §11.4 `full_revoke` session-termination steps
+(enumerate the user's non-terminal sessions via the SessionStore and mark them
+terminated; the pod-RPC fan-out and Redis cached-auth invalidation remain infra-bound).
 
 ## Test status
 
