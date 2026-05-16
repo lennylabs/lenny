@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3128fa7` — `Attach` bidirectional content-stream RPC added to
+  `schemas/lenny-adapter.proto` (§4.7, §15.4). Reconciles the Phase-1 skeleton proto
+  with §4.7's RPC table: `Attach` plus the `AttachClientMessage` / `AttachServerMessage`
+  frames. Purely additive; the regenerated bindings expose it. The adapter-server
+  `Attach` handler and the gateway-side `adapterclient.Attach` remain.
 - `e9ad1ce` — `allow-admission-webhooks` NetworkPolicy (§13.2). Re-admits
   kube-apiserver ingress and kube-system CoreDNS egress for the admission webhook
   pods under the `lenny-system` default-deny; `webhookIngressCIDR` value added.
@@ -305,18 +310,13 @@ progress; see the progress log.
    and a session-creation handler that calls `Binder.Bind`.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
-**Proto artifact is behind §4.7 — the `Attach` RPC.** The per-message agent-response
-round-trip uses the `Attach` bidirectional-streaming RPC. `Attach` is specified:
-§4.7's RPC table lists it ("Connect client stream to running session"), §15.4 states
-the proto includes the `Attach` bidirectional streaming messages, and the payload
-types are defined by `MessageEnvelope` (§15.4) and `OutputPart`
-(`schemas/outputpart.schema.json`). The gap is that `schemas/lenny-adapter.proto` is a
-self-described Phase-1 skeleton that has not added `Attach` — nor `PrepareWorkspace`,
-`FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`,
-`CoordinatorFence`, `ExportPaths`, `Resume`, or `Terminate`. §15.4 mandates
-reconciling the proto artifact with the §4.7 prose; adding `Attach` to the proto and
-implementing it is conformance work, not a spec change, and is the next critical-path
-effort — it unblocks the gateway↔pod response path.
+**The `Attach` content path.** The per-message agent-response round-trip uses the
+`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). `Attach` is now in
+`schemas/lenny-adapter.proto` (commit `3128fa7`); the adapter-server `Attach` handler
+and the gateway-side `adapterclient.Attach` remain. The proto is still a Phase-1
+skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`,
+`RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`, `CoordinatorFence`,
+`ExportPaths`, `Resume`, `Terminate` — which §15.4 mandates reconciling.
 
 ## Next step
 
