@@ -1,0 +1,141 @@
+{{- /*
+lenny-preflight pre-install/pre-upgrade Job (§17.9). Runs the
+admission-plane checks — admission-webhook inventory and phase-stamp
+consistency — before the install proceeds; a non-zero exit aborts the
+install fail-closed.
+
+The Job runs at hook-weight -10, after the phase-stamp ConfigMap (-20)
+so the phase-stamp consistency check can read it, and before the
+webhook Deployments. Its ServiceAccount and RBAC render at -15 so they
+exist when the Job pod starts. The RBAC is read-only: list
+ValidatingWebhookConfigurations cluster-wide and get ConfigMaps in the
+release namespace.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-preflight
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-preflight
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-preflight
+subjects:
+  - kind: ServiceAccount
+    name: lenny-preflight
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-preflight
+subjects:
+  - kind: ServiceAccount
+    name: lenny-preflight
+    namespace: {{ .Release.Namespace }}
+---
+{{- $accepted := list -}}
+{{- range $flag, $on := .Values.acceptFeatureFlagDowngrade }}
+{{-   if $on }}{{ $accepted = append $accepted $flag }}{{ end }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: lenny-preflight
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: preflight
+          image: "{{ .Values.preflight.image.repository }}:{{ .Values.preflight.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
+          args:
+            - --namespace={{ .Release.Namespace }}
+            - --feature-llm-proxy={{ .Values.features.llmProxy }}
+            - --feature-drain-readiness={{ .Values.features.drainReadiness }}
+            - --feature-compliance={{ .Values.features.compliance }}
+            - --accept-downgrade={{ join "," $accepted }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.preflight.resources | nindent 12 }}
