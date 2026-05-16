@@ -156,6 +156,8 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
 		mux.Handle("PUT /v1/admin/tenants/{id}/elicitation-content-integrity",
 			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
+		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
+			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
 	}
 	if r.runtimes != nil {
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
@@ -713,6 +715,119 @@ func changedFields(b UpdateTenantRequest) []string {
 		out = append(out, "billingErasurePolicy")
 	}
 	return out
+}
+
+// DecommissionComplianceRequest is the §15.1 body for the attested
+// compliance-profile wind-down. It is the sole path that may lower a
+// tenant's complianceProfile — the generic PUT rejects downgrades per
+// the §11.7 ratchet.
+type DecommissionComplianceRequest struct {
+	// PreviousProfile must equal the tenant's current profile — a
+	// concurrency guard against a racing update.
+	PreviousProfile string `json:"previousProfile"`
+	// TargetProfile is the lower profile to ratchet down to.
+	TargetProfile string `json:"targetProfile"`
+	// AcknowledgeDataRemediation must be true.
+	AcknowledgeDataRemediation bool `json:"acknowledgeDataRemediation"`
+	// Justification is required free-text recorded in the audit event.
+	Justification string `json:"justification"`
+	// RemediationAttestations lists the remediation steps the operator
+	// attests to; at least one entry is required.
+	RemediationAttestations []string `json:"remediationAttestations"`
+}
+
+// handleDecommissionCompliance implements
+// POST /v1/admin/tenants/{id}/compliance-profile/decommission per §11.7
+// and §15.1: the attested, platform-admin-only path that lowers a
+// regulated complianceProfile, which the generic PUT forbids.
+func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.Request) {
+	id := req.PathValue("id")
+	var body DecommissionComplianceRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	if !body.AcknowledgeDataRemediation {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"acknowledgeDataRemediation must be true",
+			map[string]any{"field": "acknowledgeDataRemediation"})
+		return
+	}
+	if body.Justification == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"justification is required",
+			map[string]any{"field": "justification"})
+		return
+	}
+	if len(body.RemediationAttestations) == 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"at least one remediationAttestations entry is required",
+			map[string]any{"field": "remediationAttestations"})
+		return
+	}
+
+	current, err := r.tenants.Get(req.Context(), id)
+	if err != nil {
+		if errors.Is(err, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	// Concurrency guard: previousProfile must match the live value.
+	if body.PreviousProfile != current.ComplianceProfile {
+		writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+			"previousProfile does not match the tenant's current complianceProfile",
+			map[string]any{
+				"currentProfile":  current.ComplianceProfile,
+				"previousProfile": body.PreviousProfile,
+			})
+		return
+	}
+	// targetProfile must be a ladder profile strictly below the current
+	// one. A target at or above the current profile is not a wind-down.
+	curRank, curOnLadder := complianceProfileRank[current.ComplianceProfile]
+	tgtRank, tgtOnLadder := complianceProfileRank[body.TargetProfile]
+	if !curOnLadder || !tgtOnLadder {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"previousProfile and targetProfile must be ratchet-ladder profiles (none, soc2, fedramp, hipaa)",
+			map[string]any{"field": "targetProfile"})
+		return
+	}
+	if tgtRank >= curRank {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"targetProfile must be strictly lower than the current complianceProfile",
+			map[string]any{"field": "targetProfile"})
+		return
+	}
+
+	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
+		t.ComplianceProfile = body.TargetProfile
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, tenantstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	r.emit(req.Context(), principal, "compliance.profile_decommissioned", id, map[string]any{
+		"previous_profile":         body.PreviousProfile,
+		"target_profile":           body.TargetProfile,
+		"justification":            body.Justification,
+		"remediation_attestations": body.RemediationAttestations,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(fromTenant(updated))
 }
 
 // handleDeleteTenant implements DELETE /v1/admin/tenants/{id}. The

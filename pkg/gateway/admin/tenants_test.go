@@ -757,3 +757,130 @@ func TestUpdateTenantComplianceRatchetIgnoresOffLadderProfile(t *testing.T) {
 		t.Errorf("hipaa->gdpr: status %d, want 200 (gdpr is off-ladder)", rr.Code)
 	}
 }
+
+// spec: §11.7 / §15.1 compliance-profile decommission endpoint.
+
+func newComplianceAdminServer(t *testing.T) (*admin.Router, *tenantstore.Memory, *recordingAudit) {
+	t.Helper()
+	store := tenantstore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(store, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	})
+	return router, store, audit
+}
+
+// validDecommission builds a well-formed decommission request.
+func validDecommission(prev, target string) admin.DecommissionComplianceRequest {
+	return admin.DecommissionComplianceRequest{
+		PreviousProfile:            prev,
+		TargetProfile:              target,
+		AcknowledgeDataRemediation: true,
+		Justification:              "contract end-of-life; tenant migrated off regulated workloads",
+		RemediationAttestations:    []string{"audit-range PII purged", "workspace snapshots crypto-shredded"},
+	}
+}
+
+func postDecommission(t *testing.T, h http.Handler, id string, body admin.DecommissionComplianceRequest, as func(*http.Request) *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req := as(httptest.NewRequest(http.MethodPost,
+		"/v1/admin/tenants/"+id+"/compliance-profile/decommission", bytes.NewReader(b)))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestDecommissionComplianceLowersProfile(t *testing.T) {
+	router, store, audit := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+
+	rr := postDecommission(t, router.Handler(), "acme",
+		validDecommission("hipaa", "soc2"), withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("decommission hipaa->soc2: status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "acme")
+	if row.ComplianceProfile != "soc2" {
+		t.Errorf("stored complianceProfile = %q, want soc2", row.ComplianceProfile)
+	}
+	ev, ok := findAuditEvent(audit.snapshot(), "compliance.profile_decommissioned")
+	if !ok {
+		t.Fatal("a successful decommission must emit compliance.profile_decommissioned")
+	}
+	if ev.Detail["previous_profile"] != "hipaa" || ev.Detail["target_profile"] != "soc2" {
+		t.Errorf("event detail = %v, want previous_profile=hipaa target_profile=soc2", ev.Detail)
+	}
+}
+
+func TestDecommissionComplianceRequiresAcknowledgement(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+	body := validDecommission("hipaa", "soc2")
+	body.AcknowledgeDataRemediation = false
+	rr := postDecommission(t, router.Handler(), "acme", body, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing acknowledgeDataRemediation: status %d, want 400", rr.Code)
+	}
+}
+
+func TestDecommissionComplianceRequiresJustification(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+	body := validDecommission("hipaa", "soc2")
+	body.Justification = ""
+	rr := postDecommission(t, router.Handler(), "acme", body, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing justification: status %d, want 400", rr.Code)
+	}
+}
+
+func TestDecommissionComplianceRequiresAttestation(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+	body := validDecommission("hipaa", "soc2")
+	body.RemediationAttestations = nil
+	rr := postDecommission(t, router.Handler(), "acme", body, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("missing remediationAttestations: status %d, want 400", rr.Code)
+	}
+}
+
+func TestDecommissionComplianceRejectsPreviousProfileMismatch(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+	// previousProfile claims fedramp but the tenant is on hipaa.
+	rr := postDecommission(t, router.Handler(), "acme",
+		validDecommission("fedramp", "soc2"), withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("previousProfile mismatch: status %d, want 409; body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDecommissionComplianceRejectsNonLowerTarget(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "soc2"})
+	// A target equal to the current profile is not a wind-down.
+	if rr := postDecommission(t, router.Handler(), "acme",
+		validDecommission("soc2", "soc2"), withAdminPrincipal); rr.Code != http.StatusBadRequest {
+		t.Errorf("same-profile target: status %d, want 400", rr.Code)
+	}
+	// A target above the current profile is also rejected.
+	_ = store.Create(nil, tenantstore.Tenant{ID: "globex", ComplianceProfile: "soc2"})
+	if rr := postDecommission(t, router.Handler(), "globex",
+		validDecommission("soc2", "hipaa"), withAdminPrincipal); rr.Code != http.StatusBadRequest {
+		t.Errorf("higher target: status %d, want 400", rr.Code)
+	}
+}
+
+func TestDecommissionComplianceRequiresPlatformAdmin(t *testing.T) {
+	router, store, _ := newComplianceAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", ComplianceProfile: "hipaa"})
+	// A tenant-admin cannot self-downgrade the compliance posture.
+	rr := postDecommission(t, router.Handler(), "acme",
+		validDecommission("hipaa", "soc2"), withTenantAdminPrincipal)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("tenant-admin decommission: status %d, want 403", rr.Code)
+	}
+}
