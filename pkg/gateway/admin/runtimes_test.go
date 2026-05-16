@@ -44,6 +44,53 @@ func runtimeRequest(t *testing.T, h http.Handler, method, path string, body any)
 	return rr
 }
 
+func TestCreateRuntimeWithDelegationPolicyRef(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:                "claude-code",
+		Type:                "agent",
+		Image:               "ghcr.io/anthropic/claude-code@sha256:abcdef",
+		ExecutionMode:       "session",
+		IsolationProfile:    "sandboxed",
+		IntegrationLevel:    "full",
+		DelegationPolicyRef: "orchestrator-policy",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.DelegationPolicyRef != "orchestrator-policy" {
+		t.Errorf("response delegationPolicyRef = %q, want orchestrator-policy", resp.DelegationPolicyRef)
+	}
+	row, err := store.Get(context.Background(), "claude-code")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if row.DelegationPolicyRef != "orchestrator-policy" {
+		t.Errorf("stored delegationPolicyRef = %q, want orchestrator-policy", row.DelegationPolicyRef)
+	}
+}
+
+func TestUpdateRuntimeDelegationPolicyRef(t *testing.T) {
+	router, store, _ := newRuntimeAdmin(t)
+	if err := store.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-code", DelegationPolicyRef: "old-policy",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ref := "new-policy"
+	rr := runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/claude-code",
+		admin.UpdateRuntimeRequest{DelegationPolicyRef: &ref})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "claude-code")
+	if row.DelegationPolicyRef != "new-policy" {
+		t.Errorf("stored delegationPolicyRef = %q, want new-policy", row.DelegationPolicyRef)
+	}
+}
+
 func TestCreateRuntimeHappyPath(t *testing.T) {
 	router, store, audit := newRuntimeAdmin(t)
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{

@@ -52,6 +52,11 @@ type Runtime struct {
 	// Description is an admin-facing description.
 	Description string
 
+	// DelegationPolicyRef names the §8.3 DelegationPolicy that scopes
+	// delegations originating from this runtime. Empty when the
+	// runtime has no runtime-level delegation policy.
+	DelegationPolicyRef string
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time

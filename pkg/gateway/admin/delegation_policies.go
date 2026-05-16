@@ -3,12 +3,14 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
 // DelegationPolicyPayload is the §8.3 / §15.1 admin DelegationPolicy
@@ -226,8 +228,52 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(updated))
 }
 
+// delegationPolicyRuntimeDependents builds the §8.3 / §15.1
+// `details.dependents` entry for active runtimes whose
+// `delegationPolicyRef` names the policy, returning true when at least
+// one such runtime exists. It is a no-op when the runtime store is not
+// wired.
+func (r *Router) delegationPolicyRuntimeDependents(ctx context.Context, name string) (map[string]any, bool) {
+	if r.runtimes == nil {
+		return nil, false
+	}
+	rows, err := r.runtimes.List(ctx, runtimestore.ListFilter{})
+	if err != nil {
+		return nil, false
+	}
+	var ids []string
+	for _, rt := range rows {
+		if rt.DelegationPolicyRef == name {
+			ids = append(ids, rt.Name)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, false
+	}
+	entry := map[string]any{"type": "runtime", "count": len(ids)}
+	// §15.1: the `ids` array is capped at 20; past that it is truncated.
+	if len(ids) > 20 {
+		entry["ids"] = ids[:20]
+		entry["truncated"] = true
+	} else {
+		entry["ids"] = ids
+	}
+	return entry, true
+}
+
+// handleDeleteDelegationPolicy implements DELETE per §8.3: the policy
+// is soft-deleted unless an active runtime still references it, in
+// which case the §8.3 deletion guard rejects the request. The
+// active-lease half of the §8.3 guard is deferred — delegation leases
+// are not enumerable from the admin Router.
 func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
+	if dep, ok := r.delegationPolicyRuntimeDependents(req.Context(), name); ok {
+		writeError(w, http.StatusConflict, "RESOURCE_HAS_DEPENDENTS",
+			"delegation policy is referenced by one or more runtimes",
+			map[string]any{"dependents": []map[string]any{dep}})
+		return
+	}
 	if err := r.delegationPolicies.SoftDelete(req.Context(), name, r.clock()); err != nil {
 		if errors.Is(err, delegationpolicystore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)

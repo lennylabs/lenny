@@ -12,6 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
@@ -209,6 +210,86 @@ func TestDeleteDelegationPolicy(t *testing.T) {
 	}
 	if row.IsActive() {
 		t.Error("a deleted policy must report IsActive() == false")
+	}
+}
+
+// newDelegationPolicyWithRuntimesAdmin wires both the delegation-policy
+// and runtime stores so the §8.3 deletion guard can run.
+func newDelegationPolicyWithRuntimesAdmin(t *testing.T) (*admin.Router, *delegationpolicystore.Memory, *runtimestore.Memory) {
+	t.Helper()
+	policies := delegationpolicystore.NewMemory()
+	runtimes := runtimestore.NewMemory()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithDelegationPolicies(policies).WithRuntimes(runtimes)
+	return router, policies, runtimes
+}
+
+func TestDeleteDelegationPolicyBlockedByRuntimeDependent(t *testing.T) {
+	router, policies, runtimes := newDelegationPolicyWithRuntimesAdmin(t)
+	ctx := context.Background()
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "orchestrator-policy"}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	if err := runtimes.Create(ctx, runtimestore.Runtime{
+		Name: "claude-worker", DelegationPolicyRef: "orchestrator-policy",
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+
+	rr := doAdminReq(t, router.Handler(), http.MethodDelete,
+		"/v1/admin/delegation-policies/orchestrator-policy", nil, withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("delete a referenced policy: status %d, want 409; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if env.Error.Code != "RESOURCE_HAS_DEPENDENTS" {
+		t.Errorf("error code = %q, want RESOURCE_HAS_DEPENDENTS", env.Error.Code)
+	}
+	deps, _ := env.Error.Details["dependents"].([]any)
+	if len(deps) != 1 {
+		t.Fatalf("details.dependents = %v, want one entry", env.Error.Details["dependents"])
+	}
+	entry, _ := deps[0].(map[string]any)
+	if entry["type"] != "runtime" {
+		t.Errorf("dependent type = %v, want runtime", entry["type"])
+	}
+	// §8.3: the blocked policy stays active.
+	row, _ := policies.Get(ctx, "orchestrator-policy")
+	if !row.IsActive() {
+		t.Error("a policy blocked by the deletion guard must remain active")
+	}
+}
+
+func TestDeleteDelegationPolicyAllowedWhenNoDependents(t *testing.T) {
+	router, policies, runtimes := newDelegationPolicyWithRuntimesAdmin(t)
+	ctx := context.Background()
+	if err := policies.Create(ctx, delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	// A runtime referencing a different policy must not block the delete.
+	if err := runtimes.Create(ctx, runtimestore.Runtime{
+		Name: "rt1", DelegationPolicyRef: "other-policy",
+	}); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+
+	rr := doAdminReq(t, router.Handler(), http.MethodDelete,
+		"/v1/admin/delegation-policies/p1", nil, withAdminPrincipal)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete an unreferenced policy: status %d, want 204; body %s", rr.Code, rr.Body.String())
+	}
+	row, _ := policies.Get(ctx, "p1")
+	if row.IsActive() {
+		t.Error("an unreferenced policy must be soft-deleted")
 	}
 }
 

@@ -8,46 +8,49 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name             string `json:"name"`
-	Type             string `json:"type,omitempty"`
-	Image            string `json:"image,omitempty"`
-	ExecutionMode    string `json:"executionMode,omitempty"`
-	IsolationProfile string `json:"isolationProfile,omitempty"`
-	IntegrationLevel string `json:"integrationLevel,omitempty"`
-	Description      string `json:"description,omitempty"`
-	CreatedAt        string `json:"createdAt,omitempty"`
-	UpdatedAt        string `json:"updatedAt,omitempty"`
-	DeletedAt        string `json:"deletedAt,omitempty"`
+	Name                string `json:"name"`
+	Type                string `json:"type,omitempty"`
+	Image               string `json:"image,omitempty"`
+	ExecutionMode       string `json:"executionMode,omitempty"`
+	IsolationProfile    string `json:"isolationProfile,omitempty"`
+	IntegrationLevel    string `json:"integrationLevel,omitempty"`
+	Description         string `json:"description,omitempty"`
+	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
+	CreatedAt           string `json:"createdAt,omitempty"`
+	UpdatedAt           string `json:"updatedAt,omitempty"`
+	DeletedAt           string `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
 // fields signal "leave unchanged when omitted".
 type UpdateRuntimeRequest struct {
-	Image            *string `json:"image,omitempty"`
-	ExecutionMode    *string `json:"executionMode,omitempty"`
-	IsolationProfile *string `json:"isolationProfile,omitempty"`
-	IntegrationLevel *string `json:"integrationLevel,omitempty"`
-	Description      *string `json:"description,omitempty"`
+	Image               *string `json:"image,omitempty"`
+	ExecutionMode       *string `json:"executionMode,omitempty"`
+	IsolationProfile    *string `json:"isolationProfile,omitempty"`
+	IntegrationLevel    *string `json:"integrationLevel,omitempty"`
+	Description         *string `json:"description,omitempty"`
+	DelegationPolicyRef *string `json:"delegationPolicyRef,omitempty"`
 }
 
 func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 	out := RuntimePayload{
-		Name:             r.Name,
-		Type:             string(r.Type),
-		Image:            r.Image,
-		ExecutionMode:    string(r.ExecutionMode),
-		IsolationProfile: string(r.IsolationProfile),
-		IntegrationLevel: string(r.IntegrationLevel),
-		Description:      r.Description,
-		CreatedAt:        rfc3339Nano(r.CreatedAt),
-		UpdatedAt:        rfc3339Nano(r.UpdatedAt),
+		Name:                r.Name,
+		Type:                string(r.Type),
+		Image:               r.Image,
+		ExecutionMode:       string(r.ExecutionMode),
+		IsolationProfile:    string(r.IsolationProfile),
+		IntegrationLevel:    string(r.IntegrationLevel),
+		Description:         r.Description,
+		DelegationPolicyRef: r.DelegationPolicyRef,
+		CreatedAt:           rfc3339Nano(r.CreatedAt),
+		UpdatedAt:           rfc3339Nano(r.UpdatedAt),
 	}
 	if !r.DeletedAt.IsZero() {
 		out.DeletedAt = rfc3339Nano(r.DeletedAt)
@@ -105,14 +108,15 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rt := runtimestore.Runtime{
-		Name:             body.Name,
-		Type:             runtimestore.RuntimeType(body.Type),
-		Image:            body.Image,
-		ExecutionMode:    runtimestore.ExecutionMode(body.ExecutionMode),
-		IsolationProfile: isolation.Profile(body.IsolationProfile),
-		IntegrationLevel: runtimestore.IntegrationLevel(body.IntegrationLevel),
-		Description:      body.Description,
-		CreatedAt:        r.clock(),
+		Name:                body.Name,
+		Type:                runtimestore.RuntimeType(body.Type),
+		Image:               body.Image,
+		ExecutionMode:       runtimestore.ExecutionMode(body.ExecutionMode),
+		IsolationProfile:    isolation.Profile(body.IsolationProfile),
+		IntegrationLevel:    runtimestore.IntegrationLevel(body.IntegrationLevel),
+		Description:         body.Description,
+		DelegationPolicyRef: body.DelegationPolicyRef,
+		CreatedAt:           r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
 	rt.UpdatedAt = rt.CreatedAt
@@ -220,6 +224,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Description != nil {
 			rt.Description = *body.Description
+		}
+		if body.DelegationPolicyRef != nil {
+			rt.DelegationPolicyRef = *body.DelegationPolicyRef
 		}
 		return nil
 	})
