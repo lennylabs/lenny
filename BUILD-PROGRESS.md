@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `1567473`, `f37a856` — §10.7 / §15.1 experiment admin API. `experimentstore` is the
+  per-tenant ExperimentDefinition registry; `/v1/admin/experiments` serves
+  POST/GET/list/PUT/PATCH/DELETE. POST/PUT validate the §10.7 definition (variant
+  weights, the reserved `control` id, enum fields); PUT leaves status untouched; PATCH
+  is the canonical status-transition endpoint enforcing the §10.7 lifecycle (active and
+  paused interconvert and may conclude; concluded is immutable) and emits
+  `experiment.status_changed`. The `/results` endpoint and the cross-resource
+  variant-pool isolation check are deferred.
 - `f0b2787`, `ed68362` — §11.4 `full_revoke` SessionStore-side fan-out. `full_revoke`
   transitions every non-terminal session owned by the user to `cancelled` and dismisses
   the user's pending elicitations (`interactionstore.DismissByUser` — elicitations only,
@@ -513,7 +521,7 @@ this state.
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 15    | Environment resource, RBAC                                   | Substrate only | `pkg/environment` exists. The environment admin API and the cross-environment delegation resolver are not.                                                                                                                                                                                                                                   |
-| 16    | Experiments, PoolScalingController integration               | Substrate only | `pkg/experiment` exists. The experiment router, the experiment admin API, and the variant-pool sizing path are not.                                                                                                                                                                                                                          |
+| 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The experiment router (`ExperimentRouter` interceptor), the variant-pool sizing path, the `/results` endpoint, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
 | 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
 | 17b   | Memory, semantic caching, eval hooks                         | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -670,11 +678,13 @@ SessionStore-side steps are built: non-terminal sessions are transitioned to
 `Terminate` fan-out, Redis cached-auth invalidation, and credential-lease revocation
 remain infrastructure-bound.
 
-The next pure-Go chunks are spread across the partially-built phases: the Phase 9
-`PreDelegation` / `PreExportMaterialization` interceptor wiring (the chain framework is
-built; the phase-specific payload plumbing is not), the Phase 15 environment admin API
-(`pkg/environment` substrate exists), and the Phase 16 experiment admin API
-(`pkg/experiment` substrate exists).
+The Phase 16 experiment admin API is built (`experimentstore` + `/v1/admin/experiments`
+CRUD with the PATCH status lifecycle). The next pure-Go chunks are the Phase 15
+environment admin API (the `pkg/environment` substrate is the selector/role library;
+the Environment resource model, store, and `/v1/admin/environments` CRUD are not built)
+and the Phase 9 `PreDelegation` interceptor wiring (the chain framework is built; the
+`delegate_task` tool needs a `TaskSpec.input` field for the §4 `PreDelegation` content
+payload before the phase can be wired).
 
 ## Test status
 
