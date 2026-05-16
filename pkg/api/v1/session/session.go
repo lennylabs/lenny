@@ -83,6 +83,51 @@ func IsTerminal(s State) bool {
 	return false
 }
 
+// CascadePolicy is the §8.10 cascadeOnFailure policy: it governs the
+// fate of a session's children when the session reaches a terminal
+// state. The name is historical — it applies on every terminal
+// transition, not only failure.
+type CascadePolicy string
+
+const (
+	// CascadeCancelAll cancels every descendant immediately. It is the
+	// §8.10 default.
+	CascadeCancelAll CascadePolicy = "cancel_all"
+	// CascadeAwaitCompletion lets running children finish, bounded by
+	// cascadeTimeoutSeconds.
+	CascadeAwaitCompletion CascadePolicy = "await_completion"
+	// CascadeDetach lets children outlive the terminated parent.
+	CascadeDetach CascadePolicy = "detach"
+)
+
+// DefaultCascadePolicy is the §8.10 policy applied when a session names
+// no cascadeOnFailure value.
+const DefaultCascadePolicy = CascadeCancelAll
+
+// AllCascadePolicies returns the closed §8.10 enum.
+func AllCascadePolicies() []CascadePolicy {
+	return []CascadePolicy{CascadeCancelAll, CascadeAwaitCompletion, CascadeDetach}
+}
+
+// IsValid reports whether p is a known cascade policy.
+func (p CascadePolicy) IsValid() bool {
+	for _, v := range AllCascadePolicies() {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// Resolve returns p when it is a valid policy, and the §8.10 default
+// otherwise — so an unset or unrecognized value resolves to cancel_all.
+func (p CascadePolicy) Resolve() CascadePolicy {
+	if p.IsValid() {
+		return p
+	}
+	return DefaultCascadePolicy
+}
+
 // FailureClass is the §7.1 enum that appears on `state == failed`
 // session responses. nil when state != failed.
 type FailureClass string

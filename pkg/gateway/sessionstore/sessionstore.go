@@ -94,6 +94,11 @@ type Session struct {
 	// registered.
 	TracingContext map[string]string
 
+	// CascadeOnFailure is the §8.10 policy governing the fate of this
+	// session's children when it reaches a terminal state. Empty
+	// resolves to the §8.10 default (`cancel_all`).
+	CascadeOnFailure session.CascadePolicy
+
 	// RetentionExpiresAt is the §7.1 artifact retention deadline at
 	// which the background GC job is eligible to delete this
 	// session's workspace, transcript, and logs. Zero when retention

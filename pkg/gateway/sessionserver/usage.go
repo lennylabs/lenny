@@ -90,6 +90,9 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.
 	s.archiveSettledChild(ctx, sess)
+	// §8.10: apply the cascadeOnFailure policy to this session's
+	// children now that it has reached a terminal state.
+	s.cascadeToChildren(ctx, sess)
 	if s.billing == nil {
 		return
 	}
@@ -119,6 +122,57 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 		Result:          string(result),
 		SettledAt:       s.clock(),
 	})
+}
+
+// cascadeToChildren applies the §8.10 cascadeOnFailure policy when
+// sess reaches a terminal state. Under the default `cancel_all` policy
+// the gateway cancels every descendant; `await_completion` and
+// `detach` leave the children running. Each cancelled descendant is
+// itself governed by its own cascade policy, so a `detach` child
+// shields its own subtree. Best-effort: a failure never fails the
+// transition that triggered it.
+func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Session) {
+	if sess.CascadeOnFailure.Resolve() != session.CascadeCancelAll {
+		return
+	}
+	all, err := s.store.List(ctx, sess.TenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return
+	}
+	byParent := map[string][]sessionstore.Session{}
+	for _, row := range all {
+		if row.ParentSessionID != "" {
+			byParent[row.ParentSessionID] = append(byParent[row.ParentSessionID], row)
+		}
+	}
+	// Breadth-first over the subtree. A node is cancelled, then its own
+	// children are cascaded only when the cancelled node's own policy
+	// is `cancel_all` — a `detach` node keeps its descendants alive.
+	seen := map[string]bool{sess.ID: true}
+	queue := append([]sessionstore.Session(nil), byParent[sess.ID]...)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if seen[cur.ID] {
+			continue
+		}
+		seen[cur.ID] = true
+		if session.IsTerminal(cur.State) {
+			// Already settled — its own cascade ran when it settled.
+			continue
+		}
+		updated, err := s.store.Update(ctx, sess.TenantID, cur.ID, func(row *sessionstore.Session) error {
+			row.State = session.StateCancelled
+			return nil
+		})
+		if err != nil {
+			continue
+		}
+		s.archiveSettledChild(ctx, updated)
+		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+			queue = append(queue, byParent[cur.ID]...)
+		}
+	}
 }
 
 // treeRoot returns the id of the delegation tree's root by walking the
