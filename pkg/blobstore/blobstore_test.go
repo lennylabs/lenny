@@ -3,6 +3,7 @@
 package blobstore_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
@@ -178,5 +179,65 @@ func TestMemoryStoreCrossTenantSegregation(t *testing.T) {
 	bs, _ := io.ReadAll(body)
 	if string(bs) != "acme-data" {
 		t.Errorf("acme returned %q (cross-tenant data leak?)", string(bs))
+	}
+}
+
+// spec: §12.8 GDPR erasure — the blob store's per-session adapter.
+
+func TestMemoryStoreDeleteBySessionRemovesSessionBlobs(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	keep := blobstore.URI{TenantID: "acme", SessionID: "sess_keep", PartID: "k", TTL: time.Hour}
+	erase1 := blobstore.URI{TenantID: "acme", SessionID: "sess_erase", PartID: "a", TTL: time.Hour}
+	erase2 := blobstore.URI{TenantID: "acme", SessionID: "sess_erase", PartID: "b", TTL: time.Hour}
+	for _, u := range []blobstore.URI{keep, erase1, erase2} {
+		if _, err := s.Put(u, "text/plain", strings.NewReader("x")); err != nil {
+			t.Fatalf("Put %s: %v", u.PartID, err)
+		}
+	}
+	deleted, err := s.DeleteBySession(context.Background(), "acme", "sess_erase")
+	if err != nil {
+		t.Fatalf("DeleteBySession: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	if _, _, err := s.Get(erase1); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("erased blob still present: got %v", err)
+	}
+	if _, err := s.Stat(keep); err != nil {
+		t.Errorf("blob from another session should be retained: got %v", err)
+	}
+}
+
+func TestMemoryStoreDeleteBySessionScopedByTenant(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	acme := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "p", TTL: time.Hour}
+	globex := blobstore.URI{TenantID: "globex", SessionID: "sess_1", PartID: "p", TTL: time.Hour}
+	if _, err := s.Put(acme, "text/plain", strings.NewReader("acme")); err != nil {
+		t.Fatalf("Put acme: %v", err)
+	}
+	if _, err := s.Put(globex, "text/plain", strings.NewReader("globex")); err != nil {
+		t.Fatalf("Put globex: %v", err)
+	}
+	deleted, err := s.DeleteBySession(context.Background(), "acme", "sess_1")
+	if err != nil {
+		t.Fatalf("DeleteBySession: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1 (same session id in another tenant must survive)", deleted)
+	}
+	if _, err := s.Stat(globex); err != nil {
+		t.Errorf("globex blob erased by acme erasure (cross-tenant leak): %v", err)
+	}
+}
+
+func TestMemoryStoreDeleteBySessionUnknownSessionIsNoOp(t *testing.T) {
+	s := blobstore.NewMemoryStore(nil)
+	deleted, err := s.DeleteBySession(context.Background(), "acme", "sess_absent")
+	if err != nil {
+		t.Fatalf("DeleteBySession: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 for a session with no blobs", deleted)
 	}
 }

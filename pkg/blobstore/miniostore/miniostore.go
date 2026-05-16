@@ -77,7 +77,14 @@ func New(cfg Config) (*Store, error) {
 // the in-memory store's key so the two implementations address a blob
 // identically.
 func objectKey(u blobstore.URI) string {
-	return u.TenantID + "/" + u.SessionID + "/" + u.PartID
+	return sessionPrefix(u.TenantID, u.SessionID) + u.PartID
+}
+
+// sessionPrefix is the MinIO object-key prefix shared by every blob of
+// a session. The trailing slash keeps the prefix from matching a
+// longer session id (sess_1 must not match sess_10).
+func sessionPrefix(tenantID, sessionID string) string {
+	return tenantID + "/" + sessionID + "/"
 }
 
 // Put implements blobstore.Store. §4.5 blobs are write-once: a key that
@@ -147,6 +154,43 @@ func (s *Store) Probe(ctx context.Context) error {
 		return fmt.Errorf("miniostore: bucket %q does not exist", s.bucket)
 	}
 	return nil
+}
+
+// DeleteBySession removes every object staged for the session within
+// the tenant and returns the count removed. It is the §12.8
+// GDPR-erasure per-store adapter for the blob store, which is keyed by
+// session rather than by user; the erasure orchestrator invokes it for
+// each of an erased user's sessions. Erasing a session with no blobs
+// is a no-op returning (0, nil). All objects under the session prefix
+// are removed regardless of their §4.5 TTL, since an unswept expired
+// object still holds the user's data. The signature matches the
+// orchestrator's DeleteBySessionFunc so the adapter plugs in directly.
+func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error) {
+	prefix := sessionPrefix(tenantID, sessionID)
+	var objects []minio.ObjectInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return 0, fmt.Errorf("miniostore: list %s: %w", prefix, obj.Err)
+		}
+		objects = append(objects, obj)
+	}
+	if len(objects) == 0 {
+		return 0, nil
+	}
+	objectsCh := make(chan minio.ObjectInfo, len(objects))
+	for _, obj := range objects {
+		objectsCh <- obj
+	}
+	close(objectsCh)
+	for rerr := range s.client.RemoveObjects(ctx, s.bucket, objectsCh, minio.RemoveObjectsOptions{}) {
+		if rerr.Err != nil {
+			return 0, fmt.Errorf("miniostore: remove %s: %w", rerr.ObjectName, rerr.Err)
+		}
+	}
+	return len(objects), nil
 }
 
 // blobInfo assembles a BlobInfo from a URI and object metadata. The

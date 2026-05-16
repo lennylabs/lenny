@@ -21,6 +21,7 @@ package blobstore
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -245,6 +246,26 @@ func (s *MemoryStore) Sweep(now time.Time) int {
 		}
 	}
 	return dropped
+}
+
+// DeleteBySession drops every blob staged for the session within the
+// tenant and returns the count dropped. It is the §12.8 GDPR-erasure
+// per-store adapter for the blob store, which is keyed by session
+// rather than by user; the erasure orchestrator invokes it for each of
+// an erased user's sessions. Erasing a session with no blobs is a
+// no-op returning (0, nil). The signature matches the orchestrator's
+// DeleteBySessionFunc so the adapter plugs in directly.
+func (s *MemoryStore) DeleteBySession(_ context.Context, tenantID, sessionID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for k, b := range s.blobs {
+		if b.info.URI.TenantID == tenantID && b.info.URI.SessionID == sessionID {
+			delete(s.blobs, k)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 // NewPartID returns a fresh §4.5 part identifier — 16 random bytes

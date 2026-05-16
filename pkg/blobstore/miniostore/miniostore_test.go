@@ -43,6 +43,27 @@ func TestObjectKeyMirrorsTheInMemoryStore(t *testing.T) {
 	}
 }
 
+func TestSessionPrefixMirrorsObjectKey(t *testing.T) {
+	u := blobstore.URI{TenantID: "acme", SessionID: "s_1", PartID: "part_ab"}
+	prefix := sessionPrefix(u.TenantID, u.SessionID)
+	if prefix != "acme/s_1/" {
+		t.Errorf("sessionPrefix = %q, want acme/s_1/", prefix)
+	}
+	key := objectKey(u)
+	if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+		t.Errorf("objectKey %q is not under sessionPrefix %q", key, prefix)
+	}
+}
+
+func TestSessionPrefixTrailingSlashAvoidsCollision(t *testing.T) {
+	// The §12.8 erasure of s_1 must not list objects belonging to s_10.
+	short := sessionPrefix("acme", "s_1")
+	siblingKey := objectKey(blobstore.URI{TenantID: "acme", SessionID: "s_10", PartID: "p"})
+	if len(siblingKey) >= len(short) && siblingKey[:len(short)] == short {
+		t.Errorf("prefix %q matches sibling session key %q — erasure would over-delete", short, siblingKey)
+	}
+}
+
 func TestBlobInfoComputesExpiryFromTTL(t *testing.T) {
 	stored := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	u := blobstore.URI{TenantID: "acme", SessionID: "s_1", PartID: "p", TTL: 2 * time.Hour}
