@@ -7,9 +7,10 @@
 //
 // Routes:
 //
-//	/label-immutability  — lenny-label-immutability (§17.2, §5.2 NET-003)
-//	/sandboxclaim-guard  — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
-//	/healthz, /readyz    — liveness and readiness probes
+//	/label-immutability             — lenny-label-immutability (§17.2, §5.2 NET-003)
+//	/sandboxclaim-guard             — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
+//	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
+//	/healthz, /readyz               — liveness and readiness probes
 //
 // The sandboxclaim-guard route reads live cluster state, so the binary
 // builds a Kubernetes client from the in-cluster ServiceAccount or
@@ -42,6 +43,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
 // buildScheme assembles the scheme the admission client uses to decode
@@ -59,6 +61,8 @@ func newMux(reader client.Reader) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
+	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
+		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName)))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

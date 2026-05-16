@@ -28,16 +28,20 @@ import (
 )
 
 const (
-	// adapterUID and agentUID are the non-root UIDs the adapter and
+	// AdapterUID and AgentUID are the non-root UIDs the adapter and
 	// runtime containers run as. §13.1 mandates distinct non-root
 	// identities but leaves the specific numbers to the implementation.
-	adapterUID int64 = 65532
-	agentUID   int64 = 65533
-	// credReadersGID is the lenny-cred-readers group — the §13.1
+	AdapterUID int64 = 65532
+	AgentUID   int64 = 65533
+	// CredReadersGID is the lenny-cred-readers group — the §13.1
 	// credential-file read boundary shared by the adapter and runtime
 	// containers. The pod fsGroup is set to it so the kubelet
 	// group-owns the credential tmpfs.
-	credReadersGID int64 = 65534
+	CredReadersGID int64 = 65534
+
+	// CredVolumeName is the name of the pod volume carrying the §4.7
+	// credential tmpfs mounted at credentialMount.
+	CredVolumeName = "credentials"
 
 	// terminationGraceSeconds is the default pod termination grace
 	// period.
@@ -90,7 +94,7 @@ func Build(in Inputs) (*corev1.Pod, error) {
 
 	volumes := []corev1.Volume{
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		{Name: "credentials", VolumeSource: corev1.VolumeSource{
+		{Name: CredVolumeName, VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 		}},
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{
@@ -100,12 +104,12 @@ func Build(in Inputs) (*corev1.Pod, error) {
 	// The adapter writes the credential file; the runtime only reads it.
 	adapterMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: workspaceMount},
-		{Name: "credentials", MountPath: credentialMount},
+		{Name: CredVolumeName, MountPath: credentialMount},
 		{Name: "tmp", MountPath: tmpMount},
 	}
 	runtimeMounts := []corev1.VolumeMount{
 		{Name: "workspace", MountPath: workspaceMount},
-		{Name: "credentials", MountPath: credentialMount, ReadOnly: true},
+		{Name: CredVolumeName, MountPath: credentialMount, ReadOnly: true},
 		{Name: "tmp", MountPath: tmpMount},
 	}
 
@@ -121,7 +125,7 @@ func Build(in Inputs) (*corev1.Pod, error) {
 			TerminationGracePeriodSeconds: ptr.To(terminationGraceSeconds),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   ptr.To(true),
-				FSGroup:        ptr.To(credReadersGID),
+				FSGroup:        ptr.To(CredReadersGID),
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{
@@ -131,13 +135,13 @@ func Build(in Inputs) (*corev1.Pod, error) {
 					Args:            []string{"--addr=:8443", "--workspace-root=" + workspaceMount + "/current"},
 					Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 					VolumeMounts:    adapterMounts,
-					SecurityContext: containerSecurityContext(adapterUID),
+					SecurityContext: containerSecurityContext(AdapterUID),
 				},
 				{
 					Name:            "runtime",
 					Image:           in.RuntimeImage,
 					VolumeMounts:    runtimeMounts,
-					SecurityContext: containerSecurityContext(agentUID),
+					SecurityContext: containerSecurityContext(AgentUID),
 				},
 			},
 			Volumes: volumes,
