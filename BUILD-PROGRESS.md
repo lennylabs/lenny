@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `286c63f` — §10.7 results `breakdown_by` response shape. With `breakdown_by` set to
+  `delegation_depth`, `inherited`, or `submitted_after_conclusion`, each variant's flat
+  scorers block is replaced by a `breakdowns` array of per-bucket sub-aggregates,
+  ascending by bucket value, with the variant sample count summed across buckets. This
+  completes the §10.7 experiment results API.
 - `767a30e` — §10.7 results per-dimension breakdown + filters. Each scorer aggregate on
   `GET /v1/admin/experiments/{name}/results` now carries the per-dimension `scores`
   breakdown (count/mean/p50/p95 per dimension), and the `delegation_depth`, `inherited`,
@@ -557,7 +562,7 @@ this state.
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 15    | Environment resource, RBAC                                   | Partial        | `pkg/environment` (the §10.6 Role enum and the tag-based Selector evaluator) and the environment admin API are built: `environmentstore` is the per-tenant Environment registry, and `/v1/admin/environments` serves POST/GET/list/PUT/DELETE with §10.6 resource validation (members, RBAC roles, runtime/connector selectors, mcp capability filters, bilateral cross-environment declarations). The cross-environment delegation resolver, OIDC-group resolution, the transparent-filtering middleware, and the `/usage`, `/access-report`, and `/runtime-exposure` sub-endpoints are not built.                                                                                                                                                                                                                                   |
-| 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The §10.7 built-in eval surface is built: `evalstore` is the per-session EvalResult registry (with the `maxEvalsPerSession` storage bound and the §12.8 erasure adapter), `POST /v1/sessions/{id}/eval` ingests scores, and `GET /v1/admin/experiments/{name}/results` aggregates eval scores by variant (per-scorer count, mean, p50, p95, the per-dimension `scores` breakdown, and the `delegation_depth` / `inherited` / `exclude_post_conclusion` query filters). The §10.7 `ExperimentRouter` is wired into session creation: `handleCreate` / `handleCreateAndStart` run the first-match `experiment.Route` over the tenant's active experiments matching the requested base runtime, record the `experimentContext` on the session, and route it onto the variant's runtime and pool; the eval endpoint copies that context onto each EvalResult. The §10.7 OpenFeature external-targeting integration, the PoolScalingController variant-pool sizing path, the `breakdown_by` alternate results response shape, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
+| 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The §10.7 built-in eval surface is built: `evalstore` is the per-session EvalResult registry (with the `maxEvalsPerSession` storage bound and the §12.8 erasure adapter), `POST /v1/sessions/{id}/eval` ingests scores, and `GET /v1/admin/experiments/{name}/results` aggregates eval scores by variant (per-scorer count, mean, p50, p95, the per-dimension `scores` breakdown, the `delegation_depth` / `inherited` / `exclude_post_conclusion` query filters, and the `breakdown_by` per-bucket response shape) — the §10.7 results API is complete. The §10.7 `ExperimentRouter` is wired into session creation: `handleCreate` / `handleCreateAndStart` run the first-match `experiment.Route` over the tenant's active experiments matching the requested base runtime, record the `experimentContext` on the session, and route it onto the variant's runtime and pool; the eval endpoint copies that context onto each EvalResult. The §10.7 OpenFeature external-targeting integration, the PoolScalingController variant-pool sizing path, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
 | 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
 | 17b   | Memory, semantic caching, eval hooks                         | Partial        | The §9.4 MemoryStore role is built: `pkg/gateway/memorystore` is the tenant-scoped agent-memory store (Write / Query / Delete / List with strict tenant+user scoping, the per-user capacity-eviction limit, and the §12.8 `DeleteByUser` / `DeleteByTenant` erasure primitives), and the `lenny/memory_write` / `lenny/memory_query` platform MCP tools are wired. The §10.7 built-in eval endpoints (`POST /v1/sessions/{id}/eval`, `GET /v1/admin/experiments/{name}/results`) are built. The semantic-caching layer, the Postgres + pgvector memory backend, and the runtime-native eval-platform hooks are not.                                                                                                                                                                                                                                                              |
@@ -715,16 +720,17 @@ SessionStore-side steps are built: non-terminal sessions are transitioned to
 remain infrastructure-bound.
 
 The Phase 15 environment admin API and the Phase 16 experiment surface are built end to
-end: the experiment admin CRUD, the §10.7 built-in eval endpoints, the `ExperimentRouter`
-that assigns a variant at session creation, and the eval-attribution flow into the
-results API. The §9.4 MemoryStore role and its `lenny/memory_write` / `lenny/memory_query`
-MCP tools are built. The remaining Phase 16 work is infrastructure-coupled: the
-PoolScalingController variant-pool sizing path needs the controller, and the OpenFeature
-external-targeting integration needs the OFREP provider. The next pure-Go chunks are
-the per-dimension / `breakdown_by` refinements on the experiment results API and the
-Phase 9 `delegate_task` task-input plumbing; the bulk of the remaining surface
-(Phases 0, 2, 5.4, 12b, 12c, 14, 17a) is infrastructure, release-pipeline, or
-documentation work.
+end: the experiment admin CRUD, the §10.7 built-in eval endpoints, the complete results
+API (dimensions, filters, `breakdown_by`), the `ExperimentRouter` that assigns a variant
+at session creation, and the eval-attribution flow. The §9.4 MemoryStore role and its
+`lenny/memory_write` / `lenny/memory_query` MCP tools are built. The remaining work is
+predominantly infrastructure-coupled: the PoolScalingController variant-pool sizing
+path, the OpenFeature external-targeting integration, the Postgres / Redis / pgvector
+production backends, the Kubernetes control-plane completions, and the security-hardening
+release pipeline; plus the Phase 17a documentation, reference runtimes, and installer
+work. The next pure-Go chunk is the Phase 9 `delegate_task` task-input plumbing (a
+`TaskSpec.input` field so the §4 `PreDelegation` interceptor phase has a content
+payload).
 
 ## Test status
 
