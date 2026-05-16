@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `6c2f6e1` — `podsession.Registry` — the per-session pod-binding registry. Holds the
+  live `BindResult` per coordinated session for the session-start, message, and
+  teardown paths. The last component before the gateway session-path wiring; all of
+  claim, start, content stream, teardown, and the binding registry now exist.
 - `7b34036` — `podsession.Binder.Release` (§6.2). The teardown counterpart to `Bind`:
   shuts the pod's runtime down through the adapter, closes the connection, and
   transitions the Sandbox `claimed → draining` so the reconciler reclaims the pod.
