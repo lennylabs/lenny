@@ -1,0 +1,20 @@
+{{- /*
+lenny-system control-plane NetworkPolicy (§13.2). default-deny-all is
+rendered into the release namespace, which houses the gateway, Token
+Service, controllers, and dedicated CoreDNS, and denies all ingress
+and egress for every pod. The §13.2 component-specific allow-lists are
+rendered alongside it as the control-plane network surface is
+completed; until then the namespace is network-isolated by default,
+the fail-closed posture §13.2 requires, mirroring the agent-namespace
+policy set.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
