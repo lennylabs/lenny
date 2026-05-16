@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `0b5cc49` — `allow-minio` NetworkPolicy (§13.2). Re-admits MinIO ingress from the
+  gateway and its CoreDNS egress under the `lenny-system` default-deny;
+  `minio.tlsPort` value added.
 - `9d13f34` — `allow-pgbouncer` NetworkPolicy (§13.2). Re-admits PgBouncer ingress
   from the gateway/Token Service/controller and its Postgres and CoreDNS egress under
   the `lenny-system` default-deny; `postgres.cidr` value added.
