@@ -127,12 +127,19 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 // cascadeToChildren applies the §8.10 cascadeOnFailure policy when
 // sess reaches a terminal state. Under the default `cancel_all` policy
 // the gateway cancels every descendant; `await_completion` and
-// `detach` leave the children running. Each cancelled descendant is
-// itself governed by its own cascade policy, so a `detach` child
-// shields its own subtree. Best-effort: a failure never fails the
-// transition that triggered it.
+// `detach` leave the children running. A `detach` cascade is capped
+// per §8.10: when the tenant is already over maxOrphanTasksPerTenant
+// the gateway falls back to `cancel_all` so orphans cannot accumulate
+// without bound. Each cancelled descendant is itself governed by its
+// own cascade policy, so a `detach` child shields its own subtree.
+// Best-effort: a failure never fails the transition that triggered it.
 func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Session) {
-	if sess.CascadeOnFailure.Resolve() != session.CascadeCancelAll {
+	policy := sess.CascadeOnFailure.Resolve()
+	if policy == session.CascadeDetach && s.detachExceedsOrphanCap(ctx, sess.TenantID) {
+		// §8.10 maxOrphanTasksPerTenant fallback.
+		policy = session.CascadeCancelAll
+	}
+	if policy != session.CascadeCancelAll {
 		return
 	}
 	all, err := s.store.List(ctx, sess.TenantID, sessionstore.ListFilter{})
@@ -173,6 +180,34 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 			queue = append(queue, byParent[cur.ID]...)
 		}
 	}
+}
+
+// detachExceedsOrphanCap reports whether the tenant's active orphan
+// count is over the §8.10 maxOrphanTasksPerTenant cap. An orphan is a
+// non-terminal child session whose delegation tree root has reached a
+// terminal state — the caller invokes this after a `detach`-policy
+// session has terminated, so that session's own children are already
+// counted. Best-effort: a store error reports "not over cap" so a
+// transient failure does not silently escalate detach to cancel_all.
+func (s *Server) detachExceedsOrphanCap(ctx context.Context, tenantID string) bool {
+	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return false
+	}
+	orphans := 0
+	for _, r := range all {
+		if session.IsTerminal(r.State) || r.ParentSessionID == "" {
+			continue
+		}
+		root, err := s.store.Get(ctx, tenantID, s.treeRoot(ctx, r))
+		if err != nil {
+			continue
+		}
+		if session.IsTerminal(root.State) {
+			orphans++
+		}
+	}
+	return orphans > s.maxOrphanTasks
 }
 
 // treeRoot returns the id of the delegation tree's root by walking the

@@ -200,6 +200,65 @@ func TestCascadeRespectsPerNodePolicy(t *testing.T) {
 	}
 }
 
+func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{MaxOrphanTasksPerTenant: 1})
+	now := time.Now()
+	// A pre-existing orphan: a running child of an already-terminal root.
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed old root: %v", err)
+	}
+	seedTreeSession(t, store, "old_child", "old_root")
+	// A detach parent with a running child.
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	// The tenant is over the §8.10 orphan cap, so the detach cascade
+	// falls back to cancel_all and the child is cancelled.
+	row, err := store.Get(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if row.State != session.StateCancelled {
+		t.Errorf("child state = %q, want cancelled — a detach over the orphan cap falls back to cancel_all", row.State)
+	}
+}
+
+func TestDetachProceedsUnderOrphanCap(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{MaxOrphanTasksPerTenant: 10})
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed old root: %v", err)
+	}
+	seedTreeSession(t, store, "old_child", "old_root")
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedTreeSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	// Well under the cap — the detach cascade leaves the child running.
+	row, err := store.Get(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("child state = %q, want running — a detach under the cap leaves children alive", row.State)
+	}
+}
+
 func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()

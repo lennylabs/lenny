@@ -105,7 +105,14 @@ type Server struct {
 	agentNamespace  string
 	sealer          Sealer
 	treeArchive     treearchive.Store
+	maxOrphanTasks  int
 }
+
+// DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
+// orphan tasks. When a `detach` cascade would push the tenant over the
+// cap, the gateway falls back to `cancel_all` so orphans cannot
+// accumulate without bound.
+const DefaultMaxOrphanTasksPerTenant = 100
 
 // Sealer takes the §7.1 final workspace snapshot of a session that has
 // reached a terminal state. The gateway invokes it as the
@@ -238,6 +245,10 @@ type Options struct {
 	// state, so a resumed parent can replay the outcome. Nil disables
 	// delegation-tree archiving.
 	TreeArchive treearchive.Store
+
+	// MaxOrphanTasksPerTenant caps a tenant's active orphan tasks per
+	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
+	MaxOrphanTasksPerTenant int
 }
 
 // New returns a Server bound to the supplied store.
@@ -265,12 +276,16 @@ func New(store sessionstore.Store, opts Options) *Server {
 		agentNamespace:  opts.AgentNamespace,
 		sealer:          opts.Sealer,
 		treeArchive:     opts.TreeArchive,
+		maxOrphanTasks:  opts.MaxOrphanTasksPerTenant,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
 	}
 	if s.idFn == nil {
 		s.idFn = randomSessionID
+	}
+	if s.maxOrphanTasks <= 0 {
+		s.maxOrphanTasks = DefaultMaxOrphanTasksPerTenant
 	}
 	if s.uploadIssuer == nil {
 		// Default to a freshly-generated random key so the server is
