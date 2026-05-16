@@ -34,7 +34,7 @@ func (f fakeResolver) UpstreamCredential(credential.Lease) (string, bool) {
 // fakeDenyList is a DenyList returning a fixed verdict.
 type fakeDenyList struct{ revoked bool }
 
-func (f fakeDenyList) Revoked(credential.DenyListKey) bool { return f.revoked }
+func (f fakeDenyList) Revoked(credential.CredentialKey) bool { return f.revoked }
 
 // handlerLease returns a valid pool-backed proxy lease for the handler
 // tests, holding the given lease token.

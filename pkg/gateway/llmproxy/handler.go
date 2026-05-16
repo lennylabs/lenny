@@ -35,7 +35,7 @@ type CredentialResolver interface {
 type DenyList interface {
 	// Revoked reports whether the credential identified by key is on
 	// the deny list.
-	Revoked(key credential.DenyListKey) bool
+	Revoked(key credential.CredentialKey) bool
 }
 
 // UsageRecorder receives the authoritative §4.9 token usage the proxy
@@ -100,7 +100,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	revoked := false
 	if h.DenyList != nil {
-		revoked = h.DenyList.Revoked(lease.DenyListKey())
+		revoked = h.DenyList.Revoked(lease.CredentialKey())
 	}
 	switch lease.ValidateProxyRequest(credential.ProxyRequestCheck{
 		Now:           h.now(),

@@ -149,9 +149,11 @@ func (l Lease) Expired(now time.Time) bool {
 	return !now.Before(l.ExpiresAt)
 }
 
-// DenyListKey is the §4.9 source-aware credential deny-list key. The
-// pool and user keyspaces never overlap; Source is the discriminator.
-type DenyListKey struct {
+// CredentialKey is the §4.9 source-aware identity of a backing
+// credential. The §4.9 deny list and the Token Service credential cache
+// both key on it. The pool and user keyspaces never overlap; Source is
+// the discriminator.
+type CredentialKey struct {
 	// Source discriminates the two keyspaces.
 	Source LeaseSource
 	// PoolID and CredentialID are set for a pool-backed key.
@@ -162,14 +164,14 @@ type DenyListKey struct {
 	CredentialRef string
 }
 
-// DenyListKey returns the §4.9 source-aware deny-list key for the
-// lease's backing credential. The §4.9 LLM proxy looks this key up
-// against the deny list on every request.
-func (l Lease) DenyListKey() DenyListKey {
+// CredentialKey returns the §4.9 source-aware identity of the lease's
+// backing credential. The §4.9 LLM proxy keys the deny-list check and
+// the upstream-credential lookup on it.
+func (l Lease) CredentialKey() CredentialKey {
 	if l.Source == SourceUser {
-		return DenyListKey{Source: SourceUser, TenantID: l.TenantID, CredentialRef: l.CredentialRef}
+		return CredentialKey{Source: SourceUser, TenantID: l.TenantID, CredentialRef: l.CredentialRef}
 	}
-	return DenyListKey{Source: SourcePool, PoolID: l.PoolID, CredentialID: l.CredentialID}
+	return CredentialKey{Source: SourcePool, PoolID: l.PoolID, CredentialID: l.CredentialID}
 }
 
 // LeaseRejection names the §4.9 check a proxy request failed. The empty
@@ -198,7 +200,7 @@ type ProxyRequestCheck struct {
 	// mTLS peer certificate.
 	PeerSPIFFEURI string
 	// Revoked reports whether the lease's credential is on the §4.9
-	// deny list. The caller resolves it from the lease's DenyListKey.
+	// deny list. The caller resolves it from the lease's CredentialKey.
 	Revoked bool
 }
 

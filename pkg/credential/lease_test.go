@@ -9,7 +9,7 @@ import (
 )
 
 // spec: §4.9 — the CredentialLease data model, structural validation,
-// the source-aware deny-list key, and the LLM-proxy request checks.
+// the source-aware credential key, and the LLM-proxy request checks.
 
 // validProxyLease returns a structurally valid pool-backed proxy lease.
 func validProxyLease() Lease {
@@ -131,26 +131,26 @@ func TestLeaseExpired(t *testing.T) {
 	}
 }
 
-func TestLeaseDenyListKey(t *testing.T) {
+func TestLeaseCredentialKey(t *testing.T) {
 	pool := validProxyLease()
-	pk := pool.DenyListKey()
+	pk := pool.CredentialKey()
 	if pk.Source != SourcePool || pk.PoolID != "claude-prod" || pk.CredentialID != "key-1" {
-		t.Errorf("pool deny-list key = %+v, want the pool-shaped key", pk)
+		t.Errorf("pool credential key = %+v, want the pool-shaped key", pk)
 	}
 	if pk.TenantID != "" || pk.CredentialRef != "" {
-		t.Errorf("pool deny-list key leaked user fields: %+v", pk)
+		t.Errorf("pool credential key leaked user fields: %+v", pk)
 	}
 
 	user := validProxyLease()
 	user.Source = SourceUser
 	user.TenantID = "acme"
 	user.CredentialRef = "cred-xyz"
-	uk := user.DenyListKey()
+	uk := user.CredentialKey()
 	if uk.Source != SourceUser || uk.TenantID != "acme" || uk.CredentialRef != "cred-xyz" {
-		t.Errorf("user deny-list key = %+v, want the user-shaped key", uk)
+		t.Errorf("user credential key = %+v, want the user-shaped key", uk)
 	}
 	if uk.PoolID != "" || uk.CredentialID != "" {
-		t.Errorf("user deny-list key leaked pool fields: %+v", uk)
+		t.Errorf("user credential key leaked pool fields: %+v", uk)
 	}
 }
 
