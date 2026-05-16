@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `18eba1a` — `allow-controller-metrics-scrape` NetworkPolicy (§13.2). Admits
+  Prometheus scrape from the monitoring namespace to the controller's metrics port
+  under the `lenny-system` default-deny; `controller.metricsPort` and
+  `monitoring.namespace` values added.
 - `867e439` — `allow-token-service` NetworkPolicy (§13.2). Re-admits the Token
   Service's gateway ingress and its PgBouncer/Redis/KMS/CoreDNS egress under the
   `lenny-system` default-deny; `tokenService.grpcPort`, `redis.tlsPort`, and
