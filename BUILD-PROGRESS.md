@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `bd7e508` — `allow-gateway-egress` NetworkPolicy (§13.2). Re-admits the gateway's
+  in-cluster egress (agent adapters, Token Service, PgBouncer, Redis, MinIO,
+  kube-apiserver, CoreDNS) under the `lenny-system` default-deny. The external-HTTPS
+  egress with its NET-062 dual-family IMDS exclusions is deferred to the LLM proxy.
 - `0b5cc49` — `allow-minio` NetworkPolicy (§13.2). Re-admits MinIO ingress from the
   gateway and its CoreDNS egress under the `lenny-system` default-deny;
   `minio.tlsPort` value added.
