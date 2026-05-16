@@ -279,6 +279,39 @@ type anthropicUsageEnvelope struct {
 	} `json:"usage"`
 }
 
+// rehostAnthropicBody validates an Anthropic Messages request body and
+// rewrites it for a provider that names the model in the URL path: it
+// returns the model and a body with the `model` field removed and
+// `anthropic_version` set to the provider's required value. Vertex AI
+// and AWS Bedrock both serve Claude in this form, differing only in
+// the anthropic_version string and the URL.
+func rehostAnthropicBody(reqBody []byte, anthropicVersion string) (model string, body []byte, err error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(reqBody, &fields); err != nil {
+		return "", nil, translationErrorf(ErrSchemaMismatch,
+			"request body is not a JSON object: %v", err)
+	}
+	if raw, ok := fields["model"]; ok {
+		_ = json.Unmarshal(raw, &model)
+	}
+	if model == "" {
+		return "", nil, translationErrorf(ErrSchemaMismatch,
+			"Anthropic Messages request is missing the required model field")
+	}
+	if _, ok := fields["messages"]; !ok {
+		return "", nil, translationErrorf(ErrSchemaMismatch,
+			"Anthropic Messages request is missing the required messages field")
+	}
+	delete(fields, "model")
+	fields["anthropic_version"], _ = json.Marshal(anthropicVersion)
+	body, err = json.Marshal(fields)
+	if err != nil {
+		return "", nil, translationErrorf(ErrSchemaMismatch,
+			"could not re-encode the request body: %v", err)
+	}
+	return model, body, nil
+}
+
 // extractAnthropicUsage parses the authoritative token usage from a
 // non-streaming Anthropic Messages response body.
 func extractAnthropicUsage(body []byte) (Usage, error) {

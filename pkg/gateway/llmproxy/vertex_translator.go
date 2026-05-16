@@ -3,7 +3,6 @@
 package llmproxy
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 )
@@ -54,32 +53,11 @@ func (t *VertexAITranslator) TranslateRequest(req Request, apiKey string) (*Upst
 			"vertex_ai translator is not configured with a region and project")
 	}
 
-	var body map[string]json.RawMessage
-	if err := json.Unmarshal(req.Body, &body); err != nil {
-		return nil, translationErrorf(ErrSchemaMismatch,
-			"request body is not a JSON object: %v", err)
-	}
-	var model string
-	if raw, ok := body["model"]; ok {
-		_ = json.Unmarshal(raw, &model)
-	}
-	if model == "" {
-		return nil, translationErrorf(ErrSchemaMismatch,
-			"Anthropic Messages request is missing the required model field")
-	}
-	if _, ok := body["messages"]; !ok {
-		return nil, translationErrorf(ErrSchemaMismatch,
-			"Anthropic Messages request is missing the required messages field")
-	}
-
 	// Vertex names the model in the URL; the body carries
 	// anthropic_version in place of the model field.
-	delete(body, "model")
-	body["anthropic_version"], _ = json.Marshal(vertexAnthropicVersion)
-	upstreamBody, err := json.Marshal(body)
+	model, upstreamBody, err := rehostAnthropicBody(req.Body, vertexAnthropicVersion)
 	if err != nil {
-		return nil, translationErrorf(ErrSchemaMismatch,
-			"could not re-encode the request body: %v", err)
+		return nil, err
 	}
 
 	// PathEscape the model so a crafted value cannot break out of the
