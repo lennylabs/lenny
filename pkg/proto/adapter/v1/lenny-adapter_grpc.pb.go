@@ -36,6 +36,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Adapter_StartSession_FullMethodName      = "/lenny.adapter.v1.Adapter/StartSession"
 	Adapter_SendMessage_FullMethodName       = "/lenny.adapter.v1.Adapter/SendMessage"
+	Adapter_Attach_FullMethodName            = "/lenny.adapter.v1.Adapter/Attach"
 	Adapter_AssignCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/AssignCredentials"
 	Adapter_RotateCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/RotateCredentials"
 	Adapter_RevokeCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/RevokeCredentials"
@@ -68,6 +69,13 @@ type AdapterClient interface {
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
 	SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error)
+	// Attach opens the bidirectional content stream between the gateway and a
+	// running session (spec §4.7 RPC table: "Connect client stream to running
+	// session"). The gateway streams client-to-agent envelopes in; the adapter
+	// streams the agent's response, tool-call, and status envelopes back.
+	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// bytes, mirroring SendMessage.envelope_json.
+	Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage], error)
 	// AssignCredentials pushes a per-session credential lease map to the
 	// adapter. Adapter writes the credential file under /run/lenny/. Atomic
 	// across providers; partial failures are rolled back.
@@ -145,6 +153,19 @@ func (c *adapterClient) SendMessage(ctx context.Context, in *SendMessageRequest,
 	}
 	return out, nil
 }
+
+func (c *adapterClient) Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[0], Adapter_Attach_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AttachClientMessage, AttachServerMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_AttachClient = grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage]
 
 func (c *adapterClient) AssignCredentials(ctx context.Context, in *AssignCredentialsRequest, opts ...grpc.CallOption) (*AssignCredentialsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -248,7 +269,7 @@ func (c *adapterClient) NegotiateVersion(ctx context.Context, in *NegotiateVersi
 
 func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[0], Adapter_LifecycleChannel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[1], Adapter_LifecycleChannel_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +299,13 @@ type AdapterServer interface {
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
 	SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error)
+	// Attach opens the bidirectional content stream between the gateway and a
+	// running session (spec §4.7 RPC table: "Connect client stream to running
+	// session"). The gateway streams client-to-agent envelopes in; the adapter
+	// streams the agent's response, tool-call, and status envelopes back.
+	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// bytes, mirroring SendMessage.envelope_json.
+	Attach(grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]) error
 	// AssignCredentials pushes a per-session credential lease map to the
 	// adapter. Adapter writes the credential file under /run/lenny/. Atomic
 	// across providers; partial failures are rolled back.
@@ -340,6 +368,9 @@ func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionReq
 }
 func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
+}
+func (UnimplementedAdapterServer) Attach(grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]) error {
+	return status.Error(codes.Unimplemented, "method Attach not implemented")
 }
 func (UnimplementedAdapterServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignCredentials not implemented")
@@ -429,6 +460,13 @@ func _Adapter_SendMessage_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Adapter_Attach_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AdapterServer).Attach(&grpc.GenericServerStream[AttachClientMessage, AttachServerMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_AttachServer = grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]
 
 func _Adapter_AssignCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AssignCredentialsRequest)
@@ -674,6 +712,12 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Attach",
+			Handler:       _Adapter_Attach_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "LifecycleChannel",
 			Handler:       _Adapter_LifecycleChannel_Handler,

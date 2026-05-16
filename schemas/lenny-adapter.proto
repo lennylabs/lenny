@@ -38,6 +38,14 @@ service Adapter {
   // stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse) {}
 
+  // Attach opens the bidirectional content stream between the gateway and a
+  // running session (spec §4.7 RPC table: "Connect client stream to running
+  // session"). The gateway streams client-to-agent envelopes in; the adapter
+  // streams the agent's response, tool-call, and status envelopes back.
+  // Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+  // bytes, mirroring SendMessage.envelope_json.
+  rpc Attach(stream AttachClientMessage) returns (stream AttachServerMessage) {}
+
   // AssignCredentials pushes a per-session credential lease map to the
   // adapter. Adapter writes the credential file under /run/lenny/. Atomic
   // across providers; partial failures are rolled back.
@@ -263,6 +271,27 @@ message SendMessageRequest {
 }
 
 message SendMessageResponse {}
+
+// AttachClientMessage is one frame the gateway streams to the adapter over
+// Attach. session_id is set on every message so the adapter can reject a
+// stream bound to a session the pod does not hold.
+message AttachClientMessage {
+  SessionId session_id = 1;
+  SlotId slot_id = 2;
+  // Opaque JSON-encoded client-to-agent frame (lenny-adapter-jsonl.schema.json
+  // `message`, `tool_result`, `heartbeat`, ...). The adapter writes it
+  // verbatim to the agent's stdin.
+  bytes envelope_json = 3;
+}
+
+// AttachServerMessage is one frame the adapter streams back over Attach as
+// the agent produces output.
+message AttachServerMessage {
+  // Opaque JSON-encoded agent-to-gateway frame (lenny-adapter-jsonl.schema.json
+  // `response`, `tool_call`, `status`, `heartbeat_ack`, ...) read verbatim
+  // from the agent's stdout.
+  bytes envelope_json = 1;
+}
 
 message AssignCredentialsRequest {
   SessionId session_id = 1;
