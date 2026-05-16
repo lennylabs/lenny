@@ -80,8 +80,12 @@ func TestExtractRoundTripsAnArchive(t *testing.T) {
 	}
 
 	dst := t.TempDir()
-	if err := workspace.Extract(dst, &archived); err != nil {
+	n, err := workspace.Extract(dst, &archived)
+	if err != nil {
 		t.Fatalf("Extract: %v", err)
+	}
+	if n != 10 {
+		t.Errorf("Extract reported %d uncompressed bytes, want 10 (hello + world)", n)
 	}
 
 	if got, _ := os.ReadFile(filepath.Join(dst, "a.txt")); string(got) != "hello" {
@@ -102,7 +106,7 @@ func TestExtractRoundTripsAnArchive(t *testing.T) {
 func TestExtractRejectsPathTraversal(t *testing.T) {
 	archive := buildArchive(t, tarEntry{name: "../escape.txt", typeflag: tar.TypeReg, body: "pwned"})
 	dst := t.TempDir()
-	if err := workspace.Extract(dst, bytes.NewReader(archive)); err == nil {
+	if _, err := workspace.Extract(dst, bytes.NewReader(archive)); err == nil {
 		t.Fatal("Extract accepted an archive entry that escapes the workspace root")
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dst), "escape.txt")); err == nil {
@@ -112,27 +116,27 @@ func TestExtractRejectsPathTraversal(t *testing.T) {
 
 func TestExtractRejectsAbsoluteSymlinkTarget(t *testing.T) {
 	archive := buildArchive(t, tarEntry{name: "escape", typeflag: tar.TypeSymlink, body: "/etc/passwd"})
-	if err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
+	if _, err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
 		t.Error("Extract restored a symlink pointing outside the workspace root")
 	}
 }
 
 func TestExtractRejectsEscapingRelativeSymlink(t *testing.T) {
 	archive := buildArchive(t, tarEntry{name: "escape", typeflag: tar.TypeSymlink, body: "../../../etc"})
-	if err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
+	if _, err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
 		t.Error("Extract restored a relative symlink that escapes the workspace root")
 	}
 }
 
 func TestExtractRejectsUnsupportedEntryType(t *testing.T) {
 	archive := buildArchive(t, tarEntry{name: "dev", typeflag: tar.TypeFifo})
-	if err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
+	if _, err := workspace.Extract(t.TempDir(), bytes.NewReader(archive)); err == nil {
 		t.Error("Extract accepted an unsupported (fifo) archive entry")
 	}
 }
 
 func TestExtractRejectsMalformedArchive(t *testing.T) {
-	if err := workspace.Extract(t.TempDir(), bytes.NewReader([]byte("not a gzip archive"))); err == nil {
+	if _, err := workspace.Extract(t.TempDir(), bytes.NewReader([]byte("not a gzip archive"))); err == nil {
 		t.Error("Extract accepted a non-gzip archive")
 	}
 }

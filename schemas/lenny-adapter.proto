@@ -69,6 +69,12 @@ service Adapter {
   // suspend.
   rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {}
 
+  // Resume restores a session's workspace from a checkpoint on a
+  // replacement pod (§4.7, §7.1). The adapter claims the session,
+  // rebuilds /workspace/current from the named checkpoint, and starts
+  // the runtime — the replacement-pod counterpart of StartSession.
+  rpc Resume(ResumeRequest) returns (ResumeResponse) {}
+
   // ReportUsage returns token-usage and time-usage accounting since the
   // last call. The gateway uses this for budget enforcement and billing.
   rpc ReportUsage(ReportUsageRequest) returns (ReportUsageResponse) {}
@@ -347,6 +353,16 @@ message CheckpointRequest {
 message CheckpointResponse {
   string checkpoint_id = 1;
   int64 size_bytes = 2;
+}
+
+message ResumeRequest {
+  SessionId session_id = 1;
+  string runtime = 2;        // runtime name, as in StartSessionRequest
+  string checkpoint_id = 3;  // checkpoint to restore the workspace from
+}
+
+message ResumeResponse {
+  int64 restored_bytes = 1;  // uncompressed workspace bytes restored
 }
 
 message ReportUsageRequest {

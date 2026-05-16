@@ -42,6 +42,7 @@ const (
 	Adapter_RevokeCredentials_FullMethodName = "/lenny.adapter.v1.Adapter/RevokeCredentials"
 	Adapter_Interrupt_FullMethodName         = "/lenny.adapter.v1.Adapter/Interrupt"
 	Adapter_Checkpoint_FullMethodName        = "/lenny.adapter.v1.Adapter/Checkpoint"
+	Adapter_Resume_FullMethodName            = "/lenny.adapter.v1.Adapter/Resume"
 	Adapter_ReportUsage_FullMethodName       = "/lenny.adapter.v1.Adapter/ReportUsage"
 	Adapter_ExtendLease_FullMethodName       = "/lenny.adapter.v1.Adapter/ExtendLease"
 	Adapter_Shutdown_FullMethodName          = "/lenny.adapter.v1.Adapter/Shutdown"
@@ -94,6 +95,11 @@ type AdapterClient interface {
 	// state to the artifact store. Used for eviction, drain, and session
 	// suspend.
 	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
+	// Resume restores a session's workspace from a checkpoint on a
+	// replacement pod (§4.7, §7.1). The adapter claims the session,
+	// rebuilds /workspace/current from the named checkpoint, and starts
+	// the runtime — the replacement-pod counterpart of StartSession.
+	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
@@ -217,6 +223,16 @@ func (c *adapterClient) Checkpoint(ctx context.Context, in *CheckpointRequest, o
 	return out, nil
 }
 
+func (c *adapterClient) Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeResponse)
+	err := c.cc.Invoke(ctx, Adapter_Resume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportUsageResponse)
@@ -324,6 +340,11 @@ type AdapterServer interface {
 	// state to the artifact store. Used for eviction, drain, and session
 	// suspend.
 	Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
+	// Resume restores a session's workspace from a checkpoint on a
+	// replacement pod (§4.7, §7.1). The adapter claims the session,
+	// rebuilds /workspace/current from the named checkpoint, and starts
+	// the runtime — the replacement-pod counterpart of StartSession.
+	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
@@ -386,6 +407,9 @@ func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) 
 }
 func (UnimplementedAdapterServer) Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Checkpoint not implemented")
+}
+func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
 }
 func (UnimplementedAdapterServer) ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportUsage not implemented")
@@ -558,6 +582,24 @@ func _Adapter_Checkpoint_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_Resume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).Resume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_Resume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).Resume(ctx, req.(*ResumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_ReportUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportUsageRequest)
 	if err := dec(in); err != nil {
@@ -689,6 +731,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Checkpoint",
 			Handler:    _Adapter_Checkpoint_Handler,
+		},
+		{
+			MethodName: "Resume",
+			Handler:    _Adapter_Resume_Handler,
 		},
 		{
 			MethodName: "ReportUsage",

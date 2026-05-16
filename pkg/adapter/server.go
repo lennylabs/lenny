@@ -51,6 +51,9 @@ type Server struct {
 	// Checkpoints stores the §4.4 workspace checkpoints the Checkpoint
 	// RPC produces. Nil leaves Checkpoint Unimplemented.
 	Checkpoints CheckpointSink
+	// Restorer loads the §4.4 workspace checkpoints the Resume RPC
+	// restores from. Nil leaves Resume Unimplemented.
+	Restorer CheckpointSource
 
 	// mu guards sessionID and the credential fields.
 	mu sync.Mutex

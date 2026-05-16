@@ -28,10 +28,12 @@ const maxExtractBytes = 2 << 30
 // so a restored workspace can never carry a symlink that points
 // outside it — closing the tar symlink-traversal vector. Regular files
 // keep only their permission bits; setuid and setgid are dropped.
-func Extract(root string, r io.Reader) error {
+//
+// Extract returns the total uncompressed regular-file bytes written.
+func Extract(root string, r io.Reader) (int64, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return fmt.Errorf("workspace: open archive: %w", err)
+		return 0, fmt.Errorf("workspace: open archive: %w", err)
 	}
 	defer gz.Close()
 
@@ -41,32 +43,32 @@ func Extract(root string, r io.Reader) error {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			return written, nil
 		}
 		if err != nil {
-			return fmt.Errorf("workspace: read archive: %w", err)
+			return written, fmt.Errorf("workspace: read archive: %w", err)
 		}
 		dest, err := resolvePath(rootClean, hdr.Name)
 		if err != nil {
-			return fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
+			return written, fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(dest, 0o755); err != nil {
-				return fmt.Errorf("workspace: create directory %q: %w", hdr.Name, err)
+				return written, fmt.Errorf("workspace: create directory %q: %w", hdr.Name, err)
 			}
 		case tar.TypeReg:
 			n, err := extractRegular(dest, tr, os.FileMode(hdr.Mode).Perm(), maxExtractBytes-written)
-			if err != nil {
-				return fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
-			}
 			written += n
+			if err != nil {
+				return written, fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
+			}
 		case tar.TypeSymlink:
 			if err := extractSymlink(rootClean, dest, hdr.Linkname); err != nil {
-				return fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
+				return written, fmt.Errorf("workspace: archive entry %q: %w", hdr.Name, err)
 			}
 		default:
-			return fmt.Errorf("workspace: archive entry %q has unsupported type %d", hdr.Name, hdr.Typeflag)
+			return written, fmt.Errorf("workspace: archive entry %q has unsupported type %d", hdr.Name, hdr.Typeflag)
 		}
 	}
 }
