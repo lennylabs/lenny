@@ -103,9 +103,10 @@ func toExperiment(p ExperimentPayload, tenant string) experimentstore.Experiment
 	}
 }
 
-// requireExperimentAdmin gates the experiment endpoints on
-// platform-admin or tenant-admin per §15.1.
-func (r *Router) requireExperimentAdmin(next http.Handler) http.Handler {
+// requireTenantResourceAdmin gates the per-tenant admin resources
+// (experiments, environments) on platform-admin or tenant-admin
+// per §15.1.
+func (r *Router) requireTenantResourceAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		p, ok := authmw.FromContext(req.Context())
 		if !ok {
@@ -114,7 +115,7 @@ func (r *Router) requireExperimentAdmin(next http.Handler) http.Handler {
 		}
 		if !p.HasRole(auth.RolePlatformAdmin) && !p.HasRole(auth.RoleTenantAdmin) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"experiment management requires platform-admin or tenant-admin", nil)
+				"this resource requires platform-admin or tenant-admin", nil)
 			return
 		}
 		next.ServeHTTP(w, req)

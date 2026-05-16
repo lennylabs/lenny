@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
@@ -94,6 +95,7 @@ type Router struct {
 	sessions        sessionstore.Store
 	interactions    interactionstore.Store
 	experiments     experimentstore.Store
+	environments    environmentstore.Store
 	clock           func() time.Time
 	audit           AuditSink
 
@@ -185,17 +187,30 @@ func (r *Router) Handler() http.Handler {
 	if r.experiments != nil {
 		// §10.7 / §15.1 experiment admin CRUD.
 		mux.Handle("POST /v1/admin/experiments",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handleCreateExperiment)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateExperiment)))
 		mux.Handle("GET /v1/admin/experiments",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handleListExperiments)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListExperiments)))
 		mux.Handle("GET /v1/admin/experiments/{name}",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handleGetExperiment)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetExperiment)))
 		mux.Handle("PUT /v1/admin/experiments/{name}",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handleUpdateExperiment)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateExperiment)))
 		mux.Handle("PATCH /v1/admin/experiments/{name}",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handlePatchExperiment)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handlePatchExperiment)))
 		mux.Handle("DELETE /v1/admin/experiments/{name}",
-			r.requireExperimentAdmin(http.HandlerFunc(r.handleDeleteExperiment)))
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteExperiment)))
+	}
+	if r.environments != nil {
+		// §10.6 / §15.1 environment admin CRUD.
+		mux.Handle("POST /v1/admin/environments",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateEnvironment)))
+		mux.Handle("GET /v1/admin/environments",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListEnvironments)))
+		mux.Handle("GET /v1/admin/environments/{name}",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetEnvironment)))
+		mux.Handle("PUT /v1/admin/environments/{name}",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateEnvironment)))
+		mux.Handle("DELETE /v1/admin/environments/{name}",
+			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))

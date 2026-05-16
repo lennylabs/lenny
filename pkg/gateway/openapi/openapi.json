@@ -711,6 +711,70 @@
         }
       }
     },
+    "/v1/admin/environments": {
+      "post": {
+        "summary": "Create an environment",
+        "x-lenny-mcp-tool": "admin.create_environment",
+        "x-lenny-scope": "admin.environments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "201": { "description": "Created" },
+          "422": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "get": {
+        "summary": "List environments",
+        "x-lenny-mcp-tool": "admin.list_environments",
+        "x-lenny-scope": "admin.environments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/environments/{name}": {
+      "get": {
+        "summary": "Get an environment",
+        "x-lenny-mcp-tool": "admin.get_environment",
+        "x-lenny-scope": "admin.environments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "put": {
+        "summary": "Update an environment",
+        "x-lenny-mcp-tool": "admin.update_environment",
+        "x-lenny-scope": "admin.environments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "summary": "Delete an environment",
+        "x-lenny-mcp-tool": "admin.delete_environment",
+        "x-lenny-scope": "admin.environments.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
         "summary": "Revoke an issued token by jti",

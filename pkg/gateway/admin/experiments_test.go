@@ -47,7 +47,7 @@ func validExperimentPayload(id string) admin.ExperimentPayload {
 	}
 }
 
-func doExperiment(t *testing.T, h http.Handler, method, path string, body any, as func(*http.Request) *http.Request) *httptest.ResponseRecorder {
+func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as func(*http.Request) *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
@@ -62,7 +62,7 @@ func doExperiment(t *testing.T, h http.Handler, method, path string, body any, a
 
 func TestCreateExperiment(t *testing.T) {
 	router, exps, audit := newExperimentAdmin(t)
-	rr := doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_1"), withAdminPrincipal)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
@@ -83,7 +83,7 @@ func TestCreateExperimentRejectsReservedVariant(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
 	body := validExperimentPayload("exp_bad")
 	body.Variants = []admin.ExperimentVariant{{ID: "control", Weight: 0.1}}
-	rr := doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Errorf("reserved variant id: status %d, want 422", rr.Code)
 	}
@@ -91,9 +91,9 @@ func TestCreateExperimentRejectsReservedVariant(t *testing.T) {
 
 func TestCreateExperimentRejectsDuplicate(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_dup"), withAdminPrincipal)
-	rr := doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_dup"), withAdminPrincipal)
 	if rr.Code != http.StatusConflict {
 		t.Errorf("duplicate create: status %d, want 409", rr.Code)
@@ -102,12 +102,12 @@ func TestCreateExperimentRejectsDuplicate(t *testing.T) {
 
 func TestListExperiments(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_a"), withAdminPrincipal)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_b"), withAdminPrincipal)
 
-	rr := doExperiment(t, router.Handler(), http.MethodGet, "/v1/admin/experiments?tenantId=acme",
+	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/experiments?tenantId=acme",
 		nil, withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list: status %d", rr.Code)
@@ -123,7 +123,7 @@ func TestListExperiments(t *testing.T) {
 
 func TestGetExperimentNotFound(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
-	rr := doExperiment(t, router.Handler(), http.MethodGet, "/v1/admin/experiments/absent?tenantId=acme",
+	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/experiments/absent?tenantId=acme",
 		nil, withAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("get unknown: status %d, want 404", rr.Code)
@@ -132,16 +132,16 @@ func TestGetExperimentNotFound(t *testing.T) {
 
 func TestUpdateExperimentPreservesStatus(t *testing.T) {
 	router, exps, _ := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_u"), withAdminPrincipal)
 	// Transition to paused, then PUT with status "active" in the body.
-	doExperiment(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_u?tenantId=acme",
+	doAdminReq(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_u?tenantId=acme",
 		admin.PatchExperimentRequest{Status: ptr("paused")}, withAdminPrincipal)
 
 	body := validExperimentPayload("exp_u")
 	body.Status = "active" // PUT must not transition status
 	body.BaseRuntime = "claude-worker-next"
-	rr := doExperiment(t, router.Handler(), http.MethodPut, "/v1/admin/experiments/exp_u",
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/experiments/exp_u",
 		body, withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
@@ -157,10 +157,10 @@ func TestUpdateExperimentPreservesStatus(t *testing.T) {
 
 func TestPatchExperimentTransitionsStatus(t *testing.T) {
 	router, exps, audit := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_p"), withAdminPrincipal)
 
-	rr := doExperiment(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_p?tenantId=acme",
+	rr := doAdminReq(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_p?tenantId=acme",
 		admin.PatchExperimentRequest{Status: ptr("paused")}, withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("patch: status %d, body %s", rr.Code, rr.Body.String())
@@ -182,12 +182,12 @@ func TestPatchExperimentTransitionsStatus(t *testing.T) {
 
 func TestPatchExperimentRejectsInvalidTransition(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_c"), withAdminPrincipal)
 	// active → concluded is valid; concluded → active is not.
-	doExperiment(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_c?tenantId=acme",
+	doAdminReq(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_c?tenantId=acme",
 		admin.PatchExperimentRequest{Status: ptr("concluded")}, withAdminPrincipal)
-	rr := doExperiment(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_c?tenantId=acme",
+	rr := doAdminReq(t, router.Handler(), http.MethodPatch, "/v1/admin/experiments/exp_c?tenantId=acme",
 		admin.PatchExperimentRequest{Status: ptr("active")}, withAdminPrincipal)
 	if rr.Code != http.StatusConflict {
 		t.Errorf("concluded → active: status %d, want 409", rr.Code)
@@ -196,10 +196,10 @@ func TestPatchExperimentRejectsInvalidTransition(t *testing.T) {
 
 func TestDeleteExperiment(t *testing.T) {
 	router, exps, _ := newExperimentAdmin(t)
-	doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_d"), withAdminPrincipal)
 
-	rr := doExperiment(t, router.Handler(), http.MethodDelete, "/v1/admin/experiments/exp_d?tenantId=acme",
+	rr := doAdminReq(t, router.Handler(), http.MethodDelete, "/v1/admin/experiments/exp_d?tenantId=acme",
 		nil, withAdminPrincipal)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("delete: status %d", rr.Code)
@@ -218,7 +218,7 @@ func TestExperimentRequiresAdmin(t *testing.T) {
 		})
 		return req.WithContext(ctx)
 	}
-	rr := doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		validExperimentPayload("exp_x"), asPlainUser)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("plain user create: status %d, want 403", rr.Code)
@@ -230,7 +230,7 @@ func TestExperimentTenantAdminScoped(t *testing.T) {
 	// A tenant-admin omits tenantId; the handler derives it from the token.
 	body := validExperimentPayload("exp_ta")
 	body.TenantID = ""
-	rr := doExperiment(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments",
 		body, withTenantAdminPrincipal)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("tenant-admin create: status %d, body %s", rr.Code, rr.Body.String())
