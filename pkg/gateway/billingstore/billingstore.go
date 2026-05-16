@@ -8,7 +8,10 @@
 // The ledger is append-only: Append assigns the next per-tenant
 // sequence_number and commits the event; there is no update or delete.
 // Consumers detect lost events as gaps in the sequence_number stream
-// and replay them with Since.
+// and replay them with Since. The sole exception is the §12.8 GDPR
+// erasure path: PseudonymizeUser rewrites a user's events in place so
+// the billing history is de-identified without breaking sequence
+// continuity.
 //
 // The in-memory Memory implementation here backs tests and the
 // minimal gateway; billingstore/pgstore is the durable Postgres
@@ -17,6 +20,8 @@ package billingstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"sync"
@@ -60,6 +65,25 @@ type Event struct {
 
 // ErrInvalidEvent — the event is missing a tenant id or event type.
 var ErrInvalidEvent = errors.New("billingstore: event requires a tenant id and event type")
+
+// ErrPseudonymizeArg — PseudonymizeUser was called without a tenant id,
+// a user id, or a salt. Pseudonymizing with no salt would produce a
+// trivially reversible hash, so the empty-salt case is rejected rather
+// than silently weakened.
+var ErrPseudonymizeArg = errors.New("billingstore: pseudonymize requires a tenant id, a user id, and a salt")
+
+// Pseudonymize returns the §12.8 one-way pseudonym for a billing
+// event's user id: the hex-encoded SHA-256 of the user id followed by
+// the tenant's erasure salt. The salt is a per-tenant 256-bit secret;
+// once it is destroyed the pseudonym cannot be reversed, which is what
+// makes the pseudonymized events effectively anonymous (§12.8 GDPR
+// Recital 26 note).
+func Pseudonymize(userID string, salt []byte) string {
+	h := sha256.New()
+	h.Write([]byte(userID))
+	h.Write(salt)
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // Store is the §11.2.1 billing event ledger contract. It is
 // append-only: implementations never update or delete a committed
@@ -126,6 +150,33 @@ func (m *Memory) Append(_ context.Context, e Event) (Event, error) {
 	committed.SequenceNumber = uint64(len(m.events[e.TenantID])) + 1
 	m.events[e.TenantID] = append(m.events[e.TenantID], committed)
 	return committed, nil
+}
+
+// PseudonymizeUser rewrites every billing event in tenantID owned by
+// userID, replacing the user id with its §12.8 pseudonym. It is the
+// erasure-only exception to the append-only contract: the GDPR erasure
+// job calls it so a user's billing history is de-identified while the
+// sequence numbers, tenant id, and cost dimensions stay intact for
+// financial reconciliation. It returns the count of events rewritten
+// and is idempotent — a second call with the same user id finds no
+// event still keyed to it. The current billing-event schema carries no
+// free-text columns, so the user id is the only personal field.
+func (m *Memory) PseudonymizeUser(_ context.Context, tenantID, userID string, salt []byte) (int, error) {
+	if tenantID == "" || userID == "" || len(salt) == 0 {
+		return 0, ErrPseudonymizeArg
+	}
+	pseudonym := Pseudonymize(userID, salt)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	events := m.events[tenantID]
+	for i := range events {
+		if events[i].UserID == userID {
+			events[i].UserID = pseudonym
+			n++
+		}
+	}
+	return n, nil
 }
 
 // Since implements Store.

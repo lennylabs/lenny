@@ -130,3 +130,137 @@ func TestSinceUnknownTenantIsEmpty(t *testing.T) {
 		t.Errorf("unknown tenant: got %d events, want 0", len(got))
 	}
 }
+
+// spec: §12.8 tenant-controlled billing erasure.
+
+// erasureSalt is a 32-byte (256-bit) fixed salt for the pseudonymize
+// tests, standing in for the per-tenant crypto/rand salt.
+var erasureSalt = []byte("0123456789abcdef0123456789abcdef")
+
+// billed builds a billing event carrying a cost dimension so the
+// pseudonymize tests can assert the cost columns survive.
+func billed(tenant, user string, tokensIn uint64) billingstore.Event {
+	return billingstore.Event{
+		TenantID:    tenant,
+		UserID:      user,
+		SessionID:   "sess",
+		EventType:   billingstore.EventSessionCreated,
+		TokensInput: tokensIn,
+	}
+}
+
+func TestPseudonymizeIsDeterministicAndSalted(t *testing.T) {
+	got := billingstore.Pseudonymize("alice@acme", erasureSalt)
+	if got != billingstore.Pseudonymize("alice@acme", erasureSalt) {
+		t.Error("Pseudonymize must be deterministic for the same user id and salt")
+	}
+	if got == "alice@acme" {
+		t.Error("the pseudonym must not equal the plaintext user id")
+	}
+	if len(got) != 64 {
+		t.Errorf("a SHA-256 hex pseudonym is 64 chars, got %d", len(got))
+	}
+	if billingstore.Pseudonymize("alice@acme", []byte("ffffffffffffffffffffffffffffffff")) == got {
+		t.Error("a different salt must produce a different pseudonym")
+	}
+	if billingstore.Pseudonymize("bob@acme", erasureSalt) == got {
+		t.Error("a different user id must produce a different pseudonym")
+	}
+}
+
+func TestPseudonymizeUserRewritesOnlyTheTargetUser(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := store.Append(ctx, billed("acme", "alice@acme", 10)); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	if _, err := store.Append(ctx, billed("acme", "bob@acme", 20)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	n, err := store.PseudonymizeUser(ctx, "acme", "alice@acme", erasureSalt)
+	if err != nil {
+		t.Fatalf("PseudonymizeUser: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("rewrote %d events, want 3 (alice's events only)", n)
+	}
+
+	want := billingstore.Pseudonymize("alice@acme", erasureSalt)
+	events, _ := store.Since(ctx, "acme", 0, 0)
+	for _, e := range events {
+		if e.SequenceNumber == 4 { // bob's event
+			if e.UserID != "bob@acme" {
+				t.Errorf("bob's event was rewritten: UserID=%q", e.UserID)
+			}
+			continue
+		}
+		if e.UserID != want { // alice's events
+			t.Errorf("event %d not pseudonymized: UserID=%q, want %q", e.SequenceNumber, e.UserID, want)
+		}
+		// §12.8: sequence number and cost dimensions survive intact.
+		if e.TenantID != "acme" || e.TokensInput != 10 {
+			t.Errorf("event %d lost a retained field: tenant=%q tokensIn=%d", e.SequenceNumber, e.TenantID, e.TokensInput)
+		}
+	}
+}
+
+func TestPseudonymizeUserIsIdempotent(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	if _, err := store.Append(ctx, billed("acme", "alice@acme", 10)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := store.PseudonymizeUser(ctx, "acme", "alice@acme", erasureSalt); err != nil {
+		t.Fatalf("first PseudonymizeUser: %v", err)
+	}
+	n, err := store.PseudonymizeUser(ctx, "acme", "alice@acme", erasureSalt)
+	if err != nil {
+		t.Fatalf("second PseudonymizeUser: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("a re-run rewrote %d events; the original user id should no longer be present", n)
+	}
+}
+
+func TestPseudonymizeUserRejectsEmptyArgs(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	cases := []struct {
+		name         string
+		tenant, user string
+		salt         []byte
+	}{
+		{"empty tenant", "", "alice@acme", erasureSalt},
+		{"empty user", "acme", "", erasureSalt},
+		{"empty salt", "acme", "alice@acme", nil},
+	}
+	for _, tc := range cases {
+		if _, err := store.PseudonymizeUser(ctx, tc.tenant, tc.user, tc.salt); !errors.Is(err, billingstore.ErrPseudonymizeArg) {
+			t.Errorf("%s: got %v, want ErrPseudonymizeArg", tc.name, err)
+		}
+	}
+}
+
+func TestPseudonymizeUserScopedToTenant(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	// The same user-id string appears in two tenants.
+	if _, err := store.Append(ctx, billed("acme", "alice", 10)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := store.Append(ctx, billed("globex", "alice", 10)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	if _, err := store.PseudonymizeUser(ctx, "acme", "alice", erasureSalt); err != nil {
+		t.Fatalf("PseudonymizeUser: %v", err)
+	}
+
+	globex, _ := store.Since(ctx, "globex", 0, 0)
+	if len(globex) != 1 || globex[0].UserID != "alice" {
+		t.Errorf("globex's event must be untouched, got %+v", globex)
+	}
+}
