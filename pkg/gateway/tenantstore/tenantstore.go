@@ -53,6 +53,13 @@ type Tenant struct {
 	// unlimited.
 	StorageQuotaBytes int64
 
+	// ElicitationContentIntegrity is the §9.2 tenant-stored elicitation
+	// content-integrity mode (`off`, `detect-only`, or `enforce`). The
+	// gateway clamps it against the platform floor at use time. Empty
+	// means the tenant has set no override and the platform floor
+	// applies.
+	ElicitationContentIntegrity string
+
 	// CreatedAt is the UTC instant the tenant row was committed.
 	CreatedAt time.Time
 

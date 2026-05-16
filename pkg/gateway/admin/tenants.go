@@ -138,6 +138,10 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetTenant)))
 		mux.Handle("PUT /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateTenant)))
 		mux.Handle("DELETE /v1/admin/tenants/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteTenant)))
+		mux.Handle("GET /v1/admin/tenants/{id}/elicitation-content-integrity",
+			r.requireAdmin(http.HandlerFunc(r.handleGetElicitationIntegrity)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/elicitation-content-integrity",
+			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 	}
 	if r.runtimes != nil {
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
