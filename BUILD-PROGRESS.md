@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3390203` — Gateway-side `adapterclient.Attach` (§4.7). `Client.Attach` opens and
+  binds the content stream; `AttachStream.Send` / `Recv` / `CloseSend` wrap the bidi
+  stream. The §4.7 content path now has its proto RPC, adapter handler, and gateway
+  client; wiring it into the gateway session path remains.
 - `a21b2bf` — Adapter `Attach` handler (§4.7). The bidirectional content stream: a
   receive loop forwards client envelopes to the runtime's stdin, a send loop streams
   the runtime's output envelopes back. `RuntimeProcess` gained an `Output` method
@@ -316,11 +320,11 @@ progress; see the progress log.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 **The `Attach` content path.** The per-message agent-response round-trip uses the
-`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). `Attach` is in
-`schemas/lenny-adapter.proto` (`3128fa7`) and the adapter-server handler is built
-(`a21b2bf`); the gateway-side `adapterclient.Attach` and its use in the gateway
-session path remain. The proto is still a Phase-1 skeleton behind §4.7 on other RPCs
-— `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`,
+`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). It is built end to end
+as components: the proto RPC (`3128fa7`), the adapter-server handler (`a21b2bf`), and
+the gateway-side `adapterclient.Attach` (`3390203`). What remains is wiring `Attach`
+into the gateway session path. The proto is still a Phase-1 skeleton behind §4.7 on
+other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`,
 `CheckpointBarrier`, `CoordinatorFence`, `ExportPaths`, `Resume`, `Terminate` — which
 §15.4 mandates reconciling.
 
