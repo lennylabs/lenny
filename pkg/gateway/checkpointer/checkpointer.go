@@ -21,19 +21,68 @@ import (
 // the session: it is not coordinated by this gateway replica.
 var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
 
+// defaultInterval is the periodic-checkpoint cadence used when Interval
+// is zero.
+const defaultInterval = 5 * time.Minute
+
 // Checkpointer takes §4.4 checkpoints of running sessions and records
 // the resulting snapshot on the session row.
 type Checkpointer struct {
 	// Sessions is the session store the WorkspaceSnapshot is recorded
 	// on.
 	Sessions sessionstore.Store
-	// Registry resolves a session to its bound pod adapter.
+	// Registry resolves a session to its bound pod adapter and
+	// enumerates the sessions this replica coordinates.
 	Registry *podsession.Registry
 	// Deadline bounds one checkpoint RPC. Zero lets the adapter apply
 	// its own §4.4 default.
 	Deadline time.Duration
+	// Interval is the periodic-checkpoint cadence Run ticks on. Zero
+	// selects defaultInterval.
+	Interval time.Duration
 	// Now returns the checkpoint timestamp. Nil selects time.Now.
 	Now func() time.Time
+	// OnError, when set, receives a per-session checkpoint failure
+	// during a sweep so the gateway can log it. A sweep continues
+	// past a failed session regardless.
+	OnError func(sessionID string, err error)
+}
+
+// Run drives the periodic-checkpoint loop: every Interval it sweeps a
+// §4.4 checkpoint of every running session this gateway replica
+// coordinates, keeping each session's WorkspaceSnapshot fresh against
+// the §16.5 checkpoint-freshness SLO. Run blocks until ctx is
+// cancelled.
+func (c *Checkpointer) Run(ctx context.Context) {
+	ticker := time.NewTicker(c.interval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.Sweep(ctx)
+		}
+	}
+}
+
+// Sweep takes one §4.4 checkpoint of every session this replica
+// coordinates. A per-session failure is reported through OnError and
+// does not stop the sweep.
+func (c *Checkpointer) Sweep(ctx context.Context) {
+	for _, b := range c.Registry.Snapshot() {
+		if err := c.Checkpoint(ctx, b.TenantID, b.SessionID); err != nil && c.OnError != nil {
+			c.OnError(b.SessionID, err)
+		}
+	}
+}
+
+// interval returns the configured periodic-checkpoint cadence.
+func (c *Checkpointer) interval() time.Duration {
+	if c.Interval > 0 {
+		return c.Interval
+	}
+	return defaultInterval
 }
 
 // Checkpoint takes one §4.4 checkpoint of the session: it drives the

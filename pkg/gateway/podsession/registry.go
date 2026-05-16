@@ -53,3 +53,16 @@ func (r *Registry) Len() int {
 	defer r.mu.Unlock()
 	return len(r.sessions)
 }
+
+// Snapshot returns every binding the registry currently holds. The
+// returned slice is a copy, so a caller may iterate it without holding
+// the registry lock while bindings are added or removed concurrently.
+func (r *Registry) Snapshot() []*BindResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*BindResult, 0, len(r.sessions))
+	for _, b := range r.sessions {
+		out = append(out, b)
+	}
+	return out
+}

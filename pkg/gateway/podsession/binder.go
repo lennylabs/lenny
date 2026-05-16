@@ -58,6 +58,8 @@ type BindRequest struct {
 type BindResult struct {
 	// SessionID is the session the pod was claimed for.
 	SessionID string
+	// TenantID is the tenant that owns the session.
+	TenantID string
 	// SandboxName is the claimed Sandbox.
 	SandboxName string
 	// PodIP is the bound pod's address.
@@ -115,6 +117,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (result *BindResult,
 	}
 	return &BindResult{
 		SessionID:   req.SessionID,
+		TenantID:    req.TenantID,
 		SandboxName: claim.Spec.SandboxRef,
 		PodIP:       podIP,
 		Adapter:     cl,

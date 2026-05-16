@@ -169,3 +169,84 @@ func TestCheckpointSurfacesAnAdapterFailure(t *testing.T) {
 		t.Error("a WorkspaceSnapshot was recorded despite the checkpoint failure")
 	}
 }
+
+// bindSession wires a bufconn adapter for sessionID, registers the pod
+// binding, and seeds a running session row.
+func bindSession(t *testing.T, registry *podsession.Registry, store sessionstore.Store, tenantID, sessionID string, sink adapter.CheckpointSink) {
+	t.Helper()
+	srv := adapter.New("checkpointer-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = stubRuntime{}
+	srv.Checkpoints = sink
+	client := dialAdapter(t, srv)
+	if err := client.StartSession(context.Background(), sessionID, "echo", nil); err != nil {
+		t.Fatalf("StartSession %s: %v", sessionID, err)
+	}
+	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: tenantID, Adapter: client})
+	runningSession(t, store, tenantID, sessionID)
+}
+
+func TestSweepCheckpointsEveryCoordinatedSession(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "ck-1"})
+	bindSession(t, registry, store, "acme", "s2", stubSink{id: "ck-2"})
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry}
+	cp.Sweep(context.Background())
+
+	for _, tc := range []struct{ id, ref string }{{"s1", "ck-1"}, {"s2", "ck-2"}} {
+		row, err := store.Get(context.Background(), "acme", tc.id)
+		if err != nil {
+			t.Fatalf("Get %s: %v", tc.id, err)
+		}
+		if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref != tc.ref {
+			t.Errorf("session %s snapshot = %+v, want ref %s", tc.id, row.WorkspaceSnapshot, tc.ref)
+		}
+	}
+}
+
+func TestSweepReportsPerSessionFailuresAndContinues(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "ok", stubSink{id: "ck-ok"})
+	bindSession(t, registry, store, "acme", "bad", stubSink{err: errors.New("store down")})
+
+	var failed []string
+	cp := &checkpointer.Checkpointer{
+		Sessions: store,
+		Registry: registry,
+		OnError:  func(sessionID string, _ error) { failed = append(failed, sessionID) },
+	}
+	cp.Sweep(context.Background())
+
+	if len(failed) != 1 || failed[0] != "bad" {
+		t.Errorf("OnError saw %v, want [bad]", failed)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "ok"); row.WorkspaceSnapshot == nil {
+		t.Error("the sweep stopped after the failed session — ok was not checkpointed")
+	}
+}
+
+func TestRunPeriodicallySweeps(t *testing.T) {
+	registry := podsession.NewRegistry()
+	store := memstore.New()
+	bindSession(t, registry, store, "acme", "s1", stubSink{id: "ck-run"})
+
+	cp := &checkpointer.Checkpointer{Sessions: store, Registry: registry, Interval: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go cp.Run(ctx)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if row, _ := store.Get(context.Background(), "acme", "s1"); row.WorkspaceSnapshot != nil {
+			return // the periodic loop checkpointed the session.
+		}
+		select {
+		case <-deadline:
+			t.Fatal("Run did not checkpoint the session within the deadline")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
