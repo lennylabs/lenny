@@ -248,3 +248,52 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+---
+{{- /*
+allow-gateway-metrics-scrape and allow-token-service-metrics-scrape
+admit Prometheus scrape requests from the monitoring namespace to the
+gateway and Token Service metrics ports (§13.2 line 228 supplemental
+ingress). Without them the lenny-system default-deny silently drops
+those component metrics scrapes.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.gateway.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-token-service-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: token-service
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.tokenService.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]

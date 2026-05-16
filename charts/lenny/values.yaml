@@ -70,6 +70,9 @@ tokenService:
   # grpcPort is the mTLS gRPC port the gateway reaches the Token
   # Service on (§13.2).
   grpcPort: 50052
+  # metricsPort is the port the Token Service serves Prometheus
+  # metrics on (§13.2); the monitoring-scrape NetworkPolicy admits it.
+  metricsPort: 9090
 
 # redis configures the Redis connection.
 redis:
@@ -109,6 +112,9 @@ gateway:
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
   grpcPort: 50051
+  # metricsPort is the port the gateway serves Prometheus metrics on
+  # (§13.2); the monitoring-scrape NetworkPolicy admits it.
+  metricsPort: 9090
 
 # security carries platform-wide security posture settings.
 security:
