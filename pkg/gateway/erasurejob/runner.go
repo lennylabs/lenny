@@ -4,6 +4,7 @@ package erasurejob
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
@@ -13,16 +14,18 @@ import (
 // through its phases while the erasure.Orchestrator deletes the target
 // user's data from every store.
 //
-// The v1 runner covers the store-deletion core of the §12.8 sequence
-// (initiated → store_deleting → completed, or failed). The
-// pseudonymizing and verifying phases belong to billing-event
-// pseudonymization, which depends on the per-tenant erasure_salt and
-// KMS unwrap path; the runner leaves those phases to the salt-aware
-// erasure controller.
+// The runner drives the store-deletion core of the §12.8 sequence
+// (initiated → store_deleting). When a BillingEraser is attached via
+// WithBilling, it then drives the pseudonymizing and verifying phases:
+// the target user's billing events are pseudonymized rather than
+// deleted, and the §12.8 post-pseudonymization check confirms the
+// erasure is effective. Without a BillingEraser the job completes at
+// store deletion.
 type Runner struct {
-	jobs  Store
-	erase *erasure.Orchestrator
-	clock func() time.Time
+	jobs    Store
+	erase   *erasure.Orchestrator
+	billing *BillingEraser
+	clock   func() time.Time
 }
 
 // NewRunner builds a Runner over the job registry and the erasure
@@ -32,6 +35,52 @@ func NewRunner(jobs Store, orch *erasure.Orchestrator, clock func() time.Time) *
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &Runner{jobs: jobs, erase: orch, clock: clock}
+}
+
+// WithBilling attaches the §12.8 BillingEraser so Run drives the
+// pseudonymizing and verifying phases after store deletion. It returns
+// the Runner for call chaining.
+func (r *Runner) WithBilling(b *BillingEraser) *Runner {
+	r.billing = b
+	return r
+}
+
+// errBillingVerification is the failure cause recorded when the §12.8
+// post-pseudonymization check does not pass.
+var errBillingVerification = errors.New(
+	"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization")
+
+// setPhase returns a job mutator that sets the lifecycle phase.
+func setPhase(p Phase) func(*Job) error {
+	return func(j *Job) error {
+		j.Phase = p
+		return nil
+	}
+}
+
+// recordBilling returns a job mutator that records the §12.8 billing
+// erasure outcome on the job.
+func recordBilling(o BillingErasureOutcome) func(*Job) {
+	return func(j *Job) { j.Billing = o }
+}
+
+// fail transitions the job to PhaseFailed with cause as the recorded
+// failure reason. extra, when non-nil, records any partial result
+// first. It returns cause so a synchronous caller observes the
+// failure; a registry-update error preempts it.
+func (r *Runner) fail(ctx context.Context, jobID string, cause error, extra func(*Job)) error {
+	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
+		if extra != nil {
+			extra(j)
+		}
+		j.Phase = PhaseFailed
+		j.Failure = cause.Error()
+		j.CompletedAt = r.clock()
+		return nil
+	}); err != nil {
+		return err
+	}
+	return cause
 }
 
 // Start records a fresh erasure job for the user in PhaseInitiated and
@@ -53,15 +102,20 @@ func (r *Runner) Start(ctx context.Context, tenantID, userID string) (string, er
 }
 
 // Run executes the erasure job to completion. It transitions the job
-// initiated → store_deleting → completed, recording the per-store
-// deleted counts the orchestrator reports. A store error transitions
-// the job to failed with the orchestrator's partial result preserved,
-// matching the §12.8 fail-fast contract so a retry resumes from a
-// consistent point. A job already in a terminal phase is left
+// initiated → store_deleting, recording the per-store deleted counts
+// the orchestrator reports. When a BillingEraser is attached it then
+// drives pseudonymizing → verifying — pseudonymizing the target user's
+// billing events and confirming the §12.8 post-erasure check — before
+// the job reaches completed.
+//
+// Run is fail-fast: a store error, a pseudonymization error, or a
+// failed verification transitions the job to failed with the partial
+// result preserved, matching the §12.8 contract so a retry resumes
+// from a consistent point. A job already in a terminal phase is left
 // untouched, so a crash-recovery re-run is idempotent.
 //
-// Run returns the erasure error (if any) for the benefit of a
-// synchronous caller; the job record is the authoritative outcome.
+// Run returns the failure cause (if any) for a synchronous caller; the
+// job record is the authoritative outcome.
 func (r *Runner) Run(ctx context.Context, jobID string) error {
 	job, err := r.jobs.Get(ctx, jobID)
 	if err != nil {
@@ -70,28 +124,58 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	if job.Phase.Terminal() {
 		return nil
 	}
-	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
-		j.Phase = PhaseStoreDeleting
-		return nil
-	}); err != nil {
+
+	// Store deletion.
+	if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseStoreDeleting)); err != nil {
 		return err
 	}
-
 	res, eraseErr := r.erase.DeleteByUser(ctx, job.TenantID, job.UserID)
-
 	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
 		j.Deleted = res.Deleted
 		j.Total = res.Total
-		j.CompletedAt = r.clock()
-		if eraseErr != nil {
-			j.Phase = PhaseFailed
-			j.Failure = eraseErr.Error()
-			return nil
-		}
-		j.Phase = PhaseCompleted
 		return nil
 	}); err != nil {
 		return err
 	}
-	return eraseErr
+	if eraseErr != nil {
+		return r.fail(ctx, jobID, eraseErr, nil)
+	}
+
+	// §12.8 billing-event pseudonymization, when a BillingEraser is
+	// attached: billing events are pseudonymized rather than deleted,
+	// then the post-pseudonymization check confirms the erasure.
+	billing := BillingErasureOutcome{}
+	if r.billing != nil {
+		if _, err := r.jobs.Update(ctx, jobID, setPhase(PhasePseudonymizing)); err != nil {
+			return err
+		}
+		billing, err = r.billing.Pseudonymize(ctx, job.TenantID, job.UserID)
+		if err != nil {
+			return r.fail(ctx, jobID, err, nil)
+		}
+		if billing.Disposition != billingExempt {
+			if _, err := r.jobs.Update(ctx, jobID, setPhase(PhaseVerifying)); err != nil {
+				return err
+			}
+			verified, err := r.billing.Verify(ctx, job.TenantID, job.UserID)
+			if err != nil {
+				return r.fail(ctx, jobID, err, recordBilling(billing))
+			}
+			billing.Verified = verified
+			if !verified {
+				return r.fail(ctx, jobID, errBillingVerification, recordBilling(billing))
+			}
+		}
+	}
+
+	// Completed.
+	if _, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
+		j.Billing = billing
+		j.Phase = PhaseCompleted
+		j.CompletedAt = r.clock()
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
 }

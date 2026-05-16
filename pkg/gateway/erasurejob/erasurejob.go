@@ -67,6 +67,12 @@ type Job struct {
 	Deleted map[string]int
 	// Total is the sum of Deleted across stores.
 	Total int
+	// Billing records the §12.8 billing-pseudonymization outcome: the
+	// disposition, the count of events rewritten, and whether the
+	// post-erasure verification passed. Zero value when the job has
+	// not reached the pseudonymizing phase or no BillingEraser is
+	// wired into the Runner.
+	Billing BillingErasureOutcome
 	// Failure carries the error reason when Phase is failed.
 	Failure string
 }

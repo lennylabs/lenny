@@ -556,8 +556,16 @@ func main() {
 			},
 		})
 		erasureJobs := erasurejob.NewMemory()
-		adminRouter = adminRouter.WithErasure(
-			erasurejob.NewRunner(erasureJobs, erasureOrch, nil), erasureJobs)
+		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil)
+		// §12.8: billing events are append-only, so the erasure job
+		// pseudonymizes them rather than deleting them. The Postgres
+		// billing store's pseudonymize path is deferred (it needs an
+		// UPDATE under the lenny_erasure role), so this attaches the
+		// BillingEraser only when the in-memory billing store is wired.
+		if be, ok := billing.(erasurejob.BillingErasureStore); ok {
+			erasureRunner = erasureRunner.WithBilling(erasurejob.NewBillingEraser(be, tenants))
+		}
+		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
 	}
 	if pgPool != nil {
 		// §13.3 operator-initiated token revocation, durable in the

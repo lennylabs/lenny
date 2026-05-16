@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // fixedClock returns a deterministic clock for job timestamps.
@@ -159,5 +161,130 @@ func TestRunnerRunEmptyOrchestratorCompletes(t *testing.T) {
 	job, _ := jobs.Get(context.Background(), id)
 	if job.Phase != erasurejob.PhaseCompleted || job.Total != 0 {
 		t.Errorf("job = %+v, want completed with Total 0", job)
+	}
+}
+
+// stubBillingStore is a BillingErasureStore with fixed return values,
+// for exercising the runner's billing verification-failure path.
+type stubBillingStore struct {
+	pseudonymized int
+	remaining     int
+}
+
+func (s stubBillingStore) PseudonymizeUser(context.Context, string, string, []byte) (int, error) {
+	return s.pseudonymized, nil
+}
+
+func (s stubBillingStore) CountUser(context.Context, string, string) (int, error) {
+	return s.remaining, nil
+}
+
+func TestRunnerRunPseudonymizesBilling(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
+	billing := billingstore.NewMemory()
+	seedBilling(t, billing, "acme", "alice@acme", 4)
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	job, _ := jobs.Get(ctx, id)
+	if job.Phase != erasurejob.PhaseCompleted {
+		t.Fatalf("Phase = %q, want completed", job.Phase)
+	}
+	if job.Billing.Disposition != "pseudonymized" || job.Billing.Pseudonymized != 4 {
+		t.Errorf("Billing = %+v, want disposition=pseudonymized pseudonymized=4", job.Billing)
+	}
+	if !job.Billing.Verified {
+		t.Error("Billing.Verified should be true after a clean pseudonymization")
+	}
+	if cnt, _ := billing.CountUser(ctx, "acme", "alice@acme"); cnt != 0 {
+		t.Errorf("%d billing events still carry the original user id, want 0", cnt)
+	}
+}
+
+func TestRunnerRunBillingExemptTenant(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	seedTenant(t, tenants, tenantstore.Tenant{
+		ID: "acme", BillingErasurePolicy: tenantstore.BillingErasureExempt,
+	})
+	billing := billingstore.NewMemory()
+	seedBilling(t, billing, "acme", "alice@acme", 2)
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	job, _ := jobs.Get(ctx, id)
+	if job.Phase != erasurejob.PhaseCompleted {
+		t.Fatalf("Phase = %q, want completed", job.Phase)
+	}
+	if job.Billing.Disposition != "exempt" {
+		t.Errorf("Billing.Disposition = %q, want exempt", job.Billing.Disposition)
+	}
+	if cnt, _ := billing.CountUser(ctx, "acme", "alice@acme"); cnt != 2 {
+		t.Errorf("exempt tenant's billing events were rewritten: CountUser=%d, want 2", cnt)
+	}
+}
+
+func TestRunnerRunBillingPseudonymizeFails(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory() // "acme" intentionally not seeded
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(billingstore.NewMemory(), tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err == nil {
+		t.Fatal("Run should fail when the tenant is absent from the registry")
+	}
+
+	job, _ := jobs.Get(ctx, id)
+	if job.Phase != erasurejob.PhaseFailed {
+		t.Errorf("Phase = %q, want failed", job.Phase)
+	}
+	if job.Failure == "" {
+		t.Error("Failure should carry the pseudonymization error")
+	}
+}
+
+func TestRunnerRunBillingVerificationFails(t *testing.T) {
+	ctx := context.Background()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	seedTenant(t, tenants, tenantstore.Tenant{ID: "acme"})
+	// A billing store that reports events still keyed to the user
+	// after pseudonymization — the §12.8 verification must fail closed.
+	stub := stubBillingStore{pseudonymized: 5, remaining: 3}
+
+	r := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), nil).
+		WithBilling(erasurejob.NewBillingEraser(stub, tenants))
+	id, _ := r.Start(ctx, "acme", "alice@acme")
+	if err := r.Run(ctx, id); err == nil {
+		t.Fatal("Run should fail when billing erasure verification does not pass")
+	}
+
+	job, _ := jobs.Get(ctx, id)
+	if job.Phase != erasurejob.PhaseFailed {
+		t.Errorf("Phase = %q, want failed", job.Phase)
+	}
+	// The pseudonymized partial result is recorded even on a
+	// verification failure.
+	if job.Billing.Disposition != "pseudonymized" || job.Billing.Pseudonymized != 5 {
+		t.Errorf("Billing = %+v, want the pseudonymized partial result recorded", job.Billing)
+	}
+	if job.Billing.Verified {
+		t.Error("Billing.Verified must be false on a verification failure")
 	}
 }
