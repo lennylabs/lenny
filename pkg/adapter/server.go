@@ -42,16 +42,25 @@ type Server struct {
 	// WorkspaceRoot is the directory StartSession materializes the
 	// session workspace into — the pod's /workspace/current.
 	WorkspaceRoot string
+	// CredentialsDir is the directory the credential RPCs materialize
+	// the §4.7 credential file into — the pod's /run/lenny.
+	CredentialsDir string
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess
 
-	// mu guards sessionID.
+	// mu guards sessionID and the credential fields.
 	mu sync.Mutex
 	// sessionID is the session currently assigned to the pod, empty
 	// when the pod is idle. Per §6.1 a session-mode pod is
 	// one-session-only.
 	sessionID string
+	// credSessionID is the session the current credential leases were
+	// assigned for, empty when none are assigned.
+	credSessionID string
+	// credLeases is the credential lease set materialized into the
+	// credential file, keyed by provider.
+	credLeases map[string]*adapterv1.CredentialLease
 }
 
 // New returns a Server advertising the given build version and the v1

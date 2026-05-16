@@ -44,6 +44,8 @@ func main() {
 		"path to the CA bundle that verifies gateway client certificates")
 	workspaceRoot := flag.String("workspace-root", "/workspace/current",
 		"directory the session workspace is materialized into")
+	credentialsDir := flag.String("credentials-dir", "/run/lenny",
+		"directory the §4.7 credential file is materialized into")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to the runtime binary the adapter starts at session start")
 	flag.Parse()
@@ -59,6 +61,7 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.CredentialsDir = *credentialsDir
 	if *runtimeBin != "" {
 		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
 			BinPath: *runtimeBin,
