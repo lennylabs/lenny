@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3586fe6` — `workspace.Extract` (§4.4, §7.1, §14). Restores a workspace from a
+  gzip-tar — the inverse of `Archive` — with per-entry containment, symlink-target
+  validation that closes the tar-traversal vector, and a decompression-bomb cap. The
+  adapter restore path and §14 `uploadArchive` materialization build on it.
 - `5f3f268` — Gateway wires the checkpointer as the §7.1 session sealer.
   `cmd/lenny-gateway` passes the `Checkpointer` as the `sessionserver` `Sealer`, so a
   completing session's workspace is sealed on the session-completion path.
@@ -439,7 +443,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Mostly done    | The `lenny-drain-readiness` webhook is complete end to end. The §4.4 periodic-checkpoint path and the §7.1 seal-and-export are complete: `workspace.Archive`, the adapter `Checkpoint` RPC, `adapterclient.Checkpoint`, `checkpointer.Checkpointer` with its `Run`/`Sweep` loop and `Seal`, the `sessionserver` `Sealer` hook on session completion, and the `cmd/lenny-gateway` wiring. The §7.1 resume-from-snapshot path (materializing a session's stored `WorkspaceSnapshot` onto a fresh pod) is not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Mostly done    | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete (`workspace.Archive`, the adapter `Checkpoint` RPC, `adapterclient.Checkpoint`, `checkpointer.Checkpointer` with `Run`/`Sweep`/`Seal`, the `sessionserver` `Sealer` hook, and the `cmd/lenny-gateway` wiring). `workspace.Extract` restores a workspace from a gzip-tar. The §7.1 resume-from-snapshot path — a dedicated `handleResume` plus the adapter mechanism that restores a resumed pod's workspace from the stored checkpoint — is not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -549,13 +553,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §7.1 resume-from-snapshot path. `POST /v1/sessions/{id}/resume` currently
-short-circuits a session to `running` via the generic `handleTransition`. The full
-path, like the dedicated `handleStart`, claims a fresh warm pod and materializes the
-session's stored `WorkspaceSnapshot` into it before the row transitions to running.
-This needs the adapter to materialize a workspace from an archive (a snapshot source
-the adapter does not yet restore) and a dedicated `handleResume` handler. It is the
-last Phase 8 deliverable.
+Build the adapter workspace-restore step for the §7.1 resume path. The resumed pod's
+adapter must rebuild the session workspace from a stored checkpoint archive before the
+runtime starts. With `workspace.Extract` in place, the next increment is the adapter
+side: `StartSession` (or a restore variant) accepts a checkpoint archive and calls
+`Extract` to materialize it. After that, the dedicated `handleResume` gateway handler —
+claim a fresh pod, restore the stored `WorkspaceSnapshot`, transition to running —
+completes the §7.1 resume path and Phase 8.
 
 ## Test status
 
