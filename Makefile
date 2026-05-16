@@ -32,6 +32,13 @@ build: ## Build every cmd/ binary into ./bin
 		go build -o bin/$$name ./$$d || exit 1; \
 	done
 
+.PHONY: images
+images: ## Build container images for the deployable platform binaries
+	@for b in lenny-adapter lenny-controller lenny-gateway lenny-webhook lenny-token-service; do \
+		echo "  image $$b"; \
+		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
+	done
+
 .PHONY: generate
 generate: ## Regenerate DeepCopy + CRD manifests via controller-gen
 	@echo "  controller-gen object → pkg/apis DeepCopy"
