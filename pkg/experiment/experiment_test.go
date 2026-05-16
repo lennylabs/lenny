@@ -50,6 +50,63 @@ func TestStatusCanTransitionTo(t *testing.T) {
 	}
 }
 
+// routeExp builds a single-variant Definition for the Route tests. A
+// weight near 1 routes essentially every key to the variant; a weight
+// near 0 routes essentially every key to control.
+func routeExp(id string, weight float64, status Status, mode TargetingMode) Definition {
+	return Definition{
+		ID: id, Status: status, BaseRuntime: "r",
+		Variants:      []Variant{{ID: id + "-v", Weight: weight}},
+		TargetingMode: mode, Sticky: StickyUser, Propagation: PropagationInherit,
+	}
+}
+
+func TestRouteFirstMatchWins(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	got := Route([]Definition{a, b}, "alice", "sess-1")
+	if got.ExperimentID != "exp-a" || got.VariantID != "exp-a-v" {
+		t.Errorf("Route = %+v, want the first experiment's enrollment", got)
+	}
+}
+
+func TestRouteSkipsControlAssignments(t *testing.T) {
+	// exp-a routes virtually every key to control; exp-b routes to its variant.
+	a := routeExp("exp-a", 0.0001, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	got := Route([]Definition{a, b}, "alice", "sess-1")
+	if got.ExperimentID != "exp-b" {
+		t.Errorf("Route = %+v, want exp-b (a control assignment is skipped)", got)
+	}
+}
+
+func TestRouteNoMatchReturnsZero(t *testing.T) {
+	a := routeExp("exp-a", 0.0001, StatusActive, TargetingPercentage)
+	if got := Route([]Definition{a}, "alice", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route = %+v, want a zero Assignment when every experiment yields control", got)
+	}
+}
+
+func TestRouteSkipsPausedAndExternal(t *testing.T) {
+	paused := routeExp("paused", 0.9999, StatusPaused, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	if got := Route([]Definition{paused, external}, "alice", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route = %+v, want zero — paused and external-mode experiments are not routed", got)
+	}
+}
+
+func TestRouteStickyUserUsesUserID(t *testing.T) {
+	e := routeExp("exp", 0.9999, StatusActive, TargetingPercentage) // sticky: user
+	// An anonymous session (empty userID) yields control under sticky:user.
+	if got := Route([]Definition{e}, "", "sess-1"); got != (Assignment{}) {
+		t.Errorf("Route with no userID = %+v, want zero (anonymous → control)", got)
+	}
+	// A named user routes to the variant.
+	if got := Route([]Definition{e}, "alice", "sess-1"); got.ExperimentID != "exp" {
+		t.Errorf("Route with a userID = %+v, want enrollment", got)
+	}
+}
+
 func TestAllTargetingModesIsExhaustive(t *testing.T) {
 	if got := len(AllTargetingModes()); got != 2 {
 		t.Errorf("AllTargetingModes() returned %d, want 2 per §10.7", got)

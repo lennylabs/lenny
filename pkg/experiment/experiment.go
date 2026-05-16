@@ -245,6 +245,43 @@ func AssignVariant(assignmentKey, experimentID string, variants []Variant) strin
 	return ControlVariantID
 }
 
+// Assignment is the outcome of routing a session through a tenant's
+// active experiments. A zero Assignment means no experiment enrolled
+// the session — it runs the base runtime with no experiment context.
+type Assignment struct {
+	ExperimentID string
+	VariantID    string
+}
+
+// Route applies the §10.7 first-match multi-experiment rule. The
+// experiments are evaluated in the given order (the caller sorts by
+// created_at), and the first routable percentage-mode experiment that
+// assigns the session to a non-control variant wins — that
+// experiment's enrollment is returned and evaluation stops. Paused and
+// concluded experiments are skipped, as are external-mode experiments
+// (their assignment is resolved by an OpenFeature provider, not this
+// function). When no experiment produces a non-control variant the
+// returned Assignment is zero.
+//
+// The §10.7 assignment key depends on each experiment's sticky mode:
+// `user` keys on userID, `session` and `none` key on sessionID. An
+// empty key (sticky:user with an anonymous session) yields control.
+func Route(experiments []Definition, userID, sessionID string) Assignment {
+	for _, e := range experiments {
+		if !e.Status.IsRoutable() || e.TargetingMode != TargetingPercentage {
+			continue
+		}
+		key := sessionID
+		if e.Sticky == StickyUser {
+			key = userID
+		}
+		if v := AssignVariant(key, e.ID, e.Variants); v != ControlVariantID {
+			return Assignment{ExperimentID: e.ID, VariantID: v}
+		}
+	}
+	return Assignment{}
+}
+
 // AssignVariantDeterministic verifies the §10.7 determinism
 // property: identical inputs always yield the same variant. Returns
 // nil when the property holds for the supplied set of test keys.

@@ -56,9 +56,9 @@ type Experiment struct {
 	UpdatedAt time.Time
 }
 
-// definition projects the Experiment onto the experiment.Definition
-// subset the experiment package validates.
-func (e Experiment) definition() experiment.Definition {
+// Definition projects the Experiment onto the experiment.Definition
+// subset the experiment package validates and routes over.
+func (e Experiment) Definition() experiment.Definition {
 	vs := make([]experiment.Variant, len(e.Variants))
 	for i, v := range e.Variants {
 		vs[i] = experiment.Variant{ID: v.ID, Weight: v.Weight}
@@ -78,7 +78,7 @@ func (e Experiment) definition() experiment.Definition {
 // reserved "control" identifier, and the enum fields. Cross-resource
 // checks (variant runtime/pool existence, isolation monotonicity) are
 // not covered here.
-func (e Experiment) Validate() error { return e.definition().Validate() }
+func (e Experiment) Validate() error { return e.Definition().Validate() }
 
 // Sentinel errors.
 var (
