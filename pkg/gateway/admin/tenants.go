@@ -314,6 +314,7 @@ type TenantPayload struct {
 	MaxConcurrentSessions int    `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     int64  `json:"storageQuotaBytes,omitempty"`
 	MinIsolationProfile   string `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy  string `json:"billingErasurePolicy,omitempty"`
 	CreatedAt             string `json:"createdAt,omitempty"`
 	UpdatedAt             string `json:"updatedAt,omitempty"`
 	DeletedAt             string `json:"deletedAt,omitempty"`
@@ -330,10 +331,49 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
 		StorageQuotaBytes:     t.StorageQuotaBytes,
 		MinIsolationProfile:   t.MinIsolationProfile,
+		BillingErasurePolicy:  t.BillingErasurePolicy,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
 	}
+}
+
+// validBillingErasurePolicy reports whether s is an accepted §12.8
+// billingErasurePolicy: empty (the pseudonymize default), pseudonymize,
+// or exempt.
+func validBillingErasurePolicy(s string) bool {
+	return s == "" ||
+		s == tenantstore.BillingErasurePseudonymize ||
+		s == tenantstore.BillingErasureExempt
+}
+
+// regulatedComplianceProfiles are the §12.8 compliance profiles for
+// which a billingErasurePolicy of exempt warrants an audit signal.
+var regulatedComplianceProfiles = map[string]bool{
+	"hipaa":   true,
+	"fedramp": true,
+	"soc2":    true,
+}
+
+// emitBillingErasureExemptRegulated emits the §12.8
+// compliance.billing_erasure_exempt_regulated audit event when a tenant
+// combines billingErasurePolicy=exempt with a regulated compliance
+// profile. The combination is permitted (retaining identifiable billing
+// records can be a legitimate operational need); the event makes the
+// retention trade-off visible in the audit trail so compliance officers
+// can confirm a documented legal basis.
+func (r *Router) emitBillingErasureExemptRegulated(ctx context.Context, p authmw.Principal, t tenantstore.Tenant) {
+	if t.BillingErasurePolicy != tenantstore.BillingErasureExempt {
+		return
+	}
+	if !regulatedComplianceProfiles[t.ComplianceProfile] {
+		return
+	}
+	r.emit(ctx, p, "compliance.billing_erasure_exempt_regulated", t.ID, map[string]any{
+		"tenant_id":            t.ID,
+		"complianceProfile":    t.ComplianceProfile,
+		"billingErasurePolicy": tenantstore.BillingErasureExempt,
+	})
 }
 
 // handleCreateTenant implements POST /v1/admin/tenants.
@@ -371,6 +411,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "minIsolationProfile"})
 		return
 	}
+	if !validBillingErasurePolicy(body.BillingErasurePolicy) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"billingErasurePolicy must be pseudonymize or exempt",
+			map[string]any{"field": "billingErasurePolicy"})
+		return
+	}
 
 	t := tenantstore.Tenant{
 		ID:                    body.ID,
@@ -381,6 +427,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		MaxConcurrentSessions: body.MaxConcurrentSessions,
 		StorageQuotaBytes:     body.StorageQuotaBytes,
 		MinIsolationProfile:   body.MinIsolationProfile,
+		BillingErasurePolicy:  body.BillingErasurePolicy,
 		CreatedAt:             r.clock(),
 	}
 	t.UpdatedAt = t.CreatedAt
@@ -410,6 +457,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		"maxConcurrentSessions": row.MaxConcurrentSessions,
 		"storageQuotaBytes":     row.StorageQuotaBytes,
 	})
+	r.emitBillingErasureExemptRegulated(req.Context(), principal, row)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromTenant(row))
@@ -460,6 +508,7 @@ type UpdateTenantRequest struct {
 	MaxConcurrentSessions *int    `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     *int64  `json:"storageQuotaBytes,omitempty"`
 	MinIsolationProfile   *string `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy  *string `json:"billingErasurePolicy,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -489,6 +538,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "minIsolationProfile"})
 		return
 	}
+	if body.BillingErasurePolicy != nil && !validBillingErasurePolicy(*body.BillingErasurePolicy) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"billingErasurePolicy must be pseudonymize or exempt",
+			map[string]any{"field": "billingErasurePolicy"})
+		return
+	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		if body.DisplayName != nil {
 			t.DisplayName = *body.DisplayName
@@ -511,6 +566,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		if body.MinIsolationProfile != nil {
 			t.MinIsolationProfile = *body.MinIsolationProfile
 		}
+		if body.BillingErasurePolicy != nil {
+			t.BillingErasurePolicy = *body.BillingErasurePolicy
+		}
 		return nil
 	})
 	if err != nil {
@@ -531,6 +589,7 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	r.emit(req.Context(), principal, "admin.tenant.updated", id, map[string]any{
 		"changedFields": changedFields(body),
 	})
+	r.emitBillingErasureExemptRegulated(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromTenant(updated))
 }
@@ -561,6 +620,9 @@ func changedFields(b UpdateTenantRequest) []string {
 	}
 	if b.MinIsolationProfile != nil {
 		out = append(out, "minIsolationProfile")
+	}
+	if b.BillingErasurePolicy != nil {
+		out = append(out, "billingErasurePolicy")
 	}
 	return out
 }

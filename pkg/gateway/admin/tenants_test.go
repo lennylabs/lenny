@@ -492,3 +492,139 @@ func TestNoAuditEmissionOnFailures(t *testing.T) {
 		t.Errorf("audit on failure: got %d events, want 0", got)
 	}
 }
+
+// spec: §12.8 billingErasurePolicy and the
+// compliance.billing_erasure_exempt_regulated audit event.
+
+// newAuditedAdminServer builds a tenant admin router with a recording
+// audit sink wired.
+func newAuditedAdminServer(t *testing.T) (*admin.Router, *recordingAudit) {
+	t.Helper()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	})
+	return router, audit
+}
+
+// findAuditEvent returns the first recorded event of the given type.
+func findAuditEvent(events []admin.AuditEvent, eventType string) (admin.AuditEvent, bool) {
+	for _, ev := range events {
+		if ev.Type == eventType {
+			return ev, true
+		}
+	}
+	return admin.AuditEvent{}, false
+}
+
+func TestCreateTenantWithBillingErasurePolicy(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", BillingErasurePolicy: "exempt"})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.BillingErasurePolicy != "exempt" {
+		t.Errorf("response billingErasurePolicy = %q, want exempt", resp.BillingErasurePolicy)
+	}
+	row, err := store.Get(req.Context(), "acme")
+	if err != nil {
+		t.Fatalf("store missing tenant: %v", err)
+	}
+	if row.BillingErasurePolicy != "exempt" {
+		t.Errorf("stored billingErasurePolicy = %q, want exempt", row.BillingErasurePolicy)
+	}
+}
+
+func TestCreateTenantRejectsBadBillingErasurePolicy(t *testing.T) {
+	router, _ := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", BillingErasurePolicy: "wipe"})
+
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid billingErasurePolicy: status %d, want 400", rr.Code)
+	}
+}
+
+func TestCreateTenantExemptRegulatedEmitsComplianceEvent(t *testing.T) {
+	router, audit := newAuditedAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{
+		ID: "acme", BillingErasurePolicy: "exempt", ComplianceProfile: "hipaa",
+	})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+	// §12.8: the combination is permitted (a 2xx response).
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201; body %s", rr.Code, rr.Body.String())
+	}
+	ev, ok := findAuditEvent(audit.snapshot(), "compliance.billing_erasure_exempt_regulated")
+	if !ok {
+		t.Fatal("an exempt tenant with a regulated compliance profile must emit compliance.billing_erasure_exempt_regulated")
+	}
+	if ev.Detail["complianceProfile"] != "hipaa" || ev.Detail["billingErasurePolicy"] != "exempt" {
+		t.Errorf("event detail = %v, want complianceProfile=hipaa billingErasurePolicy=exempt", ev.Detail)
+	}
+}
+
+func TestCreateTenantExemptNonRegulatedNoComplianceEvent(t *testing.T) {
+	router, audit := newAuditedAdminServer(t)
+	// gdpr is not one of the §12.8 regulated profiles (hipaa/fedramp/soc2).
+	body, _ := json.Marshal(admin.TenantPayload{
+		ID: "acme", BillingErasurePolicy: "exempt", ComplianceProfile: "gdpr",
+	})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201", rr.Code)
+	}
+	if _, ok := findAuditEvent(audit.snapshot(), "compliance.billing_erasure_exempt_regulated"); ok {
+		t.Error("a non-regulated compliance profile must not emit the exempt-regulated event")
+	}
+}
+
+func TestUpdateTenantToExemptRegulatedEmitsComplianceEvent(t *testing.T) {
+	router, audit := newAuditedAdminServer(t)
+	createBody, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: "fedramp"})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(createBody))))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d", rr.Code)
+	}
+
+	policy := "exempt"
+	updBody, _ := json.Marshal(admin.UpdateTenantRequest{BillingErasurePolicy: &policy})
+	rr = httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(
+		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(updBody))))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := findAuditEvent(audit.snapshot(), "compliance.billing_erasure_exempt_regulated"); !ok {
+		t.Error("updating a fedramp tenant to billingErasurePolicy=exempt must emit the compliance event")
+	}
+}
+
+func TestUpdateTenantRejectsBadBillingErasurePolicy(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme"})
+
+	bad := "scramble"
+	body, _ := json.Marshal(admin.UpdateTenantRequest{BillingErasurePolicy: &bad})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid billingErasurePolicy on update: status %d, want 400", rr.Code)
+	}
+}
