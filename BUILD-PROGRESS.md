@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c11f002` — `executor.PodExecutor` — the pod-backed `Executor`. `Send` drives a
+  session's bound pod over the §4.7 `Attach` content stream and collects the agent's
+  response; `Close` releases the pod. It implements the `Executor` interface, so the
+  gateway message path becomes an executor swap. The gateway↔pod session subsystem is
+  now built end to end as components; the gateway-binary wiring is the remaining step.
 - `6c2f6e1` — `podsession.Registry` — the per-session pod-binding registry. Holds the
   live `BindResult` per coordinated session for the session-start, message, and
   teardown paths. The last component before the gateway session-path wiring; all of
