@@ -48,6 +48,9 @@ type Server struct {
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess
+	// Checkpoints stores the §4.4 workspace checkpoints the Checkpoint
+	// RPC produces. Nil leaves Checkpoint Unimplemented.
+	Checkpoints CheckpointSink
 
 	// mu guards sessionID and the credential fields.
 	mu sync.Mutex
