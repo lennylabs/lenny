@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `68d87e7`, `8c066ff` — §9.4 MemoryStore. `pkg/gateway/memorystore` is the tenant-scoped
+  agent-memory store: Write / Query / Delete / List reject an empty tenant or user and
+  scope strictly by (tenant, user), Write evicts a user's oldest memories past the
+  capacity limit, and DeleteByUser / DeleteByTenant are the §12.8 erasure primitives.
+  The `lenny/memory_write` and `lenny/memory_query` MCP tools write under the calling
+  session's scope and recall across every session the user has run.
 - `467616c`, `8f53d19`, `220b789` — §10.7 ExperimentRouter. `experiment.Route` is the
   first-match multi-experiment rule; `sessionstore.Session` gained the
   `experimentContext` (migration 0011), and `handleCreate` / `handleCreateAndStart` run
@@ -549,7 +555,7 @@ this state.
 | 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The §10.7 built-in eval surface is built: `evalstore` is the per-session EvalResult registry (with the `maxEvalsPerSession` storage bound and the §12.8 erasure adapter), `POST /v1/sessions/{id}/eval` ingests scores, and `GET /v1/admin/experiments/{name}/results` aggregates eval scores by variant (per-scorer count, mean, p50, p95). The §10.7 `ExperimentRouter` is wired into session creation: `handleCreate` / `handleCreateAndStart` run the first-match `experiment.Route` over the tenant's active experiments matching the requested base runtime, record the `experimentContext` on the session, and route it onto the variant's runtime and pool; the eval endpoint copies that context onto each EvalResult. The §10.7 OpenFeature external-targeting integration, the PoolScalingController variant-pool sizing path, the per-dimension `scores` breakdown and `breakdown_by` filters on the results API, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
 | 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
-| 17b   | Memory, semantic caching, eval hooks                         | Not started    |                                                                                                                                                                                                                                                                                                                                              |
+| 17b   | Memory, semantic caching, eval hooks                         | Partial        | The §9.4 MemoryStore role is built: `pkg/gateway/memorystore` is the tenant-scoped agent-memory store (Write / Query / Delete / List with strict tenant+user scoping, the per-user capacity-eviction limit, and the §12.8 `DeleteByUser` / `DeleteByTenant` erasure primitives), and the `lenny/memory_write` / `lenny/memory_query` platform MCP tools are wired. The §10.7 built-in eval endpoints (`POST /v1/sessions/{id}/eval`, `GET /v1/admin/experiments/{name}/results`) are built. The semantic-caching layer, the Postgres + pgvector memory backend, and the runtime-native eval-platform hooks are not.                                                                                                                                                                                                                                                              |
 
 ## Implemented surface
 
@@ -706,12 +712,14 @@ remain infrastructure-bound.
 The Phase 15 environment admin API and the Phase 16 experiment surface are built end to
 end: the experiment admin CRUD, the §10.7 built-in eval endpoints, the `ExperimentRouter`
 that assigns a variant at session creation, and the eval-attribution flow into the
-results API. The remaining Phase 16 work is infrastructure-coupled: the PoolScalingController
-variant-pool sizing path needs the controller, and the OpenFeature external-targeting
-integration needs the OFREP provider. The next pure-Go chunks are spread across the
-still-partial phases — the §9.4 MemoryStore (Phase 17b), the Phase 9 `delegate_task`
-task-input plumbing, and the per-dimension / `breakdown_by` refinements on the results
-API.
+results API. The §9.4 MemoryStore role and its `lenny/memory_write` / `lenny/memory_query`
+MCP tools are built. The remaining Phase 16 work is infrastructure-coupled: the
+PoolScalingController variant-pool sizing path needs the controller, and the OpenFeature
+external-targeting integration needs the OFREP provider. The next pure-Go chunks are
+the per-dimension / `breakdown_by` refinements on the experiment results API and the
+Phase 9 `delegate_task` task-input plumbing; the bulk of the remaining surface
+(Phases 0, 2, 5.4, 12b, 12c, 14, 17a) is infrastructure, release-pipeline, or
+documentation work.
 
 ## Test status
 
