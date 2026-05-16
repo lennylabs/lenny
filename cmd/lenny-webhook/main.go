@@ -10,6 +10,7 @@
 //	/label-immutability             — lenny-label-immutability (§17.2, §5.2 NET-003)
 //	/sandboxclaim-guard             — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
 //	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
+//	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
 // The sandboxclaim-guard route reads live cluster state, so the binary
@@ -63,6 +64,7 @@ func newMux(reader client.Reader) *http.ServeMux {
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
 		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName)))
+	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
