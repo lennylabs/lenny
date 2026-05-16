@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b9a3c97` — Platform `Dockerfile`. A parameterized multi-stage build (Go to
+  `distroless/static:nonroot`) that produces the adapter, controller, gateway,
+  webhook, and token-service images via the `BINARY` build-arg; `make images` builds
+  all five. Validated by building the adapter image. Critical-path item 1's container
+  image.
 - `c683a1a` — Adapter `DemoteSDK` RPC. The §4.7 SDK-warm demotion RPC; a pod-warm
   adapter is not preConnect-capable, so `DemoteSDK` returns `Unimplemented` with a
   precise message, the behavior §4.7 specifies for non-preConnect pods. Critical-path
@@ -248,8 +253,9 @@ progress; see the progress log.
 1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`,
    `StartSession`, `SendMessage`, `Shutdown`, `NegotiateVersion`, the credential RPCs
    (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), `Interrupt`, and
-   `DemoteSDK` are done; the remaining RPCs are `Checkpoint`, `ReportUsage`,
-   `ExtendLease`, and `LifecycleChannel`, plus a container image.
+   `DemoteSDK` are done, and the parameterized `Dockerfile` builds the adapter image;
+   the remaining RPCs are `Checkpoint`, `ReportUsage`, `ExtendLease`, and
+   `LifecycleChannel`.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
