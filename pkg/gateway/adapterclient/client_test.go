@@ -226,3 +226,55 @@ func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
 		t.Error("Shutdown reported a clean exit on an error")
 	}
 }
+
+// countingSink is an adapter.CheckpointSink that tallies the archive
+// bytes it receives and returns a fixed checkpoint id.
+type countingSink struct {
+	id   string
+	size int64
+}
+
+func (s *countingSink) SaveCheckpoint(_ context.Context, _ string, r io.Reader) (string, error) {
+	n, err := io.Copy(io.Discard, r)
+	s.size = n
+	if err != nil {
+		return "", err
+	}
+	return s.id, nil
+}
+
+func TestCheckpointReturnsTheStoredCheckpoint(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	sink := &countingSink{id: "ckpt-9"}
+	srv.Checkpoints = sink
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	res, err := cl.Checkpoint(ctx, "sess-x", 30*time.Second)
+	if err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if res.CheckpointID != "ckpt-9" {
+		t.Errorf("checkpoint id = %q, want ckpt-9", res.CheckpointID)
+	}
+	if res.SizeBytes <= 0 || res.SizeBytes != sink.size {
+		t.Errorf("size = %d, want the archived byte count %d", res.SizeBytes, sink.size)
+	}
+}
+
+func TestCheckpointRejectsAnUnassignedSession(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Checkpoints = &countingSink{id: "x"}
+	cl := dialAdapter(t, srv)
+
+	if _, err := cl.Checkpoint(context.Background(), "sess-absent", 0); err == nil {
+		t.Error("Checkpoint on an unassigned session succeeded, want a failure")
+	}
+}

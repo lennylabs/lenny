@@ -96,6 +96,31 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 	return resp.GetAcknowledged(), nil
 }
 
+// CheckpointResult reports the §4.4 checkpoint a pod's adapter stored.
+type CheckpointResult struct {
+	// CheckpointID identifies the stored checkpoint.
+	CheckpointID string
+	// SizeBytes is the compressed size of the stored checkpoint.
+	SizeBytes int64
+}
+
+// Checkpoint asks the pod's adapter to snapshot the session workspace
+// and store it as a §4.4 checkpoint. deadline bounds the checkpoint; a
+// zero deadline lets the adapter apply its default.
+func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time.Duration) (CheckpointResult, error) {
+	resp, err := c.rpc.Checkpoint(ctx, &adapterv1.CheckpointRequest{
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		DeadlineMs: int32(deadline.Milliseconds()),
+	})
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	return CheckpointResult{
+		CheckpointID: resp.GetCheckpointId(),
+		SizeBytes:    resp.GetSizeBytes(),
+	}, nil
+}
+
 // AttachStream is a live §4.7 bidirectional content stream to a pod's
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
 // next agent-to-gateway envelope.
