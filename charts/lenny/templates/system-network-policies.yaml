@@ -171,3 +171,30 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+---
+{{- /*
+allow-controller-metrics-scrape admits Prometheus scrape requests from
+the monitoring namespace to the controller's metrics port (§13.2
+line 228 supplemental ingress). Without it the lenny-system
+default-deny silently drops every controller metrics scrape.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-controller-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: controller
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.controller.metricsPort }}
+          protocol: TCP
+  policyTypes: [Ingress]

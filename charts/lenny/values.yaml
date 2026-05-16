@@ -17,6 +17,9 @@ agentNamespaces:
 # election so exactly one replica reconciles at a time.
 controller:
   replicas: 2
+  # metricsPort is the port the controller serves Prometheus metrics
+  # on (§13.2); the monitoring-scrape NetworkPolicy admits it.
+  metricsPort: 9090
   image:
     repository: ghcr.io/lennylabs/lenny-controller
     # tag defaults to the chart appVersion when left empty.
@@ -79,6 +82,11 @@ kms:
   # (§13.2). Operators should tighten this to the provider's range;
   # the broad default is bounded by the per-port (443) egress rule.
   endpointCIDR: "0.0.0.0/0"
+
+# monitoring identifies the Prometheus monitoring namespace whose
+# scrape requests the §13.2 metrics-scrape NetworkPolicies admit.
+monitoring:
+  namespace: "monitoring"
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
