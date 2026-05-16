@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 
@@ -64,4 +65,36 @@ func TLSServerOption(certFile, keyFile, clientCAFile string) (grpc.ServerOption,
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	return grpc.Creds(credentials.NewTLS(cfg)), nil
+}
+
+// TLSClientOption builds the gRPC dial option the gateway uses to reach
+// a pod's adapter over the §4.7 mTLS link. When certFile and keyFile are
+// supplied the gateway presents that client certificate to the adapter;
+// caFile verifies the adapter's server certificate. When all three are
+// empty the dial is plaintext, which is intended only for local
+// development against an adapter started without TLSServerOption.
+func TLSClientOption(certFile, keyFile, caFile string) (grpc.DialOption, error) {
+	if certFile == "" && keyFile == "" && caFile == "" {
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
+	}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if certFile != "" || keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load adapter client TLS keypair: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	if caFile != "" {
+		caPEM, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read adapter server CA: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, errors.New("adapter server CA file contains no usable certificate")
+		}
+		cfg.RootCAs = pool
+	}
+	return grpc.WithTransportCredentials(credentials.NewTLS(cfg)), nil
 }

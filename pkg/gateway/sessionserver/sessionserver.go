@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -98,6 +99,9 @@ type Server struct {
 	tenants         tenantstore.Store
 	storageQuota    storagequota.Counter
 	defaultIsoProf  isolation.Profile
+	podBinder       *podsession.Binder
+	podRegistry     *podsession.Registry
+	agentNamespace  string
 }
 
 // Options configures the Server at construction.
@@ -198,6 +202,20 @@ type Options struct {
 	// the tenant's storageQuotaBytes limit. Nil disables the storage
 	// quota.
 	StorageQuota storagequota.Counter
+
+	// PodBinder, when set, makes the §15.1 start path place each session
+	// on a Kubernetes warm pod: it resolves the pool, claims a pod, and
+	// starts the session on the pod's §4.7 adapter. Nil keeps the
+	// gateway on the in-process executor.
+	PodBinder *podsession.Binder
+
+	// PodRegistry holds the per-session pod bindings the message and
+	// teardown paths read. Required when PodBinder is set.
+	PodRegistry *podsession.Registry
+
+	// AgentNamespace is the namespace the warm pools and Sandboxes live
+	// in. Required when PodBinder is set.
+	AgentNamespace string
 }
 
 // New returns a Server bound to the supplied store.
@@ -220,6 +238,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		tenants:         opts.Tenants,
 		storageQuota:    opts.StorageQuota,
 		defaultIsoProf:  opts.DefaultIsolationProfile,
+		podBinder:       opts.PodBinder,
+		podRegistry:     opts.PodRegistry,
+		agentNamespace:  opts.AgentNamespace,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

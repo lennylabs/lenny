@@ -42,12 +42,20 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
@@ -77,6 +85,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
@@ -111,6 +120,10 @@ var (
 	buildDate    = "unknown"
 )
 
+// adapterGRPCPort is the TCP port a Sandbox pod's §4.7 adapter listens
+// on. §13.2 fixes the gateway↔adapter link to TCP 50051.
+const adapterGRPCPort = 50051
+
 func main() {
 	addr := flag.String("addr", ":8080", "address to bind (host:port)")
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
@@ -129,6 +142,14 @@ func main() {
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
 		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
+	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
+		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
+	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
+		"path to the gateway's client certificate for the §4.7 mTLS link to pod adapters. Empty dials adapters in plaintext (local development only).")
+	adapterTLSKey := flag.String("adapter-tls-key", os.Getenv("LENNY_ADAPTER_TLS_KEY"),
+		"path to the private key for --adapter-tls-cert.")
+	adapterCA := flag.String("adapter-ca", os.Getenv("LENNY_ADAPTER_CA"),
+		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
 	flag.Parse()
 
 	// ----- Stores -----
@@ -275,6 +296,45 @@ func main() {
 		exec = executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: *runtimeBin})
 		log.Printf("lenny-gateway: dispatching sessions to runtime binary %s", *runtimeBin)
 	}
+
+	// §15.1 pod placement: with --agent-namespace the gateway claims a
+	// §5 warm pod for each started session and dispatches its messages
+	// to the pod's §4.7 adapter. The in-process and subprocess
+	// executors stay available for local development.
+	var (
+		podBinder   *podsession.Binder
+		podRegistry *podsession.Registry
+	)
+	if *agentNamespace != "" {
+		cfg, err := ctrl.GetConfig()
+		if err != nil {
+			log.Fatalf("lenny-gateway: resolve cluster config for --agent-namespace: %v", err)
+		}
+		scheme := k8sruntime.NewScheme()
+		utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+		utilruntime.Must(lennyv1.AddToScheme(scheme))
+		k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		if err != nil {
+			log.Fatalf("lenny-gateway: build cluster client: %v", err)
+		}
+		dialOpt, err := adapter.TLSClientOption(*adapterTLSCert, *adapterTLSKey, *adapterCA)
+		if err != nil {
+			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
+		}
+		podRegistry = podsession.NewRegistry()
+		podBinder = &podsession.Binder{
+			Client:           k8sClient,
+			Namespace:        *agentNamespace,
+			AdapterPort:      adapterGRPCPort,
+			AcceptedVersions: []string{adapter.ProtocolVersionV1},
+			DialAdapter: func(addr string) (*adapterclient.Client, error) {
+				return adapterclient.Dial(addr, dialOpt)
+			},
+		}
+		exec = executor.NewPodExecutor(podRegistry, podBinder)
+		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
+	}
+
 	eventBus := events.NewBus(0)
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
@@ -289,6 +349,9 @@ func main() {
 		Billing:             billing,
 		Tenants:             tenants,
 		StorageQuota:        storageCounter,
+		PodBinder:           podBinder,
+		PodRegistry:         podRegistry,
+		AgentNamespace:      *agentNamespace,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----

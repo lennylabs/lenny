@@ -235,3 +235,53 @@ func TestTLSServerOptionRejectsUnusableClientCA(t *testing.T) {
 		t.Fatal("TLSServerOption should error when the client CA file holds no certificate")
 	}
 }
+
+func TestTLSClientOptionPlaintextWhenNoMaterial(t *testing.T) {
+	opt, err := adapter.TLSClientOption("", "", "")
+	if err != nil {
+		t.Fatalf("TLSClientOption: %v", err)
+	}
+	if opt == nil {
+		t.Error("TLSClientOption should return a plaintext dial option when no TLS material is configured")
+	}
+}
+
+func TestTLSClientOptionLoadsClientKeypair(t *testing.T) {
+	certFile, keyFile := writeTestKeypair(t)
+	opt, err := adapter.TLSClientOption(certFile, keyFile, "")
+	if err != nil {
+		t.Fatalf("TLSClientOption: %v", err)
+	}
+	if opt == nil {
+		t.Error("TLSClientOption returned a nil option for a valid client keypair")
+	}
+}
+
+func TestTLSClientOptionConfiguresServerCA(t *testing.T) {
+	certFile, keyFile := writeTestKeypair(t)
+	// The self-signed certificate doubles as the server CA bundle.
+	opt, err := adapter.TLSClientOption(certFile, keyFile, certFile)
+	if err != nil {
+		t.Fatalf("TLSClientOption with a server CA: %v", err)
+	}
+	if opt == nil {
+		t.Error("TLSClientOption returned a nil option for a valid mTLS configuration")
+	}
+}
+
+func TestTLSClientOptionRejectsMissingKeypair(t *testing.T) {
+	_, err := adapter.TLSClientOption("/nonexistent/tls.crt", "/nonexistent/tls.key", "")
+	if err == nil {
+		t.Fatal("TLSClientOption should error when the client certificate file cannot be read")
+	}
+}
+
+func TestTLSClientOptionRejectsUnusableCA(t *testing.T) {
+	emptyCA := filepath.Join(t.TempDir(), "empty-ca.pem")
+	if err := os.WriteFile(emptyCA, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write empty CA: %v", err)
+	}
+	if _, err := adapter.TLSClientOption("", "", emptyCA); err == nil {
+		t.Fatal("TLSClientOption should error when the server CA file holds no certificate")
+	}
+}
