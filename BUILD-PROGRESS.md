@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `80039dc` — Gateway serves the §4.9 LLM reverse proxy. `cmd/lenny-gateway` gained
+  `--llm-proxy-addr` and `--anthropic-version`; `newLLMProxyServer` builds the
+  `llmproxy.Handler` over the credential-lease store, credential cache, deny list,
+  translator, and breaker-gated forwarder, and the gateway serves it at
+  `POST /llm-proxy/v1/messages` on a listener separate from the REST API.
 - `293eb04` — `denylist.DenyList` (§4.9). The per-replica credential deny list the LLM
   proxy checks on every upstream request; a hit rejects with `CREDENTIAL_REVOKED`
   before any upstream call. Satisfies the proxy's `DenyList` interface.
@@ -353,7 +358,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The LLM proxy path is built in `pkg/gateway/llmproxy` for both streaming and non-streaming responses: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, the SSE relay, and the `Handler` composing them with the `pkg/credential` lease model, the `pkg/gateway/credleasestore` lease store, the `pkg/gateway/credcache` credential cache, and the `pkg/gateway/denylist` deny list. The `lenny-direct-mode-isolation` webhook is deployable end to end. The `cmd/lenny-gateway` wiring that serves the proxy `Handler` on the §13.2 LLM-proxy port is not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Mostly done    | The §4.9 LLM proxy subsystem is built (`pkg/gateway/llmproxy`: the `anthropic_direct` translator, circuit breaker, breaker-gated forwarder, SSE relay, and `Handler`, over the `pkg/credential` lease model, the `credleasestore` lease store, the `credcache` credential cache, and the `denylist` deny list) and `cmd/lenny-gateway` serves it on the §13.2 LLM-proxy port. The `lenny-direct-mode-isolation` webhook is deployable end to end. The §4.9 credential-assignment path (`AssignCredentials`) that mints leases and populates the credential cache is not. |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -467,13 +472,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Wire the LLM proxy into `cmd/lenny-gateway`. The gateway must construct the
-`llmproxy.Handler` from the credential-lease store, the credential cache, the deny
-list, the translator, and a breaker-gated forwarder, and serve it on the §13.2
-LLM-proxy port (`gateway.llmProxyPort`, 8443) as a listener separate from the REST
-API. This makes the proxy reachable by proxy-mode agent pods and completes the §4.9
-LLM Proxy subsystem; the lease and credential population path (`AssignCredentials`)
-remains a separate §4.9 build item.
+Build the §4.9 credential-assignment path. At session start the gateway selects a
+pool credential, mints a `CredentialLease` (synthetic TTL, `expiresAt`/`renewBefore`),
+records it in `credleasestore`, caches the real upstream key in `credcache`, and — for
+a proxy-mode pool — returns the `proxyUrl`/`proxyDialect`/`leaseToken` to the agent
+pod. This populates the LLM proxy's stores so it serves real traffic, and feeds the
+adapter's `AssignCredentials` RPC. It is the remaining §4.9 piece before the LLM proxy
+is exercised end to end.
 
 ## Test status
 
