@@ -3,8 +3,10 @@
 package podsession_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 
@@ -17,12 +19,30 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 )
+
+// stubRestorer is an adapter.CheckpointSource serving a fixed archive.
+type stubRestorer struct{ archive []byte }
+
+func (s stubRestorer) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.archive)), nil
+}
+
+// emptyArchive returns a valid gzip-tar of an empty workspace.
+func emptyArchive(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := workspace.Archive(t.TempDir(), &buf); err != nil {
+		t.Fatalf("build archive: %v", err)
+	}
+	return buf.Bytes()
+}
 
 const (
 	testNS   = "lenny-agents"
@@ -138,6 +158,53 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	}
 	if sb.Status.Phase != "claimed" {
 		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	}
+}
+
+func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+	srv.Restorer = stubRestorer{archive: emptyArchive(t)}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Resume(context.Background(), podsession.ResumeRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+		Runtime: "claude-code", CheckpointID: "ckpt-1",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if res.SandboxName != "sbx-1" || res.PodIP != "10.244.1.7" {
+		t.Errorf("result = %+v, want sbx-1 / 10.244.1.7", res)
+	}
+	if rt.started != "sess-1" {
+		t.Errorf("runtime started for %q, want sess-1 — Resume must start the runtime", rt.started)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	}
+}
+
+func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
+
+	_, err := binder.Resume(context.Background(), podsession.ResumeRequest{
+		Pool: testPool, SessionID: "sess-1", CheckpointID: "ckpt-1",
+	})
+	if !errors.Is(err, podclaim.ErrNoIdlePod) {
+		t.Errorf("error = %v, want ErrNoIdlePod", err)
 	}
 }
 

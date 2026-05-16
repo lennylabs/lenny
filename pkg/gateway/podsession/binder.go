@@ -69,59 +69,106 @@ type BindResult struct {
 	Adapter *adapterclient.Client
 }
 
+// ResumeRequest describes a session to restore onto a fresh warm pod.
+type ResumeRequest struct {
+	// Pool is the SandboxWarmPool to claim a pod from.
+	Pool string
+	// SessionID is the §7.1 session being resumed.
+	SessionID string
+	// TenantID is the tenant that owns the session.
+	TenantID string
+	// Runtime is the runtime name passed to the adapter's Resume.
+	Runtime string
+	// CheckpointID is the §4.4 checkpoint the workspace is restored
+	// from.
+	CheckpointID string
+}
+
 // Bind claims an idle pod for the request's session, resolves the
 // pod's adapter address, performs the §15.5 version handshake, and
 // starts the session via the adapter's StartSession. On success the
 // caller owns the returned live adapter connection. Any failure after
 // the claim is returned so the gateway can retry on a fresh pod.
-func (b *Binder) Bind(ctx context.Context, req BindRequest) (result *BindResult, err error) {
-	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
-	claim, err := claimer.Claim(ctx, podclaim.ClaimRequest{
-		Pool:      req.Pool,
-		SessionID: req.SessionID,
-		TenantID:  req.TenantID,
-	})
+func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
+	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-
-	podIP, err := b.resolvePodIP(ctx, claim.Spec.SandboxRef)
-	if err != nil {
-		return nil, err
-	}
-
-	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
-	cl, err := b.DialAdapter(addr)
-	if err != nil {
-		return nil, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
-	}
-	// After a successful dial the connection is closed on every failure
-	// path; on success the caller takes ownership.
-	defer func() {
-		if err != nil {
-			cl.Close()
-		}
-	}()
-
-	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
-	if err != nil {
-		return nil, fmt.Errorf("podsession: negotiate version with %s: %w", claim.Spec.SandboxRef, err)
-	}
-	if resp.GetIncompatible() {
-		err = fmt.Errorf("podsession: pod %s adapter speaks no protocol version the gateway accepts", claim.Spec.SandboxRef)
-		return nil, err
-	}
-
-	if err = cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan); err != nil {
-		return nil, fmt.Errorf("podsession: start session on pod %s: %w", claim.Spec.SandboxRef, err)
+	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
 	return &BindResult{
 		SessionID:   req.SessionID,
 		TenantID:    req.TenantID,
-		SandboxName: claim.Spec.SandboxRef,
+		SandboxName: sandboxName,
 		PodIP:       podIP,
 		Adapter:     cl,
 	}, nil
+}
+
+// Resume claims an idle pod for the request's session and restores the
+// session's workspace onto it from the named §4.4 checkpoint via the
+// adapter's Resume RPC. It is the §7.1 resume counterpart of Bind: used
+// when a suspended session's original pod was released and the session
+// must be rebuilt on a replacement pod. Any failure after the claim is
+// returned so the gateway can retry on a fresh pod.
+func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, error) {
+	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := cl.Resume(ctx, req.SessionID, req.Runtime, req.CheckpointID); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, err)
+	}
+	return &BindResult{
+		SessionID:   req.SessionID,
+		TenantID:    req.TenantID,
+		SandboxName: sandboxName,
+		PodIP:       podIP,
+		Adapter:     cl,
+	}, nil
+}
+
+// connect claims an idle pod from the pool, resolves the pod's adapter
+// address, dials it, and runs the §15.5 version handshake. On success
+// the caller owns cl and must close it once the session ends or on any
+// later failure. The shared claim-and-handshake path of Bind and Resume.
+func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sandboxName, podIP string, cl *adapterclient.Client, err error) {
+	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
+	claim, err := claimer.Claim(ctx, podclaim.ClaimRequest{
+		Pool:      pool,
+		SessionID: sessionID,
+		TenantID:  tenantID,
+	})
+	if err != nil {
+		return "", "", nil, err
+	}
+	sandboxName = claim.Spec.SandboxRef
+
+	podIP, err = b.resolvePodIP(ctx, sandboxName)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
+	cl, err = b.DialAdapter(addr)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("podsession: dial adapter at %s: %w", addr, err)
+	}
+
+	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
+	if err != nil {
+		cl.Close()
+		return "", "", nil, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
+	}
+	if resp.GetIncompatible() {
+		cl.Close()
+		return "", "", nil, fmt.Errorf(
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName)
+	}
+	return sandboxName, podIP, cl, nil
 }
 
 // Release tears down a session that Bind placed on a pod: it shuts the
