@@ -293,6 +293,91 @@ func TestDeleteDelegationPolicyAllowedWhenNoDependents(t *testing.T) {
 	}
 }
 
+// newAuditedDelegationPolicyAdmin wires a recording audit sink so the
+// §8.3 scanExportedFiles transition events can be observed.
+func newAuditedDelegationPolicyAdmin(t *testing.T) (*admin.Router, *delegationpolicystore.Memory, *recordingAudit) {
+	t.Helper()
+	store := delegationpolicystore.NewMemory()
+	audit := &recordingAudit{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		Audit: audit,
+	}).WithDelegationPolicies(store)
+	return router, store, audit
+}
+
+func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
+	router, store, audit := newAuditedDelegationPolicyAdmin(t)
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{
+		Name: "p1",
+		ContentPolicy: delegationpolicystore.ContentPolicy{
+			ScanExportedFiles: true, InterceptorRef: "pii-scanner",
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Update turns scanExportedFiles off — a §8.3 weakening.
+	body := validDelegationPolicy("p1")
+	body.ContentPolicy.ScanExportedFiles = false
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/delegation-policies/p1",
+		body, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	ev, ok := findAuditEvent(audit.snapshot(), "delegation_policy.export_scan_weakened")
+	if !ok {
+		t.Fatal("a true->false scanExportedFiles transition must emit delegation_policy.export_scan_weakened")
+	}
+	if ev.Detail["old_scanExportedFiles"] != true || ev.Detail["new_scanExportedFiles"] != false {
+		t.Errorf("event detail = %v, want old=true new=false", ev.Detail)
+	}
+	if ev.Detail["cooldown_seconds"] != 60 {
+		t.Errorf("weakened event cooldown_seconds = %v, want 60", ev.Detail["cooldown_seconds"])
+	}
+}
+
+func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
+	router, store, audit := newAuditedDelegationPolicyAdmin(t)
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Update turns scanExportedFiles on — a §8.3 strengthening.
+	body := validDelegationPolicy("p1")
+	body.ContentPolicy.ScanExportedFiles = true
+	body.ContentPolicy.InterceptorRef = "pii-scanner"
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/delegation-policies/p1",
+		body, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	ev, ok := findAuditEvent(audit.snapshot(), "delegation_policy.export_scan_strengthened")
+	if !ok {
+		t.Fatal("a false->true scanExportedFiles transition must emit delegation_policy.export_scan_strengthened")
+	}
+	if _, hasCooldown := ev.Detail["cooldown_seconds"]; hasCooldown {
+		t.Error("a strengthening transition takes effect immediately — it must not carry cooldown_seconds")
+	}
+}
+
+func TestUpdateDelegationPolicyNoScanEventWhenUnchanged(t *testing.T) {
+	router, store, audit := newAuditedDelegationPolicyAdmin(t)
+	if err := store.Create(context.Background(), delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// validDelegationPolicy leaves scanExportedFiles false — unchanged.
+	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/delegation-policies/p1",
+		validDelegationPolicy("p1"), withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d", rr.Code)
+	}
+	if _, ok := findAuditEvent(audit.snapshot(), "delegation_policy.export_scan_weakened"); ok {
+		t.Error("an unchanged scanExportedFiles must not emit a weakened event")
+	}
+	if _, ok := findAuditEvent(audit.snapshot(), "delegation_policy.export_scan_strengthened"); ok {
+		t.Error("an unchanged scanExportedFiles must not emit a strengthened event")
+	}
+}
+
 func TestDelegationPolicyRequiresPlatformAdmin(t *testing.T) {
 	router, _ := newDelegationPolicyAdmin(t)
 	h := router.Handler()

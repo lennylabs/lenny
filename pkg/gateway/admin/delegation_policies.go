@@ -111,6 +111,40 @@ func (r *Router) WithDelegationPolicies(s delegationpolicystore.Store) *Router {
 	return r
 }
 
+// interceptorWeakeningCooldownSeconds is the §8.3 cluster-scoped,
+// admin-immutable cooldown applied after a delegation-policy
+// content-scan weakening (`gateway.interceptorWeakeningCooldownSeconds`).
+const interceptorWeakeningCooldownSeconds = 60
+
+// emitScanExportedFilesTransition emits the §8.3 operational event for
+// a `scanExportedFiles` change on a DelegationPolicy update: a
+// weakening (true to false) emits `delegation_policy.export_scan_weakened`
+// and starts the §8.3 interceptor-weakening cooldown; a strengthening
+// (false to true) emits `delegation_policy.export_scan_strengthened`
+// and takes effect immediately. No event fires when the value is
+// unchanged.
+//
+// The cooldown enforcement at `delegate_task` time (rejecting with
+// INTERCEPTOR_WEAKENING_COOLDOWN during the window) is deferred — it
+// belongs to the delegation request path.
+func (r *Router) emitScanExportedFilesTransition(ctx context.Context, p authmw.Principal, name string, oldScan, newScan bool, transitionTs string) {
+	if oldScan == newScan {
+		return
+	}
+	detail := map[string]any{
+		"policy_name":           name,
+		"old_scanExportedFiles": oldScan,
+		"new_scanExportedFiles": newScan,
+		"transition_ts":         transitionTs,
+	}
+	if oldScan && !newScan {
+		detail["cooldown_seconds"] = interceptorWeakeningCooldownSeconds
+		r.emit(ctx, p, "delegation_policy.export_scan_weakened", name, detail)
+		return
+	}
+	r.emit(ctx, p, "delegation_policy.export_scan_strengthened", name, detail)
+}
+
 // writeDelegationPolicyStoreError maps a delegationpolicystore error to
 // the §15.1 error envelope shared by the create and update handlers.
 func writeDelegationPolicyStoreError(w http.ResponseWriter, err error) {
@@ -203,7 +237,9 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
 		return
 	}
+	var oldScan bool
 	updated, err := r.delegationPolicies.Update(req.Context(), name, func(p *delegationpolicystore.DelegationPolicy) error {
+		oldScan = p.ContentPolicy.ScanExportedFiles
 		p.Rules = toDelegationRules(body.Rules)
 		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
 		p.AllowSelfRecursion = body.AllowSelfRecursion
@@ -224,6 +260,8 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		return
 	}
 	r.emit(req.Context(), principal, "admin.delegation_policy.updated", name, nil)
+	r.emitScanExportedFilesTransition(req.Context(), principal, name,
+		oldScan, updated.ContentPolicy.ScanExportedFiles, rfc3339Nano(updated.UpdatedAt))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(updated))
 }
