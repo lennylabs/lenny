@@ -101,6 +101,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
@@ -495,15 +496,12 @@ func main() {
 	// Session-scoped stores (transcripts, artifacts) are erased per
 	// session before the session-keyed user-scoped stores.
 	{
-		type sessionEraser interface {
-			DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
-		}
 		sessionScoped := []erasure.SessionEraser{}
-		if te, ok := transcripts.(sessionEraser); ok {
+		if te, ok := transcripts.(sessionArtifactDeleter); ok {
 			sessionScoped = append(sessionScoped,
 				erasure.SessionEraser{Name: "transcripts", DeleteBySession: te.DeleteBySession})
 		}
-		if be, ok := blobs.(sessionEraser); ok {
+		if be, ok := blobs.(sessionArtifactDeleter); ok {
 			sessionScoped = append(sessionScoped,
 				erasure.SessionEraser{Name: "artifacts", DeleteBySession: be.DeleteBySession})
 		}
@@ -715,6 +713,31 @@ func main() {
 		}
 	})
 
+	// ----- §7.1 artifact-retention GC -----
+	// Collects the workspace snapshot, transcript, and blobs of every
+	// terminal session past its retention TTL; a §12.8 legal hold
+	// exempts the session.
+	{
+		var arts []retentiongc.Artifact
+		if te, ok := transcripts.(sessionArtifactDeleter); ok {
+			arts = append(arts, retentiongc.Artifact{Name: "transcripts", Delete: te.DeleteBySession})
+		}
+		if be, ok := blobs.(sessionArtifactDeleter); ok {
+			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
+		}
+		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{})
+		go retGC.Run(watchdogCtx, func(collected int, err error) {
+			if err != nil {
+				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)
+				return
+			}
+			if collected > 0 {
+				log.Printf("lenny-gateway: retention-GC collected artifacts for %d sessions past their §7.1 retention TTL",
+					collected)
+			}
+		})
+	}
+
 	// ----- §10.1 session-coordination lease sweeper -----
 	// Active only with Redis: it renews this replica's lease on every
 	// non-terminal session so a crashed replica's sessions free up.
@@ -916,6 +939,14 @@ func resolveReplicaID() string {
 type permissiveRegistry struct{}
 
 func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
+
+// sessionArtifactDeleter is implemented by session-scoped stores that
+// expose the per-session DeleteBySession adapter — the transcript and
+// blob stores. It backs both the §12.8 erasure orchestrator and the
+// §7.1 retention GC.
+type sessionArtifactDeleter interface {
+	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
 
 // tenantsLister adapts a tenantstore.Store into a
 // watchdog.TenantLister so the watchdog sweeps every registered
