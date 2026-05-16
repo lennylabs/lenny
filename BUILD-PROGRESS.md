@@ -448,7 +448,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Mostly done    | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume — `adapterclient.Resume` and a dedicated `handleResume` that claims a fresh pod and drives the restore — is not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Done           | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume is complete: `adapterclient.Resume` drives the pod adapter's `Resume` RPC, `Binder.Resume` claims a fresh pod and restores onto it, and `handleResume` serves `POST /v1/sessions/{id}/resume` — valid only from `awaiting_client_action` per §15.1, restoring from the §7.1 `WorkspaceSnapshot` or rebuilding from the stored §14 `WorkspacePlan`.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -558,12 +558,16 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the gateway-side resume path (§7.1). Add `adapterclient.Resume` so the gateway
-can drive a pod adapter's `Resume` RPC, then a dedicated `handleResume` handler: when a
-session's pod is still held it transitions straight to running, and when the pod was
-released it claims a fresh pod and drives `Resume` with the session's stored
-`WorkspaceSnapshot` checkpoint reference. This completes the §7.1 resume path and
-Phase 8.
+Phase 8 is complete. Move to Phase 9 (§18.23) — recursive delegation. The
+`pkg/delegation/cycle` and `pkg/delegation/lease` substrates and the gateway delegation
+service exist; the remaining work is the `delegation-echo` Standard-level reference
+runtime, the platform MCP tool surface (`lenny/delegate_task`, `lenny/await_children`,
+`lenny/cancel_child`, `lenny/discover_agents`, `lenny/get_task_tree`, `lenny/output`,
+`lenny/request_input`, `lenny/send_message`, `lenny/set_tracing_context`), the
+`PreDelegation` / `PreMessageDelivery` / `PreExportMaterialization` interceptor phases,
+the `ExtendLease` lease-extension control plane, and delegation-tree recovery
+(`session_tree_archive`). Start by auditing what `pkg/gateway/delegation/service.go`
+already covers so the new work targets the gaps.
 
 ## Test status
 
