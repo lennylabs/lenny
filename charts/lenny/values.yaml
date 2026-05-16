@@ -62,6 +62,24 @@ webhookIngressCIDR: "0.0.0.0/0"
 # the broad default is bounded by the per-port (443) egress rule.
 kubeApiServerCIDR: "0.0.0.0/0"
 
+# tokenService configures the §4.3 Token Service.
+tokenService:
+  # grpcPort is the mTLS gRPC port the gateway reaches the Token
+  # Service on (§13.2).
+  grpcPort: 50052
+
+# redis configures the Redis connection.
+redis:
+  # tlsPort is the TLS port for Redis (§13.2).
+  tlsPort: 6380
+
+# kms configures the external KMS endpoint the Token Service calls.
+kms:
+  # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint
+  # (§13.2). Operators should tighten this to the provider's range;
+  # the broad default is bounded by the per-port (443) egress rule.
+  endpointCIDR: "0.0.0.0/0"
+
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
 # unconditionally; these flags add the later-phase webhooks.

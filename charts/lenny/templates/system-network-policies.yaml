@@ -109,3 +109,65 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Egress]
+---
+{{- /*
+allow-token-service re-admits the §4.3 Token Service flows the §13.2
+default-deny otherwise blocks: ingress from the gateway pods on the
+mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, and
+kube-system CoreDNS. Redis is matched by component label for the
+self-managed profile; an external Redis is reached by a deployer-added
+CIDR rule.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: token-service
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.tokenService.grpcPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: pgbouncer
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: redis
+      ports:
+        - port: {{ .Values.redis.tlsPort }}
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kms.endpointCIDR | quote }}
+      ports:
+        - port: 443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
