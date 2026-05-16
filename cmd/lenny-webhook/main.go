@@ -10,6 +10,7 @@
 //	/label-immutability             — lenny-label-immutability (§17.2, §5.2 NET-003)
 //	/sandboxclaim-guard             — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
 //	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
+//	/direct-mode-isolation          — lenny-direct-mode-isolation (§4.9, §13.2)
 //	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
@@ -57,13 +58,15 @@ func buildScheme() *runtime.Scheme {
 }
 
 // newMux wires every admission route plus the probes. reader backs the
-// sandboxclaim-guard route's API-server lookups.
-func newMux(reader client.Reader) *http.ServeMux {
+// sandboxclaim-guard route's API-server lookups; tenancyMode and devMode
+// configure the direct-mode-isolation route's §4.9 enforcement.
+func newMux(reader client.Reader, tenancyMode string, devMode bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
 		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName)))
+	mux.Handle("/direct-mode-isolation", webhook.Handler(webhook.DirectModeIsolation(tenancyMode, devMode)))
 	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -82,6 +85,10 @@ func main() {
 		"path to the server private key")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second,
 		"graceful shutdown timeout")
+	tenancyMode := flag.String("tenancy-mode", os.Getenv("LENNY_TENANCY_MODE"),
+		"platform tenancy.mode (\"multi\" or \"single\"). The direct-mode-isolation webhook enforces the §4.9 credential-delivery rules only in multi-tenant mode.")
+	devMode := flag.Bool("dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
+		"platform global.devMode. When true the direct-mode-isolation webhook admits every template, matching the §4.9 development-mode allowance.")
 	flag.Parse()
 
 	cfg, err := ctrl.GetConfig()
@@ -95,7 +102,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl),
+		Handler:           newMux(cl, *tenancyMode, *devMode),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

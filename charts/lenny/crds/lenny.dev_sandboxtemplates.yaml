@@ -155,6 +155,18 @@ spec:
               runtimeRef:
                 description: RuntimeRef names the lenny.dev/v1 Runtime this pool warms.
                 type: string
+              spiffeBinding:
+                description: |-
+                  SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding.
+                  `enabled` (the default for proxy-mode pools) binds each lease
+                  token to the issuing pod's SPIFFE identity; `disabled` is
+                  permitted only in single-tenant or development deployments and is
+                  rejected by the lenny-direct-mode-isolation webhook in
+                  multi-tenant mode.
+                enum:
+                - enabled
+                - disabled
+                type: string
               taskPolicy:
                 description: |-
                   TaskPolicy configures task-mode pod reuse. It is required when

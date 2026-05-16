@@ -151,6 +151,16 @@ type SandboxTemplateSpec struct {
 	// +optional
 	DeliveryMode string `json:"deliveryMode,omitempty"`
 
+	// SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding.
+	// `enabled` (the default for proxy-mode pools) binds each lease
+	// token to the issuing pod's SPIFFE identity; `disabled` is
+	// permitted only in single-tenant or development deployments and is
+	// rejected by the lenny-direct-mode-isolation webhook in
+	// multi-tenant mode.
+	// +kubebuilder:validation:Enum=enabled;disabled
+	// +optional
+	SpiffeBinding string `json:"spiffeBinding,omitempty"`
+
 	// MaxSessionAgeSeconds caps the lifetime of a session served by a
 	// pod in this pool.
 	// +optional

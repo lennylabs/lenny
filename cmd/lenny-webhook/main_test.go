@@ -30,7 +30,7 @@ func TestBuildSchemeRegistersWebhookTypes(t *testing.T) {
 }
 
 func TestMuxHealthEndpoints(t *testing.T) {
-	mux := newMux(nil)
+	mux := newMux(nil, "multi", false)
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -64,7 +64,7 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
+	newMux(nil, "multi", false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /label-immutability = %d, want 200", rr.Code)
 	}
@@ -81,9 +81,57 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 	}
 }
 
+// TestMuxServesDirectModeIsolation posts a real AdmissionReview to the
+// direct-mode-isolation route and confirms the mux dispatches it to the
+// webhook shim, which rejects a multi-tenant direct/standard template.
+func TestMuxServesDirectModeIsolation(t *testing.T) {
+	tmpl := lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: "lenny-agents"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:       "claude-code",
+			DeliveryMode:     "direct",
+			IsolationProfile: "standard",
+		},
+	}
+	tmplRaw, err := json.Marshal(tmpl)
+	if err != nil {
+		t.Fatalf("marshal template: %v", err)
+	}
+	review := admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "review-2",
+			Operation: admissionv1.Create,
+			Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1", Kind: "SandboxTemplate"},
+			Object:    runtime.RawExtension{Raw: tmplRaw},
+		},
+	}
+	body, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal review: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	newMux(nil, "multi", false).ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/direct-mode-isolation", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /direct-mode-isolation = %d, want 200", rr.Code)
+	}
+
+	var out admissionv1.AdmissionReview
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Response == nil || out.Response.Allowed {
+		t.Errorf("response = %+v, want a rejection for direct + standard in multi-tenant mode", out.Response)
+	}
+	if out.Response.UID != "review-2" {
+		t.Errorf("response UID = %q, want review-2", out.Response.UID)
+	}
+}
+
 func TestMuxRejectsUnknownRoute(t *testing.T) {
 	rr := httptest.NewRecorder()
-	newMux(nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
+	newMux(nil, "multi", false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST /no-such-webhook = %d, want 404", rr.Code)
 	}
