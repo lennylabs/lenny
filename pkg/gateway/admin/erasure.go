@@ -177,6 +177,16 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"deleted":  job.Deleted,
 			"total":    job.Total,
 		}
+		// §12.8: the receipt records which billing-erasure policy was
+		// applied and whether billing events were pseudonymized or
+		// exempted. Absent when no BillingEraser ran for this job.
+		if job.Billing.Disposition != "" {
+			receipt["billingErasure"] = map[string]any{
+				"disposition":   job.Billing.Disposition,
+				"pseudonymized": job.Billing.Pseudonymized,
+				"verified":      job.Billing.Verified,
+			}
+		}
 		for k, v := range overrideReceipt {
 			receipt[k] = v
 		}

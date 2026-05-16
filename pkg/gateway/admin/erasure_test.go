@@ -15,6 +15,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -151,6 +152,93 @@ func TestEraseUserEmitsCompletionReceipt(t *testing.T) {
 	}
 	if receipt.Detail["total"] != 6 {
 		t.Errorf("receipt total = %v, want 6", receipt.Detail["total"])
+	}
+}
+
+// newBillingErasureAdmin builds an erasure admin router whose erasure
+// runner has the §12.8 BillingEraser attached. Tenant `acme` is seeded
+// with the given billingErasurePolicy.
+func newBillingErasureAdmin(t *testing.T, billingPolicy string) (*admin.Router, userstore.Store, *billingstore.Memory, *recordingAudit) {
+	t.Helper()
+	users := userstore.NewMemory()
+	jobs := erasurejob.NewMemory()
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{
+		ID: "acme", BillingErasurePolicy: billingPolicy,
+	}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	billing := billingstore.NewMemory()
+	audit := &recordingAudit{}
+	runner := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), erasureClock).
+		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
+	router := admin.NewRouter(tenants, admin.Options{Clock: erasureClock, Audit: audit}).
+		WithUsers(users).WithErasure(runner, jobs)
+	return router, users, billing, audit
+}
+
+func TestEraseUserReceiptRecordsBillingPseudonymization(t *testing.T) {
+	router, users, billing, audit := newBillingErasureAdmin(t, "")
+	seedUser(t, users, "acme", "alice@acme.com")
+	for i := 0; i < 3; i++ {
+		if _, err := billing.Append(context.Background(), billingstore.Event{
+			TenantID: "acme", UserID: "alice@acme.com", SessionID: "s",
+			EventType: billingstore.EventSessionCreated,
+		}); err != nil {
+			t.Fatalf("seed billing event: %v", err)
+		}
+	}
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	// §12.8: the receipt records that billing events were pseudonymized.
+	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
+	be, ok := receipt.Detail["billingErasure"].(map[string]any)
+	if !ok {
+		t.Fatalf("receipt missing billingErasure detail: %v", receipt.Detail)
+	}
+	if be["disposition"] != "pseudonymized" {
+		t.Errorf("billingErasure.disposition = %v, want pseudonymized", be["disposition"])
+	}
+	if be["verified"] != true {
+		t.Errorf("billingErasure.verified = %v, want true", be["verified"])
+	}
+	if cnt, _ := billing.CountUser(context.Background(), "acme", "alice@acme.com"); cnt != 0 {
+		t.Errorf("%d billing events still carry the original user id, want 0", cnt)
+	}
+}
+
+func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
+	router, users, billing, audit := newBillingErasureAdmin(t, tenantstore.BillingErasureExempt)
+	seedUser(t, users, "acme", "bob@acme.com")
+	if _, err := billing.Append(context.Background(), billingstore.Event{
+		TenantID: "acme", UserID: "bob@acme.com", SessionID: "s",
+		EventType: billingstore.EventSessionCreated,
+	}); err != nil {
+		t.Fatalf("seed billing event: %v", err)
+	}
+
+	rr := eraseUser(t, router.Handler(), "bob@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d", rr.Code)
+	}
+
+	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
+	be, ok := receipt.Detail["billingErasure"].(map[string]any)
+	if !ok {
+		t.Fatalf("receipt missing billingErasure detail: %v", receipt.Detail)
+	}
+	if be["disposition"] != "exempt" {
+		t.Errorf("billingErasure.disposition = %v, want exempt", be["disposition"])
+	}
+	// §12.8 Article 17(3)(b): an exempt tenant retains the original id.
+	if cnt, _ := billing.CountUser(context.Background(), "acme", "bob@acme.com"); cnt != 1 {
+		t.Errorf("exempt tenant's billing event was rewritten: CountUser=%d, want 1", cnt)
 	}
 }
 
