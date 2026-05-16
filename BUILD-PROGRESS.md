@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `dd5d3fc` — Agent pod-spec builder. `podspec.Build` translates a Sandbox,
+  SandboxTemplate, and Runtime into the backing `corev1.Pod`: the §4.7 two-container
+  sidecar pod with the §13.1 security posture, the §6.1 volumes, and the §5.3
+  RuntimeClass. Critical-path item 2.
 - `0f8e61c` — Adapter `SendMessage` and `Shutdown` RPCs. `SendMessage` forwards the
   gateway's pre-encoded message envelope to the runtime's stdin; `Shutdown` closes the
   runtime and releases the session. `SubprocessExecutor` gained a `WriteEnvelope`
@@ -169,7 +173,7 @@ progress; see the progress log.
    `StartSession` are done; the remaining work is the message and lifecycle RPCs
    (`SendMessage`, `Shutdown`, the credential RPCs, `Interrupt`, `Checkpoint`,
    `DemoteSDK`, `LifecycleChannel`) and a container image.
-2. Build the pod-spec builder.
+2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler that wraps the existing lifecycle planner.
 4. Build the gateway pod-claim path against `SandboxClaim`.
 5. Wire workspace materialization and session start from the gateway to the adapter.
@@ -177,12 +181,13 @@ progress; see the progress log.
 
 ## Next step
 
-Build the pod-spec builder — critical-path item 2. Translate a `Sandbox`, its
-`SandboxTemplate`, and its `Runtime` into a `corev1.PodSpec` with the adapter
-container and the runtime container, the §13.1 security context (non-root, dropped
-capabilities, read-only root filesystem, the `lenny-cred-readers` fsGroup), the §6.1
-workspace and credential volumes, and the §5.3 RuntimeClass derived from the
-isolation profile. This unblocks the Sandbox-to-Pod reconciler.
+Build the Sandbox-to-Pod reconciler — critical-path item 3. A controller-runtime
+reconciler that watches `Sandbox` resources, resolves each Sandbox's `SandboxTemplate`
+and `Runtime`, and applies the existing `lifecycle.Decide` plan: create the backing
+Pod from `podspec.Build` while warming, advance `Sandbox.status.phase` to `idle` once
+the Pod is Ready, and run the `draining` → delete-Pod → `terminated` teardown. The
+Pod carries an owner reference to the Sandbox for garbage collection. This makes a
+warm pod actually materialize in the cluster.
 
 ## Test status
 
