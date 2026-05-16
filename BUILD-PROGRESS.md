@@ -457,7 +457,7 @@ this state.
 | 12a   | Token Service hardening (KMS envelope, OAuth)                | Substrate only | `pkg/tokenexchange` exists. KMS envelope encryption and the full OAuth connector flow are not.                                                                                                                                                                                                                                               |
 | 12b   | type: mcp runtime support                                    | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 12c   | Concurrent execution modes                                   | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 13    | Full observability, audit, lenny-backup, compliance          | Substrate only | `pkg/audit` and the audit hash chain exist. The `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the GDPR erasure pipeline, and the full observability catalog are not.                                                                                                                                                         |
+| 13    | Full observability, audit, lenny-backup, compliance          | Substrate only | `pkg/audit` and the audit hash chain exist (the §11.7 `ChainIntegrity` / `ComplianceProfile` / `RetentionPreset` / `OCSFTranslationState` enums are built). The §12.8 GDPR-erasure `DeleteByUser` per-store adapter is built on the SessionStore (in-memory and Postgres). The `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the rest of the GDPR erasure pipeline (the dependency-ordered orchestrator, `DeleteByUser` on the other stores, the tenant-deletion controller), and the full observability catalog are not.                                                                                                                                                         |
 | 13.5  | Pre-hardening full-system load baseline                      | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -595,6 +595,16 @@ the `credentialPolicy` fallback chain (`pkg/gateway/credfallback`). The two rema
 Phase 11 items are infra-coupled and deferred: hot rotation needs the adapter
 lifecycle channel for the `credentials_rotated` / `credentials_acknowledged`
 handshake, and cross-replica revocation propagation needs Redis pub/sub.
+
+Phases 12–13: the pure substrate is already in place — `pkg/tokenexchange` (RFC 8693
+`Validate`), the `pkg/audit` §11.7 enums, and the audit hash chain are all built. The
+§12.8 GDPR-erasure `DeleteByUser` per-store adapter is built on the SessionStore. The
+bulk of the remaining Phase 12–16 surface is infrastructure integration that requires
+external systems to realize authentically — KMS envelope encryption, the OAuth 2.1
+connector flow, Redis pub/sub propagation, Kubernetes concurrent-execution slots, the
+`lenny-backup` pipeline, SIEM streaming, and the security-hardening release pipeline.
+The next tractable pure-Go chunks are the remaining per-store `DeleteByUser` adapters
+and the dependency-ordered erasure orchestrator (§12.8).
 
 ## Test status
 
