@@ -67,11 +67,20 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 }
 
 // recordSessionCompleted runs the side effects of a session reaching a
-// terminal state: it releases the session's executor state — for a
-// pod-backed session this shuts the runtime down and reclaims the pod —
-// and emits the §11.2.1 `session.completed` billing event. Both are
-// best-effort: a failure never fails the transition that triggered it.
+// terminal state: it takes the §7.1 final workspace snapshot, releases
+// the session's executor state — for a pod-backed session this shuts
+// the runtime down and reclaims the pod — and emits the §11.2.1
+// `session.completed` billing event. All are best-effort: a failure
+// never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	// §7.1 seal-and-export: snapshot the final workspace before the pod
+	// is released. Best-effort — it no-ops for a session that never ran
+	// on a pod, and a failed seal falls back to the latest periodic
+	// checkpoint per §7.1. The seal runs before executor.Close, which
+	// tears the pod down.
+	if s.sealer != nil {
+		_ = s.sealer.Seal(ctx, sess.TenantID, sess.ID)
+	}
 	if s.executor != nil {
 		_ = s.executor.Close(ctx, sess.ID)
 	}

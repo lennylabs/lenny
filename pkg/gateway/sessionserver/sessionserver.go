@@ -102,6 +102,16 @@ type Server struct {
 	podBinder       *podsession.Binder
 	podRegistry     *podsession.Registry
 	agentNamespace  string
+	sealer          Sealer
+}
+
+// Sealer takes the §7.1 final workspace snapshot of a session that has
+// reached a terminal state. The gateway invokes it as the
+// seal-and-export step of session completion.
+type Sealer interface {
+	// Seal snapshots the session's final workspace. An implementation
+	// is expected to no-op for a session that never ran on a pod.
+	Seal(ctx context.Context, tenantID, sessionID string) error
 }
 
 // Options configures the Server at construction.
@@ -216,6 +226,10 @@ type Options struct {
 	// AgentNamespace is the namespace the warm pools and Sandboxes live
 	// in. Required when PodBinder is set.
 	AgentNamespace string
+
+	// Sealer, when set, takes the §7.1 final workspace snapshot when a
+	// session reaches a terminal state. Nil disables seal-and-export.
+	Sealer Sealer
 }
 
 // New returns a Server bound to the supplied store.
@@ -241,6 +255,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		podBinder:       opts.PodBinder,
 		podRegistry:     opts.PodRegistry,
 		agentNamespace:  opts.AgentNamespace,
+		sealer:          opts.Sealer,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
