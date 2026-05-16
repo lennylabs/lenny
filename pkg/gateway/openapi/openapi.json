@@ -620,6 +620,20 @@
         }
       }
     },
+    "/v1/admin/legal-hold": {
+      "post": {
+        "summary": "Set or clear a §12.8 legal hold on a session",
+        "x-lenny-mcp-tool": "admin.set_legal_hold",
+        "x-lenny-scope": "admin.legal_holds.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/issued-tokens/{jti}/revoke": {
       "post": {
         "summary": "Revoke an issued token by jti",

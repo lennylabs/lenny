@@ -25,6 +25,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
@@ -88,6 +89,7 @@ type Router struct {
 	revocationCache RevocationCache
 	erasureRunner   ErasureRunner
 	erasureJobs     erasurejob.Store
+	sessions        sessionstore.Store
 	clock           func() time.Time
 	audit           AuditSink
 
@@ -170,6 +172,11 @@ func (r *Router) Handler() http.Handler {
 		// §12.8 erasure-job status query.
 		mux.Handle("GET /v1/admin/erasure-jobs/{job_id}",
 			r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
+	}
+	if r.sessions != nil {
+		// §12.8 legal hold set / clear.
+		mux.Handle("POST /v1/admin/legal-hold",
+			r.requireAdmin(http.HandlerFunc(r.handleSetLegalHold)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
