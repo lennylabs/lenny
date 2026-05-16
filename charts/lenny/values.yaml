@@ -49,6 +49,13 @@ admissionWebhooks:
       cpu: 200m
       memory: 128Mi
 
+# webhookIngressCIDR is the source CIDR allowed to reach the admission
+# webhook pods (§13.2). The kube-apiserver calls webhooks from a node
+# or control-plane IP that is impractical to pin without cloud-specific
+# knowledge; the default is safe because the lenny-system namespace is
+# default-deny and the webhook pods authenticate callers via mTLS.
+webhookIngressCIDR: "0.0.0.0/0"
+
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
 # unconditionally; these flags add the later-phase webhooks.

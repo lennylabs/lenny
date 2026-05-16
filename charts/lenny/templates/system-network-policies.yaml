@@ -18,3 +18,48 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
+---
+{{- /*
+allow-admission-webhooks re-admits, for the admission webhook pods, the
+two flows the §13.2 default-deny otherwise blocks: kube-apiserver
+ingress so the API server can invoke the webhook callbacks, and
+kube-system CoreDNS egress for name resolution. Without the ingress
+rule every fail-closed webhook silently rejects all admissions. The
+drain-readiness-only gateway-egress sub-rule is rendered with that
+feature-gated webhook.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-admission-webhooks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: admission-webhook
+  ingress:
+    # The kube-apiserver connects from a node or control-plane IP, so
+    # the source CIDR is operator-tunable; the webhook pods listen on
+    # 8443 (the Service maps :443 to this container port).
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.webhookIngressCIDR | quote }}
+      ports:
+        - port: 8443
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
