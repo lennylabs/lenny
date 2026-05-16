@@ -1,0 +1,51 @@
+{{- /*
+lenny-deployment-phase-stamp ConfigMap (§17.2 feature-flag downgrade
+enforcement, layer 1). Records, per admission-plane feature flag, when
+the flag was first enabled.
+
+Write semantics are append-only: a flag key is written only on the
+false-to-true transition, and re-renders preserve the original
+enabledAt by reading the live ConfigMap through lookup. The chart is
+the sole writer; no Lenny component mutates the ConfigMap at runtime.
+The elicitation-content-integrity floor key is rewritten on every
+render because lowering the floor is a legitimate posture change.
+
+The ConfigMap is a pre-install/pre-upgrade hook at weight -20 so it
+exists before the lenny-preflight Job at weight -10. Each enabled flag
+also stamps a lenny.dev/flag-<flag> label so kube-state-metrics can
+surface the recorded posture to the AdmissionPlaneFeatureFlagDowngrade
+alert.
+*/ -}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace "lenny-deployment-phase-stamp" -}}
+{{- $prior := dict -}}
+{{- if $existing -}}
+{{-   $prior = $existing.data -}}
+{{- end -}}
+{{- $stampedAt := dateInZone "2006-01-02T15:04:05Z07:00" now "UTC" -}}
+{{- $flags := dict -}}
+{{- range $flag := list "llmProxy" "drainReadiness" "compliance" -}}
+{{-   if hasKey $prior $flag -}}
+{{-     $flags = set $flags $flag (index $prior $flag) -}}
+{{-   else if (index $.Values.features $flag) -}}
+{{-     $flags = set $flags $flag (dict "enabled" true "enabledAt" $stampedAt | toJson) -}}
+{{-   end -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-deployment-phase-stamp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    {{- range $flag, $_ := $flags }}
+    lenny.dev/flag-{{ $flag }}: "true"
+    {{- end }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  security.elicitationContentIntegrity.floor: {{ .Values.security.elicitationContentIntegrity.floor | quote }}
+  {{- range $flag, $value := $flags }}
+  {{ $flag }}: {{ $value | quote }}
+  {{- end }}

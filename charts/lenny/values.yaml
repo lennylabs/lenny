@@ -70,3 +70,12 @@ gateway:
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
   grpcPort: 50051
+
+# security carries platform-wide security posture settings.
+security:
+  elicitationContentIntegrity:
+    # floor is the deployment-wide minimum elicitation content
+    # integrity enforcement mode (§9.2): off, detect-only, or enforce.
+    # It is the lower bound of every tenant's effective mode and is
+    # recorded on the phase-stamp ConfigMap.
+    floor: "off"
