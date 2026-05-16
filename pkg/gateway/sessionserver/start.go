@@ -245,12 +245,16 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 // failSession marks a session row failed after a start-path error. The
 // update is best-effort: the start handler has already chosen the HTTP
 // error it returns to the client, so a store failure here cannot change
-// the reply.
+// the reply. A failed child session is archived to the §8.10
+// session_tree_archive so a resumed parent can replay the outcome.
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
-	_, _ = s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.State = session.StateFailed
 		return nil
 	})
+	if err == nil {
+		s.archiveSettledChild(ctx, updated)
+	}
 }
 
 // handleResume implements POST /v1/sessions/{id}/resume per §15.1 and

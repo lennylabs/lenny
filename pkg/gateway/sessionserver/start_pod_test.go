@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -546,5 +547,57 @@ func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
 	}
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 after a failed resume", registry.Len())
+	}
+}
+
+// spec: §8.10 — a child session that the gateway fails on the resume
+// path is archived to the session_tree_archive.
+func TestResumeArchivesFailedChild(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
+
+	cluster := podBindClient(t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	srv := sessionserver.New(store, sessionserver.Options{
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+		TreeArchive:             archive,
+	})
+
+	// A child session targeting a runtime no warm pool covers: resume
+	// cannot claim a pod, so the gateway fails the session.
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:              "sess_child",
+		RuntimeRef:      "no-such-runtime",
+		ParentSessionID: "sess_parent",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-1",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+		},
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_child/resume", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resume: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+
+	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("the failed child was not archived: %v", err)
+	}
+	if got.State != string(session.StateFailed) {
+		t.Errorf("archived state = %q, want failed", got.State)
+	}
+	if got.ParentSessionID != "sess_parent" {
+		t.Errorf("archived ParentSessionID = %q, want sess_parent", got.ParentSessionID)
 	}
 }
