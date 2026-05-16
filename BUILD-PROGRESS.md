@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b7f8c9c` — Adapter `Checkpoint` RPC (§4.4, §4.7). Archives the session workspace with
+  `workspace.Archive` and streams the gzip-tar to a `CheckpointSink`, returning the
+  checkpoint identifier and compressed size — the best-effort path that archives the
+  workspace live without quiescing the runtime. The `Server` gains an optional
+  `Checkpoints` sink.
 - `3a9898f` — `workspace.Archive` (§4.4, §7.1). Snapshots a workspace directory into a
   gzip-tar — the inverse of `Materialize` — for a §4.4 checkpoint or the §7.1
   seal-and-export. Symlinks are recorded as symlink entries without being followed, so
@@ -411,7 +416,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end (decision logic, gateway `GET /internal/drain-readiness` endpoint, AdmissionReview handler and route, feature-gated Helm manifest), with a real §12.5 MinIO bucket probe when `cmd/lenny-gateway` runs with `--minio-endpoint`. `pkg/checkpoint` holds the substrate and `workspace.Archive` snapshots a workspace into a gzip-tar. The adapter `Checkpoint` RPC and the gateway checkpoint-and-resume orchestration are not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end (decision logic, gateway `GET /internal/drain-readiness` endpoint, AdmissionReview handler and route, feature-gated Helm manifest), with a real §12.5 MinIO bucket probe when `cmd/lenny-gateway` runs with `--minio-endpoint`. `pkg/checkpoint` holds the substrate, `workspace.Archive` snapshots a workspace into a gzip-tar, and the adapter `Checkpoint` RPC stores a workspace checkpoint. The gateway-side `adapterclient.Checkpoint` method and the gateway checkpoint-and-resume orchestration are not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -521,13 +526,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the adapter `Checkpoint` RPC (§4.4, §4.7). The proto already declares
-`Checkpoint(CheckpointRequest) → CheckpointResponse{checkpoint_id, size_bytes}`. The
-adapter handler snapshots the session's workspace with `workspace.Archive`, streams the
-gzip-tar to the artifact store, and returns the checkpoint identifier and compressed
-size. §4.4 places the checkpoint object in MinIO; the upload is abstracted behind a
-store interface so the handler is testable without a live MinIO. This is the
-prerequisite for the gateway periodic-checkpoint and seal-and-export orchestration.
+Build the gateway-side `adapterclient.Checkpoint` method (§4.4, §15.4). The gateway's
+adapter client wraps the generated `adapterv1` client with `NegotiateVersion`,
+`StartSession`, `SendMessage`, `Interrupt`, `Shutdown`, and `Attach`; it needs a
+`Checkpoint` method so the gateway can drive a pod's checkpoint. After that, the
+gateway periodic-checkpoint orchestration calls it on the `SandboxTemplate`
+checkpoint cadence and records the resulting `WorkspaceSnapshot` on the session row.
 
 ## Test status
 
