@@ -79,6 +79,11 @@ redis:
   # tlsPort is the TLS port for Redis (§13.2).
   tlsPort: 6380
 
+# minio configures the MinIO object store (self-managed profile).
+minio:
+  # tlsPort is the TLS port the gateway reaches MinIO on (§13.2).
+  tlsPort: 9443
+
 # kms configures the external KMS endpoint the Token Service calls.
 kms:
   # endpointCIDR is the destination CIDR for the KMS HTTPS endpoint

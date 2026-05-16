@@ -349,3 +349,43 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+---
+{{- /*
+allow-minio re-admits the §13.2 MinIO flows the lenny-system
+default-deny otherwise blocks (§13.2 line 220, self-managed profile):
+ingress from the gateway pods on the TLS port, and egress to
+kube-system CoreDNS.
+*/ -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: minio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.minio.tlsPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]
