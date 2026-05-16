@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT
+
+package preflight_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/lennylabs/lenny/pkg/preflight"
+)
+
+func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
+	got := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	if len(got) != 4 {
+		t.Errorf("baseline expected %d webhooks, want 4: %v", len(got), got)
+	}
+}
+
+func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
+	got := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{
+		LLMProxy:       true,
+		DrainReadiness: true,
+		Compliance:     true,
+	})
+	want := map[string]bool{
+		"lenny-label-immutability":             true,
+		"lenny-sandboxclaim-guard":             true,
+		"lenny-pool-config-validator":          true,
+		"lenny-ephemeral-container-cred-guard": true,
+		"lenny-direct-mode-isolation":          true,
+		"lenny-drain-readiness":                true,
+		"lenny-data-residency-validator":       true,
+		"lenny-t4-node-isolation":              true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("all-flags expected %d webhooks, want %d: %v", len(got), len(want), got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected webhook %q in the all-flags set", name)
+		}
+	}
+}
+
+func healthyWebhook(name string) preflight.WebhookConfig {
+	return preflight.WebhookConfig{Name: name, FailurePolicy: "Fail", HasCABundle: true}
+}
+
+func healthyDeployment(names []string) []preflight.WebhookConfig {
+	out := make([]preflight.WebhookConfig, 0, len(names))
+	for _, n := range names {
+		out = append(out, healthyWebhook(n))
+	}
+	return out
+}
+
+func TestCheckAdmissionWebhooksPassesWhenAllPresent(t *testing.T) {
+	expected := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	d := preflight.CheckAdmissionWebhooks(expected, healthyDeployment(expected))
+	if !d.Passed {
+		t.Errorf("check failed though every expected webhook is healthy: %s", d.Reason)
+	}
+}
+
+func TestCheckAdmissionWebhooksFailsOnMissingWebhook(t *testing.T) {
+	expected := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	// Deploy all but the last expected webhook.
+	d := preflight.CheckAdmissionWebhooks(expected, healthyDeployment(expected[:len(expected)-1]))
+	if d.Passed {
+		t.Fatal("check passed with a missing webhook")
+	}
+	if !strings.Contains(d.Reason, "not found") {
+		t.Errorf("reason %q does not report the missing webhook", d.Reason)
+	}
+}
+
+func TestCheckAdmissionWebhooksFailsOnNonFailPolicy(t *testing.T) {
+	expected := []string{"lenny-label-immutability"}
+	deployed := []preflight.WebhookConfig{
+		{Name: "lenny-label-immutability", FailurePolicy: "Ignore", HasCABundle: true},
+	}
+	d := preflight.CheckAdmissionWebhooks(expected, deployed)
+	if d.Passed {
+		t.Fatal("check passed a webhook with failurePolicy Ignore")
+	}
+	if !strings.Contains(d.Reason, "failurePolicy") {
+		t.Errorf("reason %q does not report the failure policy", d.Reason)
+	}
+}
+
+func TestCheckAdmissionWebhooksFailsOnEmptyCABundle(t *testing.T) {
+	expected := []string{"lenny-sandboxclaim-guard"}
+	deployed := []preflight.WebhookConfig{
+		{Name: "lenny-sandboxclaim-guard", FailurePolicy: "Fail", HasCABundle: false},
+	}
+	d := preflight.CheckAdmissionWebhooks(expected, deployed)
+	if d.Passed {
+		t.Fatal("check passed a webhook with no caBundle")
+	}
+	if !strings.Contains(d.Reason, "caBundle") {
+		t.Errorf("reason %q does not report the missing caBundle", d.Reason)
+	}
+}
