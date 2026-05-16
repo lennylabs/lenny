@@ -489,7 +489,8 @@ func main() {
 		WithPools(pools).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
-		WithSessions(sessions)
+		WithSessions(sessions).
+		WithInteractions(interactions)
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -73,6 +74,14 @@ func fromUser(u userstore.User) UserPayload {
 // WithUsers wires the §15.1 admin user CRUD handlers onto the Router.
 func (r *Router) WithUsers(s userstore.Store) *Router {
 	r.users = s
+	return r
+}
+
+// WithInteractions wires the §9.2 interaction store onto the Router.
+// It backs the §11.4 full_revoke step that dismisses a revoked user's
+// pending elicitations.
+func (r *Router) WithInteractions(s interactionstore.Store) *Router {
+	r.interactions = s
 	return r
 }
 
@@ -372,31 +381,44 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 	// §11.4 full_revoke: terminate the user's active sessions in the
-	// SessionStore. soft_disable and hard_disable leave running
-	// sessions alone — they only gate new work.
-	sessionsTerminated := 0
-	if body.Mode == InvalidateFullRevoke && r.sessions != nil {
-		sessionsTerminated, err = r.terminateUserSessions(req.Context(), tenant, subject)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"session termination failed: "+err.Error(), nil)
-			return
+	// SessionStore and dismiss their pending elicitations. soft_disable
+	// and hard_disable leave running sessions alone — they only gate
+	// new work.
+	sessionsTerminated, elicitationsDismissed := 0, 0
+	if body.Mode == InvalidateFullRevoke {
+		if r.sessions != nil {
+			sessionsTerminated, err = r.terminateUserSessions(req.Context(), tenant, subject)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"session termination failed: "+err.Error(), nil)
+				return
+			}
+		}
+		if r.interactions != nil {
+			elicitationsDismissed, err = r.interactions.DismissByUser(req.Context(), tenant, subject)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"elicitation dismissal failed: "+err.Error(), nil)
+				return
+			}
 		}
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.user.invalidated", subject, map[string]any{
-		"tenantId":           tenant,
-		"mode":               body.Mode,
-		"reason":             body.Reason,
-		"sessionsTerminated": sessionsTerminated,
+		"tenantId":              tenant,
+		"mode":                  body.Mode,
+		"reason":                body.Reason,
+		"sessionsTerminated":    sessionsTerminated,
+		"elicitationsDismissed": elicitationsDismissed,
 	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"subject":            subject,
-		"tenantId":           tenant,
-		"mode":               body.Mode,
-		"sessionsTerminated": sessionsTerminated,
-		"user":               fromUser(updated),
+		"subject":               subject,
+		"tenantId":              tenant,
+		"mode":                  body.Mode,
+		"sessionsTerminated":    sessionsTerminated,
+		"elicitationsDismissed": elicitationsDismissed,
+		"user":                  fromUser(updated),
 	})
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -137,20 +138,21 @@ func TestInvalidateUserNotFound(t *testing.T) {
 
 // spec: §11.4 full_revoke — terminate the user's active sessions.
 
-func newUserAdminWithSessions(t *testing.T) (*admin.Router, userstore.Store, sessionstore.Store, *recordingAudit) {
+func newUserAdminWithSessions(t *testing.T) (*admin.Router, userstore.Store, sessionstore.Store, interactionstore.Store, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
 	sessions := memstore.New()
+	interactions := interactionstore.NewMemory()
 	audit := &recordingAudit{}
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,
-	}).WithUsers(users).WithSessions(sessions)
-	return router, users, sessions, audit
+	}).WithUsers(users).WithSessions(sessions).WithInteractions(interactions)
+	return router, users, sessions, interactions, audit
 }
 
 func TestFullRevokeTerminatesActiveSessions(t *testing.T) {
-	router, users, sessions, _ := newUserAdminWithSessions(t)
+	router, users, sessions, _, _ := newUserAdminWithSessions(t)
 	seedUser(t, users, "acme", "alice@acme.com")
 	seedSession(t, sessions, sessionstore.Session{
 		ID: "run_1", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning,
@@ -185,7 +187,7 @@ func TestFullRevokeTerminatesActiveSessions(t *testing.T) {
 }
 
 func TestFullRevokeLeavesOtherUsersSessions(t *testing.T) {
-	router, users, sessions, _ := newUserAdminWithSessions(t)
+	router, users, sessions, _, _ := newUserAdminWithSessions(t)
 	seedUser(t, users, "acme", "alice@acme.com")
 	seedSession(t, sessions, sessionstore.Session{
 		ID: "alice_s", TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning,
@@ -206,7 +208,7 @@ func TestFullRevokeLeavesOtherUsersSessions(t *testing.T) {
 }
 
 func TestSoftDisableLeavesSessionsRunning(t *testing.T) {
-	router, users, sessions, _ := newUserAdminWithSessions(t)
+	router, users, sessions, _, _ := newUserAdminWithSessions(t)
 	seedUser(t, users, "acme", "carol@acme.com")
 	seedSession(t, sessions, sessionstore.Session{
 		ID: "carol_s", TenantID: "acme", UserID: "carol@acme.com", State: session.StateRunning,
@@ -224,7 +226,7 @@ func TestSoftDisableLeavesSessionsRunning(t *testing.T) {
 }
 
 func TestFullRevokeWithNoActiveSessions(t *testing.T) {
-	router, users, _, _ := newUserAdminWithSessions(t)
+	router, users, _, _, _ := newUserAdminWithSessions(t)
 	seedUser(t, users, "acme", "dave@acme.com")
 
 	rr := invalidateUser(t, router.Handler(), "dave@acme.com",
@@ -236,6 +238,35 @@ func TestFullRevokeWithNoActiveSessions(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp["sessionsTerminated"] != float64(0) {
 		t.Errorf("sessionsTerminated = %v, want 0", resp["sessionsTerminated"])
+	}
+}
+
+func TestFullRevokeDismissesPendingElicitations(t *testing.T) {
+	router, users, _, interactions, _ := newUserAdminWithSessions(t)
+	seedUser(t, users, "acme", "frank@acme.com")
+	if err := interactions.Put(context.Background(), interactionstore.Interaction{
+		ID: "el_1", Kind: interactionstore.KindElicitation,
+		SessionID: "sess_e", TenantID: "acme", UserID: "frank@acme.com",
+	}); err != nil {
+		t.Fatalf("seed elicitation: %v", err)
+	}
+
+	rr := invalidateUser(t, router.Handler(), "frank@acme.com",
+		admin.InvalidateUserRequest{TenantID: "acme", Mode: admin.InvalidateFullRevoke}, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("full_revoke: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["elicitationsDismissed"] != float64(1) {
+		t.Errorf("elicitationsDismissed = %v, want 1", resp["elicitationsDismissed"])
+	}
+	got, err := interactions.Get(context.Background(), "acme", "sess_e", "frank@acme.com", "el_1")
+	if err != nil {
+		t.Fatalf("Get elicitation: %v", err)
+	}
+	if got.Phase != interactionstore.PhaseDismissed {
+		t.Errorf("elicitation phase = %q, want dismissed", got.Phase)
 	}
 }
 

@@ -95,6 +95,13 @@ type Store interface {
 	// per-store adapter. Erasing a user with no interactions is a
 	// no-op returning (0, nil).
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// DismissByUser sets every pending elicitation directed at userID
+	// within tenantID to dismissed and returns the count dismissed —
+	// the §11.4 full_revoke step that clears a revoked user's pending
+	// elicitations. Pending tool-use interactions are left untouched;
+	// §11.4 step 7 scopes the dismissal to elicitations.
+	DismissByUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -183,4 +190,21 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 		}
 	}
 	return deleted, nil
+}
+
+// DismissByUser implements Store — the §11.4 full_revoke adapter.
+func (m *Memory) DismissByUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	dismissed := 0
+	for k, in := range m.interactions {
+		if in.TenantID == tenantID && in.UserID == userID &&
+			in.Kind == KindElicitation && in.Phase == PhasePending {
+			in.Phase = PhaseDismissed
+			in.ResolvedAt = time.Now().UTC()
+			m.interactions[k] = in
+			dismissed++
+		}
+	}
+	return dismissed, nil
 }

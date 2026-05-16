@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -90,6 +91,7 @@ type Router struct {
 	erasureRunner   ErasureRunner
 	erasureJobs     erasurejob.Store
 	sessions        sessionstore.Store
+	interactions    interactionstore.Store
 	clock           func() time.Time
 	audit           AuditSink
 

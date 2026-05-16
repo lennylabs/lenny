@@ -130,3 +130,73 @@ func TestDeleteByUserNoInteractionsIsNoOp(t *testing.T) {
 		t.Errorf("DeleteByUser of a user with no interactions = (%d, %v), want (0, nil)", deleted, err)
 	}
 }
+
+// spec: §11.4 full_revoke — dismiss a revoked user's pending elicitations.
+
+func TestDismissByUserDismissesPendingElicitations(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	seed(t, s, "el1", "sess-1", "alice", interactionstore.KindElicitation)
+	seed(t, s, "el2", "sess-2", "alice", interactionstore.KindElicitation)
+	seed(t, s, "tc1", "sess-1", "alice", interactionstore.KindToolUse)
+	seed(t, s, "el3", "sess-3", "bob", interactionstore.KindElicitation)
+
+	dismissed, err := s.DismissByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DismissByUser: %v", err)
+	}
+	if dismissed != 2 {
+		t.Errorf("dismissed = %d, want 2 (alice's two pending elicitations)", dismissed)
+	}
+	for _, c := range []struct{ sess, id string }{{"sess-1", "el1"}, {"sess-2", "el2"}} {
+		got, err := s.Get(ctx, "acme", c.sess, "alice", c.id)
+		if err != nil {
+			t.Fatalf("Get %s: %v", c.id, err)
+		}
+		if got.Phase != interactionstore.PhaseDismissed {
+			t.Errorf("elicitation %s phase = %q, want dismissed", c.id, got.Phase)
+		}
+	}
+	// A tool-use interaction is not an elicitation — left pending.
+	tc, _ := s.Get(ctx, "acme", "sess-1", "alice", "tc1")
+	if tc.Phase != interactionstore.PhasePending {
+		t.Errorf("tool-use phase = %q, want pending (§11.4 step 7 dismisses elicitations only)", tc.Phase)
+	}
+	// Bob's elicitation survives alice's revocation.
+	bob, _ := s.Get(ctx, "acme", "sess-3", "bob", "el3")
+	if bob.Phase != interactionstore.PhasePending {
+		t.Errorf("bob's elicitation phase = %q, want pending", bob.Phase)
+	}
+}
+
+func TestDismissByUserSkipsAlreadyResolvedElicitations(t *testing.T) {
+	s := interactionstore.NewMemory()
+	ctx := context.Background()
+	seed(t, s, "el1", "sess-1", "alice", interactionstore.KindElicitation)
+	if _, err := s.Resolve(ctx, "acme", "sess-1", "alice", "el1",
+		func(in *interactionstore.Interaction) error {
+			in.Phase = interactionstore.PhaseResponded
+			return nil
+		}); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	dismissed, err := s.DismissByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DismissByUser: %v", err)
+	}
+	if dismissed != 0 {
+		t.Errorf("dismissed = %d, want 0 — an already-resolved elicitation is not re-dismissed", dismissed)
+	}
+	got, _ := s.Get(ctx, "acme", "sess-1", "alice", "el1")
+	if got.Phase != interactionstore.PhaseResponded {
+		t.Errorf("resolved elicitation phase = %q, want responded (unchanged)", got.Phase)
+	}
+}
+
+func TestDismissByUserNoInteractionsIsNoOp(t *testing.T) {
+	s := interactionstore.NewMemory()
+	dismissed, err := s.DismissByUser(context.Background(), "acme", "nobody")
+	if err != nil || dismissed != 0 {
+		t.Errorf("DismissByUser of a user with no interactions = (%d, %v), want (0, nil)", dismissed, err)
+	}
+}
