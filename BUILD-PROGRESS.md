@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5de9772` — `allow-controller-egress` NetworkPolicy (§13.2). Re-admits the
+  controller's kube-apiserver, PgBouncer, and CoreDNS egress under the `lenny-system`
+  default-deny, so the deployed controller can reach the API server; `kubeApiServerCIDR`
+  value added.
 - `c11f002` — `executor.PodExecutor` — the pod-backed `Executor`. `Send` drives a
   session's bound pod over the §4.7 `Attach` content stream and collects the agent's
   response; `Close` releases the pod. It implements the `Executor` interface, so the
