@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a2585eb` — `GET /v1/sessions/{id}` returns the stored `workspacePlan` (§15.1).
+  `toResponse` echoes the §14 plan persisted on the session row; the `SessionResponse`
+  envelope gained a `workspacePlan` field that `omitempty` drops for planless sessions.
 - `f11558c` — Two-step §15.1 session start places sessions on warm pods. The granular
   `create → finalize → start` lifecycle now claims a §5 warm pod at the start
   transition, matching `POST /v1/sessions/start`. The §14 WorkspacePlan is persisted on
@@ -345,8 +348,6 @@ The gateway↔pod session path runs end to end through both `POST /v1/sessions/s
 the two-step §15.1 `create → finalize → start` lifecycle. The remaining gaps, in
 dependency order, are below.
 
-- **Workspace plan read-back.** `GET /v1/sessions/{id}` does not yet return the stored
-  `workspacePlan` (§15.1). The plan is persisted on the row; the handler must echo it.
 - **gitClone ref resolution.** §15.1 pins `gitClone.resolvedCommitSha` at session
   creation. The gateway stores the submitted plan verbatim without resolving git refs.
 - **Adapter workspace-staging RPCs.** §15.4 mandates separate `PrepareWorkspace`,
@@ -401,13 +402,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Return the stored `workspacePlan` from `GET /v1/sessions/{id}`. §15.1 specifies the
-response includes the stored plan with its gateway-written read-only fields populated.
-The plan is now persisted on the session row (`sessions.workspace_plan`); the `GET`
-handler and the `SessionResponse` envelope do not yet echo it. After that, the
-gateway↔pod path's open items are `gitClone.ref` resolution at create and the §15.4
-adapter-protocol reconciliation that separates the workspace-staging RPCs from the
-bundled `StartSession`.
+Build the LLM Proxy (critical-path item 6, §5.8). It is the last critical-path item
+for an end-to-end credential-proxied Kubernetes session: a proxy-mode pod reaches its
+model provider only through the gateway's LLM reverse proxy, which injects the
+provider credential the pod never holds. The `allow-pod-egress-llm-proxy` NetworkPolicy
+already admits proxy-mode pods to the proxy port; the proxy subsystem itself and the
+`anthropic_direct` translator are not built.
 
 ## Test status
 
