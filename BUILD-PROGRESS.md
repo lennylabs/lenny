@@ -11,6 +11,20 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `33e7f1b` — §12.8 erasure receipt records the billing disposition. The
+  `gdpr.erasure_completed` receipt now carries a `billingErasure` block: the disposition,
+  the rewritten-event count, and the verification result.
+- `f078c41` — §12.8 billing-erasure phases wired into the erasure Runner. With a
+  `BillingEraser` attached, `Run` drives `pseudonymizing` → `verifying` after store
+  deletion, recording the outcome on `Job.Billing`; a pseudonymization error or a failed
+  verification fails the job closed. `lenny-gateway` attaches the `BillingEraser` for the
+  in-memory billing store.
+- `d2809a2` — §12.8 `BillingEraser`. `erasurejob.BillingEraser` resolves a tenant's
+  `billingErasurePolicy` (`exempt` retains the original user id under GDPR Article
+  17(3)(b)), generates and persists a 256-bit erasure salt, rewrites the user's billing
+  events to their salted-hash pseudonym, destroys the salt, and runs the §12.8
+  post-pseudonymization verification. `tenantstore.Tenant` gains `BillingErasurePolicy`
+  and the transient `ErasureSalt`; `billingstore.Memory` gains `CountUser`.
 - `4b51fb0` — §12.8 billing-event pseudonymization primitive. `billingstore.Pseudonymize`
   is the one-way `SHA-256(user_id || erasure_salt)` hash; `Memory.PseudonymizeUser`
   rewrites every billing event owned by a user, replacing the user id with its pseudonym
@@ -596,7 +610,7 @@ this state.
 | 12a   | Token Service hardening (KMS envelope, OAuth)                | Substrate only | `pkg/tokenexchange` exists. KMS envelope encryption and the full OAuth connector flow are not.                                                                                                                                                                                                                                               |
 | 12b   | type: mcp runtime support                                    | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 12c   | Concurrent execution modes                                   | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 13    | Full observability, audit, lenny-backup, compliance          | Partial        | `pkg/audit` and the audit hash chain exist (the §11.7 `ChainIntegrity` / `ComplianceProfile` / `RetentionPreset` / `OCSFTranslationState` enums are built). The §12.8 GDPR erasure path is wired end to end. The dependency-ordered, fail-fast `DeleteByUser` orchestrator (`pkg/gateway/erasure`) covers user-scoped and session-scoped stores, with per-store erasure adapters on the SessionStore (in-memory and Postgres), the interaction store (`DeleteByUser`), and the transcript and blob stores (`DeleteBySession`, both the in-memory and MinIO blob backends). The erasure-job registry and runner (`pkg/gateway/erasurejob`) track the §12.8 phase field and drive a job `initiated → store_deleting → completed/failed`; `POST /v1/admin/users/{user_id}/erase` initiates a background job and `GET /v1/admin/erasure-jobs/{job_id}` reports its status, both wired into the running gateway. Initiating an erasure job marks the target user §12.8 / GDPR Article 18 processing-restricted (`processing_restricted` on the user record, persisted by migration 0009), so the session-creation gate rejects new sessions with `ERASURE_IN_PROGRESS` until the job completes. A completed job writes the §12.8 `gdpr.erasure_completed` receipt to the audit trail. The §12.8 legal-hold control is built: `POST /v1/admin/legal-hold` sets and clears the `legal_hold` flag on a session (persisted by migration 0010), the §12.8 step-0 erasure preflight rejects an erasure with `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when the target user owns a held session, and a `platform-admin` may bypass the preflight via `acknowledgeHoldOverride` with a recorded justification (emitting `gdpr.legal_hold_overridden`). The §7.1 artifact-retention GC (`pkg/gateway/retentiongc`) is built and wired: a periodic sweep deletes the transcript and blobs of every terminal session past its retention deadline and exempts any session under a legal hold. Not built: artifact-level legal holds and the legal-hold ledger (audit-range and workspace-snapshot holds), billing-event pseudonymization with the per-tenant `erasure_salt`, the database-level processing-restriction trigger, the `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the tenant-deletion controller, and the full observability catalog.                                                                                                                                                         |
+| 13    | Full observability, audit, lenny-backup, compliance          | Partial        | `pkg/audit` and the audit hash chain exist (the §11.7 `ChainIntegrity` / `ComplianceProfile` / `RetentionPreset` / `OCSFTranslationState` enums are built). The §12.8 GDPR erasure path is wired end to end. The dependency-ordered, fail-fast `DeleteByUser` orchestrator (`pkg/gateway/erasure`) covers user-scoped and session-scoped stores, with per-store erasure adapters on the SessionStore (in-memory and Postgres), the interaction store (`DeleteByUser`), and the transcript and blob stores (`DeleteBySession`, both the in-memory and MinIO blob backends). The erasure-job registry and runner (`pkg/gateway/erasurejob`) track the §12.8 phase field and drive a job `initiated → store_deleting → completed/failed`; `POST /v1/admin/users/{user_id}/erase` initiates a background job and `GET /v1/admin/erasure-jobs/{job_id}` reports its status, both wired into the running gateway. Initiating an erasure job marks the target user §12.8 / GDPR Article 18 processing-restricted (`processing_restricted` on the user record, persisted by migration 0009), so the session-creation gate rejects new sessions with `ERASURE_IN_PROGRESS` until the job completes. A completed job writes the §12.8 `gdpr.erasure_completed` receipt to the audit trail. §12.8 billing-event pseudonymization is built for the in-memory path: billing events are append-only, so the erasure Runner drives the `pseudonymizing` / `verifying` phases — `erasurejob.BillingEraser` resolves the tenant's `billingErasurePolicy` (`exempt` retains the original user id under GDPR Article 17(3)(b)), generates a per-tenant 256-bit salt, rewrites the user's billing events to their `SHA-256(user_id || erasure_salt)` pseudonym, destroys the salt, and verifies the result; the receipt records the disposition. The §12.8 legal-hold control is built: `POST /v1/admin/legal-hold` sets and clears the `legal_hold` flag on a session (persisted by migration 0010), the §12.8 step-0 erasure preflight rejects an erasure with `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when the target user owns a held session, and a `platform-admin` may bypass the preflight via `acknowledgeHoldOverride` with a recorded justification (emitting `gdpr.legal_hold_overridden`). The §7.1 artifact-retention GC (`pkg/gateway/retentiongc`) is built and wired: a periodic sweep deletes the transcript and blobs of every terminal session past its retention deadline and exempts any session under a legal hold. Not built: artifact-level legal holds and the legal-hold ledger (audit-range and workspace-snapshot holds), the Postgres-backed billing pseudonymization and KMS envelope encryption of the `erasure_salt`, the database-level processing-restriction trigger, the `lenny-ops` runtime, `lenny-backup`, the compliance webhooks, the tenant-deletion controller, and the full observability catalog.                                                                                                                                                         |
 | 13.5  | Pre-hardening full-system load baseline                      | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -781,18 +795,19 @@ no session-creation-time tenant-floor enforcement (§7.1 populates `sessionIsola
 from the assigned pool's configuration), so the field has no further pure-Go consumer.
 The `PreExportMaterialization` interceptor remains blocked on the §8.7 file-export model.
 
-§12.8 tenant-controlled billing erasure is in progress. The billing-store
-pseudonymization primitive is built: `billingstore.Pseudonymize` is the one-way
-`SHA-256(user_id || erasure_salt)` hash and `Memory.PseudonymizeUser` rewrites a user's
-billing events in place so `sequence_number` / `tenant_id` / cost dimensions survive for
-financial reconciliation. The remaining billing-erasure work is one cohesive chunk: the
-per-tenant `erasure_salt` (256-bit, `crypto/rand`) and `billingErasurePolicy` fields on
-the tenant record, the orchestrator's billing-pseudonymization step (generate the salt,
-pseudonymize, null the salt, run the §12.8 verification), and the `pseudonymizing` /
-`verifying` erasure-job phases. The Postgres-backed `PseudonymizeUser` and KMS envelope
-encryption of the salt are deferred — the former needs an UPDATE under the
-`lenny_erasure` role (the role-switched-connection infrastructure the audit-erasure path
-also needs), the latter is part of Phase 12a.
+§12.8 tenant-controlled billing erasure is wired end to end for the in-memory path. The
+erasure Runner drives the `pseudonymizing` → `verifying` phases after store deletion: the
+`erasurejob.BillingEraser` resolves the tenant's `billingErasurePolicy`, generates a
+per-tenant 256-bit salt, rewrites the user's billing events to their
+`SHA-256(user_id || erasure_salt)` pseudonym, destroys the salt, and runs the §12.8
+post-pseudonymization verification; the `gdpr.erasure_completed` receipt records the
+disposition. The remaining billing-erasure work is the admin-API surface to set
+`billingErasurePolicy` on a tenant and the `compliance.billing_erasure_exempt_regulated`
+audit event (§12.8) emitted when an exempt tenant carries a regulated compliance
+profile. The Postgres-backed `PseudonymizeUser` and KMS envelope encryption of the salt
+are deferred — the former needs an UPDATE under the `lenny_erasure` role (the
+role-switched-connection infrastructure the audit-erasure path also needs), the latter
+is part of Phase 12a.
 
 ## Test status
 
