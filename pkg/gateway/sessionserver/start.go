@@ -313,7 +313,62 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	s.emitChildrenReattached(r.Context(), tenantID, id)
 	s.writeSession(w, http.StatusOK, updated)
+}
+
+// reattachedChild is the §7.1 ReattachedChild schema carried in the
+// children_reattached event.
+type reattachedChild struct {
+	SessionID         string          `json:"session_id"`
+	State             string          `json:"state"`
+	PendingRequestID  string          `json:"pending_request_id,omitempty"`
+	Result            json.RawMessage `json:"result,omitempty"`
+	DelegationLeaseID string          `json:"delegation_lease_id"`
+}
+
+// emitChildrenReattached publishes the §7.1 / §8.10 children_reattached
+// event on a resumed parent's event stream. Per §7.1 the event fires
+// only when the parent has one or more active (non-terminal) children;
+// it is a no-op when the parent has no children or every child has
+// already settled. The children array carries every child — a settled
+// child includes its §8.8 result. Best-effort: a failure to enumerate
+// or publish never fails the resume.
+func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID string) {
+	if s.events == nil {
+		return
+	}
+	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return
+	}
+	children := make([]reattachedChild, 0)
+	anyActive := false
+	for _, row := range all {
+		if row.ParentSessionID != parentID {
+			continue
+		}
+		child := reattachedChild{
+			SessionID: row.ID,
+			State:     string(row.State),
+			// v1 has no separate delegation-lease id; the child session
+			// id is the parent's correlation handle.
+			DelegationLeaseID: row.ID,
+		}
+		if session.IsTerminal(row.State) {
+			child.Result, _ = json.Marshal(archivedTaskResult(row))
+		} else {
+			anyActive = true
+		}
+		children = append(children, child)
+	}
+	if !anyActive {
+		return
+	}
+	data, _ := json.Marshal(struct {
+		Children []reattachedChild `json:"children"`
+	}{Children: children})
+	s.events.Publish(parentID, "children_reattached", string(data), s.clock())
 }
 
 // resumeOnPod restores a session onto a fresh §5 warm pod. When the

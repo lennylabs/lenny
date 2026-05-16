@@ -5,15 +5,42 @@ package sessionserver_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
+
+// seedAwaitingParent inserts a parent session in awaiting_client_action,
+// the §15.1 precondition state for POST /resume.
+func seedAwaitingParent(t *testing.T, store sessionstore.Store, id string) {
+	t.Helper()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateAwaitingClientAction,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed awaiting parent %s: %v", id, err)
+	}
+}
+
+// childrenReattached returns the children_reattached event on a
+// session's stream, or nil when none was emitted.
+func childrenReattached(bus *events.Bus, sessionID string) *events.Event {
+	for _, e := range bus.History(sessionID, 0) {
+		if e.Type == "children_reattached" {
+			ev := e
+			return &ev
+		}
+	}
+	return nil
+}
 
 // spec: §8.10 — a child session reaching a terminal state is archived
 // to the session_tree_archive so a resumed parent can replay it. The
@@ -190,6 +217,66 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	}
 	if got.State != string(session.StateCancelled) {
 		t.Errorf("archived state = %q, want cancelled", got.State)
+	}
+}
+
+// spec: §7.1 / §8.10 — a resumed parent with active children receives
+// a children_reattached event.
+
+func TestResumeEmitsChildrenReattached(t *testing.T) {
+	store := memstore.New()
+	bus := events.NewBus(0)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	seedAwaitingParent(t, store, "sess_parent")
+	seedTreeSession(t, store, "sess_child", "sess_parent") // running
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	ev := childrenReattached(bus, "sess_parent")
+	if ev == nil {
+		t.Fatal("no children_reattached event after resuming a parent with an active child")
+	}
+	if !strings.Contains(ev.Data, "sess_child") {
+		t.Errorf("children_reattached data %q missing the child", ev.Data)
+	}
+}
+
+func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
+	store := memstore.New()
+	bus := events.NewBus(0)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	seedAwaitingParent(t, store, "sess_parent")
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_child", TenantID: "acme", State: session.StateCompleted,
+		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if ev := childrenReattached(bus, "sess_parent"); ev != nil {
+		t.Error("children_reattached emitted when every child had already settled")
+	}
+}
+
+func TestResumeSkipsChildrenReattachedWhenNoChildren(t *testing.T) {
+	store := memstore.New()
+	bus := events.NewBus(0)
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	seedAwaitingParent(t, store, "sess_solo")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_solo/resume")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if ev := childrenReattached(bus, "sess_solo"); ev != nil {
+		t.Error("children_reattached emitted for a session with no children")
 	}
 }
 
