@@ -123,6 +123,24 @@ type Session struct {
 	// GDPR erasure of the session's owner is blocked by the legal-hold
 	// preflight. Set and cleared via POST /v1/admin/legal-hold.
 	LegalHold bool
+
+	// ExperimentContext is the §10.7 experiment enrollment the
+	// ExperimentRouter assigned at session creation. Nil when the
+	// session is not enrolled in any experiment.
+	ExperimentContext *ExperimentContext
+}
+
+// ExperimentContext is the §10.7 experiment enrollment recorded on a
+// session: the experiment and variant the ExperimentRouter assigned,
+// and whether the enrollment was inherited from a delegating parent.
+type ExperimentContext struct {
+	// ExperimentID is the enrolled experiment.
+	ExperimentID string
+	// VariantID is the assigned variant.
+	VariantID string
+	// Inherited is true when the context was propagated from a parent
+	// session rather than independently assigned.
+	Inherited bool
 }
 
 // WorkspaceSnapshot describes a stored workspace artifact attached to

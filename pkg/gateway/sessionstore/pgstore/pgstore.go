@@ -48,7 +48,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
 	upload_token_digest, upload_token_expiry, created_at, updated_at,
-	workspace_plan, legal_hold`
+	workspace_plan, legal_hold,
+	experiment_id, experiment_variant_id, experiment_inherited`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -67,13 +68,16 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		parent_session_id, root_session_id, failure_class, failure_reason,
 		workspace_snapshot_ref, workspace_snapshot_source, workspace_snapshot_at,
 		parent_workspace_ref, retention_expires_at, upload_token_digest,
-		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold
+		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold,
+		experiment_id, experiment_variant_id, experiment_inherited
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
-		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21
+		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
+		$22, $23, $24
 	)`
 
+	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
@@ -82,7 +86,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			ref, src, pgtenant.NullTime(at), sess.ParentWorkspaceRef,
 			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
 			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt,
-			jsonbArg(sess.WorkspacePlan), sess.LegalHold)
+			jsonbArg(sess.WorkspacePlan), sess.LegalHold,
+			expID, expVariant, expInherited)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -125,7 +130,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		workspace_snapshot_source = $12, workspace_snapshot_at = $13,
 		parent_workspace_ref = $14, retention_expires_at = $15,
 		upload_token_digest = $16, upload_token_expiry = $17, updated_at = $18,
-		legal_hold = $19
+		legal_hold = $19, experiment_id = $20, experiment_variant_id = $21,
+		experiment_inherited = $22
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -143,13 +149,14 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		}
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
+		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 		if _, err := tx.Exec(ctx, updateSQL,
 			id, tenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
 			string(sess.FailureClass), sess.FailureReason, ref, src, pgtenant.NullTime(at),
 			sess.ParentWorkspaceRef, pgtenant.NullTime(sess.RetentionExpiresAt),
 			sess.UploadTokenDigest, pgtenant.NullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
-			sess.LegalHold,
+			sess.LegalHold, expID, expVariant, expInherited,
 		); err != nil {
 			return err
 		}
@@ -243,15 +250,22 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		wsRef, wsSrc            string
 		wsAt, retAt, upExp      *time.Time
 		planJSON                []byte
+		expID, expVariant       string
+		expInherited            bool
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
 		&isoProf, &s.ParentSessionID, &failCls, &s.FailureReason,
 		&wsRef, &wsSrc, &wsAt, &s.ParentWorkspaceRef, &retAt,
 		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
-		&s.LegalHold,
+		&s.LegalHold, &expID, &expVariant, &expInherited,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if expID != "" {
+		s.ExperimentContext = &sessionstore.ExperimentContext{
+			ExperimentID: expID, VariantID: expVariant, Inherited: expInherited,
+		}
 	}
 	if len(planJSON) > 0 {
 		s.WorkspacePlan = planJSON
@@ -285,6 +299,16 @@ func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.
 		return "", "", time.Time{}
 	}
 	return ws.Ref, string(ws.Source), ws.Timestamp
+}
+
+// experimentCols flattens an optional §10.7 ExperimentContext into its
+// three column values. A nil context stores empty strings, which the
+// scan path reads back as a nil context.
+func experimentCols(ec *sessionstore.ExperimentContext) (id, variantID string, inherited bool) {
+	if ec == nil {
+		return "", "", false
+	}
+	return ec.ExperimentID, ec.VariantID, ec.Inherited
 }
 
 // jsonbArg renders a raw §14 WorkspacePlan as a jsonb query argument.
