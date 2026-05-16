@@ -45,6 +45,53 @@ func TestRoleIsTenantScoped(t *testing.T) {
 	}
 }
 
+func TestAllPermissionsIsExhaustive(t *testing.T) {
+	// §10.2's permission matrix has 19 operation rows.
+	if got := len(AllPermissions()); got != 19 {
+		t.Errorf("AllPermissions() returned %d, want 19 per the §10.2 matrix", got)
+	}
+	seen := map[Permission]bool{}
+	for _, p := range AllPermissions() {
+		if !p.IsValid() {
+			t.Errorf("AllPermissions() returned invalid permission %q", p)
+		}
+		if seen[p] {
+			t.Errorf("AllPermissions() returned duplicate permission %q", p)
+		}
+		seen[p] = true
+	}
+}
+
+func TestPermissionIsValidRejectsUnknown(t *testing.T) {
+	if Permission("manage_everything").IsValid() {
+		t.Error("an unrecognised permission must not validate")
+	}
+}
+
+func TestTenantAdminPermissionsExcludesPlatformOnly(t *testing.T) {
+	// §10.2: tenant-admin holds every operation except the three the
+	// matrix reserves to platform-admin.
+	if got := len(TenantAdminPermissions()); got != 16 {
+		t.Errorf("TenantAdminPermissions() returned %d, want 16", got)
+	}
+	platformOnly := []Permission{
+		PermIssueBillingCorrections, PermManagePlatformSettings, PermAccessCrossTenantData,
+	}
+	for _, p := range platformOnly {
+		if IsTenantAdminPermission(p) {
+			t.Errorf("%q is platform-admin-only and must not be a tenant-admin permission", p)
+		}
+	}
+	for _, p := range TenantAdminPermissions() {
+		if !IsTenantAdminPermission(p) {
+			t.Errorf("TenantAdminPermissions() includes %q but IsTenantAdminPermission rejects it", p)
+		}
+		if !p.IsValid() {
+			t.Errorf("TenantAdminPermissions() returned invalid permission %q", p)
+		}
+	}
+}
+
 func TestValidateTenantIDAcceptsCanonicalValues(t *testing.T) {
 	cases := []string{
 		"acme",
