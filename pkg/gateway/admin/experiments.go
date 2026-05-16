@@ -3,14 +3,17 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // WithExperiments wires the §10.7 / §15.1 experiment admin endpoints
@@ -122,6 +125,49 @@ func (r *Router) requireTenantResourceAdmin(next http.Handler) http.Handler {
 	})
 }
 
+// isolationConflict is one §10.7 variant-pool isolation-monotonicity
+// violation, surfaced in the 422 CONFIGURATION_CONFLICT details.
+type isolationConflict struct {
+	Fields  []string `json:"fields"`
+	Message string   `json:"message"`
+}
+
+// checkVariantIsolation runs the §10.7 admission-time isolation
+// monotonicity check: every variant pool must be at least as
+// restrictive as the experiment's base runtime, since a session that
+// hashes to control falls through to the base runtime. It returns one
+// conflict per offending variant. The check is best-effort — when the
+// pool or runtime stores are not wired, or a referenced pool or
+// runtime is unresolvable, the affected variant is skipped.
+func (r *Router) checkVariantIsolation(ctx context.Context, exp experimentstore.Experiment) []isolationConflict {
+	if r.pools == nil || r.runtimes == nil {
+		return nil
+	}
+	base, err := r.runtimes.Get(ctx, exp.BaseRuntime)
+	if err != nil || !isolation.IsValid(base.IsolationProfile) {
+		return nil
+	}
+	var conflicts []isolationConflict
+	for _, v := range exp.Variants {
+		if v.Pool == "" {
+			continue
+		}
+		pool, err := r.pools.Get(ctx, v.Pool)
+		if err != nil || !isolation.IsValid(pool.IsolationProfile) {
+			continue
+		}
+		if !isolation.AtLeastAsRestrictive(pool.IsolationProfile, base.IsolationProfile) {
+			conflicts = append(conflicts, isolationConflict{
+				Fields: []string{fmt.Sprintf("variants[%s].pool", v.ID), "baseRuntime"},
+				Message: fmt.Sprintf(
+					"variant %q pool %q has isolationProfile=%s, weaker than base runtime %q's profile %s",
+					v.ID, v.Pool, pool.IsolationProfile, exp.BaseRuntime, base.IsolationProfile),
+			})
+		}
+	}
+	return conflicts
+}
+
 func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request) {
 	var body ExperimentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -134,6 +180,12 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 		return
 	}
 	exp := toExperiment(body, tenant)
+	if conflicts := r.checkVariantIsolation(req.Context(), exp); len(conflicts) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, "CONFIGURATION_CONFLICT",
+			"a variant pool's isolation profile is weaker than the base runtime",
+			map[string]any{"conflicts": conflicts})
+		return
+	}
 	if err := r.experiments.Create(req.Context(), exp); err != nil {
 		if errors.Is(err, experimentstore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -208,6 +260,12 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		return
 	}
 	desired := toExperiment(body, tenant)
+	if conflicts := r.checkVariantIsolation(req.Context(), desired); len(conflicts) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, "CONFIGURATION_CONFLICT",
+			"a variant pool's isolation profile is weaker than the base runtime",
+			map[string]any{"conflicts": conflicts})
+		return
+	}
 	updated, err := r.experiments.Update(req.Context(), tenant, name, func(e *experimentstore.Experiment) error {
 		status := e.Status // §10.7: status transitions only via PATCH
 		desired.ID = e.ID
