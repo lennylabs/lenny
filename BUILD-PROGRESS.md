@@ -551,26 +551,41 @@ progress; see the progress log.
 `Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). It is built end to end:
 the proto RPC (`3128fa7`), the adapter-server handler (`a21b2bf`), the gateway-side
 `adapterclient.Attach` (`3390203`), and `executor.PodExecutor` (`c11f002`), which the
-gateway selects as its `Executor` when `--agent-namespace` is set. The proto is still a
-Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`,
-`RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`, `CoordinatorFence`, `ExportPaths`,
-`Resume`, `Terminate` — which §15.4 mandates reconciling.
+gateway selects as its `Executor` when `--agent-namespace` is set.
+
+**Adapter §4.7 RPC surface.** The adapter `Server` implements `StartSession`,
+`SendMessage`, `Attach`, `AssignCredentials`, `RotateCredentials`, `RevokeCredentials`,
+`Interrupt`, `Checkpoint`, `Resume`, `ReportUsage`, `Shutdown`, `DemoteSDK`, and
+`NegotiateVersion`. The remaining proto RPCs `ExtendLease` and `LifecycleChannel` are
+still behind the Phase-1 skeleton (the embedded `UnimplementedAdapterServer` answers
+`Unimplemented`).
 
 ## Next step
 
 Phase 9 (§18.23) is in progress. Done: the non-blocking platform MCP tools
 (`lenny/cancel_child`, `lenny/discover_agents`, `lenny/set_tracing_context`), the §4
-`RequestInterceptor` chain framework (`pkg/gateway/interceptor`), and the
-`PreMessageDelivery` interceptor wiring on `lenny/send_message`. Remaining Phase 9
-work: the blocking/streaming MCP tools (`lenny/output`, `lenny/await_children`,
-`lenny/request_input`), the `delegation-echo` Standard-level reference runtime (model
-it on `cmd/runtimes/echo`), the `ExtendLease` lease-extension control plane, and
-delegation-tree recovery (`session_tree_archive`). The `PreDelegation` and
-`PreExportMaterialization` interceptor phases reuse the built chain framework but need
-their phase-specific payload plumbing (task input for `PreDelegation`, the §8.7 file
-export model for `PreExportMaterialization`). Suggested next chunk: the
-`cmd/runtimes/delegation-echo` reference runtime — it is a self-contained CLI binary
-modeled on `cmd/runtimes/echo` with no streaming dependency.
+`RequestInterceptor` chain framework (`pkg/gateway/interceptor`), the
+`PreMessageDelivery` interceptor wiring on `lenny/send_message`, and the §4.7
+`ReportUsage` adapter RPC. Remaining Phase 9 work: the blocking/streaming MCP tools
+(`lenny/output`, `lenny/await_children`, `lenny/request_input`), the `delegation-echo`
+reference runtime, the `ExtendLease` lease-extension control plane, and
+delegation-tree recovery (`session_tree_archive`).
+
+Each remaining Phase 9 item carries a dependency to scope first:
+
+- `delegation-echo` is a Standard-level runtime — §15.4.3 requires it to connect to the
+  adapter's local platform MCP server over an abstract Unix socket with the manifest
+  `mcpNonce` handshake. That intra-pod MCP-server infrastructure is not built; audit it
+  before starting the runtime.
+- `lenny/output` needs an output sink (check `pkg/gateway/events` and the `executor`
+  output channel) to route the emitted `OutputPart[]`.
+- `ExtendLease` and `LifecycleChannel` are the last two adapter proto RPCs.
+  `ExtendLease`'s direction needs settling: the proto places it in the `Adapter`
+  service (gateway → pod) but the §8.6 prose describes the adapter requesting budget
+  from the gateway.
+- The `PreDelegation` and `PreExportMaterialization` interceptor phases reuse the built
+  chain framework but need their phase-specific payload plumbing (task input for
+  `PreDelegation`, the §8.7 file export model for `PreExportMaterialization`).
 
 ## Test status
 
