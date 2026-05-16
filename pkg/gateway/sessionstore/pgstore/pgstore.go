@@ -14,6 +14,7 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -46,7 +47,7 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	isolation_profile, COALESCE(parent_session_id::text, ''), failure_class,
 	failure_reason, workspace_snapshot_ref, workspace_snapshot_source,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
-	upload_token_digest, upload_token_expiry, created_at, updated_at`
+	upload_token_digest, upload_token_expiry, created_at, updated_at, workspace_plan`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -65,11 +66,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		parent_session_id, root_session_id, failure_class, failure_reason,
 		workspace_snapshot_ref, workspace_snapshot_source, workspace_snapshot_at,
 		parent_workspace_ref, retention_expires_at, upload_token_digest,
-		upload_token_expiry, created_at, updated_at
+		upload_token_expiry, created_at, updated_at, workspace_plan
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
-		$11, $12, $13, $14, $15, $16, $17, $18, $19
+		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb
 	)`
 
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
@@ -79,7 +80,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			string(sess.FailureClass), sess.FailureReason,
 			ref, src, pgtenant.NullTime(at), sess.ParentWorkspaceRef,
 			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
-			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt)
+			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt,
+			jsonbArg(sess.WorkspacePlan))
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -220,14 +222,18 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		state, isoProf, failCls string
 		wsRef, wsSrc            string
 		wsAt, retAt, upExp      *time.Time
+		planJSON                []byte
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
 		&isoProf, &s.ParentSessionID, &failCls, &s.FailureReason,
 		&wsRef, &wsSrc, &wsAt, &s.ParentWorkspaceRef, &retAt,
-		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt,
+		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if len(planJSON) > 0 {
+		s.WorkspacePlan = planJSON
 	}
 	s.State = session.State(state)
 	s.IsolationProfile = isolation.Profile(isoProf)
@@ -258,6 +264,16 @@ func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.
 		return "", "", time.Time{}
 	}
 	return ws.Ref, string(ws.Source), ws.Timestamp
+}
+
+// jsonbArg renders a raw §14 WorkspacePlan as a jsonb query argument.
+// An empty document becomes a SQL NULL so the column stays null for a
+// session created without a workspace plan.
+func jsonbArg(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return string(raw)
 }
 
 // normalizeMiss maps pgx.ErrNoRows and the invalid-UUID-text error to

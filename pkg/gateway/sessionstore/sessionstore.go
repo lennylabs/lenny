@@ -14,6 +14,7 @@ package sessionstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -60,6 +61,14 @@ type Session struct {
 	// monotonicity check. Empty for sessions whose pool has not yet
 	// been resolved.
 	IsolationProfile isolation.Profile
+
+	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
+	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
+	// create so the finalize and start handlers can materialize the
+	// workspace onto the claimed pod, and GET /v1/sessions/{id} can
+	// return the stored plan per §15.1. Nil when the session was
+	// created without a workspace plan.
+	WorkspacePlan json.RawMessage
 
 	// WorkspaceSnapshot is the §7.1 / §15.1 workspace snapshot ref
 	// resolved for this session — nil when no snapshot exists yet

@@ -276,7 +276,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}", s.handleGet)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("POST /v1/sessions/{id}/finalize", s.handleFinalize)
-	mux.HandleFunc("POST /v1/sessions/{id}/start", s.handleTransition(session.EndpointStart, transitionStart))
+	mux.HandleFunc("POST /v1/sessions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", s.handleTransition(session.EndpointInterrupt, transitionInterrupt))
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate", s.handleTransition(session.EndpointTerminate, transitionTerminate))
 	mux.HandleFunc("POST /v1/sessions/{id}/resume", s.handleTransition(session.EndpointResume, transitionResume))
@@ -413,14 +413,18 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// §14 workspace plan: parse + validate when present. Absent plan
 	// is admitted (the session starts with an empty workspace, the
 	// minimal gateway uses this for tests that exercise pure
-	// state-machine paths).
+	// state-machine paths). The validated plan is stored on the row so
+	// the start handler can materialize it onto the claimed pod and
+	// GET /v1/sessions/{id} can return it per §15.1.
 	var planWarnings []workspaceplan.Warning
+	var planJSON json.RawMessage
 	if len(req.WorkspacePlan) > 0 && !isJSONNull(req.WorkspacePlan) {
 		_, warnings, err := workspaceplan.Parse(req.WorkspacePlan)
 		if err != nil {
 			s.writeWorkspacePlanError(w, err)
 			return
 		}
+		planJSON = req.WorkspacePlan
 		planWarnings = warnings
 	}
 
@@ -431,6 +435,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:       req.RuntimeRef,
 		State:            session.StateCreated,
 		IsolationProfile: isoProf,
+		WorkspacePlan:    planJSON,
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt

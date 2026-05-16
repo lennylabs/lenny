@@ -13,8 +13,10 @@ package stores_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -117,6 +119,57 @@ func TestSessionStoreContract(t *testing.T) {
 			!got.WorkspaceSnapshot.Timestamp.Equal(want.WorkspaceSnapshot.Timestamp) {
 			t.Errorf("WorkspaceSnapshot mismatch: got %+v want %+v",
 				got.WorkspaceSnapshot, want.WorkspaceSnapshot)
+		}
+	})
+
+	t.Run("workspace plan round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		want := sessionstore.Session{
+			ID:         newUUID(t),
+			TenantID:   tenant,
+			State:      session.StateCreated,
+			RuntimeRef: "echo",
+			WorkspacePlan: json.RawMessage(
+				`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`),
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if len(got.WorkspacePlan) == 0 {
+			t.Fatal("WorkspacePlan lost in round-trip")
+		}
+		// jsonb normalizes whitespace and key order, so compare the
+		// decoded documents rather than the raw bytes.
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan is not valid JSON: %v", err)
+		}
+		if err := json.Unmarshal(want.WorkspacePlan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("WorkspacePlan mismatch:\n got %s\nwant %s", got.WorkspacePlan, want.WorkspacePlan)
+		}
+	})
+
+	t.Run("absent workspace plan stays nil", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		want := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}
+		if err := store.Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, want.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.WorkspacePlan != nil {
+			t.Errorf("WorkspacePlan = %s, want nil for a session created without a plan", got.WorkspacePlan)
 		}
 	})
 

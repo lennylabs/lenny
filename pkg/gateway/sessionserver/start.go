@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -73,6 +74,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 
 	var planWarnings []workspaceplan.Warning
 	var parsedPlan workspaceplan.Plan
+	var planJSON json.RawMessage
 	if len(req.WorkspacePlan) > 0 && !isJSONNull(req.WorkspacePlan) {
 		plan, warnings, err := workspaceplan.Parse(req.WorkspacePlan)
 		if err != nil {
@@ -80,6 +82,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		parsedPlan = plan
+		planJSON = req.WorkspacePlan
 		planWarnings = warnings
 	}
 
@@ -90,6 +93,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:       req.RuntimeRef,
 		State:            session.StateRunning, // skip directly to running per §15.1
 		IsolationProfile: isoProf,
+		WorkspacePlan:    planJSON,
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
@@ -142,6 +146,75 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleStart implements POST /v1/sessions/{id}/start per §15.1: the
+// explicit start transition of the two-step create → finalize → start
+// lifecycle. It transitions a ready session to running and, when the
+// gateway is wired with a pod binder, places the session on a §5 warm
+// pod using the §14 WorkspacePlan stored at create.
+//
+// handleStart is a dedicated handler rather than a generic
+// handleTransition because the start transition carries the extra
+// pod-placement step — the same reason handleFinalize is dedicated for
+// the finalize transition. The pod claim runs before the row
+// transitions: a claim failure leaves the row ready so the client can
+// retry POST /start.
+func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointStart,
+		CurrentState: row.State,
+	}); err != nil {
+		s.writePreconditionError(w, err)
+		return
+	}
+
+	if s.podBinder != nil {
+		plan, err := storedWorkspacePlan(row)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"stored workspace plan could not be parsed: "+err.Error(), nil)
+			return
+		}
+		if err := s.startOnPod(r.Context(), row, plan); err != nil {
+			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
+				"could not place the session on a warm pod: "+err.Error(), nil)
+			return
+		}
+	}
+
+	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+		transitionStart(row)
+		return nil
+	})
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	s.writeSession(w, http.StatusOK, updated)
+}
+
+// storedWorkspacePlan re-parses the §14 WorkspacePlan recorded on the
+// session row at create. It returns the zero Plan when the session was
+// created without a plan. The plan was validated at create, so a parse
+// failure here indicates gateway-version skew against the stored plan.
+func storedWorkspacePlan(row sessionstore.Session) (workspaceplan.Plan, error) {
+	if len(row.WorkspacePlan) == 0 || isJSONNull(row.WorkspacePlan) {
+		return workspaceplan.Plan{}, nil
+	}
+	plan, _, err := workspaceplan.Parse(row.WorkspacePlan)
+	return plan, err
 }
 
 // startOnPod places a started session on a Kubernetes warm pod. It

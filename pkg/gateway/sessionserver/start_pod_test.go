@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -220,5 +222,124 @@ func TestSessionStartFailsSessionWhenNoPoolMatches(t *testing.T) {
 	}
 	if row.State != session.StateFailed {
 		t.Errorf("session state = %q, want failed after the claim failure", row.State)
+	}
+}
+
+// podBindServer builds a sessionserver wired to a warm pool, its
+// template, and an idle Sandbox, returning the server, the registry,
+// the cluster client, and the adapter's workspace root.
+func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.Registry, client.Client, string) {
+	t.Helper()
+	wsRoot := t.TempDir()
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return id },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	return srv, registry, cluster, wsRoot
+}
+
+// postSessionStep issues one §15.1 lifecycle POST and returns the
+// recorder.
+func postSessionStep(t *testing.T, h http.Handler, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		reader = bytes.NewReader(body)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, reader)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// spec: §15.1 — the two-step create → finalize → start lifecycle places
+// the session on a warm pod at start, using the §14 WorkspacePlan
+// stored on the row at create.
+
+func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
+	srv, registry, cluster, wsRoot := podBindServer(t, "sess_2step_1")
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# stored plan","mode":"0644"}]
+		}`),
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := postSessionStep(t, h, "/v1/sessions/sess_2step_1/finalize", nil); rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	rr := postSessionStep(t, h, "/v1/sessions/sess_2step_1/start", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("state = %q, want running", resp.State)
+	}
+	if _, ok := registry.Get("sess_2step_1"); !ok {
+		t.Error("registry holds no binding after the two-step start")
+	}
+
+	var sb lennyv1.Sandbox
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	}
+
+	// The plan stored at create was re-parsed at start and materialized
+	// onto the pod's adapter workspace.
+	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("stored workspace plan was not materialized: %v", err)
+	}
+	if string(got) != "# stored plan" {
+		t.Errorf("materialized file = %q, want %q", got, "# stored plan")
+	}
+}
+
+func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
+	srv, registry, _, _ := podBindServer(t, "sess_2step_early")
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// /start before /finalize: the row is still `created`, not `ready`.
+	rr := postSessionStep(t, h, "/v1/sessions/sess_2step_early/start", nil)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("start before finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
+	}
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0 — no pod claimed on a rejected start", registry.Len())
 	}
 }
