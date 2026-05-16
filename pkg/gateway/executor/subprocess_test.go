@@ -228,3 +228,38 @@ func TestSubprocessExecutorInterruptUnknownSession(t *testing.T) {
 		t.Error("Interrupt of an unknown session succeeded, want a failure")
 	}
 }
+
+func TestSubprocessExecutorOutputUnknownSession(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath: echoBinary,
+	})
+	if _, err := exec.Output(context.Background(), "sess_missing"); err == nil {
+		t.Error("Output for an unknown session succeeded, want a failure")
+	}
+}
+
+func TestSubprocessExecutorOutputClosesWhenRuntimeExits(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath: echoBinary,
+	})
+	if err := exec.Start(context.Background(), "sess_out"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	out, err := exec.Output(context.Background(), "sess_out")
+	if err != nil {
+		t.Fatalf("Output: %v", err)
+	}
+	// Closing the runtime EOFs its stdout, which closes the channel.
+	_ = exec.Close(context.Background(), "sess_out")
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case _, ok := <-out:
+			if !ok {
+				return // channel closed — the expected outcome
+			}
+		case <-deadline:
+			t.Fatal("the Output channel did not close after the runtime exited")
+		}
+	}
+}

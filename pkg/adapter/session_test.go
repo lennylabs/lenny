@@ -24,6 +24,9 @@ type fakeRuntime struct {
 	closed       []string
 	interrupts   []bool // the hard flag of each Interrupt call
 	interruptErr error
+	output       chan []byte // when set, Output returns it
+	outputErr    error
+	echoInput    bool // when set, WriteEnvelope echoes the envelope to output
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -39,7 +42,22 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 		return f.writeErr
 	}
 	f.envelopes = append(f.envelopes, envelope)
+	if f.echoInput && f.output != nil {
+		f.output <- append([]byte(nil), envelope...)
+	}
 	return nil
+}
+
+func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
+	if f.outputErr != nil {
+		return nil, f.outputErr
+	}
+	if f.output != nil {
+		return f.output, nil
+	}
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
 }
 
 func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {

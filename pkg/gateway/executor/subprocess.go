@@ -160,6 +160,34 @@ func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard
 	return nil
 }
 
+// Output streams every line the session's runtime writes to stdout as
+// a channel of §15.4.1 JSONL frames. The channel closes when the
+// runtime's stdout reaches EOF; ctx cancellation stops the reader so a
+// consumer that stops draining does not leak the goroutine. Output
+// must be consumed by a single caller — the adapter's Attach stream —
+// because it drains the shared stdout scanner.
+func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
+	e.mu.Lock()
+	sess, ok := e.procs[sessionID]
+	e.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("executor: session %s has no running runtime", sessionID)
+	}
+	ch := make(chan []byte)
+	go func() {
+		defer close(ch)
+		for sess.stdout.Scan() {
+			line := append([]byte(nil), sess.stdout.Bytes()...)
+			select {
+			case ch <- line:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ch, nil
+}
+
 // readResponse scans stdout for the next `response` envelope. The
 // echo runtime may interleave `heartbeat_ack` and `status` frames;
 // those are skipped. Bounded by the executor's SendTimeout.

@@ -43,6 +43,12 @@ func (f *fakeRuntime) WriteEnvelope(string, []byte) error            { return ni
 func (f *fakeRuntime) Interrupt(context.Context, string, bool) error { return nil }
 func (f *fakeRuntime) Close(context.Context, string) error           { return nil }
 
+func (f *fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()

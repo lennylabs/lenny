@@ -35,6 +35,12 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	return nil
 }
 
+func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+
 func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 	f.interruptedHard = hard
 	f.interrupted = true

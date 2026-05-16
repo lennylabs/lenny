@@ -21,6 +21,11 @@ type RuntimeProcess interface {
 	// WriteEnvelope forwards a pre-encoded message envelope to the
 	// runtime's stdin.
 	WriteEnvelope(sessionID string, envelope []byte) error
+	// Output streams the runtime's output envelopes. Each value is one
+	// §15.4.1 JSONL frame the runtime wrote to stdout. The channel is
+	// closed when the runtime's output ends; the context bounds the
+	// reader so a stalled consumer does not leak it.
+	Output(ctx context.Context, sessionID string) (<-chan []byte, error)
 	// Interrupt signals the runtime process. A hard interrupt sends
 	// SIGKILL; a clean interrupt sends SIGTERM so the runtime can pause
 	// or checkpoint within the gateway's grace deadline.
