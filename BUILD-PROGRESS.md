@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5c46127` — §8.3 DelegationPolicy contentPolicy defaults. `ApplyDefaults` fills the
+  §8.3 ceilings (`maxInputSize` 128 KiB, `maxExportedFileSize` 10 MiB) on a policy whose
+  size fields were left zero; the admin create/update handlers call it.
 - `fc80b34` — §4 tenant-scoped runtime/pool reads. `GET /v1/admin/runtimes` and
   `/v1/admin/pools` (list and by-name) now admit a tenant-admin and filter the result to
   the resources granted to their tenant through the `runtime_tenant_access` /
