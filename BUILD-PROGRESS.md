@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4aa16c7` — `allow-dedicated-coredns` NetworkPolicy (§13.2). Re-admits the dedicated
+  CoreDNS ingress (agent-namespace DNS, monitoring scrape) and kube-system CoreDNS
+  egress under the `lenny-system` default-deny.
 - `18eba1a` — `allow-controller-metrics-scrape` NetworkPolicy (§13.2). Admits
   Prometheus scrape from the monitoring namespace to the controller's metrics port
   under the `lenny-system` default-deny; `controller.metricsPort` and
