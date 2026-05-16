@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8b72d0b` — `lenny-system` `default-deny-all` NetworkPolicy (§13.2). The fail-closed
+  control-plane network baseline for the release namespace; the §13.2 component
+  allow-lists remain.
 - `8312655` — `make images` now builds `lenny-preflight`. The preflight Job's image
   was missing from the target; verified the image builds via the parameterized
   Dockerfile.
@@ -298,6 +301,15 @@ progress; see the progress log.
    5 now need only the gateway-binary wiring: a controller-runtime Kubernetes client
    and a session-creation handler that calls `Binder.Bind`.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
+
+**Spec gap — the pod-to-gateway content path.** The gateway-binary wiring can place a
+session on a pod (claim plus `StartSession`) and deliver messages (`SendMessage` is a
+unary fire-and-forget delivery). The per-message agent-response round-trip needs the
+`Attach` bidirectional-streaming RPC: §15.4 states `schemas/lenny-adapter.proto`
+"Includes ... the `Attach` bidirectional streaming messages", but the current proto
+has no `Attach` RPC and no §15.4 subsection defines its message shapes. Designing
+those shapes is a spec-level decision, so the response path is left for a spec
+revision rather than invented here.
 
 ## Next step
 
