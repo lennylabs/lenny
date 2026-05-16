@@ -168,6 +168,45 @@ func (r *Router) checkVariantIsolation(ctx context.Context, exp experimentstore.
 	return conflicts
 }
 
+// checkTenantIsolationFloor runs the §10.7 admission-time tenant-floor
+// advisory check: when a variant pool's isolation profile is weaker
+// than the tenant's configured minIsolationProfile floor, the gateway
+// emits an experiment.variant_weaker_than_tenant_floor event. Unlike
+// the hard monotonicity check this never rejects the request — a
+// tenant floor may be intentionally stricter than the variant mix, so
+// the operator is informed rather than blocked.
+func (r *Router) checkTenantIsolationFloor(ctx context.Context, principal authmw.Principal, exp experimentstore.Experiment) {
+	if r.tenants == nil || r.pools == nil {
+		return
+	}
+	tenant, err := r.tenants.Get(ctx, exp.TenantID)
+	if err != nil || tenant.MinIsolationProfile == "" {
+		return
+	}
+	floor := isolation.Profile(tenant.MinIsolationProfile)
+	if !isolation.IsValid(floor) {
+		return
+	}
+	for _, v := range exp.Variants {
+		if v.Pool == "" {
+			continue
+		}
+		pool, err := r.pools.Get(ctx, v.Pool)
+		if err != nil || !isolation.IsValid(pool.IsolationProfile) {
+			continue
+		}
+		if !isolation.AtLeastAsRestrictive(pool.IsolationProfile, floor) {
+			r.emit(ctx, principal, "experiment.variant_weaker_than_tenant_floor", exp.ID, map[string]any{
+				"tenantId":           exp.TenantID,
+				"variantId":          v.ID,
+				"variantPool":        v.Pool,
+				"variantProfile":     string(pool.IsolationProfile),
+				"tenantFloorProfile": string(floor),
+			})
+		}
+	}
+}
+
 func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request) {
 	var body ExperimentPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -201,6 +240,7 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 		"tenantId": tenant,
 		"status":   string(stored.Status),
 	})
+	r.checkTenantIsolationFloor(req.Context(), principal, stored)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(fromExperiment(stored))
@@ -284,6 +324,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.experiment.updated", name, map[string]any{"tenantId": tenant})
+	r.checkTenantIsolationFloor(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromExperiment(updated))
 }
