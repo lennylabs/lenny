@@ -93,7 +93,7 @@ func newBinder(c client.Client, dial func(string) (*adapterclient.Client, error)
 	return &podsession.Binder{
 		Client:           c,
 		Namespace:        testNS,
-		AdapterPort:      8443,
+		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      dial,
 	}

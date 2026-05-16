@@ -47,8 +47,9 @@ const (
 	// period.
 	terminationGraceSeconds int64 = 30
 
-	// adapterPort is the adapter's gRPC listener port.
-	adapterPort int32 = 8443
+	// adapterPort is the adapter's gRPC listener port (§13.2: the
+	// gateway reaches the adapter on TCP 50051).
+	adapterPort int32 = 50051
 
 	// workspaceMount, credentialMount, and tmpMount are the in-pod
 	// mount paths (§6.1, §13.1).
@@ -132,7 +133,7 @@ func Build(in Inputs) (*corev1.Pod, error) {
 				{
 					Name:            "adapter",
 					Image:           in.AdapterImage,
-					Args:            []string{"--addr=:8443", "--workspace-root=" + workspaceMount + "/current"},
+					Args:            []string{fmt.Sprintf("--addr=:%d", adapterPort), "--workspace-root=" + workspaceMount + "/current"},
 					Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},
 					VolumeMounts:    adapterMounts,
 					SecurityContext: containerSecurityContext(AdapterUID),

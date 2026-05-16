@@ -12,7 +12,7 @@
 //
 // Usage:
 //
-//	lenny-adapter --addr :8443 \
+//	lenny-adapter --addr :50051 \
 //	  --tls-cert-file /etc/lenny/adapter-tls/tls.crt \
 //	  --tls-key-file  /etc/lenny/adapter-tls/tls.key \
 //	  --tls-client-ca-file /etc/lenny/adapter-tls/ca.crt
@@ -37,7 +37,7 @@ import (
 var version = "0.1.0"
 
 func main() {
-	addr := flag.String("addr", ":8443", "address the adapter gRPC server binds to")
+	addr := flag.String("addr", ":50051", "address the adapter gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the adapter server certificate")
 	keyFile := flag.String("tls-key-file", "", "path to the adapter server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
