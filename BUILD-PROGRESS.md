@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `6221f0f` — `llmproxy.CircuitBreaker` (§4.9). The LLM Proxy circuit breaker around an
+  upstream provider: consecutive failures trip it open, an open breaker rejects every
+  request so the proxy returns `PROVIDER_UNAVAILABLE` without hanging, and after the
+  cooldown it admits one half-open probe whose outcome closes or reopens it. State maps
+  to the §16.1 `lenny_gateway_subsystem_circuit_state` gauge values.
 - `9799022` — `llmproxy.AnthropicDirectTranslator` (§4.9). First leaf of the LLM reverse
   proxy: converts an agent pod's Anthropic Messages proxy-dialect request into the
   upstream `anthropic_direct` request (body passthrough, injected `x-api-key`,
@@ -295,7 +300,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The `anthropic_direct` Anthropic Messages translator is built (`pkg/gateway/llmproxy`): request and non-streaming response translation with the §4.9 error taxonomy. The proxy HTTP handler, lease-token validation, the SSE relay, the circuit breaker, and the `lenny-direct-mode-isolation` webhook are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy) and the upstream circuit breaker. The proxy HTTP handler, lease-token validation, the upstream forwarder, the SSE relay, and the `lenny-direct-mode-isolation` webhook are not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -409,12 +414,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the LLM Proxy HTTP handler (§4.9, critical-path item 6). The handler serves
-`POST {proxyUrl}/v1/messages`, validates the agent pod's lease token, runs the
-`AnthropicDirectTranslator`, injects the upstream credential, forwards to the provider
-behind a circuit breaker, and translates the response back. The translator is built;
-the remaining pieces are lease-token validation, the HTTP handler, the SSE relay for
-streaming responses, and the `lenny-direct-mode-isolation` admission webhook.
+Build the LLM Proxy upstream forwarder (§4.9). The forwarder takes a translated
+`UpstreamRequest`, consults the `CircuitBreaker` for admission, dials the upstream LLM
+provider over HTTPS, and returns the `UpstreamResponse` or a `TranslationError` tagged
+with the §4.9 error taxonomy, recording success or failure on the breaker. It is the
+last leaf the proxy HTTP handler needs before the handler itself, which additionally
+requires lease-token validation. The SSE relay and the `lenny-direct-mode-isolation`
+webhook remain after the non-streaming path is whole.
 
 ## Test status
 
