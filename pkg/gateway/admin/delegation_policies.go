@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: MIT
+
+package admin
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+)
+
+// DelegationPolicyPayload is the §8.3 / §15.1 admin DelegationPolicy
+// wire shape.
+type DelegationPolicyPayload struct {
+	Name               string                  `json:"name"`
+	Rules              []DelegationRulePayload `json:"rules,omitempty"`
+	ContentPolicy      ContentPolicyPayload    `json:"contentPolicy"`
+	AllowSelfRecursion bool                    `json:"allowSelfRecursion,omitempty"`
+	CreatedAt          string                  `json:"createdAt,omitempty"`
+	UpdatedAt          string                  `json:"updatedAt,omitempty"`
+	DeletedAt          string                  `json:"deletedAt,omitempty"`
+}
+
+// DelegationRulePayload is one §8.3 tag-matched allow/deny rule.
+type DelegationRulePayload struct {
+	Target DelegationTargetPayload `json:"target"`
+	Allow  bool                    `json:"allow"`
+}
+
+// DelegationTargetPayload is the §8.3 tag-based match target.
+type DelegationTargetPayload struct {
+	MatchLabels map[string]string `json:"matchLabels,omitempty"`
+	IDs         []string          `json:"ids,omitempty"`
+	Types       []string          `json:"types,omitempty"`
+}
+
+// ContentPolicyPayload is the §8.3 delegation content policy.
+type ContentPolicyPayload struct {
+	MaxInputSize        int    `json:"maxInputSize,omitempty"`
+	InterceptorRef      string `json:"interceptorRef,omitempty"`
+	ScanExportedFiles   bool   `json:"scanExportedFiles,omitempty"`
+	MaxExportedFileSize int64  `json:"maxExportedFileSize,omitempty"`
+}
+
+// fromDelegationPolicy maps a stored policy to the wire payload.
+func fromDelegationPolicy(p delegationpolicystore.DelegationPolicy) DelegationPolicyPayload {
+	out := DelegationPolicyPayload{
+		Name:               p.Name,
+		AllowSelfRecursion: p.AllowSelfRecursion,
+		ContentPolicy: ContentPolicyPayload{
+			MaxInputSize:        p.ContentPolicy.MaxInputSize,
+			InterceptorRef:      p.ContentPolicy.InterceptorRef,
+			ScanExportedFiles:   p.ContentPolicy.ScanExportedFiles,
+			MaxExportedFileSize: p.ContentPolicy.MaxExportedFileSize,
+		},
+		CreatedAt: rfc3339Nano(p.CreatedAt),
+		UpdatedAt: rfc3339Nano(p.UpdatedAt),
+		DeletedAt: rfc3339Nano(p.DeletedAt),
+	}
+	for _, r := range p.Rules {
+		out.Rules = append(out.Rules, DelegationRulePayload{
+			Target: DelegationTargetPayload{
+				MatchLabels: r.Target.MatchLabels,
+				IDs:         r.Target.IDs,
+				Types:       r.Target.Types,
+			},
+			Allow: r.Allow,
+		})
+	}
+	return out
+}
+
+// toDelegationRules maps the wire rules to the store representation.
+func toDelegationRules(in []DelegationRulePayload) []delegationpolicystore.Rule {
+	if in == nil {
+		return nil
+	}
+	out := make([]delegationpolicystore.Rule, 0, len(in))
+	for _, r := range in {
+		out = append(out, delegationpolicystore.Rule{
+			Target: delegationpolicystore.Target{
+				MatchLabels: r.Target.MatchLabels,
+				IDs:         r.Target.IDs,
+				Types:       r.Target.Types,
+			},
+			Allow: r.Allow,
+		})
+	}
+	return out
+}
+
+// toContentPolicy maps the wire content policy to the store
+// representation.
+func toContentPolicy(in ContentPolicyPayload) delegationpolicystore.ContentPolicy {
+	return delegationpolicystore.ContentPolicy{
+		MaxInputSize:        in.MaxInputSize,
+		InterceptorRef:      in.InterceptorRef,
+		ScanExportedFiles:   in.ScanExportedFiles,
+		MaxExportedFileSize: in.MaxExportedFileSize,
+	}
+}
+
+// WithDelegationPolicies wires the §15.1 delegation-policy CRUD
+// handlers onto the Router.
+func (r *Router) WithDelegationPolicies(s delegationpolicystore.Store) *Router {
+	r.delegationPolicies = s
+	return r
+}
+
+// writeDelegationPolicyStoreError maps a delegationpolicystore error to
+// the §15.1 error envelope shared by the create and update handlers.
+func writeDelegationPolicyStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, delegationpolicystore.ErrScanRequiresInterceptor):
+		// §8.3 rule 1 / §15.1 error catalog: HTTP 400.
+		writeError(w, http.StatusBadRequest, "EXPORT_SCAN_REQUIRES_INTERCEPTOR", err.Error(), nil)
+	default:
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+	}
+}
+
+func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.Request) {
+	var body DelegationPolicyPayload
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	p := delegationpolicystore.DelegationPolicy{
+		Name:               body.Name,
+		Rules:              toDelegationRules(body.Rules),
+		ContentPolicy:      toContentPolicy(body.ContentPolicy),
+		AllowSelfRecursion: body.AllowSelfRecursion,
+		CreatedAt:          r.clock(),
+	}
+	p.UpdatedAt = p.CreatedAt
+	if err := r.delegationPolicies.Create(req.Context(), p); err != nil {
+		if errors.Is(err, delegationpolicystore.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
+				"delegation policy with this name already exists", nil)
+			return
+		}
+		writeDelegationPolicyStoreError(w, err)
+		return
+	}
+	stored, _ := r.delegationPolicies.Get(req.Context(), body.Name)
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	r.emit(req.Context(), principal, "admin.delegation_policy.created", body.Name, map[string]any{
+		"ruleCount":          len(stored.Rules),
+		"scanExportedFiles":  stored.ContentPolicy.ScanExportedFiles,
+		"allowSelfRecursion": stored.AllowSelfRecursion,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(stored))
+}
+
+func (r *Router) handleListDelegationPolicies(w http.ResponseWriter, req *http.Request) {
+	rows, err := r.delegationPolicies.List(req.Context(), delegationpolicystore.ListFilter{
+		IncludeDeleted: req.URL.Query().Get("includeDeleted") == "true",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	out := make([]DelegationPolicyPayload, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, fromDelegationPolicy(p))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"delegationPolicies": out})
+}
+
+func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	row, err := r.delegationPolicies.Get(req.Context(), name)
+	if err != nil {
+		if errors.Is(err, delegationpolicystore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(row))
+}
+
+// handleUpdateDelegationPolicy implements PUT — a full replace of the
+// mutable fields (rules, contentPolicy, allowSelfRecursion).
+func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	var body DelegationPolicyPayload
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	updated, err := r.delegationPolicies.Update(req.Context(), name, func(p *delegationpolicystore.DelegationPolicy) error {
+		p.Rules = toDelegationRules(body.Rules)
+		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
+		p.AllowSelfRecursion = body.AllowSelfRecursion
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, delegationpolicystore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
+			return
+		}
+		writeDelegationPolicyStoreError(w, err)
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	r.emit(req.Context(), principal, "admin.delegation_policy.updated", name, nil)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(fromDelegationPolicy(updated))
+}
+
+func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("name")
+	if err := r.delegationPolicies.SoftDelete(req.Context(), name, r.clock()); err != nil {
+		if errors.Is(err, delegationpolicystore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "delegation policy not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return
+	}
+	r.emit(req.Context(), principal, "admin.delegation_policy.soft_deleted", name, nil)
+	w.WriteHeader(http.StatusNoContent)
+}

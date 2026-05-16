@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
@@ -83,24 +84,25 @@ type AuditEvent struct {
 // only the resources the gateway has stores for; future commits add
 // users, pools, connectors, circuit breakers, etc.
 type Router struct {
-	tenants         tenantstore.Store
-	runtimes        runtimestore.Store
-	users           userstore.Store
-	pools           poolstore.Store
-	breakers        breakerstore.Store
-	connectors      connectorstore.Store
-	auditLog        AuditLog
-	tokenRevoker    IssuedTokenRevoker
-	revocationCache RevocationCache
-	erasureRunner   ErasureRunner
-	erasureJobs     erasurejob.Store
-	sessions        sessionstore.Store
-	interactions    interactionstore.Store
-	experiments     experimentstore.Store
-	environments    environmentstore.Store
-	evals           evalstore.Store
-	clock           func() time.Time
-	audit           AuditSink
+	tenants            tenantstore.Store
+	runtimes           runtimestore.Store
+	users              userstore.Store
+	pools              poolstore.Store
+	breakers           breakerstore.Store
+	connectors         connectorstore.Store
+	delegationPolicies delegationpolicystore.Store
+	auditLog           AuditLog
+	tokenRevoker       IssuedTokenRevoker
+	revocationCache    RevocationCache
+	erasureRunner      ErasureRunner
+	erasureJobs        erasurejob.Store
+	sessions           sessionstore.Store
+	interactions       interactionstore.Store
+	experiments        experimentstore.Store
+	environments       environmentstore.Store
+	evals              evalstore.Store
+	clock              func() time.Time
+	audit              AuditSink
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
@@ -235,6 +237,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
 		mux.Handle("PUT /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
 		mux.Handle("DELETE /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
+	}
+	if r.delegationPolicies != nil {
+		mux.Handle("POST /v1/admin/delegation-policies", r.requireAdmin(http.HandlerFunc(r.handleCreateDelegationPolicy)))
+		mux.Handle("GET /v1/admin/delegation-policies", r.requireAdmin(http.HandlerFunc(r.handleListDelegationPolicies)))
+		mux.Handle("GET /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetDelegationPolicy)))
+		mux.Handle("PUT /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
+		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
 	}
 	if r.breakers != nil {
 		mux.Handle("GET /v1/admin/circuit-breakers", r.requireAdmin(http.HandlerFunc(r.handleListBreakers)))
