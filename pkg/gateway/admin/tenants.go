@@ -167,8 +167,10 @@ func (r *Router) Handler() http.Handler {
 	}
 	if r.runtimes != nil {
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
-		mux.Handle("GET /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleListRuntimes)))
-		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetRuntime)))
+		// §4: runtime reads are tenant-scoped — a tenant-admin sees the
+		// runtimes granted to their tenant; the handlers filter.
+		mux.Handle("GET /v1/admin/runtimes", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListRuntimes)))
+		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetRuntime)))
 		mux.Handle("PUT /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateRuntime)))
 		mux.Handle("DELETE /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteRuntime)))
 	}
@@ -230,8 +232,10 @@ func (r *Router) Handler() http.Handler {
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
-		mux.Handle("GET /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleListPools)))
-		mux.Handle("GET /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetPool)))
+		// §4 / §15.1: pool reads are tenant-scoped — a tenant-admin sees
+		// the pools granted to their tenant; the handlers filter.
+		mux.Handle("GET /v1/admin/pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListPools)))
+		mux.Handle("GET /v1/admin/pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetPool)))
 		mux.Handle("PUT /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdatePool)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 	}

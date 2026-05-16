@@ -10,6 +10,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -153,6 +154,19 @@ func (r *Router) handleListPools(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// §4: a tenant-admin sees only pools granted to their tenant
+	// through the pool_tenant_access table; platform-admin is
+	// unfiltered.
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		allowed := r.accessibleSet(req.Context(), tenantaccessstore.KindPool, tenantID)
+		kept := rows[:0]
+		for _, p := range rows {
+			if allowed[p.Name] {
+				kept = append(kept, p)
+			}
+		}
+		rows = kept
+	}
 	out := make([]PoolPayload, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, fromPool(p))
@@ -171,6 +185,14 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	// §4 / §15.1: a tenant-admin may read a pool only when their
+	// tenant holds an access grant for it; otherwise it reads as 404.
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		if !r.accessibleSet(req.Context(), tenantaccessstore.KindPool, tenantID)[row.Name] {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "pool not found", nil)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromPool(row))

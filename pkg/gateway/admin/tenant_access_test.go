@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
@@ -143,6 +145,128 @@ func TestPoolTenantAccess(t *testing.T) {
 	rt, _ := access.List(context.Background(), tenantaccessstore.KindRuntime, "cw-pool")
 	if len(rt) != 0 {
 		t.Error("a pool grant must not appear under the runtime kind")
+	}
+}
+
+// newScopedResourceAdmin wires the runtime, pool, and tenant-access
+// stores so the §4 tenant-scoped runtime/pool reads can be exercised.
+func newScopedResourceAdmin(t *testing.T) (*admin.Router, *runtimestore.Memory, *poolstore.Memory, *tenantaccessstore.Memory) {
+	t.Helper()
+	runtimes := runtimestore.NewMemory()
+	pools := poolstore.NewMemory()
+	access := tenantaccessstore.NewMemory()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithRuntimes(runtimes).WithPools(pools).WithTenantAccess(access)
+	return router, runtimes, pools, access
+}
+
+func TestListRuntimesTenantScoped(t *testing.T) {
+	router, runtimes, _, access := newScopedResourceAdmin(t)
+	ctx := context.Background()
+	for _, name := range []string{"rt-a", "rt-b", "rt-c"} {
+		if err := runtimes.Create(ctx, runtimestore.Runtime{Name: name}); err != nil {
+			t.Fatalf("seed runtime: %v", err)
+		}
+	}
+	for _, name := range []string{"rt-a", "rt-b"} {
+		if _, err := access.Grant(ctx, tenantaccessstore.KindRuntime, name, "acme", "admin", time.Time{}); err != nil {
+			t.Fatalf("seed grant: %v", err)
+		}
+	}
+
+	// A tenant-admin of acme sees only the granted runtimes.
+	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes", nil, withTenantAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("tenant-admin list: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var scoped struct {
+		Runtimes []admin.RuntimePayload `json:"runtimes"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &scoped)
+	if len(scoped.Runtimes) != 2 {
+		t.Errorf("tenant-admin sees %d runtimes, want 2 (granted only)", len(scoped.Runtimes))
+	}
+
+	// A platform-admin sees every runtime, unfiltered.
+	rrP := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes", nil, withAdminPrincipal)
+	var all struct {
+		Runtimes []admin.RuntimePayload `json:"runtimes"`
+	}
+	_ = json.Unmarshal(rrP.Body.Bytes(), &all)
+	if len(all.Runtimes) != 3 {
+		t.Errorf("platform-admin sees %d runtimes, want 3 (unfiltered)", len(all.Runtimes))
+	}
+}
+
+func TestGetRuntimeTenantScoped(t *testing.T) {
+	router, runtimes, _, access := newScopedResourceAdmin(t)
+	ctx := context.Background()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "granted"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "ungranted"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := access.Grant(ctx, tenantaccessstore.KindRuntime, "granted", "acme", "admin", time.Time{}); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	if rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/granted",
+		nil, withTenantAdminPrincipal); rr.Code != http.StatusOK {
+		t.Errorf("tenant-admin get granted runtime: status %d, want 200", rr.Code)
+	}
+	// An ungranted runtime reads as 404 for the tenant-admin.
+	if rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/ungranted",
+		nil, withTenantAdminPrincipal); rr.Code != http.StatusNotFound {
+		t.Errorf("tenant-admin get ungranted runtime: status %d, want 404", rr.Code)
+	}
+	// The platform-admin reads the ungranted runtime fine.
+	if rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/ungranted",
+		nil, withAdminPrincipal); rr.Code != http.StatusOK {
+		t.Errorf("platform-admin get: status %d, want 200", rr.Code)
+	}
+}
+
+func TestListPoolsTenantScoped(t *testing.T) {
+	router, _, pools, access := newScopedResourceAdmin(t)
+	ctx := context.Background()
+	for _, name := range []string{"pool-a", "pool-b", "pool-c"} {
+		if err := pools.Create(ctx, poolstore.Pool{Name: name}); err != nil {
+			t.Fatalf("seed pool: %v", err)
+		}
+	}
+	if _, err := access.Grant(ctx, tenantaccessstore.KindPool, "pool-a", "acme", "admin", time.Time{}); err != nil {
+		t.Fatalf("seed grant: %v", err)
+	}
+
+	rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools", nil, withTenantAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("tenant-admin list: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var scoped struct {
+		Pools []admin.PoolPayload `json:"pools"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &scoped)
+	if len(scoped.Pools) != 1 || scoped.Pools[0].Name != "pool-a" {
+		t.Errorf("tenant-admin pools = %+v, want only pool-a", scoped.Pools)
+	}
+}
+
+func TestGetPoolTenantScoped(t *testing.T) {
+	router, _, pools, _ := newScopedResourceAdmin(t)
+	ctx := context.Background()
+	if err := pools.Create(ctx, poolstore.Pool{Name: "ungranted"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// §15.1: a pool not in the caller's access table reads as 404.
+	if rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/ungranted",
+		nil, withTenantAdminPrincipal); rr.Code != http.StatusNotFound {
+		t.Errorf("tenant-admin get ungranted pool: status %d, want 404", rr.Code)
+	}
+	if rr := doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/pools/ungranted",
+		nil, withAdminPrincipal); rr.Code != http.StatusOK {
+		t.Errorf("platform-admin get: status %d, want 200", rr.Code)
 	}
 }
 

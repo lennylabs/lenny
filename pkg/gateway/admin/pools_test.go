@@ -176,6 +176,9 @@ func TestDeletePoolSoftDeletes(t *testing.T) {
 	}
 }
 
+// TestPoolEndpointsRequirePlatformAdmin covers the pool mutation
+// endpoints. The GET endpoints are §4 tenant-scoped (a tenant-admin may
+// call them, filtered) and are covered by the tenant-scoping tests.
 func TestPoolEndpointsRequirePlatformAdmin(t *testing.T) {
 	router, store, _, _ := newPoolAdmin(t)
 	_ = store.Create(context.Background(), poolstore.Pool{Name: "p", IsolationProfile: isolation.ProfileSandboxed})
@@ -185,8 +188,6 @@ func TestPoolEndpointsRequirePlatformAdmin(t *testing.T) {
 		body         []byte
 	}{
 		{http.MethodPost, "/v1/admin/pools", []byte(`{"name":"x"}`)},
-		{http.MethodGet, "/v1/admin/pools", nil},
-		{http.MethodGet, "/v1/admin/pools/p", nil},
 		{http.MethodPut, "/v1/admin/pools/p", []byte("{}")},
 		{http.MethodDelete, "/v1/admin/pools/p", nil},
 	} {

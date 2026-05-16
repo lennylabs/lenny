@@ -116,6 +116,51 @@ func TestInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestListForTenant(t *testing.T) {
+	ctx := context.Background()
+	store := tenantaccessstore.NewMemory()
+	// acme is granted two runtimes and one pool; globex one runtime.
+	for _, rt := range []string{"claude-code", "echo"} {
+		if _, err := store.Grant(ctx, tenantaccessstore.KindRuntime, rt, "acme", "a", time.Time{}); err != nil {
+			t.Fatalf("Grant: %v", err)
+		}
+	}
+	if _, err := store.Grant(ctx, tenantaccessstore.KindPool, "cw-pool", "acme", "a", time.Time{}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if _, err := store.Grant(ctx, tenantaccessstore.KindRuntime, "claude-code", "globex", "a", time.Time{}); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	rts, err := store.ListForTenant(ctx, tenantaccessstore.KindRuntime, "acme")
+	if err != nil {
+		t.Fatalf("ListForTenant: %v", err)
+	}
+	if len(rts) != 2 || rts[0] != "claude-code" || rts[1] != "echo" {
+		t.Errorf("acme runtimes = %v, want [claude-code echo]", rts)
+	}
+	// The pool grant must not appear in the runtime-kind result.
+	pools, _ := store.ListForTenant(ctx, tenantaccessstore.KindPool, "acme")
+	if len(pools) != 1 || pools[0] != "cw-pool" {
+		t.Errorf("acme pools = %v, want [cw-pool]", pools)
+	}
+	globex, _ := store.ListForTenant(ctx, tenantaccessstore.KindRuntime, "globex")
+	if len(globex) != 1 || globex[0] != "claude-code" {
+		t.Errorf("globex runtimes = %v, want [claude-code]", globex)
+	}
+}
+
+func TestListForTenantNoGrantsIsEmpty(t *testing.T) {
+	out, err := tenantaccessstore.NewMemory().ListForTenant(
+		context.Background(), tenantaccessstore.KindRuntime, "acme")
+	if err != nil {
+		t.Fatalf("ListForTenant: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("a tenant with no grants: got %v, want empty", out)
+	}
+}
+
 func TestListUnknownResourceIsEmpty(t *testing.T) {
 	grants, err := tenantaccessstore.NewMemory().List(context.Background(), tenantaccessstore.KindPool, "ghost")
 	if err != nil {

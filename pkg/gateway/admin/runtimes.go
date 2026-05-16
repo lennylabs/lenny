@@ -10,6 +10,7 @@ import (
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -158,6 +159,19 @@ func (r *Router) handleListRuntimes(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// §4: a tenant-admin sees only runtimes granted to their tenant
+	// through the runtime_tenant_access table; platform-admin is
+	// unfiltered.
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		allowed := r.accessibleSet(req.Context(), tenantaccessstore.KindRuntime, tenantID)
+		kept := rows[:0]
+		for _, rt := range rows {
+			if allowed[rt.Name] {
+				kept = append(kept, rt)
+			}
+		}
+		rows = kept
+	}
 	out := make([]RuntimePayload, 0, len(rows))
 	for _, rt := range rows {
 		out = append(out, fromRuntime(rt))
@@ -176,6 +190,14 @@ func (r *Router) handleGetRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
+	}
+	// §4: a tenant-admin may read a runtime only when their tenant
+	// holds an access grant for it.
+	if tenantID, filtered := tenantScopeFilter(req); filtered {
+		if !r.accessibleSet(req.Context(), tenantaccessstore.KindRuntime, tenantID)[row.Name] {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromRuntime(row))

@@ -267,6 +267,9 @@ func TestDeleteRuntimeSoftDeletes(t *testing.T) {
 	}
 }
 
+// TestRuntimeEndpointsRequirePlatformAdmin covers the runtime mutation
+// endpoints. The GET endpoints are §4 tenant-scoped (a tenant-admin may
+// call them, filtered) and are covered by the tenant-scoping tests.
 func TestRuntimeEndpointsRequirePlatformAdmin(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
@@ -276,8 +279,6 @@ func TestRuntimeEndpointsRequirePlatformAdmin(t *testing.T) {
 		body         []byte
 	}{
 		{http.MethodPost, "/v1/admin/runtimes", []byte(`{"name":"x"}`)},
-		{http.MethodGet, "/v1/admin/runtimes", nil},
-		{http.MethodGet, "/v1/admin/runtimes/echo", nil},
 		{http.MethodPut, "/v1/admin/runtimes/echo", []byte("{}")},
 		{http.MethodDelete, "/v1/admin/runtimes/echo", nil},
 	} {

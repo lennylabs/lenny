@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,6 +60,11 @@ type Store interface {
 	Revoke(ctx context.Context, kind ResourceKind, resource, tenantID string) error
 	// List returns a resource's grants, tenant-id ascending.
 	List(ctx context.Context, kind ResourceKind, resource string) ([]Grant, error)
+	// ListForTenant returns the names of every resource of the given
+	// kind the tenant has been granted, name ascending. It is the
+	// inverse of List, used to filter a tenant-admin's runtime/pool
+	// reads to the resources they may see (§4).
+	ListForTenant(ctx context.Context, kind ResourceKind, tenantID string) ([]string, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -123,6 +129,27 @@ func (m *Memory) List(_ context.Context, kind ResourceKind, resource string) ([]
 		out = append(out, g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TenantID < out[j].TenantID })
+	return out, nil
+}
+
+// ListForTenant implements Store.
+func (m *Memory) ListForTenant(_ context.Context, kind ResourceKind, tenantID string) ([]string, error) {
+	if !kind.IsValid() || tenantID == "" {
+		return nil, ErrInvalidArg
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	prefix := string(kind) + "/"
+	var out []string
+	for k, grants := range m.grants {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if _, ok := grants[tenantID]; ok {
+			out = append(out, strings.TrimPrefix(k, prefix))
+		}
+	}
+	sort.Strings(out)
 	return out, nil
 }
 

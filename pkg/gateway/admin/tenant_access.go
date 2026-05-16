@@ -3,13 +3,52 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 )
+
+// tenantScopeFilter reports whether a runtime/pool read should be
+// scoped to a tenant's access grants. Per §4 a platform-admin caller
+// sees every resource (filtered=false); a tenant-admin caller is
+// scoped to their own tenant.
+func tenantScopeFilter(req *http.Request) (tenantID string, filtered bool) {
+	p, ok := authmw.FromContext(req.Context())
+	if !ok {
+		return "", false
+	}
+	if p.HasRole(auth.RolePlatformAdmin) {
+		return "", false
+	}
+	if p.HasRole(auth.RoleTenantAdmin) {
+		return p.TenantID, true
+	}
+	return "", false
+}
+
+// accessibleSet returns the set of resource names of the given kind a
+// tenant may see, per the §4 tenant-access join tables. When the
+// tenantAccess store is not wired the set is empty — a tenant-admin
+// sees nothing rather than everything (§4 fail-closed).
+func (r *Router) accessibleSet(ctx context.Context, kind tenantaccessstore.ResourceKind, tenantID string) map[string]bool {
+	set := map[string]bool{}
+	if r.tenantAccess == nil {
+		return set
+	}
+	names, err := r.tenantAccess.ListForTenant(ctx, kind, tenantID)
+	if err != nil {
+		return set
+	}
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
 
 // tenantAccessGrantPayload is the §15.1 grant request body.
 type tenantAccessGrantPayload struct {
