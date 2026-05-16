@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `6cc57d9` — §10.7 ExperimentRouter rejection event + counter. The fail-closed
+  rejection now emits the `experiment.isolation_mismatch` operational event (§16.6) and
+  increments `lenny_experiment_isolation_rejections_total` (§16.1, labeled by
+  `tenant_id`, `experiment_id`, and `variant_id`) alongside the 422. `sessionserver`
+  gains an `ExperimentRejectionReporter` interface (mirroring `DeriveAuditSink`, so the
+  package stays decoupled from the audit and metrics subsystems); the gateway wires an
+  adapter that fans the rejection out to the §11.7 audit chain and the metrics registry.
 - `86bf8cc` — §10.7 ExperimentRouter isolation-monotonicity fail-closed. Before routing
   a session to a variant pool the router verifies the pool's §5.3 isolation profile is
   at least as restrictive as the session's; a weaker variant pool fails the session
@@ -759,7 +766,9 @@ admission-time isolation checks at experiment creation (the hard variant-pool
 monotonicity rejection and the tenant-floor advisory) and the routing-time
 `ExperimentRouter` isolation-monotonicity fail-closed check, where a session routed to
 a variant pool weaker than its own §5.3 profile is rejected with
-`422 VARIANT_ISOLATION_UNAVAILABLE`. The §5.3 tenant `minIsolationProfile` is now a
+`422 VARIANT_ISOLATION_UNAVAILABLE`, the `experiment.isolation_mismatch` operational
+event is emitted, and `lenny_experiment_isolation_rejections_total` is incremented. The
+§5.3 tenant `minIsolationProfile` is now a
 stored tenant field; a remaining pure-Go consumer is its enforcement on the
 session-creation path (rejecting a session whose isolation profile is weaker than the
 tenant floor). The `PreExportMaterialization` interceptor remains blocked on the §8.7
