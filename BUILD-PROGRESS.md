@@ -11,12 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a422cdc` — §4.9 / §15.1 CredentialPool admin CRUD. `POST` / `GET` / list / `PUT` /
+  `DELETE /v1/admin/credential-pools` are wired onto the admin Router, gated on
+  platform-admin or tenant-admin and tenant-scoped: a tenant-admin operates on their own
+  tenant, a platform-admin specifies `tenantId`. `assignmentStrategy` is validated
+  against the §4.9 enum; PUT is a full replace of the mutable fields. The §4.9 Token
+  Service RBAC live-probe on create and the revoke / re-enable endpoints are deferred —
+  both need the gateway-to-Token-Service mTLS link and the lease store.
 - `d8a2abf` — §4.9 CredentialPool registry (`pkg/gateway/credentialpoolstore`). The
   tenant-scoped store for the §4.9 CredentialPool resource — a named, per-provider
   credential set with an assignment strategy and lease limits, keyed by
-  `(tenant_id, name)`. `Validate` enforces the §4.9 structural invariants. The §15.1
-  admin CRUD, the Token Service RBAC live-probe, and the revoke / re-enable endpoints
-  are follow-ups.
+  `(tenant_id, name)`. `Validate` enforces the §4.9 structural invariants.
 - `279305b` — §8.3 DelegationPolicy deletion guard. The Runtime resource gains
   `delegationPolicyRef`, settable through `POST` / `PUT /v1/admin/runtimes`;
   `DELETE /v1/admin/delegation-policies/{name}` rejects the delete with
