@@ -328,3 +328,62 @@ func TestResumeRejectsAMissingCheckpointSource(t *testing.T) {
 		t.Error("Resume succeeded with no checkpoint source, want a failure")
 	}
 }
+
+// fakeUsageMeter is an adapter.UsageMeter returning a fixed accounting.
+type fakeUsageMeter struct {
+	usage adapter.Usage
+	err   error
+}
+
+func (m fakeUsageMeter) Usage(context.Context, string) (adapter.Usage, error) {
+	return m.usage, m.err
+}
+
+func TestReportUsageReturnsAccounting(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 1200, OutputTokens: 340, WallClockMS: 5000}}
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	rep, err := cl.ReportUsage(ctx, "sess-x")
+	if err != nil {
+		t.Fatalf("ReportUsage: %v", err)
+	}
+	if rep.InputTokens != 1200 || rep.OutputTokens != 340 || rep.WallClockMS != 5000 {
+		t.Errorf("usage = %+v, want input=1200 output=340 wall=5000", rep)
+	}
+}
+
+func TestReportUsageRejectsAnUnassignedSession(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	srv.Usage = fakeUsageMeter{}
+	cl := dialAdapter(t, srv)
+
+	// No StartSession ran, so the pod holds no session.
+	if _, err := cl.ReportUsage(context.Background(), "sess-absent"); err == nil {
+		t.Error("ReportUsage on an unassigned session succeeded, want a failure")
+	}
+}
+
+func TestReportUsageRejectsAMissingMeter(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	// No Usage meter configured: the adapter cannot report usage.
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {
+		t.Error("ReportUsage with no usage meter succeeded, want a failure")
+	}
+}

@@ -137,6 +137,36 @@ func (c *Client) Resume(ctx context.Context, sessionID, runtimeName, checkpointI
 	return resp.GetRestoredBytes(), nil
 }
 
+// UsageReport is the §4.7 token and wall-clock accounting a pod's
+// adapter returned for a session.
+type UsageReport struct {
+	// InputTokens is the prompt-token count.
+	InputTokens int64
+	// OutputTokens is the completion-token count.
+	OutputTokens int64
+	// WallClockMS is the elapsed runtime wall-clock time in
+	// milliseconds.
+	WallClockMS int64
+}
+
+// ReportUsage pulls the session's token and time accounting from the
+// pod's adapter (§4.7). The accounting is incremental — each call
+// returns usage accumulated since the previous one — so the gateway
+// sums it for §11.2 budget enforcement and billing.
+func (c *Client) ReportUsage(ctx context.Context, sessionID string) (UsageReport, error) {
+	resp, err := c.rpc.ReportUsage(ctx, &adapterv1.ReportUsageRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	})
+	if err != nil {
+		return UsageReport{}, err
+	}
+	return UsageReport{
+		InputTokens:  resp.GetInputTokens(),
+		OutputTokens: resp.GetOutputTokens(),
+		WallClockMS:  resp.GetWallClockMs(),
+	}, nil
+}
+
 // AttachStream is a live §4.7 bidirectional content stream to a pod's
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
 // next agent-to-gateway envelope.

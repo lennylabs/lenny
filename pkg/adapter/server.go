@@ -54,6 +54,9 @@ type Server struct {
 	// Restorer loads the §4.4 workspace checkpoints the Resume RPC
 	// restores from. Nil leaves Resume Unimplemented.
 	Restorer CheckpointSource
+	// Usage reports the session's token and wall-clock accounting the
+	// ReportUsage RPC returns. Nil leaves ReportUsage Unimplemented.
+	Usage UsageMeter
 
 	// mu guards sessionID and the credential fields.
 	mu sync.Mutex

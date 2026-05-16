@@ -137,11 +137,11 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 func TestGRPCServerReportsUnimplementedForUnbuiltRPCs(t *testing.T) {
 	client, _ := adapterClient(t, adapter.New("served"))
 
-	// ReportUsage is not yet implemented; the embedded
+	// ExtendLease is not yet implemented; the embedded
 	// UnimplementedAdapterServer answers with codes.Unimplemented.
-	_, err := client.ReportUsage(context.Background(), &adapterv1.ReportUsageRequest{})
+	_, err := client.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{})
 	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("ReportUsage error code = %v, want Unimplemented", status.Code(err))
+		t.Errorf("ExtendLease error code = %v, want Unimplemented", status.Code(err))
 	}
 }
 
