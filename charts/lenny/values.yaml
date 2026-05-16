@@ -91,6 +91,14 @@ kms:
 monitoring:
   namespace: "monitoring"
 
+# postgres configures the Postgres connection.
+postgres:
+  # cidr is the destination CIDR PgBouncer is allowed to reach
+  # Postgres on (§13.2). Operators should tighten this to the
+  # database endpoint; the broad default is bounded by the per-port
+  # (5432) egress rule.
+  cidr: "0.0.0.0/0"
+
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
 # unconditionally; these flags add the later-phase webhooks.
