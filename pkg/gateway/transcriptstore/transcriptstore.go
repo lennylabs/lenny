@@ -121,3 +121,16 @@ func (m *Memory) Page(_ context.Context, tenantID, sessionID string, afterSeq ui
 	}
 	return out, nil
 }
+
+// DeleteBySession removes the session's transcript and returns the
+// number of entries deleted. It is the §12.8 GDPR-erasure per-session
+// adapter for this session-scoped store; the erasure orchestrator
+// invokes it for each of an erased user's sessions.
+func (m *Memory) DeleteBySession(_ context.Context, tenantID, sessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, sessionID)
+	n := len(m.transcripts[k])
+	delete(m.transcripts, k)
+	return n, nil
+}
