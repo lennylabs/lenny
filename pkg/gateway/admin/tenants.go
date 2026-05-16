@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
+	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -96,6 +97,7 @@ type Router struct {
 	interactions    interactionstore.Store
 	experiments     experimentstore.Store
 	environments    environmentstore.Store
+	evals           evalstore.Store
 	clock           func() time.Time
 	audit           AuditSink
 
@@ -198,6 +200,11 @@ func (r *Router) Handler() http.Handler {
 			r.requireTenantResourceAdmin(http.HandlerFunc(r.handlePatchExperiment)))
 		mux.Handle("DELETE /v1/admin/experiments/{name}",
 			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteExperiment)))
+		if r.evals != nil {
+			// §10.7 / §15.1 experiment results aggregation.
+			mux.Handle("GET /v1/admin/experiments/{name}/results",
+				r.requireTenantResourceAdmin(http.HandlerFunc(r.handleExperimentResults)))
+		}
 	}
 	if r.environments != nil {
 		// §10.6 / §15.1 environment admin CRUD.

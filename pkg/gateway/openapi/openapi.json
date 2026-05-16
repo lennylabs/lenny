@@ -724,6 +724,21 @@
         }
       }
     },
+    "/v1/admin/experiments/{name}/results": {
+      "get": {
+        "summary": "Get aggregated eval results for an experiment, by variant",
+        "x-lenny-mcp-tool": "admin.get_experiment_results",
+        "x-lenny-scope": "admin.experiments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
+          "404": { "description": "Experiment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/v1/admin/environments": {
       "post": {
         "summary": "Create an environment",

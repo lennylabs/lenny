@@ -96,6 +96,7 @@ func TestDocumentMatchesEndpoints(t *testing.T) {
 		"/v1/admin/legal-hold",
 		"/v1/admin/experiments",
 		"/v1/admin/experiments/{name}",
+		"/v1/admin/experiments/{name}/results",
 		"/v1/admin/environments",
 		"/v1/admin/environments/{name}",
 		"/v1/admin/issued-tokens/{jti}/revoke",

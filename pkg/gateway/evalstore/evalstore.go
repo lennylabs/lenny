@@ -74,6 +74,10 @@ type Store interface {
 	CountBySession(ctx context.Context, tenantID, sessionID string) (int, error)
 	// ListBySession returns the session's eval results, oldest first.
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]EvalResult, error)
+	// ListByExperiment returns every eval result attributed to the
+	// experiment within the tenant — the input to the §10.7 results
+	// aggregation. Results with no experiment attribution are excluded.
+	ListByExperiment(ctx context.Context, tenantID, experimentID string) ([]EvalResult, error)
 	// DeleteBySession removes every eval result for the session and
 	// returns the count deleted — the §12.8 GDPR-erasure adapter.
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
@@ -143,6 +147,23 @@ func (m *Memory) ListBySession(_ context.Context, tenantID, sessionID string) ([
 	var out []EvalResult
 	for _, e := range m.results {
 		if e.TenantID == tenantID && e.SessionID == sessionID {
+			out = append(out, cloneResult(e))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+// ListByExperiment implements Store.
+func (m *Memory) ListByExperiment(_ context.Context, tenantID, experimentID string) ([]EvalResult, error) {
+	if experimentID == "" {
+		return nil, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []EvalResult
+	for _, e := range m.results {
+		if e.TenantID == tenantID && e.ExperimentID == experimentID {
 			out = append(out, cloneResult(e))
 		}
 	}
