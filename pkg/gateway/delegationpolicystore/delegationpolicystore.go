@@ -97,6 +97,29 @@ type DelegationPolicy struct {
 // IsActive reports whether the policy has not been soft-deleted.
 func (p DelegationPolicy) IsActive() bool { return p.DeletedAt.IsZero() }
 
+// §8.3 contentPolicy defaults.
+const (
+	// DefaultMaxInputSize is the §8.3 default `contentPolicy.maxInputSize`
+	// — 128 KiB of `TaskSpec.input` per delegation.
+	DefaultMaxInputSize = 128 * 1024
+
+	// DefaultMaxExportedFileSize is the §8.3 default
+	// `contentPolicy.maxExportedFileSize` — a 10 MiB per-file ceiling.
+	DefaultMaxExportedFileSize = 10 * 1024 * 1024
+)
+
+// ApplyDefaults fills the §8.3 contentPolicy defaults on a policy whose
+// size fields were left zero. The admin create and update handlers
+// call it so a registered policy always carries explicit ceilings.
+func ApplyDefaults(p *DelegationPolicy) {
+	if p.ContentPolicy.MaxInputSize == 0 {
+		p.ContentPolicy.MaxInputSize = DefaultMaxInputSize
+	}
+	if p.ContentPolicy.MaxExportedFileSize == 0 {
+		p.ContentPolicy.MaxExportedFileSize = DefaultMaxExportedFileSize
+	}
+}
+
 // Store is the §8.3 DelegationPolicy registry contract.
 type Store interface {
 	Create(ctx context.Context, p DelegationPolicy) error

@@ -85,6 +85,28 @@ func TestCreateRejectsInvalidName(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults(t *testing.T) {
+	// A zero content policy receives the §8.3 defaults.
+	var p delegationpolicystore.DelegationPolicy
+	delegationpolicystore.ApplyDefaults(&p)
+	if p.ContentPolicy.MaxInputSize != delegationpolicystore.DefaultMaxInputSize {
+		t.Errorf("MaxInputSize = %d, want default %d",
+			p.ContentPolicy.MaxInputSize, delegationpolicystore.DefaultMaxInputSize)
+	}
+	if p.ContentPolicy.MaxExportedFileSize != delegationpolicystore.DefaultMaxExportedFileSize {
+		t.Errorf("MaxExportedFileSize = %d, want default %d",
+			p.ContentPolicy.MaxExportedFileSize, delegationpolicystore.DefaultMaxExportedFileSize)
+	}
+	// Explicit values are preserved.
+	explicit := delegationpolicystore.DelegationPolicy{
+		ContentPolicy: delegationpolicystore.ContentPolicy{MaxInputSize: 4096, MaxExportedFileSize: 8192},
+	}
+	delegationpolicystore.ApplyDefaults(&explicit)
+	if explicit.ContentPolicy.MaxInputSize != 4096 || explicit.ContentPolicy.MaxExportedFileSize != 8192 {
+		t.Errorf("ApplyDefaults overwrote explicit values: %+v", explicit.ContentPolicy)
+	}
+}
+
 func TestCreateRejectsScanWithoutInterceptor(t *testing.T) {
 	ctx := context.Background()
 	store := delegationpolicystore.NewMemory()

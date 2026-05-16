@@ -67,6 +67,26 @@ func TestCreateDelegationPolicy(t *testing.T) {
 	}
 }
 
+func TestCreateDelegationPolicyAppliesContentDefaults(t *testing.T) {
+	router, store := newDelegationPolicyAdmin(t)
+	// A payload that omits the contentPolicy sizes.
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/delegation-policies",
+		admin.DelegationPolicyPayload{Name: "p1"}, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("store missing policy: %v", err)
+	}
+	if row.ContentPolicy.MaxInputSize != delegationpolicystore.DefaultMaxInputSize {
+		t.Errorf("stored MaxInputSize = %d, want the §8.3 default", row.ContentPolicy.MaxInputSize)
+	}
+	if row.ContentPolicy.MaxExportedFileSize != delegationpolicystore.DefaultMaxExportedFileSize {
+		t.Errorf("stored MaxExportedFileSize = %d, want the §8.3 default", row.ContentPolicy.MaxExportedFileSize)
+	}
+}
+
 func TestCreateDelegationPolicyRejectsScanWithoutInterceptor(t *testing.T) {
 	router, _ := newDelegationPolicyAdmin(t)
 	body := validDelegationPolicy("scan-policy")

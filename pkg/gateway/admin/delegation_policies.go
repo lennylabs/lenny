@@ -171,6 +171,7 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 		CreatedAt:          r.clock(),
 	}
 	p.UpdatedAt = p.CreatedAt
+	delegationpolicystore.ApplyDefaults(&p)
 	if err := r.delegationPolicies.Create(req.Context(), p); err != nil {
 		if errors.Is(err, delegationpolicystore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -243,6 +244,7 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		p.Rules = toDelegationRules(body.Rules)
 		p.ContentPolicy = toContentPolicy(body.ContentPolicy)
 		p.AllowSelfRecursion = body.AllowSelfRecursion
+		delegationpolicystore.ApplyDefaults(p)
 		return nil
 	})
 	if err != nil {
