@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	testNS   = "lenny-agents"
-	testName = "claude-worker-1"
+	testNS    = "lenny-agents"
+	testName  = "claude-worker-1"
+	testPodIP = "10.244.1.7"
 )
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -67,7 +68,7 @@ func runtimeCR() *lennyv1.Runtime {
 func podCR(phase corev1.PodPhase, ready bool) *corev1.Pod {
 	p := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
-		Status:     corev1.PodStatus{Phase: phase},
+		Status:     corev1.PodStatus{Phase: phase, PodIP: testPodIP},
 	}
 	if ready {
 		p.Status.Conditions = []corev1.PodCondition{
@@ -129,6 +130,18 @@ func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 	}
 	if got := getSandbox(t, c).Status.Phase; got != "idle" {
 		t.Errorf("phase = %q, want idle once the pod is ready", got)
+	}
+}
+
+func TestReconcileRecordsPodIP(t *testing.T) {
+	s := newScheme(t)
+	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := getSandbox(t, c).Status.PodIP; got != testPodIP {
+		t.Errorf("sandbox status.podIP = %q, want %q so the gateway can reach the adapter", got, testPodIP)
 	}
 }
 

@@ -51,6 +51,11 @@ type SandboxStatus struct {
 	// +optional
 	NodeName string `json:"nodeName,omitempty"`
 
+	// PodIP is the cluster IP of the backing Pod. The gateway dials the
+	// pod's §4.7 adapter at this address. Empty until the pod is running.
+	// +optional
+	PodIP string `json:"podIP,omitempty"`
+
 	// ObservedGeneration is the .metadata.generation the controller
 	// last reconciled.
 	// +optional

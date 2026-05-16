@@ -186,6 +186,11 @@ spec:
                 - draining
                 - terminated
                 type: string
+              podIP:
+                description: |-
+                  PodIP is the cluster IP of the backing Pod. The gateway dials the
+                  pod's §4.7 adapter at this address. Empty until the pod is running.
+                type: string
               podName:
                 description: |-
                   PodName is the underlying Pod backing this Sandbox. Empty until

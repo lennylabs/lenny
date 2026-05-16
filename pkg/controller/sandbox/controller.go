@@ -154,15 +154,18 @@ func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decisi
 	case obs == lifecycle.PodAbsent:
 		sb.Status.PodName = ""
 		sb.Status.NodeName = ""
+		sb.Status.PodIP = ""
 	default:
 		sb.Status.PodName = sb.Name
 		sb.Status.NodeName = pod.Spec.NodeName
+		sb.Status.PodIP = pod.Status.PodIP
 	}
 	sb.Status.ObservedGeneration = sb.Generation
 
 	if sb.Status.Phase == before.Phase &&
 		sb.Status.PodName == before.PodName &&
 		sb.Status.NodeName == before.NodeName &&
+		sb.Status.PodIP == before.PodIP &&
 		sb.Status.ObservedGeneration == before.ObservedGeneration {
 		return nil
 	}
