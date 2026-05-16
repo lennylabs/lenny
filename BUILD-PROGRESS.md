@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fc80b34` — §4 tenant-scoped runtime/pool reads. `GET /v1/admin/runtimes` and
+  `/v1/admin/pools` (list and by-name) now admit a tenant-admin and filter the result to
+  the resources granted to their tenant through the `runtime_tenant_access` /
+  `pool_tenant_access` join tables; a platform-admin is unfiltered, and a by-name read
+  of an ungranted resource is `404`. `tenantaccessstore` gains `ListForTenant`; an
+  unwired access store fails closed (a tenant-admin sees nothing).
 - `adf6f77` — §8.3 / §16.6 scanExportedFiles transition events. `PUT
   /v1/admin/delegation-policies/{name}` emits `delegation_policy.export_scan_weakened`
   on a `true → false` transition (carrying `cooldown_seconds`) and
