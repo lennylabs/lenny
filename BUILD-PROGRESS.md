@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4b51fb0` — §12.8 billing-event pseudonymization primitive. `billingstore.Pseudonymize`
+  is the one-way `SHA-256(user_id || erasure_salt)` hash; `Memory.PseudonymizeUser`
+  rewrites every billing event owned by a user, replacing the user id with its pseudonym
+  while the append-only sequence numbers, the tenant id, and the cost dimensions survive
+  for financial reconciliation. The method rejects an empty salt (an unsalted hash is
+  trivially reversible) and is idempotent. The Postgres-backed counterpart is deferred —
+  it needs an UPDATE under the `lenny_erasure` role.
 - `6cc57d9` — §10.7 ExperimentRouter rejection event + counter. The fail-closed
   rejection now emits the `experiment.isolation_mismatch` operational event (§16.6) and
   increments `lenny_experiment_isolation_rejections_total` (§16.1, labeled by
@@ -774,14 +781,18 @@ no session-creation-time tenant-floor enforcement (§7.1 populates `sessionIsola
 from the assigned pool's configuration), so the field has no further pure-Go consumer.
 The `PreExportMaterialization` interceptor remains blocked on the §8.7 file-export model.
 
-The next clearly-specified pure-Go chunk is §12.8 tenant-controlled billing erasure:
-the erasure job pseudonymizes billing events (`user_id` replaced with
-`SHA-256(user_id || erasure_salt)`, free-text PII cleared) rather than deleting them, so
-`sequence_number` / `tenant_id` / cost dimensions survive for financial reconciliation.
-This needs the per-tenant `erasure_salt` (256-bit, `crypto/rand`) on the tenant record, a
-`PseudonymizeUser` adapter on the billing store, the `pseudonymizing` and `verifying`
-erasure-job phases, and the step-20 salt immediate-deletion sequence. KMS envelope
-encryption of the salt is deferred with the rest of Phase 12a.
+§12.8 tenant-controlled billing erasure is in progress. The billing-store
+pseudonymization primitive is built: `billingstore.Pseudonymize` is the one-way
+`SHA-256(user_id || erasure_salt)` hash and `Memory.PseudonymizeUser` rewrites a user's
+billing events in place so `sequence_number` / `tenant_id` / cost dimensions survive for
+financial reconciliation. The remaining billing-erasure work is one cohesive chunk: the
+per-tenant `erasure_salt` (256-bit, `crypto/rand`) and `billingErasurePolicy` fields on
+the tenant record, the orchestrator's billing-pseudonymization step (generate the salt,
+pseudonymize, null the salt, run the §12.8 verification), and the `pseudonymizing` /
+`verifying` erasure-job phases. The Postgres-backed `PseudonymizeUser` and KMS envelope
+encryption of the salt are deferred — the former needs an UPDATE under the
+`lenny_erasure` role (the role-switched-connection infrastructure the audit-erasure path
+also needs), the latter is part of Phase 12a.
 
 ## Test status
 
