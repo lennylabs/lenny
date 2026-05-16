@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e4d9a8b` — `credassign.Service` (§4.9). The credential-assignment service: at session
+  start it selects a pool credential per the assignment strategy, mints the
+  `CredentialLease`, records it in `credleasestore`, and caches the real upstream
+  credential in `credcache` so the LLM proxy can inject it; `Release` frees the slot.
 - `c5db326` — `credential.SelectCredential` (§4.9). The pool credential assignment
   strategies — least-loaded, round-robin, sticky-until-failure — each picking a healthy
   credential, skipping unhealthy ones, and returning `ErrPoolExhausted` when none is
@@ -479,13 +483,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 credential-assignment orchestration. With `SelectCredential` and
-`MintLease` in place, the remaining piece is the `Assigner`: given a pool and a
-session, it selects a credential, mints the lease, records it in `credleasestore`,
-caches the real upstream key in `credcache`, and returns the lease's
-`materializedConfig` for delivery to the pod. It needs an in-memory `CredentialPool`
-holding each pool's credentials and their health state. This completes the §4.9
-credential-leasing path that populates the LLM proxy's stores.
+Wire the §4.9 credential-leasing service into `cmd/lenny-gateway`. `newLLMProxyServer`
+must accept a shared `credleasestore` and `credcache` rather than constructing private
+ones, so the `credassign.Service` writes the leases and credentials the proxy
+`Handler` reads. The gateway then constructs the `credassign.Service` from the shared
+stores. The credential pools the service assigns from come from the §4.9 credential-pool
+configuration (a Postgres-backed `CredentialPoolStore`), which is the dependency that
+must be defined before session start can call `Assign`.
 
 ## Test status
 
