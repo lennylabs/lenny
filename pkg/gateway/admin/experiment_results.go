@@ -33,9 +33,22 @@ type ScorerStats struct {
 	Dimensions map[string]ScorerStats `json:"dimensions,omitempty"`
 }
 
-// VariantResults is the §10.7 per-variant results block.
+// VariantResults is the §10.7 per-variant results block. The default
+// response carries the flat Scorers map; a breakdown_by request
+// replaces it with the Breakdowns array of per-bucket sub-aggregates.
 type VariantResults struct {
 	VariantID   string                 `json:"variantId"`
+	SampleCount int                    `json:"sampleCount"`
+	Scorers     map[string]ScorerStats `json:"scorers,omitempty"`
+	BreakdownBy string                 `json:"breakdownBy,omitempty"`
+	Breakdowns  []BreakdownBucket      `json:"breakdowns,omitempty"`
+}
+
+// BreakdownBucket is one §10.7 breakdown_by sub-aggregate: the scorers
+// computed over the eval rows that share a single value of the
+// breakdown field.
+type BreakdownBucket struct {
+	BucketValue any                    `json:"bucketValue"`
 	SampleCount int                    `json:"sampleCount"`
 	Scorers     map[string]ScorerStats `json:"scorers"`
 }
@@ -56,8 +69,8 @@ type ExperimentResults struct {
 // and — when the scorer's results carried a multi-dimensional `scores`
 // map — the same aggregate per dimension. The §10.7 `delegation_depth`,
 // `inherited`, and `exclude_post_conclusion` query filters narrow the
-// result set. The §10.7 `breakdown_by` alternate response shape is not
-// yet supported.
+// result set; the `breakdown_by` query parameter replaces each
+// variant's flat scorers block with per-bucket sub-aggregates.
 func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Request) {
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {
@@ -84,6 +97,12 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr, nil)
 		return
 	}
+	breakdownBy := req.URL.Query().Get("breakdown_by")
+	if breakdownBy != "" && !validBreakdownField(breakdownBy) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"breakdown_by must be delegation_depth, inherited, or submitted_after_conclusion", nil)
+		return
+	}
 
 	byVariant := map[string][]evalstore.EvalResult{}
 	for _, row := range rows {
@@ -99,7 +118,11 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 
 	out := ExperimentResults{ExperimentID: exp.ID, Status: string(exp.Status)}
 	for _, vid := range variantIDs {
-		out.Variants = append(out.Variants, aggregateVariant(vid, byVariant[vid]))
+		if breakdownBy != "" {
+			out.Variants = append(out.Variants, aggregateBreakdown(vid, byVariant[vid], breakdownBy))
+		} else {
+			out.Variants = append(out.Variants, aggregateVariant(vid, byVariant[vid]))
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
@@ -192,6 +215,67 @@ func aggregateVariant(variantID string, rows []evalstore.EvalResult) VariantResu
 		scorers[scorer] = st
 	}
 	return VariantResults{VariantID: variantID, SampleCount: len(sessions), Scorers: scorers}
+}
+
+// validBreakdownField reports whether field is a §10.7 breakdown_by
+// dimension.
+func validBreakdownField(field string) bool {
+	return field == "delegation_depth" || field == "inherited" ||
+		field == "submitted_after_conclusion"
+}
+
+// breakdownValue extracts the breakdown-field value from a row.
+func breakdownValue(row evalstore.EvalResult, field string) any {
+	switch field {
+	case "delegation_depth":
+		return row.DelegationDepth
+	case "inherited":
+		return row.Inherited
+	default: // submitted_after_conclusion
+		return row.SubmittedAfterConclusion
+	}
+}
+
+// breakdownLess orders §10.7 bucket values: numeric ascending for
+// delegation_depth, false before true for the boolean fields.
+func breakdownLess(a, b any) bool {
+	switch av := a.(type) {
+	case uint32:
+		bv, _ := b.(uint32)
+		return av < bv
+	case bool:
+		bv, _ := b.(bool)
+		return !av && bv
+	}
+	return false
+}
+
+// aggregateBreakdown computes the §10.7 breakdown_by per-variant
+// results: the variant's rows are bucketed by the breakdown field and
+// each bucket is aggregated independently. Buckets with no rows are
+// absent; breakdowns is always present (possibly empty). The variant
+// sample count is the sum across buckets.
+func aggregateBreakdown(variantID string, rows []evalstore.EvalResult, field string) VariantResults {
+	buckets := map[any][]evalstore.EvalResult{}
+	for _, row := range rows {
+		k := breakdownValue(row, field)
+		buckets[k] = append(buckets[k], row)
+	}
+	keys := make([]any, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return breakdownLess(keys[i], keys[j]) })
+
+	vr := VariantResults{VariantID: variantID, BreakdownBy: field, Breakdowns: []BreakdownBucket{}}
+	for _, k := range keys {
+		sub := aggregateVariant(variantID, buckets[k])
+		vr.Breakdowns = append(vr.Breakdowns, BreakdownBucket{
+			BucketValue: k, SampleCount: sub.SampleCount, Scorers: sub.Scorers,
+		})
+		vr.SampleCount += sub.SampleCount
+	}
+	return vr
 }
 
 // scorerStats computes the count, mean, and p50 / p95 percentiles of a

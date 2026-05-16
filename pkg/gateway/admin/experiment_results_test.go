@@ -213,6 +213,68 @@ func TestExperimentResultsDelegationDepthFilter(t *testing.T) {
 	}
 }
 
+func TestExperimentResultsBreakdownByDelegationDepth(t *testing.T) {
+	router, exps, evals := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_bd")
+	put := func(depth uint32) {
+		if _, err := evals.Put(context.Background(), evalstore.EvalResult{
+			TenantID: "acme", SessionID: "s", ExperimentID: "exp_bd",
+			VariantID: "treatment", Scorer: "judge", Score: scorePtr(0.7),
+			DelegationDepth: depth,
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	put(0)
+	put(0)
+	put(1)
+
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_bd/results?tenantId=acme&breakdown_by=delegation_depth",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("results: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var res admin.ExperimentResults
+	_ = json.Unmarshal(rr.Body.Bytes(), &res)
+	var treatment admin.VariantResults
+	for _, v := range res.Variants {
+		if v.VariantID == "treatment" {
+			treatment = v
+		}
+	}
+	if treatment.BreakdownBy != "delegation_depth" {
+		t.Errorf("breakdownBy = %q, want delegation_depth", treatment.BreakdownBy)
+	}
+	if treatment.Scorers != nil {
+		t.Error("a breakdown_by response must not carry the flat scorers block")
+	}
+	if len(treatment.Breakdowns) != 2 {
+		t.Fatalf("breakdowns = %d, want 2 (depths 0 and 1)", len(treatment.Breakdowns))
+	}
+	if treatment.Breakdowns[0].BucketValue != float64(0) || treatment.Breakdowns[1].BucketValue != float64(1) {
+		t.Errorf("bucket order = [%v %v], want ascending [0 1]",
+			treatment.Breakdowns[0].BucketValue, treatment.Breakdowns[1].BucketValue)
+	}
+	if treatment.Breakdowns[0].Scorers["judge"].Count != 2 {
+		t.Errorf("depth-0 bucket judge count = %d, want 2", treatment.Breakdowns[0].Scorers["judge"].Count)
+	}
+	if treatment.SampleCount != treatment.Breakdowns[0].SampleCount+treatment.Breakdowns[1].SampleCount {
+		t.Error("variant sampleCount must equal the sum across breakdown buckets")
+	}
+}
+
+func TestExperimentResultsRejectsBadBreakdownBy(t *testing.T) {
+	router, exps, _ := newResultsAdmin(t)
+	seedExperiment(t, exps, "exp_bb")
+	rr := doAdminReq(t, router.Handler(), http.MethodGet,
+		"/v1/admin/experiments/exp_bb/results?tenantId=acme&breakdown_by=nonsense",
+		nil, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed breakdown_by: status %d, want 400", rr.Code)
+	}
+}
+
 func TestExperimentResultsRejectsBadFilter(t *testing.T) {
 	router, exps, _ := newResultsAdmin(t)
 	seedExperiment(t, exps, "exp_bad")
