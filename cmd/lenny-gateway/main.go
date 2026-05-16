@@ -80,6 +80,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
@@ -433,6 +434,7 @@ func main() {
 		Runtimes:     runtimes,
 		Interceptors: interceptor.NewChain(),
 		Events:       eventBus,
+		InputWaits:   inputwait.NewRegistry(),
 		TenantID:     "default",
 	})
 

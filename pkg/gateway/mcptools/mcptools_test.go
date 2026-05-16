@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
@@ -38,10 +39,11 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
-		Events:   events.NewBus(0),
+		Store:      store,
+		Executor:   executor.NewEchoExecutor(),
+		Runtimes:   runtimes,
+		Events:     events.NewBus(0),
+		InputWaits: inputwait.NewRegistry(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -50,6 +52,38 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		TenantID: "acme",
 	})
 	return srv, store, runtimes
+}
+
+// newMCPForInput builds the MCP server with a lenny/request_input
+// registry and the given §11.3 timeout, returning the registry.
+func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionstore.Store, *inputwait.Registry) {
+	t.Helper()
+	store := memstore.New()
+	reg := inputwait.NewRegistry()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:               store,
+		Executor:            executor.NewEchoExecutor(),
+		InputWaits:          reg,
+		RequestInputTimeout: timeout,
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+	})
+	return srv, store, reg
+}
+
+// waitPending blocks until a request is registered, or fails the test.
+func waitPending(t *testing.T, reg *inputwait.Registry, sessionID, requestID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if reg.Pending(sessionID, requestID) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("request %s/%s never became pending", sessionID, requestID)
 }
 
 // newMCPForOutput builds the MCP server with a §15.1 event bus and
@@ -569,6 +603,78 @@ func TestOutputToolRejectsEmptyOutput(t *testing.T) {
 	}
 }
 
+func TestRequestInputResolvedByMessage(t *testing.T) {
+	srv, store, reg := newMCPForInput(t, 5*time.Second)
+	mkSession(t, store, "sess_i", session.StateRunning, "")
+	h := srv.Handler()
+
+	// request_input blocks; run it in a goroutine and resolve it from
+	// the main goroutine via send_message with a matching inReplyTo.
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_input",
+			`{"sessionId":"sess_i","requestId":"req-1","prompt":"pick a color"}`)
+	}()
+	waitPending(t, reg, "sess_i", "req-1")
+
+	resp := call(t, h, "lenny/send_message",
+		`{"sessionId":"sess_i","content":"blue","inReplyTo":"req-1"}`)
+	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"req-1"`) {
+		t.Errorf("send_message inReplyTo result = %q, want resolved req-1", text)
+	}
+
+	select {
+	case ri := <-got:
+		if text := resultText(t, ri); !strings.Contains(text, `"answer":"blue"`) {
+			t.Errorf("request_input result = %q, want answer blue", text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("request_input did not return after the message resolved it")
+	}
+}
+
+func TestRequestInputTimeout(t *testing.T) {
+	srv, store, _ := newMCPForInput(t, 40*time.Millisecond)
+	mkSession(t, store, "sess_i", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_i","requestId":"req-1"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("a timed-out request_input should be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if msg, _ := c0["text"].(string); !strings.Contains(msg, "REQUEST_INPUT_TIMEOUT") {
+		t.Errorf("timeout error = %q, want REQUEST_INPUT_TIMEOUT", msg)
+	}
+}
+
+func TestRequestInputRejectsTerminalSession(t *testing.T) {
+	srv, store, _ := newMCPForInput(t, time.Second)
+	mkSession(t, store, "sess_done", session.StateCompleted, "")
+
+	resp := call(t, srv.Handler(), "lenny/request_input",
+		`{"sessionId":"sess_done","requestId":"req-1"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("request_input on a terminal session should be a tool error: %+v", resp)
+	}
+}
+
+func TestSendMessageInReplyToFallsThroughWithoutPendingInput(t *testing.T) {
+	srv, store, _ := newMCPForInput(t, time.Second)
+	mkSession(t, store, "sess_i", session.StateRunning, "")
+
+	// inReplyTo references no pending request — the message is an
+	// ordinary threaded message and is delivered to the runtime.
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"sessionId":"sess_i","content":"hello","inReplyTo":"req-absent"}`)
+	if text := resultText(t, resp); !strings.Contains(text, "hello") {
+		t.Errorf("a non-matching inReplyTo should deliver normally, got %q", text)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -588,7 +694,7 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 		"lenny/create_session", "lenny/send_message",
 		"lenny/get_task_tree", "lenny/cancel_child",
 		"lenny/discover_agents", "lenny/set_tracing_context",
-		"lenny/output", "lenny/delegate_task",
+		"lenny/output", "lenny/request_input", "lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)

@@ -15,6 +15,7 @@
 //   - `lenny/discover_agents`     — list §8 delegation targets.
 //   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
 //   - `lenny/output`              — emit output parts to the event stream.
+//   - `lenny/request_input`       — block until a peer provides input.
 //   - `lenny/delegate_task`       — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
@@ -36,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -68,6 +70,14 @@ type Deps struct {
 	// lenny/output tool is not registered.
 	Events *events.Bus
 
+	// InputWaits is the §8.5 lenny/request_input pending-call registry.
+	// Optional — when nil, lenny/request_input is not registered.
+	InputWaits *inputwait.Registry
+
+	// RequestInputTimeout caps a lenny/request_input block per the
+	// §11.3 maxRequestInputWaitSeconds limit. Zero selects the default.
+	RequestInputTimeout time.Duration
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -78,6 +88,10 @@ type Deps struct {
 	// adapter instance.
 	TenantID string
 }
+
+// defaultRequestInputTimeout is the §11.3 maxRequestInputWaitSeconds
+// default applied when Deps.RequestInputTimeout is zero.
+const defaultRequestInputTimeout = 600 * time.Second
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
@@ -129,11 +143,12 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/send_message",
 		Description: "Deliver a message to a running session and return the response.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"inReplyTo":{"type":"string"}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
 			SessionID string `json:"sessionId"`
 			Content   string `json:"content"`
+			InReplyTo string `json:"inReplyTo"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -144,6 +159,20 @@ func Register(srv *mcp.Server, deps Deps) {
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+		}
+		// §8.5: when the message answers a pending lenny/request_input
+		// call, it resolves that blocked call directly instead of being
+		// delivered to the runtime. A non-matching inReplyTo falls
+		// through to normal delivery — it is then an ordinary threaded
+		// message.
+		if in.InReplyTo != "" && deps.InputWaits != nil {
+			err := deps.InputWaits.Resolve(in.SessionID, in.InReplyTo, in.Content)
+			if err == nil {
+				return textResult(fmt.Sprintf(`{"resolved":%q}`, in.InReplyTo)), nil
+			}
+			if !errors.Is(err, inputwait.ErrNotFound) {
+				return mcp.ToolResult{}, err
+			}
 		}
 		if deps.Executor == nil {
 			return mcp.ToolResult{}, errors.New("no executor configured")
@@ -332,6 +361,67 @@ func Register(srv *mcp.Server, deps Deps) {
 			}{Output: parts})
 			deps.Events.Publish(row.ID, "agent_output", string(data), clock())
 			return textResult(fmt.Sprintf(`{"emitted":%d}`, len(parts))), nil
+		})
+	}
+
+	if deps.InputWaits != nil {
+		requestInputTimeout := deps.RequestInputTimeout
+		if requestInputTimeout <= 0 {
+			requestInputTimeout = defaultRequestInputTimeout
+		}
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/request_input",
+			Description: "Block until a peer answers via lenny/send_message with a matching inReplyTo (§8.5).",
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","requestId"],"properties":{"sessionId":{"type":"string"},"requestId":{"type":"string"},"prompt":{"type":"string"}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				SessionID string `json:"sessionId"`
+				RequestID string `json:"requestId"`
+				Prompt    string `json:"prompt"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
+			if in.SessionID == "" || in.RequestID == "" {
+				return mcp.ToolResult{}, errors.New("sessionId and requestId are required")
+			}
+			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+			}
+			if session.IsTerminal(row.State) {
+				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			}
+			ch, err := deps.InputWaits.Register(in.SessionID, in.RequestID)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			// §8.5: surface the question on the session event stream so a
+			// peer can see what input is being asked for.
+			if deps.Events != nil {
+				data, _ := json.Marshal(struct {
+					RequestID string `json:"requestId"`
+					Prompt    string `json:"prompt"`
+				}{RequestID: in.RequestID, Prompt: in.Prompt})
+				deps.Events.Publish(in.SessionID, "request_input", string(data), clock())
+			}
+			// Block in the §7.2 input_required sub-state until a peer
+			// resolves the request or the §11.3 timeout fires.
+			select {
+			case answer := <-ch:
+				body, _ := json.Marshal(struct {
+					RequestID string `json:"requestId"`
+					Answer    string `json:"answer"`
+				}{RequestID: in.RequestID, Answer: answer})
+				return textResult(string(body)), nil
+			case <-time.After(requestInputTimeout):
+				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
+				return mcp.ToolResult{}, fmt.Errorf(
+					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, requestInputTimeout)
+			case <-ctx.Done():
+				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
+				return mcp.ToolResult{}, ctx.Err()
+			}
 		})
 	}
 
