@@ -148,6 +148,10 @@ gateway:
   # proxy-mode agent pods are admitted to it, by the supplemental
   # allow-pod-egress-llm-proxy NetworkPolicy.
   llmProxyPort: 8443
+  # internalPort is the gateway's internal HTTP port (§13.2). The
+  # lenny-drain-readiness webhook reaches GET /internal/drain-readiness
+  # on this port for its §12.5 pre-drain MinIO health check.
+  internalPort: 8080
 
 # security carries platform-wide security posture settings.
 security:

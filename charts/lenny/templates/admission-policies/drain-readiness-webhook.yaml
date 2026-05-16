@@ -1,0 +1,46 @@
+{{- /*
+lenny-drain-readiness ValidatingAdmissionWebhook (§12.5, §13.2 NET-037).
+Intercepts CREATE on the pods/eviction subresource in agent namespaces
+and blocks a planned node drain while the artifact store is degraded, so
+a drain cannot evict agent pods into a MinIO outage and lose
+un-checkpointed workspace state. The webhook queries the gateway
+GET /internal/drain-readiness endpoint; an unhealthy or unreachable
+result rejects the eviction. Fail-closed. Rendered only when
+features.drainReadiness is enabled.
+*/ -}}
+{{- if .Values.features.drainReadiness }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-drain-readiness") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-drain-readiness
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-drain-readiness
+webhooks:
+  - name: drain-readiness.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 10
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods/eviction"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-drain-readiness
+        namespace: {{ .Release.Namespace }}
+        path: /drain-readiness
+        port: 443
+{{- end }}

@@ -51,6 +51,7 @@ spec:
             - --tls-key-file=/etc/lenny/webhook-tls/tls.key
             - --tenancy-mode={{ $.Values.tenancy.mode }}
             - --dev-mode={{ $.Values.global.devMode }}
+            - --gateway-drain-readiness-url=http://lenny-gateway.{{ $.Release.Namespace }}.svc:{{ $.Values.gateway.internalPort }}/internal/drain-readiness
           ports:
             - name: https
               containerPort: 8443
