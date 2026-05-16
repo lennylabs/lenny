@@ -93,14 +93,23 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stored, err := s.evals.Put(r.Context(), evalstore.EvalResult{
+	// §10.7 gateway auto-association: copy the session's experiment
+	// context onto the eval result so the results API can aggregate by
+	// variant. An unenrolled session leaves the attribution empty.
+	result := evalstore.EvalResult{
 		TenantID:  tenantID,
 		SessionID: id,
 		Scorer:    req.Scorer,
 		Score:     req.Score,
 		Scores:    req.Scores,
 		Metadata:  req.Metadata,
-	})
+	}
+	if ec := sess.ExperimentContext; ec != nil {
+		result.ExperimentID = ec.ExperimentID
+		result.VariantID = ec.VariantID
+		result.Inherited = ec.Inherited
+	}
+	stored, err := s.evals.Put(r.Context(), result)
 	if err != nil {
 		if errors.Is(err, evalstore.ErrQuotaExceeded) {
 			s.writeError(w, http.StatusTooManyRequests, "EVAL_QUOTA_EXCEEDED",

@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -108,6 +109,7 @@ type Server struct {
 	treeArchive     treearchive.Store
 	maxOrphanTasks  int
 	evals           evalstore.Store
+	experiments     experimentstore.Store
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -195,6 +197,11 @@ type Options struct {
 	// `503 EVAL_UNAVAILABLE`.
 	Evals evalstore.Store
 
+	// Experiments is the §10.7 experiment registry. When set, the
+	// ExperimentRouter assigns a variant at session creation; when nil
+	// no session is enrolled in an experiment.
+	Experiments experimentstore.Store
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -271,6 +278,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		executor:        opts.Executor,
 		transcripts:     opts.Transcripts,
 		evals:           opts.Evals,
+		experiments:     opts.Experiments,
 		events:          opts.Events,
 		interactions:    opts.Interactions,
 		usage:           opts.Usage,
@@ -492,6 +500,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
+	// §10.7: the ExperimentRouter may enroll the session in a variant,
+	// rewriting its runtime/pool before the row is persisted.
+	s.applyExperimentRouting(r.Context(), &row)
 	if err := s.store.Create(r.Context(), row); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return

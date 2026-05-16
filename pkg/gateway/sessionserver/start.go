@@ -19,10 +19,10 @@ import (
 // the convenience surface that bundles create + finalize + start.
 type CreateAndStartRequest struct {
 	// Inherits the same shape as CreateSessionRequest.
-	RuntimeRef       string             `json:"runtimeRef"`
-	UserID           string             `json:"userId,omitempty"`
-	WorkspacePlan    json.RawMessage    `json:"workspacePlan,omitempty"`
-	IsolationProfile isolation.Profile  `json:"isolationProfile,omitempty"`
+	RuntimeRef       string            `json:"runtimeRef"`
+	UserID           string            `json:"userId,omitempty"`
+	WorkspacePlan    json.RawMessage   `json:"workspacePlan,omitempty"`
+	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 }
 
 // CreateAndStartResponse is the convenience reply. Mirrors the
@@ -97,6 +97,9 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
+	// §10.7: the ExperimentRouter may enroll the session in a variant,
+	// rewriting its runtime/pool before the row is persisted.
+	s.applyExperimentRouting(r.Context(), &row)
 	if err := s.store.Create(r.Context(), row); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return

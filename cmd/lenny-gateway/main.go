@@ -415,6 +415,7 @@ func main() {
 	// resolvable through the REST surface.
 	interactions := interactionstore.NewMemory()
 	evals := evalstore.NewMemory(0, nil)
+	experiments := experimentstore.NewMemory()
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -424,6 +425,7 @@ func main() {
 		Events:              eventBus,
 		Interactions:        interactions,
 		Evals:               evals,
+		Experiments:         experiments,
 		Usage:               usagestore.NewMemory(),
 		Users:               users,
 		Billing:             billing,
@@ -496,7 +498,7 @@ func main() {
 		WithConnectors(connectors).
 		WithSessions(sessions).
 		WithInteractions(interactions).
-		WithExperiments(experimentstore.NewMemory()).
+		WithExperiments(experiments).
 		WithEnvironments(environmentstore.NewMemory()).
 		WithEvalResults(evals)
 	adminRouter = wireAudit(adminRouter)
