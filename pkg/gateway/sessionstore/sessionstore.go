@@ -186,6 +186,12 @@ type Store interface {
 	// when the row is missing. The minimal gateway uses this for the
 	// audit-row GC path; production gateways soft-delete instead.
 	Delete(ctx context.Context, tenantID, id string) error
+
+	// DeleteByUser removes every session owned by userID within
+	// tenantID and returns the count deleted. It is the §12.8
+	// GDPR-erasure per-store adapter — erasing a user with no sessions
+	// is a no-op that returns (0, nil), never ErrNotFound.
+	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
 // ListFilter narrows the List result. Empty fields mean "no filter".

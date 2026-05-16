@@ -215,6 +215,23 @@ func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
 	return normalizeMiss(err)
 }
 
+// DeleteByUser implements Store — the §12.8 GDPR-erasure adapter. It
+// removes every session owned by userID within tenantID and returns
+// the count deleted; a user with no sessions yields (0, nil).
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
+	deleted := 0
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2`, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	return deleted, err
+}
+
 // scanSession reads one row in selectList order into a Session.
 func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	var (

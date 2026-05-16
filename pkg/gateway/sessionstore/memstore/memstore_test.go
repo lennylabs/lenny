@@ -117,3 +117,57 @@ func TestDeleteAndGetMissing(t *testing.T) {
 		t.Errorf("after Delete: want ErrNotFound, got %v", err)
 	}
 }
+
+func TestDeleteByUserRemovesAllUserSessions(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	for _, id := range []string{"sess_a1", "sess_a2"} {
+		_ = s.Create(ctx, sessionstore.Session{ID: id, TenantID: "acme", UserID: "alice@acme.com", State: session.StateRunning})
+	}
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_b1", TenantID: "acme", UserID: "bob@acme.com", State: session.StateRunning})
+
+	deleted, err := s.DeleteByUser(ctx, "acme", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	for _, id := range []string{"sess_a1", "sess_a2"} {
+		if _, err := s.Get(ctx, "acme", id); !errors.Is(err, sessionstore.ErrNotFound) {
+			t.Errorf("session %s should be erased", id)
+		}
+	}
+	if _, err := s.Get(ctx, "acme", "sess_b1"); err != nil {
+		t.Errorf("another user's session must survive the erasure: %v", err)
+	}
+}
+
+func TestDeleteByUserScopedByTenant(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_acme", TenantID: "acme", UserID: "alice", State: session.StateRunning})
+	_ = s.Create(ctx, sessionstore.Session{ID: "sess_globex", TenantID: "globex", UserID: "alice", State: session.StateRunning})
+
+	deleted, err := s.DeleteByUser(ctx, "acme", "alice")
+	if err != nil {
+		t.Fatalf("DeleteByUser: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("deleted = %d, want 1 — only the acme session", deleted)
+	}
+	if _, err := s.Get(ctx, "globex", "sess_globex"); err != nil {
+		t.Errorf("the same user's session in another tenant must survive: %v", err)
+	}
+}
+
+func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
+	s := memstore.New()
+	deleted, err := s.DeleteByUser(context.Background(), "acme", "nobody@acme.com")
+	if err != nil {
+		t.Errorf("erasing a user with no sessions should not error: %v", err)
+	}
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0", deleted)
+	}
+}

@@ -133,3 +133,17 @@ func (s *Store) Delete(_ context.Context, tenantID, id string) error {
 	delete(s.sessions, id)
 	return nil
 }
+
+// DeleteByUser implements Store — the §12.8 GDPR-erasure adapter.
+func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for id, row := range s.sessions {
+		if row.TenantID == tenantID && row.UserID == userID {
+			delete(s.sessions, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
