@@ -449,7 +449,7 @@ this state.
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
 | 8     | Checkpoint/resume, drain-readiness webhook                   | Done           | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume is complete: `adapterclient.Resume` drives the pod adapter's `Resume` RPC, `Binder.Resume` claims a fresh pod and restores onto it, and `handleResume` serves `POST /v1/sessions/{id}/resume` — valid only from `awaiting_client_action` per §15.1, restoring from the §7.1 `WorkspaceSnapshot` or rebuilding from the stored §14 `WorkspacePlan`.                                                                                                                                              |
-| 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation/cycle`, `pkg/delegation/lease`, `pkg/delegation/tracing`, and the gateway delegation service are built. The platform MCP tool surface has `lenny/create_session`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/delegate_task`, `lenny/cancel_child`, `lenny/discover_agents`, and `lenny/set_tracing_context`; the delegation service propagates a parent's §8.3 tracingContext onto each child. The §4 `RequestInterceptor` chain framework (`pkg/gateway/interceptor`) is built and the `PreMessageDelivery` phase is wired into `lenny/send_message`. Not built: `lenny/await_children`, `lenny/output`, `lenny/request_input`, the `delegation-echo` runtime, the `PreDelegation` and `PreExportMaterialization` interceptor wiring, external gRPC interceptors, the `ExtendLease` lease-extension control plane, and delegation-tree recovery (`session_tree_archive`).                                                                                                                                                                                                 |
+| 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation/cycle`, `pkg/delegation/lease`, `pkg/delegation/tracing`, and the gateway delegation service are built. The platform MCP tool surface has `lenny/create_session`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/delegate_task`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/set_tracing_context`, and `lenny/output`; the delegation service propagates a parent's §8.3 tracingContext onto each child. The §4 `RequestInterceptor` chain framework (`pkg/gateway/interceptor`) is built and the `PreMessageDelivery` phase is wired into `lenny/send_message`. Not built: the blocking MCP tools `lenny/await_children` and `lenny/request_input`, the `delegation-echo` runtime, the `PreDelegation` and `PreExportMaterialization` interceptor wiring, external gRPC interceptors, the `ExtendLease` lease-extension control plane, and delegation-tree recovery (`session_tree_archive`).                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
 | 11    | Advanced credentials, multi-provider translators, revocation | Partial        | The revocation cache exists. The `aws_bedrock`, `vertex_ai`, and `azure_openai` translators and the proactive renewal worker are not.                                                                                                                                                                                                        |
@@ -563,22 +563,26 @@ still behind the Phase-1 skeleton (the embedded `UnimplementedAdapterServer` ans
 ## Next step
 
 Phase 9 (§18.23) is in progress. Done: the non-blocking platform MCP tools
-(`lenny/cancel_child`, `lenny/discover_agents`, `lenny/set_tracing_context`), the §4
-`RequestInterceptor` chain framework (`pkg/gateway/interceptor`), the
-`PreMessageDelivery` interceptor wiring on `lenny/send_message`, and the §4.7
-`ReportUsage` adapter RPC. Remaining Phase 9 work: the blocking/streaming MCP tools
-(`lenny/output`, `lenny/await_children`, `lenny/request_input`), the `delegation-echo`
-reference runtime, the `ExtendLease` lease-extension control plane, and
-delegation-tree recovery (`session_tree_archive`).
+(`lenny/cancel_child`, `lenny/discover_agents`, `lenny/set_tracing_context`,
+`lenny/output`), the §4 `RequestInterceptor` chain framework
+(`pkg/gateway/interceptor`), the `PreMessageDelivery` interceptor wiring on
+`lenny/send_message`, and the §4.7 `ReportUsage` adapter RPC. Remaining Phase 9 work:
+the blocking MCP tools (`lenny/await_children`, `lenny/request_input`), the
+`delegation-echo` reference runtime, the `ExtendLease` lease-extension control plane,
+and delegation-tree recovery (`session_tree_archive`).
 
 Each remaining Phase 9 item carries a dependency to scope first:
 
+- `lenny/await_children` and `lenny/request_input` are blocking tools. The MCP tool
+  handler signature (`func(ctx, args) (ToolResult, error)`) supports a handler that
+  blocks on a channel with a `ctx`/timeout `select`. `request_input` needs a
+  resolution path — a way for the client or parent to provide the awaited input
+  (`pkg/gateway/interactionstore` is the likely substrate) — and the §11.3
+  `maxRequestInputWaitSeconds` timeout producing `REQUEST_INPUT_TIMEOUT`.
 - `delegation-echo` is a Standard-level runtime — §15.4.3 requires it to connect to the
   adapter's local platform MCP server over an abstract Unix socket with the manifest
   `mcpNonce` handshake. That intra-pod MCP-server infrastructure is not built; audit it
   before starting the runtime.
-- `lenny/output` needs an output sink (check `pkg/gateway/events` and the `executor`
-  output channel) to route the emitted `OutputPart[]`.
 - `ExtendLease` and `LifecycleChannel` are the last two adapter proto RPCs.
   `ExtendLease`'s direction needs settling: the proto places it in the `Adapter`
   service (gateway → pod) but the §8.6 prose describes the adapter requesting budget
