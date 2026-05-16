@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a0b3259` — §4 / §15.1 runtime/pool tenant-access endpoints. The six §15.1
+  endpoints — `POST` / `GET /v1/admin/{runtimes,pools}/{name}/tenant-access` and
+  `DELETE .../tenant-access/{tenantId}` — are wired onto the admin Router,
+  platform-admin gated. The grant is idempotent (201 new, 200 existing); the list
+  resolves grantee display names; a revoke of an absent grant is 404. The runtime/pool
+  list-endpoint filtering that consults these join tables is a follow-up.
+- `8cff3bd` — §4 runtime/pool tenant-access registry (`pkg/gateway/tenantaccessstore`).
+  The join-table store behind `runtime_tenant_access` / `pool_tenant_access`: `Grant`
+  (idempotent), `Revoke`, and `List`, scoped by `(kind, resource)`.
 - `a422cdc` — §4.9 / §15.1 CredentialPool admin CRUD. `POST` / `GET` / list / `PUT` /
   `DELETE /v1/admin/credential-pools` are wired onto the admin Router, gated on
   platform-admin or tenant-admin and tenant-scoped: a tenant-admin operates on their own
