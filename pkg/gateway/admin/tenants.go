@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -93,6 +94,7 @@ type Router struct {
 	connectors         connectorstore.Store
 	delegationPolicies delegationpolicystore.Store
 	credentialPools    credentialpoolstore.Store
+	tenantAccess       tenantaccessstore.Store
 	auditLog           AuditLog
 	tokenRevoker       IssuedTokenRevoker
 	revocationCache    RevocationCache
@@ -253,6 +255,14 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
 		mux.Handle("PUT /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
 		mux.Handle("DELETE /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
+	}
+	if r.tenantAccess != nil {
+		mux.Handle("POST /v1/admin/runtimes/{name}/tenant-access", r.requireAdmin(r.grantAccessHandler(tenantaccessstore.KindRuntime)))
+		mux.Handle("GET /v1/admin/runtimes/{name}/tenant-access", r.requireAdmin(r.listAccessHandler(tenantaccessstore.KindRuntime)))
+		mux.Handle("DELETE /v1/admin/runtimes/{name}/tenant-access/{tenantId}", r.requireAdmin(r.revokeAccessHandler(tenantaccessstore.KindRuntime)))
+		mux.Handle("POST /v1/admin/pools/{name}/tenant-access", r.requireAdmin(r.grantAccessHandler(tenantaccessstore.KindPool)))
+		mux.Handle("GET /v1/admin/pools/{name}/tenant-access", r.requireAdmin(r.listAccessHandler(tenantaccessstore.KindPool)))
+		mux.Handle("DELETE /v1/admin/pools/{name}/tenant-access/{tenantId}", r.requireAdmin(r.revokeAccessHandler(tenantaccessstore.KindPool)))
 	}
 	if r.breakers != nil {
 		mux.Handle("GET /v1/admin/circuit-breakers", r.requireAdmin(http.HandlerFunc(r.handleListBreakers)))

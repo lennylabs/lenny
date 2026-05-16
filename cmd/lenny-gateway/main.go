@@ -117,6 +117,7 @@ import (
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -519,6 +520,7 @@ func main() {
 		WithConnectors(connectors).
 		WithDelegationPolicies(delegationpolicystore.NewMemory()).
 		WithCredentialPools(credentialpoolstore.NewMemory()).
+		WithTenantAccess(tenantaccessstore.NewMemory()).
 		WithSessions(sessions).
 		WithInteractions(interactions).
 		WithExperiments(experiments).
