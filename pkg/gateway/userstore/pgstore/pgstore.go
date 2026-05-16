@@ -36,7 +36,8 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ userstore.Store = (*Store)(nil)
 
 const selectList = `tenant_id, subject, email, display_name, roles,
-	disabled, created_at, updated_at, deleted_at`
+	disabled, created_at, updated_at, deleted_at,
+	processing_restricted, erasure_job_id`
 
 // Create inserts a new user row. It validates the tenant id, subject,
 // and role set, mirroring userstore.Memory. Returns ErrAlreadyExists
@@ -61,10 +62,12 @@ func (s *Store) Create(ctx context.Context, u userstore.User) error {
 	err := pgtenant.InTx(ctx, s.pool, u.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO users (
 			tenant_id, subject, email, display_name, roles,
-			disabled, created_at, updated_at, deleted_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			disabled, created_at, updated_at, deleted_at,
+			processing_restricted, erasure_job_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			u.TenantID, u.Subject, u.Email, u.DisplayName, rolesToText(u.Roles),
-			u.Disabled, u.CreatedAt, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt))
+			u.Disabled, u.CreatedAt, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
+			u.ProcessingRestricted, u.ErasureJobID)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -123,10 +126,12 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 		u.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
 		if _, err := tx.Exec(ctx, `UPDATE users SET
 			email = $3, display_name = $4, roles = $5, disabled = $6,
-			updated_at = $7, deleted_at = $8
+			updated_at = $7, deleted_at = $8,
+			processing_restricted = $9, erasure_job_id = $10
 		WHERE tenant_id = $1 AND subject = $2`,
 			tenantID, subject, u.Email, u.DisplayName, rolesToText(u.Roles),
-			u.Disabled, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt)); err != nil {
+			u.Disabled, u.UpdatedAt, pgtenant.NullTime(u.DeletedAt),
+			u.ProcessingRestricted, u.ErasureJobID); err != nil {
 			return err
 		}
 		out = u
@@ -209,6 +214,7 @@ func scanUser(row pgx.Row) (userstore.User, error) {
 	if err := row.Scan(
 		&u.TenantID, &u.Subject, &u.Email, &u.DisplayName, &roles,
 		&u.Disabled, &u.CreatedAt, &u.UpdatedAt, &deletedAt,
+		&u.ProcessingRestricted, &u.ErasureJobID,
 	); err != nil {
 		return userstore.User{}, err
 	}
