@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `adf6f77` — §8.3 / §16.6 scanExportedFiles transition events. `PUT
+  /v1/admin/delegation-policies/{name}` emits `delegation_policy.export_scan_weakened`
+  on a `true → false` transition (carrying `cooldown_seconds`) and
+  `delegation_policy.export_scan_strengthened` on `false → true`; no event fires when
+  the value is unchanged. The cooldown enforcement at `delegate_task` time
+  (`INTERCEPTOR_WEAKENING_COOLDOWN`) is deferred to the delegation request path.
 - `a0b3259` — §4 / §15.1 runtime/pool tenant-access endpoints. The six §15.1
   endpoints — `POST` / `GET /v1/admin/{runtimes,pools}/{name}/tenant-access` and
   `DELETE .../tenant-access/{tenantId}` — are wired onto the admin Router,
