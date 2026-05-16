@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `0f8e61c` — Adapter `SendMessage` and `Shutdown` RPCs. `SendMessage` forwards the
+  gateway's pre-encoded message envelope to the runtime's stdin; `Shutdown` closes the
+  runtime and releases the session. `SubprocessExecutor` gained a `WriteEnvelope`
+  raw-delivery path.
 - `45ad73d` — Adapter `StartSession` RPC. Rejects a non-idle pod with Unavailable,
   materializes the workspace, runs the setup commands, and starts the runtime process;
   releases the pod on any post-claim failure. `SubprocessExecutor` gained an eager
@@ -132,11 +136,11 @@ The implementation cannot run a Kubernetes-hosted session. The blocking gaps, in
 dependency order, are below.
 
 - **Runtime adapter server.** The gRPC scaffold, `NegotiateVersion`, the transport
-  wiring, `cmd/lenny-adapter`, and `StartSession` (workspace materialization, setup
-  commands, runtime-process start) are built. The remaining RPCs are not: `SendMessage`,
-  the credential RPCs (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`),
-  `Interrupt`, `Checkpoint`, `Shutdown`, `DemoteSDK`, and the `LifecycleChannel` stream.
-  No container image is built.
+  wiring, `cmd/lenny-adapter`, and the core session RPCs `StartSession`, `SendMessage`,
+  and `Shutdown` are built. The remaining RPCs are not: the credential RPCs
+  (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`), `Interrupt`,
+  `Checkpoint`, `DemoteSDK`, and the `LifecycleChannel` stream. The runtime-to-gateway
+  output path and a container image are also not built.
 - **Pod-spec builder.** Nothing translates a `Sandbox`, its `SandboxTemplate`, and its
   `Runtime` into a `corev1.PodSpec`. A faithful agent pod carries an adapter container
   and a runtime container with the §13.1 security context, the §6.1 volumes, and the
@@ -173,13 +177,12 @@ progress; see the progress log.
 
 ## Next step
 
-Implement the adapter `SendMessage` and `Shutdown` RPCs. `SendMessage` writes the
-request's pre-encoded message envelope to the runtime's stdin and collects the
-response; `Shutdown` closes the runtime process and returns the pod toward
-termination. `SubprocessExecutor` covers the message round-trip and `Close`, but its
-API marshals its own envelope, whereas the proto `SendMessage` carries an
-already-encoded `envelope_json`; the executor needs a raw-envelope send path or a
-small adapter-side equivalent.
+Build the pod-spec builder — critical-path item 2. Translate a `Sandbox`, its
+`SandboxTemplate`, and its `Runtime` into a `corev1.PodSpec` with the adapter
+container and the runtime container, the §13.1 security context (non-root, dropped
+capabilities, read-only root filesystem, the `lenny-cred-readers` fsGroup), the §6.1
+workspace and credential volumes, and the §5.3 RuntimeClass derived from the
+isolation profile. This unblocks the Sandbox-to-Pod reconciler.
 
 ## Test status
 
