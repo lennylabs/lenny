@@ -768,11 +768,20 @@ monotonicity rejection and the tenant-floor advisory) and the routing-time
 a variant pool weaker than its own §5.3 profile is rejected with
 `422 VARIANT_ISOLATION_UNAVAILABLE`, the `experiment.isolation_mismatch` operational
 event is emitted, and `lenny_experiment_isolation_rejections_total` is incremented. The
-§5.3 tenant `minIsolationProfile` is now a
-stored tenant field; a remaining pure-Go consumer is its enforcement on the
-session-creation path (rejecting a session whose isolation profile is weaker than the
-tenant floor). The `PreExportMaterialization` interceptor remains blocked on the §8.7
-file-export model.
+§5.3 tenant `minIsolationProfile` is a stored tenant field; its only spec-defined
+consumer is the §10.7 admission-time advisory check, which is built. The spec defines
+no session-creation-time tenant-floor enforcement (§7.1 populates `sessionIsolationLevel`
+from the assigned pool's configuration), so the field has no further pure-Go consumer.
+The `PreExportMaterialization` interceptor remains blocked on the §8.7 file-export model.
+
+The next clearly-specified pure-Go chunk is §12.8 tenant-controlled billing erasure:
+the erasure job pseudonymizes billing events (`user_id` replaced with
+`SHA-256(user_id || erasure_salt)`, free-text PII cleared) rather than deleting them, so
+`sequence_number` / `tenant_id` / cost dimensions survive for financial reconciliation.
+This needs the per-tenant `erasure_salt` (256-bit, `crypto/rand`) on the tenant record, a
+`PseudonymizeUser` adapter on the billing store, the `pseudonymizing` and `verifying`
+erasure-job phases, and the step-20 salt immediate-deletion sequence. KMS envelope
+encryption of the salt is deferred with the rest of Phase 12a.
 
 ## Test status
 
