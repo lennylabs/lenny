@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `77c00ef` — Gateway closes the executor on session completion.
+  `recordSessionCompleted` now calls `executor.Close`, fixing a latent leak (a
+  SubprocessExecutor child outlived its session) and giving the pod-backed
+  `PodExecutor` its teardown hook — a prerequisite for the gateway↔pod wiring.
 - `bd7e508` — `allow-gateway-egress` NetworkPolicy (§13.2). Re-admits the gateway's
   in-cluster egress (agent adapters, Token Service, PgBouncer, Redis, MinIO,
   kube-apiserver, CoreDNS) under the `lenny-system` default-deny. The external-HTTPS
