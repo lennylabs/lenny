@@ -10,6 +10,7 @@ package adapterclient
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -73,6 +74,26 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []b
 		EnvelopeJson: envelope,
 	})
 	return err
+}
+
+// Interrupt asks the pod's runtime to pause (§4.7). A hard interrupt
+// sends SIGKILL; a clean interrupt sends SIGTERM and grants the runtime
+// deadline to pause and checkpoint. The returned bool reports whether
+// the adapter acknowledged the interrupt.
+func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, deadline time.Duration) (bool, error) {
+	mode := adapterv1.InterruptRequest_MODE_CLEAN
+	if hard {
+		mode = adapterv1.InterruptRequest_MODE_HARD
+	}
+	resp, err := c.rpc.Interrupt(ctx, &adapterv1.InterruptRequest{
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		Mode:       mode,
+		DeadlineMs: int32(deadline.Milliseconds()),
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetAcknowledged(), nil
 }
 
 // Shutdown terminates the pod's runtime and releases the session. The

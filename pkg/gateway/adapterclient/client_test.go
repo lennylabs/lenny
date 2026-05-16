@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -17,9 +18,11 @@ import (
 
 // fakeRuntime records what the adapter asks of the pod's runtime.
 type fakeRuntime struct {
-	started   string
-	envelopes [][]byte
-	closed    bool
+	started         string
+	envelopes       [][]byte
+	interrupted     bool
+	interruptedHard bool
+	closed          bool
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -29,6 +32,12 @@ func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
 
 func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	f.envelopes = append(f.envelopes, envelope)
+	return nil
+}
+
+func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
+	f.interruptedHard = hard
+	f.interrupted = true
 	return nil
 }
 
@@ -120,6 +129,29 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	if !rt.closed {
 		t.Error("the runtime was not closed on Shutdown")
+	}
+}
+
+func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	ack, err := cl.Interrupt(ctx, "sess-x", true, 2*time.Second)
+	if err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if !ack {
+		t.Error("Interrupt was not acknowledged")
+	}
+	if !rt.interrupted || !rt.interruptedHard {
+		t.Errorf("runtime interrupted=%t hard=%t, want a hard interrupt", rt.interrupted, rt.interruptedHard)
 	}
 }
 

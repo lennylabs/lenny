@@ -185,3 +185,46 @@ func TestSubprocessExecutorBadBinaryErrors(t *testing.T) {
 		t.Error("Send against a missing binary should error")
 	}
 }
+
+func TestSubprocessExecutorCleanInterrupt(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath:     echoBinary,
+		SendTimeout: 10 * time.Second,
+	})
+	if err := exec.Start(context.Background(), "sess_clean"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := exec.Interrupt(context.Background(), "sess_clean", false); err != nil {
+		t.Errorf("clean Interrupt: %v", err)
+	}
+	_ = exec.Close(context.Background(), "sess_clean")
+}
+
+func TestSubprocessExecutorHardInterruptKillsRuntime(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath:     echoBinary,
+		SendTimeout: 10 * time.Second,
+	})
+	if err := exec.Start(context.Background(), "sess_hard"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := exec.Interrupt(context.Background(), "sess_hard", true); err != nil {
+		t.Fatalf("hard Interrupt: %v", err)
+	}
+	// SIGKILL terminated the runtime, so a subsequent Send must fail.
+	if _, err := exec.Send(context.Background(), "sess_hard", []executor.Message{
+		{Role: "user", Content: "after kill"},
+	}); err == nil {
+		t.Error("Send succeeded after a hard interrupt, want a failure")
+	}
+	_ = exec.Close(context.Background(), "sess_hard")
+}
+
+func TestSubprocessExecutorInterruptUnknownSession(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath: echoBinary,
+	})
+	if err := exec.Interrupt(context.Background(), "sess_missing", false); err == nil {
+		t.Error("Interrupt of an unknown session succeeded, want a failure")
+	}
+}

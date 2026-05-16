@@ -13,14 +13,18 @@ import (
 )
 
 // RuntimeProcess manages the pod's runtime process. The §4.7 adapter
-// starts it at session start, forwards message envelopes to it, and
-// closes it at session teardown.
+// starts it at session start, forwards message envelopes to it,
+// signals it on interrupt, and closes it at session teardown.
 type RuntimeProcess interface {
 	// Start spawns the runtime process for the session.
 	Start(ctx context.Context, sessionID string) error
 	// WriteEnvelope forwards a pre-encoded message envelope to the
 	// runtime's stdin.
 	WriteEnvelope(sessionID string, envelope []byte) error
+	// Interrupt signals the runtime process. A hard interrupt sends
+	// SIGKILL; a clean interrupt sends SIGTERM so the runtime can pause
+	// or checkpoint within the gateway's grace deadline.
+	Interrupt(ctx context.Context, sessionID string, hard bool) error
 	// Close tears the runtime process down.
 	Close(ctx context.Context, sessionID string) error
 }

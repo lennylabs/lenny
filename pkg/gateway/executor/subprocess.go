@@ -11,6 +11,7 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -132,6 +133,29 @@ func (e *SubprocessExecutor) WriteEnvelope(sessionID string, envelope []byte) er
 	defer sess.mu.Unlock()
 	if _, err := sess.stdin.Write(append(envelope, '\n')); err != nil {
 		return fmt.Errorf("executor: write envelope to runtime: %w", err)
+	}
+	return nil
+}
+
+// Interrupt signals the session's runtime process: a hard interrupt
+// sends SIGKILL, a clean interrupt sends SIGTERM. The signal is
+// delivered without taking the session's stdin/stdout lock, so an
+// interrupt reaches a runtime that is busy with an in-flight Send.
+func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard bool) error {
+	e.mu.Lock()
+	sess, ok := e.procs[sessionID]
+	e.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("executor: session %s has no running runtime", sessionID)
+	}
+	if hard {
+		if err := sess.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("executor: kill runtime: %w", err)
+		}
+		return nil
+	}
+	if err := sess.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("executor: signal runtime: %w", err)
 	}
 	return nil
 }

@@ -17,11 +17,13 @@ import (
 )
 
 type fakeRuntime struct {
-	started   []string
-	startErr  error
-	envelopes [][]byte
-	writeErr  error
-	closed    []string
+	started      []string
+	startErr     error
+	envelopes    [][]byte
+	writeErr     error
+	closed       []string
+	interrupts   []bool // the hard flag of each Interrupt call
+	interruptErr error
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -37,6 +39,14 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 		return f.writeErr
 	}
 	f.envelopes = append(f.envelopes, envelope)
+	return nil
+}
+
+func (f *fakeRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
+	if f.interruptErr != nil {
+		return f.interruptErr
+	}
+	f.interrupts = append(f.interrupts, hard)
 	return nil
 }
 
