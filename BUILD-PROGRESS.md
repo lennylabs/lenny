@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `55bbd9d` — `Sandbox.status.podIP`. The Sandbox reconciler records the backing pod's
+  cluster IP as it observes the pod. The gateway needs this address to reach a claimed
+  pod's §4.7 adapter; it unblocks the gateway-side integration of critical-path
+  items 4 and 5.
 - `d67c6d4` — Adapter `Interrupt` lifecycle RPC. A clean interrupt sends SIGTERM, a
   hard interrupt sends SIGKILL. `RuntimeProcess` gained an `Interrupt` method;
   `SubprocessExecutor` signals the child without taking the stdin/stdout lock so an
@@ -217,10 +221,11 @@ progress; see the progress log.
 Wire the Kubernetes-backed session path into the gateway. The gateway binary needs a
 controller-runtime Kubernetes client; the session-creation handler must call
 `podclaim.Claimer.Claim` to bind a pod (retrying against `ErrNoIdlePod` within
-`podClaimQueueTimeout`), then drive that pod through `adapterclient` —
-`NegotiateVersion`, then `StartSession` with the WorkspacePlan. This completes
-critical-path items 4 and 5 together and connects the REST session surface to the
-warm-pod fabric.
+`podClaimQueueTimeout`), resolve the bound `Sandbox`'s `status.podIP`, and drive that
+pod through `adapterclient` — `NegotiateVersion`, then `StartSession` with the
+WorkspacePlan. The claim path, the adapter client, and the pod address are now all
+in place; the remaining work is the gateway-binary wiring that joins them. This
+completes critical-path items 4 and 5 together.
 
 ## Test status
 
