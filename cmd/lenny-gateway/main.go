@@ -66,9 +66,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
@@ -77,6 +80,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -150,6 +154,10 @@ func main() {
 		"path to the private key for --adapter-tls-cert.")
 	adapterCA := flag.String("adapter-ca", os.Getenv("LENNY_ADAPTER_CA"),
 		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
+	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
+		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
+	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
+		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
 	flag.Parse()
 
 	// ----- Stores -----
@@ -537,6 +545,11 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// ----- §4.9 LLM reverse proxy -----
+	// With --llm-proxy-addr the gateway serves the §4.9 LLM proxy for
+	// proxy-mode agent pods on a listener separate from the REST API.
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion)
+
 	// ----- §6.2 / §11.3 pre-running watchdog -----
 	// Sweeps every 5 s; transitions stuck sessions to failed.
 	// Tenants list is sourced from the in-memory store so newly
@@ -650,12 +663,23 @@ func main() {
 			log.Fatalf("lenny-gateway: listen: %v", err)
 		}
 	}()
+	if llmProxySrv != nil {
+		go func() {
+			log.Printf("lenny-gateway: §4.9 LLM proxy listening on %s", llmProxySrv.Addr)
+			if err := llmProxySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("lenny-gateway: llm proxy listen: %v", err)
+			}
+		}()
+	}
 
 	<-stopCh
 	log.Printf("lenny-gateway: shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
+	if llmProxySrv != nil {
+		_ = llmProxySrv.Shutdown(ctx)
+	}
 	if pgPool != nil {
 		pgPool.Close()
 	}
@@ -671,6 +695,31 @@ func main() {
 type breakerRegistry interface {
 	breakerstore.Store
 	cbmw.Registry
+}
+
+// newLLMProxyServer builds the §4.9 LLM reverse-proxy HTTP server,
+// serving the Anthropic Messages endpoint at POST /llm-proxy/v1/messages.
+// It returns nil when addr is empty, which disables the proxy listener.
+// The credential-lease store, the credential cache, and the deny list
+// start empty; the §4.9 credential-assignment path populates them, and
+// a request that arrives before then is cleanly rejected.
+func newLLMProxyServer(addr, anthropicVersion string) *http.Server {
+	if addr == "" {
+		return nil
+	}
+	proxyMux := http.NewServeMux()
+	proxyMux.Handle("POST /llm-proxy/v1/messages", &llmproxy.Handler{
+		Leases:      credleasestore.New(),
+		Translator:  &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
+		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials: credcache.New(),
+		DenyList:    denylist.New(),
+	})
+	return &http.Server{
+		Addr:              addr,
+		Handler:           proxyMux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 }
 
 // verifyPostgresSchema fails fast when the gateway is pointed at a
