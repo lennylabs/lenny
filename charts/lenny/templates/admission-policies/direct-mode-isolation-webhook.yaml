@@ -1,0 +1,45 @@
+{{- /*
+lenny-direct-mode-isolation ValidatingAdmissionWebhook (§4.9, §13.2).
+Rejects SandboxTemplate resources whose credential-delivery
+configuration exposes cross-tenant credential risk in a multi-tenant
+deployment: deliveryMode direct with isolationProfile standard, and
+deliveryMode proxy with spiffeBinding disabled. Scoped to agent
+namespaces and the sandboxtemplates resource; fail-closed. Rendered
+only when features.llmProxy is enabled.
+*/ -}}
+{{- if .Values.features.llmProxy }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-direct-mode-isolation") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-direct-mode-isolation
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-direct-mode-isolation
+webhooks:
+  - name: direct-mode-isolation.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: ["lenny.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxtemplates"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-direct-mode-isolation
+        namespace: {{ .Release.Namespace }}
+        path: /direct-mode-isolation
+        port: 443
+{{- end }}

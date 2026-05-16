@@ -112,6 +112,22 @@ features:
   drainReadiness: false
   compliance: false
 
+# tenancy configures the platform multi-tenancy posture (§4.9, §13).
+tenancy:
+  # mode is "single" or "multi". In multi-tenant mode the
+  # lenny-direct-mode-isolation webhook rejects the §4.9
+  # credential-delivery configurations that expose cross-tenant
+  # credential risk: deliveryMode direct with isolationProfile standard,
+  # and deliveryMode proxy with spiffeBinding disabled.
+  mode: single
+
+# global holds chart-wide settings shared across components.
+global:
+  # devMode relaxes the multi-tenant admission controls for local
+  # development (§4.9). It must never be enabled on a real multi-tenant
+  # cluster.
+  devMode: false
+
 # adapter configures the §4.7 runtime adapter sidecar that runs in
 # every agent pod.
 adapter:

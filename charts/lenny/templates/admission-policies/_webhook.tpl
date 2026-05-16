@@ -49,6 +49,8 @@ spec:
             - --addr=:8443
             - --tls-cert-file=/etc/lenny/webhook-tls/tls.crt
             - --tls-key-file=/etc/lenny/webhook-tls/tls.key
+            - --tenancy-mode={{ $.Values.tenancy.mode }}
+            - --dev-mode={{ $.Values.global.devMode }}
           ports:
             - name: https
               containerPort: 8443
