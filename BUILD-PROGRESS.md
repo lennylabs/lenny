@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `45ad73d` — Adapter `StartSession` RPC. Rejects a non-idle pod with Unavailable,
+  materializes the workspace, runs the setup commands, and starts the runtime process;
+  releases the pod on any post-claim failure. `SubprocessExecutor` gained an eager
+  `Start` so the runtime is live at session start per §6.1.
 - `da1a77b` — Adapter setup-command runner. `workspace.RunSetup` executes a
   WorkspacePlan's setup commands in order, each in the workspace directory under a
   wall-clock timeout, stopping at the first failure.
@@ -128,10 +132,11 @@ The implementation cannot run a Kubernetes-hosted session. The blocking gaps, in
 dependency order, are below.
 
 - **Runtime adapter server.** The gRPC scaffold, `NegotiateVersion`, the transport
-  wiring, and `cmd/lenny-adapter` are built (`d255c7f`). The substantive RPCs are not:
-  `StartSession` (workspace materialization, setup commands, runtime-process start),
-  `SendMessage`, the credential RPCs, `Interrupt`, `Checkpoint`, `DemoteSDK`, and the
-  `LifecycleChannel` stream. No container image is built.
+  wiring, `cmd/lenny-adapter`, and `StartSession` (workspace materialization, setup
+  commands, runtime-process start) are built. The remaining RPCs are not: `SendMessage`,
+  the credential RPCs (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`),
+  `Interrupt`, `Checkpoint`, `Shutdown`, `DemoteSDK`, and the `LifecycleChannel` stream.
+  No container image is built.
 - **Pod-spec builder.** Nothing translates a `Sandbox`, its `SandboxTemplate`, and its
   `Runtime` into a `corev1.PodSpec`. A faithful agent pod carries an adapter container
   and a runtime container with the §13.1 security context, the §6.1 volumes, and the
@@ -156,11 +161,10 @@ client SDKs, the first-party reference runtimes, and the web playground all rema
 The shortest route to running one real session on a warm pod. The first item is in
 progress; see the progress log.
 
-1. Build the §4.7 runtime adapter server. The gRPC scaffold and `cmd/lenny-adapter`
-   are done; the remaining work is the substantive RPCs (`StartSession` with
-   workspace materialization and runtime-process management, `SendMessage`, the
-   credential RPCs, `Interrupt`, `Checkpoint`, `DemoteSDK`, `LifecycleChannel`) and a
-   container image.
+1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`, and
+   `StartSession` are done; the remaining work is the message and lifecycle RPCs
+   (`SendMessage`, `Shutdown`, the credential RPCs, `Interrupt`, `Checkpoint`,
+   `DemoteSDK`, `LifecycleChannel`) and a container image.
 2. Build the pod-spec builder.
 3. Build the Sandbox-to-Pod reconciler that wraps the existing lifecycle planner.
 4. Build the gateway pod-claim path against `SandboxClaim`.
@@ -169,13 +173,13 @@ progress; see the progress log.
 
 ## Next step
 
-Wire the adapter `StartSession` RPC end to end. The workspace materializer and the
-setup-command runner are built; `StartSession` needs the adapter session-state guard
-(reject when the pod is not idle), a call to `workspace.Materialize` then
-`workspace.RunSetup`, and the runtime-process start. The runtime-process management
-that `pkg/gateway/executor.SubprocessExecutor` provides is the reuse candidate; it
-currently sits under `pkg/gateway/` and should either be imported as-is or relocated
-to a neutral package shared by the adapter and the `make run` path.
+Implement the adapter `SendMessage` and `Shutdown` RPCs. `SendMessage` writes the
+request's pre-encoded message envelope to the runtime's stdin and collects the
+response; `Shutdown` closes the runtime process and returns the pod toward
+termination. `SubprocessExecutor` covers the message round-trip and `Close`, but its
+API marshals its own envelope, whereas the proto `SendMessage` carries an
+already-encoded `envelope_json`; the executor needs a raw-envelope send path or a
+small adapter-side equivalent.
 
 ## Test status
 
