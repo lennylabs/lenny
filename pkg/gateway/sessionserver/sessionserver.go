@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -103,6 +104,7 @@ type Server struct {
 	podRegistry     *podsession.Registry
 	agentNamespace  string
 	sealer          Sealer
+	treeArchive     treearchive.Store
 }
 
 // Sealer takes the §7.1 final workspace snapshot of a session that has
@@ -230,6 +232,12 @@ type Options struct {
 	// Sealer, when set, takes the §7.1 final workspace snapshot when a
 	// session reaches a terminal state. Nil disables seal-and-export.
 	Sealer Sealer
+
+	// TreeArchive, when set, receives a §8.10 archive record for every
+	// child session (a session with a parent) that reaches a terminal
+	// state, so a resumed parent can replay the outcome. Nil disables
+	// delegation-tree archiving.
+	TreeArchive treearchive.Store
 }
 
 // New returns a Server bound to the supplied store.
@@ -256,6 +264,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		podRegistry:     opts.PodRegistry,
 		agentNamespace:  opts.AgentNamespace,
 		sealer:          opts.Sealer,
+		treeArchive:     opts.TreeArchive,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

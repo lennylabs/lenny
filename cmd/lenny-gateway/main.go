@@ -399,6 +399,9 @@ func main() {
 	}
 
 	eventBus := events.NewBus(0)
+	// One §8.10 tree archive shared by the sessionserver (which archives
+	// children on terminal transitions) and the platform MCP tools.
+	treeArchive := treearchive.NewMemory()
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -416,6 +419,7 @@ func main() {
 		PodRegistry:         podRegistry,
 		AgentNamespace:      *agentNamespace,
 		Sealer:              sessionSealer,
+		TreeArchive:         treeArchive,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -436,7 +440,7 @@ func main() {
 		Interceptors: interceptor.NewChain(),
 		Events:       eventBus,
 		InputWaits:   inputwait.NewRegistry(),
-		TreeArchive:  treearchive.NewMemory(),
+		TreeArchive:  treeArchive,
 		TenantID:     "default",
 	})
 

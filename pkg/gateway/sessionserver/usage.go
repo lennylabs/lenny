@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 )
 
@@ -84,6 +87,9 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 	if s.executor != nil {
 		_ = s.executor.Close(ctx, sess.ID)
 	}
+	// §8.10: a child session reaching a terminal state is archived to
+	// the session_tree_archive so a resumed parent can replay it.
+	s.archiveSettledChild(ctx, sess)
 	if s.billing == nil {
 		return
 	}
@@ -93,4 +99,66 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		SessionID: sess.ID,
 		EventType: billingstore.EventSessionCompleted,
 	})
+}
+
+// archiveSettledChild records a terminal child session in the §8.10
+// session_tree_archive. A session with no parent is the tree root and
+// is not archived. Archiving is best-effort: a failure never fails the
+// transition that triggered it.
+func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Session) {
+	if s.treeArchive == nil || sess.ParentSessionID == "" {
+		return
+	}
+	result, _ := json.Marshal(archivedTaskResult(sess))
+	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID:      sess.TenantID,
+		RootSessionID: s.treeRoot(ctx, sess),
+		NodeSessionID: sess.ID,
+		State:         string(sess.State),
+		Result:        string(result),
+		SettledAt:     s.clock(),
+	})
+}
+
+// treeRoot returns the id of the delegation tree's root by walking the
+// ParentSessionID chain up from sess. The visited set guards against a
+// malformed cyclic chain, and an ancestor that has been GC'd ends the
+// walk at the deepest reachable node.
+func (s *Server) treeRoot(ctx context.Context, sess sessionstore.Session) string {
+	cur := sess
+	visited := map[string]bool{}
+	for cur.ParentSessionID != "" && !visited[cur.ID] {
+		visited[cur.ID] = true
+		parent, err := s.store.Get(ctx, cur.TenantID, cur.ParentSessionID)
+		if err != nil {
+			break
+		}
+		cur = parent
+	}
+	return cur.ID
+}
+
+// archivedTaskResult is the §8.8 TaskResult body the tree archive
+// stores for a settled child session.
+type archivedTaskResult sessionstore.Session
+
+// MarshalJSON renders the §8.8 TaskResult fields v1 records: identity,
+// terminal state, and an error code for a non-completed terminal state.
+func (a archivedTaskResult) MarshalJSON() ([]byte, error) {
+	body := map[string]any{
+		"schemaVersion": 1,
+		"taskId":        a.ID,
+		"state":         string(a.State),
+	}
+	if a.State != session.StateCompleted {
+		code := a.FailureReason
+		if code == "" {
+			code = "CHILD_" + strings.ToUpper(string(a.State))
+		}
+		body["error"] = map[string]any{
+			"code":    code,
+			"message": "child session ended in state " + string(a.State),
+		}
+	}
+	return json.Marshal(body)
 }
