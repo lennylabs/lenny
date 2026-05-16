@@ -346,8 +346,9 @@ func main() {
 	// to the pod's §4.7 adapter. The in-process and subprocess
 	// executors stay available for local development.
 	var (
-		podBinder   *podsession.Binder
-		podRegistry *podsession.Registry
+		podBinder     *podsession.Binder
+		podRegistry   *podsession.Registry
+		checkpointSvc *checkpointer.Checkpointer
 	)
 	if *agentNamespace != "" {
 		cfg, err := ctrl.GetConfig()
@@ -376,7 +377,22 @@ func main() {
 			},
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
+		checkpointSvc = &checkpointer.Checkpointer{
+			Sessions: sessions,
+			Registry: podRegistry,
+			Interval: *checkpointInterval,
+			OnError: func(sessionID string, err error) {
+				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
+			},
+		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
+	}
+
+	// §7.1 seal-and-export uses the same checkpointer; an untyped-nil
+	// Sealer keeps seal-and-export disabled without --agent-namespace.
+	var sessionSealer sessionserver.Sealer
+	if checkpointSvc != nil {
+		sessionSealer = checkpointSvc
 	}
 
 	eventBus := events.NewBus(0)
@@ -396,6 +412,7 @@ func main() {
 		PodBinder:           podBinder,
 		PodRegistry:         podRegistry,
 		AgentNamespace:      *agentNamespace,
+		Sealer:              sessionSealer,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -634,16 +651,10 @@ func main() {
 	// Active only with --agent-namespace: snapshots every coordinated
 	// session's workspace on the checkpoint cadence so the §7.1
 	// WorkspaceSnapshot stays fresh against the §16.5 freshness SLO.
-	if podRegistry != nil {
-		cp := &checkpointer.Checkpointer{
-			Sessions: sessions,
-			Registry: podRegistry,
-			Interval: *checkpointInterval,
-			OnError: func(sessionID string, err error) {
-				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
-			},
-		}
-		go cp.Run(watchdogCtx)
+	// The same checkpointer backs the §7.1 seal-and-export on the
+	// session-completion path.
+	if checkpointSvc != nil {
+		go checkpointSvc.Run(watchdogCtx)
 	}
 
 	// ----- §13.3 revocation-cache rehydration -----
