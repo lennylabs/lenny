@@ -25,6 +25,31 @@ func TestStatusIsRoutable(t *testing.T) {
 	}
 }
 
+func TestStatusCanTransitionTo(t *testing.T) {
+	valid := []struct{ from, to Status }{
+		{StatusActive, StatusPaused},
+		{StatusActive, StatusConcluded},
+		{StatusPaused, StatusActive},
+		{StatusPaused, StatusConcluded},
+	}
+	for _, c := range valid {
+		if !c.from.CanTransitionTo(c.to) {
+			t.Errorf("%q → %q should be a valid §10.7 transition", c.from, c.to)
+		}
+	}
+	invalid := []struct{ from, to Status }{
+		{StatusConcluded, StatusActive}, // concluded is immutable
+		{StatusConcluded, StatusPaused}, // concluded is immutable
+		{StatusActive, StatusActive},    // not a transition
+		{StatusPaused, StatusPaused},    // not a transition
+	}
+	for _, c := range invalid {
+		if c.from.CanTransitionTo(c.to) {
+			t.Errorf("%q → %q must not be a valid transition", c.from, c.to)
+		}
+	}
+}
+
 func TestAllTargetingModesIsExhaustive(t *testing.T) {
 	if got := len(AllTargetingModes()); got != 2 {
 		t.Errorf("AllTargetingModes() returned %d, want 2 per §10.7", got)

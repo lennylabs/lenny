@@ -45,6 +45,20 @@ func (s Status) IsValid() bool {
 // participate.
 func (s Status) IsRoutable() bool { return s == StatusActive }
 
+// CanTransitionTo reports whether an experiment may move from status s
+// to next per the §10.7 lifecycle: active and paused may move to each
+// other or to concluded, and a concluded experiment is immutable.
+func (s Status) CanTransitionTo(next Status) bool {
+	switch s {
+	case StatusActive:
+		return next == StatusPaused || next == StatusConcluded
+	case StatusPaused:
+		return next == StatusActive || next == StatusConcluded
+	default: // concluded — immutable
+		return false
+	}
+}
+
 // TargetingMode is the §10.7 targeting.mode enum.
 type TargetingMode string
 
