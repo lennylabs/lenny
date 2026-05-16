@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `15634ed` — `lenny-direct-mode-isolation` Helm manifest (§4.9, §13.2). The fail-closed
+  `ValidatingWebhookConfiguration` scoped to `sandboxtemplates` in agent namespaces,
+  rendered only when `features.llmProxy` is enabled. `values.yaml` gained `tenancy.mode`
+  and `global.devMode`, passed to every admission-webhook Deployment as `--tenancy-mode`
+  and `--dev-mode`. The webhook is deployable end to end.
+- `b4c27a8` — `lenny-direct-mode-isolation` webhook handler and route (§4.9, §13.2). The
+  `DirectModeIsolation` Decider decodes a `SandboxTemplate` and applies
+  `direct_mode_isolation.Decide`; `cmd/lenny-webhook` gained the `/direct-mode-isolation`
+  route and the `--tenancy-mode` / `--dev-mode` flags. `SandboxTemplateSpec` gained a
+  `spiffeBinding` field so the webhook can enforce the `proxy` + `spiffeBinding: disabled`
+  rejection on the resource it admits.
 - `dd0ccf8` — `direct_mode_isolation` decision logic (§4.9, §13.2). The pure decision
   for the `lenny-direct-mode-isolation` webhook: in multi-tenant mode it rejects
   `deliveryMode: direct` with `isolationProfile: standard` and `deliveryMode: proxy`
@@ -311,7 +322,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy), the upstream circuit breaker, and the breaker-gated upstream forwarder. The `lenny-direct-mode-isolation` webhook has its decision logic (`pkg/admission/direct_mode_isolation`). The proxy HTTP handler, lease-token validation, the SSE relay, and the webhook's HTTP handler and Helm manifest are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | `pkg/gateway/llmproxy` holds the `anthropic_direct` Anthropic Messages translator (request and non-streaming response translation with the §4.9 error taxonomy), the upstream circuit breaker, and the breaker-gated upstream forwarder. The `lenny-direct-mode-isolation` webhook is deployable end to end (decision logic, HTTP handler, `cmd/lenny-webhook` route, feature-gated Helm manifest). The proxy HTTP handler, lease-token validation, and the SSE relay are not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -352,7 +363,7 @@ The following are built and tested at the unit tier.
   the WarmPoolController (the pure planner, the reconciler, the `PoolWarmingUp`
   condition, an envtest integration test) with the `lenny-controller` binary; the
   PoolScalingController (config sync, demand-driven minWarm, the periodic runnable); the
-  Helm chart with the controller Deployment and RBAC, the agent namespaces, and two
+  Helm chart with the controller Deployment and RBAC, the agent namespaces, and the
   admission webhooks; the `lenny-webhook` binary.
 - **Pure-logic substrate.** Tested Go packages exist for the warm-pod state machine,
   the isolation profiles, the sandbox-claim state, the scaling formula, the warm-pool
@@ -425,15 +436,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 credential-leasing service foundation: the `CredentialPool` resource
-and the credential-lease store that mints and validates proxy-mode lease tokens. This
-is the shared dependency that currently blocks both remaining Phase 5.8 pieces — the
-LLM Proxy HTTP handler needs lease-token validation, and the `lenny-direct-mode-isolation`
-webhook handler needs the `CredentialPool` resource and its `spiffeBinding` field to
-admit (the `direct_mode_isolation` decision logic is built and waiting). The
-`SandboxTemplate` CRD carries `deliveryMode` and `isolationProfile` but not
-`spiffeBinding`, and no `CredentialPool` resource exists yet, so both must be defined
-before the webhook handler and the proxy lease check can be wired.
+Build the §4.9 credential-lease store: the `CredentialLease` data model and the store
+that mints and validates proxy-mode lease tokens, recording each token's issuing-pod
+SPIFFE URI. This is the remaining dependency for the LLM Proxy HTTP handler, which
+must validate the agent pod's lease token (lookup, expiry, revocation, SPIFFE-binding)
+before translating and forwarding the request. The translator, circuit breaker, and
+forwarder are built; the lease store plus the handler complete the §4.9 proxy path.
 
 ## Test status
 
