@@ -627,7 +627,8 @@ func main() {
 	// Tenants list is sourced from the in-memory store so newly
 	// registered tenants are picked up on the next tick.
 	wd := watchdog.New(sessions, tenantsLister{tenants}, watchdog.Config{}, nil).
-		WithBilling(billing)
+		WithBilling(billing).
+		WithTreeArchive(treeArchive)
 	watchdogCtx, watchdogCancel := context.WithCancel(context.Background())
 	defer watchdogCancel()
 	go wd.Run(watchdogCtx, func(res watchdog.Result, err error) {

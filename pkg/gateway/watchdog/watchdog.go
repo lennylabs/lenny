@@ -31,11 +31,14 @@ package watchdog
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 )
 
 // FailureReason constants — §6.2 / §11.3 pre-running timeouts.
@@ -131,6 +134,7 @@ type Watchdog struct {
 	cfg     Config
 	clock   func() time.Time
 	billing billingstore.Store
+	archive treearchive.Store
 }
 
 // New returns a Watchdog. The clock argument is optional; pass nil to
@@ -151,6 +155,13 @@ func New(store sessionstore.Store, tenants TenantLister, cfg Config, clock func(
 // session.completed event for every session it forces to `failed`.
 func (w *Watchdog) WithBilling(b billingstore.Store) *Watchdog {
 	w.billing = b
+	return w
+}
+
+// WithTreeArchive wires the §8.10 session_tree_archive so the watchdog
+// archives a child session it forces to a terminal state.
+func (w *Watchdog) WithTreeArchive(a treearchive.Store) *Watchdog {
+	w.archive = a
 	return w
 }
 
@@ -316,10 +327,12 @@ func (w *Watchdog) Run(ctx context.Context, onTick func(Result, error)) {
 	}
 }
 
-// recordCompleted emits the §11.2.1 session.completed billing event
-// for a session the watchdog forced to `failed`. Best-effort: a
-// billing failure must not abort the sweep.
+// recordCompleted runs the side effects of a session the watchdog
+// forced to a terminal state: it archives a child session to the §8.10
+// session_tree_archive and emits the §11.2.1 session.completed billing
+// event. Best-effort: a failure must not abort the sweep.
 func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Session) {
+	w.archiveChild(ctx, sess)
 	if w.billing == nil {
 		return
 	}
@@ -329,6 +342,50 @@ func (w *Watchdog) recordCompleted(ctx context.Context, sess sessionstore.Sessio
 		SessionID: sess.ID,
 		EventType: billingstore.EventSessionCompleted,
 	})
+}
+
+// archiveChild records a child session the watchdog forced terminal in
+// the §8.10 session_tree_archive, keyed by the delegation tree's root.
+// A session with no parent is the tree root and is not archived.
+func (w *Watchdog) archiveChild(ctx context.Context, sess sessionstore.Session) {
+	if w.archive == nil || sess.ParentSessionID == "" {
+		return
+	}
+	result, _ := json.Marshal(map[string]any{
+		"schemaVersion": 1,
+		"taskId":        sess.ID,
+		"state":         string(sess.State),
+		"error": map[string]any{
+			"code":    "CHILD_" + strings.ToUpper(string(sess.State)),
+			"message": "child session ended in state " + string(sess.State),
+		},
+	})
+	_ = w.archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID:        sess.TenantID,
+		RootSessionID:   w.treeRoot(ctx, sess),
+		NodeSessionID:   sess.ID,
+		ParentSessionID: sess.ParentSessionID,
+		State:           string(sess.State),
+		Result:          string(result),
+		SettledAt:       w.clock(),
+	})
+}
+
+// treeRoot returns the delegation tree's root by walking the
+// ParentSessionID chain up from sess. The visited set guards against a
+// malformed cyclic chain.
+func (w *Watchdog) treeRoot(ctx context.Context, sess sessionstore.Session) string {
+	cur := sess
+	visited := map[string]bool{}
+	for cur.ParentSessionID != "" && !visited[cur.ID] {
+		visited[cur.ID] = true
+		parent, err := w.store.Get(ctx, cur.TenantID, cur.ParentSessionID)
+		if err != nil {
+			break
+		}
+		cur = parent
+	}
+	return cur.ID
 }
 
 // elapsed reports whether row (currently in state st) has been in

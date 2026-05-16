@@ -11,8 +11,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 )
+
+// seedChildRow inserts a session with a parent for the §8.10
+// archive-on-watchdog-transition tests.
+func seedChildRow(t *testing.T, store sessionstore.Store, id, parent string, state session.State, updatedAt time.Time) {
+	t.Helper()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: state, ParentSessionID: parent,
+		CreatedAt: updatedAt, UpdatedAt: updatedAt,
+	}); err != nil {
+		t.Fatalf("seed child %s: %v", id, err)
+	}
+}
 
 // spec: §6.2 pre-running watchdogs, §11.3 budgets.
 
@@ -368,5 +381,70 @@ func TestRunFiresOnTickerInterval(t *testing.T) {
 	row, _ := store.Get(context.Background(), "acme", "sess_x")
 	if row.State != session.StateFailed {
 		t.Errorf("Run did not force failed: %q", row.State)
+	}
+}
+
+// spec: §8.10 — a child session the watchdog forces to a terminal
+// state is archived to the session_tree_archive.
+
+func TestTickArchivesForcedFailedChild(t *testing.T) {
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A child session stuck in `created` past its pre-running budget.
+	seedChildRow(t, store, "sess_child", "sess_parent", session.StateCreated, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTreeArchive(archive)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("the forced-failed child was not archived: %v", err)
+	}
+	if got.State != string(session.StateFailed) {
+		t.Errorf("archived state = %q, want failed", got.State)
+	}
+	if got.ParentSessionID != "sess_parent" {
+		t.Errorf("archived ParentSessionID = %q, want sess_parent", got.ParentSessionID)
+	}
+}
+
+func TestTickArchivesExpiredChild(t *testing.T) {
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A child session waiting in awaiting_client_action past the deadline.
+	seedChildRow(t, store, "sess_child", "sess_parent", session.StateAwaitingClientAction, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTreeArchive(archive)
+
+	if _, err := w.Tick(context.Background(), stale.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("the expired child was not archived: %v", err)
+	}
+	if got.State != string(session.StateExpired) {
+		t.Errorf("archived state = %q, want expired", got.State)
+	}
+}
+
+func TestTickDoesNotArchiveAForcedRootSession(t *testing.T) {
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A root session (no parent) stuck in `created`.
+	seedRow(t, store, "sess_root", "acme", session.StateCreated, stale)
+	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
+		WithTreeArchive(archive)
+
+	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if _, err := archive.GetByNode(context.Background(), "acme", "sess_root"); err == nil {
+		t.Error("a forced root session was archived, want it skipped")
 	}
 }
