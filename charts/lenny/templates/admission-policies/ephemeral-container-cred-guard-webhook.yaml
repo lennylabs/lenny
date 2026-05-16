@@ -1,0 +1,44 @@
+{{- /*
+lenny-ephemeral-container-cred-guard ValidatingAdmissionWebhook
+(§17.2 item 13, §13.1). Rejects any ephemeral debug container attached
+to an agent pod that could read the credential file at
+/run/lenny/credentials.json — by running as the adapter or agent UID,
+by joining the lenny-cred-readers group, by eliding securityContext
+fields that inherit the pod fsGroup, or by mounting the credential
+volume. Scoped to agent namespaces and the pods/ephemeralcontainers
+subresource; fail-closed.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-ephemeral-container-cred-guard") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-ephemeral-container-cred-guard
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-ephemeral-container-cred-guard
+webhooks:
+  - name: ephemeral-container-cred-guard.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods/ephemeralcontainers"]
+        operations: ["UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-ephemeral-container-cred-guard
+        namespace: {{ .Release.Namespace }}
+        path: /ephemeral-container-cred-guard
+        port: 443
