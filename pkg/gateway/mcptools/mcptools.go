@@ -96,6 +96,10 @@ type Deps struct {
 	// §9.1 maxElicitationWait limit. Zero selects the default.
 	ElicitationTimeout time.Duration
 
+	// MaxElicitationsPerSession caps a session's lifetime elicitation
+	// count per §9.1. Zero selects the default.
+	MaxElicitationsPerSession int
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -114,6 +118,10 @@ const defaultRequestInputTimeout = 600 * time.Second
 // defaultElicitationTimeout is the §9.1 maxElicitationWait default
 // applied when Deps.ElicitationTimeout is zero.
 const defaultElicitationTimeout = 600 * time.Second
+
+// defaultMaxElicitationsPerSession is the §9.1 per-session elicitation
+// budget applied when Deps.MaxElicitationsPerSession is zero.
+const defaultMaxElicitationsPerSession = 50
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
@@ -520,6 +528,10 @@ func Register(srv *mcp.Server, deps Deps) {
 		if elicitationTimeout <= 0 {
 			elicitationTimeout = defaultElicitationTimeout
 		}
+		maxElicitations := deps.MaxElicitationsPerSession
+		if maxElicitations <= 0 {
+			maxElicitations = defaultMaxElicitationsPerSession
+		}
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/request_elicitation",
 			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
@@ -543,6 +555,18 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if session.IsTerminal(row.State) {
 				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			}
+			// §9.1: the per-session elicitation budget bounds how many
+			// elicitations an agent may raise — an over-budget request
+			// is dropped so an agent cannot spam the user.
+			count, err := deps.Interactions.CountElicitations(ctx, tenant, in.SessionID)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			if count >= maxElicitations {
+				return mcp.ToolResult{}, fmt.Errorf(
+					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
+					in.SessionID, maxElicitations)
 			}
 			elicitationID := in.ElicitationID
 			if elicitationID == "" {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -973,6 +974,37 @@ func TestRequestElicitationTimeout(t *testing.T) {
 	c0, _ := content[0].(map[string]any)
 	if msg, _ := c0["text"].(string); !strings.Contains(msg, "ELICITATION_TIMEOUT") {
 		t.Errorf("timeout error = %q, want ELICITATION_TIMEOUT", msg)
+	}
+}
+
+func TestRequestElicitationBudgetExceeded(t *testing.T) {
+	srv, store, interactions := newMCPForElicitation(t, time.Second)
+	mkSession(t, store, "sess_e", session.StateRunning, "")
+	// Fill the default §9.1 per-session elicitation budget (50).
+	for i := 0; i < 50; i++ {
+		if err := interactions.Put(context.Background(), interactionstore.Interaction{
+			ID:        "elic-" + strconv.Itoa(i),
+			Kind:      interactionstore.KindElicitation,
+			SessionID: "sess_e", TenantID: "acme",
+		}); err != nil {
+			t.Fatalf("seed elicitation %d: %v", i, err)
+		}
+	}
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_e","message":"one too many","elicitationId":"elic_over"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("an over-budget elicitation should be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if msg, _ := c0["text"].(string); !strings.Contains(msg, "budget") {
+		t.Errorf("error = %q, want an elicitation-budget message", msg)
+	}
+	// The over-budget elicitation was dropped, not recorded.
+	if _, err := interactions.Get(context.Background(), "acme", "sess_e", "", "elic_over"); err == nil {
+		t.Error("the dropped elicitation was recorded in the interaction store")
 	}
 }
 

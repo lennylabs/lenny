@@ -83,6 +83,12 @@ type Store interface {
 	Resolve(ctx context.Context, tenantID, sessionID, userID, id string, mutate func(*Interaction) error) (Interaction, error)
 	// Get returns the interaction, scoped to the triple.
 	Get(ctx context.Context, tenantID, sessionID, userID, id string) (Interaction, error)
+
+	// CountElicitations returns the number of elicitation interactions
+	// recorded for the session, across every resolution phase. The
+	// §9.1 maxElicitationsPerSession budget is a per-session lifetime
+	// cap, so already-resolved elicitations count toward it.
+	CountElicitations(ctx context.Context, tenantID, sessionID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation.
@@ -144,4 +150,17 @@ func (m *Memory) Resolve(_ context.Context, tenantID, sessionID, userID, id stri
 	in.ResolvedAt = time.Now().UTC()
 	m.interactions[k] = in
 	return in, nil
+}
+
+// CountElicitations implements Store.
+func (m *Memory) CountElicitations(_ context.Context, tenantID, sessionID string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, in := range m.interactions {
+		if in.TenantID == tenantID && in.SessionID == sessionID && in.Kind == KindElicitation {
+			n++
+		}
+	}
+	return n, nil
 }
