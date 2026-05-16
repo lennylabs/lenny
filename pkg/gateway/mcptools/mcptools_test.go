@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -1045,6 +1046,81 @@ func TestRequestElicitationDropRecordsMetric(t *testing.T) {
 	}
 	if len(rec.reasons) != 1 || rec.reasons[0] != "budget_exceeded" {
 		t.Errorf("recorded drop reasons = %v, want [budget_exceeded]", rec.reasons)
+	}
+}
+
+func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:                      store,
+		Interactions:               interactions,
+		ElicitationDepthPolicy:     elicitation.DepthSuppressAtDepth,
+		ElicitationSuppressAtDepth: 2,
+		ElicitationTimeout:         time.Second,
+		IDFunc:                     func() string { return "elic_gen" },
+		TenantID:                   "acme",
+	})
+	// A delegation tree root → mid → leaf; the leaf sits at depth 2.
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_mid", session.StateRunning, "sess_root")
+	mkSession(t, store, "sess_leaf", session.StateRunning, "sess_mid")
+
+	resp := call(t, srv.Handler(), "lenny/request_elicitation",
+		`{"sessionId":"sess_leaf","message":"ask","elicitationId":"elic_x"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("an elicitation at the suppression depth should be a tool error: %+v", resp)
+	}
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if msg, _ := c0["text"].(string); !strings.Contains(msg, "suppressed") {
+		t.Errorf("error = %q, want a suppression message", msg)
+	}
+	// The suppressed elicitation was not recorded.
+	if _, err := interactions.Get(context.Background(), "acme", "sess_leaf", "", "elic_x"); err == nil {
+		t.Error("a suppressed elicitation was recorded in the interaction store")
+	}
+}
+
+func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
+	store := memstore.New()
+	interactions := interactionstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:                      store,
+		Interactions:               interactions,
+		ElicitationDepthPolicy:     elicitation.DepthSuppressAtDepth,
+		ElicitationSuppressAtDepth: 5, // higher than the session's depth
+		ElicitationTimeout:         5 * time.Second,
+		IDFunc:                     func() string { return "elic_gen" },
+		TenantID:                   "acme",
+	})
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_mid", session.StateRunning, "sess_root") // depth 1
+	h := srv.Handler()
+
+	got := make(chan map[string]any, 1)
+	go func() {
+		got <- call(t, h, "lenny/request_elicitation",
+			`{"sessionId":"sess_mid","message":"ask","elicitationId":"elic_x"}`)
+	}()
+	// The elicitation is recorded — it was not suppressed below the depth.
+	waitElicitation(t, interactions, "sess_mid", "elic_x")
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_mid", "", "elic_x",
+		func(i *interactionstore.Interaction) error {
+			i.Phase = interactionstore.PhaseResponded
+			i.Response = "ok"
+			return nil
+		}); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	select {
+	case resp := <-got:
+		resultText(t, resp) // a non-error result confirms it was not suppressed
+	case <-time.After(3 * time.Second):
+		t.Fatal("request_elicitation did not return")
 	}
 }
 

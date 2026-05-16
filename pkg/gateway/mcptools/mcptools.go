@@ -36,6 +36,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
+	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -104,6 +105,15 @@ type Deps struct {
 	// every elicitation the gateway drops. Optional.
 	ElicitationMetrics ElicitationDropRecorder
 
+	// ElicitationDepthPolicy is the §9.2 depth policy applied to an
+	// agent-initiated elicitation. An unset or invalid value resolves
+	// to `allow_all` (no depth suppression).
+	ElicitationDepthPolicy elicitation.DepthPolicy
+
+	// ElicitationSuppressAtDepth is the §9.2 delegation depth at which
+	// the `suppress_at_depth` policy starts suppressing elicitations.
+	ElicitationSuppressAtDepth int
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -127,9 +137,15 @@ const defaultElicitationTimeout = 600 * time.Second
 // budget applied when Deps.MaxElicitationsPerSession is zero.
 const defaultMaxElicitationsPerSession = 50
 
-// elicitationDropBudgetExceeded is the §9.1 lenny_elicitation_dropped_total
-// `reason` label for a drop caused by the per-session budget.
-const elicitationDropBudgetExceeded = "budget_exceeded"
+// §9.1 lenny_elicitation_dropped_total `reason` label values.
+const (
+	// elicitationDropBudgetExceeded — the per-session budget rejected
+	// the request.
+	elicitationDropBudgetExceeded = "budget_exceeded"
+	// elicitationDropDepthSuppressed — the §9.2 depth policy suppressed
+	// the request.
+	elicitationDropDepthSuppressed = "depth_suppressed"
+)
 
 // ElicitationDropRecorder records a §9.1 elicitation drop for the
 // lenny_elicitation_dropped_total counter. pkg/gateway/gatewaymetrics
@@ -586,6 +602,21 @@ func Register(srv *mcp.Server, deps Deps) {
 					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
 					in.SessionID, maxElicitations)
 			}
+			// §9.2: the depth policy suppresses an agent elicitation
+			// raised too deep in the delegation tree.
+			depthPolicy := deps.ElicitationDepthPolicy
+			if !depthPolicy.IsValid() {
+				depthPolicy = elicitation.DepthAllowAll
+			}
+			depth := sessionDepth(ctx, deps.Store, tenant, row)
+			if depthPolicy.ShouldSuppress(elicitation.InitiatorAgent, depth, deps.ElicitationSuppressAtDepth) {
+				if deps.ElicitationMetrics != nil {
+					deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropDepthSuppressed)
+				}
+				return mcp.ToolResult{}, fmt.Errorf(
+					"elicitation suppressed: the %q depth policy suppresses an agent elicitation at delegation depth %d",
+					depthPolicy, depth)
+			}
 			elicitationID := in.ElicitationID
 			if elicitationID == "" {
 				elicitationID = idFn()
@@ -937,6 +968,25 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 	}
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// sessionDepth returns sess's delegation depth — the number of hops
+// from sess up to the §8 delegation tree root (root = 0). The seen set
+// guards against a malformed cyclic chain.
+func sessionDepth(ctx context.Context, store sessionstore.Store, tenant string, sess sessionstore.Session) int {
+	depth := 0
+	cur := sess
+	seen := map[string]bool{}
+	for cur.ParentSessionID != "" && !seen[cur.ID] {
+		seen[cur.ID] = true
+		parent, err := store.Get(ctx, tenant, cur.ParentSessionID)
+		if err != nil {
+			break
+		}
+		cur = parent
+		depth++
+	}
+	return depth
 }
 
 // treeRoot returns the id of the §8 delegation tree's root by walking
