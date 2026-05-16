@@ -305,14 +305,18 @@ progress; see the progress log.
    and a session-creation handler that calls `Binder.Bind`.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
-**Spec gap — the pod-to-gateway content path.** The gateway-binary wiring can place a
-session on a pod (claim plus `StartSession`) and deliver messages (`SendMessage` is a
-unary fire-and-forget delivery). The per-message agent-response round-trip needs the
-`Attach` bidirectional-streaming RPC: §15.4 states `schemas/lenny-adapter.proto`
-"Includes ... the `Attach` bidirectional streaming messages", but the current proto
-has no `Attach` RPC and no §15.4 subsection defines its message shapes. Designing
-those shapes is a spec-level decision, so the response path is left for a spec
-revision rather than invented here.
+**Proto artifact is behind §4.7 — the `Attach` RPC.** The per-message agent-response
+round-trip uses the `Attach` bidirectional-streaming RPC. `Attach` is specified:
+§4.7's RPC table lists it ("Connect client stream to running session"), §15.4 states
+the proto includes the `Attach` bidirectional streaming messages, and the payload
+types are defined by `MessageEnvelope` (§15.4) and `OutputPart`
+(`schemas/outputpart.schema.json`). The gap is that `schemas/lenny-adapter.proto` is a
+self-described Phase-1 skeleton that has not added `Attach` — nor `PrepareWorkspace`,
+`FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`,
+`CoordinatorFence`, `ExportPaths`, `Resume`, or `Terminate`. §15.4 mandates
+reconciling the proto artifact with the §4.7 prose; adding `Attach` to the proto and
+implementing it is conformance work, not a spec change, and is the next critical-path
+effort — it unblocks the gateway↔pod response path.
 
 ## Next step
 
