@@ -740,16 +740,38 @@ func Register(srv *mcp.Server, deps Deps) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/delegate_task",
 			Description: "Spawn a child session under a running parent (§8.2 recursive delegation).",
-			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","runtimeRef"],"properties":{"parentSessionId":{"type":"string"},"runtimeRef":{"type":"string"},"poolRef":{"type":"string"},"maxDepth":{"type":"integer"},"taskInput":{"type":"string"}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
 				ParentSessionID string `json:"parentSessionId"`
 				RuntimeRef      string `json:"runtimeRef"`
 				PoolRef         string `json:"poolRef"`
 				MaxDepth        int    `json:"maxDepth"`
+				TaskInput       string `json:"taskInput"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			}
+			// §4 PreDelegation: run the interceptor chain over the
+			// TaskSpec.input before the gateway processes the delegation.
+			// A REJECT blocks the delegation; a MODIFY rewrites the input
+			// the child receives. The chain payload is the task input
+			// only — delegation metadata (runtimeRef, poolRef, maxDepth)
+			// is structurally immutable because it is not in the payload.
+			taskInput := in.TaskInput
+			if taskInput != "" && deps.Interceptors != nil {
+				res := deps.Interceptors.Run(ctx, interceptor.Request{
+					Phase:     interceptor.PhasePreDelegation,
+					SessionID: in.ParentSessionID,
+					TenantID:  tenant,
+					Content:   []byte(taskInput),
+				})
+				if res.Action == interceptor.ActionReject {
+					return mcp.ToolResult{}, fmt.Errorf("delegation rejected by policy: %s", res.Reason)
+				}
+				if res.Action == interceptor.ActionModify {
+					taskInput = string(res.ModifiedContent)
+				}
 			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
 				ParentSessionID: in.ParentSessionID,
@@ -759,6 +781,16 @@ func Register(srv *mcp.Server, deps Deps) {
 			})
 			if err != nil {
 				return mcp.ToolResult{}, err
+			}
+			// Deliver the (possibly interceptor-modified) task input to
+			// the child as its first message.
+			if taskInput != "" && deps.Executor != nil {
+				if _, err := deps.Executor.Send(ctx, res.Child.ID, []executor.Message{
+					{Role: "user", Content: taskInput},
+				}); err != nil {
+					return mcp.ToolResult{}, fmt.Errorf("child %s created but task input delivery failed: %w",
+						res.Child.ID, err)
+				}
 			}
 			return textResult(fmt.Sprintf(`{"childSessionId":%q,"depth":%d}`, res.Child.ID, res.Depth)), nil
 		})
