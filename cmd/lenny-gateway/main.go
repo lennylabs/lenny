@@ -69,6 +69,7 @@ import (
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
@@ -517,6 +518,7 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors).
 		WithDelegationPolicies(delegationpolicystore.NewMemory()).
+		WithCredentialPools(credentialpoolstore.NewMemory()).
 		WithSessions(sessions).
 		WithInteractions(interactions).
 		WithExperiments(experiments).

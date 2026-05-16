@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
@@ -91,6 +92,7 @@ type Router struct {
 	breakers           breakerstore.Store
 	connectors         connectorstore.Store
 	delegationPolicies delegationpolicystore.Store
+	credentialPools    credentialpoolstore.Store
 	auditLog           AuditLog
 	tokenRevoker       IssuedTokenRevoker
 	revocationCache    RevocationCache
@@ -244,6 +246,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetDelegationPolicy)))
 		mux.Handle("PUT /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
 		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
+	}
+	if r.credentialPools != nil {
+		mux.Handle("POST /v1/admin/credential-pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateCredentialPool)))
+		mux.Handle("GET /v1/admin/credential-pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListCredentialPools)))
+		mux.Handle("GET /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
+		mux.Handle("PUT /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
+		mux.Handle("DELETE /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
 	}
 	if r.breakers != nil {
 		mux.Handle("GET /v1/admin/circuit-breakers", r.requireAdmin(http.HandlerFunc(r.handleListBreakers)))
