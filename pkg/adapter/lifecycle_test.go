@@ -91,6 +91,17 @@ func TestInterruptRejectsAnUnassignedSession(t *testing.T) {
 	}
 }
 
+func TestDemoteSDKReturnsUnimplementedForAPodWarmAdapter(t *testing.T) {
+	s := adapter.New("test")
+
+	_, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{
+		Reason: "incoming WorkspacePlan matched an sdkWarmBlockingPaths pattern",
+	})
+	if status.Code(err) != codes.Unimplemented {
+		t.Errorf("error code = %v, want Unimplemented for a pod-warm adapter", status.Code(err))
+	}
+}
+
 func TestInterruptReportsARuntimeFailure(t *testing.T) {
 	s, rt := startedSession(t, "sess-1")
 	rt.interruptErr = errors.New("signal delivery failed")

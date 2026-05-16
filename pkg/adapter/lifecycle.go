@@ -33,3 +33,15 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 	}
 	return &adapterv1.InterruptResponse{Acknowledged: true}, nil
 }
+
+// DemoteSDK is the §4.7 SDK-warm demotion RPC. The gateway calls it on
+// an SDK-warm pod to tear down a pre-connected SDK session before
+// workspace materialization. It applies only to pods whose runtime
+// declares capabilities.preConnect: true. This adapter serves pod-warm
+// pods, which never pre-connect an SDK, so DemoteSDK is not applicable
+// and returns Unimplemented as the §4.7 contract specifies for
+// non-preConnect pods.
+func (s *Server) DemoteSDK(_ context.Context, _ *adapterv1.DemoteSDKRequest) (*adapterv1.DemoteSDKResponse, error) {
+	return nil, status.Error(codes.Unimplemented,
+		"DemoteSDK applies only to SDK-warm pods that declare capabilities.preConnect: true; this is a pod-warm adapter")
+}
