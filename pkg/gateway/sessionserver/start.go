@@ -252,3 +252,94 @@ func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 		return nil
 	})
 }
+
+// handleResume implements POST /v1/sessions/{id}/resume per §15.1 and
+// §7.1. The endpoint is valid only from `awaiting_client_action` — the
+// state a session reaches after automatic resume retries are exhausted
+// or the resume window elapses (§7.2). A session in that state has no
+// live pod, so the handler restores the session onto a fresh §5 warm
+// pod from its latest §7.1 WorkspaceSnapshot before the row
+// transitions to running. The API-reported transition is
+// `resume_pending` → `running`; the `resume_pending` and `resuming`
+// states between are internal transients.
+//
+// handleResume is a dedicated handler rather than a generic
+// handleTransition because the resume carries the extra pod-claim and
+// workspace-restore step.
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	tenantID := s.resolveTenant(r)
+	id := r.PathValue("id")
+	row, err := s.store.Get(r.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if err := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointResume,
+		CurrentState: row.State,
+	}); err != nil {
+		s.writePreconditionError(w, err)
+		return
+	}
+
+	// A session in `awaiting_client_action` has no live pod: it reached
+	// that state after its pod failed and automatic recovery was
+	// abandoned. When the gateway is wired with a pod binder, restore
+	// the session onto a fresh pod before the row transitions to
+	// running. A claim failure marks the row failed and surfaces a
+	// retryable 503.
+	if s.podBinder != nil {
+		if err := s.resumeOnPod(r.Context(), row); err != nil {
+			s.failSession(r.Context(), tenantID, id)
+			s.writeError(w, http.StatusServiceUnavailable, "POD_CLAIM_FAILED",
+				"could not resume the session on a warm pod: "+err.Error(), nil)
+			return
+		}
+	}
+
+	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+		transitionResume(row)
+		return nil
+	})
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	s.writeSession(w, http.StatusOK, updated)
+}
+
+// resumeOnPod restores a session onto a fresh §5 warm pod. When the
+// session carries a §7.1 WorkspaceSnapshot it is restored from that
+// checkpoint via the adapter Resume RPC. A session that never
+// checkpointed has no snapshot to restore; it is rebuilt from the §14
+// WorkspacePlan recorded at create by reusing the start path.
+func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) error {
+	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
+		plan, err := storedWorkspacePlan(row)
+		if err != nil {
+			return err
+		}
+		return s.startOnPod(ctx, row, plan)
+	}
+	pool, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.agentNamespace,
+		row.RuntimeRef, string(row.IsolationProfile))
+	if err != nil {
+		return err
+	}
+	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
+		Pool:         pool,
+		SessionID:    row.ID,
+		TenantID:     row.TenantID,
+		Runtime:      row.RuntimeRef,
+		CheckpointID: row.WorkspaceSnapshot.Ref,
+	})
+	if err != nil {
+		return err
+	}
+	s.podRegistry.Put(result)
+	return nil
+}

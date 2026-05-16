@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,12 +23,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -341,5 +344,207 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 	}
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 — no pod claimed on a rejected start", registry.Len())
+	}
+}
+
+// spec: §15.1 / §7.1 — POST /v1/sessions/{id}/resume is valid only
+// from `awaiting_client_action`; it restores the session onto a fresh
+// §5 warm pod from its §7.1 WorkspaceSnapshot and reports the
+// transition as `resume_pending` → `running`.
+
+// resumeCheckpointSource is an adapter.CheckpointSource serving a fixed
+// gzip-tar workspace archive for the resume path's restore step.
+type resumeCheckpointSource struct{ archive []byte }
+
+func (s resumeCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(s.archive)), nil
+}
+
+// emptyResumeArchive returns a gzip-tar archive of an empty workspace,
+// the minimal valid input the adapter's Resume RPC can restore.
+func emptyResumeArchive(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if _, err := workspace.Archive(t.TempDir(), &buf); err != nil {
+		t.Fatalf("archive empty workspace: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// podResumeServer builds a sessionserver wired to a warm pool whose
+// §4.7 adapter carries a checkpoint source, so the §7.1 resume path
+// can restore a session onto a fresh pod. It returns the server, the
+// session store for seeding `awaiting_client_action` rows, the pod
+// registry, and the cluster client.
+func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.Store, *podsession.Registry, client.Client) {
+	t.Helper()
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
+
+	cluster := podBindClient(t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return id },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	return srv, store, registry, cluster
+}
+
+// seedAwaitingSession inserts a session row already in
+// `awaiting_client_action` — the only state POST /resume accepts.
+func seedAwaitingSession(t *testing.T, store *memstore.Store, row sessionstore.Session) {
+	t.Helper()
+	row.TenantID = "acme"
+	row.State = session.StateAwaitingClientAction
+	if row.RuntimeRef == "" {
+		row.RuntimeRef = "echo"
+	}
+	if row.IsolationProfile == "" {
+		row.IsolationProfile = isolation.ProfileSandboxed
+	}
+	if err := store.Create(context.Background(), row); err != nil {
+		t.Fatalf("seed awaiting session %s: %v", row.ID, err)
+	}
+}
+
+func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
+	srv, store, registry, cluster := podResumeServer(t, "sess_resume_1")
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID: "sess_resume_1",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-1",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+		},
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_1/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess_resume_1")
+	if err != nil {
+		t.Fatalf("get resumed session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("state = %q, want running after resume", row.State)
+	}
+
+	binding, ok := registry.Get("sess_resume_1")
+	if !ok {
+		t.Fatal("registry holds no binding for the resumed session")
+	}
+	if binding.SandboxName != "sbx-1" || binding.PodIP != "10.244.2.5" {
+		t.Errorf("binding = %+v, want sbx-1 / 10.244.2.5", binding)
+	}
+
+	var sb lennyv1.Sandbox
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "sbx-1"}, &sb); err != nil {
+		t.Fatalf("get sandbox: %v", err)
+	}
+	if sb.Status.Phase != "claimed" {
+		t.Errorf("sandbox phase = %q, want claimed", sb.Status.Phase)
+	}
+}
+
+func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
+	srv, store, registry, _ := podResumeServer(t, "sess_resume_nockpt")
+	// No WorkspaceSnapshot: the session never checkpointed. The resume
+	// path rebuilds it from the §14 WorkspacePlan recorded at create.
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID: "sess_resume_nockpt",
+		WorkspacePlan: json.RawMessage(`{
+			"schemaVersion": 1,
+			"sources": [{"type":"inlineFile","path":"CLAUDE.md","content":"# resumed","mode":"0644"}]
+		}`),
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_nockpt/resume", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess_resume_nockpt")
+	if err != nil {
+		t.Fatalf("get resumed session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("state = %q, want running after resume", row.State)
+	}
+	if _, ok := registry.Get("sess_resume_nockpt"); !ok {
+		t.Error("registry holds no binding after a snapshotless resume")
+	}
+}
+
+func TestResumeRejectsNonResumableState(t *testing.T) {
+	srv, store, registry, _ := podResumeServer(t, "sess_resume_bad")
+	// A `running` session is not a valid POST /resume precondition —
+	// only `awaiting_client_action` is (§15.1).
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:               "sess_resume_bad",
+		TenantID:         "acme",
+		State:            session.StateRunning,
+		RuntimeRef:       "echo",
+		IsolationProfile: isolation.ProfileSandboxed,
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_bad/resume", nil)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("resume of a running session: status %d, want 409; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess_resume_bad")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("state = %q, want running unchanged after a rejected resume", row.State)
+	}
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0 — no pod claimed on a rejected resume", registry.Len())
+	}
+}
+
+func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
+	srv, store, registry, _ := podResumeServer(t, "sess_resume_nopool")
+	// The cluster serves only the "echo" runtime; the session targets a
+	// runtime no warm pool covers, so the pod claim cannot resolve.
+	seedAwaitingSession(t, store, sessionstore.Session{
+		ID:         "sess_resume_nopool",
+		RuntimeRef: "no-such-runtime",
+		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
+			Ref:    "ckpt-1",
+			Source: sessionstore.WorkspaceSnapshotCheckpoint,
+		},
+	})
+
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess_resume_nopool/resume", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("resume with no matching pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+
+	row, err := store.Get(context.Background(), "acme", "sess_resume_nopool")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the resume claim failure", row.State)
+	}
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0 after a failed resume", registry.Len())
 	}
 }
