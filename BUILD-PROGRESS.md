@@ -425,12 +425,15 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Complete the `lenny-direct-mode-isolation` webhook (§4.9, §13.2): the HTTP /
-AdmissionReview handler on `cmd/lenny-webhook` that decodes a `SandboxTemplate` or
-`CredentialPool` admission request and calls `direct_mode_isolation.Decide`, plus the
-fail-closed `ValidatingWebhookConfiguration` Helm manifest rendered when
-`features.llmProxy` is enabled. The decision logic is built; this finishes the webhook
-end to end. The LLM Proxy HTTP handler and lease-token validation remain.
+Build the §4.9 credential-leasing service foundation: the `CredentialPool` resource
+and the credential-lease store that mints and validates proxy-mode lease tokens. This
+is the shared dependency that currently blocks both remaining Phase 5.8 pieces — the
+LLM Proxy HTTP handler needs lease-token validation, and the `lenny-direct-mode-isolation`
+webhook handler needs the `CredentialPool` resource and its `spiffeBinding` field to
+admit (the `direct_mode_isolation` decision logic is built and waiting). The
+`SandboxTemplate` CRD carries `deliveryMode` and `isolationProfile` but not
+`spiffeBinding`, and no `CredentialPool` resource exists yet, so both must be defined
+before the webhook handler and the proxy lease check can be wired.
 
 ## Test status
 
