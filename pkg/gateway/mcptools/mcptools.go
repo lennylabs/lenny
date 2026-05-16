@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -55,6 +56,11 @@ type Deps struct {
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
 	Runtimes runtimestore.Store
+
+	// Interceptors is the §4 RequestInterceptor chain. Optional — when
+	// non-nil, lenny/send_message runs the PreMessageDelivery phase
+	// over the message body before delivery.
+	Interceptors *interceptor.Chain
 
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
@@ -136,8 +142,26 @@ func Register(srv *mcp.Server, deps Deps) {
 		if deps.Executor == nil {
 			return mcp.ToolResult{}, errors.New("no executor configured")
 		}
+		// §4 PreMessageDelivery: run the interceptor chain over the
+		// message body before delivery. A REJECT blocks the message; a
+		// MODIFY rewrites what the target session receives.
+		messageBody := in.Content
+		if deps.Interceptors != nil {
+			res := deps.Interceptors.Run(ctx, interceptor.Request{
+				Phase:     interceptor.PhasePreMessageDelivery,
+				SessionID: row.ID,
+				TenantID:  tenant,
+				Content:   []byte(in.Content),
+			})
+			if res.Action == interceptor.ActionReject {
+				return mcp.ToolResult{}, fmt.Errorf("message delivery rejected by policy: %s", res.Reason)
+			}
+			if res.Action == interceptor.ActionModify {
+				messageBody = string(res.ModifiedContent)
+			}
+		}
 		out, err := deps.Executor.Send(ctx, row.ID, []executor.Message{
-			{Role: "user", Content: in.Content},
+			{Role: "user", Content: messageBody},
 		})
 		if err != nil {
 			return mcp.ToolResult{}, err

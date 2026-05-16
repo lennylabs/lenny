@@ -81,6 +81,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
@@ -426,11 +427,12 @@ func main() {
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:      sessions,
-		Executor:   exec,
-		Delegation: delegationSvc,
-		Runtimes:   runtimes,
-		TenantID:   "default",
+		Store:        sessions,
+		Executor:     exec,
+		Delegation:   delegationSvc,
+		Runtimes:     runtimes,
+		Interceptors: interceptor.NewChain(),
+		TenantID:     "default",
 	})
 
 	// §13.3 revocation cache: the auth middleware rejects a token

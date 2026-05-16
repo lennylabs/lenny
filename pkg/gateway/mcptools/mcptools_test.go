@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -107,6 +108,35 @@ func TestCreateSessionToolRejectsMissingRuntime(t *testing.T) {
 	}
 }
 
+// newMCPWithChain builds the MCP server with a §4 interceptor chain so
+// the PreMessageDelivery wiring tests can register interceptors.
+func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessionstore.Store) {
+	t.Helper()
+	store := memstore.New()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:        store,
+		Executor:     executor.NewEchoExecutor(),
+		Interceptors: chain,
+		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:       func() string { return "sess_mcp" },
+		TenantID:     "acme",
+	})
+	return srv, store
+}
+
+// staticInterceptor is a built-in interceptor returning a fixed result.
+type staticInterceptor struct{ result interceptor.Result }
+
+func (s staticInterceptor) Name() string                       { return "test-static" }
+func (s staticInterceptor) Priority() int32                    { return 200 }
+func (s staticInterceptor) Builtin() bool                      { return true }
+func (s staticInterceptor) FailPolicy() interceptor.FailPolicy { return interceptor.FailClosed }
+func (s staticInterceptor) Timeout() time.Duration             { return 0 }
+func (s staticInterceptor) Intercept(context.Context, interceptor.Request) (interceptor.Result, error) {
+	return s.result, nil
+}
+
 func TestSendMessageTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
@@ -132,6 +162,53 @@ func TestSendMessageToolRejectsTerminalSession(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("terminal session should be a tool error: %+v", resp)
+	}
+}
+
+func TestSendMessageRejectedByInterceptor(t *testing.T) {
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreMessageDelivery, staticInterceptor{
+		result: interceptor.Result{Action: interceptor.ActionReject, Reason: "prompt injection detected"},
+	}); err != nil {
+		t.Fatalf("register interceptor: %v", err)
+	}
+	srv, store := newMCPWithChain(t, chain)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("a PreMessageDelivery REJECT should be a tool error: %+v", resp)
+	}
+}
+
+func TestSendMessageModifiedByInterceptor(t *testing.T) {
+	chain := interceptor.NewChain()
+	if err := chain.Register(interceptor.PhasePreMessageDelivery, staticInterceptor{
+		result: interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: []byte("scrubbed")},
+	}); err != nil {
+		t.Fatalf("register interceptor: %v", err)
+	}
+	srv, store := newMCPWithChain(t, chain)
+	now := time.Now()
+	_ = store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	// The echo executor reflects the delivered body. A PreMessageDelivery
+	// MODIFY must rewrite what the target session receives.
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"sessionId":"sess_x","content":"ping"}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "scrubbed") {
+		t.Errorf("echo response %q should reflect the interceptor-modified body", text)
+	}
+	if strings.Contains(text, "ping") {
+		t.Errorf("echo response %q still carries the original body — MODIFY was not applied", text)
 	}
 }
 
