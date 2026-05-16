@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `550db8e`, `466b3a6` — §10.6 / §15.1 environment admin API. `environmentstore` is the
+  per-tenant Environment registry; `/v1/admin/environments` serves POST/GET/list/PUT/
+  DELETE. The wire payload mirrors the §10.6 resource — RBAC members, tag-based runtime
+  and connector selectors, mcp capability filters, and bilateral cross-environment
+  declarations — and validates against the `pkg/environment` Role and Selector
+  primitives. The cross-environment delegation resolver and transparent-filtering
+  middleware are deferred.
 - `1567473`, `f37a856` — §10.7 / §15.1 experiment admin API. `experimentstore` is the
   per-tenant ExperimentDefinition registry; `/v1/admin/experiments` serves
   POST/GET/list/PUT/PATCH/DELETE. POST/PUT validate the §10.7 definition (variant
@@ -520,7 +527,7 @@ this state.
 | 13.5  | Pre-hardening full-system load baseline                      | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 14    | Comprehensive security hardening                             | Substrate only | `pkg/podsecurity` exists. The release pipeline, cosign verification, the final NetworkPolicy posture, and the pen-test driver are not.                                                                                                                                                                                                       |
 | 14.5  | Post-hardening SLO re-validation                             | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 15    | Environment resource, RBAC                                   | Substrate only | `pkg/environment` exists. The environment admin API and the cross-environment delegation resolver are not.                                                                                                                                                                                                                                   |
+| 15    | Environment resource, RBAC                                   | Partial        | `pkg/environment` (the §10.6 Role enum and the tag-based Selector evaluator) and the environment admin API are built: `environmentstore` is the per-tenant Environment registry, and `/v1/admin/environments` serves POST/GET/list/PUT/DELETE with §10.6 resource validation (members, RBAC roles, runtime/connector selectors, mcp capability filters, bilateral cross-environment declarations). The cross-environment delegation resolver, OIDC-group resolution, the transparent-filtering middleware, and the `/usage`, `/access-report`, and `/runtime-exposure` sub-endpoints are not built.                                                                                                                                                                                                                                   |
 | 16    | Experiments, PoolScalingController integration               | Partial        | `pkg/experiment` (the §10.7 enums, HMAC bucketing, status-transition rules) and the experiment admin API are built: `experimentstore` is the per-tenant ExperimentDefinition registry, and `/v1/admin/experiments` serves POST/GET/list/PUT/PATCH/DELETE with §10.7 definition validation and the PATCH status-transition lifecycle. The experiment router (`ExperimentRouter` interceptor), the variant-pool sizing path, the `/results` endpoint, and the cross-resource variant-pool isolation-monotonicity check are not built.                                                                                                                                                                                                                          |
 | 16.5  | Experiment load test SLO re-validation                       | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 17a   | Documentation, governance, community launch                  | Not started    | The first-party reference runtimes from §26, the installer wizard, the tier preset values files, and the web playground are not built.                                                                                                                                                                                                       |
@@ -678,13 +685,13 @@ SessionStore-side steps are built: non-terminal sessions are transitioned to
 `Terminate` fan-out, Redis cached-auth invalidation, and credential-lease revocation
 remain infrastructure-bound.
 
-The Phase 16 experiment admin API is built (`experimentstore` + `/v1/admin/experiments`
-CRUD with the PATCH status lifecycle). The next pure-Go chunks are the Phase 15
-environment admin API (the `pkg/environment` substrate is the selector/role library;
-the Environment resource model, store, and `/v1/admin/environments` CRUD are not built)
-and the Phase 9 `PreDelegation` interceptor wiring (the chain framework is built; the
-`delegate_task` tool needs a `TaskSpec.input` field for the §4 `PreDelegation` content
-payload before the phase can be wired).
+The Phase 16 experiment admin API and the Phase 15 environment admin API are built
+(`experimentstore` + `/v1/admin/experiments` CRUD with the PATCH status lifecycle;
+`environmentstore` + `/v1/admin/environments` CRUD). The next pure-Go chunk is the
+Phase 9 `delegate_task` task-input plumbing: the `lenny/delegate_task` tool needs a
+`TaskSpec.input` field so the §4 `PreDelegation` interceptor phase has a content
+payload to run over, after which the `PreDelegation` chain can be wired into the
+delegation path the same way `PreMessageDelivery` is wired into `lenny/send_message`.
 
 ## Test status
 
