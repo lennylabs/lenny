@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `da1a77b` — Adapter setup-command runner. `workspace.RunSetup` executes a
+  WorkspacePlan's setup commands in order, each in the workspace directory under a
+  wall-clock timeout, stopping at the first failure.
+- `5900141` — Adapter workspace materializer. `pkg/adapter/workspace.Materialize`
+  writes a WorkspacePlan's inlineFile and mkdir sources into the workspace root, with
+  adapter-side path-containment and mode checks. uploadFile, uploadArchive, and
+  gitClone return `ErrSourceUnsupported`.
 - `d255c7f` — Runtime adapter gRPC server scaffold. `pkg/adapter.Server` implements the
   generated `adapterv1.AdapterServer` contract with `NegotiateVersion` and the
   TLS/mTLS transport wiring; `cmd/lenny-adapter` is the sidecar binary. The workspace,
@@ -162,10 +169,13 @@ progress; see the progress log.
 
 ## Next step
 
-Implement the adapter `StartSession` RPC and the adapter-to-runtime process
-management: materialize the workspace from the `WorkspacePlan`, run the setup
-commands, and start the runtime binary over the existing adapter binary protocol
-(`pkg/gateway/executor` already speaks that protocol and is the reuse candidate).
+Wire the adapter `StartSession` RPC end to end. The workspace materializer and the
+setup-command runner are built; `StartSession` needs the adapter session-state guard
+(reject when the pod is not idle), a call to `workspace.Materialize` then
+`workspace.RunSetup`, and the runtime-process start. The runtime-process management
+that `pkg/gateway/executor.SubprocessExecutor` provides is the reuse candidate; it
+currently sits under `pkg/gateway/` and should either be imported as-is or relocated
+to a neutral package shared by the adapter and the `make run` path.
 
 ## Test status
 
