@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f0b2787`, `ed68362` — §11.4 `full_revoke` SessionStore-side fan-out. `full_revoke`
+  transitions every non-terminal session owned by the user to `cancelled` and dismisses
+  the user's pending elicitations (`interactionstore.DismissByUser` — elicitations only,
+  per the spec's step-7 wording). soft/hard disable leave running sessions and
+  elicitations alone. The invalidate response and audit event report the counts. The
+  pod-RPC `Terminate` fan-out and Redis cached-auth invalidation remain infra-bound.
 - `112a3e9` — §7.1 artifact-retention GC (`pkg/gateway/retentiongc`). A periodic sweep
   deletes the transcript and blobs of every terminal session past its retention
   deadline and clears the session's snapshot reference so the row is collected once. A
@@ -492,7 +498,7 @@ this state.
 | 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Mostly done    | The §4.9 LLM proxy subsystem is built (`pkg/gateway/llmproxy`: the `anthropic_direct` translator, circuit breaker, breaker-gated forwarder, SSE relay, and `Handler`, over the `pkg/credential` lease model, the `credleasestore` lease store, the `credcache` credential cache, and the `denylist` deny list) and `cmd/lenny-gateway` serves it on the §13.2 LLM-proxy port. The `lenny-direct-mode-isolation` webhook is deployable end to end. The §4.9 credential-assignment path (`AssignCredentials`) that mints leases and populates the credential cache is not. |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
-| 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
+| 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, billing events, the usage endpoints, and the Redis breaker cache are built. The §11.4 three-tier user invalidation is built: soft/hard disable gate new work; full_revoke additionally transitions the user's non-terminal sessions to `cancelled` and dismisses their pending elicitations. The §11.4 full_revoke pod-RPC `Terminate` fan-out, Redis cached-auth invalidation, and credential-lease revocation remain infrastructure-bound. The external interceptor registration framework needs confirmation. |
 | 8     | Checkpoint/resume, drain-readiness webhook                   | Done           | The `lenny-drain-readiness` webhook, the §4.4 periodic-checkpoint path, and the §7.1 seal-and-export are complete. `workspace.Extract` restores a workspace from a gzip-tar, and the adapter `Resume` RPC rebuilds a replacement pod's workspace from a checkpoint. The gateway-side resume is complete: `adapterclient.Resume` drives the pod adapter's `Resume` RPC, `Binder.Resume` claims a fresh pod and restores onto it, and `handleResume` serves `POST /v1/sessions/{id}/resume` — valid only from `awaiting_client_action` per §15.1, restoring from the §7.1 `WorkspaceSnapshot` or rebuilding from the stored §14 `WorkspacePlan`.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation/cycle`, `pkg/delegation/lease`, `pkg/delegation/tracing`, and the gateway delegation service are built. The §8.5 platform MCP tool surface is complete: `lenny/create_session`, `lenny/send_message` (with `inReplyTo` input resolution), `lenny/get_task_tree`, `lenny/delegate_task`, `lenny/cancel_child`, `lenny/await_children`, `lenny/discover_agents`, `lenny/set_tracing_context`, `lenny/output`, and `lenny/request_input` (`pkg/gateway/inputwait` registry, §11.3 timeout). The delegation service propagates a parent's §8.3 tracingContext onto each child. The §4 `RequestInterceptor` chain framework (`pkg/gateway/interceptor`) is built and the `PreMessageDelivery` phase is wired into `lenny/send_message`. The §8.10 `session_tree_archive` store (`pkg/gateway/treearchive`) is built with the archive-and-replay loop wired: child sessions are archived on every terminal transition (`lenny/cancel_child`, the sessionserver terminate / `DELETE` / start-failure paths, and the watchdog forced-failure and expiry sweeps), and `lenny/await_children` replays an archived child when its live session row is gone. The §8.10 `cascadeOnFailure` policy is applied on every terminal transition (`cancel_all` default cancels descendants, `detach` / `await_completion` leave them running, per-node policy honored), a resumed parent with active children receives the §7.1 `children_reattached` event, the §8.10 orphan-cleanup job (`pkg/gateway/orphancleanup`) sweeps every 60s to terminate orphans past the `cascadeTimeoutSeconds` window, and a `detach` cascade falls back to `cancel_all` when the tenant is over the `maxOrphanTasksPerTenant` cap, and the §8.10 bottom-up reattach traversal (`pkg/delegation/recovery`) groups failed tree nodes by depth and recovers them leaves-first under the `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` deadlines. Not built: the `delegation-echo` runtime, the `PreDelegation` and `PreExportMaterialization` interceptor wiring, external gRPC interceptors, and the `ExtendLease` lease-extension control plane.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
@@ -658,11 +664,17 @@ security-hardening release pipeline.
 The §12.8 legal-hold control is built end to end: the `legal_hold` flag on sessions,
 `POST /v1/admin/legal-hold`, the step-0 erasure preflight, the `acknowledgeHoldOverride`
 bypass, and the §7.1 artifact-retention GC (`pkg/gateway/retentiongc`) that collects
-expired-TTL session artifacts and exempts held sessions. The next tractable pure-Go
-chunk is the §11.4 `full_revoke` session-termination step (enumerate the user's
-non-terminal sessions and transition them to a terminal state). The pod-RPC `Terminate`
-fan-out, Redis cached-auth invalidation, and credential-lease revocation remain
-infrastructure-bound.
+expired-TTL session artifacts and exempts held sessions. The §11.4 `full_revoke`
+SessionStore-side steps are built: non-terminal sessions are transitioned to
+`cancelled` and the user's pending elicitations are dismissed. The §11.4 pod-RPC
+`Terminate` fan-out, Redis cached-auth invalidation, and credential-lease revocation
+remain infrastructure-bound.
+
+The next pure-Go chunks are spread across the partially-built phases: the Phase 9
+`PreDelegation` / `PreExportMaterialization` interceptor wiring (the chain framework is
+built; the phase-specific payload plumbing is not), the Phase 15 environment admin API
+(`pkg/environment` substrate exists), and the Phase 16 experiment admin API
+(`pkg/experiment` substrate exists).
 
 ## Test status
 
