@@ -34,7 +34,7 @@ build: ## Build every cmd/ binary into ./bin
 
 .PHONY: images
 images: ## Build container images for the deployable platform binaries
-	@for b in lenny-adapter lenny-controller lenny-gateway lenny-webhook lenny-token-service; do \
+	@for b in lenny-adapter lenny-controller lenny-gateway lenny-webhook lenny-token-service lenny-preflight; do \
 		echo "  image $$b"; \
 		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
 	done
