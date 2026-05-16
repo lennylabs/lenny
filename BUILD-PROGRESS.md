@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `867e439` — `allow-token-service` NetworkPolicy (§13.2). Re-admits the Token
+  Service's gateway ingress and its PgBouncer/Redis/KMS/CoreDNS egress under the
+  `lenny-system` default-deny; `tokenService.grpcPort`, `redis.tlsPort`, and
+  `kms.endpointCIDR` values added.
 - `5de9772` — `allow-controller-egress` NetworkPolicy (§13.2). Re-admits the
   controller's kube-apiserver, PgBouncer, and CoreDNS egress under the `lenny-system`
   default-deny, so the deployed controller can reach the API server; `kubeApiServerCIDR`
