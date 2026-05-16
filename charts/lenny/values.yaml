@@ -56,6 +56,12 @@ admissionWebhooks:
 # default-deny and the webhook pods authenticate callers via mTLS.
 webhookIngressCIDR: "0.0.0.0/0"
 
+# kubeApiServerCIDR is the destination CIDR the control-plane
+# components are allowed to reach the kube-apiserver on (§13.2).
+# Operators should tighten this to the cluster's apiserver endpoint;
+# the broad default is bounded by the per-port (443) egress rule.
+kubeApiServerCIDR: "0.0.0.0/0"
+
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render
 # unconditionally; these flags add the later-phase webhooks.
