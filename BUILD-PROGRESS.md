@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `37072e4` — Adapter credential RPCs (`AssignCredentials`, `RotateCredentials`,
+  `RevokeCredentials`). Each materializes the §4.7 credential file from the session's
+  per-provider lease set. The new `pkg/adapter/credfile` package writes
+  `credentials.json` through an atomic temp-file rename at mode `0440`, relying on the
+  pod fsGroup for group ownership so no `chown` runs (§13.1). `lenny-adapter` gained
+  `--credentials-dir`. Critical-path item 1 work.
 - `c7f6fe8` — Gateway-side adapter client (`pkg/gateway/adapterclient`). Wraps the
   generated `adapterv1` gRPC client with connection lifecycle management and a
   session-oriented surface: `NegotiateVersion` for the §15.5 handshake, and
@@ -185,10 +191,11 @@ client SDKs, the first-party reference runtimes, and the web playground all rema
 The shortest route to running one real session on a warm pod. The first item is in
 progress; see the progress log.
 
-1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`, and
-   `StartSession` are done; the remaining work is the message and lifecycle RPCs
-   (`SendMessage`, `Shutdown`, the credential RPCs, `Interrupt`, `Checkpoint`,
-   `DemoteSDK`, `LifecycleChannel`) and a container image.
+1. Build the §4.7 runtime adapter server. The gRPC scaffold, `cmd/lenny-adapter`,
+   `StartSession`, `SendMessage`, `Shutdown`, and the credential RPCs
+   (`AssignCredentials`, `RotateCredentials`, `RevokeCredentials`) are done; the
+   remaining work is the lifecycle RPCs (`Interrupt`, `Checkpoint`, `DemoteSDK`,
+   `LifecycleChannel`) and a container image.
 2. Build the pod-spec builder. Done — `pkg/controller/sandbox/podspec`.
 3. Build the Sandbox-to-Pod reconciler. Done — `pkg/controller/sandbox`, registered
    in `cmd/lenny-controller`.
