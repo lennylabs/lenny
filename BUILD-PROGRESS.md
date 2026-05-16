@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e08e4db` — Adapter gRPC port corrected to 50051 (§13.2). The adapter binary and
+  pod-spec builder bound the adapter to 8443, which §13.2 reserves for the LLM proxy
+  port; §13.2 fixes the adapter gRPC port at 50051. A spec-conformance fix that also
+  unblocks the §13.2 `allow-gateway-ingress` NetworkPolicy.
 - `0eb6258` — `default-deny-all` NetworkPolicy (§13.2). Renders the fail-closed
   deny-all ingress/egress baseline into every agent namespace. The §13.2
   allow-companion policies (gateway ingress, pod egress plus DNS) remain.
