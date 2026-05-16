@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `30d05a2` — Periodic-checkpoint loop (§4.4, §7.1). `Checkpointer.Run` ticks on the
+  configured cadence and `Sweep` takes a §4.4 checkpoint of every running session this
+  gateway replica coordinates, keeping each `WorkspaceSnapshot` fresh. `podsession.BindResult`
+  gained `TenantID` and `podsession.Registry` gained `Snapshot` to enumerate the bindings.
 - `eb1200e` — `checkpointer.Checkpointer` (§4.4, §7.1). Drives one §4.4 checkpoint of a
   running session: resolves the bound pod adapter via the `podsession` registry, calls
   the adapter `Checkpoint` RPC, and records the result as the session's §7.1
@@ -423,7 +427,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end. The checkpoint write path is built: `workspace.Archive` snapshots a workspace into a gzip-tar, the adapter `Checkpoint` RPC stores it, `adapterclient.Checkpoint` drives it from the gateway, and `checkpointer.Checkpointer` takes one checkpoint and records the §7.1 `WorkspaceSnapshot` on the session row. The periodic-checkpoint loop, the §7.1 seal-and-export, and the resume path are not built.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | The `lenny-drain-readiness` webhook is complete end to end. The checkpoint write path is built: `workspace.Archive`, the adapter `Checkpoint` RPC, `adapterclient.Checkpoint`, `checkpointer.Checkpointer` (single checkpoint + snapshot record), and the periodic-checkpoint loop (`Checkpointer.Run`/`Sweep`). The `cmd/lenny-gateway` wiring of the checkpoint loop, the §7.1 seal-and-export, and the resume path are not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -533,12 +537,12 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the gateway periodic-checkpoint loop (§4.4, §7.1). A gateway runnable ticks on
-the pool's checkpoint cadence (`SandboxTemplate.CheckpointCadenceSeconds`) and calls
-`checkpointer.Checkpointer.Checkpoint` for every running session this replica
-coordinates, so each session's `WorkspaceSnapshot` stays fresh against the §16.5
-checkpoint-freshness SLO. After the periodic loop, the §7.1 seal-and-export on session
-completion and the resume-from-snapshot path complete Phase 8.
+Wire `checkpointer.Checkpointer.Run` into `cmd/lenny-gateway`. When the gateway runs
+with `--agent-namespace` (so the pod registry and session pod-binding are live), it
+starts the periodic-checkpoint loop as a background runnable alongside the watchdog,
+with a `--checkpoint-interval` flag and an `OnError` log hook. After that, the §7.1
+seal-and-export on session completion and the resume-from-snapshot path complete
+Phase 8.
 
 ## Test status
 
