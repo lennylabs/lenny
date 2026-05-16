@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c7f6fe8` — Gateway-side adapter client (`pkg/gateway/adapterclient`). Wraps the
+  generated `adapterv1` gRPC client with connection lifecycle management and a
+  session-oriented surface: `NegotiateVersion` for the §15.5 handshake, and
+  `StartSession` / `SendMessage` / `Shutdown` for the session path. The connective
+  piece between the gateway and a claimed pod's adapter; needed by critical-path
+  items 4 and 5.
 - `6ee9fd9` — Gateway pod-claim `Claimer` (`pkg/gateway/podclaim`). Binds a session to
   an idle Sandbox: flips it to `claimed` under an optimistic-locking status update and
   creates the binding `SandboxClaim`; a conflict skips to the next idle pod. The
@@ -190,15 +196,18 @@ progress; see the progress log.
    `pkg/gateway/podclaim.Claimer` claim logic is built; the gateway binary must gain
    a Kubernetes client and call the Claimer from the session-creation handler.
 5. Wire workspace materialization and session start from the gateway to the adapter.
+   The gateway-side client is built — `pkg/gateway/adapterclient` — so the remaining
+   work is calling it from the gateway session path against a claimed pod's address.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 ## Next step
 
-Wire the `podclaim.Claimer` into the gateway. The gateway binary needs a
-controller-runtime Kubernetes client, and the session-creation handler must call
-`Claimer.Claim` to bind a pod (retrying against `ErrNoIdlePod` within
-`podClaimQueueTimeout`) instead of the current in-process executor path. This
-completes critical-path item 4 and connects the REST session surface to the
+Wire the Kubernetes-backed session path into the gateway. The gateway binary needs a
+controller-runtime Kubernetes client; the session-creation handler must call
+`podclaim.Claimer.Claim` to bind a pod (retrying against `ErrNoIdlePod` within
+`podClaimQueueTimeout`), then drive that pod through `adapterclient` —
+`NegotiateVersion`, then `StartSession` with the WorkspacePlan. This completes
+critical-path items 4 and 5 together and connects the REST session surface to the
 warm-pod fabric.
 
 ## Test status
