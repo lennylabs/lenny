@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5c7f1c1` — Gateway serves `GET /internal/drain-readiness` (§12.5). `cmd/lenny-gateway`
+  mounts the `drainreadiness.Handler` so the `lenny-drain-readiness` webhook can run its
+  pre-drain artifact-store health check. The §12.5 webhook is now complete end to end.
+- `150f168` — `lenny-drain-readiness` Helm manifest (§12.5). The fail-closed
+  `ValidatingWebhookConfiguration` on the `pods/eviction` subresource, rendered when
+  `features.drainReadiness` is enabled; the shared webhook Deployment template passes
+  `--gateway-drain-readiness-url`.
 - `889e4ad` — `cmd/lenny-webhook` serves the `/drain-readiness` route (§12.5). The
   `lenny-drain-readiness` admission route on the `pods/eviction` subresource, built from
   the cluster client and an `HTTPDrainProbe` pointed at the gateway endpoint via the new
@@ -391,7 +398,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook is built and served by `cmd/lenny-webhook`: the decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint handler (`pkg/gateway/drainreadiness`), the AdmissionReview handler (`webhook.DrainReadiness`), and the `/drain-readiness` route. The feature-gated Helm manifest, the `cmd/lenny-gateway` mounting of the endpoint, and the gateway checkpoint-and-resume orchestration are not built; the endpoint's MinIO probe needs the production MinIO-backed blobstore, which is also unbuilt.                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook is built and deployable end to end: the decision logic (`pkg/admission/drain_readiness`), the gateway `GET /internal/drain-readiness` endpoint (`pkg/gateway/drainreadiness`, served by `cmd/lenny-gateway`), the AdmissionReview handler and route (`cmd/lenny-webhook`), and the feature-gated Helm manifest. The gateway checkpoint-and-resume orchestration is not built. The drain-readiness endpoint's probe reports ready against the in-memory blobstore; a real MinIO HeadBucket probe needs the production MinIO-backed blobstore, which is unbuilt.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -501,14 +508,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Render the `lenny-drain-readiness` `ValidatingWebhookConfiguration` Helm manifest,
-gated on `features.drainReadiness`, scoped to the `pods/eviction` subresource in agent
-namespaces, fail-closed — following the `direct-mode-isolation-webhook.yaml` pattern.
-The shared admission-webhook Deployment template passes `--gateway-drain-readiness-url`
-from a Helm value. Mounting the `drainreadiness.Handler` at `GET /internal/drain-readiness`
-in `cmd/lenny-gateway` is the remaining piece; its MinIO probe needs the production
-MinIO-backed `blobstore` implementation (currently `MemoryStore`-only), so the
-MinIO-backed blobstore is the dependency to build alongside it.
+Build the production MinIO-backed `blobstore.Store`. `pkg/blobstore` ships only
+`MemoryStore`; §12.5 and §7.1 need an S3/MinIO-backed implementation for workspace
+snapshots, checkpoints, and the drain-readiness `HeadBucket` probe. The implementation
+wraps the MinIO Go SDK behind the existing `blobstore.Store` interface (Put, Get, Stat)
+and adds the artifact-store liveness probe the §12.5 drain-readiness endpoint needs.
+This is a foundational dependency shared by Phase 8 checkpoint/resume and the §7.1
+workspace artifact path.
 
 ## Test status
 
