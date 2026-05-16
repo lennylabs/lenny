@@ -5,6 +5,7 @@ package llmproxy_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -135,4 +136,62 @@ func TestForwardClassifiesTimeout(t *testing.T) {
 	defer cancel()
 	_, err := f.Forward(ctx, upstreamRequest(srv.URL))
 	wantErrorType(t, err, llmproxy.ErrTimeout)
+}
+
+func TestForwardStreamReturnsLiveResponseOn2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: ping\n\n"))
+	}))
+	defer srv.Close()
+
+	f := &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}}
+	resp, err := f.ForwardStream(context.Background(), upstreamRequest(srv.URL))
+	if err != nil {
+		t.Fatalf("ForwardStream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "event: ping\n\n" {
+		t.Errorf("body = %q, want the live stream", body)
+	}
+}
+
+func TestForwardStreamClassifiesNon2xx(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		want   llmproxy.ErrorType
+	}{
+		{401, llmproxy.ErrAuthFailed},
+		{400, llmproxy.ErrUpstream4xx},
+		{503, llmproxy.ErrUpstream5xx},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"x"}`))
+			}))
+			defer srv.Close()
+			f := &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{FailureThreshold: 1}}
+			resp, err := f.ForwardStream(context.Background(), upstreamRequest(srv.URL))
+			if resp != nil {
+				t.Error("ForwardStream returned a response for a non-2xx upstream status")
+			}
+			wantErrorType(t, err, tc.want)
+		})
+	}
+}
+
+func TestForwardStreamRejectsWhenBreakerOpen(t *testing.T) {
+	breaker := &llmproxy.CircuitBreaker{FailureThreshold: 1, Cooldown: time.Hour}
+	breaker.Allow()
+	breaker.RecordFailure()
+	f := &llmproxy.Forwarder{Breaker: breaker}
+	if _, err := f.ForwardStream(context.Background(), upstreamRequest("http://127.0.0.1:1")); !errors.Is(err, llmproxy.ErrCircuitOpen) {
+		t.Errorf("error = %v, want ErrCircuitOpen", err)
+	}
 }

@@ -38,6 +38,16 @@ type DenyList interface {
 	Revoked(key credential.DenyListKey) bool
 }
 
+// UsageRecorder receives the authoritative §4.9 token usage the proxy
+// extracts from each upstream response. §4.9 makes the proxy-extracted
+// counts the record for quota accounting; pod-reported counts are not
+// accepted in proxy mode.
+type UsageRecorder interface {
+	// RecordUsage records the token usage of one request against a
+	// lease.
+	RecordUsage(lease credential.Lease, usage Usage)
+}
+
 // Handler is the §4.9 LLM reverse proxy HTTP handler for the Anthropic
 // Messages dialect. It resolves the agent pod's bearer lease token,
 // runs the §4.9 per-request lease checks, translates the request into
@@ -58,6 +68,9 @@ type Handler struct {
 	// DenyList reports credential revocation. A nil DenyList denies
 	// nothing.
 	DenyList DenyList
+	// Usage records the authoritative token usage of each proxied
+	// request. A nil Usage discards the counts.
+	Usage UsageRecorder
 	// Now returns the current time, checked against lease expiry. A nil
 	// Now selects time.Now.
 	Now func() time.Time
@@ -132,6 +145,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if requestWantsStream(body) {
+		h.serveStream(w, r, lease, upstreamReq)
+		return
+	}
+
 	upstreamResp, err := h.Forwarder.Forward(r.Context(), upstreamReq)
 	if err != nil {
 		if errors.Is(err, ErrCircuitOpen) {
@@ -148,9 +166,58 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeTranslationError(w, err)
 		return
 	}
+	h.recordUsage(lease, resp.Usage)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Body)
+}
+
+// serveStream runs the §4.9 streaming proxy path: it forwards the
+// request for a streaming response and relays the upstream Server-Sent
+// Events stream to the agent pod. Once the 200 status and SSE headers
+// are written the response is committed, so a mid-stream relay failure
+// can only end the stream — it cannot change the status.
+func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease credential.Lease, upstreamReq *UpstreamRequest) {
+	resp, err := h.Forwarder.ForwardStream(r.Context(), upstreamReq)
+	if err != nil {
+		if errors.Is(err, ErrCircuitOpen) {
+			h.writeError(w, http.StatusServiceUnavailable, "PROVIDER_UNAVAILABLE",
+				"the upstream provider circuit breaker is open")
+			return
+		}
+		h.writeTranslationError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	flush := func() {}
+	if f, ok := w.(http.Flusher); ok {
+		flush = f.Flush
+	}
+	usage, _ := RelayStream(w, resp.Body, flush)
+	h.recordUsage(lease, usage)
+}
+
+// requestWantsStream reports whether an Anthropic Messages request body
+// asks for a streaming response.
+func requestWantsStream(body []byte) bool {
+	var req struct {
+		Stream bool `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &req)
+	return req.Stream
+}
+
+// recordUsage forwards the authoritative token usage to the configured
+// recorder. It is a no-op when no recorder is set.
+func (h *Handler) recordUsage(lease credential.Lease, usage Usage) {
+	if h.Usage != nil {
+		h.Usage.RecordUsage(lease, usage)
+	}
 }
 
 // now returns the handler clock.

@@ -271,3 +271,82 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 		t.Errorf("status = %d, want 405", rr.Code)
 	}
 }
+
+// fakeUsage is a UsageRecorder capturing the last recorded usage.
+type fakeUsage struct {
+	usage llmproxy.Usage
+	calls int
+}
+
+func (f *fakeUsage) RecordUsage(_ credential.Lease, u llmproxy.Usage) {
+	f.usage = u
+	f.calls++
+}
+
+func TestHandlerRecordsAuthoritativeUsage(t *testing.T) {
+	h := newProxyHarness(t)
+	rec := &fakeUsage{}
+	h.handler.Usage = rec
+	if err := h.leases.Put(handlerLease("lt-usage")); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	if rr := post(h.handler, "lt-usage", messagesBody); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	// The fake upstream replies with usage 5 in / 7 out.
+	if rec.calls != 1 || rec.usage.InputTokens != 5 || rec.usage.OutputTokens != 7 {
+		t.Errorf("recorded usage = %+v calls=%d, want 5/7 recorded once", rec.usage, rec.calls)
+	}
+}
+
+func TestHandlerStreamsSSEResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(anthropicSSEStream))
+	}))
+	defer upstream.Close()
+
+	leases := credleasestore.New()
+	if err := leases.Put(handlerLease("lt-stream")); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	rec := &fakeUsage{}
+	h := &llmproxy.Handler{
+		Leases:      leases,
+		Translator:  &llmproxy.AnthropicDirectTranslator{BaseURL: upstream.URL, DefaultAnthropicVersion: "2023-06-01"},
+		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
+		Credentials: fakeResolver{key: "sk-ant-real", ok: true},
+		Usage:       rec,
+	}
+
+	rr := post(h, "lt-stream", `{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if rr.Body.String() != anthropicSSEStream {
+		t.Errorf("relayed body is not the upstream SSE stream:\n got %q", rr.Body.String())
+	}
+	if rec.calls != 1 || rec.usage.InputTokens != 12 || rec.usage.OutputTokens != 34 {
+		t.Errorf("streamed usage = %+v calls=%d, want 12/34 recorded once", rec.usage, rec.calls)
+	}
+}
+
+func TestHandlerStreamingRejectsExpiredLeaseBeforeUpstream(t *testing.T) {
+	h := newProxyHarness(t)
+	lease := handlerLease("lt-stream-exp")
+	lease.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := h.leases.Put(lease); err != nil {
+		t.Fatalf("seed lease: %v", err)
+	}
+	// A streaming request on an expired lease is rejected with a normal
+	// JSON error, not a half-opened event stream.
+	rr := post(h.handler, "lt-stream-exp",
+		`{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	if rr.Code != http.StatusForbidden || errorCode(t, rr) != "LEASE_EXPIRED" {
+		t.Errorf("status %d code %q, want 403 LEASE_EXPIRED", rr.Code, errorCode(t, rr))
+	}
+}

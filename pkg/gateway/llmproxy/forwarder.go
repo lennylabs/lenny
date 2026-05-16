@@ -80,6 +80,54 @@ func (f *Forwarder) Forward(ctx context.Context, req *UpstreamRequest) (*Upstrea
 	return &UpstreamResponse{StatusCode: resp.StatusCode, Body: body}, nil
 }
 
+// ForwardStream sends the translated request upstream for a streaming
+// response. Like Forward it gates the call through the circuit breaker,
+// but on a 2xx it returns the live *http.Response with the body unread
+// so the caller can relay the Server-Sent Events stream; the caller
+// owns the response body and must close it. A non-2xx upstream status
+// is read, closed, and returned as a TranslationError — a streaming
+// request that the upstream answers with an error never produced a
+// stream. A 5xx or transport failure records a breaker failure.
+func (f *Forwarder) ForwardStream(ctx context.Context, req *UpstreamRequest) (*http.Response, error) {
+	if !f.Breaker.Allow() {
+		return nil, ErrCircuitOpen
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, req.URL, bytes.NewReader(req.Body))
+	if err != nil {
+		f.Breaker.RecordFailure()
+		return nil, translationErrorf(ErrUpstream5xx, "build upstream request: %v", err)
+	}
+	for k, v := range req.Header {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := f.client().Do(httpReq)
+	if err != nil {
+		f.Breaker.RecordFailure()
+		if isTimeout(err) {
+			return nil, translationErrorf(ErrTimeout, "upstream request timed out: %v", err)
+		}
+		return nil, translationErrorf(ErrUpstream5xx, "upstream request failed: %v", err)
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		f.Breaker.RecordSuccess()
+		return resp, nil
+	}
+
+	// A non-2xx answer to a streaming request is a bounded error body,
+	// not a stream: read it, close, and classify.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		f.Breaker.RecordFailure()
+	} else {
+		f.Breaker.RecordSuccess()
+	}
+	return nil, upstreamStatusError(resp.StatusCode, body)
+}
+
 // client returns the configured HTTP client or a default bounded one.
 func (f *Forwarder) client() *http.Client {
 	if f.Client != nil {
