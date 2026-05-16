@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,62 @@ func TestCreateValidatesWorkspacePlan(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.WorkspacePlanWarnings) != 0 {
 		t.Errorf("unexpected warnings: %+v", resp.WorkspacePlanWarnings)
+	}
+}
+
+func TestGetReturnsStoredWorkspacePlan(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_wp_get" }})
+	h := srv.Handler()
+
+	const plan = `{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`
+	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{
+		RuntimeRef:    "echo",
+		WorkspacePlan: json.RawMessage(plan),
+	}); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_wp_get", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.SessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.WorkspacePlan) == 0 {
+		t.Fatal("GET /v1/sessions/{id} did not return the stored workspacePlan (§15.1)")
+	}
+	var got, want any
+	_ = json.Unmarshal(resp.WorkspacePlan, &got)
+	_ = json.Unmarshal([]byte(plan), &want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("workspacePlan = %s, want %s", resp.WorkspacePlan, plan)
+	}
+}
+
+func TestGetOmitsWorkspacePlanWhenAbsent(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_noplan" }})
+	h := srv.Handler()
+
+	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "echo"}); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d", rr.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_noplan", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	// omitempty drops the field from the envelope for a planless session.
+	if bytes.Contains(rr.Body.Bytes(), []byte("workspacePlan")) {
+		t.Errorf("response carries workspacePlan for a planless session: %s", rr.Body.String())
 	}
 }
 

@@ -325,6 +325,11 @@ type SessionResponse struct {
 	UpdatedAt  string `json:"updatedAt"`
 
 	FailureClass string `json:"failureClass,omitempty"`
+
+	// WorkspacePlan is the §14 WorkspacePlan stored at session
+	// creation, echoed per §15.1. Absent when the session was created
+	// without a plan.
+	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 }
 
 // CreateSessionResponse is the §15.1 POST /v1/sessions response
@@ -788,6 +793,9 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)
+	}
+	if len(row.WorkspacePlan) > 0 {
+		out.WorkspacePlan = row.WorkspacePlan
 	}
 	return out
 }
