@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -92,6 +93,11 @@ type Deps struct {
 	// lenny/request_elicitation. Optional — when nil, the tool is not
 	// registered.
 	Interactions interactionstore.Store
+
+	// Memory is the §9.4 MemoryStore backing lenny/memory_write and
+	// lenny/memory_query. Optional — when nil, those tools are not
+	// registered.
+	Memory memorystore.Store
 
 	// ElicitationTimeout caps a lenny/request_elicitation block per the
 	// §9.1 maxElicitationWait limit. Zero selects the default.
@@ -757,6 +763,92 @@ func Register(srv *mcp.Server, deps Deps) {
 			return textResult(fmt.Sprintf(`{"childSessionId":%q,"depth":%d}`, res.Child.ID, res.Depth)), nil
 		})
 	}
+
+	if deps.Memory != nil {
+		registerMemoryTools(srv, deps, tenant, clock)
+	}
+}
+
+// registerMemoryTools wires the §9.4 lenny/memory_write and
+// lenny/memory_query platform MCP tools. A memory is written under
+// the calling session's user, runtime, and session scope; a query
+// recalls across all of the user's sessions within the tenant.
+func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() time.Time) {
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/memory_write",
+		Description: "Write a memory to the §9.4 memory store, scoped to the calling session's user.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","content"],"properties":{"sessionId":{"type":"string"},"content":{"type":"string"},"metadata":{"type":"object"}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		var in struct {
+			SessionID string         `json:"sessionId"`
+			Content   string         `json:"content"`
+			Metadata  map[string]any `json:"metadata"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if in.SessionID == "" || in.Content == "" {
+			return mcp.ToolResult{}, errors.New("sessionId and content are required")
+		}
+		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+		}
+		scope := memorystore.MemoryScope{
+			TenantID: tenant, UserID: row.UserID,
+			AgentType: row.RuntimeRef, SessionID: row.ID,
+		}
+		if err := deps.Memory.Write(ctx, scope, []memorystore.Memory{
+			{Content: in.Content, Metadata: in.Metadata},
+		}); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("memory write: %w", err)
+		}
+		return textResult(`{"written":1}`), nil
+	})
+
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/memory_query",
+		Description: "Query the §9.4 memory store across the calling session's user's memories.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"query":{"type":"string"},"limit":{"type":"integer"}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		var in struct {
+			SessionID string `json:"sessionId"`
+			Query     string `json:"query"`
+			Limit     int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if in.SessionID == "" {
+			return mcp.ToolResult{}, errors.New("sessionId is required")
+		}
+		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+		}
+		// §9.4: memory recall is user-scoped — it spans every session
+		// the user has run, not just the calling session.
+		results, err := deps.Memory.Query(ctx,
+			memorystore.MemoryScope{TenantID: tenant, UserID: row.UserID}, in.Query, in.Limit)
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("memory query: %w", err)
+		}
+		out := make([]memoryResult, len(results))
+		for i, m := range results {
+			out[i] = memoryResult{ID: m.ID, Content: m.Content, Metadata: m.Metadata}
+		}
+		data, _ := json.Marshal(struct {
+			Memories []memoryResult `json:"memories"`
+		}{Memories: out})
+		return textResult(string(data)), nil
+	})
+}
+
+// memoryResult is the §9.4 memory shape lenny/memory_query returns.
+type memoryResult struct {
+	ID       string         `json:"id"`
+	Content  string         `json:"content"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // treeNode mirrors the §8 tree shape the get_task_tree tool returns.

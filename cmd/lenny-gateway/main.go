@@ -93,6 +93,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
@@ -416,6 +417,7 @@ func main() {
 	interactions := interactionstore.NewMemory()
 	evals := evalstore.NewMemory(0, nil)
 	experiments := experimentstore.NewMemory()
+	memories := memorystore.NewInMemory(0, nil)
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -464,6 +466,7 @@ func main() {
 		InputWaits:         inputwait.NewRegistry(),
 		TreeArchive:        treeArchive,
 		Interactions:       interactions,
+		Memory:             memories,
 		ElicitationMetrics: gwMetrics,
 		TenantID:           "default",
 	})
@@ -535,6 +538,12 @@ func main() {
 			SessionScoped: sessionScoped,
 			UserScoped: []erasure.Eraser{
 				{Name: "interactions", DeleteByUser: interactions.DeleteByUser},
+				{Name: "memory", DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
+					// §9.4 MemoryStore.DeleteByUser returns only an error;
+					// the orchestrator's adapter reports the count it
+					// cannot supply as 0.
+					return 0, memories.DeleteByUser(ctx, tenantID, userID)
+				}},
 				{Name: "sessions", DeleteByUser: sessions.DeleteByUser},
 			},
 		})
