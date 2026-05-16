@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `293eb04` — `denylist.DenyList` (§4.9). The per-replica credential deny list the LLM
+  proxy checks on every upstream request; a hit rejects with `CREDENTIAL_REVOKED`
+  before any upstream call. Satisfies the proxy's `DenyList` interface.
+- `1676fd6` — `credcache.Cache` (§4.9). The Token Service in-memory upstream-credential
+  cache: real provider keys keyed by the source-aware credential identity, satisfying
+  the proxy's `CredentialResolver`. The §4.9 source-aware key is renamed
+  `credential.DenyListKey` → `credential.CredentialKey`, since the deny list and the
+  cache both key on it.
 - `3764c4a` — LLM proxy SSE streaming wired into the handler (§4.9). `Forwarder.ForwardStream`
   gates a streaming upstream call through the breaker and returns the live 2xx response;
   the `Handler` dispatches on the request `stream` field, relays the upstream SSE stream
@@ -345,7 +353,7 @@ this state.
 | 5.5   | Basic credential leasing, Token Service                      | Mostly done    | `pkg/credential`, the Token Service binary, `POST /v1/oauth/token`, the `issued_tokens` table, and the `/v1/credentials` endpoints are built.                                                                                                                                                                                                |
 | 5.6   | Targeted security design review (credential)                 | Not started    | No review document under `tests/tier9_security/reviews/`.                                                                                                                                                                                                                                                                                    |
 | 5.75  | Minimum viable policy enforcement                            | Mostly done    | `pkg/quota` and the auth and quota interceptors are built.                                                                                                                                                                                                                                                                                   |
-| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The LLM proxy path is built in `pkg/gateway/llmproxy` for both streaming and non-streaming responses: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, the SSE relay, and the `Handler` composing them with the `pkg/credential` lease model and the `pkg/gateway/credleasestore` lease store. The `lenny-direct-mode-isolation` webhook is deployable end to end. The Token Service credential cache (`CredentialResolver`), the §4.9 deny list (`DenyList`), and the `cmd/lenny-gateway` wiring that mounts the proxy are not.                              |
+| 5.8   | LLM Proxy, direct-mode-isolation webhook                     | Partial        | The LLM proxy path is built in `pkg/gateway/llmproxy` for both streaming and non-streaming responses: the `anthropic_direct` translator, the circuit breaker, the breaker-gated forwarder, the SSE relay, and the `Handler` composing them with the `pkg/credential` lease model, the `pkg/gateway/credleasestore` lease store, the `pkg/gateway/credcache` credential cache, and the `pkg/gateway/denylist` deny list. The `lenny-direct-mode-isolation` webhook is deployable end to end. The `cmd/lenny-gateway` wiring that serves the proxy `Handler` on the §13.2 LLM-proxy port is not.                              |
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
@@ -459,13 +467,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Build the §4.9 Token Service in-memory credential cache: the `CredentialResolver`
-implementation that holds real upstream API keys keyed by a lease's credential
-identity (`{poolId, credentialId}` or `{tenantId, credentialRef}`). §4.9 places real
-keys only in this in-process cache, never on disk. Rotation refreshes a cache entry
-atomically, so the next proxy request reads the new key with no reload. After the
-cache, the §4.9 deny list and the `cmd/lenny-gateway` wiring that mounts the proxy
-`Handler` make the LLM proxy deployable.
+Wire the LLM proxy into `cmd/lenny-gateway`. The gateway must construct the
+`llmproxy.Handler` from the credential-lease store, the credential cache, the deny
+list, the translator, and a breaker-gated forwarder, and serve it on the §13.2
+LLM-proxy port (`gateway.llmProxyPort`, 8443) as a listener separate from the REST
+API. This makes the proxy reachable by proxy-mode agent pods and completes the §4.9
+LLM Proxy subsystem; the lease and credential population path (`AssignCredentials`)
+remains a separate §4.9 build item.
 
 ## Test status
 
