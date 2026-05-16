@@ -418,6 +418,31 @@ func main() {
 	evals := evalstore.NewMemory(0, nil)
 	experiments := experimentstore.NewMemory()
 	memories := memorystore.NewInMemory(0, nil)
+
+	// ----- §16.1 Prometheus metrics -----
+	gwMetrics, err := gatewaymetrics.New()
+	if err != nil {
+		log.Fatalf("lenny-gateway: metrics: %v", err)
+	}
+
+	// The §11.7 per-tenant audit hash chain. With Postgres the chain is
+	// durable (auditstore); otherwise it is in-memory and lost on
+	// restart. Both the admin router and the §10.7 ExperimentRouter
+	// rejection reporter commit events to it.
+	var (
+		auditSink admin.AuditSink
+		wireAudit func(*admin.Router) *admin.Router
+	)
+	if pgPool != nil {
+		pgAudit := auditstore.New(pgPool)
+		auditSink = admin.NewAuditLogSink(pgAudit, nil)
+		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
+	} else {
+		auditChains := audit.NewChainSet()
+		auditSink = admin.NewChainAuditSink(auditChains, nil)
+		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:   uploadIssuer,
 		UploadTokenVerifier: uploadVerifier,
@@ -429,16 +454,20 @@ func main() {
 		Evals:               evals,
 		Experiments:         experiments,
 		Pools:               pools,
-		Usage:               usagestore.NewMemory(),
-		Users:               users,
-		Billing:             billing,
-		Tenants:             tenants,
-		StorageQuota:        storageCounter,
-		PodBinder:           podBinder,
-		PodRegistry:         podRegistry,
-		AgentNamespace:      *agentNamespace,
-		Sealer:              sessionSealer,
-		TreeArchive:         treeArchive,
+		ExperimentRejections: experimentRejectionReporter{
+			audit:   auditSink,
+			metrics: gwMetrics,
+		},
+		Usage:          usagestore.NewMemory(),
+		Users:          users,
+		Billing:        billing,
+		Tenants:        tenants,
+		StorageQuota:   storageCounter,
+		PodBinder:      podBinder,
+		PodRegistry:    podRegistry,
+		AgentNamespace: *agentNamespace,
+		Sealer:         sessionSealer,
+		TreeArchive:    treeArchive,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -447,12 +476,6 @@ func main() {
 
 	// ----- §4.9 end-user credential registry -----
 	credServer := credentialserver.New(credentialstore.NewMemory(nil))
-
-	// ----- §16.1 Prometheus metrics -----
-	gwMetrics, err := gatewaymetrics.New()
-	if err != nil {
-		log.Fatalf("lenny-gateway: metrics: %v", err)
-	}
 
 	// ----- MCP adapter -----
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
@@ -478,22 +501,6 @@ func main() {
 	revCache := revocation.NewCache()
 
 	// ----- Admin API -----
-	// Every admin mutation is committed to a §11.7 per-tenant audit
-	// hash chain. With Postgres the chain is durable (auditstore);
-	// otherwise it is in-memory and lost on restart.
-	var (
-		auditSink admin.AuditSink
-		wireAudit func(*admin.Router) *admin.Router
-	)
-	if pgPool != nil {
-		pgAudit := auditstore.New(pgPool)
-		auditSink = admin.NewAuditLogSink(pgAudit, nil)
-		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
-	} else {
-		auditChains := audit.NewChainSet()
-		auditSink = admin.NewChainAuditSink(auditChains, nil)
-		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
-	}
 	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
@@ -969,6 +976,37 @@ func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil 
 // §7.1 retention GC.
 type sessionArtifactDeleter interface {
 	DeleteBySession(ctx context.Context, tenantID, sessionID string) (int, error)
+}
+
+// experimentRejectionReporter bridges a §10.7 ExperimentRouter
+// fail-closed rejection to the §11.7 audit chain and the §16.1
+// metrics registry: it emits the `experiment.isolation_mismatch`
+// operational event and increments
+// `lenny_experiment_isolation_rejections_total`.
+type experimentRejectionReporter struct {
+	audit   admin.AuditSink
+	metrics *gatewaymetrics.Metrics
+}
+
+func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx context.Context, ev sessionserver.ExperimentIsolationRejection) {
+	if e.metrics != nil {
+		e.metrics.RecordExperimentIsolationRejection(ev.TenantID, ev.ExperimentID, ev.VariantID)
+	}
+	if e.audit != nil {
+		e.audit.EmitAdminEvent(ctx, admin.AuditEvent{
+			Type:           "experiment.isolation_mismatch",
+			ActorTenantID:  ev.TenantID,
+			TargetResource: ev.ExperimentID,
+			Detail: map[string]any{
+				"tenant_id":            ev.TenantID,
+				"user_id":              ev.UserID,
+				"experiment_id":        ev.ExperimentID,
+				"variant_id":           ev.VariantID,
+				"sessionMinIsolation":  ev.SessionMinIsolation,
+				"variantPoolIsolation": ev.VariantPoolIsolation,
+			},
+		})
+	}
 }
 
 // tenantsLister adapts a tenantstore.Store into a

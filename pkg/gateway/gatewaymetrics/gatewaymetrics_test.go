@@ -171,3 +171,23 @@ func TestRecordElicitationDropExposesCounter(t *testing.T) {
 		t.Errorf("/metrics output missing the budget_exceeded count of 2:\n%s", body)
 	}
 }
+
+func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.RecordExperimentIsolationRejection("acme", "exp_1", "treatment")
+	m.RecordExperimentIsolationRejection("acme", "exp_1", "treatment")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	want := `lenny_experiment_isolation_rejections_total{experiment_id="exp_1",tenant_id="acme",variant_id="treatment"} 2`
+	if !strings.Contains(body, want) {
+		t.Errorf("/metrics output missing %q\n---\n%s", want, body)
+	}
+}

@@ -49,12 +49,24 @@ func seedPool(t *testing.T, pools poolstore.Store, name string, profile isolatio
 // isolation-profile override.
 func postSessionIso(t *testing.T, h http.Handler, path, runtime, iso string) *httptest.ResponseRecorder {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"runtimeRef": runtime, "isolationProfile": iso})
+	body, _ := json.Marshal(map[string]string{
+		"runtimeRef": runtime, "isolationProfile": iso, "userId": "alice",
+	})
 	req := asUser(httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)), "alice", "default")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
+}
+
+// recordingRejectionReporter captures the §10.7 rejection reports the
+// ExperimentRouter emits when it fails a session closed.
+type recordingRejectionReporter struct {
+	events []sessionserver.ExperimentIsolationRejection
+}
+
+func (r *recordingRejectionReporter) ReportExperimentIsolationRejection(_ context.Context, ev sessionserver.ExperimentIsolationRejection) {
+	r.events = append(r.events, ev)
 }
 
 // errorDetails parses a §15.1 error envelope and returns its code and
@@ -163,6 +175,61 @@ func TestExperimentRouterCreateAndStartFailsClosed(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "default", "sess_start_weak"); err == nil {
 		t.Error("session was created despite the fail-closed isolation rejection")
+	}
+}
+
+func TestExperimentRouterRejectionReporterReceivesEvent(t *testing.T) {
+	exps := experimentstore.NewMemory()
+	routedExperiment(t, exps, "claude-code", "claude-code-v2", "cc-v2-pool")
+	pools := poolstore.NewMemory()
+	seedPool(t, pools, "cc-v2-pool", isolation.ProfileSandboxed)
+	reporter := &recordingRejectionReporter{}
+	h := sessionserver.New(memstore.New(), sessionserver.Options{
+		Experiments:          exps,
+		Pools:                pools,
+		ExperimentRejections: reporter,
+		IDFunc:               func() string { return "sess_report" },
+	}).Handler()
+
+	rr := postSessionIso(t, h, "/v1/sessions", "claude-code", string(isolation.ProfileMicrovm))
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create: status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	if len(reporter.events) != 1 {
+		t.Fatalf("reporter received %d events, want exactly 1", len(reporter.events))
+	}
+	want := sessionserver.ExperimentIsolationRejection{
+		TenantID:             "default",
+		UserID:               "alice",
+		ExperimentID:         "exp_1",
+		VariantID:            "treatment",
+		SessionMinIsolation:  "microvm",
+		VariantPoolIsolation: "sandboxed",
+	}
+	if reporter.events[0] != want {
+		t.Errorf("rejection event = %+v, want %+v", reporter.events[0], want)
+	}
+}
+
+func TestExperimentRouterReporterSilentOnSuccessfulRouting(t *testing.T) {
+	exps := experimentstore.NewMemory()
+	routedExperiment(t, exps, "claude-code", "claude-code-v2", "cc-v2-pool")
+	pools := poolstore.NewMemory()
+	seedPool(t, pools, "cc-v2-pool", isolation.ProfileMicrovm)
+	reporter := &recordingRejectionReporter{}
+	h := sessionserver.New(memstore.New(), sessionserver.Options{
+		Experiments:          exps,
+		Pools:                pools,
+		ExperimentRejections: reporter,
+		IDFunc:               func() string { return "sess_ok" },
+	}).Handler()
+
+	rr := postSessionIso(t, h, "/v1/sessions", "claude-code", string(isolation.ProfileMicrovm))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201; body %s", rr.Code, rr.Body.String())
+	}
+	if len(reporter.events) != 0 {
+		t.Errorf("reporter received %d events on a successful routing, want 0", len(reporter.events))
 	}
 }
 

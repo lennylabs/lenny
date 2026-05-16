@@ -31,6 +31,7 @@ type Metrics struct {
 	cbCacheStale       prometheus.Gauge
 	cbCacheInitialized prometheus.Gauge
 	elicitationDropped *prometheus.CounterVec
+	experimentIsoRej   *prometheus.CounterVec
 }
 
 // New constructs and registers the gateway metric set against a
@@ -102,9 +103,16 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	experimentIsoRej, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_experiment_isolation_rejections_total",
+		Help: "Total sessions the §10.7 ExperimentRouter rejected closed because the variant pool's isolation profile was weaker than the session's.",
+	}, []string{"tenant_id", "experiment_id", "variant_id"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
-		storageQuotaLimit, circuitBreakerOpen, elicitationDropped)
+		storageQuotaLimit, circuitBreakerOpen, elicitationDropped, experimentIsoRej)
 	gauge := activeSessions.WithLabelValues()
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
@@ -121,6 +129,7 @@ func New() (*Metrics, error) {
 		cbCacheStale:       cbStale,
 		cbCacheInitialized: cbInit,
 		elicitationDropped: elicitationDropped,
+		experimentIsoRej:   experimentIsoRej,
 	}, nil
 }
 
@@ -128,6 +137,14 @@ func New() (*Metrics, error) {
 // counter for the given drop reason (for example `budget_exceeded`).
 func (m *Metrics) RecordElicitationDrop(reason string) {
 	m.elicitationDropped.WithLabelValues(reason).Inc()
+}
+
+// RecordExperimentIsolationRejection increments the §16.1
+// lenny_experiment_isolation_rejections_total counter when the §10.7
+// ExperimentRouter fails a session closed because the variant pool's
+// isolation profile is weaker than the session's.
+func (m *Metrics) RecordExperimentIsolationRejection(tenantID, experimentID, variantID string) {
+	m.experimentIsoRej.WithLabelValues(tenantID, experimentID, variantID).Inc()
 }
 
 // SetCircuitBreakerOpen updates the §16.1 per-breaker open gauge: 1

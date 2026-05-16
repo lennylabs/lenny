@@ -86,32 +86,33 @@ func jsonReader(w http.ResponseWriter, r *http.Request) interface {
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
-	store           sessionstore.Store
-	clock           func() time.Time
-	idFn            func() string
-	deriveAuditSink DeriveAuditSink
-	uploadIssuer    *uploadtoken.Issuer
-	uploadVerifier  *uploadtoken.Verifier
-	blobs           blobstore.Store
-	executor        executor.Executor
-	transcripts     transcriptstore.Store
-	events          *events.Bus
-	interactions    interactionstore.Store
-	usage           usagestore.Store
-	users           userstore.Store
-	billing         billingstore.Store
-	tenants         tenantstore.Store
-	storageQuota    storagequota.Counter
-	defaultIsoProf  isolation.Profile
-	podBinder       *podsession.Binder
-	podRegistry     *podsession.Registry
-	agentNamespace  string
-	sealer          Sealer
-	treeArchive     treearchive.Store
-	maxOrphanTasks  int
-	evals           evalstore.Store
-	experiments     experimentstore.Store
-	pools           poolstore.Store
+	store              sessionstore.Store
+	clock              func() time.Time
+	idFn               func() string
+	deriveAuditSink    DeriveAuditSink
+	uploadIssuer       *uploadtoken.Issuer
+	uploadVerifier     *uploadtoken.Verifier
+	blobs              blobstore.Store
+	executor           executor.Executor
+	transcripts        transcriptstore.Store
+	events             *events.Bus
+	interactions       interactionstore.Store
+	usage              usagestore.Store
+	users              userstore.Store
+	billing            billingstore.Store
+	tenants            tenantstore.Store
+	storageQuota       storagequota.Counter
+	defaultIsoProf     isolation.Profile
+	podBinder          *podsession.Binder
+	podRegistry        *podsession.Registry
+	agentNamespace     string
+	sealer             Sealer
+	treeArchive        treearchive.Store
+	maxOrphanTasks     int
+	evals              evalstore.Store
+	experiments        experimentstore.Store
+	pools              poolstore.Store
+	experimentReporter ExperimentRejectionReporter
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -210,6 +211,14 @@ type Options struct {
 	// When nil the router skips the isolation check.
 	Pools poolstore.Store
 
+	// ExperimentRejections, when set, receives a report each time the
+	// §10.7 ExperimentRouter fails a session closed on the isolation
+	// monotonicity check. The gateway wires an implementation that
+	// emits the `experiment.isolation_mismatch` event and increments
+	// `lenny_experiment_isolation_rejections_total`. Nil disables
+	// reporting; the 422 rejection still fires.
+	ExperimentRejections ExperimentRejectionReporter
+
 	// Usage is the §15.1 usage / metering accumulator. When set, the
 	// gateway records a session-created event on create and the
 	// `GET /v1/usage` endpoint serves the aggregated report. Nil
@@ -276,32 +285,33 @@ type Options struct {
 // New returns a Server bound to the supplied store.
 func New(store sessionstore.Store, opts Options) *Server {
 	s := &Server{
-		store:           store,
-		clock:           opts.Clock,
-		idFn:            opts.IDFunc,
-		deriveAuditSink: opts.DeriveAuditSink,
-		uploadIssuer:    opts.UploadTokenIssuer,
-		uploadVerifier:  opts.UploadTokenVerifier,
-		blobs:           opts.Blobs,
-		executor:        opts.Executor,
-		transcripts:     opts.Transcripts,
-		evals:           opts.Evals,
-		experiments:     opts.Experiments,
-		pools:           opts.Pools,
-		events:          opts.Events,
-		interactions:    opts.Interactions,
-		usage:           opts.Usage,
-		users:           opts.Users,
-		billing:         opts.Billing,
-		tenants:         opts.Tenants,
-		storageQuota:    opts.StorageQuota,
-		defaultIsoProf:  opts.DefaultIsolationProfile,
-		podBinder:       opts.PodBinder,
-		podRegistry:     opts.PodRegistry,
-		agentNamespace:  opts.AgentNamespace,
-		sealer:          opts.Sealer,
-		treeArchive:     opts.TreeArchive,
-		maxOrphanTasks:  opts.MaxOrphanTasksPerTenant,
+		store:              store,
+		clock:              opts.Clock,
+		idFn:               opts.IDFunc,
+		deriveAuditSink:    opts.DeriveAuditSink,
+		uploadIssuer:       opts.UploadTokenIssuer,
+		uploadVerifier:     opts.UploadTokenVerifier,
+		blobs:              opts.Blobs,
+		executor:           opts.Executor,
+		transcripts:        opts.Transcripts,
+		evals:              opts.Evals,
+		experiments:        opts.Experiments,
+		pools:              opts.Pools,
+		experimentReporter: opts.ExperimentRejections,
+		events:             opts.Events,
+		interactions:       opts.Interactions,
+		usage:              opts.Usage,
+		users:              opts.Users,
+		billing:            opts.Billing,
+		tenants:            opts.Tenants,
+		storageQuota:       opts.StorageQuota,
+		defaultIsoProf:     opts.DefaultIsolationProfile,
+		podBinder:          opts.PodBinder,
+		podRegistry:        opts.PodRegistry,
+		agentNamespace:     opts.AgentNamespace,
+		sealer:             opts.Sealer,
+		treeArchive:        opts.TreeArchive,
+		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }

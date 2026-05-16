@@ -32,6 +32,30 @@ func (e *variantIsolationError) Error() string {
 		e.VariantID, e.VariantPoolIsolation, e.SessionMinIsolation)
 }
 
+// ExperimentRejectionReporter records a §10.7 ExperimentRouter
+// fail-closed rejection. The gateway wires an implementation that
+// emits the `experiment.isolation_mismatch` operational event and
+// increments the `lenny_experiment_isolation_rejections_total` counter
+// (§16.1). Defining the interface here keeps the session server
+// decoupled from the audit and metrics subsystems, matching the
+// DeriveAuditSink pattern. A nil reporter disables reporting; the 422
+// rejection still fires.
+type ExperimentRejectionReporter interface {
+	ReportExperimentIsolationRejection(ctx context.Context, ev ExperimentIsolationRejection)
+}
+
+// ExperimentIsolationRejection is the §16.6 `experiment.isolation_mismatch`
+// event payload. Field names carry through to the operational-event
+// record and the §16.1 counter labels.
+type ExperimentIsolationRejection struct {
+	TenantID             string
+	UserID               string
+	ExperimentID         string
+	VariantID            string
+	SessionMinIsolation  string
+	VariantPoolIsolation string
+}
+
 // applyExperimentRouting runs the §10.7 ExperimentRouter over a
 // session at creation. The tenant's experiments whose baseRuntime
 // matches the session's requested runtime are evaluated in created_at
@@ -105,6 +129,19 @@ func (s *Server) routeExperiment(w http.ResponseWriter, r *http.Request, row *se
 	}
 	var ve *variantIsolationError
 	if errors.As(err, &ve) {
+		// §10.7 / §16.6: the fail-closed rejection emits the
+		// experiment.isolation_mismatch event and increments the
+		// rejection counter alongside the 422.
+		if s.experimentReporter != nil {
+			s.experimentReporter.ReportExperimentIsolationRejection(r.Context(), ExperimentIsolationRejection{
+				TenantID:             row.TenantID,
+				UserID:               row.UserID,
+				ExperimentID:         ve.ExperimentID,
+				VariantID:            ve.VariantID,
+				SessionMinIsolation:  ve.SessionMinIsolation,
+				VariantPoolIsolation: ve.VariantPoolIsolation,
+			})
+		}
 		s.writeError(w, http.StatusUnprocessableEntity, "VARIANT_ISOLATION_UNAVAILABLE",
 			"the assigned experiment variant pool's isolation profile is weaker than the session's minimum",
 			map[string]any{
