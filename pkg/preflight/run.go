@@ -9,10 +9,16 @@ import (
 	"strings"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// lennyManagedLabel selects the workloads the chart labels as
+// Lenny-managed; the host-sharing check scans only these.
+var lennyManagedLabel = client.MatchingLabels{"app.kubernetes.io/name": "lenny"}
 
 // PhaseStampConfigMapName is the name of the §17.2 phase-stamp ConfigMap.
 const PhaseStampConfigMapName = "lenny-deployment-phase-stamp"
@@ -87,7 +93,66 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Decision: CheckPhaseStamp(incoming, stamp, cfg.AcceptDowngrade),
 		})
 	}
+
+	if pods, err := gatherWorkloadPodSpecs(ctx, reader, cfg.Namespace); err != nil {
+		report = append(report, CheckResult{
+			Name:     "host-sharing-flags",
+			Decision: Decision{Reason: "list Lenny-managed workloads: " + err.Error()},
+		})
+	} else {
+		report = append(report, CheckResult{
+			Name:     "host-sharing-flags",
+			Decision: CheckHostSharing(pods),
+		})
+	}
 	return report
+}
+
+// gatherWorkloadPodSpecs lists the Lenny-managed Deployments,
+// DaemonSets, and Jobs in namespace and projects each pod template
+// onto a HostSharingPodSpec.
+func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespace string) ([]HostSharingPodSpec, error) {
+	var out []HostSharingPodSpec
+
+	var deploys appsv1.DeploymentList
+	if err := reader.List(ctx, &deploys, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+		return nil, err
+	}
+	for i := range deploys.Items {
+		d := &deploys.Items[i]
+		out = append(out, projectHostSharing("Deployment/"+d.Name, &d.Spec.Template.Spec))
+	}
+
+	var daemonsets appsv1.DaemonSetList
+	if err := reader.List(ctx, &daemonsets, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+		return nil, err
+	}
+	for i := range daemonsets.Items {
+		ds := &daemonsets.Items[i]
+		out = append(out, projectHostSharing("DaemonSet/"+ds.Name, &ds.Spec.Template.Spec))
+	}
+
+	var jobs batchv1.JobList
+	if err := reader.List(ctx, &jobs, client.InNamespace(namespace), lennyManagedLabel); err != nil {
+		return nil, err
+	}
+	for i := range jobs.Items {
+		j := &jobs.Items[i]
+		out = append(out, projectHostSharing("Job/"+j.Name, &j.Spec.Template.Spec))
+	}
+	return out, nil
+}
+
+// projectHostSharing reduces a pod template to the host-sharing flags
+// the §13.1 check inspects.
+func projectHostSharing(workload string, spec *corev1.PodSpec) HostSharingPodSpec {
+	return HostSharingPodSpec{
+		Workload:              workload,
+		ShareProcessNamespace: spec.ShareProcessNamespace != nil && *spec.ShareProcessNamespace,
+		HostPID:               spec.HostPID,
+		HostNetwork:           spec.HostNetwork,
+		HostIPC:               spec.HostIPC,
+	}
 }
 
 // gatherWebhooks lists the lenny-* ValidatingWebhookConfigurations and

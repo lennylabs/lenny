@@ -4,15 +4,18 @@ package preflight_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
@@ -127,6 +130,69 @@ func TestRunPassesWhenPhaseStampConsistent(t *testing.T) {
 	if resultByName(report, "phase-stamp-consistency").Passed != true {
 		t.Errorf("phase-stamp-consistency failed though compliance is still enabled: %s",
 			resultByName(report, "phase-stamp-consistency").Reason)
+	}
+}
+
+func lennyDeployment(name string, hostPID bool) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: preflightNS,
+			Labels:    map[string]string{"app.kubernetes.io/name": "lenny"},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{HostPID: hostPID},
+			},
+		},
+	}
+}
+
+func TestRunPassesWhenWorkloadsHaveNoHostSharing(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, lennyDeployment("lenny-gateway", false))
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if !resultByName(report, "host-sharing-flags").Passed {
+		t.Errorf("host-sharing-flags failed for a compliant Deployment: %s",
+			resultByName(report, "host-sharing-flags").Reason)
+	}
+}
+
+func TestRunFailsOnHostSharingWorkload(t *testing.T) {
+	objs := allBaselineWebhooks()
+	objs = append(objs, lennyDeployment("lenny-gateway", true)) // hostPID enabled
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if resultByName(report, "host-sharing-flags").Passed {
+		t.Error("host-sharing-flags passed a Deployment with hostPID true")
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a host-sharing workload")
+	}
+}
+
+func TestRunReportsAClusterReadFailureFailClosed(t *testing.T) {
+	c := fake.NewClientBuilder().
+		WithScheme(runScheme(t)).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*admissionregistrationv1.ValidatingWebhookConfigurationList); ok {
+					return errors.New("api server unavailable")
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).
+		Build()
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a cluster read error")
+	}
+	if resultByName(report, "admission-webhook-inventory").Passed {
+		t.Error("admission-webhook-inventory passed despite a failed List")
 	}
 }
 
