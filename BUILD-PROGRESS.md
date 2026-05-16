@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a21b2bf` — Adapter `Attach` handler (§4.7). The bidirectional content stream: a
+  receive loop forwards client envelopes to the runtime's stdin, a send loop streams
+  the runtime's output envelopes back. `RuntimeProcess` gained an `Output` method
+  (`SubprocessExecutor` drains the child's stdout); tested over an in-memory gRPC
+  stream with `-race`. The gateway-side `adapterclient.Attach` remains.
 - `3128fa7` — `Attach` bidirectional content-stream RPC added to
   `schemas/lenny-adapter.proto` (§4.7, §15.4). Reconciles the Phase-1 skeleton proto
   with §4.7's RPC table: `Attach` plus the `AttachClientMessage` / `AttachServerMessage`
@@ -311,12 +316,13 @@ progress; see the progress log.
 6. Build the LLM Proxy so a credential-proxied session can reach a provider.
 
 **The `Attach` content path.** The per-message agent-response round-trip uses the
-`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). `Attach` is now in
-`schemas/lenny-adapter.proto` (commit `3128fa7`); the adapter-server `Attach` handler
-and the gateway-side `adapterclient.Attach` remain. The proto is still a Phase-1
-skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWorkspace`,
-`RunSetup`, `ConfigureWorkspace`, `CheckpointBarrier`, `CoordinatorFence`,
-`ExportPaths`, `Resume`, `Terminate` — which §15.4 mandates reconciling.
+`Attach` bidirectional-streaming RPC (§4.7 RPC table, §15.4). `Attach` is in
+`schemas/lenny-adapter.proto` (`3128fa7`) and the adapter-server handler is built
+(`a21b2bf`); the gateway-side `adapterclient.Attach` and its use in the gateway
+session path remain. The proto is still a Phase-1 skeleton behind §4.7 on other RPCs
+— `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `ConfigureWorkspace`,
+`CheckpointBarrier`, `CoordinatorFence`, `ExportPaths`, `Resume`, `Terminate` — which
+§15.4 mandates reconciling.
 
 ## Next step
 
