@@ -236,6 +236,102 @@ func TestGetErasureJobNotFound(t *testing.T) {
 	}
 }
 
+// awaitUnrestricted polls the user store until the §12.8 processing
+// restriction is lifted — the erase handler clears it in a background
+// goroutine once the job completes.
+func awaitUnrestricted(t *testing.T, users userstore.Store, tenant, subject string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		u, err := users.Get(context.Background(), tenant, subject)
+		if err != nil {
+			t.Fatalf("Get user: %v", err)
+		}
+		if !u.ProcessingRestricted {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("processing restriction was not cleared after the erasure job completed")
+}
+
+func TestEraseUserSetsProcessingRestriction(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release) // never leave the background job blocked
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
+		Name: "sessions",
+		DeleteByUser: func(context.Context, string, string) (int, error) {
+			<-release // hold the job in store_deleting
+			return 1, nil
+		},
+	}}})
+	router, users, _, _ := newErasureAdmin(t, orch)
+	seedUser(t, users, "acme", "alice@acme.com")
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	jobID := resp["jobId"].(string)
+
+	// The job is held in store_deleting; the restriction must be set.
+	u, err := users.Get(context.Background(), "acme", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("Get user: %v", err)
+	}
+	if !u.ProcessingRestricted {
+		t.Error("erase initiation must set ProcessingRestricted on the user")
+	}
+	if u.ErasureJobID != jobID {
+		t.Errorf("ErasureJobID = %q, want %q", u.ErasureJobID, jobID)
+	}
+}
+
+func TestEraseUserClearsRestrictionOnCompletion(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, _, _ := newErasureAdmin(t, orch)
+	seedUser(t, users, "acme", "bob@acme.com")
+
+	rr := eraseUser(t, router.Handler(), "bob@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase: status %d", rr.Code)
+	}
+	awaitUnrestricted(t, users, "acme", "bob@acme.com")
+	u, _ := users.Get(context.Background(), "acme", "bob@acme.com")
+	if u.ErasureJobID != "" {
+		t.Errorf("ErasureJobID = %q, want empty after the job completed", u.ErasureJobID)
+	}
+}
+
+func TestEraseUserKeepsRestrictionOnFailure(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
+		{Name: "broken", DeleteByUser: func(context.Context, string, string) (int, error) {
+			return 0, errors.New("store down")
+		}},
+	}})
+	router, users, jobs, _ := newErasureAdmin(t, orch)
+	seedUser(t, users, "acme", "carol@acme.com")
+
+	rr := eraseUser(t, router.Handler(), "carol@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	jobID := resp["jobId"].(string)
+	job := awaitTerminal(t, jobs, jobID)
+	if job.Phase != erasurejob.PhaseFailed {
+		t.Fatalf("job phase = %q, want failed", job.Phase)
+	}
+	// §12.8: a failed erasure job leaves the restriction in place.
+	u, _ := users.Get(context.Background(), "acme", "carol@acme.com")
+	if !u.ProcessingRestricted {
+		t.Error("a failed erasure job must leave ProcessingRestricted set for an operator to retry")
+	}
+}
+
 func TestGetErasureJobTenantScoped(t *testing.T) {
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
 	router, users, jobs, _ := newErasureAdmin(t, orch)

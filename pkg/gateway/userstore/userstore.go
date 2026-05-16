@@ -54,6 +54,19 @@ type User struct {
 
 	// DeletedAt is the §11.4 `hard_disable` / soft-delete tombstone.
 	DeletedAt time.Time
+
+	// ProcessingRestricted is the §12.8 / GDPR Article 18
+	// restriction-of-processing flag. It is set when a GDPR erasure job
+	// is initiated for the user and cleared when that job completes.
+	// While set, new session creation is rejected with
+	// ERASURE_IN_PROGRESS. A failed erasure job leaves the flag set.
+	ProcessingRestricted bool
+
+	// ErasureJobID is the id of the erasure job that raised
+	// ProcessingRestricted, surfaced in the ERASURE_IN_PROGRESS error so
+	// the caller can poll the job. It is empty when the user is not
+	// restricted.
+	ErasureJobID string
 }
 
 // IsActive reports whether the user is neither disabled nor

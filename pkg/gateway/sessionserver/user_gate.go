@@ -9,10 +9,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
 
-// requireActiveUser enforces §11.4 user invalidation on the
-// session-creation path. When the authenticated principal maps to a
-// registered user that has been soft-disabled, hard-disabled, or
-// fully-revoked, the request is denied with 403 USER_INVALIDATED.
+// requireActiveUser enforces §11.4 user invalidation and the §12.8
+// erasure processing-restriction on the session-creation path. When
+// the authenticated principal maps to a registered user that has been
+// soft-disabled, hard-disabled, or fully-revoked, the request is
+// denied with 403 USER_INVALIDATED; when the user has a pending GDPR
+// erasure job, it is denied with 403 ERASURE_IN_PROGRESS.
 //
 // A principal with no user-registry row is admitted: §11.4 governs
 // invalidation of known users, not registry membership, so dev-header
@@ -41,6 +43,14 @@ func (s *Server) requireActiveUser(w http.ResponseWriter, r *http.Request) bool 
 	if !user.IsActive() {
 		s.writeError(w, http.StatusForbidden, "USER_INVALIDATED",
 			"the authenticated user has been invalidated and cannot create sessions", nil)
+		return false
+	}
+	// §12.8 / GDPR Article 18: a user with a pending erasure request is
+	// blocked from creating new sessions until the job completes.
+	if user.ProcessingRestricted {
+		s.writeError(w, http.StatusForbidden, "ERASURE_IN_PROGRESS",
+			"this user has a pending erasure request; new sessions cannot be created until erasure completes",
+			map[string]any{"userId": principal.Subject, "jobId": user.ErasureJobID})
 		return false
 	}
 	return true

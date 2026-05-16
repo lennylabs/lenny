@@ -109,3 +109,49 @@ func TestCreateAndStartDeniedForDisabledUser(t *testing.T) {
 			rr.Code, rr.Body.String())
 	}
 }
+
+// spec: §12.8 — a user with a pending GDPR erasure job is denied new
+// sessions until the job completes.
+
+func TestCreateDeniedForProcessingRestrictedUser(t *testing.T) {
+	h := gateWithUsers(t, userstore.User{
+		Subject: "frank@acme.com", TenantID: "acme",
+		ProcessingRestricted: true, ErasureJobID: "erasure_abc123",
+	})
+	rr := postSession(t, h, "/v1/sessions", "frank@acme.com", "acme")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("processing-restricted user: status %d, want 403; body %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "ERASURE_IN_PROGRESS") {
+		t.Errorf("denial should carry ERASURE_IN_PROGRESS: %s", body)
+	}
+	if !strings.Contains(body, "erasure_abc123") {
+		t.Errorf("denial should surface the erasure job id so the caller can poll it: %s", body)
+	}
+}
+
+func TestCreateAndStartDeniedForProcessingRestrictedUser(t *testing.T) {
+	h := gateWithUsers(t, userstore.User{
+		Subject: "grace@acme.com", TenantID: "acme", ProcessingRestricted: true,
+	})
+	rr := postSession(t, h, "/v1/sessions/start", "grace@acme.com", "acme")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("/v1/sessions/start with a restricted user: status %d, want 403; body %s",
+			rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "ERASURE_IN_PROGRESS") {
+		t.Errorf("denial should carry ERASURE_IN_PROGRESS: %s", rr.Body.String())
+	}
+}
+
+func TestCreateAllowedAfterProcessingRestrictionCleared(t *testing.T) {
+	// A user whose erasure job completed is no longer restricted.
+	h := gateWithUsers(t, userstore.User{
+		Subject: "heidi@acme.com", TenantID: "acme", ProcessingRestricted: false,
+	})
+	rr := postSession(t, h, "/v1/sessions", "heidi@acme.com", "acme")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("unrestricted user: status %d, want 201; body %s", rr.Code, rr.Body.String())
+	}
+}

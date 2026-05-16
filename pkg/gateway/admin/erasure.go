@@ -78,10 +78,28 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"erasure job could not be started: "+err.Error(), nil)
 		return
 	}
+	// §12.8 / GDPR Article 18: mark the user processing-restricted so
+	// new session creation is rejected while erasure is in progress.
+	_, _ = r.users.Update(req.Context(), tenant, subject, func(u *userstore.User) error {
+		u.ProcessingRestricted = true
+		u.ErasureJobID = jobID
+		return nil
+	})
 	// §12.8: the job runs in the background and the API returns the job
 	// id immediately. The job uses a detached context so it outlives
-	// the request.
-	go func() { _ = r.erasureRunner.Run(context.Background(), jobID) }()
+	// the request. The processing restriction is lifted once the job
+	// completes; a failed job leaves it set for an operator to retry.
+	go func() {
+		_ = r.erasureRunner.Run(context.Background(), jobID)
+		job, err := r.erasureJobs.Get(context.Background(), jobID)
+		if err == nil && job.Phase == erasurejob.PhaseCompleted {
+			_, _ = r.users.Update(context.Background(), tenant, subject, func(u *userstore.User) error {
+				u.ProcessingRestricted = false
+				u.ErasureJobID = ""
+				return nil
+			})
+		}
+	}()
 
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.user.erasure_initiated", subject, map[string]any{
