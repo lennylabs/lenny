@@ -38,6 +38,16 @@ func (r *Router) WithErasure(runner ErasureRunner, jobs erasurejob.Store) *Route
 // tenant-admin's tenant is taken from the token.
 type EraseUserRequest struct {
 	TenantID string `json:"tenantId,omitempty"`
+
+	// AcknowledgeHoldOverride, when true, bypasses the §12.8 step-0
+	// legal-hold preflight. The override requires a non-empty
+	// Justification and the platform-admin role; a tenant-admin cannot
+	// self-override.
+	AcknowledgeHoldOverride bool `json:"acknowledgeHoldOverride,omitempty"`
+
+	// Justification is the free-text reason recorded with a legal-hold
+	// override. Required when AcknowledgeHoldOverride is set.
+	Justification string `json:"justification,omitempty"`
 }
 
 // handleEraseUser implements POST /v1/admin/users/{user_id}/erase —
@@ -84,17 +94,50 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			"legal-hold preflight failed: "+err.Error(), nil)
 		return
 	}
+	// overrideReceipt carries the §12.8 legal-hold override fields into
+	// the completion receipt; it stays nil when no override occurred.
+	var overrideReceipt map[string]any
 	if len(held) > 0 {
-		r.emit(req.Context(), principal, "gdpr.erasure_blocked_by_hold", subject, map[string]any{
-			"tenantId":     tenant,
-			"userId":       subject,
-			"holdCount":    len(held),
-			"heldSessions": held,
+		if !body.AcknowledgeHoldOverride {
+			r.emit(req.Context(), principal, "gdpr.erasure_blocked_by_hold", subject, map[string]any{
+				"tenantId":     tenant,
+				"userId":       subject,
+				"holdCount":    len(held),
+				"heldSessions": held,
+			})
+			writeError(w, http.StatusConflict, "ERASURE_BLOCKED_BY_LEGAL_HOLD",
+				"the user has one or more sessions under a legal hold; erasure is blocked until the holds are released",
+				map[string]any{"heldSessions": held})
+			return
+		}
+		// §12.8: a platform-admin may override the preflight with a
+		// recorded justification. A tenant-admin cannot self-override.
+		if body.Justification == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST",
+				"acknowledgeHoldOverride requires a non-empty justification", nil)
+			return
+		}
+		if !principal.HasRole(auth.RolePlatformAdmin) {
+			writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"a legal-hold override requires the platform-admin role", nil)
+			return
+		}
+		overrideReceipt = map[string]any{
+			"legalHoldOverride":     true,
+			"overrideBy":            principal.Subject,
+			"overrideJustification": body.Justification,
+			"overriddenHolds":       held,
+		}
+		r.emit(req.Context(), principal, "gdpr.legal_hold_overridden", subject, map[string]any{
+			"tenantId":      tenant,
+			"userId":        subject,
+			"overrideBy":    principal.Subject,
+			"justification": body.Justification,
+			"holdCount":     len(held),
+			"heldSessions":  held,
 		})
-		writeError(w, http.StatusConflict, "ERASURE_BLOCKED_BY_LEGAL_HOLD",
-			"the user has one or more sessions under a legal hold; erasure is blocked until the holds are released",
-			map[string]any{"heldSessions": held})
-		return
+		// The underlying legal-hold rows are left set; the erasure
+		// proceeds.
 	}
 	jobID, err := r.erasureRunner.Start(req.Context(), tenant, subject)
 	if err != nil {
@@ -126,13 +169,18 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 			return nil
 		})
 		// §12.8 erasure receipt: the gdpr.* audit event is the
-		// authoritative proof that the erasure was carried out.
-		r.emit(context.Background(), principal, "gdpr.erasure_completed", subject, map[string]any{
+		// authoritative proof that the erasure was carried out. When a
+		// legal-hold override was exercised, the receipt records it.
+		receipt := map[string]any{
 			"tenantId": tenant,
 			"jobId":    jobID,
 			"deleted":  job.Deleted,
 			"total":    job.Total,
-		})
+		}
+		for k, v := range overrideReceipt {
+			receipt[k] = v
+		}
+		r.emit(context.Background(), principal, "gdpr.erasure_completed", subject, receipt)
 	}()
 
 	r.emit(req.Context(), principal, "admin.user.erasure_initiated", subject, map[string]any{

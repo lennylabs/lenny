@@ -346,6 +346,65 @@ func TestEraseUserProceedsWhenNoHold(t *testing.T) {
 	}
 }
 
+func TestEraseUserHoldOverrideProceeds(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, sessions, audit := newErasureAdminWithSessions(t, orch)
+	seedUser(t, users, "acme", "alice@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_held", TenantID: "acme", UserID: "alice@acme.com", LegalHold: true,
+	})
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com", admin.EraseUserRequest{
+		TenantID: "acme", AcknowledgeHoldOverride: true, Justification: "court order lifted, ticket-9",
+	}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("override erase: status %d, want 202; body %s", rr.Code, rr.Body.String())
+	}
+	// §12.8: the override is recorded synchronously as gdpr.legal_hold_overridden.
+	override := awaitAuditEvent(t, audit, "gdpr.legal_hold_overridden")
+	if override.Detail["justification"] != "court order lifted, ticket-9" {
+		t.Errorf("override event justification = %v", override.Detail["justification"])
+	}
+	// The completion receipt records that an override was exercised.
+	receipt := awaitAuditEvent(t, audit, "gdpr.erasure_completed")
+	if receipt.Detail["legalHoldOverride"] != true {
+		t.Errorf("completion receipt should record legalHoldOverride: %+v", receipt.Detail)
+	}
+}
+
+func TestEraseUserHoldOverrideRequiresJustification(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, sessions, _ := newErasureAdminWithSessions(t, orch)
+	seedUser(t, users, "acme", "bob@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_b", TenantID: "acme", UserID: "bob@acme.com", LegalHold: true,
+	})
+
+	rr := eraseUser(t, router.Handler(), "bob@acme.com", admin.EraseUserRequest{
+		TenantID: "acme", AcknowledgeHoldOverride: true,
+	}, withAdminPrincipal)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("override without justification: status %d, want 400; body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestEraseUserHoldOverrideRequiresPlatformAdmin(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, sessions, _ := newErasureAdminWithSessions(t, orch)
+	seedUser(t, users, "acme", "carol@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_c", TenantID: "acme", UserID: "carol@acme.com", LegalHold: true,
+	})
+
+	// A tenant-admin cannot self-override even with a justification.
+	rr := eraseUser(t, router.Handler(), "carol@acme.com", admin.EraseUserRequest{
+		AcknowledgeHoldOverride: true, Justification: "ticket-9",
+	}, func(req *http.Request) *http.Request { return withTenantAdminFor(req, "acme") })
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("tenant-admin override: status %d, want 403; body %s", rr.Code, rr.Body.String())
+	}
+}
+
 // awaitUnrestricted polls the user store until the §12.8 processing
 // restriction is lifted — the erase handler clears it in a background
 // goroutine once the job completes.
