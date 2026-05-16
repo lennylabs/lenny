@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5974b11` — `drainreadiness` gateway endpoint (§12.5). The `GET /internal/drain-readiness`
+  endpoint runs a MinIO liveness probe within a 2s timeout and returns the §12.5
+  ready/not-ready JSON bodies; the probe is a `Prober` interface so the MinIO HeadBucket
+  check wires in at the gateway.
+- `a6c627c` — `drain_readiness` decision logic (§12.5, §13.2). The pure decision for the
+  `lenny-drain-readiness` webhook: the node drain-force override admits an eviction as a
+  forced drain, a healthy §12.5 MinIO probe admits it, and an unhealthy or unreachable
+  probe rejects it fail-closed. The webhook handler, gateway endpoint, and Helm manifest
+  follow.
 - `e4d9a8b` — `credassign.Service` (§4.9). The credential-assignment service: at session
   start it selects a pool credential per the assignment strategy, mints the
   `CredentialLease`, records it in `credleasestore`, and caches the real upstream
@@ -373,7 +382,7 @@ this state.
 | 6     | Interactive sessions, SDKs                                   | Partial        | The interactive-session endpoints, message injection, and replay are built. The Go, TypeScript, and Python client SDKs are not.                                                                                                                                                                                                              |
 | 6.5   | Incremental load test (streaming)                            | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 7     | Policy engine (quotas, budgets, audit hooks)                 | Mostly done    | `pkg/circuitbreaker`, `pkg/idempotency`, quota enforcement, user invalidation, billing events, the usage endpoints, and the Redis breaker cache are built. The external interceptor registration framework needs confirmation.                                                                                                               |
-| 8     | Checkpoint/resume, drain-readiness webhook                   | Substrate only | `pkg/checkpoint` exists. The gateway checkpoint-and-resume orchestration and the `lenny-drain-readiness` webhook are not built.                                                                                                                                                                                                              |
+| 8     | Checkpoint/resume, drain-readiness webhook                   | Partial        | `pkg/checkpoint` exists. The `lenny-drain-readiness` webhook has its decision logic (`pkg/admission/drain_readiness`) and the gateway `GET /internal/drain-readiness` endpoint (`pkg/gateway/drainreadiness`). The webhook HTTP handler, the `cmd/lenny-webhook` route, the Helm manifest, the gateway endpoint wiring, and the gateway checkpoint-and-resume orchestration are not built.                                                                                                                                              |
 | 9     | Delegation, delegation-echo                                  | Partial        | `pkg/delegation` and the gateway delegation service exist. The `delegation-echo` runtime and parts of the platform MCP tool surface are not.                                                                                                                                                                                                 |
 | 9.5   | Incremental load test (delegation)                           | Not started    |                                                                                                                                                                                                                                                                                                                                              |
 | 10    | MCP fabric, elicitation chain                                | Substrate only | `pkg/elicitation` exists. The virtual MCP server and the elicitation chain are not built.                                                                                                                                                                                                                                                    |
@@ -483,13 +492,13 @@ Phase-1 skeleton behind §4.7 on other RPCs — `PrepareWorkspace`, `FinalizeWor
 
 ## Next step
 
-Wire the §4.9 credential-leasing service into `cmd/lenny-gateway`. `newLLMProxyServer`
-must accept a shared `credleasestore` and `credcache` rather than constructing private
-ones, so the `credassign.Service` writes the leases and credentials the proxy
-`Handler` reads. The gateway then constructs the `credassign.Service` from the shared
-stores. The credential pools the service assigns from come from the §4.9 credential-pool
-configuration (a Postgres-backed `CredentialPoolStore`), which is the dependency that
-must be defined before session start can call `Assign`.
+Build the `lenny-drain-readiness` webhook HTTP handler (§12.5). The handler intercepts
+CREATE on the `pods/eviction` subresource, resolves the evicted pod's node, reads the
+`lenny.dev/drain-force` override annotation, calls the gateway `GET /internal/drain-readiness`
+endpoint, and applies `drain_readiness.Decide`. It needs a Kubernetes client to resolve
+pod → node and an HTTP client to reach the gateway endpoint. After the handler, the
+`cmd/lenny-webhook` route, the feature-gated Helm manifest, and the `cmd/lenny-gateway`
+wiring of the drain-readiness endpoint complete the §12.5 webhook.
 
 ## Test status
 
