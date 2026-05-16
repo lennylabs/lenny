@@ -8,12 +8,13 @@
 //
 // v1 registers the core §8.5 tools:
 //
-//   - `lenny/create_session`   — create a session.
-//   - `lenny/send_message`     — deliver a message to a session.
-//   - `lenny/get_task_tree`    — read the §8 delegation task tree.
-//   - `lenny/cancel_child`     — cancel a child session and cascade.
-//   - `lenny/discover_agents`  — list §8 delegation targets.
-//   - `lenny/delegate_task`    — spawn a child session (§8.2).
+//   - `lenny/create_session`      — create a session.
+//   - `lenny/send_message`        — deliver a message to a session.
+//   - `lenny/get_task_tree`       — read the §8 delegation task tree.
+//   - `lenny/cancel_child`        — cancel a child session and cascade.
+//   - `lenny/discover_agents`     — list §8 delegation targets.
+//   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
+//   - `lenny/delegate_task`       — spawn a child session (§8.2).
 //
 // Each handler runs the same validation as the equivalent REST
 // endpoint so the REST and MCP surfaces stay in lockstep per the
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -216,6 +218,49 @@ func Register(srv *mcp.Server, deps Deps) {
 		body, _ := json.Marshal(struct {
 			Cancelled []string `json:"cancelled"`
 		}{Cancelled: cancelled})
+		return textResult(string(body)), nil
+	})
+
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/set_tracing_context",
+		Description: "Register §8.3 tracing identifiers on a session for propagation through delegation.",
+		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","context"],"properties":{"sessionId":{"type":"string"},"context":{"type":"object","additionalProperties":{"type":"string"}}}}`),
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		var in struct {
+			SessionID string            `json:"sessionId"`
+			Context   map[string]string `json:"context"`
+		}
+		if err := json.Unmarshal(args, &in); err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if in.SessionID == "" {
+			return mcp.ToolResult{}, errors.New("sessionId is required")
+		}
+		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		if err != nil {
+			return mcp.ToolResult{}, fmt.Errorf("session lookup: %w", err)
+		}
+		if session.IsTerminal(row.State) {
+			return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+		}
+		// §8.3: new entries merge with the inherited context and cannot
+		// overwrite or remove existing (parent) entries. Validation runs
+		// on the merged result that will be registered.
+		merged := tracing.Merge(row.TracingContext, in.Context)
+		if err := tracing.Validate(merged); err != nil {
+			return mcp.ToolResult{}, err
+		}
+		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
+			row.TracingContext = merged
+			return nil
+		})
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		body, _ := json.Marshal(struct {
+			SessionID      string            `json:"sessionId"`
+			TracingContext map[string]string `json:"tracingContext"`
+		}{SessionID: updated.ID, TracingContext: updated.TracingContext})
 		return textResult(string(body)), nil
 	})
 

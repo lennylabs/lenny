@@ -204,3 +204,37 @@ func TestDelegateInheritsParentIsolationWhenUnset(t *testing.T) {
 		t.Errorf("child isolation: got %q, want microvm", res.Child.IsolationProfile)
 	}
 }
+
+func TestDelegatePropagatesTracingContext(t *testing.T) {
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	parentCtx := map[string]string{"trace-id": "t-root", "span_id": "s-1"}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		TracingContext: parentCtx,
+		CreatedAt:      now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed parent: %v", err)
+	}
+	svc := newService(t, store, func() string { return "sess_child" })
+
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	// §8.3: the child inherits the parent's tracingContext.
+	if res.Child.TracingContext["trace-id"] != "t-root" || res.Child.TracingContext["span_id"] != "s-1" {
+		t.Errorf("child tracingContext = %v, want the parent's entries", res.Child.TracingContext)
+	}
+	// The child's map is a copy — mutating it must not reach the parent.
+	res.Child.TracingContext["trace-id"] = "mutated"
+	if parentCtx["trace-id"] != "t-root" {
+		t.Error("child tracingContext aliases the parent's map")
+	}
+}

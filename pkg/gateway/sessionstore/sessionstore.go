@@ -86,6 +86,14 @@ type Session struct {
 	// not a reference-counted dependency.
 	ParentWorkspaceRef string
 
+	// TracingContext is the §8.3 delegation tracingContext: opaque
+	// tracing identifiers a runtime registers via
+	// lenny/set_tracing_context. The gateway copies a parent's
+	// TracingContext onto each child it delegates so native traces
+	// stitch into the parent's trace tree. Nil when no context was
+	// registered.
+	TracingContext map[string]string
+
 	// RetentionExpiresAt is the §7.1 artifact retention deadline at
 	// which the background GC job is eligible to delete this
 	// session's workspace, transcript, and logs. Zero when retention

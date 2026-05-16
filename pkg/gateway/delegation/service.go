@@ -201,8 +201,11 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		State:            session.StateCreated,
 		IsolationProfile: childProfile,
 		ParentSessionID:  parent.ID,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		// §8.3: the gateway attaches the parent's registered
+		// tracingContext to every child it delegates.
+		TracingContext: copyTracingContext(parent.TracingContext),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err
@@ -246,6 +249,20 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 	}
 	// The parent's depth is its index in the root-first chain.
 	return lineage, len(chain) - 1, nil
+}
+
+// copyTracingContext returns a deep copy of the §8.3 tracingContext so
+// a delegated child does not alias the parent's map. Returns nil when
+// the parent registered no context.
+func copyTracingContext(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }
 
 // randomChildID returns a fresh §12.6 UUIDv8 session identifier for a

@@ -353,6 +353,79 @@ func TestDiscoverAgentsToolExcludesSoftDeleted(t *testing.T) {
 	}
 }
 
+func TestSetTracingContextTool(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_t", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_t","context":{"langsmith_run_id":"run_abc"}}`)
+	text := resultText(t, resp)
+	if !strings.Contains(text, "run_abc") {
+		t.Errorf("set_tracing_context result: %q", text)
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_t")
+	if row.TracingContext["langsmith_run_id"] != "run_abc" {
+		t.Errorf("stored tracingContext = %v, want langsmith_run_id=run_abc", row.TracingContext)
+	}
+}
+
+func TestSetTracingContextToolMerges(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_t", session.StateRunning, "")
+
+	// First registration — the inherited / parent entries.
+	resultText(t, call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_t","context":{"trace-id":"parent","span_id":"p1"}}`))
+	// Second registration — a child extending the context. The
+	// colliding key must not be overwritten (§8.3 merge semantics).
+	resultText(t, call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_t","context":{"trace-id":"override-attempt","run_id":"c1"}}`))
+
+	row, _ := store.Get(context.Background(), "acme", "sess_t")
+	if row.TracingContext["trace-id"] != "parent" {
+		t.Errorf("trace-id = %q, want parent — an existing entry must survive", row.TracingContext["trace-id"])
+	}
+	if row.TracingContext["run_id"] != "c1" {
+		t.Errorf("run_id = %q, want c1 — a new entry should be added", row.TracingContext["run_id"])
+	}
+}
+
+func TestSetTracingContextToolRejectsSensitiveKey(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_t", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_t","context":{"api_token":"abc"}}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("a sensitive key should be a tool error: %+v", resp)
+	}
+}
+
+func TestSetTracingContextToolRejectsURLValue(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_t", session.StateRunning, "")
+
+	resp := call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_t","context":{"endpoint":"https://evil.example.com"}}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("a URL value should be a tool error: %+v", resp)
+	}
+}
+
+func TestSetTracingContextToolRejectsTerminalSession(t *testing.T) {
+	srv, store := newMCP(t)
+	mkSession(t, store, "sess_done", session.StateCompleted, "")
+
+	resp := call(t, srv.Handler(), "lenny/set_tracing_context",
+		`{"sessionId":"sess_done","context":{"trace-id":"x"}}`)
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Errorf("a terminal session should be a tool error: %+v", resp)
+	}
+}
+
 func TestToolsListIncludesLennyTools(t *testing.T) {
 	srv, _ := newMCP(t)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -371,7 +444,8 @@ func TestToolsListIncludesLennyTools(t *testing.T) {
 	for _, want := range []string{
 		"lenny/create_session", "lenny/send_message",
 		"lenny/get_task_tree", "lenny/cancel_child",
-		"lenny/discover_agents", "lenny/delegate_task",
+		"lenny/discover_agents", "lenny/set_tracing_context",
+		"lenny/delegate_task",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q: %v", want, names)
