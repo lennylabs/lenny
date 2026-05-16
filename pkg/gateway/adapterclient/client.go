@@ -96,6 +96,54 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 	return resp.GetAcknowledged(), nil
 }
 
+// AttachStream is a live §4.7 bidirectional content stream to a pod's
+// adapter. Send forwards a client-to-agent envelope; Recv returns the
+// next agent-to-gateway envelope.
+type AttachStream struct {
+	stream    grpc.BidiStreamingClient[adapterv1.AttachClientMessage, adapterv1.AttachServerMessage]
+	sessionID string
+}
+
+// Attach opens the §4.7 content stream for sessionID and binds it with
+// an envelope-free first message, so the returned stream is ready to
+// carry content. The caller closes the stream by cancelling ctx.
+func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, error) {
+	stream, err := c.rpc.Attach(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adapterclient: open attach stream: %w", err)
+	}
+	if err := stream.Send(&adapterv1.AttachClientMessage{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}); err != nil {
+		return nil, fmt.Errorf("adapterclient: bind attach stream: %w", err)
+	}
+	return &AttachStream{stream: stream, sessionID: sessionID}, nil
+}
+
+// Send forwards a §15.4.1 client-to-agent envelope to the agent.
+func (a *AttachStream) Send(envelope []byte) error {
+	return a.stream.Send(&adapterv1.AttachClientMessage{
+		SessionId:    &adapterv1.SessionId{Value: a.sessionID},
+		EnvelopeJson: envelope,
+	})
+}
+
+// Recv returns the next §15.4.1 agent-to-gateway envelope. It returns
+// io.EOF once the runtime's output stream ends.
+func (a *AttachStream) Recv() ([]byte, error) {
+	msg, err := a.stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+	return msg.GetEnvelopeJson(), nil
+}
+
+// CloseSend signals that the gateway will send no further client
+// envelopes; the adapter keeps streaming runtime output until it ends.
+func (a *AttachStream) CloseSend() error {
+	return a.stream.CloseSend()
+}
+
 // Shutdown terminates the pod's runtime and releases the session. The
 // returned bool reports whether the runtime exited cleanly.
 func (c *Client) Shutdown(ctx context.Context, sessionID string) (bool, error) {

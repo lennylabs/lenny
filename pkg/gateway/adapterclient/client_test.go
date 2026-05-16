@@ -4,6 +4,7 @@ package adapterclient_test
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type fakeRuntime struct {
 	interrupted     bool
 	interruptedHard bool
 	closed          bool
+	output          chan []byte // when set, Output returns it
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -36,6 +38,9 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 }
 
 func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
+	if f.output != nil {
+		return f.output, nil
+	}
 	ch := make(chan []byte)
 	close(ch)
 	return ch, nil
@@ -171,6 +176,39 @@ func TestSendMessageRejectsAnUnassignedSession(t *testing.T) {
 	err := cl.SendMessage(context.Background(), "sess-absent", []byte(`{"type":"user"}`))
 	if err == nil {
 		t.Error("SendMessage to an unassigned session succeeded, want a failure")
+	}
+}
+
+func TestAttachStreamsRuntimeOutput(t *testing.T) {
+	rt := &fakeRuntime{output: make(chan []byte, 4)}
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	stream, err := cl.Attach(ctx, "sess-x")
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	defer func() { _ = stream.CloseSend() }()
+
+	rt.output <- []byte(`{"type":"response","text":"hi"}`)
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(got) != `{"type":"response","text":"hi"}` {
+		t.Errorf("Recv returned %s, want the runtime output envelope", got)
+	}
+
+	// Closing the runtime output ends the stream.
+	close(rt.output)
+	if _, err := stream.Recv(); err != io.EOF {
+		t.Errorf("Recv after the runtime output closed = %v, want io.EOF", err)
 	}
 }
 
