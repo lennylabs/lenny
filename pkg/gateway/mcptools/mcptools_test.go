@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -71,6 +72,23 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 		TenantID:            "acme",
 	})
 	return srv, store, reg
+}
+
+// newMCPForArchive builds the MCP server with a §8.10 tree archive and
+// returns the archive so the cancel_child archiving test can read it.
+func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store) {
+	t.Helper()
+	store := memstore.New()
+	archive := treearchive.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:       store,
+		TreeArchive: archive,
+		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:      func() string { return "sess_mcp" },
+		TenantID:    "acme",
+	})
+	return srv, store, archive
 }
 
 // waitPending blocks until a request is registered, or fails the test.
@@ -406,6 +424,35 @@ func TestCancelChildToolRejectsTerminalChild(t *testing.T) {
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("cancelling a terminal child should be a tool error: %+v", resp)
+	}
+}
+
+func TestCancelChildArchivesCancelledSubtree(t *testing.T) {
+	srv, store, archive := newMCPForArchive(t)
+	mkSession(t, store, "sess_root", session.StateRunning, "")
+	mkSession(t, store, "sess_a", session.StateRunning, "sess_root")
+	mkSession(t, store, "sess_a1", session.StateRunning, "sess_a")
+
+	resp := call(t, srv.Handler(), "lenny/cancel_child",
+		`{"parentSessionId":"sess_root","childSessionId":"sess_a"}`)
+	resultText(t, resp) // fails the test on a tool error
+
+	// §8.10: every cancelled subtree node is archived under the tree
+	// root (sess_root), in original-settlement order.
+	archived, err := archive.Replay(context.Background(), "acme", "sess_root")
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if len(archived) != 2 {
+		t.Fatalf("archived %d nodes, want 2 (sess_a, sess_a1)", len(archived))
+	}
+	for _, n := range archived {
+		if n.State != string(session.StateCancelled) {
+			t.Errorf("archived node %s state = %q, want cancelled", n.NodeSessionID, n.State)
+		}
+		if !strings.Contains(n.Result, "CHILD_CANCELLED") {
+			t.Errorf("archived node %s result %q missing the cancellation error", n.NodeSessionID, n.Result)
+		}
 	}
 }
 

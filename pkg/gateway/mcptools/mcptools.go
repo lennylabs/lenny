@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -74,6 +75,11 @@ type Deps struct {
 	// InputWaits is the §8.5 lenny/request_input pending-call registry.
 	// Optional — when nil, lenny/request_input is not registered.
 	InputWaits *inputwait.Registry
+
+	// TreeArchive is the §8.10 session_tree_archive. Optional — when
+	// non-nil, lenny/cancel_child archives each cancelled child's
+	// §8.8 TaskResult so a resumed parent can replay it.
+	TreeArchive treearchive.Store
 
 	// RequestInputTimeout caps a lenny/request_input block per the
 	// §11.3 maxRequestInputWaitSeconds limit. Zero selects the default.
@@ -274,6 +280,13 @@ func Register(srv *mcp.Server, deps Deps) {
 		cancelled, err := cancelSubtree(ctx, deps.Store, tenant, child, all)
 		if err != nil {
 			return mcp.ToolResult{}, err
+		}
+		// §8.10: a child reaching a terminal state is archived to the
+		// session_tree_archive so a resumed parent can replay its
+		// result. Archiving is best-effort observability — the
+		// cancellation itself has already committed.
+		if deps.TreeArchive != nil {
+			archiveCancelled(ctx, deps.TreeArchive, tenant, treeRoot(child, all), cancelled, clock())
 		}
 		body, _ := json.Marshal(struct {
 			Cancelled []string `json:"cancelled"`
@@ -719,6 +732,55 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 	}
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// treeRoot returns the id of the §8 delegation tree's root by walking
+// the ParentSessionID chain up from start. The seen set guards against
+// a malformed cyclic chain.
+func treeRoot(start sessionstore.Session, all []sessionstore.Session) string {
+	byID := make(map[string]sessionstore.Session, len(all))
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	cur := start
+	seen := map[string]bool{}
+	for cur.ParentSessionID != "" && !seen[cur.ID] {
+		seen[cur.ID] = true
+		next, ok := byID[cur.ParentSessionID]
+		if !ok {
+			break
+		}
+		cur = next
+	}
+	return cur.ID
+}
+
+// archiveCancelled records each cancelled subtree node in the §8.10
+// session_tree_archive, keyed by the delegation tree's root. Archiving
+// is best-effort: an archive error does not undo the cancellation, so
+// the error is dropped.
+func archiveCancelled(ctx context.Context, archive treearchive.Store,
+	tenant, rootSessionID string, cancelled []string, now time.Time) {
+
+	for _, id := range cancelled {
+		result, _ := json.Marshal(taskResult{
+			SchemaVersion: 1,
+			TaskID:        id,
+			State:         string(session.StateCancelled),
+			Error: &taskError{
+				Code:    "CHILD_CANCELLED",
+				Message: "child session ended in state cancelled",
+			},
+		})
+		_ = archive.Archive(ctx, treearchive.ArchivedNode{
+			TenantID:      tenant,
+			RootSessionID: rootSessionID,
+			NodeSessionID: id,
+			State:         string(session.StateCancelled),
+			Result:        string(result),
+			SettledAt:     now,
+		})
+	}
 }
 
 func textResult(s string) mcp.ToolResult {

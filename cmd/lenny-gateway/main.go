@@ -112,6 +112,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
@@ -435,6 +436,7 @@ func main() {
 		Interceptors: interceptor.NewChain(),
 		Events:       eventBus,
 		InputWaits:   inputwait.NewRegistry(),
+		TreeArchive:  treearchive.NewMemory(),
 		TenantID:     "default",
 	})
 
