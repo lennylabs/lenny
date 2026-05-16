@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7b34036` — `podsession.Binder.Release` (§6.2). The teardown counterpart to `Bind`:
+  shuts the pod's runtime down through the adapter, closes the connection, and
+  transitions the Sandbox `claimed → draining` so the reconciler reclaims the pod.
+  The gateway↔pod session lifecycle — claim, start, content stream, teardown — is now
+  built as components; the gateway-binary session-path wiring remains.
 - `3390203` — Gateway-side `adapterclient.Attach` (§4.7). `Client.Attach` opens and
   binds the content stream; `AttachStream.Send` / `Recv` / `CloseSend` wrap the bidi
   stream. The §4.7 content path now has its proto RPC, adapter handler, and gateway
