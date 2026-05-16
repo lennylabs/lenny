@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 )
@@ -275,6 +278,71 @@ func TestGetErasureJobNotFound(t *testing.T) {
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("get unknown job: status %d, want 404", rr.Code)
+	}
+}
+
+// newErasureAdminWithSessions builds an erasure admin router that also
+// has a SessionStore wired, so the §12.8 legal-hold preflight can run.
+func newErasureAdminWithSessions(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, userstore.Store, sessionstore.Store, *recordingAudit) {
+	t.Helper()
+	users := userstore.NewMemory()
+	jobs := erasurejob.NewMemory()
+	sessions := memstore.New()
+	audit := &recordingAudit{}
+	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: erasureClock,
+		Audit: audit,
+	}).WithUsers(users).WithErasure(runner, jobs).WithSessions(sessions)
+	return router, users, sessions, audit
+}
+
+func TestEraseUserBlockedByLegalHold(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, sessions, audit := newErasureAdminWithSessions(t, orch)
+	seedUser(t, users, "acme", "alice@acme.com")
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_held", TenantID: "acme", UserID: "alice@acme.com", LegalHold: true,
+	})
+
+	rr := eraseUser(t, router.Handler(), "alice@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("erase with a held session: status %d, want 409; body %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "ERASURE_BLOCKED_BY_LEGAL_HOLD") {
+		t.Errorf("rejection should carry ERASURE_BLOCKED_BY_LEGAL_HOLD: %s", rr.Body.String())
+	}
+	// §12.8: the job never initiated, so the processing restriction is
+	// not applied.
+	u, _ := users.Get(context.Background(), "acme", "alice@acme.com")
+	if u.ProcessingRestricted {
+		t.Error("a hold-blocked erasure must not set the processing restriction")
+	}
+	found := false
+	for _, ev := range audit.snapshot() {
+		if ev.Type == "gdpr.erasure_blocked_by_hold" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a hold-blocked erasure must emit gdpr.erasure_blocked_by_hold")
+	}
+}
+
+func TestEraseUserProceedsWhenNoHold(t *testing.T) {
+	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
+	router, users, sessions, _ := newErasureAdminWithSessions(t, orch)
+	seedUser(t, users, "acme", "bob@acme.com")
+	// A session the user owns but which is not under hold must not block.
+	seedSession(t, sessions, sessionstore.Session{
+		ID: "sess_free", TenantID: "acme", UserID: "bob@acme.com", LegalHold: false,
+	})
+
+	rr := eraseUser(t, router.Handler(), "bob@acme.com",
+		admin.EraseUserRequest{TenantID: "acme"}, withAdminPrincipal)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase with no held session: status %d, want 202; body %s", rr.Code, rr.Body.String())
 	}
 }
 

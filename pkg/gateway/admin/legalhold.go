@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -76,4 +77,26 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 		"tenantId":  body.TenantID,
 		"legalHold": updated.LegalHold,
 	})
+}
+
+// heldSessions returns the ids of the user's sessions that carry a
+// §12.8 legal hold. An empty result means the §12.8 erasure
+// legal-hold preflight passes and the user may be erased. When no
+// SessionStore is wired the preflight cannot run and the result is
+// empty.
+func (r *Router) heldSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
+	if r.sessions == nil {
+		return nil, nil
+	}
+	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	var held []string
+	for _, s := range rows {
+		if s.UserID == userID && s.LegalHold {
+			held = append(held, s.ID)
+		}
+	}
+	return held, nil
 }

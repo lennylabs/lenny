@@ -46,9 +46,10 @@ type EraseUserRequest struct {
 // returns the job id immediately so the caller polls
 // GET /v1/admin/erasure-jobs/{job_id} for completion.
 //
-// The §12.8 legal-hold preflight, billing-event pseudonymization, and
-// the processing-restriction flag are not yet enforced here; the
-// runner covers the store-deletion core of the erasure sequence.
+// The §12.8 step-0 legal-hold preflight is enforced: a user with a
+// legally-held session is rejected before the job initiates. The
+// billing-event pseudonymization step is not yet enforced; the runner
+// covers the store-deletion core of the erasure sequence.
 func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	subject := req.PathValue("user_id")
 	var body EraseUserRequest
@@ -72,6 +73,29 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	principal, _ := authmw.FromContext(req.Context())
+	// §12.8 step 0: legal-hold preflight. A user with a legally-held
+	// session is rejected synchronously before the job initiates, so
+	// the processing restriction is never applied. Destroying data
+	// under a preservation order would be spoliation.
+	held, err := r.heldSessions(req.Context(), tenant, subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"legal-hold preflight failed: "+err.Error(), nil)
+		return
+	}
+	if len(held) > 0 {
+		r.emit(req.Context(), principal, "gdpr.erasure_blocked_by_hold", subject, map[string]any{
+			"tenantId":     tenant,
+			"userId":       subject,
+			"holdCount":    len(held),
+			"heldSessions": held,
+		})
+		writeError(w, http.StatusConflict, "ERASURE_BLOCKED_BY_LEGAL_HOLD",
+			"the user has one or more sessions under a legal hold; erasure is blocked until the holds are released",
+			map[string]any{"heldSessions": held})
+		return
+	}
 	jobID, err := r.erasureRunner.Start(req.Context(), tenant, subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -85,7 +109,6 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		u.ErasureJobID = jobID
 		return nil
 	})
-	principal, _ := authmw.FromContext(req.Context())
 	// §12.8: the job runs in the background and the API returns the job
 	// id immediately. The job uses a detached context so it outlives
 	// the request. On completion the processing restriction is lifted
