@@ -1,0 +1,22 @@
+{{- /*
+Agent-namespace NetworkPolicies (§13.2). default-deny-all is rendered
+into every agent namespace and denies all ingress and egress for every
+pod in the namespace. The §13.2 allow-companion policies that re-admit
+the gateway control channel and DNS are rendered alongside it as the
+chart's network surface is completed; until then the agent namespaces
+are network-isolated by default, which is the fail-closed posture
+§13.2 requires.
+*/ -}}
+{{- range $ns := .Values.agentNamespaces }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+{{- end }}
