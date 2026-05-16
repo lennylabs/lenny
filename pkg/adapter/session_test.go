@@ -17,8 +17,11 @@ import (
 )
 
 type fakeRuntime struct {
-	started  []string
-	startErr error
+	started   []string
+	startErr  error
+	envelopes [][]byte
+	writeErr  error
+	closed    []string
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -29,7 +32,18 @@ func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
 	return nil
 }
 
-func (f *fakeRuntime) Close(context.Context, string) error { return nil }
+func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	f.envelopes = append(f.envelopes, envelope)
+	return nil
+}
+
+func (f *fakeRuntime) Close(_ context.Context, sessionID string) error {
+	f.closed = append(f.closed, sessionID)
+	return nil
+}
 
 // sessionServer builds an adapter Server wired to a fresh workspace
 // directory and a fake runtime.
@@ -124,6 +138,98 @@ func TestStartSessionReleasesPodOnBadWorkspacePlan(t *testing.T) {
 	// The pod must be idle again so a retry can proceed.
 	if _, retryErr := s.StartSession(context.Background(), startReq("sess-good", nil, nil)); retryErr != nil {
 		t.Errorf("pod was not released after a failed StartSession: %v", retryErr)
+	}
+}
+
+func TestSendMessageForwardsEnvelopeToRuntime(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	envelope := []byte(`{"type":"message","input":[{"type":"text","inline":"hi"}]}`)
+	_, err := s.SendMessage(context.Background(), &adapterv1.SendMessageRequest{
+		SessionId:    &adapterv1.SessionId{Value: "sess-1"},
+		EnvelopeJson: envelope,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
+		t.Errorf("runtime received envelopes %v, want one matching the request", rt.envelopes)
+	}
+}
+
+func TestSendMessageRejectsUnknownSession(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	_, err := s.SendMessage(context.Background(), &adapterv1.SendMessageRequest{
+		SessionId:    &adapterv1.SessionId{Value: "sess-other"},
+		EnvelopeJson: []byte(`{}`),
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("code = %v, want NotFound for a session not assigned to the pod", status.Code(err))
+	}
+}
+
+func TestSendMessageRejectsWhenNoSessionAssigned(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	_, err := s.SendMessage(context.Background(), &adapterv1.SendMessageRequest{
+		SessionId:    &adapterv1.SessionId{Value: "sess-1"},
+		EnvelopeJson: []byte(`{}`),
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition when the pod is idle", status.Code(err))
+	}
+}
+
+func TestSendMessageRejectsEmptyEnvelope(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	_, err := s.SendMessage(context.Background(), &adapterv1.SendMessageRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("code = %v, want InvalidArgument for an empty envelope", status.Code(err))
+	}
+}
+
+func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
+	s, rt, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+	})
+	if err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if !resp.ExitedCleanly {
+		t.Error("Shutdown reported an unclean exit for a healthy runtime")
+	}
+	if len(rt.closed) != 1 || rt.closed[0] != "sess-1" {
+		t.Errorf("runtime closed = %v, want [sess-1]", rt.closed)
+	}
+	// The pod must be idle again so a replacement session can be assigned.
+	if _, retryErr := s.StartSession(context.Background(), startReq("sess-2", nil, nil)); retryErr != nil {
+		t.Errorf("pod was not released after Shutdown: %v", retryErr)
+	}
+}
+
+func TestShutdownRejectsUnknownSession(t *testing.T) {
+	s, _, _ := sessionServer(t)
+	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	_, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-other"},
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("code = %v, want NotFound", status.Code(err))
 	}
 }
 

@@ -115,6 +115,27 @@ func (e *SubprocessExecutor) Start(_ context.Context, sessionID string) error {
 	return err
 }
 
+// WriteEnvelope writes a pre-encoded §15.4.1 message envelope to the
+// session's runtime stdin, terminated by a newline. The session must
+// already be started; WriteEnvelope does not spawn the process. It is
+// the raw-delivery path the §4.7 adapter's SendMessage uses, where the
+// gateway has already encoded the envelope and the adapter forwards it
+// verbatim.
+func (e *SubprocessExecutor) WriteEnvelope(sessionID string, envelope []byte) error {
+	e.mu.Lock()
+	sess, ok := e.procs[sessionID]
+	e.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("executor: session %s has no running runtime", sessionID)
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if _, err := sess.stdin.Write(append(envelope, '\n')); err != nil {
+		return fmt.Errorf("executor: write envelope to runtime: %w", err)
+	}
+	return nil
+}
+
 // readResponse scans stdout for the next `response` envelope. The
 // echo runtime may interleave `heartbeat_ack` and `status` frames;
 // those are skipped. Bounded by the executor's SendTimeout.

@@ -13,10 +13,14 @@ import (
 )
 
 // RuntimeProcess manages the pod's runtime process. The §4.7 adapter
-// starts it at session start and closes it at session teardown.
+// starts it at session start, forwards message envelopes to it, and
+// closes it at session teardown.
 type RuntimeProcess interface {
 	// Start spawns the runtime process for the session.
 	Start(ctx context.Context, sessionID string) error
+	// WriteEnvelope forwards a pre-encoded message envelope to the
+	// runtime's stdin.
+	WriteEnvelope(sessionID string, envelope []byte) error
 	// Close tears the runtime process down.
 	Close(ctx context.Context, sessionID string) error
 }
@@ -58,6 +62,58 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
 	return &adapterv1.StartSessionResponse{}, nil
+}
+
+// SendMessage delivers a content message to the pod's runtime (§4.7).
+// The request carries a §15.4.1 message envelope already encoded by
+// the gateway; the adapter writes it verbatim to the runtime's stdin.
+// The runtime's response is surfaced asynchronously, so SendMessage
+// returns once the envelope is delivered.
+func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "SendMessage requires a session id")
+	}
+	if len(req.GetEnvelopeJson()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "SendMessage requires a message envelope")
+	}
+	if err := s.checkSession(sessionID); err != nil {
+		return nil, err
+	}
+	if err := s.Runtime.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
+		return nil, status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
+	}
+	return &adapterv1.SendMessageResponse{}, nil
+}
+
+// Shutdown terminates the pod's runtime and releases the session
+// (§4.7). It closes the runtime process and returns the pod toward
+// termination; a session-mode pod is replaced rather than reused.
+func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "Shutdown requires a session id")
+	}
+	if err := s.checkSession(sessionID); err != nil {
+		return nil, err
+	}
+	closeErr := s.Runtime.Close(ctx, sessionID)
+	s.releaseSession()
+	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
+}
+
+// checkSession confirms sessionID is the session currently assigned to
+// the pod.
+func (s *Server) checkSession(sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionID == "" {
+		return status.Error(codes.FailedPrecondition, "pod has no assigned session")
+	}
+	if s.sessionID != sessionID {
+		return status.Errorf(codes.NotFound, "session %s is not assigned to this pod", sessionID)
+	}
+	return nil
 }
 
 // claimSession marks the pod as holding sessionID, returning a gRPC

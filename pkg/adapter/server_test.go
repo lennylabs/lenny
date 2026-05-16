@@ -137,11 +137,11 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 func TestGRPCServerReportsUnimplementedForUnbuiltRPCs(t *testing.T) {
 	client, _ := adapterClient(t, adapter.New("served"))
 
-	// SendMessage is not yet implemented; the embedded
+	// Checkpoint is not yet implemented; the embedded
 	// UnimplementedAdapterServer answers with codes.Unimplemented.
-	_, err := client.SendMessage(context.Background(), &adapterv1.SendMessageRequest{})
+	_, err := client.Checkpoint(context.Background(), &adapterv1.CheckpointRequest{})
 	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("SendMessage error code = %v, want Unimplemented", status.Code(err))
+		t.Errorf("Checkpoint error code = %v, want Unimplemented", status.Code(err))
 	}
 }
 

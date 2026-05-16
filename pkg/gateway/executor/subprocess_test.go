@@ -145,6 +145,28 @@ func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
 	}
 }
 
+func TestSubprocessExecutorWriteEnvelope(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		BinPath:     echoBinary,
+		SendTimeout: 10 * time.Second,
+	})
+	defer exec.Close(context.Background(), "enveloped")
+
+	if err := exec.Start(context.Background(), "enveloped"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := exec.WriteEnvelope("enveloped", []byte(`{"type":"heartbeat"}`)); err != nil {
+		t.Errorf("WriteEnvelope to a started session: %v", err)
+	}
+}
+
+func TestSubprocessExecutorWriteEnvelopeUnstartedSessionErrors(t *testing.T) {
+	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: echoBinary})
+	if err := exec.WriteEnvelope("never-started", []byte(`{}`)); err == nil {
+		t.Error("WriteEnvelope to an unstarted session should error")
+	}
+}
+
 func TestSubprocessExecutorStartBadBinaryErrors(t *testing.T) {
 	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
 		BinPath: "/nonexistent/runtime/binary",
