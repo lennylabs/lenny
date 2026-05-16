@@ -66,6 +66,23 @@ type Tenant struct {
 	// platform default applies.
 	MinIsolationProfile string
 
+	// BillingErasurePolicy is the §12.8 policy that decides how the
+	// GDPR erasure job treats this tenant's billing events. Empty or
+	// `pseudonymize` replaces an erased user's id with a salted hash;
+	// `exempt` retains the original id under GDPR Article 17(3)(b) for
+	// financial record-keeping.
+	BillingErasurePolicy string
+
+	// ErasureSalt is the §12.8 per-tenant billing-pseudonymization
+	// secret (256-bit). It is non-nil only transiently, while an
+	// erasure job pseudonymizes the tenant's billing events; the job
+	// destroys it immediately afterward so the pseudonymized records
+	// cannot be re-identified. Postgres persistence of this field is
+	// deferred with the rest of the §12.8 Postgres billing-erasure
+	// path: the salt must be KMS-envelope-encrypted, never stored
+	// plaintext.
+	ErasureSalt []byte
+
 	// CreatedAt is the UTC instant the tenant row was committed.
 	CreatedAt time.Time
 
@@ -79,6 +96,18 @@ type Tenant struct {
 
 // IsActive reports whether the tenant has not been soft-deleted.
 func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
+
+// §12.8 BillingErasurePolicy values.
+const (
+	// BillingErasurePseudonymize is the default policy: the erasure job
+	// replaces an erased user's id with a salted hash. An empty
+	// BillingErasurePolicy is treated as this value.
+	BillingErasurePseudonymize = "pseudonymize"
+
+	// BillingErasureExempt retains billing events with the original
+	// user id under GDPR Article 17(3)(b).
+	BillingErasureExempt = "exempt"
+)
 
 // Store is the §12.8 platform-tenant registry contract.
 type Store interface {

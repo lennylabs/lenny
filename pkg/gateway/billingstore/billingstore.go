@@ -179,6 +179,21 @@ func (m *Memory) PseudonymizeUser(_ context.Context, tenantID, userID string, sa
 	return n, nil
 }
 
+// CountUser returns the number of billing events in tenantID owned by
+// userID. The §12.8 erasure verification calls it to confirm no event
+// remains keyed to a pseudonymized user's original id.
+func (m *Memory) CountUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.events[tenantID] {
+		if e.UserID == userID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Since implements Store.
 func (m *Memory) Since(_ context.Context, tenantID string, since uint64, limit int) ([]Event, error) {
 	m.mu.Lock()
