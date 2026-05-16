@@ -56,3 +56,17 @@ features:
   llmProxy: false
   drainReadiness: false
   compliance: false
+
+# adapter configures the §4.7 runtime adapter sidecar that runs in
+# every agent pod.
+adapter:
+  # grpcPort is the adapter's gRPC listen port (§13.2). The gateway
+  # reaches each pod's adapter on this port; the agent-namespace
+  # allow-gateway-ingress NetworkPolicy admits it.
+  grpcPort: 50051
+
+# gateway configures the §4.1 edge gateway.
+gateway:
+  # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
+  # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
+  grpcPort: 50051

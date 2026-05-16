@@ -1,11 +1,15 @@
 {{- /*
-Agent-namespace NetworkPolicies (§13.2). default-deny-all is rendered
-into every agent namespace and denies all ingress and egress for every
-pod in the namespace. The §13.2 allow-companion policies that re-admit
-the gateway control channel and DNS are rendered alongside it as the
-chart's network surface is completed; until then the agent namespaces
-are network-isolated by default, which is the fail-closed posture
-§13.2 requires.
+Agent-namespace NetworkPolicies (§13.2). Three policies are rendered
+into every agent namespace declared in .Values.agentNamespaces:
+
+  - default-deny-all: denies all ingress and egress for every pod.
+  - allow-gateway-ingress: re-admits the gateway's gRPC control
+    connection to each managed pod's adapter.
+  - allow-pod-egress-base: re-admits each managed pod's egress to the
+    gateway gRPC control channel and to cluster DNS.
+
+The supplemental allow-pod-egress-llm-proxy policy applies only to
+proxy-mode pools and is rendered with the LLM proxy.
 */ -}}
 {{- range $ns := .Values.agentNamespaces }}
 ---
@@ -19,4 +23,64 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.adapter.grpcPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-base
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ $.Values.gateway.grpcPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+          podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+  policyTypes: [Egress]
 {{- end }}
