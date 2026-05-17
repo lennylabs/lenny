@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
@@ -200,6 +201,66 @@ func TestListRuntimesSurfacesAgentInterface(t *testing.T) {
 	ai := resp.Runtimes[0].AgentInterface
 	if ai == nil || ai.Description != "Analyzes codebases" || len(ai.Skills) != 1 {
 		t.Errorf("discovery must surface the agentInterface descriptor: %+v", ai)
+	}
+}
+
+func TestRuntimeMetaServesPublicEntry(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"name":"carded"}`},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	// §5.1: a public entry is served opaquely under its content type.
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/carded/meta/agent-card", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("public meta: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != `{"name":"carded"}` {
+		t.Errorf("public meta body: %q", rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("public meta content-type: %q", ct)
+	}
+
+	// A soft-deleted runtime no longer serves its metadata.
+	_ = runtimes.SoftDelete(context.Background(), "carded", time.Now())
+	req = httptest.NewRequest(http.MethodGet, "/v1/runtimes/carded/meta/agent-card", nil)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("soft-deleted runtime meta: status %d, want 404", rr.Code)
+	}
+}
+
+func TestRuntimeMetaHidesNonPublicAndMissing(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "secret-spec", Visibility: runtimestore.VisibilityInternal, Content: "internal: true"},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	// §5.1: a non-public entry, a missing key, and a missing runtime
+	// all return an identical 404, so the endpoint does not enumerate.
+	for _, path := range []string{
+		"/v1/runtimes/carded/meta/secret-spec",
+		"/v1/runtimes/carded/meta/no-such-key",
+		"/v1/runtimes/no-such-runtime/meta/agent-card",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", path, rr.Code)
+		}
 	}
 }
 

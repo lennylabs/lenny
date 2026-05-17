@@ -121,6 +121,40 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRuntimeMeta implements GET /v1/runtimes/{name}/meta/{key} — the
+// §5.1 public publishedMetadata fetch endpoint. It serves an entry only
+// when the entry's visibility class is public. Per §5.1 a missing
+// runtime, a soft-deleted runtime, a missing key, and a non-public
+// entry all return an identical 404, so the endpoint does not enable
+// enumeration. Content is served opaquely under the entry's declared
+// content type; the gateway never parses it.
+func (s *Server) handleRuntimeMeta(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	key := r.PathValue("key")
+	if s.runtimes == nil {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
+		return
+	}
+	rt, err := s.runtimes.Get(r.Context(), name)
+	if err != nil || !rt.IsActive() {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
+		return
+	}
+	for _, e := range rt.PublishedMetadata {
+		if e.Key != key || e.Visibility != runtimestore.VisibilityPublic {
+			continue
+		}
+		ct := e.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ct)
+		_, _ = w.Write([]byte(e.Content))
+		return
+	}
+	s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
+}
+
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
 // environment access the request principal holds. When the
 // environment or tenant registry is not wired, or the request carries
