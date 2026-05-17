@@ -171,6 +171,10 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
+		if err := validateCapabilities(p.Capabilities); err != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
+			continue
+		}
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
 		if errors.Is(err, runtimestore.ErrNotFound) {
 			row := runtimestore.Runtime{
@@ -181,6 +185,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 				IsolationProfile: isolation.Profile(p.IsolationProfile),
 				IntegrationLevel: runtimestore.IntegrationLevel(p.IntegrationLevel),
 				Description:      p.Description,
+				Capabilities:     p.Capabilities,
 				CreatedAt:        r.clock(),
 			}
 			runtimestore.ApplyDefaults(&row)
@@ -212,6 +217,9 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			}
 			if p.Description != "" {
 				rt.Description = p.Description
+			}
+			if p.Capabilities != nil {
+				rt.Capabilities = p.Capabilities
 			}
 			return nil
 		})

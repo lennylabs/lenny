@@ -60,8 +60,19 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 
 	// ---- admin: bootstrap a tenant + runtime as platform-admin ----
 	code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
-		"tenants":  []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
-		"runtimes": []map[string]any{{"name": "echo", "image": "lenny/echo@sha256:abc"}},
+		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},
+		"runtimes": []map[string]any{{
+			"name":  "echo",
+			"image": "lenny/echo@sha256:abc",
+			// §5.1: the runtime must declare injection support for the
+			// test's POST /messages mid-session injection to be accepted.
+			"capabilities": map[string]any{
+				"injection": map[string]any{
+					"supported": true,
+					"modes":     []string{"immediate", "queued"},
+				},
+			},
+		}},
 	})
 	if code != http.StatusOK {
 		t.Fatalf("bootstrap: status %d", code)
