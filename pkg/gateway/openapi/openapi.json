@@ -483,6 +483,103 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/tenants/{id}/roles": {
+      "post": {
+        "summary": "Create a custom role",
+        "x-lenny-mcp-tool": "admin.create_custom_role",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "summary": "List custom roles",
+        "x-lenny-mcp-tool": "admin.list_custom_roles",
+        "x-lenny-scope": "admin.rbac.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/roles/{name}": {
+      "get": {
+        "summary": "Get a custom role",
+        "x-lenny-mcp-tool": "admin.get_custom_role",
+        "x-lenny-scope": "admin.rbac.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Update a custom role",
+        "x-lenny-mcp-tool": "admin.update_custom_role",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Delete a custom role",
+        "x-lenny-mcp-tool": "admin.delete_custom_role",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/rbac-config": {
+      "get": {
+        "summary": "Get tenant RBAC configuration",
+        "x-lenny-mcp-tool": "admin.get_rbac_config",
+        "x-lenny-scope": "admin.rbac.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Set tenant RBAC configuration",
+        "x-lenny-mcp-tool": "admin.update_rbac_config",
+        "x-lenny-scope": "admin.rbac.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/access-report": {
+      "get": {
+        "summary": "Cross-environment access matrix",
+        "x-lenny-mcp-tool": "admin.tenant_access_report",
+        "x-lenny-scope": "admin.environments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/runtimes": {
       "post": {
         "summary": "Create a runtime",
@@ -799,6 +896,21 @@
         "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "204": { "description": "Deleted" },
+          "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/admin/environments/{name}/runtime-exposure": {
+      "get": {
+        "summary": "Runtimes and connectors in an environment's scope",
+        "x-lenny-mcp-tool": "admin.environment_runtime_exposure",
+        "x-lenny-scope": "admin.environments.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK" },
           "404": { "description": "Environment not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
