@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f2973f0` — §15.1 OpenAPI: `GET /internal/runtimes/{name}/meta/{key}` documented as a
+  BearerAuth-gated path.
+- `380fa06` — §5.1 `GET /internal/runtimes/{name}/meta/{key}` internal/tenant fetch. The
+  endpoint requires an authenticated session principal: an internal-visibility entry is
+  served to any authenticated caller, and a tenant-visibility entry only when the
+  caller's tenant holds a §4 runtime tenant-access grant. A missing principal, a
+  missing or soft-deleted runtime, a missing key, a public entry, and an unreachable
+  tenant entry all return an identical 404; the tenant check fails closed when the
+  tenant-access registry is not wired. `cmd/lenny-gateway` shares one
+  `tenantaccessstore` between the admin tenant-access endpoints and this endpoint. This
+  completes the §5.1 publishedMetadata meta-fetch surface.
 - `d1ae44a` — §15.1 OpenAPI: `PublishedMetadataEntry` / `PublishedMetadataRef` component
   schemas, referenced from the admin `Runtime` body and the `GET /v1/runtimes`
   discovery item, plus the `GET /v1/runtimes/{name}/meta/{key}` path.
