@@ -11,6 +11,24 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `88393ef` — §15.1 OpenAPI: `capabilities` in the admin `Runtime` schema and the
+  `403 INJECTION_REJECTED` response on `POST /v1/sessions/{id}/messages`.
+- `98d9151` — §15.1 injection rejected against unsupported runtimes. `POST
+  /v1/sessions/{id}/messages` rejects mid-session injection with `403
+  INJECTION_REJECTED` when the session's runtime does not declare
+  `capabilities.injection.supported: true` (§5.1 default false). The check degrades
+  safely when the runtime registry is not wired.
+- `fae2758` — §15.1 `capabilities` round-trip on the admin runtime API. `POST` / `GET`
+  carry the block on `RuntimePayload`; `PUT` carries it as an optional pointer. Create
+  and update validate the interaction and injection-mode enums and the §5.1 coherence
+  rule that a `multi_turn` runtime must declare `injection.supported: true`.
+- `d8a29ee` — §5.1 `capabilities` block on the runtime model. `runtimestore.Runtime`
+  gains the §5.1 `capabilities` block — the interaction model (`one_shot` /
+  `multi_turn`) and the mid-session injection support (`injection.supported`,
+  `injection.modes`). `Runtime.InjectionSupported` is the §5.1 default-false injection
+  gate. The in-memory store deep-copies the injection modes; the pgstore persists the
+  block (migration 0020, `capabilities` jsonb column). With this the §5.1
+  capabilities-driven injection rejection is enforced end to end.
 - `df9d053` — §15.1 OpenAPI: `setupPolicy` in the admin `Runtime` schema.
 - `27bec28` — §15.1 `setupPolicy` round-trip on the admin runtime API. `POST` / `GET`
   carry it on `RuntimePayload`; `PUT` carries it as an optional pointer. Create and
