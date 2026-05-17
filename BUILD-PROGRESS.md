@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `06ad182` — §10.6 `ISOLATION_MONOTONICITY_VIOLATED` reason on `lenny/delegate_task`.
+  A delegation refused for a §8.3 isolation-monotonicity violation now leads its error
+  with the §10.6 reason token.
 - `cb76325` — §8.3 / §10.6 `delegate_task` child-pool isolation. The tool resolves the
   child pool's §5.3 isolation profile (new optional `Pools` dep) and hands it to the
   delegation service, so the §8.3 monotonicity check evaluates the child pool rather
