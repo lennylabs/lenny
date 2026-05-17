@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7d051ed` — accept loop for the adapter-local MCP server. `Server.Serve`
+  accepts connections on a `net.Listener` until its context is cancelled or
+  the listener fails, handling each with `ServeConn` in its own goroutine;
+  cancelling the context closes the listener so `Serve` returns promptly.
+  Production passes an abstract-Unix-socket listener (§15.4.3); the accept
+  loop is listener-type-agnostic and is tested over an in-memory listener.
+  Remaining MCP-fabric work: the abstract-Unix-socket listener creation and
+  the `SO_PEERCRED` peer-UID check (both Linux-only, deferred with the other
+  Linux-platform-coupled work), the platform MCP tool surface
+  (`lenny/delegate_task`, `lenny/output`, etc.) registered onto the server,
+  and the `platformMcpServer`/`adapterLocalTools` manifest fields.
 - `8504ea2` — adapter-local MCP server with nonce-authenticated connection
   handling. `Server.ServeConn` handles one MCP connection: the first message
   must be the nonce-authenticated `initialize` request (a failed handshake
