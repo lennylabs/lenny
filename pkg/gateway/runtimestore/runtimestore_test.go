@@ -375,6 +375,61 @@ func TestRuntimeMinPlatformVersionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeTaskPolicyRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries an optional taskPolicy. The store must
+	// deep-copy the cleanup-command slice and the retry pointer.
+	s := runtimestore.NewMemory()
+	retries := 3
+	policy := &runtimestore.TaskPolicy{
+		AcknowledgeBestEffortScrub: true,
+		MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
+		CleanupCommands:            []string{"rm -rf /tmp/x"},
+		CleanupTimeoutSeconds:      30,
+		OnCleanupFailure:           runtimestore.CleanupFailureWarn,
+		MaxScrubFailures:           3,
+		MaxTasksPerPod:             50,
+		MaxTaskRetries:             &retries,
+	}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, TaskPolicy: policy,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	policy.CleanupCommands[0] = "tampered" // mutate caller's slice
+	*policy.MaxTaskRetries = 99            // mutate caller's pointee
+
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.TaskPolicy == nil || !got.TaskPolicy.AcknowledgeBestEffortScrub ||
+		got.TaskPolicy.MaxTasksPerPod != 50 || got.TaskPolicy.CleanupCommands[0] != "rm -rf /tmp/x" {
+		t.Errorf("taskPolicy not stored or not isolated: %+v", got.TaskPolicy)
+	}
+	if got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 3 {
+		t.Errorf("maxTaskRetries not isolated from caller mutation: %+v", got.TaskPolicy.MaxTaskRetries)
+	}
+}
+
+func TestMicrovmScrubModeAndCleanupDispositionIsValid(t *testing.T) {
+	for _, m := range runtimestore.AllMicrovmScrubModes() {
+		if !m.IsValid() {
+			t.Errorf("scrub mode %q from the closed enum reports invalid", m)
+		}
+	}
+	if runtimestore.MicrovmScrubMode("wipe").IsValid() {
+		t.Error("an unknown scrub mode must report invalid")
+	}
+	for _, d := range runtimestore.AllCleanupFailureDispositions() {
+		if !d.IsValid() {
+			t.Errorf("cleanup disposition %q from the closed enum reports invalid", d)
+		}
+	}
+	if runtimestore.CleanupFailureDisposition("retry").IsValid() {
+		t.Error("an unknown cleanup disposition must report invalid")
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{

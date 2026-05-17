@@ -276,6 +276,41 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("taskPolicy round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		retries := 2
+		r.TaskPolicy = &runtimestore.TaskPolicy{
+			AcknowledgeBestEffortScrub: true,
+			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
+			CleanupCommands:            []string{"rm -rf /tmp/x"},
+			OnCleanupFailure:           runtimestore.CleanupFailureWarn,
+			MaxTasksPerPod:             50,
+			MaxTaskRetries:             &retries,
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.TaskPolicy == nil || !got.TaskPolicy.AcknowledgeBestEffortScrub ||
+			got.TaskPolicy.MaxTasksPerPod != 50 || len(got.TaskPolicy.CleanupCommands) != 1 ||
+			got.TaskPolicy.MaxTaskRetries == nil || *got.TaskPolicy.MaxTaskRetries != 2 {
+			t.Errorf("taskPolicy round-trip mismatch: %+v", got.TaskPolicy)
+		}
+
+		// A runtime with no taskPolicy reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.TaskPolicy != nil {
+			t.Errorf("taskPolicy must be nil when omitted: %+v", gotPlain.TaskPolicy)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {

@@ -102,6 +102,11 @@ type Runtime struct {
 	// declares no minimum.
 	MinPlatformVersion string
 
+	// TaskPolicy is the §5.1 taskPolicy block: the §5.2 task-mode
+	// pod-reuse and workspace-cleanup policy. It is nil when the
+	// runtime declares no task policy.
+	TaskPolicy *TaskPolicy
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -421,6 +426,118 @@ func (p *SetupPolicy) Clone() *SetupPolicy {
 	return &cp
 }
 
+// MicrovmScrubMode is the §5.1 taskPolicy.microvmScrubMode enum: how a
+// microvm-isolated task-mode pod is scrubbed between cross-tenant tasks.
+type MicrovmScrubMode string
+
+const (
+	// MicrovmScrubRestart restarts the guest between tasks (default).
+	MicrovmScrubRestart MicrovmScrubMode = "restart"
+	// MicrovmScrubInPlace reuses the running guest, leaving documented
+	// guest-kernel residual state across tenants.
+	MicrovmScrubInPlace MicrovmScrubMode = "in-place"
+)
+
+// AllMicrovmScrubModes returns the closed enum.
+func AllMicrovmScrubModes() []MicrovmScrubMode {
+	return []MicrovmScrubMode{MicrovmScrubRestart, MicrovmScrubInPlace}
+}
+
+// IsValid reports whether m is a known scrub mode.
+func (m MicrovmScrubMode) IsValid() bool {
+	for _, v := range AllMicrovmScrubModes() {
+		if m == v {
+			return true
+		}
+	}
+	return false
+}
+
+// CleanupFailureDisposition is the §5.1 taskPolicy.onCleanupFailure
+// enum: the disposition when a task-mode pod's cleanup commands fail.
+type CleanupFailureDisposition string
+
+const (
+	// CleanupFailureWarn returns the pod to the pool with a warning.
+	CleanupFailureWarn CleanupFailureDisposition = "warn"
+	// CleanupFailureFail retires the pod on a cleanup failure.
+	CleanupFailureFail CleanupFailureDisposition = "fail"
+)
+
+// AllCleanupFailureDispositions returns the closed enum.
+func AllCleanupFailureDispositions() []CleanupFailureDisposition {
+	return []CleanupFailureDisposition{CleanupFailureWarn, CleanupFailureFail}
+}
+
+// IsValid reports whether d is a known cleanup-failure disposition.
+func (d CleanupFailureDisposition) IsValid() bool {
+	for _, v := range AllCleanupFailureDispositions() {
+		if d == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TaskPolicy is the §5.1 taskPolicy block: the §5.2 task-mode pod-reuse
+// and workspace-cleanup policy for a runtime.
+type TaskPolicy struct {
+	// AcknowledgeBestEffortScrub is the §5.1 deployer acknowledgment
+	// that workspace scrub is best-effort. Task mode requires it.
+	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub,omitempty"`
+
+	// AllowCrossTenantReuse permits a task-mode pod to serve tasks from
+	// more than one tenant. §5.1 only permits it with microvm isolation.
+	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
+
+	// MicrovmScrubMode is the cross-task scrub mode for a microvm pod.
+	MicrovmScrubMode MicrovmScrubMode `json:"microvmScrubMode,omitempty"`
+
+	// AcknowledgeMicrovmResidualState is the §5.1 acknowledgment that
+	// in-place microvm scrub leaves guest-kernel residual state.
+	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
+
+	// CleanupCommands run between tasks to scrub the workspace.
+	CleanupCommands []string `json:"cleanupCommands,omitempty"`
+
+	// CleanupTimeoutSeconds bounds the cleanup-command phase.
+	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
+
+	// OnCleanupFailure is the disposition when cleanup commands fail.
+	OnCleanupFailure CleanupFailureDisposition `json:"onCleanupFailure,omitempty"`
+
+	// MaxScrubFailures retires a pod after this many cumulative scrub
+	// failures. §5.1 default is 3.
+	MaxScrubFailures int `json:"maxScrubFailures,omitempty"`
+
+	// MaxTasksPerPod retires a pod after this many tasks. §5.1 requires
+	// it for task mode.
+	MaxTasksPerPod int `json:"maxTasksPerPod,omitempty"`
+
+	// MaxPodUptimeSeconds optionally retires a pod after this uptime.
+	MaxPodUptimeSeconds int `json:"maxPodUptimeSeconds,omitempty"`
+
+	// MaxTaskRetries is the §6.6 per-task crash-retry budget. A nil
+	// value takes the §6.6 default of 1; an explicit 0 disables retries.
+	MaxTaskRetries *int `json:"maxTaskRetries,omitempty"`
+}
+
+// Clone returns a deep copy of the policy so the store never shares the
+// cleanup-command slice or the retry pointer with a caller. A nil
+// receiver clones to nil.
+func (p *TaskPolicy) Clone() *TaskPolicy {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
+	if p.MaxTaskRetries != nil {
+		n := *p.MaxTaskRetries
+		cp.MaxTaskRetries = &n
+	}
+	return &cp
+}
+
 // RuntimeType is the §5.1 type discriminator.
 type RuntimeType string
 
@@ -581,6 +698,7 @@ func cloneRuntime(r Runtime) Runtime {
 	}
 	r.SetupPolicy = r.SetupPolicy.Clone()
 	r.Capabilities = r.Capabilities.Clone()
+	r.TaskPolicy = r.TaskPolicy.Clone()
 	return r
 }
 
