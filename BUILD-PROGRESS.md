@@ -11,6 +11,34 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d1ae44a` — §15.1 OpenAPI: `PublishedMetadataEntry` / `PublishedMetadataRef` component
+  schemas, referenced from the admin `Runtime` body and the `GET /v1/runtimes`
+  discovery item, plus the `GET /v1/runtimes/{name}/meta/{key}` path.
+- `97f5ffc` — §15 `publishedMetadata` refs on runtime discovery. `GET /v1/runtimes` and
+  `lenny/list_runtimes` carry per-runtime `publishedMetadata` refs (key, content type,
+  visibility — not content). The unauthenticated discovery surface carries only the
+  public refs; internal and tenant refs surface with the `/internal` discovery-auth
+  path.
+- `4239260` — §5.1 `GET /v1/runtimes/{name}/meta/{key}` public publishedMetadata fetch.
+  Serves an entry only when its visibility class is public, returning the content
+  opaquely under its declared content type. A missing runtime, a soft-deleted runtime,
+  a missing key, and a non-public entry all return an identical 404 (§5.1 no
+  enumeration). The `/internal/runtimes/{name}/meta/{key}` endpoint for internal and
+  tenant visibility is the remaining half.
+- `91539f8` — §15.1 `publishedMetadata` round-trip on the admin runtime API. `POST` /
+  `GET` carry the list on `RuntimePayload`; `PUT` carries it as an optional slice
+  pointer so an omitted key leaves it unchanged and an empty array clears it. Create
+  and update validate the list (non-empty unique keys, valid visibility class).
+- `a52ee89` — §5.1 `published_metadata` jsonb column (migration 0016). The §5.1
+  `publishedMetadata` list persists to a nullable jsonb column; an empty list stores as
+  SQL NULL. The pgstore contract test gains a round-trip subtest.
+- `186fae9` — §5.1 `publishedMetadata` list on the runtime model. `runtimestore.Runtime`
+  gains the §5.1 `publishedMetadata` field — the runtime's named, opaque metadata
+  entries (agent cards, OpenAPI specs, cost manifests). `PublishedMetadataEntry` carries
+  a key, content type, visibility class, and opaque content; `MetadataVisibility` is the
+  closed `internal` / `tenant` / `public` enum. `ValidatePublishedMetadata` enforces
+  non-empty unique keys and a valid visibility class. The A2A agent-card
+  auto-generation and the bulk-regeneration endpoint remain unbuilt.
 - `4af8de2` — §15.1 OpenAPI: `AgentInterface` component schema (with its mode / skill /
   example sub-schemas) referenced from the admin `Runtime` schema and the
   `GET /v1/runtimes` discovery item.
