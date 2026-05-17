@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8be8b49` — §16.5 add `CircuitBreakerActive` and `CircuitBreakerStale` to the rule
+  catalog. The §11.6 circuit-breaker metrics `lenny_circuit_breaker_open` and
+  `lenny_circuit_breaker_cache_stale_seconds` are emitted by `gatewaymetrics`, so their
+  §16.5 warning alerts now carry weight: `CircuitBreakerActive` fires on a breaker open
+  past five minutes, `CircuitBreakerStale` on an admission cache stale beyond its poll
+  interval.
 - `294ec5a` — §14 `gitref.Clone` — gitClone materialization primitive. Clones a Git
   repository at a pinned commit into a destination directory: fetches the §14
   `resolvedCommitSha` directly and checks it out detached, honoring the `depth`
