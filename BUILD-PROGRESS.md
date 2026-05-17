@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `541755e` — §25.3 emit circuit-breaker operational events. The admin Router gains
+  `WithEventEmitter` (the emit counterpart of the event-buffer query side); opening or
+  closing a circuit breaker via the admin API emits a `circuit_breaker_opened` /
+  `circuit_breaker_closed` operational event into the buffer, so an ops agent observes
+  it through `GET /v1/admin/events/buffer`. The other §25.3 emit sources (pool,
+  session, alert, upgrade, credential, health) are the remaining wiring.
+- `<emitter>` — §25.3 operational-event `Emitter` (`pkg/gateway/opsevents`). `Emit`
+  stamps an event with the CloudEvents envelope and the stable
+  `{replicaID}:{emittedAt}:{nonce}` eventKey, then records it in the `EventBuffer`. The
+  Redis-stream emit destination and the disk-checkpointed nonce are refinements.
 - `fce3a5c` — §15.1 OpenAPI: `GET /v1/admin/events/buffer` documented.
 - `73d3247` — §25.3 `GET /v1/admin/events/buffer` endpoint. Wires the Gateway Event
   Buffer query onto the admin Router (platform-admin gated; `?since=` cursor,
