@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -984,12 +985,28 @@ func TestCreateRuntimeRejectsInvalidTaskPolicy(t *testing.T) {
 	}
 }
 
+// createBaseRuntime registers a standalone runtime usable as a §5.1
+// derived-runtime base.
+func createBaseRuntime(t *testing.T, h http.Handler, name string) {
+	t.Helper()
+	rr := runtimeRequest(t, h, http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  name,
+		Image: "lenny/" + name + "@sha256:abc",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create base %q: status %d, body=%s", name, rr.Code, rr.Body.String())
+	}
+}
+
 func TestRuntimeBaseRuntimeRoundTrip(t *testing.T) {
 	// §5.1: the admin runtime API round-trips the baseRuntime reference.
+	// A derived runtime omits the inherited fields and references an
+	// existing standalone base.
 	router, _, _ := newRuntimeAdmin(t)
+	createBaseRuntime(t, router.Handler(), "langgraph-runtime")
+
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
 		Name:        "research-pipeline",
-		Image:       "lenny/research@sha256:abc",
 		BaseRuntime: "langgraph-runtime",
 	})
 	if rr.Code != http.StatusCreated {
@@ -1007,17 +1024,57 @@ func TestRuntimeBaseRuntimeRoundTrip(t *testing.T) {
 	if got.BaseRuntime != "langgraph-runtime" {
 		t.Errorf("get response baseRuntime: %q", got.BaseRuntime)
 	}
+}
 
-	rebased := "newer-base"
-	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/research-pipeline",
-		admin.UpdateRuntimeRequest{BaseRuntime: &rebased})
-	if rr.Code != http.StatusOK {
-		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+func TestCreateRuntimeRejectsInvalidDerivedRuntime(t *testing.T) {
+	// §5.1: a derived runtime may not set the inherited / prohibited
+	// fields, and its baseRuntime must reference an existing standalone
+	// runtime.
+	router, _, _ := newRuntimeAdmin(t)
+	createBaseRuntime(t, router.Handler(), "base-rt")
+
+	cases := []struct {
+		name    string
+		payload admin.RuntimePayload
+	}{
+		{"image set", admin.RuntimePayload{Name: "d1", BaseRuntime: "base-rt", Image: "lenny/x@sha256:abc"}},
+		{"type set", admin.RuntimePayload{Name: "d2", BaseRuntime: "base-rt", Type: "agent"}},
+		{"isolationProfile set", admin.RuntimePayload{Name: "d3", BaseRuntime: "base-rt", IsolationProfile: "standard"}},
+		{"integrationLevel set", admin.RuntimePayload{Name: "d4", BaseRuntime: "base-rt", IntegrationLevel: "full"}},
+		{"capabilities set", admin.RuntimePayload{
+			Name: "d5", BaseRuntime: "base-rt",
+			Capabilities: &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionOneShot},
+		}},
+		{"missing base", admin.RuntimePayload{Name: "d6", BaseRuntime: "no-such-runtime"}},
 	}
-	var updated admin.RuntimePayload
-	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
-	if updated.BaseRuntime != "newer-base" {
-		t.Errorf("update did not replace baseRuntime: %q", updated.BaseRuntime)
+	for _, tc := range cases {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", tc.payload)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (body=%s)", tc.name, rr.Code, rr.Body.String())
+			continue
+		}
+		if !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+			t.Errorf("%s: body %s, want INVALID_DERIVED_RUNTIME", tc.name, rr.Body.String())
+		}
+	}
+}
+
+func TestCreateRuntimeRejectsChainedDerivation(t *testing.T) {
+	// §5.1: the merge algorithm is single-level — a derived runtime's
+	// base must itself be standalone.
+	router, _, _ := newRuntimeAdmin(t)
+	createBaseRuntime(t, router.Handler(), "root-rt")
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "mid-rt", BaseRuntime: "root-rt",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create mid runtime: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	chained := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "leaf-rt", BaseRuntime: "mid-rt",
+	})
+	if chained.Code != http.StatusBadRequest {
+		t.Errorf("chained derivation: status %d, want 400 (body=%s)", chained.Code, chained.Body.String())
 	}
 }
 

@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -90,6 +91,42 @@ type UpdateRuntimeRequest struct {
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
 	BaseRuntime             *string                                      `json:"baseRuntime,omitempty"`
+}
+
+// validateDerivedRuntime applies the §5.1 derived-runtime registration
+// rules to a create payload. A derived runtime (one with baseRuntime
+// set) may not declare the inherited or prohibited fields — image,
+// type, executionMode, isolationProfile, integrationLevel, and
+// capabilities are always taken from the base — and its baseRuntime
+// must reference an existing standalone runtime. The §5.1 merge
+// algorithm is single-level, so a base that is itself derived is
+// rejected. A standalone payload passes unconditionally.
+func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) error {
+	if p.BaseRuntime == "" {
+		return nil
+	}
+	switch {
+	case p.Image != "":
+		return errors.New("image is prohibited on derived runtimes")
+	case p.Type != "":
+		return errors.New("type is prohibited on derived runtimes")
+	case p.ExecutionMode != "":
+		return errors.New("executionMode is prohibited on derived runtimes")
+	case p.IsolationProfile != "":
+		return errors.New("isolationProfile is prohibited on derived runtimes")
+	case p.IntegrationLevel != "":
+		return errors.New("integrationLevel is prohibited on derived runtimes")
+	case p.Capabilities != nil:
+		return errors.New("capabilities is prohibited on derived runtimes")
+	}
+	base, err := r.runtimes.Get(ctx, p.BaseRuntime)
+	if err != nil {
+		return errors.New("baseRuntime does not reference an existing runtime")
+	}
+	if base.IsDerived() {
+		return errors.New("baseRuntime must reference a standalone runtime, not another derived runtime")
+	}
+	return nil
 }
 
 // validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
@@ -278,6 +315,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := validateTaskPolicy(body.TaskPolicy); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
+	if err := r.validateDerivedRuntime(req.Context(), body); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", err.Error(), nil)
 		return
 	}
 
