@@ -507,6 +507,7 @@ func main() {
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
 			metrics: gwMetrics,
+			emitter: opsEmitter,
 		},
 		Usage:          usagestore.NewMemory(),
 		Users:          users,
@@ -1065,32 +1066,46 @@ type sessionArtifactDeleter interface {
 }
 
 // experimentRejectionReporter bridges a §10.7 ExperimentRouter
-// fail-closed rejection to the §11.7 audit chain and the §16.1
-// metrics registry: it emits the `experiment.isolation_mismatch`
-// operational event and increments
+// fail-closed rejection to the §11.7 audit chain, the §16.1 metrics
+// registry, and the §25.3 operational-event buffer: it records the
+// `experiment.isolation_mismatch` event on all three and increments
 // `lenny_experiment_isolation_rejections_total`.
 type experimentRejectionReporter struct {
 	audit   admin.AuditSink
 	metrics *gatewaymetrics.Metrics
+	emitter *opsevents.Emitter
 }
 
 func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx context.Context, ev sessionserver.ExperimentIsolationRejection) {
 	if e.metrics != nil {
 		e.metrics.RecordExperimentIsolationRejection(ev.TenantID, ev.ExperimentID, ev.VariantID)
 	}
+	detail := map[string]any{
+		"tenant_id":            ev.TenantID,
+		"user_id":              ev.UserID,
+		"experiment_id":        ev.ExperimentID,
+		"variant_id":           ev.VariantID,
+		"sessionMinIsolation":  ev.SessionMinIsolation,
+		"variantPoolIsolation": ev.VariantPoolIsolation,
+	}
 	if e.audit != nil {
 		e.audit.EmitAdminEvent(ctx, admin.AuditEvent{
 			Type:           "experiment.isolation_mismatch",
 			ActorTenantID:  ev.TenantID,
 			TargetResource: ev.ExperimentID,
-			Detail: map[string]any{
-				"tenant_id":            ev.TenantID,
-				"user_id":              ev.UserID,
-				"experiment_id":        ev.ExperimentID,
-				"variant_id":           ev.VariantID,
-				"sessionMinIsolation":  ev.SessionMinIsolation,
-				"variantPoolIsolation": ev.VariantPoolIsolation,
-			},
+			Detail:         detail,
+		})
+	}
+	// §16.6: the rejection is also an operational event — surface it on
+	// the §25.3 event buffer so ops agents observe it without log scraping.
+	if e.emitter != nil {
+		data, _ := json.Marshal(detail)
+		e.emitter.Emit(opsevents.OperationalEvent{
+			Source:          "/v1/sessions",
+			Type:            opsevents.EventExperimentIsolationMismatch.CloudEventsType(),
+			Severity:        "warning",
+			DataContentType: "application/json",
+			Data:            data,
 		})
 	}
 }
