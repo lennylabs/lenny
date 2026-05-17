@@ -202,6 +202,44 @@ func TestListRuntimesToolSurfacesAgentInterface(t *testing.T) {
 	}
 }
 
+func TestListRuntimesToolSurfacesPublicMetadataRefs(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"k":"payloadbytes"}`},
+			{Key: "spec", Visibility: runtimestore.VisibilityInternal, Content: "internalonly"},
+		},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+
+	var resp struct {
+		Runtimes []struct {
+			PublishedMetadata []runtimestore.PublishedMetadataRef `json:"publishedMetadata"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("decode: %v (%q)", err, text)
+	}
+	if len(resp.Runtimes) != 1 {
+		t.Fatalf("runtimes: got %d, want 1 (%q)", len(resp.Runtimes), text)
+	}
+	// §15: list_runtimes carries only the public refs, never content.
+	refs := resp.Runtimes[0].PublishedMetadata
+	if len(refs) != 1 || refs[0].Key != "agent-card" {
+		t.Errorf("list_runtimes must surface only the public metadata ref: %+v", refs)
+	}
+	if strings.Contains(text, "payloadbytes") || strings.Contains(text, "internalonly") {
+		t.Errorf("list_runtimes refs must not carry entry content: %q", text)
+	}
+}
+
 func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
 	srv, runtimes, envs, tenants := newMCPFiltered(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

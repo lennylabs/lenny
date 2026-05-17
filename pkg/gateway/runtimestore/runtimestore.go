@@ -207,6 +207,36 @@ type PublishedMetadataEntry struct {
 	Content string `json:"content,omitempty"`
 }
 
+// PublishedMetadataRef is the §15 discovery-surface view of a
+// publishedMetadata entry: the key, content type, and visibility class
+// without the entry content. Discovery responses carry refs rather than
+// content because the content (agent cards, OpenAPI specs) may be large
+// and is fetched separately through the meta-fetch endpoint.
+type PublishedMetadataRef struct {
+	Key         string             `json:"key"`
+	ContentType string             `json:"contentType"`
+	Visibility  MetadataVisibility `json:"visibility"`
+}
+
+// Ref returns the discovery-surface ref for the entry, dropping Content.
+func (e PublishedMetadataEntry) Ref() PublishedMetadataRef {
+	return PublishedMetadataRef{Key: e.Key, ContentType: e.ContentType, Visibility: e.Visibility}
+}
+
+// PublicMetadataRefs returns the discovery-surface refs for the public
+// entries in a publishedMetadata list. §15 discovery carries refs, not
+// content; this is the unauthenticated subset, so internal and tenant
+// entries are visibility-filtered out.
+func PublicMetadataRefs(entries []PublishedMetadataEntry) []PublishedMetadataRef {
+	var refs []PublishedMetadataRef
+	for _, e := range entries {
+		if e.Visibility == VisibilityPublic {
+			refs = append(refs, e.Ref())
+		}
+	}
+	return refs
+}
+
 // ValidatePublishedMetadata checks a §5.1 publishedMetadata list: every
 // entry needs a non-empty key and a valid visibility class, and keys
 // are unique within the list.

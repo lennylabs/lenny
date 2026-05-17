@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +202,40 @@ func TestListRuntimesSurfacesAgentInterface(t *testing.T) {
 	ai := resp.Runtimes[0].AgentInterface
 	if ai == nil || ai.Description != "Analyzes codebases" || len(ai.Skills) != 1 {
 		t.Errorf("discovery must surface the agentInterface descriptor: %+v", ai)
+	}
+}
+
+func TestListRuntimesSurfacesPublicMetadataRefs(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"big":"payload"}`},
+			{Key: "secret-spec", ContentType: "application/yaml", Visibility: runtimestore.VisibilityInternal, Content: "internalonly"},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes) != 1 {
+		t.Fatalf("runtimes: got %d, want 1", len(resp.Runtimes))
+	}
+	// §15: discovery carries only the public refs, and a ref never
+	// carries entry content.
+	refs := resp.Runtimes[0].PublishedMetadata
+	if len(refs) != 1 || refs[0].Key != "agent-card" || refs[0].Visibility != runtimestore.VisibilityPublic {
+		t.Errorf("discovery must surface only the public metadata ref: %+v", refs)
+	}
+	if strings.Contains(rr.Body.String(), "payload") || strings.Contains(rr.Body.String(), "internalonly") {
+		t.Errorf("discovery refs must not carry entry content: %s", rr.Body.String())
 	}
 }
 

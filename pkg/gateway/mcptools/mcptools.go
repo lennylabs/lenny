@@ -816,11 +816,12 @@ func Register(srv *mcp.Server, deps Deps) {
 					continue
 				}
 				out = append(out, discoveredRuntime{
-					Name:             rt.Name,
-					Type:             string(rt.Type),
-					IntegrationLevel: string(rt.IntegrationLevel),
-					Description:      rt.Description,
-					AgentInterface:   rt.AgentInterface,
+					Name:              rt.Name,
+					Type:              string(rt.Type),
+					IntegrationLevel:  string(rt.IntegrationLevel),
+					Description:       rt.Description,
+					AgentInterface:    rt.AgentInterface,
+					PublishedMetadata: runtimestore.PublicMetadataRefs(rt.PublishedMetadata),
 				})
 			}
 			body, _ := json.Marshal(struct {
@@ -1035,11 +1036,12 @@ type treeNode struct {
 // discoveredRuntime is one entry in the lenny/list_runtimes result. It
 // covers every runtime type, so it carries the type discriminator.
 type discoveredRuntime struct {
-	Name             string                       `json:"name"`
-	Type             string                       `json:"type,omitempty"`
-	IntegrationLevel string                       `json:"integrationLevel,omitempty"`
-	Description      string                       `json:"description,omitempty"`
-	AgentInterface   *runtimestore.AgentInterface `json:"agentInterface,omitempty"`
+	Name              string                              `json:"name"`
+	Type              string                              `json:"type,omitempty"`
+	IntegrationLevel  string                              `json:"integrationLevel,omitempty"`
+	Description       string                              `json:"description,omitempty"`
+	AgentInterface    *runtimestore.AgentInterface        `json:"agentInterface,omitempty"`
+	PublishedMetadata []runtimestore.PublishedMetadataRef `json:"publishedMetadata,omitempty"`
 }
 
 // mcpAdapterCapabilities reports the §15 AdapterCapabilities of the MCP
