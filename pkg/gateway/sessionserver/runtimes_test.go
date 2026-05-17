@@ -173,6 +173,36 @@ func TestDiscoveryAdapterCapabilitiesPresentWhenUnwired(t *testing.T) {
 	}
 }
 
+func TestListRuntimesSurfacesAgentInterface(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "refactorer", Type: runtimestore.TypeAgent,
+		AgentInterface: &runtimestore.AgentInterface{
+			Description: "Analyzes codebases",
+			Skills:      []runtimestore.AgentInterfaceSkill{{ID: "review"}},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Runtimes) != 1 {
+		t.Fatalf("runtimes: got %d, want 1", len(resp.Runtimes))
+	}
+	// §9.1: GET /v1/runtimes surfaces the per-runtime agentInterface.
+	ai := resp.Runtimes[0].AgentInterface
+	if ai == nil || ai.Description != "Analyzes codebases" || len(ai.Skills) != 1 {
+		t.Errorf("discovery must surface the agentInterface descriptor: %+v", ai)
+	}
+}
+
 func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

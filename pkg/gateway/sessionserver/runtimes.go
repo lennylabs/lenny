@@ -30,16 +30,17 @@ func restAdapterCapabilities() adapter.Capabilities {
 }
 
 // RuntimeDiscoveryEntry is one runtime in the §9.1 GET /v1/runtimes
-// discovery response. v1 reports the §5.1 registry fields; the §9.1
-// per-runtime agentInterface and mcpEndpoint blocks are not yet modelled
-// on the runtime record. The §9.1 adapterCapabilities block is a
-// top-level response field, not a per-runtime one.
+// discovery response. v1 reports the §5.1 registry fields and the §9.1
+// per-runtime agentInterface descriptor; the §9.1 mcpEndpoint block is
+// not yet surfaced. The §9.1 adapterCapabilities block is a top-level
+// response field, not a per-runtime one.
 type RuntimeDiscoveryEntry struct {
-	Name             string            `json:"name"`
-	Type             string            `json:"type,omitempty"`
-	IntegrationLevel string            `json:"integrationLevel,omitempty"`
-	Description      string            `json:"description,omitempty"`
-	Labels           map[string]string `json:"labels,omitempty"`
+	Name             string                       `json:"name"`
+	Type             string                       `json:"type,omitempty"`
+	IntegrationLevel string                       `json:"integrationLevel,omitempty"`
+	Description      string                       `json:"description,omitempty"`
+	Labels           map[string]string            `json:"labels,omitempty"`
+	AgentInterface   *runtimestore.AgentInterface `json:"agentInterface,omitempty"`
 }
 
 // handleListRuntimes implements GET /v1/runtimes — the §9.1 REST
@@ -71,6 +72,7 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 			IntegrationLevel: string(rt.IntegrationLevel),
 			Description:      rt.Description,
 			Labels:           rt.Labels,
+			AgentInterface:   rt.AgentInterface,
 		})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{

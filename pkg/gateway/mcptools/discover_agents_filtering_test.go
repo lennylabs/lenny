@@ -166,6 +166,42 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 	}
 }
 
+func TestListRuntimesToolSurfacesAgentInterface(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+		AgentInterface: &runtimestore.AgentInterface{
+			Description: "Security review agent",
+			Skills:      []runtimestore.AgentInterfaceSkill{{ID: "scan"}},
+		},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+
+	var resp struct {
+		Runtimes []struct {
+			Name           string                       `json:"name"`
+			AgentInterface *runtimestore.AgentInterface `json:"agentInterface"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("decode: %v (%q)", err, text)
+	}
+	if len(resp.Runtimes) != 1 {
+		t.Fatalf("runtimes: got %d, want 1 (%q)", len(resp.Runtimes), text)
+	}
+	// §9.1: list_runtimes surfaces the per-runtime agentInterface.
+	ai := resp.Runtimes[0].AgentInterface
+	if ai == nil || ai.Description != "Security review agent" || len(ai.Skills) != 1 {
+		t.Errorf("list_runtimes must surface the agentInterface descriptor: %+v", ai)
+	}
+}
+
 func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
 	srv, runtimes, envs, tenants := newMCPFiltered(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
