@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
-	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -94,13 +94,13 @@ type DeriveAuditSink interface {
 // DeriveIsolationDowngradeEvent is the §7.1 derive rule 5 audit
 // payload. Field names match the spec for downstream OCSF mapping.
 type DeriveIsolationDowngradeEvent struct {
-	SourceSessionID         string
-	SourceIsolationProfile  isolation.Profile
-	TargetPool              string
-	TargetIsolationProfile  isolation.Profile
-	AuthorizingUserSubject  string
-	TicketID                string
-	TenantID                string
+	SourceSessionID        string
+	SourceIsolationProfile isolation.Profile
+	TargetPool             string
+	TargetIsolationProfile isolation.Profile
+	AuthorizingUserSubject string
+	TicketID               string
+	TenantID               string
 }
 
 // handleDerive implements POST /v1/sessions/{id}/derive per §7.1 and

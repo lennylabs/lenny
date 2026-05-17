@@ -8,8 +8,8 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // AuditEventPayload is the §25.9 audit-event wire shape.

@@ -113,9 +113,9 @@ func TestReleaseFreesTheCredentialSlot(t *testing.T) {
 		healthyCred("key-1", "sk-one"),
 		healthyCred("key-2", "sk-two")))
 
-	first, _ := svc.Assign("claude-prod", "s_1", "")  // key-1, active{key-1:1}
-	_, _ = svc.Assign("claude-prod", "s_2", "")       // key-2, active{key-2:1}
-	svc.Release(first.LeaseID)                        // active{key-1:0}
+	first, _ := svc.Assign("claude-prod", "s_1", "") // key-1, active{key-1:1}
+	_, _ = svc.Assign("claude-prod", "s_2", "")      // key-2, active{key-2:1}
+	svc.Release(first.LeaseID)                       // active{key-1:0}
 
 	// key-1 is now the least loaded, so the next assignment picks it.
 	third, err := svc.Assign("claude-prod", "s_3", "")

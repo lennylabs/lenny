@@ -52,8 +52,8 @@ func TestListAuditEvents(t *testing.T) {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var resp struct {
-		TenantID    string                     `json:"tenantId"`
-		AuditEvents []admin.AuditEventPayload  `json:"auditEvents"`
+		TenantID    string                    `json:"tenantId"`
+		AuditEvents []admin.AuditEventPayload `json:"auditEvents"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.AuditEvents) != 2 {

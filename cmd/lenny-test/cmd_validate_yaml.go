@@ -31,7 +31,7 @@ func validateGroupsYAML(path string) checkResult {
 	var doc struct {
 		Version int `yaml:"version"`
 		Groups  map[string]struct {
-			Description string `yaml:"description"`
+			Description string    `yaml:"description"`
 			Selectors   yaml.Node `yaml:"selectors"`
 		} `yaml:"groups"`
 	}

@@ -131,7 +131,7 @@ func TestOpenAIChatStreamEmitsSSEChunks(t *testing.T) {
 func TestOpenAIChatDefaultsRuntimeWhenModelEmpty(t *testing.T) {
 	store := memstore.New()
 	h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
-		IDFunc: func() string { return "sess_def" },
+		IDFunc:         func() string { return "sess_def" },
 		DefaultRuntime: "echo",
 	})
 	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{

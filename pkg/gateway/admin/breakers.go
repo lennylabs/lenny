@@ -14,14 +14,14 @@ import (
 
 // BreakerPayload is the §15.1 admin-circuit-breaker wire shape.
 type BreakerPayload struct {
-	Name             string `json:"name"`
-	State            string `json:"state,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	LimitTier        string `json:"limit_tier,omitempty"`
+	Name             string       `json:"name"`
+	State            string       `json:"state,omitempty"`
+	Reason           string       `json:"reason,omitempty"`
+	LimitTier        string       `json:"limit_tier,omitempty"`
 	Scope            ScopePayload `json:"scope,omitempty"`
-	OpenedAt         string `json:"opened_at,omitempty"`
-	OpenedBySub      string `json:"opened_by_sub,omitempty"`
-	OpenedByTenantID string `json:"opened_by_tenant_id,omitempty"`
+	OpenedAt         string       `json:"opened_at,omitempty"`
+	OpenedBySub      string       `json:"opened_by_sub,omitempty"`
+	OpenedByTenantID string       `json:"opened_by_tenant_id,omitempty"`
 }
 
 // ScopePayload is the per-tier scope object.
@@ -41,10 +41,10 @@ type OpenBreakerRequest struct {
 
 func fromBreaker(b circuitbreaker.Breaker) BreakerPayload {
 	return BreakerPayload{
-		Name:             b.Name,
-		State:            string(b.State),
-		Reason:           b.Reason,
-		LimitTier:        string(b.LimitTier),
+		Name:      b.Name,
+		State:     string(b.State),
+		Reason:    b.Reason,
+		LimitTier: string(b.LimitTier),
 		Scope: ScopePayload{
 			Runtime:       b.Scope.Runtime,
 			Pool:          b.Scope.Pool,
@@ -91,10 +91,10 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	b := circuitbreaker.Breaker{
-		Name:             name,
-		State:            circuitbreaker.StateOpen,
-		Reason:           body.Reason,
-		LimitTier:        circuitbreaker.LimitTier(body.LimitTier),
+		Name:      name,
+		State:     circuitbreaker.StateOpen,
+		Reason:    body.Reason,
+		LimitTier: circuitbreaker.LimitTier(body.LimitTier),
 		Scope: circuitbreaker.Scope{
 			Runtime:       body.Scope.Runtime,
 			Pool:          body.Scope.Pool,

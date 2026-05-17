@@ -52,11 +52,11 @@ func TestPlatformVersionDefaultsWhenUnset(t *testing.T) {
 func TestPlatformConfigRedactsSecrets(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{}).
 		WithPlatformInfo(admin.PlatformInfo{}, map[string]string{
-			"gateway.addr":          ":8080",
-			"jwt.signingSecret":     "super-secret-value",
-			"redis.password":        "hunter2",
-			"upload.tokenKey":       "raw-key-bytes",
-			"oauth.clientId":        "public-client-id",
+			"gateway.addr":      ":8080",
+			"jwt.signingSecret": "super-secret-value",
+			"redis.password":    "hunter2",
+			"upload.tokenKey":   "raw-key-bytes",
+			"oauth.clientId":    "public-client-id",
 		})
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/platform/config", nil))
 	rr := httptest.NewRecorder()

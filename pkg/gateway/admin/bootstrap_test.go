@@ -113,7 +113,7 @@ func TestBootstrapReportsPerEntryErrors(t *testing.T) {
 	body := admin.BootstrapRequest{
 		Tenants: []admin.TenantPayload{
 			{ID: "acme"},
-			{ID: ""}, // missing id
+			{ID: ""},           // missing id
 			{ID: "with space"}, // invalid format
 		},
 	}

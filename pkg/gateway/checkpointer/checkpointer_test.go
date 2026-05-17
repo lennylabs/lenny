@@ -29,10 +29,10 @@ import (
 // stubRuntime is a no-op RuntimeProcess for the bufconn adapter.
 type stubRuntime struct{}
 
-func (stubRuntime) Start(context.Context, string) error          { return nil }
-func (stubRuntime) WriteEnvelope(string, []byte) error           { return nil }
+func (stubRuntime) Start(context.Context, string) error           { return nil }
+func (stubRuntime) WriteEnvelope(string, []byte) error            { return nil }
 func (stubRuntime) Interrupt(context.Context, string, bool) error { return nil }
-func (stubRuntime) Close(context.Context, string) error          { return nil }
+func (stubRuntime) Close(context.Context, string) error           { return nil }
 func (stubRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)
 	close(ch)

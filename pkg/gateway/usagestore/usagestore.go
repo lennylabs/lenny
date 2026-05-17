@@ -23,11 +23,11 @@ type Tokens struct {
 
 // Record is one usage event — a session's accumulated consumption.
 type Record struct {
-	TenantID     string
-	Runtime      string
-	Sessions     int64
-	Tokens       Tokens
-	PodMinutes   float64
+	TenantID   string
+	Runtime    string
+	Sessions   int64
+	Tokens     Tokens
+	PodMinutes float64
 }
 
 // TenantUsage is the §15.1 per-tenant usage rollup.

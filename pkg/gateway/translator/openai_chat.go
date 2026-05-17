@@ -29,10 +29,10 @@ import (
 // extension fields (`temperature`, `top_p`, `n`, `tools`, etc.) are
 // preserved on the raw map for future translators.
 type OpenAIChatCompletionsRequest struct {
-	Model    string                  `json:"model"`
-	Messages []OpenAIChatMessage     `json:"messages"`
-	Stream   bool                    `json:"stream,omitempty"`
-	User     string                  `json:"user,omitempty"`
+	Model    string              `json:"model"`
+	Messages []OpenAIChatMessage `json:"messages"`
+	Stream   bool                `json:"stream,omitempty"`
+	User     string              `json:"user,omitempty"`
 }
 
 // OpenAIChatMessage is one entry in the OpenAI messages array.
@@ -83,10 +83,10 @@ type OpenAIErrorBody struct {
 // It maps the OpenAI request shape to a Lenny session message dispatch
 // and re-shapes the executor response into OpenAI's expected format.
 type OpenAIChatHandler struct {
-	store    sessionstore.Store
-	exec     executor.Executor
-	clock    func() time.Time
-	idFn     func() string
+	store          sessionstore.Store
+	exec           executor.Executor
+	clock          func() time.Time
+	idFn           func() string
 	defaultRuntime string
 }
 
@@ -223,17 +223,17 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 // chatCompletionChunk is the OpenAI `chat.completion.chunk` SSE
 // frame shape.
 type chatCompletionChunk struct {
-	ID      string             `json:"id"`
-	Object  string             `json:"object"`
-	Created int64              `json:"created"`
-	Model   string             `json:"model"`
+	ID      string                      `json:"id"`
+	Object  string                      `json:"object"`
+	Created int64                       `json:"created"`
+	Model   string                      `json:"model"`
 	Choices []chatCompletionChoiceDelta `json:"choices"`
 }
 
 type chatCompletionChoiceDelta struct {
-	Index        int         `json:"index"`
-	Delta        chatDelta   `json:"delta"`
-	FinishReason *string     `json:"finish_reason"`
+	Index        int       `json:"index"`
+	Delta        chatDelta `json:"delta"`
+	FinishReason *string   `json:"finish_reason"`
 }
 
 type chatDelta struct {

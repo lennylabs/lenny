@@ -151,12 +151,12 @@ func TestMintLeaseRejectsInvalidRequest(t *testing.T) {
 func TestMintLeaseCapsTTLAtProviderCeiling(t *testing.T) {
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	lease, err := MintLease(MintRequest{
-		SessionID:    "s_1",
-		Provider:     ProviderVertexAI,
-		Source:       SourcePool,
-		PoolID:       "p",
-		CredentialID: "c",
-		DeliveryMode: DeliveryDirect,
+		SessionID:      "s_1",
+		Provider:       ProviderVertexAI,
+		Source:         SourcePool,
+		PoolID:         "p",
+		CredentialID:   "c",
+		DeliveryMode:   DeliveryDirect,
 		PoolTTLSeconds: 99999, // far above the vertex_ai 1h ceiling
 		Now:            now,
 	})

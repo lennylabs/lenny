@@ -93,15 +93,14 @@ func TestChainAuditSinkEmitDirect(t *testing.T) {
 	chains := audit.NewChainSet()
 	sink := admin.NewChainAuditSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
-		Type:          "admin.tenant.created",
-		ActorSubject:  "admin@acme.com",
-		ActorTenantID: "acme",
+		Type:           "admin.tenant.created",
+		ActorSubject:   "admin@acme.com",
+		ActorTenantID:  "acme",
 		TargetResource: "acme",
-		At:            time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		At:             time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 	chain := chains.Chain("acme")
 	if chain == nil || chain.Len() != 1 {
 		t.Fatalf("acme chain: %v", chain)
 	}
 }
-

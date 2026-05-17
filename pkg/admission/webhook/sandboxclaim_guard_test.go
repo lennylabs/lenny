@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 )
 
 const guardNS = "lenny-agents"

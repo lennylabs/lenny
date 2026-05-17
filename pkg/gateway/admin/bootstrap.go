@@ -38,10 +38,10 @@ type BootstrapResponse struct {
 
 // BootstrapSection is the per-resource result.
 type BootstrapSection struct {
-	CreatedCount int                `json:"createdCount"`
-	UpdatedCount int                `json:"updatedCount"`
-	Errors       []BootstrapError   `json:"errors,omitempty"`
-	Applied      []string           `json:"applied,omitempty"`
+	CreatedCount int              `json:"createdCount"`
+	UpdatedCount int              `json:"updatedCount"`
+	Errors       []BootstrapError `json:"errors,omitempty"`
+	Applied      []string         `json:"applied,omitempty"`
 }
 
 // BootstrapError captures a single per-entry failure.

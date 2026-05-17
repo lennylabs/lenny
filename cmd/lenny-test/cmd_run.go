@@ -280,6 +280,7 @@ func describe(s selector) string {
 //   - static  → invokes `go vet ./...`. (golangci-lint is the future Phase 1 addition.)
 //   - unit    → invokes `go test ./...` if there is any Go code under pkg/.
 //   - others  → recorded as skipped with reason "phase-0-not-implemented".
+//
 // tierExecFn runs one tier and returns (status, detail, *tierResult).
 // All tier-specific executors implement this signature; runStaticTier
 // (which has no tierResult) is wrapped to fit.
@@ -437,7 +438,6 @@ func execute(s selector, r resolvedSelector) int {
 	}
 	return printSummary(s, v, v.Verdict, exitCodeFor(v.Verdict))
 }
-
 
 // exitCodeFor maps the §7 verdict value to the process exit code
 // CI gates on: 0 for PASS, 1 for FAIL, 2 for INCONCLUSIVE so an

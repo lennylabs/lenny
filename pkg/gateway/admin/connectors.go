@@ -13,16 +13,16 @@ import (
 
 // ConnectorPayload is the §9.3 / §15.1 admin-connector wire shape.
 type ConnectorPayload struct {
-	ID           string            `json:"id"`
-	DisplayName  string            `json:"displayName,omitempty"`
-	MCPServerURL string            `json:"mcpServerUrl,omitempty"`
-	Transport    string            `json:"transport,omitempty"`
+	ID           string                `json:"id"`
+	DisplayName  string                `json:"displayName,omitempty"`
+	MCPServerURL string                `json:"mcpServerUrl,omitempty"`
+	Transport    string                `json:"transport,omitempty"`
 	Auth         *ConnectorAuthPayload `json:"auth,omitempty"`
-	Visibility   string            `json:"visibility,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	CreatedAt    string            `json:"createdAt,omitempty"`
-	UpdatedAt    string            `json:"updatedAt,omitempty"`
-	DeletedAt    string            `json:"deletedAt,omitempty"`
+	Visibility   string                `json:"visibility,omitempty"`
+	Labels       map[string]string     `json:"labels,omitempty"`
+	CreatedAt    string                `json:"createdAt,omitempty"`
+	UpdatedAt    string                `json:"updatedAt,omitempty"`
+	DeletedAt    string                `json:"deletedAt,omitempty"`
 }
 
 // ConnectorAuthPayload is the OAuth2 auth block. The client secret

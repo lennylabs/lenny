@@ -63,12 +63,12 @@ func (c Connector) IsActive() bool { return c.DeletedAt.IsZero() }
 // always a reference (`namespace/secret-name`); the raw secret never
 // enters the registry per §9.3 ("encrypted, never in pods").
 type ConnectorAuth struct {
-	Type                 string   `json:"type"`
-	AuthorizationEndpoint string  `json:"authorizationEndpoint,omitempty"`
-	TokenEndpoint        string   `json:"tokenEndpoint,omitempty"`
-	ClientID             string   `json:"clientId,omitempty"`
-	ClientSecretRef      string   `json:"clientSecretRef,omitempty"`
-	Scopes               []string `json:"scopes,omitempty"`
+	Type                  string   `json:"type"`
+	AuthorizationEndpoint string   `json:"authorizationEndpoint,omitempty"`
+	TokenEndpoint         string   `json:"tokenEndpoint,omitempty"`
+	ClientID              string   `json:"clientId,omitempty"`
+	ClientSecretRef       string   `json:"clientSecretRef,omitempty"`
+	Scopes                []string `json:"scopes,omitempty"`
 }
 
 // Store is the §9.3 connector registry contract.

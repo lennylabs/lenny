@@ -16,7 +16,7 @@ import (
 // fakeClock is a test clock the breaker reads through CircuitBreaker.Now.
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) now() time.Time { return c.t }
+func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
 func TestCircuitBreakerClosedAdmitsEverything(t *testing.T) {

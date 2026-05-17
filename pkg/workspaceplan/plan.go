@@ -106,13 +106,13 @@ func (m Mkdir) Path() string    { return m.PathField }
 
 // GitClone is the §14 gitClone variant.
 type GitClone struct {
-	URL                string         `json:"url"`
-	Ref                string         `json:"ref"`
-	PathField          string         `json:"path,omitempty"`
-	Depth              int            `json:"depth,omitempty"`
-	Submodules         bool           `json:"submodules,omitempty"`
-	Auth               *GitCloneAuth  `json:"auth,omitempty"`
-	ResolvedCommitSha  string         `json:"resolvedCommitSha,omitempty"` // gateway-written
+	URL               string        `json:"url"`
+	Ref               string        `json:"ref"`
+	PathField         string        `json:"path,omitempty"`
+	Depth             int           `json:"depth,omitempty"`
+	Submodules        bool          `json:"submodules,omitempty"`
+	Auth              *GitCloneAuth `json:"auth,omitempty"`
+	ResolvedCommitSha string        `json:"resolvedCommitSha,omitempty"` // gateway-written
 }
 
 func (GitClone) sourceVariantTag() {}
@@ -145,9 +145,9 @@ const (
 type WarningCode string
 
 const (
-	WarnUnknownSourceType    WarningCode = "workspace_plan_unknown_source_type"
-	WarnStripComponentsSkip  WarningCode = "workspace_plan_strip_components_skip"
-	WarnPathCollision        WarningCode = "workspace_plan_path_collision"
+	WarnUnknownSourceType   WarningCode = "workspace_plan_unknown_source_type"
+	WarnStripComponentsSkip WarningCode = "workspace_plan_strip_components_skip"
+	WarnPathCollision       WarningCode = "workspace_plan_path_collision"
 )
 
 // Warning is a non-fatal advisory the parser raised against a plan.
@@ -190,25 +190,25 @@ func (e *ValidationError) Error() string {
 
 // Validation reasons (§14 normative).
 const (
-	ReasonInvalidModeFormat       = "invalid_mode_format"
-	ReasonSetuidSetgidProhibited  = "setuid_setgid_prohibited"
-	ReasonStickyOnFileProhibited  = "sticky_on_file_prohibited"
-	ReasonGatewayWrittenField     = "gateway_written_field"
-	ReasonPathTraversal           = "path_traversal"
-	ReasonAbsolutePath            = "absolute_path"
-	ReasonPathTooDeep             = "path_too_deep"
-	ReasonPathTooLong             = "path_too_long"
-	ReasonGitNonHTTPS             = "git_non_https"
-	ReasonGitInvalidURL           = "git_invalid_url"
-	ReasonMissingRequired         = "missing_required"
-	ReasonUnknownField            = "unknown_field"
-	ReasonInvalidEnumValue        = "invalid_enum_value"
-	ReasonInvalidSchemaVersion    = "invalid_schema_version"
-	ReasonZeroSchemaVersion       = "zero_schema_version"
+	ReasonInvalidModeFormat        = "invalid_mode_format"
+	ReasonSetuidSetgidProhibited   = "setuid_setgid_prohibited"
+	ReasonStickyOnFileProhibited   = "sticky_on_file_prohibited"
+	ReasonGatewayWrittenField      = "gateway_written_field"
+	ReasonPathTraversal            = "path_traversal"
+	ReasonAbsolutePath             = "absolute_path"
+	ReasonPathTooDeep              = "path_too_deep"
+	ReasonPathTooLong              = "path_too_long"
+	ReasonGitNonHTTPS              = "git_non_https"
+	ReasonGitInvalidURL            = "git_invalid_url"
+	ReasonMissingRequired          = "missing_required"
+	ReasonUnknownField             = "unknown_field"
+	ReasonInvalidEnumValue         = "invalid_enum_value"
+	ReasonInvalidSchemaVersion     = "invalid_schema_version"
+	ReasonZeroSchemaVersion        = "zero_schema_version"
 	ReasonUnsupportedSchemaVersion = "unsupported_schema_version"
-	ReasonNegativeDepth           = "negative_depth"
-	ReasonInvalidLeaseScope       = "invalid_lease_scope"
-	ReasonInvalidAuthMode         = "invalid_auth_mode"
+	ReasonNegativeDepth            = "negative_depth"
+	ReasonInvalidLeaseScope        = "invalid_lease_scope"
+	ReasonInvalidAuthMode          = "invalid_auth_mode"
 )
 
 // §14 limits.
@@ -513,7 +513,7 @@ func validateUploadArchive(v *UploadArchive, i int) *SubErr {
 		// ok
 	default:
 		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].format", i),
-			Reason: ReasonInvalidEnumValue,
+			Reason:  ReasonInvalidEnumValue,
 			Message: fmt.Sprintf("format %q must be one of tar, tar.gz, zip", v.Format)}
 	}
 	if v.StripComponents < 0 {
@@ -556,12 +556,12 @@ func validateGitClone(v *GitClone, i int) *SubErr {
 	u, err := url.Parse(v.URL)
 	if err != nil || u.Host == "" {
 		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
-			Reason: ReasonGitInvalidURL,
+			Reason:  ReasonGitInvalidURL,
 			Message: fmt.Sprintf("url %q is not a valid URI", v.URL)}
 	}
 	if strings.ToLower(u.Scheme) != "https" {
 		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
-			Reason: ReasonGitNonHTTPS,
+			Reason:  ReasonGitNonHTTPS,
 			Message: "gitClone v1 accepts HTTPS URLs only; SSH and git:// are deferred post-V1"}
 	}
 	if u.User != nil {
@@ -569,7 +569,7 @@ func validateGitClone(v *GitClone, i int) *SubErr {
 		// path that gates HTTPS clone auth. Reject so the only path
 		// to authenticated clones is via gitClone.auth.leaseScope.
 		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
-			Reason: ReasonGitInvalidURL,
+			Reason:  ReasonGitInvalidURL,
 			Message: "gitClone url must not embed userinfo; use gitClone.auth.leaseScope for authenticated clones"}
 	}
 	if v.Ref == "" {

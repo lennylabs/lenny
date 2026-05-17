@@ -33,14 +33,14 @@ type OpenResponsesRequest struct {
 
 // OpenResponsesResponse is the §15.1 successful response.
 type OpenResponsesResponse struct {
-	ID                 string              `json:"id"`
-	Object             string              `json:"object"`
-	CreatedAt          int64               `json:"created_at"`
-	Status             string              `json:"status"`
-	Model              string              `json:"model"`
-	PreviousResponseID string              `json:"previous_response_id,omitempty"`
-	Output             []OpenResponseItem  `json:"output"`
-	Usage              OpenResponsesUsage  `json:"usage"`
+	ID                 string             `json:"id"`
+	Object             string             `json:"object"`
+	CreatedAt          int64              `json:"created_at"`
+	Status             string             `json:"status"`
+	Model              string             `json:"model"`
+	PreviousResponseID string             `json:"previous_response_id,omitempty"`
+	Output             []OpenResponseItem `json:"output"`
+	Usage              OpenResponsesUsage `json:"usage"`
 }
 
 // OpenResponseItem is one item in the output array.
