@@ -107,6 +107,12 @@ type Runtime struct {
 	// runtime declares no task policy.
 	TaskPolicy *TaskPolicy
 
+	// BaseRuntime is the §5.1 baseRuntime reference. When set, this
+	// runtime is a derived runtime: the gateway resolves its effective
+	// definition by merging it onto the named base runtime. An empty
+	// value marks a standalone runtime.
+	BaseRuntime string
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -119,6 +125,10 @@ type Runtime struct {
 
 // IsActive reports whether the runtime has not been soft-deleted.
 func (r Runtime) IsActive() bool { return r.DeletedAt.IsZero() }
+
+// IsDerived reports whether the runtime is a §5.1 derived runtime — one
+// that references a base runtime and is resolved by the merge algorithm.
+func (r Runtime) IsDerived() bool { return r.BaseRuntime != "" }
 
 // InjectionSupported reports whether the runtime accepts §7.2
 // mid-session message injection. Per §5.1 the default is false: a
