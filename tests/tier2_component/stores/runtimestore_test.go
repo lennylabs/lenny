@@ -261,6 +261,21 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("minPlatformVersion round-trips", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.MinPlatformVersion = "1.4.0"
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.MinPlatformVersion != "1.4.0" {
+			t.Errorf("minPlatformVersion: got %q, want 1.4.0", got.MinPlatformVersion)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {

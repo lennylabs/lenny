@@ -96,6 +96,12 @@ type Runtime struct {
 	// nil when the runtime declares no capabilities block.
 	Capabilities *RuntimeCapabilities
 
+	// MinPlatformVersion is the §5.1 minPlatformVersion: the lowest
+	// Lenny gateway version the runtime supports. The gateway rejects
+	// registration when its own version is below this. An empty value
+	// declares no minimum.
+	MinPlatformVersion string
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time

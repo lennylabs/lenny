@@ -358,6 +358,23 @@ func TestRuntimeInteractionAndInjectionModeIsValid(t *testing.T) {
 	}
 }
 
+func TestRuntimeMinPlatformVersionRoundTrip(t *testing.T) {
+	// §5.1: a runtime carries an optional minPlatformVersion.
+	s := runtimestore.NewMemory()
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, MinPlatformVersion: "1.4.0",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.MinPlatformVersion != "1.4.0" {
+		t.Errorf("minPlatformVersion: got %q, want 1.4.0", got.MinPlatformVersion)
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{
