@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 )
 
 // BreakerPayload is the §15.1 admin-circuit-breaker wire shape.
@@ -128,7 +129,7 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 	})
 	// §25.3: surface the breaker transition as an operational event so
 	// ops agents observe it through the event buffer.
-	r.emitOpsEvent("circuit_breaker_opened", "warning", map[string]any{
+	r.emitOpsEvent(opsevents.EventCircuitBreakerOpened, "warning", map[string]any{
 		"name": name, "reason": body.Reason, "openedBy": principal.Subject,
 	})
 	w.Header().Set("Content-Type", "application/json")
@@ -153,7 +154,7 @@ func (r *Router) handleCloseBreaker(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.emit(req.Context(), principal, "circuit_breaker.closed", name, nil)
-	r.emitOpsEvent("circuit_breaker_closed", "info", map[string]any{
+	r.emitOpsEvent(opsevents.EventCircuitBreakerClosed, "info", map[string]any{
 		"name": name, "closedBy": principal.Subject,
 	})
 	w.Header().Set("Content-Type", "application/json")

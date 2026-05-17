@@ -27,8 +27,9 @@ func (r *Router) WithEventEmitter(em *opsevents.Emitter) *Router {
 
 // emitOpsEvent records a §25.3 operational event when an emitter is
 // wired. It is a no-op otherwise, so the admin handlers do not depend
-// on the event buffer being configured.
-func (r *Router) emitOpsEvent(eventType, severity string, data map[string]any) {
+// on the event buffer being configured. eventType is a §16.6 catalogue
+// short name; its CloudEvents `type` is derived via CloudEventsType.
+func (r *Router) emitOpsEvent(eventType opsevents.EventType, severity string, data map[string]any) {
 	if r.eventEmitter == nil {
 		return
 	}
@@ -40,7 +41,7 @@ func (r *Router) emitOpsEvent(eventType, severity string, data map[string]any) {
 	}
 	r.eventEmitter.Emit(opsevents.OperationalEvent{
 		Source:          "/v1/admin",
-		Type:            "dev.lenny." + eventType,
+		Type:            eventType.CloudEventsType(),
 		Severity:        severity,
 		DataContentType: "application/json",
 		Data:            payload,

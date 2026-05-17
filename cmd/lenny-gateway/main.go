@@ -683,7 +683,7 @@ func main() {
 		})
 		opsEmitter.Emit(opsevents.OperationalEvent{
 			Source:          "/v1/admin/health",
-			Type:            "dev.lenny.health_status_changed",
+			Type:            opsevents.EventHealthStatusChanged.CloudEventsType(),
 			Severity:        "warning",
 			DataContentType: "application/json",
 			Data:            data,

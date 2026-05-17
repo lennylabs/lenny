@@ -99,7 +99,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.S
 		})
 		s.opsEmitter.Emit(opsevents.OperationalEvent{
 			Source:          "/v1/sessions",
-			Type:            "dev.lenny.session_failed",
+			Type:            opsevents.EventSessionFailed.CloudEventsType(),
 			Severity:        "error",
 			DataContentType: "application/json",
 			Data:            data,
