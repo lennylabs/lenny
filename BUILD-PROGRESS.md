@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c60dde3` — §7.1 re-deliver the §8.3 manifest contexts on Resume. `ResumeRequest`
+  carries `experiment_context` and `tracing_context`, and the adapter `Resume` handler
+  writes the §15.4 adapter manifest before starting the restored runtime — so a session
+  resumed onto a fresh pod reads the same `experimentContext` and `tracingContext` it
+  had before. The manifest write is now a shared `Server.writeSessionManifest` helper
+  that `StartSession` and `Resume` both call.
 - `d39aab7` — §5.1 enforce the runtime `setupPolicy` aggregate cap at session start.
   `StartSessionRequest` now carries the §5.1 `setup_policy` (the aggregate setup-phase
   cap and `onTimeout` disposition). The gateway resolves the effective runtime's
