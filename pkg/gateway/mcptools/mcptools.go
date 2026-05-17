@@ -38,6 +38,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
@@ -45,8 +47,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -66,6 +70,17 @@ type Deps struct {
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
 	Runtimes runtimestore.Store
+
+	// Environments is the §10.6 environment registry. Optional — when
+	// set together with Tenants, lenny/discover_agents applies §10.6
+	// transparent filtering, returning only the agent runtimes the
+	// caller's environment membership authorizes.
+	Environments environmentstore.Store
+
+	// Tenants is the §10.2 tenant registry. Optional — consulted with
+	// Environments to read the caller tenant's noEnvironmentPolicy for
+	// the §10.6 transparent-filtering fallback.
+	Tenants tenantstore.Store
 
 	// Interceptors is the §4 RequestInterceptor chain. Optional — when
 	// non-nil, lenny/send_message runs the PreMessageDelivery phase
@@ -717,6 +732,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
+			// §10.6: narrow the list to the runtimes the caller's
+			// environment membership authorizes.
+			runtimes, err = filterByEnvironmentAccess(ctx, deps, runtimes)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
 			needle := strings.ToLower(in.NameContains)
 			agents := make([]discoveredAgent, 0, len(runtimes))
 			for _, rt := range runtimes {
@@ -895,6 +916,33 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// filterByEnvironmentAccess applies §10.6 transparent filtering to a
+// runtime list: it returns only the runtimes the caller's environment
+// membership authorizes. Filtering runs when the environment and
+// tenant registries are wired and the request context carries an
+// authenticated principal; otherwise the list is returned unchanged
+// (a minimal deployment with no environment registry). A caller in no
+// environment is governed by the tenant's §10.6 noEnvironmentPolicy.
+func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtimestore.Runtime) ([]runtimestore.Runtime, error) {
+	if deps.Environments == nil || deps.Tenants == nil {
+		return runtimes, nil
+	}
+	principal, ok := authmw.FromContext(ctx)
+	if !ok || principal.TenantID == "" {
+		return runtimes, nil
+	}
+	envs, err := deps.Environments.List(ctx, principal.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	tenant, err := deps.Tenants.Get(ctx, principal.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
+	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, tenant.NoEnvironmentPolicy), nil
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its
