@@ -859,6 +859,73 @@ func TestCreateRuntimeRejectsIncoherentCapabilities(t *testing.T) {
 	}
 }
 
+func TestRuntimeMinPlatformVersionRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips minPlatformVersion.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:               "rt",
+		Image:              "lenny/rt@sha256:abc",
+		MinPlatformVersion: "1.0.0",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.MinPlatformVersion != "1.0.0" {
+		t.Errorf("create response minPlatformVersion: %q", created.MinPlatformVersion)
+	}
+	bumped := "1.1.0"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{MinPlatformVersion: &bumped})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.MinPlatformVersion != "1.1.0" {
+		t.Errorf("update minPlatformVersion: %q", updated.MinPlatformVersion)
+	}
+}
+
+func TestCreateRuntimeRejectsMinPlatformVersionAboveGateway(t *testing.T) {
+	// §5.1: the gateway rejects registration when its own version is
+	// below the runtime's minPlatformVersion.
+	router, _, _ := newRuntimeAdmin(t)
+	router = router.WithPlatformInfo(admin.PlatformInfo{Version: "1.2.0"}, nil)
+
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:               "futuristic",
+		Image:              "lenny/futuristic@sha256:abc",
+		MinPlatformVersion: "2.0.0",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("minPlatformVersion above gateway: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	ok := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:               "compatible",
+		Image:              "lenny/compatible@sha256:abc",
+		MinPlatformVersion: "1.0.0",
+	})
+	if ok.Code != http.StatusCreated {
+		t.Errorf("satisfied minPlatformVersion: status %d, want 201 (body=%s)", ok.Code, ok.Body.String())
+	}
+}
+
+func TestCreateRuntimeRejectsMalformedMinPlatformVersion(t *testing.T) {
+	// §5.1: minPlatformVersion must be a valid version string.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:               "bad",
+		Image:              "lenny/bad@sha256:abc",
+		MinPlatformVersion: "not-a-version",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("malformed minPlatformVersion: status %d, want 400", rr.Code)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

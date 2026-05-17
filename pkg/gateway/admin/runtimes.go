@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/semver"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -59,6 +60,7 @@ type RuntimePayload struct {
 	ToolCapabilityOverrides map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                   `json:"setupPolicy,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
+	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
@@ -83,6 +85,26 @@ type UpdateRuntimeRequest struct {
 	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
+	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
+}
+
+// validateMinPlatformVersion checks a §5.1 minPlatformVersion: when set
+// it must be a parseable version, and the running gateway version must
+// not be below it. The gateway-version floor check is skipped when the
+// gateway's own version is not a parseable release (a dev build), since
+// no meaningful comparison is possible.
+func (r *Router) validateMinPlatformVersion(minVersion string) error {
+	if minVersion == "" {
+		return nil
+	}
+	if _, ok := semver.Parse(minVersion); !ok {
+		return errors.New("minPlatformVersion is not a valid version")
+	}
+	gw := r.platformInfo.Version
+	if _, ok := semver.Parse(gw); ok && semver.Compare(gw, minVersion) < 0 {
+		return errors.New("runtime minPlatformVersion is newer than this gateway's platform version")
+	}
+	return nil
 }
 
 // validateSetupPolicy checks a §5.1 setupPolicy: a non-negative
@@ -142,6 +164,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		ToolCapabilityOverrides: r.ToolCapabilityOverrides,
 		SetupPolicy:             r.SetupPolicy,
 		Capabilities:            r.Capabilities,
+		MinPlatformVersion:      r.MinPlatformVersion,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -218,6 +241,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := r.validateMinPlatformVersion(body.MinPlatformVersion); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                    body.Name,
@@ -235,6 +262,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		ToolCapabilityOverrides: body.ToolCapabilityOverrides,
 		SetupPolicy:             body.SetupPolicy,
 		Capabilities:            body.Capabilities,
+		MinPlatformVersion:      body.MinPlatformVersion,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -400,6 +428,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.MinPlatformVersion != nil {
+		if err := r.validateMinPlatformVersion(*body.MinPlatformVersion); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -443,6 +477,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Capabilities != nil {
 			rt.Capabilities = body.Capabilities
+		}
+		if body.MinPlatformVersion != nil {
+			rt.MinPlatformVersion = *body.MinPlatformVersion
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -528,6 +565,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.Capabilities != nil {
 		out = append(out, "capabilities")
+	}
+	if b.MinPlatformVersion != nil {
+		out = append(out, "minPlatformVersion")
 	}
 	return out
 }
