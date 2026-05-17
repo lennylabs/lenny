@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `294ec5a` — §14 `gitref.Clone` — gitClone materialization primitive. Clones a Git
+  repository at a pinned commit into a destination directory: fetches the §14
+  `resolvedCommitSha` directly and checks it out detached, honoring the `depth`
+  (shallow) and `submodules` options, with interactive credential prompts disabled.
+  Tested against local Git fixtures. This is the gateway-side clone primitive; the
+  remaining gitClone-materialization work is the workspace-staging integration that
+  calls it and delivers the cloned tree to the pod (the §15.4 `PrepareWorkspace` RPC),
+  and authenticated private-repo cloning via the §4.9 VCS credential lease.
 - `4873072` — §8.3 propagate the experiment context onto delegation children.
   `delegation.Delegate` now sets the child's `experimentContext` from the parent's per
   the §10.7 propagation mode (via `experiment.PropagateContext`): `inherit` copies the
