@@ -34,6 +34,19 @@
           }
         }
       },
+      "AdapterCapabilities": {
+        "type": "object",
+        "description": "Routing and protocol capabilities of the adapter serving a runtime-discovery request.",
+        "required": ["pathPrefix", "protocol"],
+        "properties": {
+          "pathPrefix":                { "type": "string" },
+          "protocol":                  { "type": "string" },
+          "supportsSessionContinuity": { "type": "boolean" },
+          "supportsDelegation":        { "type": "boolean" },
+          "supportsElicitation":       { "type": "boolean" },
+          "supportsInterrupt":         { "type": "boolean" }
+        }
+      },
       "Session": {
         "type": "object",
         "required": ["id", "tenantId", "state", "createdAt", "updatedAt"],
@@ -275,7 +288,8 @@
                           "labels":           { "type": "object", "additionalProperties": { "type": "string" } }
                         }
                       }
-                    }
+                    },
+                    "adapterCapabilities": { "$ref": "#/components/schemas/AdapterCapabilities" }
                   }
                 }
               }
@@ -308,7 +322,8 @@
                           "owned_by": { "type": "string" }
                         }
                       }
-                    }
+                    },
+                    "adapterCapabilities": { "$ref": "#/components/schemas/AdapterCapabilities" }
                   }
                 }
               }
