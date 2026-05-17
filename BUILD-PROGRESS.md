@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `bf10a61` — §25.3 `credrenewal.OnRenewed` hook. Adds the `OnRenewed` callback to the
+  §4.9 CredentialRenewalWorker (the §25.3 `credential_rotated` extension point,
+  consistent with the existing `OnExhausted`). The `credential_rotated` emit is wired
+  when the renewal worker is instantiated in `cmd/lenny-gateway` — `credrenewal` is not
+  yet wired into the gateway binary, which awaits the §4.9 credential-leasing path.
 - `fe5d62d` — §25.3 emit `health_status_changed` operational events. The health
   `Aggregator` gains an `OnTransition` hook that fires when a `Report` computes an
   aggregate status different from the previous Report's; `cmd/lenny-gateway` wires it to
