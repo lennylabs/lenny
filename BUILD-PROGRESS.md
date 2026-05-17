@@ -11,6 +11,32 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- Scoped the Full-level lifecycle channel (next feature to build). Findings,
+  so the next iteration can start directly:
+  - Two unimplemented adapter RPCs remain: `LifecycleChannel` and
+    `ExtendLease` (the embedded `UnimplementedAdapterServer` answers
+    `Unimplemented`). All other 16 §4.7 RPCs are implemented.
+  - The §15.4.3/§15.4.6 lifecycle channel is a **runtime ↔ adapter Unix
+    socket**, separate from the gRPC `Adapter.LifecycleChannel` RPC. The
+    agent runtime dials the socket named by the adapter manifest's
+    `lifecycleChannel.socket` field and speaks JSONL frames: the
+    `lifecycle_capabilities`/`lifecycle_support` handshake, then
+    `checkpoint_request`/`checkpoint_ready`/`checkpoint_complete`,
+    `interrupt_request`/`interrupt_acknowledged`, `credentials_rotated`,
+    `deadline_signal`, and `draining`.
+  - The runtime side is built (`cmd/runtimes/streaming-echo`) and the
+    compliance harness already plays the adapter side with a `fakeAdapter`
+    socket server (`cmd/lenny-compliance/full.go`, the five §15.4.6 checks).
+    Unbuilt: the **real adapter-side** lifecycle socket server in
+    `pkg/adapter`, the manifest `lifecycleChannel.socket` field in
+    `manifest.go`, and the bridge from that socket to the gRPC
+    `LifecycleChannel` stream so the gateway sees the events.
+  - Suggested build order: (1) adapter lifecycle socket server + protocol,
+    component-tested against `cmd/runtimes/streaming-echo`; (2) manifest
+    field; (3) gRPC `LifecycleChannel` bridge; (4) `ExtendLease` last — its
+    proto placement in the `Adapter` service contradicts the §8.6 prose
+    (adapter requests budget from the gateway), so it needs a direction
+    decision first.
 - Tier-0 static gate sweep (`make lint` / `lenny-test --tier static`) — now
   GREEN (`verdict: PASS`). The static gate had not been run during the
   build-out, so a backlog of Tier-0 violations had accumulated. This pass
