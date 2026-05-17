@@ -136,7 +136,8 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = rt
 
-	cluster := podBindClient(t,
+	cluster := podBindClient(
+		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
@@ -190,7 +191,8 @@ func TestSessionStartFailsSessionWhenNoPoolMatches(t *testing.T) {
 
 	// The cluster serves only the "echo" runtime; the request asks for a
 	// runtime no warm pool covers.
-	cluster := podBindClient(t,
+	cluster := podBindClient(
+		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
@@ -239,7 +241,8 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 	adapterSrv.WorkspaceRoot = wsRoot
 	adapterSrv.Runtime = &podBindRuntime{}
 
-	cluster := podBindClient(t,
+	cluster := podBindClient(
+		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
@@ -384,7 +387,8 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 	adapterSrv.Runtime = &podBindRuntime{}
 	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
 
-	cluster := podBindClient(t,
+	cluster := podBindClient(
+		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
@@ -558,7 +562,8 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 	adapterSrv.Runtime = &podBindRuntime{}
 	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
 
-	cluster := podBindClient(t,
+	cluster := podBindClient(
+		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),

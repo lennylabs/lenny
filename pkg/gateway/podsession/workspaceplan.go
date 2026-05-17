@@ -3,7 +3,7 @@
 package podsession
 
 import (
-	"github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

@@ -92,7 +92,8 @@ func TestClaimReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 }
 
 func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
-	claimer, _ := claimerFor(t,
+	claimer, _ := claimerFor(
+		t,
 		sandboxIn(testPool, "sbx-warming", "warming"),
 		sandboxIn(testPool, "sbx-claimed", "claimed"),
 		sandboxIn(testPool, "sbx-draining", "draining"),
@@ -104,7 +105,8 @@ func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
 }
 
 func TestClaimPicksTheIdleSandboxAmongMixedPhases(t *testing.T) {
-	claimer, _ := claimerFor(t,
+	claimer, _ := claimerFor(
+		t,
 		sandboxIn(testPool, "sbx-warming", "warming"),
 		sandboxIn(testPool, "sbx-idle", "idle"),
 		sandboxIn(testPool, "sbx-claimed", "claimed"),
@@ -147,7 +149,8 @@ func TestClaimSkipsAPodLostToAConcurrentClaimer(t *testing.T) {
 					conflicted = true
 					return apierrors.NewConflict(
 						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
-						"sbx-a", errors.New("claimed by a competing replica"))
+						"sbx-a", errors.New("claimed by a competing replica"),
+					)
 				}
 				return cl.Status().Update(ctx, obj, opts...)
 			},

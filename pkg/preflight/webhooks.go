@@ -74,16 +74,19 @@ func CheckAdmissionWebhooks(expected []string, deployed []WebhookConfig) Decisio
 		w, ok := byName[name]
 		if !ok {
 			return Decision{Passed: false, Reason: fmt.Sprintf(
-				"expected ValidatingWebhookConfiguration %q not found; the chart-rendered webhook is missing", name)}
+				"expected ValidatingWebhookConfiguration %q not found; the chart-rendered webhook is missing", name,
+			)}
 		}
 		if w.FailurePolicy != "Fail" {
 			return Decision{Passed: false, Reason: fmt.Sprintf(
 				"ValidatingWebhookConfiguration %q has failurePolicy=%q; expected \"Fail\" for fail-closed behavior",
-				name, w.FailurePolicy)}
+				name, w.FailurePolicy,
+			)}
 		}
 		if !w.HasCABundle {
 			return Decision{Passed: false, Reason: fmt.Sprintf(
-				"ValidatingWebhookConfiguration %q has an empty caBundle; cert-manager CA injection has not completed", name)}
+				"ValidatingWebhookConfiguration %q has an empty caBundle; cert-manager CA injection has not completed", name,
+			)}
 		}
 	}
 	return Decision{Passed: true}

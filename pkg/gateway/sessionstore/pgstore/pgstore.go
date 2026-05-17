@@ -150,7 +150,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		sess.UpdatedAt = pgtenant.MonotonicNext(prevUpdated, time.Now())
 		ref, src, at := snapshotCols(sess.WorkspaceSnapshot)
 		expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
-		if _, err := tx.Exec(ctx, updateSQL,
+		if _, err := tx.Exec(
+			ctx, updateSQL,
 			id, tenantID, sess.UserID, string(sess.State), sess.RuntimeRef,
 			sess.PoolRef, string(sess.IsolationProfile), sess.ParentSessionID,
 			string(sess.FailureClass), sess.FailureReason, ref, src, pgtenant.NullTime(at),

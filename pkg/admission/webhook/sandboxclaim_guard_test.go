@@ -75,7 +75,8 @@ func TestSandboxClaimGuardAllowsCreateWithNoExistingClaim(t *testing.T) {
 }
 
 func TestSandboxClaimGuardRejectsCreateWithExistingBoundClaim(t *testing.T) {
-	c := guardClient(t,
+	c := guardClient(
+		t,
 		sandbox("sbx-1", "claimed"),
 		seededClaim("claim-existing", "sbx-1", "bound"),
 	)
@@ -94,7 +95,8 @@ func TestSandboxClaimGuardRejectsCreateWithExistingBoundClaim(t *testing.T) {
 }
 
 func TestSandboxClaimGuardAllowsCreateWhenExistingClaimTerminal(t *testing.T) {
-	c := guardClient(t,
+	c := guardClient(
+		t,
 		sandbox("sbx-1", "idle"),
 		seededClaim("claim-old", "sbx-1", "released"),
 	)

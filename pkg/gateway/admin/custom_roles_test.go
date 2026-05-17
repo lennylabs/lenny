@@ -205,6 +205,7 @@ func (fakeUserLister) Create(context.Context, userstore.User) error { return nil
 func (fakeUserLister) Get(context.Context, string, string) (userstore.User, error) {
 	return userstore.User{}, userstore.ErrNotFound
 }
+
 func (fakeUserLister) Update(context.Context, string, string, func(*userstore.User) error) (userstore.User, error) {
 	return userstore.User{}, userstore.ErrNotFound
 }

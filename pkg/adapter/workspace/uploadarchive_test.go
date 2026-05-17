@@ -18,7 +18,7 @@ import (
 func buildTar(t *testing.T, gzipIt bool, entries map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	var sink = &buf
+	sink := &buf
 	gz := gzip.NewWriter(sink)
 	var tw *tar.Writer
 	if gzipIt {

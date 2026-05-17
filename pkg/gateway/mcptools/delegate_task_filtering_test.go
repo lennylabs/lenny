@@ -57,7 +57,8 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	})
 	_ = tenants.Create(ctxbg, tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(ctxbg, securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,

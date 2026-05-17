@@ -282,7 +282,8 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 	if resp.GetIncompatible() {
 		cl.Close()
 		return "", "", nil, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName)
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
+		)
 	}
 	return sandboxName, podIP, cl, nil
 }

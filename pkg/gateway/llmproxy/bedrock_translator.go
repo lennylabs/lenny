@@ -61,7 +61,8 @@ func (t *AWSBedrockTranslator) TranslateRequest(req Request, apiKey string) (*Up
 	// the path segment and redirect the upstream call.
 	upstreamURL := fmt.Sprintf(
 		"https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke",
-		t.Region, url.PathEscape(model))
+		t.Region, url.PathEscape(model),
+	)
 	return &UpstreamRequest{
 		URL:  upstreamURL,
 		Body: upstreamBody,

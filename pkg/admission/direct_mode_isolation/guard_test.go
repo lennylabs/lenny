@@ -61,17 +61,23 @@ func TestAllowsSafeCombinationsInMultiTenant(t *testing.T) {
 		req  dmi.Request
 	}{
 		{"direct + sandboxed", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DeliveryMode: "direct", IsolationProfile: "sandboxed"}},
+			TenancyMode: dmi.TenancyMulti, DeliveryMode: "direct", IsolationProfile: "sandboxed",
+		}},
 		{"direct + microvm", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DeliveryMode: "direct", IsolationProfile: "microvm"}},
+			TenancyMode: dmi.TenancyMulti, DeliveryMode: "direct", IsolationProfile: "microvm",
+		}},
 		{"proxy + standard", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy", IsolationProfile: "standard"}},
+			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy", IsolationProfile: "standard",
+		}},
 		{"proxy + spiffe enabled", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy", SpiffeBinding: "enabled"}},
+			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy", SpiffeBinding: "enabled",
+		}},
 		{"proxy + spiffe default", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy"}},
+			TenancyMode: dmi.TenancyMulti, DeliveryMode: "proxy",
+		}},
 		{"no delivery mode", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, IsolationProfile: "standard"}},
+			TenancyMode: dmi.TenancyMulti, IsolationProfile: "standard",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := dmi.Decide(tc.req)
@@ -93,14 +99,18 @@ func TestAllowsUnsafeCombinationsOutsideMultiTenant(t *testing.T) {
 		req  dmi.Request
 	}{
 		{"single-tenant direct + standard", dmi.Request{
-			TenancyMode: "single", DeliveryMode: "direct", IsolationProfile: "standard"}},
+			TenancyMode: "single", DeliveryMode: "direct", IsolationProfile: "standard",
+		}},
 		{"single-tenant proxy + spiffe disabled", dmi.Request{
-			TenancyMode: "single", DeliveryMode: "proxy", SpiffeBinding: "disabled"}},
+			TenancyMode: "single", DeliveryMode: "proxy", SpiffeBinding: "disabled",
+		}},
 		{"devMode multi-tenant direct + standard", dmi.Request{
 			TenancyMode: dmi.TenancyMulti, DevMode: true,
-			DeliveryMode: "direct", IsolationProfile: "standard"}},
+			DeliveryMode: "direct", IsolationProfile: "standard",
+		}},
 		{"empty tenancy mode", dmi.Request{
-			DeliveryMode: "direct", IsolationProfile: "standard"}},
+			DeliveryMode: "direct", IsolationProfile: "standard",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := dmi.Decide(tc.req)

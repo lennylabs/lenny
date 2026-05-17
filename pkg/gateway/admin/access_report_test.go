@@ -39,7 +39,8 @@ func member(typ, value string, role environment.Role) environmentstore.Member {
 }
 
 func TestTenantAccessReportMatrix(t *testing.T) {
-	router := accessReportRouter(t,
+	router := accessReportRouter(
+		t,
 		environmentstore.Environment{
 			Name: "security-team", TenantID: "acme",
 			Members: []environmentstore.Member{

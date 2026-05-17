@@ -231,8 +231,8 @@ func storedWorkspacePlan(row sessionstore.Session) (workspaceplan.Plan, error) {
 // ref-resolution failure it writes the §15.1 error response and
 // returns ok=false; the caller must abort.
 func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, rawPlan json.RawMessage) (
-	plan workspaceplan.Plan, storedJSON json.RawMessage, warnings []workspaceplan.Warning, ok bool) {
-
+	plan workspaceplan.Plan, storedJSON json.RawMessage, warnings []workspaceplan.Warning, ok bool,
+) {
 	if len(rawPlan) == 0 || isJSONNull(rawPlan) {
 		return workspaceplan.Plan{}, nil, nil, true
 	}

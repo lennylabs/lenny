@@ -54,6 +54,8 @@ generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
 		head -1 "$$f" | grep -q SPDX-License-Identifier || \
 		{ printf '// SPDX-License-Identifier: MIT\n\n' | cat - "$$f" > "$$f.tmp" && mv "$$f.tmp" "$$f"; }; \
 	done
+	@echo "  goimports → pkg/proto"
+	@PATH="$(GOPATH_BIN):$$PATH" goimports -w -local github.com/lennylabs/lenny ./pkg/proto
 
 .PHONY: install
 install: ## Install lenny-test + lenny-compliance into $(go env GOPATH)/bin

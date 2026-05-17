@@ -594,7 +594,8 @@ func Register(srv *mcp.Server, deps Deps) {
 			case <-time.After(requestInputTimeout):
 				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
 				return mcp.ToolResult{}, fmt.Errorf(
-					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, requestInputTimeout)
+					"REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s", in.RequestID, requestInputTimeout,
+				)
 			case <-ctx.Done():
 				deps.InputWaits.Cancel(in.SessionID, in.RequestID)
 				return mcp.ToolResult{}, ctx.Err()
@@ -648,7 +649,8 @@ func Register(srv *mcp.Server, deps Deps) {
 				}
 				return mcp.ToolResult{}, fmt.Errorf(
 					"elicitation budget exhausted: session %s has reached the maxElicitationsPerSession limit of %d",
-					in.SessionID, maxElicitations)
+					in.SessionID, maxElicitations,
+				)
 			}
 			// §9.2: the depth policy suppresses an agent elicitation
 			// raised too deep in the delegation tree.
@@ -663,7 +665,8 @@ func Register(srv *mcp.Server, deps Deps) {
 				}
 				return mcp.ToolResult{}, fmt.Errorf(
 					"elicitation suppressed: the %q depth policy suppresses an agent elicitation at delegation depth %d",
-					depthPolicy, depth)
+					depthPolicy, depth,
+				)
 			}
 			elicitationID := in.ElicitationID
 			if elicitationID == "" {
@@ -731,7 +734,8 @@ func Register(srv *mcp.Server, deps Deps) {
 							return nil
 						})
 					return mcp.ToolResult{}, fmt.Errorf(
-						"ELICITATION_TIMEOUT: no response for %s within %s", elicitationID, elicitationTimeout)
+						"ELICITATION_TIMEOUT: no response for %s within %s", elicitationID, elicitationTimeout,
+					)
 				case <-ticker.C:
 				}
 			}
@@ -878,7 +882,8 @@ func Register(srv *mcp.Server, deps Deps) {
 				// is rejected with the target_not_in_scope reason.
 				return mcp.ToolResult{}, fmt.Errorf(
 					"target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)",
-					in.RuntimeRef)
+					in.RuntimeRef,
+				)
 			}
 			// §4 PreDelegation: run the interceptor chain over the
 			// TaskSpec.input before the gateway processes the delegation.
@@ -1258,8 +1263,8 @@ type childOutcome struct {
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
 func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
-	tenant, childID string) (childOutcome, error) {
-
+	tenant, childID string,
+) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
 		return childOutcome{
@@ -1294,8 +1299,8 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 // returned. A child whose live row is gone is resolved from the §8.10
 // archive.
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store,
-	tenant string, childIDs []string, mode string) ([]taskResult, bool, error) {
-
+	tenant string, childIDs []string, mode string,
+) ([]taskResult, bool, error) {
 	var terminal []taskResult
 	allTerminal := true
 	for _, cid := range childIDs {
@@ -1373,8 +1378,8 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 // descends through them to reach any non-terminal descendants. It
 // returns the ids it cancelled, sorted for a deterministic result.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, all []sessionstore.Session) ([]string, error) {
-
+	child sessionstore.Session, all []sessionstore.Session,
+) ([]string, error) {
 	byParent := map[string][]sessionstore.Session{}
 	for _, s := range all {
 		if s.ParentSessionID != "" {
@@ -1452,8 +1457,8 @@ func treeRoot(start sessionstore.Session, all []sessionstore.Session) string {
 // is best-effort: an archive error does not undo the cancellation, so
 // the error is dropped.
 func archiveCancelled(ctx context.Context, archive treearchive.Store,
-	tenant, rootSessionID string, cancelled []string, all []sessionstore.Session, now time.Time) {
-
+	tenant, rootSessionID string, cancelled []string, all []sessionstore.Session, now time.Time,
+) {
 	parentOf := make(map[string]string, len(all))
 	for _, s := range all {
 		parentOf[s.ID] = s.ParentSessionID

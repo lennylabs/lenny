@@ -219,7 +219,8 @@ func TestDeriveIsolationDowngradeWithoutAdminRoleReturns403(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{})
 
 	// Attach a non-admin Principal via context.
-	rr := deriveRequest(t, srv.Handler(),
+	rr := deriveRequest(
+		t, srv.Handler(),
 		sessionserver.DeriveRequest{
 			TargetIsolationProfile:  isolation.ProfileSandboxed,
 			AllowIsolationDowngrade: true,
@@ -253,7 +254,8 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 		DeriveAuditSink: sink,
 	})
 
-	rr := deriveRequest(t, srv.Handler(),
+	rr := deriveRequest(
+		t, srv.Handler(),
 		sessionserver.DeriveRequest{
 			TargetIsolationProfile:  isolation.ProfileSandboxed,
 			TargetPool:              "low-iso-pool",

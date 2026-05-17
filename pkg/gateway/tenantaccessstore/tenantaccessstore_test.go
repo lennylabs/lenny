@@ -152,7 +152,8 @@ func TestListForTenant(t *testing.T) {
 
 func TestListForTenantNoGrantsIsEmpty(t *testing.T) {
 	out, err := tenantaccessstore.NewMemory().ListForTenant(
-		context.Background(), tenantaccessstore.KindRuntime, "acme")
+		context.Background(), tenantaccessstore.KindRuntime, "acme",
+	)
 	if err != nil {
 		t.Fatalf("ListForTenant: %v", err)
 	}

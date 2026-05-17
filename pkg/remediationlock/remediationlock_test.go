@@ -17,7 +17,8 @@ func TestAuthorizePlatformAdminMayTouchEveryScope(t *testing.T) {
 		"config:global",
 	} {
 		if err := remediationlock.Authorize(
-			remediationlock.PlatformAdmin, "acme", scope, "globex"); err != nil {
+			remediationlock.PlatformAdmin, "acme", scope, "globex",
+		); err != nil {
 			t.Errorf("platform-admin denied scope %q: %v", scope, err)
 		}
 	}
@@ -27,17 +28,20 @@ func TestAuthorizeTenantAdminTenantResourceScopes(t *testing.T) {
 	for _, scope := range []string{"pool:p", "credential-pool:c", "session:s"} {
 		// Owned by the caller's tenant — allowed.
 		if err := remediationlock.Authorize(
-			remediationlock.TenantAdmin, "acme", scope, "acme"); err != nil {
+			remediationlock.TenantAdmin, "acme", scope, "acme",
+		); err != nil {
 			t.Errorf("tenant-admin denied own-tenant scope %q: %v", scope, err)
 		}
 		// Owned by another tenant — forbidden.
 		if err := remediationlock.Authorize(
-			remediationlock.TenantAdmin, "acme", scope, "globex"); !errors.Is(err, remediationlock.ErrScopeForbidden) {
+			remediationlock.TenantAdmin, "acme", scope, "globex",
+		); !errors.Is(err, remediationlock.ErrScopeForbidden) {
 			t.Errorf("tenant-admin allowed cross-tenant scope %q: %v", scope, err)
 		}
 		// Owner unknown — fail closed.
 		if err := remediationlock.Authorize(
-			remediationlock.TenantAdmin, "acme", scope, ""); !errors.Is(err, remediationlock.ErrScopeForbidden) {
+			remediationlock.TenantAdmin, "acme", scope, "",
+		); !errors.Is(err, remediationlock.ErrScopeForbidden) {
 			t.Errorf("tenant-admin allowed scope %q with no resolved owner", scope)
 		}
 	}
@@ -45,11 +49,13 @@ func TestAuthorizeTenantAdminTenantResourceScopes(t *testing.T) {
 
 func TestAuthorizeTenantAdminTenantScope(t *testing.T) {
 	if err := remediationlock.Authorize(
-		remediationlock.TenantAdmin, "acme", "tenant:acme:*", ""); err != nil {
+		remediationlock.TenantAdmin, "acme", "tenant:acme:*", "",
+	); err != nil {
 		t.Errorf("tenant-admin denied its own tenant scope: %v", err)
 	}
 	if err := remediationlock.Authorize(
-		remediationlock.TenantAdmin, "acme", "tenant:globex:*", ""); !errors.Is(err, remediationlock.ErrScopeForbidden) {
+		remediationlock.TenantAdmin, "acme", "tenant:globex:*", "",
+	); !errors.Is(err, remediationlock.ErrScopeForbidden) {
 		t.Error("tenant-admin allowed another tenant's scope")
 	}
 }
@@ -67,11 +73,13 @@ func TestAuthorizeTenantAdminPlatformScopesForbidden(t *testing.T) {
 
 func TestAuthorizeRejectsUnknownRoleAndScope(t *testing.T) {
 	if err := remediationlock.Authorize(
-		remediationlock.Role("auditor"), "acme", "pool:p", "acme"); !errors.Is(err, remediationlock.ErrScopeForbidden) {
+		remediationlock.Role("auditor"), "acme", "pool:p", "acme",
+	); !errors.Is(err, remediationlock.ErrScopeForbidden) {
 		t.Error("an unknown role was authorized")
 	}
 	if err := remediationlock.Authorize(
-		remediationlock.TenantAdmin, "acme", "teleport:x", "acme"); !errors.Is(err, remediationlock.ErrScopeForbidden) {
+		remediationlock.TenantAdmin, "acme", "teleport:x", "acme",
+	); !errors.Is(err, remediationlock.ErrScopeForbidden) {
 		t.Error("tenant-admin authorized an unrecognized scope kind")
 	}
 }

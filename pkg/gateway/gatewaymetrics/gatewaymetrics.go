@@ -13,9 +13,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
 // Metrics holds the registered §16.1 gateway metric vectors.

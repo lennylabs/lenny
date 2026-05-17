@@ -631,7 +631,8 @@ func TestCreateTenantExemptRegulatedEmitsComplianceEvent(t *testing.T) {
 	})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	// §12.8: the combination is permitted (a 2xx response).
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -653,7 +654,8 @@ func TestCreateTenantExemptNonRegulatedNoComplianceEvent(t *testing.T) {
 	})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, want 201", rr.Code)
 	}
@@ -667,7 +669,8 @@ func TestUpdateTenantToExemptRegulatedEmitsComplianceEvent(t *testing.T) {
 	createBody, _ := json.Marshal(admin.TenantPayload{ID: "acme", ComplianceProfile: "fedramp"})
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(createBody))))
+		httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(createBody)),
+	))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d", rr.Code)
 	}
@@ -676,7 +679,8 @@ func TestUpdateTenantToExemptRegulatedEmitsComplianceEvent(t *testing.T) {
 	updBody, _ := json.Marshal(admin.UpdateTenantRequest{BillingErasurePolicy: &policy})
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAdminPrincipal(
-		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(updBody))))
+		httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(updBody)),
+	))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -740,7 +744,8 @@ func TestEmitBillingErasureExemptRegulatedStartup(t *testing.T) {
 func TestEmitBillingErasureExemptRegulatedStartupNilSink(t *testing.T) {
 	// A nil audit sink is a no-op rather than a panic.
 	if err := admin.EmitBillingErasureExemptRegulatedStartup(
-		context.Background(), tenantstore.NewMemory(), nil, nil); err != nil {
+		context.Background(), tenantstore.NewMemory(), nil, nil,
+	); err != nil {
 		t.Errorf("nil sink: got %v, want nil", err)
 	}
 }

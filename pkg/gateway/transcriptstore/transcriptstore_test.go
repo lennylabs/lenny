@@ -12,7 +12,8 @@ import (
 
 func TestAppendAndGet(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	err := s.Append(context.Background(), "acme", "sess_1",
+	err := s.Append(
+		context.Background(), "acme", "sess_1",
 		transcriptstore.Entry{Role: "user", Content: "hello"},
 		transcriptstore.Entry{Role: "assistant", Content: "hi"},
 	)

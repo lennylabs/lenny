@@ -28,6 +28,7 @@ func (r *respondingRuntime) WriteEnvelope(string, []byte) error {
 	r.out <- []byte(`{"type":"response","text":"ack"}`)
 	return nil
 }
+
 func (r *respondingRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	return r.out, nil
 }

@@ -61,7 +61,8 @@ func TestCellNameDeterministic(t *testing.T) {
 func TestRunWithSkipFiltersCells(t *testing.T) {
 	t.Parallel()
 	var seen []string
-	Run(t,
+	Run(
+		t,
 		Dim("provider", []string{"a", "b", "c"}),
 	)(func(t *testing.T, cell map[string]string) {
 		seen = append(seen, cell["provider"])

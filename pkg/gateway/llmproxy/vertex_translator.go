@@ -64,7 +64,8 @@ func (t *VertexAITranslator) TranslateRequest(req Request, apiKey string) (*Upst
 	// path segment and redirect the upstream call.
 	upstreamURL := fmt.Sprintf(
 		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/anthropic/models/%s:rawPredict",
-		t.Region, t.Project, t.Region, url.PathEscape(model))
+		t.Region, t.Project, t.Region, url.PathEscape(model),
+	)
 	return &UpstreamRequest{
 		URL:  upstreamURL,
 		Body: upstreamBody,

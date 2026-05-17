@@ -316,7 +316,8 @@ func main() {
 		breakers = breakerCache
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leasestore.New(redisClient),
-			coordination.Options{ReplicaID: replica, Interval: *coordInterval})
+			coordination.Options{ReplicaID: replica, Interval: *coordInterval},
+		)
 		// The §11.2 storage-quota counter lives in Redis so the quota
 		// holds across replicas; its reserve is Lua-atomic.
 		storageCounter = storagequotaredis.New(redisClient)
@@ -474,7 +475,8 @@ func main() {
 	// exempt with a regulated compliance profile so the retention
 	// posture cannot silently persist across redeployments.
 	if err := admin.EmitBillingErasureExemptRegulatedStartup(
-		context.Background(), tenants, auditSink, nil); err != nil {
+		context.Background(), tenants, auditSink, nil,
+	); err != nil {
 		log.Printf("lenny-gateway: WARNING: billing-erasure-exempt startup scan: %v", err)
 	}
 
@@ -581,7 +583,8 @@ func main() {
 		WithEnvironments(environments).
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityService(
-			recommendations.NewWindowStore(7 * 24 * time.Hour)))
+			recommendations.NewWindowStore(7 * 24 * time.Hour),
+		))
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEmitter.Buffer()).
 		WithEventEmitter(opsEmitter)

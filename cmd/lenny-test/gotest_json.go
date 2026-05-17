@@ -144,8 +144,10 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 // specSectionRe extracts a numeric reference like "8.2" or "11.7.3"
 // from a `// spec: <ref> (<note>)` annotation. Multiple references
 // per annotation are comma-separated and listed in spec-map.json.
-var specSectionRe = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.*)$`)
-var sectionNumberRe = regexp.MustCompile(`\b\d+(?:\.\d+)*\b`)
+var (
+	specSectionRe   = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.*)$`)
+	sectionNumberRe = regexp.MustCompile(`\b\d+(?:\.\d+)*\b`)
+)
 
 // lookupSpecSections returns the list of spec sections attributed
 // to a failing test by scanning *_test.go files in the test's

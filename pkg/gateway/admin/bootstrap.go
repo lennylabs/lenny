@@ -178,8 +178,10 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 		}
 		// §5.1: a type:mcp runtime does not carry an agentInterface.
 		if runtimestore.RuntimeType(p.Type) == runtimestore.TypeMCP && p.AgentInterface != nil {
-			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name,
-				Message: "agentInterface is not valid on a type:mcp runtime"})
+			out.Errors = append(out.Errors, BootstrapError{
+				Index: i, ID: p.Name,
+				Message: "agentInterface is not valid on a type:mcp runtime",
+			})
 			continue
 		}
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
@@ -270,8 +272,10 @@ func (r *Router) upsertUsers(req *http.Request, in []UserPayload) BootstrapSecti
 		}
 		for _, role := range p.Roles {
 			if !role.IsValid() {
-				out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Subject,
-					Message: "role " + string(role) + " is not a recognised §10.2 RBAC role"})
+				out.Errors = append(out.Errors, BootstrapError{
+					Index: i, ID: p.Subject,
+					Message: "role " + string(role) + " is not a recognised §10.2 RBAC role",
+				})
 				continue
 			}
 		}

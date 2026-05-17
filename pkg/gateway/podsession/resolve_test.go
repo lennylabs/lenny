@@ -28,7 +28,8 @@ func sandboxTemplate(name, runtimeRef, isolation string) *lennyv1.SandboxTemplat
 }
 
 func TestResolvePoolMatchesByRuntime(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),
 	)
@@ -42,7 +43,8 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 }
 
 func TestResolvePoolNoMatch(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),
 	)
@@ -53,7 +55,8 @@ func TestResolvePoolNoMatch(t *testing.T) {
 }
 
 func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("claude-gvisor", "tmpl-gvisor"),
 		sandboxTemplate("tmpl-gvisor", "claude-code", "gvisor"),
 		warmPool("claude-kata", "tmpl-kata"),
@@ -71,7 +74,8 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 func TestResolvePoolAmbiguous(t *testing.T) {
 	// Two pools with the same runtime and isolation: the gateway cannot
 	// pick one.
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("pool-a", "tmpl-a"),
 		sandboxTemplate("tmpl-a", "claude-code", "gvisor"),
 		warmPool("pool-b", "tmpl-b"),
@@ -86,7 +90,8 @@ func TestResolvePoolAmbiguous(t *testing.T) {
 func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 	// The pool with a dangling template ref is skipped; the valid pool
 	// still resolves.
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		warmPool("broken-pool", "missing-tmpl"),
 		warmPool("claude-pool", "claude-tmpl"),
 		sandboxTemplate("claude-tmpl", "claude-code", "gvisor"),

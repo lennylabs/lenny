@@ -46,7 +46,8 @@ func newUUID(t *testing.T) string {
 func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
 	t.Helper()
 	id := "t-" + newUUID(t)[:8]
-	if _, err := pg.Pool.Exec(ctx,
+	if _, err := pg.Pool.Exec(
+		ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, $2)`, id, []byte{0x01},
 	); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)
@@ -130,7 +131,8 @@ func TestSessionStoreContract(t *testing.T) {
 			State:      session.StateCreated,
 			RuntimeRef: "echo",
 			WorkspacePlan: json.RawMessage(
-				`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`),
+				`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`,
+			),
 		}
 		if err := store.Create(ctx, want); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -382,7 +384,8 @@ func insertMessage(t *testing.T, ctx context.Context, pg *containers.Postgres, t
 func messageCount(t *testing.T, ctx context.Context, pg *containers.Postgres, sessionID string) int {
 	t.Helper()
 	var n int
-	if err := pg.Pool.QueryRow(ctx,
+	if err := pg.Pool.QueryRow(
+		ctx,
 		`SELECT COUNT(*) FROM session_messages WHERE session_id = $1::uuid`, sessionID,
 	).Scan(&n); err != nil {
 		t.Fatalf("messageCount: %v", err)

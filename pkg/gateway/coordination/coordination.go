@@ -15,10 +15,9 @@ package coordination
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
-
-	"errors"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"

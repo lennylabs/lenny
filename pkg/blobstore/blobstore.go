@@ -110,7 +110,8 @@ func (u URI) String() string {
 	if enc == "" {
 		enc = Encoding
 	}
-	return fmt.Sprintf("%s://%s/%s/%s?ttl=%d&enc=%s",
+	return fmt.Sprintf(
+		"%s://%s/%s/%s?ttl=%d&enc=%s",
 		Scheme,
 		url.PathEscape(u.TenantID),
 		url.PathEscape(u.SessionID),

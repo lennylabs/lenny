@@ -385,7 +385,8 @@ func countCells(caps []struct {
 	Name        string               `yaml:"name"`
 	SpecSection string               `yaml:"spec_section"`
 	Status      map[string]yaml.Node `yaml:"status"`
-}) int {
+},
+) int {
 	n := 0
 	for _, c := range caps {
 		n += len(c.Status)

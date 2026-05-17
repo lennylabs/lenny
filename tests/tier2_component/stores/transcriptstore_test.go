@@ -47,7 +47,8 @@ func TestTranscriptStoreContract(t *testing.T) {
 	t.Run("append and get round-trip", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
-		if err := store.Append(ctx, tenant, sid,
+		if err := store.Append(
+			ctx, tenant, sid,
 			entry("user", "hello"),
 			entry("assistant", "hi there"),
 			entry("user", "bye"),

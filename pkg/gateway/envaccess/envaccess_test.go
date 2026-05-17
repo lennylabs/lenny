@@ -53,7 +53,8 @@ func TestMembershipGroupMatch(t *testing.T) {
 	env := teamEnv("security-team", "security",
 		groupMember("security-engineers", environment.RoleCreator))
 	role, ok := envaccess.Membership(
-		envaccess.Caller{Subject: "alice", Groups: []string{"security-engineers"}}, env)
+		envaccess.Caller{Subject: "alice", Groups: []string{"security-engineers"}}, env,
+	)
 	if !ok || role != environment.RoleCreator {
 		t.Errorf("group match: role=%q ok=%v, want creator true", role, ok)
 	}
@@ -73,7 +74,8 @@ func TestMembershipHighestRoleWins(t *testing.T) {
 		groupMember("engineers", environment.RoleViewer),
 		groupMember("leads", environment.RoleAdmin))
 	role, ok := envaccess.Membership(
-		envaccess.Caller{Subject: "alice", Groups: []string{"engineers", "leads"}}, env)
+		envaccess.Caller{Subject: "alice", Groups: []string{"engineers", "leads"}}, env,
+	)
 	if !ok || role != environment.RoleAdmin {
 		t.Errorf("highest role: role=%q ok=%v, want admin true", role, ok)
 	}
@@ -83,7 +85,8 @@ func TestMembershipNonMember(t *testing.T) {
 	env := teamEnv("security-team", "security",
 		groupMember("security-engineers", environment.RoleCreator))
 	if _, ok := envaccess.Membership(
-		envaccess.Caller{Subject: "bob", Groups: []string{"research-team"}}, env); ok {
+		envaccess.Caller{Subject: "bob", Groups: []string{"research-team"}}, env,
+	); ok {
 		t.Error("a caller in no matching group must not be a member")
 	}
 }
@@ -94,7 +97,8 @@ func TestMemberEnvironments(t *testing.T) {
 		teamEnv("research-team", "research", groupMember("scientists", environment.RoleViewer)),
 	}
 	got := envaccess.MemberEnvironments(
-		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}}, envs)
+		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}}, envs,
+	)
 	if len(got) != 1 || got[0].Name != "security-team" {
 		t.Errorf("member environments: got %d, want only security-team", len(got))
 	}
@@ -114,7 +118,8 @@ func TestAuthorizedRuntimesUnionAndDedup(t *testing.T) {
 	// the result unions both selectors.
 	got := envaccess.AuthorizedRuntimes(
 		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}},
-		envs, runtimes, envaccess.PolicyDenyAll)
+		envs, runtimes, envaccess.PolicyDenyAll,
+	)
 	want := []string{"research-agent", "sec-scanner", "shared-tool"}
 	if got2 := names(got); !equalStrings(got2, want) {
 		t.Errorf("union: got %v, want %v", got2, want)
@@ -128,7 +133,8 @@ func TestAuthorizedRuntimesNoMembershipDenyAll(t *testing.T) {
 	}
 	got := envaccess.AuthorizedRuntimes(
 		envaccess.Caller{Subject: "bob", Groups: []string{"outsiders"}},
-		envs, runtimes, envaccess.PolicyDenyAll)
+		envs, runtimes, envaccess.PolicyDenyAll,
+	)
 	if len(got) != 0 {
 		t.Errorf("deny-all with no membership: got %v, want empty", names(got))
 	}
@@ -139,7 +145,8 @@ func TestAuthorizedRuntimesNoMembershipAllowAll(t *testing.T) {
 		runtimeWithTeam("b-runtime", "x"), runtimeWithTeam("a-runtime", "y"),
 	}
 	got := envaccess.AuthorizedRuntimes(
-		envaccess.Caller{Subject: "bob"}, nil, runtimes, envaccess.PolicyAllowAll)
+		envaccess.Caller{Subject: "bob"}, nil, runtimes, envaccess.PolicyAllowAll,
+	)
 	if got2 := names(got); !equalStrings(got2, []string{"a-runtime", "b-runtime"}) {
 		t.Errorf("allow-all with no membership: got %v, want all runtimes name-sorted", got2)
 	}
@@ -157,7 +164,8 @@ func TestAuthorizedRuntimesMemberScopedBySelector(t *testing.T) {
 	}
 	got := envaccess.AuthorizedRuntimes(
 		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}},
-		envs, runtimes, envaccess.PolicyAllowAll)
+		envs, runtimes, envaccess.PolicyAllowAll,
+	)
 	if got2 := names(got); !equalStrings(got2, []string{"sec-scanner"}) {
 		t.Errorf("member scoped by selector: got %v, want only sec-scanner", got2)
 	}
@@ -179,10 +187,14 @@ func crossEnvRule(peer string) environmentstore.CrossEnvRule {
 func TestCrossEnvironmentReachableBilateral(t *testing.T) {
 	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
 	envs := []environmentstore.Environment{
-		{Name: "team-a", TenantID: "acme",
-			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
-		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
-			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+		{
+			Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")},
+		},
+		{
+			Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")},
+		},
 	}
 	if !envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
 		t.Error("a bilateral team-a <-> team-b declaration should make the shared tool reachable")
@@ -192,10 +204,14 @@ func TestCrossEnvironmentReachableBilateral(t *testing.T) {
 func TestCrossEnvironmentReachableWildcardInbound(t *testing.T) {
 	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
 	envs := []environmentstore.Environment{
-		{Name: "team-a", TenantID: "acme",
-			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
-		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
-			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("*")}},
+		{
+			Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")},
+		},
+		{
+			Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("*")},
+		},
 	}
 	if !envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
 		t.Error("a wildcard inbound source should admit team-a")
@@ -206,8 +222,10 @@ func TestCrossEnvironmentUnreachableWithoutBothSides(t *testing.T) {
 	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
 	// team-a declares outbound but team-b has no reciprocal inbound.
 	noInbound := []environmentstore.Environment{
-		{Name: "team-a", TenantID: "acme",
-			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
+		{
+			Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")},
+		},
 		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel},
 	}
 	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, noInbound) {
@@ -216,8 +234,10 @@ func TestCrossEnvironmentUnreachableWithoutBothSides(t *testing.T) {
 	// team-b declares inbound but team-a has no outbound.
 	noOutbound := []environmentstore.Environment{
 		{Name: "team-a", TenantID: "acme"},
-		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
-			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+		{
+			Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")},
+		},
 	}
 	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, noOutbound) {
 		t.Error("an inbound declaration alone must not grant cross-environment access")
@@ -228,11 +248,15 @@ func TestCrossEnvironmentUnreachableWhenTargetNotInPeer(t *testing.T) {
 	// The bilateral declaration exists, but team-b's runtimeSelector
 	// does not admit the target — team-b is not a home of the runtime.
 	envs := []environmentstore.Environment{
-		{Name: "team-a", TenantID: "acme",
-			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
-		{Name: "team-b", TenantID: "acme",
+		{
+			Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")},
+		},
+		{
+			Name: "team-b", TenantID: "acme",
 			RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "other"}},
-			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")},
+		},
 	}
 	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
 		t.Error("a target the peer environment does not admit must not be reachable")

@@ -62,7 +62,8 @@ func Descriptors() []Descriptor {
 			`{"type":"object","properties":` +
 				`{"path":{"type":"string","description":"Workspace-relative or absolute path within /workspace."},` +
 				`"content":{"type":"string","description":"File content to write."}},` +
-				`"required":["path","content"]}`)},
+				`"required":["path","content"]}`,
+		)},
 		{ToolListDir, "List the entries of a directory in the workspace.", pathSchema},
 		{ToolDeleteFile, "Delete a file in the workspace.", pathSchema},
 	}

@@ -480,8 +480,10 @@ func decodeVariant(raw json.RawMessage, i int, typ string, out any) *SubErr {
 // validateInlineFile applies §14 inlineFile rules.
 func validateInlineFile(v *InlineFile, i int) *SubErr {
 	if v.PathField == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
-			Reason: ReasonMissingRequired, Message: "path is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
+			Reason: ReasonMissingRequired, Message: "path is required",
+		}
 	}
 	if subErr := validatePath(v.PathField, i, "path"); subErr != nil {
 		return subErr
@@ -495,12 +497,16 @@ func validateInlineFile(v *InlineFile, i int) *SubErr {
 // validateUploadFile applies §14 uploadFile rules.
 func validateUploadFile(v *UploadFile, i int) *SubErr {
 	if v.PathField == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
-			Reason: ReasonMissingRequired, Message: "path is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
+			Reason: ReasonMissingRequired, Message: "path is required",
+		}
 	}
 	if v.UploadRef == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].uploadRef", i),
-			Reason: ReasonMissingRequired, Message: "uploadRef is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].uploadRef", i),
+			Reason: ReasonMissingRequired, Message: "uploadRef is required",
+		}
 	}
 	if subErr := validatePath(v.PathField, i, "path"); subErr != nil {
 		return subErr
@@ -514,24 +520,32 @@ func validateUploadFile(v *UploadFile, i int) *SubErr {
 // validateUploadArchive applies §14 uploadArchive rules.
 func validateUploadArchive(v *UploadArchive, i int) *SubErr {
 	if v.PathPrefix == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].pathPrefix", i),
-			Reason: ReasonMissingRequired, Message: "pathPrefix is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].pathPrefix", i),
+			Reason: ReasonMissingRequired, Message: "pathPrefix is required",
+		}
 	}
 	if v.UploadRef == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].uploadRef", i),
-			Reason: ReasonMissingRequired, Message: "uploadRef is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].uploadRef", i),
+			Reason: ReasonMissingRequired, Message: "uploadRef is required",
+		}
 	}
 	switch v.Format {
 	case "tar", "tar.gz", "zip":
 		// ok
 	default:
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].format", i),
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].format", i),
 			Reason:  ReasonInvalidEnumValue,
-			Message: fmt.Sprintf("format %q must be one of tar, tar.gz, zip", v.Format)}
+			Message: fmt.Sprintf("format %q must be one of tar, tar.gz, zip", v.Format),
+		}
 	}
 	if v.StripComponents < 0 {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].stripComponents", i),
-			Reason: ReasonNegativeDepth, Message: "stripComponents must be >= 0"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].stripComponents", i),
+			Reason: ReasonNegativeDepth, Message: "stripComponents must be >= 0",
+		}
 	}
 	return validatePath(v.PathPrefix, i, "pathPrefix")
 }
@@ -540,8 +554,10 @@ func validateUploadArchive(v *UploadArchive, i int) *SubErr {
 // directories per §14 mode-field notes.
 func validateMkdir(v *Mkdir, i int) *SubErr {
 	if v.PathField == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
-			Reason: ReasonMissingRequired, Message: "path is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].path", i),
+			Reason: ReasonMissingRequired, Message: "path is required",
+		}
 	}
 	if subErr := validatePath(v.PathField, i, "path"); subErr != nil {
 		return subErr
@@ -566,35 +582,47 @@ func validateGitClone(v *GitClone, i int, stored bool) *SubErr {
 		}
 	}
 	if v.URL == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
-			Reason: ReasonMissingRequired, Message: "url is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
+			Reason: ReasonMissingRequired, Message: "url is required",
+		}
 	}
 	u, err := url.Parse(v.URL)
 	if err != nil || u.Host == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
 			Reason:  ReasonGitInvalidURL,
-			Message: fmt.Sprintf("url %q is not a valid URI", v.URL)}
+			Message: fmt.Sprintf("url %q is not a valid URI", v.URL),
+		}
 	}
 	if strings.ToLower(u.Scheme) != "https" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
 			Reason:  ReasonGitNonHTTPS,
-			Message: "gitClone v1 accepts HTTPS URLs only; SSH and git:// are deferred post-V1"}
+			Message: "gitClone v1 accepts HTTPS URLs only; SSH and git:// are deferred post-V1",
+		}
 	}
 	if u.User != nil {
 		// §14 / §13.5: in-URL credentials bypass the credential-lease
 		// path that gates HTTPS clone auth. Reject so the only path
 		// to authenticated clones is via gitClone.auth.leaseScope.
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].url", i),
 			Reason:  ReasonGitInvalidURL,
-			Message: "gitClone url must not embed userinfo; use gitClone.auth.leaseScope for authenticated clones"}
+			Message: "gitClone url must not embed userinfo; use gitClone.auth.leaseScope for authenticated clones",
+		}
 	}
 	if v.Ref == "" {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].ref", i),
-			Reason: ReasonMissingRequired, Message: "ref is required"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].ref", i),
+			Reason: ReasonMissingRequired, Message: "ref is required",
+		}
 	}
 	if v.Depth < 0 {
-		return &SubErr{SourceIndex: i, Field: fmt.Sprintf("sources[%d].depth", i),
-			Reason: ReasonNegativeDepth, Message: "depth must be >= 1 when set"}
+		return &SubErr{
+			SourceIndex: i, Field: fmt.Sprintf("sources[%d].depth", i),
+			Reason: ReasonNegativeDepth, Message: "depth must be >= 1 when set",
+		}
 	}
 	if v.Auth != nil {
 		if v.Auth.Mode != "credential-lease" {

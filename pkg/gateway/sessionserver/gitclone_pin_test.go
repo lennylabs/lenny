@@ -221,7 +221,8 @@ func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 func TestCreateGitCloneAuthAmbiguousHost(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		IDFunc: func() string { return "sess_auth_ambiguous" },
-		CredentialPools: vcsPoolStore(t,
+		CredentialPools: vcsPoolStore(
+			t,
 			githubPool("gh-a", "github.com"),
 			githubPool("gh-b", "*.com"),
 		),

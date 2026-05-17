@@ -162,7 +162,8 @@ func (r *Router) checkVariantIsolation(ctx context.Context, exp experimentstore.
 				Fields: []string{fmt.Sprintf("variants[%s].pool", v.ID), "baseRuntime"},
 				Message: fmt.Sprintf(
 					"variant %q pool %q has isolationProfile=%s, weaker than base runtime %q's profile %s",
-					v.ID, v.Pool, pool.IsolationProfile, exp.BaseRuntime, base.IsolationProfile),
+					v.ID, v.Pool, pool.IsolationProfile, exp.BaseRuntime, base.IsolationProfile,
+				),
 			})
 		}
 	}

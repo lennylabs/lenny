@@ -149,7 +149,8 @@ var (
 	// interceptorRef. The admin layer maps this to the
 	// EXPORT_SCAN_REQUIRES_INTERCEPTOR error code.
 	ErrScanRequiresInterceptor = errors.New(
-		"delegationpolicystore: contentPolicy.scanExportedFiles requires contentPolicy.interceptorRef")
+		"delegationpolicystore: contentPolicy.scanExportedFiles requires contentPolicy.interceptorRef",
+	)
 )
 
 // namePattern follows the §8.3 policy-name shape — the same identifier

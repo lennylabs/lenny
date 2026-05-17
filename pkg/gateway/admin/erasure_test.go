@@ -603,7 +603,8 @@ func TestGetErasureJobTenantScoped(t *testing.T) {
 
 	// A tenant-admin of a different tenant must not see the acme job.
 	req := withTenantAdminFor(
-		httptest.NewRequest(http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, nil), "globex")
+		httptest.NewRequest(http.MethodGet, "/v1/admin/erasure-jobs/"+jobID, nil), "globex",
+	)
 	statusRR := httptest.NewRecorder()
 	router.Handler().ServeHTTP(statusRR, req)
 	if statusRR.Code != http.StatusNotFound {

@@ -47,7 +47,8 @@ func TestHandleToolCallReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, handled := adapter.HandleToolCall(
-		toolCallFrame(t, "tc_read1", "read_file", map[string]string{"path": "f.txt"}), root)
+		toolCallFrame(t, "tc_read1", "read_file", map[string]string{"path": "f.txt"}), root,
+	)
 	if !handled {
 		t.Fatal("read_file tool_call was not handled")
 	}
@@ -83,7 +84,8 @@ func TestHandleToolCallErrorResult(t *testing.T) {
 	// read_file of a missing file is still an adapter-local tool: it is
 	// handled, and the tool_result carries isError.
 	result, handled := adapter.HandleToolCall(
-		toolCallFrame(t, "tc_miss", "read_file", map[string]string{"path": "absent"}), t.TempDir())
+		toolCallFrame(t, "tc_miss", "read_file", map[string]string{"path": "absent"}), t.TempDir(),
+	)
 	if !handled {
 		t.Fatal("read_file of a missing file was not handled")
 	}
@@ -94,7 +96,8 @@ func TestHandleToolCallErrorResult(t *testing.T) {
 
 func TestHandleToolCallPlatformToolNotHandled(t *testing.T) {
 	_, handled := adapter.HandleToolCall(
-		toolCallFrame(t, "tc_deleg", "lenny/delegate_task", map[string]string{}), t.TempDir())
+		toolCallFrame(t, "tc_deleg", "lenny/delegate_task", map[string]string{}), t.TempDir(),
+	)
 	if handled {
 		t.Error("a platform MCP tool_call was handled as an adapter-local tool")
 	}

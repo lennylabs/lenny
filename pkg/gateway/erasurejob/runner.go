@@ -48,7 +48,8 @@ func (r *Runner) WithBilling(b *BillingEraser) *Runner {
 // errBillingVerification is the failure cause recorded when the §12.8
 // post-pseudonymization check does not pass.
 var errBillingVerification = errors.New(
-	"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization")
+	"billing erasure verification failed: the erasure salt or the original user id survived pseudonymization",
+)
 
 // setPhase returns a job mutator that sets the lifecycle phase.
 func setPhase(p Phase) func(*Job) error {

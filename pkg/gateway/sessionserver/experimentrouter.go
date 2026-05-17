@@ -33,7 +33,8 @@ type variantIsolationError struct {
 func (e *variantIsolationError) Error() string {
 	return fmt.Sprintf(
 		"variant %q pool isolation %s is weaker than the session's %s",
-		e.VariantID, e.VariantPoolIsolation, e.SessionMinIsolation)
+		e.VariantID, e.VariantPoolIsolation, e.SessionMinIsolation,
+	)
 }
 
 // ExperimentRejectionReporter records a §10.7 ExperimentRouter
@@ -204,7 +205,8 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 			return "", false
 		}
 		variantID, known := experiment.ResolveExternalVariant(
-			result.Variant, result.Value, variantIDsOf(candidates, experimentID))
+			result.Variant, result.Value, variantIDsOf(candidates, experimentID),
+		)
 		if !known {
 			s.emitExperimentUnknownVariant(row, experimentID, string(cfg.Provider), result.Variant)
 			return "", false

@@ -45,7 +45,8 @@ func CheckHostSharing(pods []HostSharingPodSpec) Decision {
 		return Decision{Passed: false, Reason: fmt.Sprintf(
 			"POD_SPEC_HOST_SHARING_FORBIDDEN: workload %s sets %s: true; host-sharing and "+
 				"process-sharing flags are forbidden on every Lenny-managed pod (§13.1)",
-			p.Workload, field)}
+			p.Workload, field,
+		)}
 	}
 	return Decision{Passed: true}
 }

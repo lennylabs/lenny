@@ -29,7 +29,8 @@ func migrationsDir(t *testing.T) string {
 // app.current_tenant context is required.
 func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id string) {
 	t.Helper()
-	if _, err := pg.Pool.Exec(ctx,
+	if _, err := pg.Pool.Exec(
+		ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id,
 	); err != nil {
 		t.Fatalf("seed tenant %q: %v", id, err)

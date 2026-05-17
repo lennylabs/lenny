@@ -86,7 +86,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 	for _, role := range []string{"lenny_app", "lenny_erasure"} {
 		var exists bool
-		if err := pg.Pool.QueryRow(ctx,
+		if err := pg.Pool.QueryRow(
+			ctx,
 			`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, role,
 		).Scan(&exists); err != nil {
 			t.Fatalf("check role %q: %v", role, err)
@@ -111,7 +112,8 @@ func TestTenantGuard(t *testing.T) {
 
 	// tenants is platform-global (no guard): seed two tenants directly.
 	for _, id := range []string{"acme", "globex"} {
-		if _, err := pg.Pool.Exec(ctx,
+		if _, err := pg.Pool.Exec(
+			ctx,
 			`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, id,
 		); err != nil {
 			t.Fatalf("seed tenant %q: %v", id, err)
@@ -166,7 +168,8 @@ func TestLedgerImmutability(t *testing.T) {
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
 	ctx := context.Background()
 
-	if _, err := pg.Pool.Exec(ctx,
+	if _, err := pg.Pool.Exec(
+		ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`,
 	); err != nil {
 		t.Fatalf("seed tenant: %v", err)

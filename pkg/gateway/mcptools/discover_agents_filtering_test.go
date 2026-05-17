@@ -85,7 +85,8 @@ func TestDiscoverAgentsTransparentFiltering(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	// A caller in the security-engineers group sees only the runtime
 	// the environment's runtimeSelector admits.
@@ -150,7 +151,8 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
@@ -178,7 +180,8 @@ func TestListRuntimesToolSurfacesAgentInterface(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
@@ -214,7 +217,8 @@ func TestListRuntimesToolSurfacesPublicMetadataRefs(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
@@ -255,7 +259,8 @@ func TestListRuntimesToolResolvesDerivedRuntime(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
@@ -293,7 +298,8 @@ func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
 	})
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
 	_ = envs.Create(context.Background(), securityEnv(
-		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
+	))
 
 	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))

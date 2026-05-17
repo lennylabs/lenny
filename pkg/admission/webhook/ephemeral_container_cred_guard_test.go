@@ -129,7 +129,8 @@ func TestCredGuardEvaluatesTheNewlyAddedContainer(t *testing.T) {
 	// A pre-existing bad container plus a newly-added bad container:
 	// the new one must be evaluated and reject the request.
 	old := ecPod(t, ephemeralWithSecCtx("legacy-debug", i64(tAgentUID), i64(99999)))
-	updated := ecPod(t,
+	updated := ecPod(
+		t,
 		ephemeralWithSecCtx("legacy-debug", i64(tAgentUID), i64(99999)),
 		ephemeralWithSecCtx("new-attacker", i64(tAdapterUID), i64(99999)),
 	)

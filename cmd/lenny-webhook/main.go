@@ -68,10 +68,12 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
-		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName)))
+		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName,
+	)))
 	mux.Handle("/direct-mode-isolation", webhook.Handler(webhook.DirectModeIsolation(tenancyMode, devMode)))
 	mux.Handle("/drain-readiness", webhook.Handler(webhook.DrainReadiness(
-		reader, webhook.HTTPDrainProbe{URL: drainReadinessURL}, logForcedDrain)))
+		reader, webhook.HTTPDrainProbe{URL: drainReadinessURL}, logForcedDrain,
+	)))
 	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
