@@ -47,15 +47,14 @@ type meteringPage struct {
 // handleMeteringEvents implements GET /v1/metering/events per §15.1 —
 // the paginated §11.2.1 billing event stream. Events with
 // sequence_number greater than ?since_sequence are returned in
-// ascending order, capped at ?limit. The endpoint requires the
-// billing-viewer, tenant-admin, or platform-admin role.
+// ascending order, capped at ?limit. The endpoint requires the §10.2
+// view_usage permission (held by platform-admin, tenant-admin,
+// tenant-viewer, and billing-viewer).
 func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 	principal, ok := getPrincipal(r)
-	if !ok || !(principal.HasRole(pkgauth.RoleBillingViewer) ||
-		principal.HasRole(pkgauth.RoleTenantAdmin) ||
-		principal.HasRole(pkgauth.RolePlatformAdmin)) {
+	if !ok || !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
 		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"metering events require the billing-viewer, tenant-admin, or platform-admin role", nil)
+			"metering events require the view_usage permission", nil)
 		return
 	}
 

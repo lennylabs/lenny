@@ -111,16 +111,14 @@ func (r *Router) authorizedTenantForUser(req *http.Request, requestedTenant stri
 // the tenant custom-role registry. With no registry wired, only
 // built-in roles are consulted.
 func (r *Router) principalGrantsPermission(ctx context.Context, p authmw.Principal, perm auth.Permission) bool {
+	if auth.RolesGrant(p.Roles, perm) {
+		return true
+	}
+	if r.customRoles == nil {
+		return false
+	}
 	for _, role := range p.Roles {
 		if role.IsValid() {
-			for _, granted := range auth.RolePermissions(role) {
-				if granted == perm {
-					return true
-				}
-			}
-			continue
-		}
-		if r.customRoles == nil {
 			continue
 		}
 		cr, err := r.customRoles.Get(ctx, p.TenantID, string(role))

@@ -65,7 +65,7 @@ func decodeMeteringPage(t *testing.T, rr *httptest.ResponseRecorder) meteringPag
 	return page
 }
 
-func TestMeteringEventsRequiresBillingRole(t *testing.T) {
+func TestMeteringEventsRequiresViewUsage(t *testing.T) {
 	srv := meteringServer(t, 3)
 
 	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleUser)
@@ -73,8 +73,11 @@ func TestMeteringEventsRequiresBillingRole(t *testing.T) {
 		t.Errorf("a plain user: status %d, want 403", rr.Code)
 	}
 
+	// §10.2: every role the matrix grants view_usage is admitted —
+	// tenant-viewer included (§10.2 names it for GET /v1/metering/events).
 	for _, role := range []pkgauth.Role{
-		pkgauth.RoleBillingViewer, pkgauth.RoleTenantAdmin, pkgauth.RolePlatformAdmin,
+		pkgauth.RoleBillingViewer, pkgauth.RoleTenantAdmin,
+		pkgauth.RoleTenantViewer, pkgauth.RolePlatformAdmin,
 	} {
 		rr := meteringRequest(t, srv.Handler(), "", role)
 		if rr.Code != http.StatusOK {

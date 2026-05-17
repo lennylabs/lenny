@@ -217,6 +217,23 @@ func RolePermissions(r Role) []Permission {
 	}
 }
 
+// RolesGrant reports whether any built-in role in roles grants perm.
+// A non-built-in role name (a tenant custom role) is ignored: its
+// permissions live in the tenant custom-role registry, which this
+// function does not consult. A caller that must honor custom roles
+// resolves them against the registry and combines the result with
+// RolesGrant.
+func RolesGrant(roles []Role, perm Permission) bool {
+	for _, r := range roles {
+		for _, granted := range RolePermissions(r) {
+			if granted == perm {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // tenantIDPattern is the regex from §10.2: `^[a-zA-Z0-9_-]{1,128}$`.
 // Enforced at every boundary that ingests a tenant identifier.
 var tenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)

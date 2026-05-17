@@ -169,6 +169,31 @@ func TestNonPlatformRolesAreBoundedByTenantAdmin(t *testing.T) {
 	}
 }
 
+func TestRolesGrant(t *testing.T) {
+	// A built-in role grants its matrix permissions.
+	if !RolesGrant([]Role{RoleBillingViewer}, PermViewUsage) {
+		t.Error("billing-viewer should grant view_usage")
+	}
+	if !RolesGrant([]Role{RoleTenantViewer}, PermViewUsage) {
+		t.Error("tenant-viewer should grant view_usage")
+	}
+	if RolesGrant([]Role{RoleUser}, PermViewUsage) {
+		t.Error("user must not grant view_usage")
+	}
+	// The grant holds when any role in the set grants it.
+	if !RolesGrant([]Role{RoleUser, RoleTenantAdmin}, PermManageUsers) {
+		t.Error("a set containing tenant-admin should grant manage_users")
+	}
+	// A custom role name has no built-in matrix row and is ignored.
+	if RolesGrant([]Role{"session-manager"}, PermManageOwnSessions) {
+		t.Error("a custom role name must not resolve through RolesGrant")
+	}
+	// The empty set grants nothing.
+	if RolesGrant(nil, PermViewUsage) {
+		t.Error("the empty role set must grant nothing")
+	}
+}
+
 func TestValidateTenantIDAcceptsCanonicalValues(t *testing.T) {
 	cases := []string{
 		"acme",

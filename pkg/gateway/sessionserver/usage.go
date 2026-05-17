@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -19,9 +20,18 @@ import (
 // usage report. The §15.1 contract: this is a single aggregated
 // object, not a paginated list.
 //
-// A platform-admin caller may scope the report to one tenant via
-// ?tenantId=; every other caller is scoped to their own tenant.
+// The endpoint requires the §10.2 view_usage permission (held by
+// platform-admin, tenant-admin, tenant-viewer, and billing-viewer; the
+// `user` role does not hold it). A platform-admin caller may scope the
+// report to one tenant via ?tenantId=; every other caller is scoped to
+// their own tenant.
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	principal, ok := getPrincipal(r)
+	if !ok || !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
+		s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"usage reports require the view_usage permission", nil)
+		return
+	}
 	if s.usage == nil {
 		// Metering disabled — return an empty report rather than an
 		// error so dashboards do not break.
