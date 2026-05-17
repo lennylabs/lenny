@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a2ea98a` — §10.7 `PropagateContext` — delegation experiment-context propagation
+  decision. Encodes the §8.3/§10.7 propagation rule for a recursive-delegation child:
+  `inherit` adopts the parent's enrollment verbatim, `control` forces the parent's
+  experiment onto the control variant, `independent` routes the child afresh. The
+  delegation child-creation path does not yet consult it — neither `pkg/gateway/delegation`
+  nor `mcptools` propagates `experimentContext` today, so a delegated child currently
+  gets no experiment context regardless of the parent's propagation mode. Wiring
+  `PropagateContext` into `delegation.Delegate` (which needs the parent session's
+  `ExperimentContext` and the experiment's `Propagation` from `experimentstore`) is the
+  remaining §8.3 step.
 - `5e0be0b` / `f057528` — §10.7 wire the `mode: external` ExperimentRouter path.
   `applyExperimentRouting` routes `mode: external` experiments through the tenant's
   OpenFeature provider: `buildExternalEvaluator` constructs an OFREP client from
