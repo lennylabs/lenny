@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d3a4c00` — §10.7 `TargetingConfig.Clone`. A deep-copy method so a store holding a
+  `TargetingConfig` cannot leak mutable state through the shared provider sub-blocks or
+  the OFREP header map — it copies the scalars and every non-nil provider block,
+  mirroring `runtimestore.SetupPolicy.Clone`. It is the prerequisite for persisting
+  `experimentTargeting` on the tenant: the tenant memory store currently deep-copies
+  nothing, so adding the field there will need a `cloneTenant` helper built on `Clone`.
 - `d41919f` — fix: tenant pgstore dropped three policy fields. The Postgres tenant
   store persisted only a subset of `tenantstore.Tenant` — the §9.2
   `elicitation_content_integrity` mode, the §12.8 `billing_erasure_policy`, and the
