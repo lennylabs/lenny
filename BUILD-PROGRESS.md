@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `78c388f` — §5.1 capability inference from MCP ToolAnnotations
+  (`pkg/gateway/capabilityinference`). The inference table maps a tool's MCP annotations
+  onto its §5.3 capability set (read-only → `read`, not-read-only → `write`, destructive
+  → `write` + `delete`, open-world → `network`); an annotation-free tool takes the
+  `capabilityInferenceMode` default (strict → `admin` with the §5.1 registration WARN,
+  permissive → `write`). The `capabilityInferenceMode` runtime field and the live
+  `tools/list` read at connector / `type:mcp` runtime registration that feeds the
+  inferrer are the remaining wiring; the latter is infra-coupled.
 - `9e44abd` — §15.1 OpenAPI: `POST /v1/admin/runtimes/regenerate-cards` documented with
   its `generatorVersionBefore` / `dryRun` body and the regenerated / skipped / errors
   response.
