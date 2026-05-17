@@ -34,6 +34,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Adapter_PrepareWorkspace_FullMethodName  = "/lenny.adapter.v1.Adapter/PrepareWorkspace"
+	Adapter_FinalizeWorkspace_FullMethodName = "/lenny.adapter.v1.Adapter/FinalizeWorkspace"
+	Adapter_RunSetup_FullMethodName          = "/lenny.adapter.v1.Adapter/RunSetup"
 	Adapter_StartSession_FullMethodName      = "/lenny.adapter.v1.Adapter/StartSession"
 	Adapter_SendMessage_FullMethodName       = "/lenny.adapter.v1.Adapter/SendMessage"
 	Adapter_Attach_FullMethodName            = "/lenny.adapter.v1.Adapter/Attach"
@@ -62,6 +65,25 @@ const (
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the lifecycle channel).
 type AdapterClient interface {
+	// PrepareWorkspace accepts streamed upload-file content into the pod's
+	// staging area. It is the first RPC in the §4.7 session assignment
+	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+	// StartSession). Frames sharing an upload_ref are concatenated in
+	// arrival order into one staged file; FinalizeWorkspace then
+	// materializes the uploadFile and uploadArchive plan sources from the
+	// staged content.
+	PrepareWorkspace(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse], error)
+	// FinalizeWorkspace validates the staged workspace content and
+	// materializes the §14 WorkspacePlan into /workspace/current. It is
+	// the second RPC in the §4.7 session assignment sequence
+	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
+	FinalizeWorkspace(ctx context.Context, in *FinalizeWorkspaceRequest, opts ...grpc.CallOption) (*FinalizeWorkspaceResponse, error)
+	// RunSetup executes the §14 WorkspacePlan setup commands against the
+	// materialized workspace. It is the third RPC in the §4.7 session
+	// assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+	// StartSession). The §5.1 setupPolicy in the request bounds the
+	// aggregate setup phase.
+	RunSetup(ctx context.Context, in *RunSetupRequest, opts ...grpc.CallOption) (*RunSetupResponse, error)
 	// StartSession assigns a session to this pod. Workspace materialization
 	// (per the supplied WorkspacePlan) and setup-command execution happen
 	// before the response. Returns Unavailable if the pod is not in `idle`
@@ -140,6 +162,39 @@ func NewAdapterClient(cc grpc.ClientConnInterface) AdapterClient {
 	return &adapterClient{cc}
 }
 
+func (c *adapterClient) PrepareWorkspace(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[0], Adapter_PrepareWorkspace_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PrepareWorkspaceRequest, PrepareWorkspaceResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_PrepareWorkspaceClient = grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse]
+
+func (c *adapterClient) FinalizeWorkspace(ctx context.Context, in *FinalizeWorkspaceRequest, opts ...grpc.CallOption) (*FinalizeWorkspaceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FinalizeWorkspaceResponse)
+	err := c.cc.Invoke(ctx, Adapter_FinalizeWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) RunSetup(ctx context.Context, in *RunSetupRequest, opts ...grpc.CallOption) (*RunSetupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunSetupResponse)
+	err := c.cc.Invoke(ctx, Adapter_RunSetup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) StartSession(ctx context.Context, in *StartSessionRequest, opts ...grpc.CallOption) (*StartSessionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartSessionResponse)
@@ -162,7 +217,7 @@ func (c *adapterClient) SendMessage(ctx context.Context, in *SendMessageRequest,
 
 func (c *adapterClient) Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[0], Adapter_Attach_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[1], Adapter_Attach_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +340,7 @@ func (c *adapterClient) NegotiateVersion(ctx context.Context, in *NegotiateVersi
 
 func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[1], Adapter_LifecycleChannel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[2], Adapter_LifecycleChannel_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +362,25 @@ type Adapter_LifecycleChannelClient = grpc.BidiStreamingClient[LifecycleChannelR
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the lifecycle channel).
 type AdapterServer interface {
+	// PrepareWorkspace accepts streamed upload-file content into the pod's
+	// staging area. It is the first RPC in the §4.7 session assignment
+	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+	// StartSession). Frames sharing an upload_ref are concatenated in
+	// arrival order into one staged file; FinalizeWorkspace then
+	// materializes the uploadFile and uploadArchive plan sources from the
+	// staged content.
+	PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error
+	// FinalizeWorkspace validates the staged workspace content and
+	// materializes the §14 WorkspacePlan into /workspace/current. It is
+	// the second RPC in the §4.7 session assignment sequence
+	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
+	FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error)
+	// RunSetup executes the §14 WorkspacePlan setup commands against the
+	// materialized workspace. It is the third RPC in the §4.7 session
+	// assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+	// StartSession). The §5.1 setupPolicy in the request bounds the
+	// aggregate setup phase.
+	RunSetup(context.Context, *RunSetupRequest) (*RunSetupResponse, error)
 	// StartSession assigns a session to this pod. Workspace materialization
 	// (per the supplied WorkspacePlan) and setup-command execution happen
 	// before the response. Returns Unavailable if the pod is not in `idle`
@@ -384,6 +458,15 @@ type AdapterServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAdapterServer struct{}
 
+func (UnimplementedAdapterServer) PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error {
+	return status.Error(codes.Unimplemented, "method PrepareWorkspace not implemented")
+}
+func (UnimplementedAdapterServer) FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FinalizeWorkspace not implemented")
+}
+func (UnimplementedAdapterServer) RunSetup(context.Context, *RunSetupRequest) (*RunSetupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RunSetup not implemented")
+}
 func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartSession not implemented")
 }
@@ -447,6 +530,49 @@ func RegisterAdapterServer(s grpc.ServiceRegistrar, srv AdapterServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Adapter_ServiceDesc, srv)
+}
+
+func _Adapter_PrepareWorkspace_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AdapterServer).PrepareWorkspace(&grpc.GenericServerStream[PrepareWorkspaceRequest, PrepareWorkspaceResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_PrepareWorkspaceServer = grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]
+
+func _Adapter_FinalizeWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FinalizeWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).FinalizeWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_FinalizeWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).FinalizeWorkspace(ctx, req.(*FinalizeWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_RunSetup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RunSetupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).RunSetup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_RunSetup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).RunSetup(ctx, req.(*RunSetupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Adapter_StartSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -705,6 +831,14 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*AdapterServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
+			MethodName: "FinalizeWorkspace",
+			Handler:    _Adapter_FinalizeWorkspace_Handler,
+		},
+		{
+			MethodName: "RunSetup",
+			Handler:    _Adapter_RunSetup_Handler,
+		},
+		{
 			MethodName: "StartSession",
 			Handler:    _Adapter_StartSession_Handler,
 		},
@@ -758,6 +892,11 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "PrepareWorkspace",
+			Handler:       _Adapter_PrepareWorkspace_Handler,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "Attach",
 			Handler:       _Adapter_Attach_Handler,

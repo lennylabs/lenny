@@ -10,6 +10,7 @@ package adapterclient
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -71,6 +72,55 @@ func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string
 		SetupPolicy:       setupPolicy,
 	})
 	return err
+}
+
+// prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
+const prepareWorkspaceChunkSize = 64 * 1024
+
+// PrepareWorkspace streams uploaded workspace files into the pod's
+// staging area (§4.7, the first session-assignment RPC). uploads maps
+// each §14 WorkspaceSource upload_ref to its content; each upload is
+// sent in frames bounded by prepareWorkspaceChunkSize. The response
+// reports the staged byte and file totals the adapter persisted.
+func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
+	stream, err := c.rpc.PrepareWorkspace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sid := &adapterv1.SessionId{Value: sessionID}
+	for ref, content := range uploads {
+		if err := sendUpload(stream, sid, ref, content); err != nil {
+			// io.EOF means the adapter closed the stream early with an
+			// error; CloseAndRecv surfaces the real status. Any other
+			// send error is a transport failure to return directly.
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+	}
+	return stream.CloseAndRecv()
+}
+
+// sendUpload streams one upload as PrepareWorkspace frames. It always
+// sends at least one frame so an empty upload still stages a file.
+func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.SessionId, ref string, content []byte) error {
+	for off := 0; ; off += prepareWorkspaceChunkSize {
+		end := off + prepareWorkspaceChunkSize
+		if end > len(content) {
+			end = len(content)
+		}
+		if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
+			SessionId: sid,
+			UploadRef: ref,
+			Chunk:     content[off:end],
+		}); err != nil {
+			return err
+		}
+		if end >= len(content) {
+			return nil
+		}
+	}
 }
 
 // SendMessage forwards a pre-encoded §15.4.1 message envelope to the

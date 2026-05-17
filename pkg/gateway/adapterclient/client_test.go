@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -148,6 +150,88 @@ func TestStartSessionWritesManifest(t *testing.T) {
 	}
 	if m.TracingContext["langsmith_run_id"] != "run_9" {
 		t.Errorf("manifest tracingContext = %v, want the langsmith run id", m.TracingContext)
+	}
+}
+
+func TestPrepareWorkspaceStagesUploads(t *testing.T) {
+	// §4.7: PrepareWorkspace streams uploaded files into the staging
+	// area, keyed by upload_ref.
+	stagingDir := t.TempDir()
+	srv := adapter.New("adapter-test-build")
+	srv.StagingDir = stagingDir
+	cl := dialAdapter(t, srv)
+
+	uploads := map[string][]byte{
+		"upload-a": []byte("alpha content"),
+		"upload-b": []byte("beta"),
+	}
+	resp, err := cl.PrepareWorkspace(context.Background(), "sess-1", uploads)
+	if err != nil {
+		t.Fatalf("PrepareWorkspace: %v", err)
+	}
+	if resp.GetStagedFiles() != 2 {
+		t.Errorf("stagedFiles = %d, want 2", resp.GetStagedFiles())
+	}
+	wantBytes := int64(len("alpha content") + len("beta"))
+	if resp.GetStagedBytes() != wantBytes {
+		t.Errorf("stagedBytes = %d, want %d", resp.GetStagedBytes(), wantBytes)
+	}
+	for ref, want := range uploads {
+		got, err := os.ReadFile(filepath.Join(stagingDir, ref))
+		if err != nil {
+			t.Fatalf("read staged %s: %v", ref, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("staged %s = %q, want %q", ref, got, want)
+		}
+	}
+}
+
+func TestPrepareWorkspaceConcatenatesChunks(t *testing.T) {
+	// An upload larger than the client chunk size arrives as multiple
+	// frames; the adapter concatenates them in order into one file.
+	stagingDir := t.TempDir()
+	srv := adapter.New("adapter-test-build")
+	srv.StagingDir = stagingDir
+	cl := dialAdapter(t, srv)
+
+	large := bytes.Repeat([]byte("lenny"), 40_000) // 200 KB, several frames
+	resp, err := cl.PrepareWorkspace(context.Background(), "sess-1",
+		map[string][]byte{"big": large})
+	if err != nil {
+		t.Fatalf("PrepareWorkspace: %v", err)
+	}
+	if resp.GetStagedBytes() != int64(len(large)) {
+		t.Errorf("stagedBytes = %d, want %d", resp.GetStagedBytes(), len(large))
+	}
+	got, err := os.ReadFile(filepath.Join(stagingDir, "big"))
+	if err != nil {
+		t.Fatalf("read staged file: %v", err)
+	}
+	if !bytes.Equal(got, large) {
+		t.Errorf("staged file is %d bytes, want %d (chunk reassembly mismatch)",
+			len(got), len(large))
+	}
+}
+
+func TestPrepareWorkspaceWithoutStagingDir(t *testing.T) {
+	srv := adapter.New("adapter-test-build") // no StagingDir configured
+	cl := dialAdapter(t, srv)
+	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
+		map[string][]byte{"x": []byte("y")})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("PrepareWorkspace without a staging dir = %v, want FailedPrecondition", err)
+	}
+}
+
+func TestPrepareWorkspaceRejectsEscapingRef(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.StagingDir = t.TempDir()
+	cl := dialAdapter(t, srv)
+	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
+		map[string][]byte{"../escape": []byte("payload")})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("PrepareWorkspace with an escaping upload ref = %v, want InvalidArgument", err)
 	}
 }
 

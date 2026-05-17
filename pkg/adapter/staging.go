@@ -4,6 +4,10 @@ package adapter
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -11,6 +15,83 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// PrepareWorkspace accepts streamed upload-file content into the pod's
+// staging area. It is the first RPC of the §4.7 session assignment
+// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+// StartSession). Frames sharing an upload_ref are concatenated in
+// arrival order into one staged file; FinalizeWorkspace materializes
+// the uploadFile and uploadArchive plan sources from the staged
+// content. Like the rest of the staging sequence it runs before the
+// session is claimed, so it does not touch pod-assignment state.
+func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServer) error {
+	if s.StagingDir == "" {
+		return status.Error(codes.FailedPrecondition,
+			"adapter is not configured with a staging directory")
+	}
+	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
+		return status.Errorf(codes.Internal, "create staging directory: %v", err)
+	}
+	open := map[string]*os.File{}
+	closeAll := func() {
+		for _, f := range open {
+			_ = f.Close()
+		}
+	}
+	var stagedBytes int64
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			closeAll()
+			return err
+		}
+		if req.GetSessionId().GetValue() == "" {
+			closeAll()
+			return status.Error(codes.InvalidArgument,
+				"PrepareWorkspace frame requires a session id")
+		}
+		ref := req.GetUploadRef()
+		f, ok := open[ref]
+		if !ok {
+			path, err := stagingPath(s.StagingDir, ref)
+			if err != nil {
+				closeAll()
+				return status.Errorf(codes.InvalidArgument, "%v", err)
+			}
+			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				closeAll()
+				return status.Errorf(codes.Internal, "open staging file: %v", err)
+			}
+			open[ref] = f
+		}
+		n, err := f.Write(req.GetChunk())
+		if err != nil {
+			closeAll()
+			return status.Errorf(codes.Internal, "write staging file: %v", err)
+		}
+		stagedBytes += int64(n)
+	}
+	closeAll()
+	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{
+		StagedBytes: stagedBytes,
+		StagedFiles: int32(len(open)),
+	})
+}
+
+// stagingPath resolves an upload ref to a path inside the staging
+// directory. The ref MUST be a plain file name: a path separator, an
+// empty string, ".", or ".." is rejected so a malicious ref cannot
+// escape the staging directory.
+func stagingPath(dir, ref string) (string, error) {
+	if ref == "" || ref == "." || ref == ".." || ref != filepath.Base(ref) {
+		return "", fmt.Errorf("upload ref %q is not a plain file name", ref)
+	}
+	return filepath.Join(dir, ref), nil
+}
 
 // FinalizeWorkspace materializes the §14 WorkspacePlan into the
 // workspace root. It is the second RPC of the §4.7 session assignment

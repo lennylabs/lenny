@@ -42,6 +42,11 @@ type Server struct {
 	// WorkspaceRoot is the directory StartSession materializes the
 	// session workspace into — the pod's /workspace/current.
 	WorkspaceRoot string
+	// StagingDir is the directory PrepareWorkspace streams uploaded
+	// files into before FinalizeWorkspace materializes them — the pod's
+	// workspace staging area. Empty leaves PrepareWorkspace returning
+	// FailedPrecondition.
+	StagingDir string
 	// CredentialsDir is the directory the credential RPCs materialize
 	// the §4.7 credential file into — the pod's /run/lenny.
 	CredentialsDir string

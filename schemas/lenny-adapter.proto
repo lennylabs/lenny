@@ -28,6 +28,15 @@ option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the lifecycle channel).
 service Adapter {
+  // PrepareWorkspace accepts streamed upload-file content into the pod's
+  // staging area. It is the first RPC in the §4.7 session assignment
+  // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+  // StartSession). Frames sharing an upload_ref are concatenated in
+  // arrival order into one staged file; FinalizeWorkspace then
+  // materializes the uploadFile and uploadArchive plan sources from the
+  // staged content.
+  rpc PrepareWorkspace(stream PrepareWorkspaceRequest) returns (PrepareWorkspaceResponse) {}
+
   // FinalizeWorkspace validates the staged workspace content and
   // materializes the §14 WorkspacePlan into /workspace/current. It is
   // the second RPC in the §4.7 session assignment sequence
@@ -277,6 +286,24 @@ message ExperimentContext {
   // inherited is true when the context was propagated from a parent
   // session under the §8.3 inherit or control propagation mode.
   bool inherited = 3;
+}
+
+// PrepareWorkspaceRequest is one frame of the PrepareWorkspace upload
+// stream. Frames sharing an upload_ref are concatenated in arrival
+// order into a single staged file.
+message PrepareWorkspaceRequest {
+  SessionId session_id = 1;
+  // upload_ref matches the WorkspaceSource.upload_ref of the uploadFile
+  // or uploadArchive source this content backs. It MUST be a plain file
+  // name with no path separators.
+  string upload_ref = 2;
+  bytes chunk = 3;
+}
+
+// PrepareWorkspaceResponse reports the total staged upload set.
+message PrepareWorkspaceResponse {
+  int64 staged_bytes = 1;
+  int32 staged_files = 2;
 }
 
 // FinalizeWorkspaceRequest carries the §14 WorkspacePlan the adapter
