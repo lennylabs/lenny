@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b30da9c` — §10.7 OFREP client. `pkg/gateway/ofrep` is the OpenFeature Remote
+  Evaluation Protocol transport for `mode: external` experiment resolution: `Evaluate`
+  POSTs a single-flag evaluation and returns the provider's variant and value. A
+  transport failure, a non-2xx status, or an OFREP `errorCode` surfaces as an error —
+  the §10.7 `targeting_failed` condition — with `EvalError` carrying the provider's
+  error code. Its `Result` feeds `experiment.ResolveExternalVariant`. The remaining
+  `mode: external` work is the `ExperimentRouter` wiring: configure the OFREP endpoint
+  per experiment, call the client, map the outcome through `ResolveExternalVariant`,
+  and emit the §16.6 experiment events. OpenFeature SDK providers (LaunchDarkly,
+  Statsig, Unleash) need their vendor SDKs and stay deferred; OFREP is the SDK-free path.
 - `d5a202e` — §10.7 `ResolveExternalVariant` — OpenFeature variant resolution. The
   pure-Go core of `mode: external` experiment assignment: it resolves an OpenFeature
   provider's evaluation result to a variant ID per the §10.7 precedence (the `Variant`
