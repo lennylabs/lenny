@@ -4,6 +4,56 @@ package experiment
 
 import "testing"
 
+func TestRouteMixedNilEvalSkipsExternal(t *testing.T) {
+	ext := routeExp("ext", 0.9999, StatusActive, TargetingExternal)
+	if got := RouteMixed([]Definition{ext}, "alice", "s", nil); got != (Assignment{}) {
+		t.Errorf("RouteMixed with a nil eval = %+v, want zero — external experiments are skipped", got)
+	}
+}
+
+func TestRouteMixedExternalEnrolls(t *testing.T) {
+	ext := routeExp("ext", 0.9999, StatusActive, TargetingExternal)
+	eval := func(string) (string, bool) { return "treatment", true }
+	got := RouteMixed([]Definition{ext}, "alice", "s", eval)
+	if got.ExperimentID != "ext" || got.VariantID != "treatment" {
+		t.Errorf("RouteMixed = %+v, want ext/treatment", got)
+	}
+}
+
+func TestRouteMixedExternalControlOrNotOKIsSkipped(t *testing.T) {
+	ext := routeExp("ext", 0.9999, StatusActive, TargetingExternal)
+	control := func(string) (string, bool) { return ControlVariantID, true }
+	if got := RouteMixed([]Definition{ext}, "alice", "s", control); got != (Assignment{}) {
+		t.Errorf("RouteMixed = %+v, want zero — a control assignment does not enroll", got)
+	}
+	failed := func(string) (string, bool) { return "", false }
+	if got := RouteMixed([]Definition{ext}, "alice", "s", failed); got != (Assignment{}) {
+		t.Errorf("RouteMixed = %+v, want zero — eval ok=false does not enroll", got)
+	}
+}
+
+func TestRouteMixedFirstMatchAcrossModes(t *testing.T) {
+	// A percentage experiment created before an external one wins.
+	pct := routeExp("pct", 0.9999, StatusActive, TargetingPercentage)
+	ext := routeExp("ext", 0.9999, StatusActive, TargetingExternal)
+	eval := func(string) (string, bool) { return "ext-v", true }
+	if got := RouteMixed([]Definition{pct, ext}, "alice", "s", eval); got.ExperimentID != "pct" {
+		t.Errorf("RouteMixed = %+v, want pct — the earlier experiment wins", got)
+	}
+	// External created first wins over a later percentage experiment.
+	if got := RouteMixed([]Definition{ext, pct}, "alice", "s", eval); got.ExperimentID != "ext" {
+		t.Errorf("RouteMixed = %+v, want ext — the earlier experiment wins", got)
+	}
+}
+
+func TestRouteMixedSkipsPausedExternal(t *testing.T) {
+	paused := routeExp("paused", 0.9999, StatusPaused, TargetingExternal)
+	eval := func(string) (string, bool) { return "v", true }
+	if got := RouteMixed([]Definition{paused}, "alice", "s", eval); got != (Assignment{}) {
+		t.Errorf("RouteMixed = %+v, want zero — a paused experiment is not routable", got)
+	}
+}
+
 func TestAllTargetingProvidersIsExhaustive(t *testing.T) {
 	if got := len(AllTargetingProviders()); got != 4 {
 		t.Errorf("AllTargetingProviders() returned %d, want 4 per §10.7", got)

@@ -211,6 +211,49 @@ func BuildEvaluationContext(in EvaluationContextInput) map[string]any {
 	return ctx
 }
 
+// ExternalEvaluator resolves a §10.7 mode:external experiment to a
+// variant for a session. ok is false when the experiment yields no
+// enrollment — the session hashed (per the provider) to control, the
+// experiment is unevaluable, or the external provider failed. The
+// gateway supplies a closure that calls the OpenFeature provider; the
+// §10.7 "a provider failure makes no external assignment for any
+// experiment" rule is the closure's responsibility.
+type ExternalEvaluator func(experimentID string) (variantID string, ok bool)
+
+// RouteMixed applies the §10.7 first-match multi-experiment rule over
+// both percentage-mode and external-mode experiments. Experiments are
+// evaluated in the given order (the caller sorts by created_at): a
+// percentage-mode experiment is bucketed by the built-in HMAC hash, an
+// external-mode experiment is resolved through eval. The first routable
+// experiment that yields a non-control variant wins. A nil eval skips
+// every external-mode experiment — the OpenFeature-not-configured path,
+// to which Route delegates.
+func RouteMixed(experiments []Definition, userID, sessionID string, eval ExternalEvaluator) Assignment {
+	for _, e := range experiments {
+		if !e.Status.IsRoutable() {
+			continue
+		}
+		switch e.TargetingMode {
+		case TargetingPercentage:
+			key := sessionID
+			if e.Sticky == StickyUser {
+				key = userID
+			}
+			if v := AssignVariant(key, e.ID, e.Variants); v != ControlVariantID {
+				return Assignment{ExperimentID: e.ID, VariantID: v}
+			}
+		case TargetingExternal:
+			if eval == nil {
+				continue
+			}
+			if v, ok := eval(e.ID); ok && v != ControlVariantID {
+				return Assignment{ExperimentID: e.ID, VariantID: v}
+			}
+		}
+	}
+	return Assignment{}
+}
+
 // ResolveExternalVariant implements the §10.7 OpenFeature
 // external-targeting variant resolution. A `mode: external` experiment
 // is assigned by an OpenFeature provider, which returns an
