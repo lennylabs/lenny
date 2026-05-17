@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4cb0d1e` — §16.5 add `StorageQuotaHigh` to the rule catalog. The per-tenant
+  storage-quota gauges `lenny_storage_quota_bytes_used` and
+  `lenny_tenant_storage_quota_bytes` are emitted by `gatewaymetrics`, so the §16.5
+  `StorageQuotaHigh` warning alert now carries weight and joins `rules.Catalog()`. The
+  expression guards against a zero configured quota.
 - `725c9ec` — §14 pin gitClone refs at session creation. `handleCreate` and
   `handleCreateAndStart` resolve every `gitClone` source's ref to an immutable commit
   SHA when a `RefResolver` is wired: `resolvePlanForCreate` parses the plan, calls
