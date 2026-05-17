@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `204ada6` — §9.1 `adapterCapabilities` on `lenny/list_runtimes`. The MCP discovery
+  tool embeds the MCP adapter's capability block (`/mcp`, protocol `mcp`, session
+  continuity / delegation / elicitation / interrupt all supported).
+- `0c29621` — §15.1 OpenAPI: `adapterCapabilities` component schema referenced from the
+  `GET /v1/runtimes` and `GET /v1/models` response bodies.
+- `d74865b` — §9.1 `adapterCapabilities` discovery block. New `pkg/gateway/adapter`
+  holds the §15 `AdapterCapabilities` type; `GET /v1/runtimes` and `GET /v1/models`
+  embed a top-level `adapterCapabilities` block describing the REST adapter (`/v1`,
+  protocol `rest`, session continuity / interrupt / elicitation supported, delegation
+  absent — no REST delegate route). §9.1 requires this block on every discovery
+  response so a consumer can inspect `supportsElicitation` before an
+  elicitation-dependent workflow. The §9.1 per-runtime `agentInterface` / `mcpEndpoint`
+  fields still need a fuller runtime record.
 - `50af1f8` — §15.1 OpenAPI: `GET /v1/models` documented with its OpenAI-compatible
   model-list response schema.
 - `4998c8c` — §9.1 `GET /v1/models` model discovery. The OpenAI Completions / Open
