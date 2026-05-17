@@ -412,6 +412,7 @@ func main() {
 			DialAdapter: func(addr string) (*adapterclient.Client, error) {
 				return adapterclient.Dial(addr, dialOpt)
 			},
+			Blobs: blobs,
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
 		checkpointSvc = &checkpointer.Checkpointer{

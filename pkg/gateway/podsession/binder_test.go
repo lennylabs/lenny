@@ -8,7 +8,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -21,10 +24,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // stubRestorer is an adapter.CheckpointSource serving a fixed archive.
@@ -316,5 +321,75 @@ func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
+	}
+}
+
+func TestBindStagesUploadFile(t *testing.T) {
+	// A plan with an uploadFile source: Bind fetches the blob, streams
+	// it via PrepareWorkspace, and FinalizeWorkspace materializes it.
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	root := t.TempDir()
+	srv.WorkspaceRoot = root
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = rt
+
+	blobs := blobstore.NewMemoryStore(nil)
+	uri := blobstore.URI{
+		TenantID: "acme", SessionID: "sess-1", PartID: "part-1",
+		TTL: time.Hour, Encoding: blobstore.Encoding,
+	}
+	if _, err := blobs.Put(uri, "application/octet-stream",
+		bytes.NewReader([]byte("uploaded payload"))); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	binder.Blobs = blobs
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{Type: "uploadFile", Path: "data/payload.bin", UploadRef: uri.String()},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	got, err := os.ReadFile(filepath.Join(root, "data", "payload.bin"))
+	if err != nil {
+		t.Fatalf("read materialized upload: %v", err)
+	}
+	if string(got) != "uploaded payload" {
+		t.Errorf("materialized upload = %q, want %q", got, "uploaded payload")
+	}
+}
+
+func TestBindFailsWhenUploadPlanHasNoBlobStore(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv)) // no Blobs configured
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{Type: "uploadFile", Path: "f.bin", UploadRef: "lenny-blob://acme/sess-1/part-1?ttl=600"},
+			},
+		},
+	})
+	if err == nil {
+		t.Error("Bind succeeded for an upload plan with no blob store, want a failure")
 	}
 }

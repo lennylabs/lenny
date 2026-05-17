@@ -11,12 +11,14 @@ package podsession
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -38,6 +40,12 @@ type Binder struct {
 	// DialAdapter opens an adapter client for the pod reachable at addr.
 	// Production dials over mTLS; tests substitute an in-memory link.
 	DialAdapter func(addr string) (*adapterclient.Client, error)
+	// Blobs resolves §4.5 lenny-blob:// upload refs to their content so
+	// Bind can stage a plan's uploadFile and uploadArchive sources via
+	// the adapter's PrepareWorkspace RPC. Nil when the deployment has no
+	// blob store configured; a plan carrying upload sources then fails
+	// to bind.
+	Blobs blobstore.Store
 }
 
 // BindRequest describes a session to place on a warm pod.
@@ -101,15 +109,19 @@ type ResumeRequest struct {
 // Bind claims an idle pod for the request's session, resolves the
 // pod's adapter address, performs the §15.5 version handshake, and runs
 // the §4.7 session-assignment sequence on the pod's adapter:
-// FinalizeWorkspace materializes the workspace, RunSetup runs the
-// plan's setup commands, and StartSession starts the runtime. On
-// success the caller owns the returned live adapter connection. Any
-// failure after the claim is returned so the gateway can retry on a
-// fresh pod.
+// PrepareWorkspace stages any uploaded files, FinalizeWorkspace
+// materializes the workspace, RunSetup runs the plan's setup commands,
+// and StartSession starts the runtime. On success the caller owns the
+// returned live adapter connection. Any failure after the claim is
+// returned so the gateway can retry on a fresh pod.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
+	}
+	if err := b.stageUploads(ctx, cl, req.SessionID, req.Plan); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: stage uploads on pod %s: %w", sandboxName, err)
 	}
 	if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
 		cl.Close()
@@ -130,6 +142,58 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		PodIP:       podIP,
 		Adapter:     cl,
 	}, nil
+}
+
+// stageUploads fetches the blob content for every uploadFile and
+// uploadArchive source in the plan and streams it to the pod's staging
+// area via PrepareWorkspace, the first RPC of the §4.7 sequence. It is
+// a no-op when the plan has no upload sources. A plan that carries
+// upload sources but binds through a Binder with no blob store fails
+// rather than materializing an incomplete workspace.
+func (b *Binder) stageUploads(ctx context.Context, cl *adapterclient.Client, sessionID string, plan *adapterv1.WorkspacePlan) error {
+	refs := uploadRefs(plan)
+	if len(refs) == 0 {
+		return nil
+	}
+	if b.Blobs == nil {
+		return fmt.Errorf("plan has %d upload source(s) but the binder has no blob store", len(refs))
+	}
+	uploads := make(map[string][]byte, len(refs))
+	for _, ref := range refs {
+		uri, err := blobstore.ParseURI(ref)
+		if err != nil {
+			return fmt.Errorf("parse upload ref %q: %w", ref, err)
+		}
+		_, rc, err := b.Blobs.Get(uri)
+		if err != nil {
+			return fmt.Errorf("fetch upload %q: %w", ref, err)
+		}
+		content, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return fmt.Errorf("read upload %q: %w", ref, err)
+		}
+		uploads[ref] = content
+	}
+	_, err := cl.PrepareWorkspace(ctx, sessionID, uploads)
+	return err
+}
+
+// uploadRefs collects the distinct uploadRef values of the plan's
+// uploadFile and uploadArchive sources, in first-seen order.
+func uploadRefs(plan *adapterv1.WorkspacePlan) []string {
+	seen := make(map[string]bool)
+	var refs []string
+	for _, src := range plan.GetSources() {
+		switch src.GetType() {
+		case "uploadFile", "uploadArchive":
+			if ref := src.GetUploadRef(); ref != "" && !seen[ref] {
+				seen[ref] = true
+				refs = append(refs, ref)
+			}
+		}
+	}
+	return refs
 }
 
 // Resume claims an idle pod for the request's session and restores the
