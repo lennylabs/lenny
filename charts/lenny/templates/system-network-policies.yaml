@@ -7,7 +7,7 @@ rendered alongside it as the control-plane network surface is
 completed; until then the namespace is network-isolated by default,
 the fail-closed posture §13.2 requires, mirroring the agent-namespace
 policy set.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -27,7 +27,7 @@ kube-system CoreDNS egress for name resolution. Without the ingress
 rule every fail-closed webhook silently rejects all admissions. The
 drain-readiness-only gateway-egress sub-rule is rendered with that
 feature-gated webhook.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -70,7 +70,7 @@ PoolScalingController egress the §13.2 default-deny otherwise blocks:
 the kube-apiserver (the controllers watch and write CRDs), PgBouncer
 (pool configuration), and kube-system CoreDNS. The controllers accept
 no unsolicited ingress, so the policy is egress-only.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -117,7 +117,7 @@ mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, and
 kube-system CoreDNS. Redis is matched by component label for the
 self-managed profile; an external Redis is reached by a deployer-added
 CIDR rule.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -177,7 +177,7 @@ allow-controller-metrics-scrape admits Prometheus scrape requests from
 the monitoring namespace to the controller's metrics port (§13.2
 line 228 supplemental ingress). Without it the lenny-system
 default-deny silently drops every controller metrics scrape.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -205,7 +205,7 @@ lenny-system default-deny otherwise blocks: ingress from agent-namespace
 pods for DNS resolution and from the monitoring namespace for the
 metrics scrape, and egress to kube-system CoreDNS for upstream
 forwarding.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -255,7 +255,7 @@ admit Prometheus scrape requests from the monitoring namespace to the
 gateway and Token Service metrics ports (§13.2 line 228 supplemental
 ingress). Without them the lenny-system default-deny silently drops
 those component metrics scrapes.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -303,7 +303,7 @@ allow-pgbouncer re-admits the §13.2 PgBouncer flows the lenny-system
 default-deny otherwise blocks (§13.2 line 219, self-managed profile):
 ingress from the gateway, Token Service, and controller pods on 5432,
 and egress to Postgres and kube-system CoreDNS.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -355,7 +355,7 @@ allow-minio re-admits the §13.2 MinIO flows the lenny-system
 default-deny otherwise blocks (§13.2 line 220, self-managed profile):
 ingress from the gateway pods on the TLS port, and egress to
 kube-system CoreDNS.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -397,7 +397,7 @@ adapters, the Token Service, PgBouncer, Redis, MinIO, the
 kube-apiserver, and kube-system CoreDNS. The external-HTTPS egress
 with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
 rendered with the LLM proxy.
-*/ -}}
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
