@@ -61,6 +61,7 @@ type RuntimePayload struct {
 	SetupPolicy             *runtimestore.SetupPolicy                   `json:"setupPolicy,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
+	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
@@ -86,6 +87,32 @@ type UpdateRuntimeRequest struct {
 	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
+	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
+}
+
+// validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
+// cleanup-failure enums and non-negative numeric fields. The §5.1
+// cross-field rules — allowCrossTenantReuse requires microvm isolation
+// and in-place scrub requires the residual-state acknowledgment — are
+// enforced by the pool controller against the resolved pool.
+func validateTaskPolicy(p *runtimestore.TaskPolicy) error {
+	if p == nil {
+		return nil
+	}
+	if p.MicrovmScrubMode != "" && !p.MicrovmScrubMode.IsValid() {
+		return errors.New("taskPolicy.microvmScrubMode must be restart or in-place")
+	}
+	if p.OnCleanupFailure != "" && !p.OnCleanupFailure.IsValid() {
+		return errors.New("taskPolicy.onCleanupFailure must be warn or fail")
+	}
+	if p.CleanupTimeoutSeconds < 0 || p.MaxScrubFailures < 0 ||
+		p.MaxTasksPerPod < 0 || p.MaxPodUptimeSeconds < 0 {
+		return errors.New("taskPolicy numeric fields must not be negative")
+	}
+	if p.MaxTaskRetries != nil && *p.MaxTaskRetries < 0 {
+		return errors.New("taskPolicy.maxTaskRetries must not be negative")
+	}
+	return nil
 }
 
 // validateMinPlatformVersion checks a §5.1 minPlatformVersion: when set
@@ -165,6 +192,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		SetupPolicy:             r.SetupPolicy,
 		Capabilities:            r.Capabilities,
 		MinPlatformVersion:      r.MinPlatformVersion,
+		TaskPolicy:              r.TaskPolicy,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -245,6 +273,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := validateTaskPolicy(body.TaskPolicy); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                    body.Name,
@@ -263,6 +295,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		SetupPolicy:             body.SetupPolicy,
 		Capabilities:            body.Capabilities,
 		MinPlatformVersion:      body.MinPlatformVersion,
+		TaskPolicy:              body.TaskPolicy,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -434,6 +467,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.TaskPolicy != nil {
+		if err := validateTaskPolicy(body.TaskPolicy); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -480,6 +519,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.MinPlatformVersion != nil {
 			rt.MinPlatformVersion = *body.MinPlatformVersion
+		}
+		if body.TaskPolicy != nil {
+			rt.TaskPolicy = body.TaskPolicy
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -568,6 +610,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.MinPlatformVersion != nil {
 		out = append(out, "minPlatformVersion")
+	}
+	if b.TaskPolicy != nil {
+		out = append(out, "taskPolicy")
 	}
 	return out
 }

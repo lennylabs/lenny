@@ -926,6 +926,64 @@ func TestCreateRuntimeRejectsMalformedMinPlatformVersion(t *testing.T) {
 	}
 }
 
+func TestRuntimeTaskPolicyRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the taskPolicy block.
+	router, _, _ := newRuntimeAdmin(t)
+	retries := 2
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "rt",
+		Image: "lenny/rt@sha256:abc",
+		TaskPolicy: &runtimestore.TaskPolicy{
+			AcknowledgeBestEffortScrub: true,
+			MicrovmScrubMode:           runtimestore.MicrovmScrubRestart,
+			OnCleanupFailure:           runtimestore.CleanupFailureWarn,
+			MaxTasksPerPod:             50,
+			MaxTaskRetries:             &retries,
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.TaskPolicy == nil || created.TaskPolicy.MaxTasksPerPod != 50 ||
+		created.TaskPolicy.MaxTaskRetries == nil || *created.TaskPolicy.MaxTaskRetries != 2 {
+		t.Errorf("create response taskPolicy: %+v", created.TaskPolicy)
+	}
+
+	replacement := &runtimestore.TaskPolicy{AcknowledgeBestEffortScrub: true, MaxTasksPerPod: 99}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{TaskPolicy: replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.TaskPolicy == nil || updated.TaskPolicy.MaxTasksPerPod != 99 {
+		t.Errorf("update did not replace taskPolicy: %+v", updated.TaskPolicy)
+	}
+}
+
+func TestCreateRuntimeRejectsInvalidTaskPolicy(t *testing.T) {
+	// §5.1: taskPolicy enums and numeric fields are validated.
+	router, _, _ := newRuntimeAdmin(t)
+	cases := []*runtimestore.TaskPolicy{
+		{MicrovmScrubMode: "wipe"},
+		{OnCleanupFailure: "retry"},
+		{MaxTasksPerPod: -1},
+	}
+	for i, p := range cases {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+			Name:       "bad",
+			Image:      "lenny/bad@sha256:abc",
+			TaskPolicy: p,
+		})
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("case %d: status %d, want 400 (body=%s)", i, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
