@@ -11,9 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
-- Tier-0 static gate sweep (`make lint` / `lenny-test --tier static`). The
-  static gate had not been run during the build-out, so a backlog of Tier-0
-  violations had accumulated. This pass works through them:
+- Tier-0 static gate sweep (`make lint` / `lenny-test --tier static`) — now
+  GREEN (`verdict: PASS`). The static gate had not been run during the
+  build-out, so a backlog of Tier-0 violations had accumulated. This pass
+  cleared every one:
   - `cfc8dfc` — renamed the `Attach` RPC stream messages to
     `AttachRequest`/`AttachResponse` so `buf lint` (`RPC_REQUEST_STANDARD_NAME`)
     passes; regenerated the adapter protobuf.
@@ -28,13 +29,14 @@ Newest first. Each entry is one increment toward the critical path below.
     `system-network-policies` chart template so `helm lint` passes.
   - `6661ed3` — added per-migration schema coverage (`prod_columns_test.go`)
     for migrations 0003-0025 so `lint-migrations.sh` passes.
-  - `tests:` — added `// spec:` + `// diagnosis:` annotations to 28
+  - `2b0d9f3` — added `// spec:` + `// diagnosis:` annotations to 28
     component-tier test functions so `validate-diagnosis` passes.
-  - REMAINING: `validate-maps` fails — ~40 test files under
-    `tests/tier{2,3,4,5}_*/` are absent from `tests/spec-map.json` (many are
-    `scaffolds_test.go`). Each needs a `tests` entry in the matching
-    `spec-map.json` section. After that, re-run `make lint` for any further
-    Tier-0 linter failures.
+  - `ae7822d` — mapped the 28 unreferenced tier-2/3/4 test files into
+    `tests/spec-map.json` so `validate-maps` passes.
+  With all eight linters passing, `lenny-test --tier static` reports
+  `verdict: PASS`. Tiers 0-4 are green; Tier 5 e2e_kind is scaffold-only.
+  Next: build out the remaining unbuilt features (see the critical path
+  below) and replace the Tier-5 scaffolds with real Kind E2E tests.
 - `9a23cda` — bootstrap upsert applies the full runtime payload.
   `POST /v1/admin/bootstrap` accepts a `RuntimePayload` but `upsertRuntimes`
   built and merged the runtime row from only a subset of its fields,
