@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e4f8624` — §25.10 configuration drift detection comparison. New pure
+  package `pkg/drift`: `Diff` walks the desired and actual JSON state field
+  by field, recursing into nested objects with dotted paths, and reports
+  each drifted field as added, removed, or modified; `Classify` ranks a
+  field by §25.10 severity (image/isolation/security high, labels/
+  descriptions/metadata low, the rest medium); `SnapshotStale` applies the
+  §25.10 staleness threshold. A third pure-logic building block of the
+  infrastructure-bound `lenny-ops` service (with `pkg/backup/retention` and
+  `pkg/cron`).
 - `8311725` — standard five-field cron expression evaluator. The §25
   `lenny-ops` backup scheduler, the platform upgrade-check cron, and the
   verification schedules are configured as cron strings, but the codebase
