@@ -213,6 +213,35 @@ func TestRuntimeCapabilityInferenceModeDefault(t *testing.T) {
 	}
 }
 
+func TestRuntimeToolCapabilityOverridesRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries a toolCapabilityOverrides map. The store
+	// must deep-copy it so it never shares mutable state with a caller.
+	s := runtimestore.NewMemory()
+	overrides := map[string][]capabilityinference.Capability{
+		"deploy": {capabilityinference.CapExecute, capabilityinference.CapAdmin},
+	}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, ToolCapabilityOverrides: overrides,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	overrides["deploy"][0] = capabilityinference.CapRead // mutate caller's slice
+
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.ToolCapabilityOverrides["deploy"]) != 2 ||
+		got.ToolCapabilityOverrides["deploy"][0] != capabilityinference.CapExecute {
+		t.Errorf("toolCapabilityOverrides not stored or not isolated: %+v", got.ToolCapabilityOverrides)
+	}
+	got.ToolCapabilityOverrides["deploy"][1] = capabilityinference.CapRead // mutate returned slice
+	again, _ := s.Get(context.Background(), "rt")
+	if again.ToolCapabilityOverrides["deploy"][1] != capabilityinference.CapAdmin {
+		t.Errorf("the returned map aliases the stored map: %+v", again.ToolCapabilityOverrides)
+	}
+}
+
 func TestRuntimeCapabilityInferenceModeRoundTrip(t *testing.T) {
 	s := runtimestore.NewMemory()
 	_ = s.Create(context.Background(), runtimestore.Runtime{

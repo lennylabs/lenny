@@ -80,6 +80,12 @@ type Runtime struct {
 	// the §5.1 default (strict) when it is empty.
 	CapabilityInferenceMode capabilityinference.Mode
 
+	// ToolCapabilityOverrides is the §5.1 toolCapabilityOverrides map:
+	// an explicit §5.3 capability set per tool name that overrides MCP
+	// annotation inference. A nil or empty map means every tool is
+	// inferred.
+	ToolCapabilityOverrides map[string][]capabilityinference.Capability
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -414,6 +420,13 @@ func cloneRuntime(r Runtime) Runtime {
 	r.AgentInterface = r.AgentInterface.Clone()
 	if r.PublishedMetadata != nil {
 		r.PublishedMetadata = append([]PublishedMetadataEntry(nil), r.PublishedMetadata...)
+	}
+	if r.ToolCapabilityOverrides != nil {
+		m := make(map[string][]capabilityinference.Capability, len(r.ToolCapabilityOverrides))
+		for k, v := range r.ToolCapabilityOverrides {
+			m[k] = append([]capabilityinference.Capability(nil), v...)
+		}
+		r.ToolCapabilityOverrides = m
 	}
 	return r
 }

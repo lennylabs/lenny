@@ -173,6 +173,34 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("toolCapabilityOverrides round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.ToolCapabilityOverrides = map[string][]capabilityinference.Capability{
+			"deploy": {capabilityinference.CapExecute, capabilityinference.CapAdmin},
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if len(got.ToolCapabilityOverrides["deploy"]) != 2 ||
+			got.ToolCapabilityOverrides["deploy"][0] != capabilityinference.CapExecute {
+			t.Errorf("toolCapabilityOverrides round-trip mismatch: %+v", got.ToolCapabilityOverrides)
+		}
+
+		// A runtime registered with no overrides reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.ToolCapabilityOverrides != nil {
+			t.Errorf("toolCapabilityOverrides must be nil when omitted: %+v", gotPlain.ToolCapabilityOverrides)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {
