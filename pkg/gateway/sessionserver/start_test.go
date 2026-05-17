@@ -55,6 +55,38 @@ func TestSessionStartCreatesRunningSession(t *testing.T) {
 	}
 }
 
+func TestSessionStartRecordsEnvironment(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc: func() string { return "sess_start_env" },
+		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
+		RuntimeRef:  "echo",
+		Environment: "security-team",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.CreateSessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Environment != "security-team" {
+		t.Errorf("response environment: got %q, want security-team", resp.Environment)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_start_env")
+	if err != nil {
+		t.Fatalf("not stored: %v", err)
+	}
+	if row.Environment != "security-team" {
+		t.Errorf("stored environment: got %q, want security-team", row.Environment)
+	}
+}
+
 func TestSessionStartRejectsMissingRuntime(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{})

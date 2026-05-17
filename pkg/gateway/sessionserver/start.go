@@ -23,6 +23,7 @@ type CreateAndStartRequest struct {
 	UserID           string            `json:"userId,omitempty"`
 	WorkspacePlan    json.RawMessage   `json:"workspacePlan,omitempty"`
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
+	Environment      string            `json:"environment,omitempty"`
 }
 
 // CreateAndStartResponse is the convenience reply. Mirrors the
@@ -91,6 +92,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		TenantID:         tenantID,
 		UserID:           req.UserID,
 		RuntimeRef:       req.RuntimeRef,
+		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
 		IsolationProfile: isoProf,
 		WorkspacePlan:    planJSON,
