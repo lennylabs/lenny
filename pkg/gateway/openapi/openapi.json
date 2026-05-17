@@ -1715,6 +1715,48 @@
         "responses": { "200": { "description": "OK" }, "404": { "description": "Unknown component" } }
       }
     },
+    "/v1/admin/recommendations": {
+      "get": {
+        "summary": "Capacity recommendations",
+        "x-lenny-mcp-tool": "admin.get_recommendations",
+        "x-lenny-scope": "admin.recommendations.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "operability",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "category", "in": "query", "schema": { "type": "string", "enum": ["warm_pool_sizing","credential_pool_sizing","gateway_scaling","resource_limits","retention_tuning","quota_adjustment"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recommendations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "rule":          { "type": "string" },
+                          "category":      { "type": "string" },
+                          "summary":       { "type": "string" },
+                          "detail":        { "type": "string" },
+                          "value":         { "type": "number" },
+                          "confidence":    { "type": "number" },
+                          "dataAvailable": { "type": "boolean" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/admin/me": {
       "get": {
         "summary": "Identity + role grants for the calling principal",
