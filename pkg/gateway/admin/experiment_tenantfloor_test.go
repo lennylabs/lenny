@@ -4,12 +4,14 @@ package admin_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -21,7 +23,7 @@ import (
 // newExperimentTenantFloorAdmin builds an experiment admin router with
 // tenant `acme` carrying the given minIsolationProfile floor, a
 // `sandboxed` base runtime, and pools at `sandboxed` and `microvm`.
-func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit) {
+func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Router, *recordingAudit, *opsevents.Emitter) {
 	t.Helper()
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
@@ -47,11 +49,13 @@ func newExperimentTenantFloorAdmin(t *testing.T, tenantFloor string) (*admin.Rou
 		t.Fatalf("seed microvm pool: %v", err)
 	}
 	audit := &recordingAudit{}
+	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "replica-test")
 	router := admin.NewRouter(tenants, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,
-	}).WithRuntimes(runtimes).WithPools(pools).WithExperiments(experimentstore.NewMemory())
-	return router, audit
+	}).WithRuntimes(runtimes).WithPools(pools).
+		WithExperiments(experimentstore.NewMemory()).WithEventEmitter(emitter)
+	return router, audit, emitter
 }
 
 func emittedTenantFloorAdvisory(audit *recordingAudit) bool {
@@ -64,7 +68,7 @@ func emittedTenantFloorAdvisory(audit *recordingAudit) bool {
 }
 
 func TestCreateExperimentEmitsTenantFloorAdvisory(t *testing.T) {
-	router, audit := newExperimentTenantFloorAdmin(t, "microvm")
+	router, audit, _ := newExperimentTenantFloorAdmin(t, "microvm")
 	body := validExperimentPayload("exp_tf")
 	// cw-sandboxed meets the sandboxed base runtime (the hard check
 	// passes) but is below the microvm tenant floor.
@@ -80,7 +84,7 @@ func TestCreateExperimentEmitsTenantFloorAdvisory(t *testing.T) {
 }
 
 func TestCreateExperimentNoAdvisoryWhenAtTenantFloor(t *testing.T) {
-	router, audit := newExperimentTenantFloorAdmin(t, "microvm")
+	router, audit, _ := newExperimentTenantFloorAdmin(t, "microvm")
 	body := validExperimentPayload("exp_ok")
 	body.Variants[0].Pool = "cw-microvm" // meets the microvm tenant floor
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
@@ -94,7 +98,7 @@ func TestCreateExperimentNoAdvisoryWhenAtTenantFloor(t *testing.T) {
 
 func TestCreateExperimentNoAdvisoryWithoutTenantFloor(t *testing.T) {
 	// A tenant with no minIsolationProfile floor configured.
-	router, audit := newExperimentTenantFloorAdmin(t, "")
+	router, audit, _ := newExperimentTenantFloorAdmin(t, "")
 	body := validExperimentPayload("exp_nofloor")
 	body.Variants[0].Pool = "cw-sandboxed"
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
@@ -103,5 +107,55 @@ func TestCreateExperimentNoAdvisoryWithoutTenantFloor(t *testing.T) {
 	}
 	if emittedTenantFloorAdvisory(audit) {
 		t.Error("no tenant floor configured — the advisory event must not fire")
+	}
+}
+
+func TestCreateExperimentTenantFloorAdvisoryReachesEventBuffer(t *testing.T) {
+	// §16.6: the tenant-floor advisory is also an operational event —
+	// it must reach the §25.3 event buffer, not only the audit log.
+	router, _, emitter := newExperimentTenantFloorAdmin(t, "microvm")
+	body := validExperimentPayload("exp_tf_ops")
+	body.Variants[0].Pool = "cw-sandboxed" // below the microvm tenant floor
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/experiments", body, withAdminPrincipal)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+
+	page := emitter.Buffer().Query(0, opsevents.EventFilter{
+		EventType: string(opsevents.EventExperimentVariantWeakerThanFloor),
+	}, 0)
+	if len(page.Events) != 1 {
+		t.Fatalf("event buffer holds %d variant_weaker_than_tenant_floor events, want 1", len(page.Events))
+	}
+	ev := page.Events[0].Event
+	if ev.Type != "dev.lenny.experiment.variant_weaker_than_tenant_floor" {
+		t.Errorf("event type = %q", ev.Type)
+	}
+	if ev.Severity != "warning" {
+		t.Errorf("severity = %q, want warning", ev.Severity)
+	}
+	var data struct {
+		TenantID       string `json:"tenant_id"`
+		ExperimentID   string `json:"experiment_id"`
+		VariantID      string `json:"variant_id"`
+		VariantPoolIso string `json:"variant_pool_isolation"`
+		TenantFloor    string `json:"tenant_floor"`
+		ActorSub       string `json:"actor_sub"`
+		EmittedAt      string `json:"emitted_at"`
+	}
+	if err := json.Unmarshal(ev.Data, &data); err != nil {
+		t.Fatalf("event data: %v", err)
+	}
+	if data.TenantID != "acme" || data.ExperimentID != "exp_tf_ops" {
+		t.Errorf("tenant/experiment = %q/%q, want acme/exp_tf_ops", data.TenantID, data.ExperimentID)
+	}
+	if data.TenantFloor != string(isolation.ProfileMicrovm) ||
+		data.VariantPoolIso != string(isolation.ProfileSandboxed) {
+		t.Errorf("floor/variant isolation = %q/%q, want %s/%s",
+			data.TenantFloor, data.VariantPoolIso,
+			isolation.ProfileMicrovm, isolation.ProfileSandboxed)
+	}
+	if data.ActorSub == "" || data.EmittedAt == "" {
+		t.Errorf("actor_sub and emitted_at must be populated: %q / %q", data.ActorSub, data.EmittedAt)
 	}
 }
