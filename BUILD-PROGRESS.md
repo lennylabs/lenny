@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `17bf241` — §14 enforce gitClone auth host-to-pool binding at session creation.
+  `resolvePlanForCreate` runs the §14 auth binding check for every gitClone source with
+  an `auth` block: when a `CredentialPools` store is wired, the source's URL host must
+  bind to exactly one of the tenant's VCS credential pools whose provider matches the
+  leaseScope, else the §15.1 `GIT_CLONE_AUTH_UNSUPPORTED_HOST` / `GIT_CLONE_AUTH_HOST_AMBIGUOUS`
+  (422) response is written. `cmd/lenny-gateway` shares one `credentialpoolstore` between
+  the admin CRUD and this check. The §14 authenticated-gitClone path is now built end to
+  end except the §4.9 token minting that turns the resolved pool into a short-lived
+  HTTPS credential — the `LsRemoteResolver` still does an unauthenticated `ls-remote`,
+  so a private-repo ref resolution fails `auth_failed` after the binding check passes.
 - `996c38f` — §14 `ParseLeaseScope` and `GitCloneHost`. `ParseLeaseScope` extracts the
   VCS provider and read/write mode from a `gitClone.auth.leaseScope`
   (`vcs.<provider>.read|write`); `GitCloneHost` returns the lowercased URL authority.
