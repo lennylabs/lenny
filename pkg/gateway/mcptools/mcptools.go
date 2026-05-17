@@ -779,6 +779,18 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
+			// §10.6: the delegation target must be within the caller's
+			// environment scope — the same transparent-filter boundary
+			// lenny/discover_agents applies, enforced so a hard-coded
+			// runtimeRef cannot reach an out-of-scope runtime.
+			authorized, err := runtimeAuthorizedForCaller(ctx, deps, in.RuntimeRef)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			if !authorized {
+				return mcp.ToolResult{}, fmt.Errorf(
+					"delegation target %q is not within the caller's environment scope (§10.6)", in.RuntimeRef)
+			}
 			// §4 PreDelegation: run the interceptor chain over the
 			// TaskSpec.input before the gateway processes the delegation.
 			// A REJECT blocks the delegation; a MODIFY rewrites the input
@@ -955,6 +967,28 @@ func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtim
 	}
 	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
 	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, policy), nil
+}
+
+// runtimeAuthorizedForCaller reports whether the caller's §10.6
+// environment access admits runtimeRef as a delegation target — the
+// "environment definition" half of the §10.6 effective delegation
+// scope. When the environment, tenant, or runtime registry is not
+// wired, or the runtime cannot be resolved, it returns true: the
+// transparent-filter boundary is not in effect and the delegation
+// service remains the authority on the runtime reference.
+func runtimeAuthorizedForCaller(ctx context.Context, deps Deps, runtimeRef string) (bool, error) {
+	if deps.Environments == nil || deps.Tenants == nil || deps.Runtimes == nil {
+		return true, nil
+	}
+	rt, err := deps.Runtimes.Get(ctx, runtimeRef)
+	if err != nil {
+		return true, nil
+	}
+	authorized, err := filterByEnvironmentAccess(ctx, deps, []runtimestore.Runtime{rt})
+	if err != nil {
+		return false, err
+	}
+	return len(authorized) > 0, nil
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its
