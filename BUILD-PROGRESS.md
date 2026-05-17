@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5f25913` — §4.7 `FinalizeWorkspace` adapter RPC, the second slice of the
+  staging-RPC split. `FinalizeWorkspace` materializes the §14 WorkspacePlan
+  into the workspace root via `workspace.Materialize`. Like `RunSetup` it runs
+  before the session is claimed, so it neither claims nor checks
+  pod-assignment state. Staged-file validation against the streamed
+  `PrepareWorkspace` content arrives with that RPC; this slice materializes
+  the filesystem-native plan sources (`inlineFile`, `mkdir`). Remaining
+  staging slices: `PrepareWorkspace` (streaming files into a staging area),
+  then slim `StartSession` to runtime start only — move workspace
+  materialization and setup out of it — with the gateway binder orchestrating
+  the four-RPC sequence.
 - `adf5411` — §4.7 `RunSetup` adapter RPC, the first slice of the staging-RPC
   split. §4.7 specifies four distinct Gateway → Adapter RPCs for session
   assignment (`PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`,
