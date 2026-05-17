@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d555b51` — §15.4.3 intra-pod MCP nonce handshake validation. New package
+  `pkg/adapter/mcp`. `AuthenticateInitialize` validates the nonce on an MCP
+  `initialize` JSON-RPC request — a constant-time exact compare against the
+  manifest `mcpNonce`, no normalization per §15.4.3 — and returns the request
+  with `_lennyNonce` stripped from `params` so the MCP server never sees the
+  non-standard field. A non-`initialize` first message, a missing or
+  mismatched nonce, or an empty expected nonce is rejected. Remaining
+  MCP-fabric work: the abstract-Unix-socket MCP server that calls this on each
+  incoming connection (`@lenny-platform-mcp` and connector sockets), the
+  `SO_PEERCRED` UID check, the platform MCP server's tool surface
+  (`lenny/delegate_task`, `lenny/output`, etc.), and the
+  `platformMcpServer`/`adapterLocalTools` manifest fields.
 - `899bbc8` — §15.4.3 intra-pod MCP nonce in the adapter manifest. §15.4.3
   authenticates every intra-pod MCP connection with a manifest-nonce
   handshake. The manifest now carries the `mcpNonce` field;
