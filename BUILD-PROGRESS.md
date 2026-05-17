@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a308ac3` — §10.7 persist the tenant `experimentTargeting` config. `tenantstore.Tenant`
+  carries `ExperimentTargeting` (the §10.7 `experimentTargeting` block). The in-memory
+  store gains a `cloneTenant` helper so a caller cannot mutate stored state through the
+  shared provider sub-blocks — this also closes the latent `ErasureSalt` aliasing. The
+  Postgres store persists it as a `jsonb` column (migration 0025). The admin tenant API
+  accepts and returns it on POST/PUT/GET, validating the block per §10.7;
+  `TargetingConfig` gained JSON tags matching the §10.7 field names. The §10.7
+  `mode: external` substrate and its tenant config are now complete; the remaining work
+  is the `ExperimentRouter` wiring that reads `tenant.ExperimentTargeting`, builds the
+  OFREP client, and emits the §16.6 experiment events.
 - `d3a4c00` — §10.7 `TargetingConfig.Clone`. A deep-copy method so a store holding a
   `TargetingConfig` cannot leak mutable state through the shared provider sub-blocks or
   the OFREP header map — it copies the scalars and every non-nil provider block,
