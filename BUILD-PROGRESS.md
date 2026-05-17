@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e78f57a` — §10.6 `lenny_noenvironmentpolicy_allowall_total` metric. `gatewaymetrics`
+  registers the counter; `PUT /v1/admin/tenants/{id}/rbac-config` increments it
+  (labelled by `tenant_id`) on an allow-all write through the admin Router's new
+  optional `RBACConfigMetrics` dependency, which `cmd/lenny-gateway` wires.
 - `b42d882` — §10.6 transparent filtering on `lenny/discover_agents`. The tool narrows
   its agent list to the runtimes the caller's environment membership authorizes,
   resolved through `pkg/gateway/envaccess` from the request principal's groups, the
