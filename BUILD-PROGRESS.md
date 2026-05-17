@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cc8744b` — §10.2 custom-role enforcement for the custom-role admin endpoints. The
+  `/v1/admin/tenants/{id}/roles` routes are gated on `PermManageRBACConfig`, the
+  permission the matrix names "Configure tenant RBAC config". `authorizeTenantPath`
+  became a pure path-tenant resolver, consistent with `authorizedTenantForUser`.
+- `b8f0995` — §10.2 custom-role enforcement for environments and credential pools. New
+  `Router.requirePermission` gate factory; the environment and credential-pool routes
+  are gated on `PermManageEnvironments` and `PermManageCredentialPools`. The built-in
+  admitted set is unchanged from `requireTenantResourceAdmin`; the gate additionally
+  admits a tenant custom role holding the permission.
 - `57fc1ec` — §10.2 custom-role enforcement for user management. `requireUserAdmin`
   resolves a principal's roles to the permission set (`Router.principalGrantsPermission`:
   built-in roles via `auth.RolePermissions`, custom roles via the `customrolestore`
@@ -796,16 +805,23 @@ dependency order, are below.
   and the `anthropic_direct` translator are not built.
 - **Operational services.** `lenny-ops` and `lenny-backup` do not exist; `lenny-preflight`
   is built and deployable.
-- **Custom-role permission enforcement.** The §11.4 / §15.1 user-management endpoints
-  are permission-gated: `requireUserAdmin` resolves a principal's roles to the §10.2
-  permission set through `Router.principalGrantsPermission` (built-in roles via
-  `auth.RolePermissions`, custom roles via the `customrolestore` registry) and admits
-  any principal granting `PermManageUsers`. The remaining gates — the
-  `requireTenantResourceAdmin` family covering runtimes, pools, environments,
-  delegation policies, and egress profiles, plus the session-API gates — still match
-  `HasRole` against built-in role names, so a custom role scoped to those resources
-  grants nothing yet. Each remaining gate follows the same `principalGrantsPermission`
-  pattern against its matrix permission.
+- **Custom-role permission enforcement.** The user-management, environment,
+  credential-pool, and custom-role admin endpoints are permission-gated through
+  `Router.requirePermission`, which resolves a principal's roles to the §10.2
+  permission set with `principalGrantsPermission` (built-in roles via
+  `auth.RolePermissions`, custom roles via the `customrolestore` registry).
+  `requireTenantResourceAdmin` still gates the experiment routes — §10.2 defines no
+  permission for experiments, so they stay built-in-only — and the runtime and pool
+  read routes. The session-API gates still match `HasRole`, so a session-scoped custom
+  role is not yet enforced on the session endpoints.
+- **Built-in-role gating conformance.** Two `requireAdmin` (platform-admin-only)
+  groupings may diverge from the §10.2 matrix. The matrix grants `tenant-admin`
+  "Manage delegation policies" for its own tenant, but `/v1/admin/delegation-policies`
+  is platform-admin-only; the `delegationpolicystore` is a platform-global registry,
+  so whether create is platform-scoped while update is tenant-scoped needs a §8.3 /
+  §15.1 decision. Likewise §10.2 line 298 lets a `tenant-admin` update a granted
+  runtime or pool, but `PUT /v1/admin/runtimes/{name}` and `PUT /v1/admin/pools/{name}`
+  are platform-admin-only.
 
 Phases 13 through 17b are largely unbuilt beyond their logic substrate. The audit
 pipeline, the compliance webhooks, the GDPR erasure pipeline, the backup and restore
