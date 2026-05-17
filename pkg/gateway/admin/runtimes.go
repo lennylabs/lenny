@@ -16,19 +16,20 @@ import (
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name                string                       `json:"name"`
-	Type                string                       `json:"type,omitempty"`
-	Image               string                       `json:"image,omitempty"`
-	ExecutionMode       string                       `json:"executionMode,omitempty"`
-	IsolationProfile    string                       `json:"isolationProfile,omitempty"`
-	IntegrationLevel    string                       `json:"integrationLevel,omitempty"`
-	Description         string                       `json:"description,omitempty"`
-	DelegationPolicyRef string                       `json:"delegationPolicyRef,omitempty"`
-	Labels              map[string]string            `json:"labels,omitempty"`
-	AgentInterface      *runtimestore.AgentInterface `json:"agentInterface,omitempty"`
-	CreatedAt           string                       `json:"createdAt,omitempty"`
-	UpdatedAt           string                       `json:"updatedAt,omitempty"`
-	DeletedAt           string                       `json:"deletedAt,omitempty"`
+	Name                string                                `json:"name"`
+	Type                string                                `json:"type,omitempty"`
+	Image               string                                `json:"image,omitempty"`
+	ExecutionMode       string                                `json:"executionMode,omitempty"`
+	IsolationProfile    string                                `json:"isolationProfile,omitempty"`
+	IntegrationLevel    string                                `json:"integrationLevel,omitempty"`
+	Description         string                                `json:"description,omitempty"`
+	DelegationPolicyRef string                                `json:"delegationPolicyRef,omitempty"`
+	Labels              map[string]string                     `json:"labels,omitempty"`
+	AgentInterface      *runtimestore.AgentInterface          `json:"agentInterface,omitempty"`
+	PublishedMetadata   []runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
+	CreatedAt           string                                `json:"createdAt,omitempty"`
+	UpdatedAt           string                                `json:"updatedAt,omitempty"`
+	DeletedAt           string                                `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
@@ -37,14 +38,15 @@ type RuntimePayload struct {
 // stay distinct: omitted leaves the descriptor unchanged, null clears
 // it, and an object replaces it.
 type UpdateRuntimeRequest struct {
-	Image               *string            `json:"image,omitempty"`
-	ExecutionMode       *string            `json:"executionMode,omitempty"`
-	IsolationProfile    *string            `json:"isolationProfile,omitempty"`
-	IntegrationLevel    *string            `json:"integrationLevel,omitempty"`
-	Description         *string            `json:"description,omitempty"`
-	DelegationPolicyRef *string            `json:"delegationPolicyRef,omitempty"`
-	Labels              *map[string]string `json:"labels,omitempty"`
-	AgentInterface      json.RawMessage    `json:"agentInterface,omitempty"`
+	Image               *string                                `json:"image,omitempty"`
+	ExecutionMode       *string                                `json:"executionMode,omitempty"`
+	IsolationProfile    *string                                `json:"isolationProfile,omitempty"`
+	IntegrationLevel    *string                                `json:"integrationLevel,omitempty"`
+	Description         *string                                `json:"description,omitempty"`
+	DelegationPolicyRef *string                                `json:"delegationPolicyRef,omitempty"`
+	Labels              *map[string]string                     `json:"labels,omitempty"`
+	AgentInterface      json.RawMessage                        `json:"agentInterface,omitempty"`
+	PublishedMetadata   *[]runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
 }
 
 // errAgentInterfaceOnMCP is returned from the update mutate closure when
@@ -63,6 +65,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		DelegationPolicyRef: r.DelegationPolicyRef,
 		Labels:              r.Labels,
 		AgentInterface:      r.AgentInterface,
+		PublishedMetadata:   r.PublishedMetadata,
 		CreatedAt:           rfc3339Nano(r.CreatedAt),
 		UpdatedAt:           rfc3339Nano(r.UpdatedAt),
 	}
@@ -120,6 +123,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := runtimestore.ValidatePublishedMetadata(body.PublishedMetadata); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                body.Name,
@@ -132,6 +139,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		DelegationPolicyRef: body.DelegationPolicyRef,
 		Labels:              body.Labels,
 		AgentInterface:      body.AgentInterface,
+		PublishedMetadata:   body.PublishedMetadata,
 		CreatedAt:           r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -264,6 +272,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.PublishedMetadata != nil {
+		if err := runtimestore.ValidatePublishedMetadata(*body.PublishedMetadata); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -292,6 +306,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 				return errAgentInterfaceOnMCP
 			}
 			rt.AgentInterface = newAgentInterface
+		}
+		if body.PublishedMetadata != nil {
+			rt.PublishedMetadata = *body.PublishedMetadata
 		}
 		return nil
 	})
@@ -359,6 +376,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if len(b.AgentInterface) > 0 {
 		out = append(out, "agentInterface")
+	}
+	if b.PublishedMetadata != nil {
+		out = append(out, "publishedMetadata")
 	}
 	return out
 }

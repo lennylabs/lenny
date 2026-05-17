@@ -364,6 +364,96 @@ func TestRuntimeAgentInterfaceRejectedOnMCP(t *testing.T) {
 	}
 }
 
+func TestRuntimePublishedMetadataRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the publishedMetadata list
+	// on create, read, and update.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "carded",
+		Image: "lenny/carded@sha256:abc",
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"n":"x"}`},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if len(created.PublishedMetadata) != 1 || created.PublishedMetadata[0].Key != "agent-card" {
+		t.Errorf("create response publishedMetadata: %+v", created.PublishedMetadata)
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/carded", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if len(got.PublishedMetadata) != 1 || got.PublishedMetadata[0].Content != `{"n":"x"}` {
+		t.Errorf("get response publishedMetadata: %+v", got.PublishedMetadata)
+	}
+
+	// A PUT replaces the list.
+	replacement := []runtimestore.PublishedMetadataEntry{
+		{Key: "spec", ContentType: "application/yaml", Visibility: runtimestore.VisibilityInternal},
+	}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/carded",
+		admin.UpdateRuntimeRequest{PublishedMetadata: &replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if len(updated.PublishedMetadata) != 1 || updated.PublishedMetadata[0].Key != "spec" {
+		t.Errorf("update did not replace publishedMetadata: %+v", updated.PublishedMetadata)
+	}
+
+	// An empty list clears the published entries.
+	empty := []runtimestore.PublishedMetadataEntry{}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/carded",
+		admin.UpdateRuntimeRequest{PublishedMetadata: &empty})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update-clear: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var cleared admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &cleared)
+	if len(cleared.PublishedMetadata) != 0 {
+		t.Errorf("empty list did not clear publishedMetadata: %+v", cleared.PublishedMetadata)
+	}
+}
+
+func TestCreateRuntimeRejectsInvalidPublishedMetadata(t *testing.T) {
+	// §5.1: publishedMetadata keys must be non-empty and unique, and
+	// each entry needs a valid visibility class.
+	router, _, _ := newRuntimeAdmin(t)
+	cases := []struct {
+		name    string
+		entries []runtimestore.PublishedMetadataEntry
+	}{
+		{"dup-keys", []runtimestore.PublishedMetadataEntry{
+			{Key: "dup", Visibility: runtimestore.VisibilityPublic},
+			{Key: "dup", Visibility: runtimestore.VisibilityTenant},
+		}},
+		{"bad-visibility", []runtimestore.PublishedMetadataEntry{
+			{Key: "k", Visibility: "world"},
+		}},
+		{"empty-key", []runtimestore.PublishedMetadataEntry{
+			{Key: "", Visibility: runtimestore.VisibilityPublic},
+		}},
+	}
+	for _, tc := range cases {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+			Name:              tc.name,
+			Image:             "lenny/x@sha256:abc",
+			PublishedMetadata: tc.entries,
+		})
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (body=%s)", tc.name, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
