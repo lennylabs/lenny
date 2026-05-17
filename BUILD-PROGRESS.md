@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `1fe8ec5` — adapter-local `tool_call` interception in the content stream.
+  `localtools` had a `Dispatch` entry point but no caller. `HandleToolCall`
+  classifies a §15.4.1 stdout frame: a `tool_call` for an adapter-local tool
+  is run via `localtools.Dispatch` and answered with the matching
+  `tool_result` frame; any other frame is left for the caller to relay. The
+  `Attach` send loop calls it on each runtime output frame, so an
+  adapter-local `tool_call` is answered on the runtime's stdin and never
+  relayed to the gateway. The §15 adapter-local tools now work end to end:
+  advertised in the manifest, called over the binary protocol, dispatched,
+  and answered. Remaining MCP-fabric work: the platform MCP tool surface
+  (`lenny/...`), and the Linux abstract-socket layer with the
+  `platformMcpServer`/`connectorServers`/`lifecycleChannel` manifest fields.
 - `7ae68ad` — adapter-local tools advertised in the manifest.
   `localtools.Descriptors` returns the §4.7 manifest descriptors of the
   built-in tools (name, description, JSON Schema `inputSchema`), the single
