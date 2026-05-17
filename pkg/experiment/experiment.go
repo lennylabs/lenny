@@ -130,6 +130,46 @@ func (p Propagation) IsValid() bool {
 	return false
 }
 
+// ContextPropagation is the outcome of applying a §10.7 propagation
+// mode to a recursive-delegation child.
+type ContextPropagation struct {
+	// UseParentContext is true when the child must adopt the
+	// ExperimentID/VariantID below verbatim and the ExperimentRouter is
+	// skipped — the inherit and control modes. It is false for the
+	// independent mode, where the caller routes the child afresh.
+	UseParentContext bool
+	// ExperimentID and VariantID are the child's enrollment when
+	// UseParentContext is true. The child records this context with
+	// inherited=true.
+	ExperimentID string
+	VariantID    string
+}
+
+// PropagateContext applies a §10.7 experiment-context propagation mode
+// to a delegation child whose parent is enrolled in parentExperimentID
+// at parentVariantID. Under `inherit` the child receives the parent's
+// enrollment verbatim; under `control` the child is forced onto the
+// reserved control variant of the parent's experiment; under
+// `independent` the child is routed afresh (UseParentContext false).
+func PropagateContext(parentExperimentID, parentVariantID string, mode Propagation) ContextPropagation {
+	switch mode {
+	case PropagationInherit:
+		return ContextPropagation{
+			UseParentContext: true,
+			ExperimentID:     parentExperimentID,
+			VariantID:        parentVariantID,
+		}
+	case PropagationControl:
+		return ContextPropagation{
+			UseParentContext: true,
+			ExperimentID:     parentExperimentID,
+			VariantID:        ControlVariantID,
+		}
+	default: // independent — the child is routed independently.
+		return ContextPropagation{UseParentContext: false}
+	}
+}
+
 // ControlVariantID is the §10.7 reserved variant identifier the
 // gateway auto-assigns to sessions that do not land in any named
 // variant. Deployers cannot define a variant with this id; attempts

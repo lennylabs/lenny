@@ -177,6 +177,27 @@ func TestAllStickyValuesIsExhaustive(t *testing.T) {
 	}
 }
 
+func TestPropagateContextInherit(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationInherit)
+	if !got.UseParentContext || got.ExperimentID != "exp-1" || got.VariantID != "treatment" {
+		t.Errorf("PropagateContext(inherit) = %+v, want the parent's enrollment verbatim", got)
+	}
+}
+
+func TestPropagateContextControl(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationControl)
+	if !got.UseParentContext || got.ExperimentID != "exp-1" || got.VariantID != ControlVariantID {
+		t.Errorf("PropagateContext(control) = %+v, want exp-1 forced onto control", got)
+	}
+}
+
+func TestPropagateContextIndependent(t *testing.T) {
+	got := PropagateContext("exp-1", "treatment", PropagationIndependent)
+	if got.UseParentContext {
+		t.Errorf("PropagateContext(independent) = %+v, want UseParentContext false — the child routes afresh", got)
+	}
+}
+
 func TestAllPropagationsIsExhaustive(t *testing.T) {
 	if got := len(AllPropagations()); got != 3 {
 		t.Errorf("AllPropagations() returned %d, want 3 per §10.7", got)
