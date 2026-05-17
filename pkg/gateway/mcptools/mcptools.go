@@ -790,6 +790,17 @@ func Register(srv *mcp.Server, deps Deps) {
 				return mcp.ToolResult{}, err
 			}
 			if !authorized {
+				// §10.6: a runtime outside the caller's environment scope
+				// may still be reachable through a bilateral
+				// cross-environment-delegation declaration from the parent
+				// session's environment.
+				reachable, err := crossEnvReachable(ctx, deps, tenant, in.ParentSessionID, in.RuntimeRef)
+				if err != nil {
+					return mcp.ToolResult{}, err
+				}
+				authorized = reachable
+			}
+			if !authorized {
 				return mcp.ToolResult{}, fmt.Errorf(
 					"delegation target %q is not within the caller's environment scope (§10.6)", in.RuntimeRef)
 			}
@@ -991,6 +1002,31 @@ func runtimeAuthorizedForCaller(ctx context.Context, deps Deps, runtimeRef strin
 		return false, err
 	}
 	return len(authorized) > 0, nil
+}
+
+// crossEnvReachable reports whether runtimeRef is reachable from the
+// parent session's §10.6 environment through a bilateral
+// cross-environment-delegation declaration. It returns false when the
+// registries are not wired, the parent session is not environment-
+// scoped, or the runtime cannot be resolved — the cross-environment
+// path simply does not widen the delegation scope in those cases.
+func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, runtimeRef string) (bool, error) {
+	if deps.Environments == nil || deps.Store == nil || deps.Runtimes == nil {
+		return false, nil
+	}
+	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
+	if err != nil || parent.Environment == "" {
+		return false, nil
+	}
+	rt, err := deps.Runtimes.Get(ctx, runtimeRef)
+	if err != nil {
+		return false, nil
+	}
+	envs, err := deps.Environments.List(ctx, parent.TenantID)
+	if err != nil {
+		return false, err
+	}
+	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, envs), nil
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its

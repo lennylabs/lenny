@@ -123,6 +123,72 @@ func AuthorizedRuntimes(caller Caller, envs []environmentstore.Environment, runt
 	return out
 }
 
+// CrossEnvironmentReachable reports whether the target runtime is
+// reachable from the caller's environment through a §10.6 bilateral
+// cross-environment-delegation declaration. It is reachable when some
+// other environment B admits the target via its runtimeSelector, the
+// caller's environment has an outbound rule for B whose runtime
+// selector admits the target, and B has an inbound rule for the
+// caller's environment (or the "*" wildcard source) whose selector
+// also admits the target. Both sides must permit the delegation;
+// neither environment can grant it unilaterally.
+func CrossEnvironmentReachable(callerEnvName string, target runtimestore.Runtime, envs []environmentstore.Environment) bool {
+	callerEnv, ok := findEnvironment(callerEnvName, envs)
+	if !ok {
+		return false
+	}
+	cand := environment.Candidate{
+		Name: target.Name, Type: string(target.Type), Labels: target.Labels,
+	}
+	for _, b := range envs {
+		if b.Name == callerEnvName {
+			continue
+		}
+		// b must be a home environment of the target — its
+		// runtimeSelector admits the runtime.
+		if !b.RuntimeSelector.Matches(cand) {
+			continue
+		}
+		if outboundPermits(callerEnv, b.Name, cand) && inboundPermits(b, callerEnvName, cand) {
+			return true
+		}
+	}
+	return false
+}
+
+// findEnvironment returns the environment named name.
+func findEnvironment(name string, envs []environmentstore.Environment) (environmentstore.Environment, bool) {
+	for _, e := range envs {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return environmentstore.Environment{}, false
+}
+
+// outboundPermits reports whether env has an outbound cross-environment
+// rule that targets targetEnv and whose runtime selector admits cand.
+func outboundPermits(env environmentstore.Environment, targetEnv string, cand environment.Candidate) bool {
+	for _, rule := range env.CrossEnvOutbound {
+		if rule.Environment == targetEnv && rule.Runtimes.Matches(cand) {
+			return true
+		}
+	}
+	return false
+}
+
+// inboundPermits reports whether env has an inbound cross-environment
+// rule that admits sourceEnv — by exact name or the "*" wildcard — and
+// whose runtime selector admits cand.
+func inboundPermits(env environmentstore.Environment, sourceEnv string, cand environment.Candidate) bool {
+	for _, rule := range env.CrossEnvInbound {
+		if (rule.Environment == sourceEnv || rule.Environment == "*") && rule.Runtimes.Matches(cand) {
+			return true
+		}
+	}
+	return false
+}
+
 // sortedByName returns a name-sorted copy of runtimes.
 func sortedByName(runtimes []runtimestore.Runtime) []runtimestore.Runtime {
 	out := append([]runtimestore.Runtime(nil), runtimes...)

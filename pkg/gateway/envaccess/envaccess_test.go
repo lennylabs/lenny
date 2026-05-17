@@ -163,6 +163,88 @@ func TestAuthorizedRuntimesMemberScopedBySelector(t *testing.T) {
 	}
 }
 
+// sharedTool is the cross-environment delegation target used below.
+var sharedTool = runtimestore.Runtime{
+	Name: "shared-tool", Type: runtimestore.TypeAgent,
+	Labels: map[string]string{"shared": "true"},
+}
+
+func crossEnvRule(peer string) environmentstore.CrossEnvRule {
+	return environmentstore.CrossEnvRule{
+		Environment: peer,
+		Runtimes:    environment.Selector{MatchLabels: map[string]string{"shared": "true"}},
+	}
+}
+
+func TestCrossEnvironmentReachableBilateral(t *testing.T) {
+	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
+	envs := []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
+		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+	}
+	if !envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
+		t.Error("a bilateral team-a <-> team-b declaration should make the shared tool reachable")
+	}
+}
+
+func TestCrossEnvironmentReachableWildcardInbound(t *testing.T) {
+	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
+	envs := []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
+		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("*")}},
+	}
+	if !envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
+		t.Error("a wildcard inbound source should admit team-a")
+	}
+}
+
+func TestCrossEnvironmentUnreachableWithoutBothSides(t *testing.T) {
+	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
+	// team-a declares outbound but team-b has no reciprocal inbound.
+	noInbound := []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
+		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel},
+	}
+	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, noInbound) {
+		t.Error("an outbound declaration alone must not grant cross-environment access")
+	}
+	// team-b declares inbound but team-a has no outbound.
+	noOutbound := []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme"},
+		{Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+	}
+	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, noOutbound) {
+		t.Error("an inbound declaration alone must not grant cross-environment access")
+	}
+}
+
+func TestCrossEnvironmentUnreachableWhenTargetNotInPeer(t *testing.T) {
+	// The bilateral declaration exists, but team-b's runtimeSelector
+	// does not admit the target — team-b is not a home of the runtime.
+	envs := []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme",
+			CrossEnvOutbound: []environmentstore.CrossEnvRule{crossEnvRule("team-b")}},
+		{Name: "team-b", TenantID: "acme",
+			RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "other"}},
+			CrossEnvInbound: []environmentstore.CrossEnvRule{crossEnvRule("team-a")}},
+	}
+	if envaccess.CrossEnvironmentReachable("team-a", sharedTool, envs) {
+		t.Error("a target the peer environment does not admit must not be reachable")
+	}
+}
+
+func TestCrossEnvironmentReachableUnknownCallerEnv(t *testing.T) {
+	if envaccess.CrossEnvironmentReachable("ghost", sharedTool, nil) {
+		t.Error("an unknown caller environment must not be cross-environment reachable")
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

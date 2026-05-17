@@ -86,3 +86,62 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 		t.Errorf("delegation to an in-scope runtime should proceed: %q", text)
 	}
 }
+
+func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	envs := environmentstore.NewMemory()
+	tenants := tenantstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:        store,
+		Executor:     executor.NewEchoExecutor(),
+		Runtimes:     runtimes,
+		Environments: envs,
+		Tenants:      tenants,
+		Delegation: delegation.NewService(store, delegation.Options{
+			IDFunc: func() string { return "sess_child" },
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+
+	ctxbg := context.Background()
+	sharedSel := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
+	_ = runtimes.Create(ctxbg, runtimestore.Runtime{
+		Name: "shared-tool", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"shared": "true"},
+	})
+	_ = tenants.Create(ctxbg, tenantstore.Tenant{ID: "acme"})
+	// team-a declares outbound delegation to team-b; team-b admits the
+	// shared tool and accepts inbound delegation from team-a.
+	_ = envs.Create(ctxbg, environmentstore.Environment{
+		Name: "team-a", TenantID: "acme",
+		CrossEnvOutbound: []environmentstore.CrossEnvRule{
+			{Environment: "team-b", Runtimes: sharedSel},
+		},
+	})
+	_ = envs.Create(ctxbg, environmentstore.Environment{
+		Name: "team-b", TenantID: "acme", RuntimeSelector: sharedSel,
+		CrossEnvInbound: []environmentstore.CrossEnvRule{
+			{Environment: "team-a", Runtimes: sharedSel},
+		},
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = store.Create(ctxbg, sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
+	})
+
+	// The caller is a member of no environment, so the within-environment
+	// check denies the shared tool; the bilateral team-a <-> team-b
+	// declaration makes it reachable cross-environment.
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme"}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`))
+	if !strings.Contains(text, "sess_child") {
+		t.Errorf("a cross-environment-reachable delegation should proceed: %q", text)
+	}
+}
