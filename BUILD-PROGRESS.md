@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `88dca55` — §25 `lenny-ops` backup retention policy evaluator. §25 defines
+  the backup retention policy (`retainDays`, `retainCount`, `retainMinFull`,
+  `preRestoreRetainDays`) but nothing evaluated it. New pure package
+  `pkg/backup/retention`: `Plan` partitions backups into keep and prune sets
+  — a regular backup is kept when within `retainDays` and among the
+  `retainCount` newest, `retainMinFull` keeps the newest full backups beyond
+  that floor, and pre-restore backups are cleaned on the shorter
+  `preRestoreRetainDays` schedule without consuming the regular count. This
+  is a building block of the (still-unbuilt) `lenny-ops` service, whose
+  binary requires Postgres, Redis, the K8s API, and Prometheus to run.
 - `249847b` — §4.7 / §13 `SO_PEERCRED` peer-credential check on the platform
   MCP server. `peerCheckedListener` wraps the platform MCP server's listener
   and runs a per-connection check, closing and skipping any rejected
