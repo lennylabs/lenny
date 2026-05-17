@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `87febc6` — §8.3 deliver `tracingContext` in the runtime manifest. The adapter
+  `StartSessionRequest` carries the §8.3 `tracing_context` map and the adapter writes it
+  into the manifest the runtime reads, so a runtime stitches its native traces into the
+  parent's trace tree (§16.3 Tier-2 tracing). The gateway populates it from the session
+  row's `TracingContext`, threaded through `BindRequest` and `adapterclient.StartSession`
+  — the same path as `experimentContext`.
 - `f020e1a` — §15.4 write the adapter manifest at session start. `StartSession` writes
   `/run/lenny/adapter-manifest.json` — the §15.4 manifest the runtime reads at startup —
   carrying the session id, workspace root, and the §8.3 `experimentContext`. This closes
