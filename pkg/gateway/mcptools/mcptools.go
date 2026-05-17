@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
@@ -822,8 +823,9 @@ func Register(srv *mcp.Server, deps Deps) {
 				})
 			}
 			body, _ := json.Marshal(struct {
-				Runtimes []discoveredRuntime `json:"runtimes"`
-			}{Runtimes: out})
+				Runtimes            []discoveredRuntime  `json:"runtimes"`
+				AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+			}{Runtimes: out, AdapterCapabilities: mcpAdapterCapabilities()})
 			return textResult(string(body)), nil
 		})
 	}
@@ -1036,6 +1038,23 @@ type discoveredRuntime struct {
 	Type             string `json:"type,omitempty"`
 	IntegrationLevel string `json:"integrationLevel,omitempty"`
 	Description      string `json:"description,omitempty"`
+}
+
+// mcpAdapterCapabilities reports the §15 AdapterCapabilities of the MCP
+// adapter. The MCP surface owns the /mcp path prefix. The MCP transport
+// natively carries the §9.2 hop-by-hop elicitation chain, the
+// lenny/delegate_task platform tool, and interrupt signalling, and
+// sessions persist for resumption, so every capability flag is set. §9.1
+// requires the list_runtimes response to embed this block.
+func mcpAdapterCapabilities() adapter.Capabilities {
+	return adapter.Capabilities{
+		PathPrefix:                "/mcp",
+		Protocol:                  "mcp",
+		SupportsSessionContinuity: true,
+		SupportsDelegation:        true,
+		SupportsElicitation:       true,
+		SupportsInterrupt:         true,
+	}
 }
 
 // discoveredAgent is one entry in the lenny/discover_agents result.

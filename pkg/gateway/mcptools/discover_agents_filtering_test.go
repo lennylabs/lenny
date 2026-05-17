@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -162,6 +163,38 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 	}
 	if strings.Contains(text, "research-agent") {
 		t.Errorf("list_runtimes must exclude an out-of-environment runtime: %q", text)
+	}
+}
+
+func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+
+	// §9.1: the list_runtimes response embeds a top-level
+	// adapterCapabilities object describing the MCP adapter.
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("decode: %v (%q)", err, text)
+	}
+	caps := resp.AdapterCapabilities
+	if caps.Protocol != "mcp" || caps.PathPrefix != "/mcp" {
+		t.Errorf("adapterCapabilities routing fields: %+v", caps)
+	}
+	// The MCP transport carries the §9.2 elicitation chain, the
+	// delegate_task tool, and interrupt signalling.
+	if !caps.SupportsElicitation || !caps.SupportsDelegation || !caps.SupportsInterrupt {
+		t.Errorf("MCP adapter must report elicitation, delegation, interrupt: %+v", caps)
 	}
 }
 
