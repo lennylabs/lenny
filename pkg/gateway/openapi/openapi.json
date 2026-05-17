@@ -245,6 +245,22 @@
             }
           },
           "minPlatformVersion": { "type": "string" },
+          "taskPolicy": {
+            "type": "object",
+            "properties": {
+              "acknowledgeBestEffortScrub":      { "type": "boolean" },
+              "allowCrossTenantReuse":           { "type": "boolean" },
+              "microvmScrubMode":                { "type": "string", "enum": ["restart","in-place"] },
+              "acknowledgeMicrovmResidualState": { "type": "boolean" },
+              "cleanupCommands":                 { "type": "array", "items": { "type": "string" } },
+              "cleanupTimeoutSeconds":           { "type": "integer" },
+              "onCleanupFailure":                { "type": "string", "enum": ["warn","fail"] },
+              "maxScrubFailures":                { "type": "integer" },
+              "maxTasksPerPod":                  { "type": "integer" },
+              "maxPodUptimeSeconds":             { "type": "integer" },
+              "maxTaskRetries":                  { "type": "integer" }
+            }
+          },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
