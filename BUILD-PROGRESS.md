@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `0ee2ed9` — §4.7 staging-RPC split complete: `StartSession` slimmed,
+  binder orchestrates the sequence. The adapter bundled workspace
+  materialization and setup-command execution into `StartSession`.
+  `StartSession` now claims the pod, writes the §15.4 manifest, and starts
+  the runtime; `workspace_plan` and `setup_policy` are removed from
+  `StartSessionRequest` (field numbers reserved). `podsession.Bind` runs the
+  §4.7 sequence: `FinalizeWorkspace` materializes the workspace, `RunSetup`
+  runs the plan's setup commands, then `StartSession` starts the runtime —
+  each a separate adapter RPC. A non-upload workspace is now assigned end to
+  end through the four-RPC sequence. `PrepareWorkspace` (the streaming upload
+  RPC) is built and client-wired; `Bind` invokes it separately once the
+  gateway upload-store-to-binder content path for `uploadFile`/`uploadArchive`
+  sources is built — that content path is the remaining staging follow-on.
 - `9ef7d3d` — §4.7 `FinalizeWorkspace` and `RunSetup` gateway client methods.
   The three §4.7 staging RPCs are built on the adapter; only
   `PrepareWorkspace` had a gateway-side `adapterclient` method. `Client` now
