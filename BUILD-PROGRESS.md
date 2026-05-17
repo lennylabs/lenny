@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `2b50f6f` — §8.3 deliver `experimentContext` in the adapter StartSession manifest.
+  The adapter `StartSessionRequest` proto gained an `ExperimentContext` message
+  (`experiment_id`, `variant_id`, `inherited`); the gateway populates it from the
+  session row's `ExperimentContext` — `BindRequest` carries it and `adapterclient`'s
+  `StartSession` sends it. The wire contract now delivers a session's §10.7 experiment
+  enrollment to the adapter. The adapter-to-runtime last mile (the §15.4 runtime
+  manifest the runtime process reads — `Runtime.Start` takes only a session id today)
+  remains, as does carrying the field on the `Resume` path.
 - `db9b182` — fix: `SkippedAfter` under-reported external experiments. `SkippedAfter`
   excluded every external-mode experiment — correct when `Route` was percentage-only,
   but stale once `RouteMixed` began evaluating external experiments. It now takes an
