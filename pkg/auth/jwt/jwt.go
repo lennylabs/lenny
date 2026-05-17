@@ -65,6 +65,12 @@ type Claims struct {
 	// the gateway re-evaluates per-endpoint role requirements every
 	// request and does not persist roles in the session row.
 	Roles []auth.Role `json:"roles,omitempty"`
+
+	// Groups carries the §10.6 OIDC group claim. Environment membership
+	// keys on group identity: an environment member of type oidc-group
+	// matches a caller whose token carries that group. Like the role
+	// claim, the group claim is admission-time only.
+	Groups []string `json:"groups,omitempty"`
 }
 
 // HasRole reports whether c carries r in its Roles slice. Useful for

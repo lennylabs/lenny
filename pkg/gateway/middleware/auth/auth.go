@@ -43,6 +43,13 @@ type Principal struct {
 	// verbatim from the JWT roles claim (Bearer path) or parsed from
 	// the comma-separated X-Lenny-Roles dev header (dev-headers path).
 	Roles []auth.Role
+
+	// Groups carries the §10.6 OIDC groups claimed by this token, copied
+	// from the JWT groups claim (Bearer path) or parsed from the
+	// comma-separated X-Lenny-Groups dev header (dev-headers path, only
+	// under AllowDevRoles). Environment membership is resolved against
+	// it.
+	Groups []string
 }
 
 // HasRole reports whether p holds r. Endpoints that gate behaviour on
@@ -95,17 +102,18 @@ type Options struct {
 	// surface.
 	AllowDevHeaders bool
 
-	// AllowDevRoles, when true, additionally honours the
-	// X-Lenny-Roles dev header so dev-mode callers can claim RBAC
-	// roles. SECURITY: This MUST be false in production —
-	// X-Lenny-Roles is an unauthenticated client-controlled value
-	// and admits self-claiming `platform-admin`. Production
-	// deployments leave this false (the dev-header path silently
-	// drops Roles) so RBAC is anchored to the Bearer JWT only.
+	// AllowDevRoles, when true, additionally honours the X-Lenny-Roles
+	// and X-Lenny-Groups dev headers so dev-mode callers can claim RBAC
+	// roles and §10.6 environment groups. SECURITY: This MUST be false
+	// in production — both headers are unauthenticated client-controlled
+	// values and X-Lenny-Roles admits self-claiming `platform-admin`.
+	// Production deployments leave this false (the dev-header path
+	// silently drops Roles and Groups) so RBAC and environment
+	// membership are anchored to the Bearer JWT only.
 	//
 	// AllowDevHeaders without AllowDevRoles is the recommended dev
 	// mode: tenant + user_id round-trip through headers for
-	// convenience, but role claims remain authenticated.
+	// convenience, but role and group claims remain authenticated.
 	AllowDevRoles bool
 
 	// RequireAuth, when true, rejects requests that carry neither a
@@ -197,6 +205,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		CallerType: claims.CallerType,
 		Typ:        claims.Typ,
 		Roles:      append([]auth.Role(nil), claims.Roles...),
+		Groups:     append([]string(nil), claims.Groups...),
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	// Echo the resolved tenant via the dev header path so handlers
@@ -224,6 +233,7 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.opts.AllowDevRoles {
 		p.Roles = parseRolesHeader(r.Header.Get("X-Lenny-Roles"))
+		p.Groups = parseGroupsHeader(r.Header.Get("X-Lenny-Groups"))
 	}
 	ctx := WithPrincipal(r.Context(), p)
 	r = r.WithContext(ctx)
@@ -250,6 +260,28 @@ func parseRolesHeader(v string) []auth.Role {
 		role := auth.Role(name)
 		if role.IsValid() {
 			out = append(out, role)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseGroupsHeader parses the comma-separated X-Lenny-Groups dev
+// header into a §10.6 group-name slice. Whitespace and empty entries
+// are skipped. Like the roles header it is convenience only, not a
+// security boundary; production anchors group membership to the
+// Bearer JWT.
+func parseGroupsHeader(v string) []string {
+	if v == "" {
+		return nil
+	}
+	out := make([]string, 0, 1)
+	for _, raw := range strings.Split(v, ",") {
+		name := strings.TrimSpace(raw)
+		if name != "" {
+			out = append(out, name)
 		}
 	}
 	if len(out) == 0 {
