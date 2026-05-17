@@ -23,9 +23,19 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	if err != nil {
 		return fmt.Errorf("listen on MCP socket %s: %w", s.MCPSocket, err)
 	}
+	// §4.7 / §13: when a runtime UID is configured, reject any MCP
+	// connection from a process not running as that UID.
+	var serveLis net.Listener = lis
+	if s.RuntimeUID != 0 {
+		uid := s.RuntimeUID
+		serveLis = &peerCheckedListener{
+			Listener: lis,
+			check:    func(c net.Conn) error { return checkPeerUID(c, uid) },
+		}
+	}
 	srv := mcp.NewServer()
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Serve(ctx, lis, nonce) }()
+	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
 	s.mu.Lock()
 	s.mcpCancel = cancel
 	s.mu.Unlock()

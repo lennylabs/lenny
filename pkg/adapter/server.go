@@ -60,6 +60,11 @@ type Server struct {
 	// MCP server. A manifest directory must also be configured, since
 	// the runtime reads the authenticating nonce from the manifest.
 	MCPSocket string
+	// RuntimeUID is the Unix UID the agent runtime process runs as.
+	// When non-zero the platform MCP server applies the §4.7 / §13
+	// SO_PEERCRED peer-credential check, rejecting any connection from
+	// a process running as a different UID. Zero disables the check.
+	RuntimeUID uint32
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess
