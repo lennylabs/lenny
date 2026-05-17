@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3ea86ac` — §14 gitClone ref-to-commit-SHA resolution core. `workspaceplan.PinCommitSHAs`
+  pins every `gitClone` source's ref to an immutable commit SHA — the §14 per-session
+  immutability guarantee. A ref already in 40-character lowercase-hex form (`IsCommitSHA`)
+  is pinned with no round-trip; any other ref resolves through the `RefResolver`
+  interface. `ResolveError` classifies a failure as transient
+  (`GIT_CLONE_REF_RESOLVE_TRANSIENT`, 503) or not (`GIT_CLONE_REF_UNRESOLVABLE`, 422)
+  for the §15.1 error mapping. This addresses the "gitClone ref resolution" principal
+  gap at the substrate level; the `git ls-remote` `RefResolver` backend and the
+  session-creation wiring (which maps `ResolveError` to the §15.1 response and pins the
+  plan before it is stored) are the follow-on increment.
 - `9ed9347` — §16.5 add `ExperimentIsolationRejections` to the rule catalog. The §10.7
   ExperimentRouter isolation-monotonicity feature ships and emits
   `lenny_experiment_isolation_rejections_total`, so its §16.5 warning alert now carries
@@ -1303,7 +1313,11 @@ the two-step §15.1 `create → finalize → start` lifecycle. The remaining gap
 dependency order, are below.
 
 - **gitClone ref resolution.** §15.1 pins `gitClone.resolvedCommitSha` at session
-  creation. The gateway stores the submitted plan verbatim without resolving git refs.
+  creation. The resolution core is built — `workspaceplan.PinCommitSHAs` with the
+  `IsCommitSHA` fast-path and the `RefResolver` interface — but the gateway does not
+  yet call it: the `git ls-remote` `RefResolver` backend and the session-creation
+  wiring remain, so the gateway still stores the submitted plan without pinning a
+  non-SHA ref.
 - **Adapter workspace-staging RPCs.** §15.4 mandates separate `PrepareWorkspace`,
   `FinalizeWorkspace`, and `RunSetup` RPCs. The adapter bundles materialization, setup,
   and runtime start into `StartSession`, so the §15.1 finalize step short-circuits
