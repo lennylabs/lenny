@@ -2,6 +2,150 @@
 
 package experiment
 
+import (
+	"errors"
+	"fmt"
+)
+
+// TargetingProvider is the §10.7 experimentTargeting.provider enum:
+// the external-targeting integration a tenant uses to resolve
+// mode:external experiment assignment.
+type TargetingProvider string
+
+const (
+	TargetingProviderOFREP        TargetingProvider = "ofrep"
+	TargetingProviderLaunchDarkly TargetingProvider = "launchdarkly"
+	TargetingProviderStatsig      TargetingProvider = "statsig"
+	TargetingProviderUnleash      TargetingProvider = "unleash"
+)
+
+// AllTargetingProviders returns the closed §10.7 enum.
+func AllTargetingProviders() []TargetingProvider {
+	return []TargetingProvider{
+		TargetingProviderOFREP, TargetingProviderLaunchDarkly,
+		TargetingProviderStatsig, TargetingProviderUnleash,
+	}
+}
+
+// IsValid reports whether p is one of the §10.7 targeting providers.
+func (p TargetingProvider) IsValid() bool {
+	for _, v := range AllTargetingProviders() {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultTargetingTimeoutMs is the §10.7 experimentTargeting.timeoutMs
+// default — the session-creation hot-path budget for an external
+// evaluation.
+const DefaultTargetingTimeoutMs = 200
+
+// OFREPConfig is the §10.7 experimentTargeting.ofrep block.
+type OFREPConfig struct {
+	Endpoint string
+	Headers  map[string]string
+}
+
+// LaunchDarklyConfig is the §10.7 experimentTargeting.launchdarkly block.
+type LaunchDarklyConfig struct {
+	SDKKey  string
+	BaseURL string
+}
+
+// StatsigConfig is the §10.7 experimentTargeting.statsig block.
+type StatsigConfig struct {
+	ServerSecret string
+}
+
+// UnleashConfig is the §10.7 experimentTargeting.unleash block.
+type UnleashConfig struct {
+	APIURL   string
+	APIToken string
+}
+
+// TargetingConfig is the §10.7 tenant experimentTargeting block: how a
+// tenant resolves mode:external experiment assignment. The zero value
+// (Provider == "") means the tenant configures no external targeting —
+// its mode:external experiments are skipped and only percentage-mode
+// experiments route.
+type TargetingConfig struct {
+	Provider     TargetingProvider
+	TimeoutMs    int
+	OFREP        *OFREPConfig
+	LaunchDarkly *LaunchDarklyConfig
+	Statsig      *StatsigConfig
+	Unleash      *UnleashConfig
+}
+
+// Configured reports whether the tenant has set up external targeting.
+func (c TargetingConfig) Configured() bool { return c.Provider != "" }
+
+// EffectiveTimeoutMs returns the configured hot-path timeout, or
+// DefaultTargetingTimeoutMs when none is set.
+func (c TargetingConfig) EffectiveTimeoutMs() int {
+	if c.TimeoutMs > 0 {
+		return c.TimeoutMs
+	}
+	return DefaultTargetingTimeoutMs
+}
+
+// Validate reports the §10.7 invariants of an experimentTargeting
+// block. A zero config is valid (no external targeting). When a
+// provider is set it must be one of the §10.7 providers, the timeout
+// must be non-negative, the provider's own sub-block must be present
+// and complete, and no other provider's sub-block may be set.
+func (c TargetingConfig) Validate() error {
+	if c.Provider == "" {
+		if c.OFREP != nil || c.LaunchDarkly != nil || c.Statsig != nil || c.Unleash != nil {
+			return errors.New("experiment: experimentTargeting.provider is required when a provider block is set")
+		}
+		return nil
+	}
+	if !c.Provider.IsValid() {
+		return fmt.Errorf("experiment: experimentTargeting.provider %q is not one of {ofrep, launchdarkly, statsig, unleash}", c.Provider)
+	}
+	if c.TimeoutMs < 0 {
+		return errors.New("experiment: experimentTargeting.timeoutMs must be >= 0")
+	}
+	switch c.Provider {
+	case TargetingProviderOFREP:
+		if c.OFREP == nil || c.OFREP.Endpoint == "" {
+			return errors.New("experiment: experimentTargeting.ofrep.endpoint is required for provider ofrep")
+		}
+	case TargetingProviderLaunchDarkly:
+		if c.LaunchDarkly == nil || c.LaunchDarkly.SDKKey == "" {
+			return errors.New("experiment: experimentTargeting.launchdarkly.sdkKey is required for provider launchdarkly")
+		}
+	case TargetingProviderStatsig:
+		if c.Statsig == nil || c.Statsig.ServerSecret == "" {
+			return errors.New("experiment: experimentTargeting.statsig.serverSecret is required for provider statsig")
+		}
+	case TargetingProviderUnleash:
+		if c.Unleash == nil || c.Unleash.APIURL == "" || c.Unleash.APIToken == "" {
+			return errors.New("experiment: experimentTargeting.unleash.apiUrl and apiToken are required for provider unleash")
+		}
+	}
+	other := 0
+	if c.Provider != TargetingProviderOFREP && c.OFREP != nil {
+		other++
+	}
+	if c.Provider != TargetingProviderLaunchDarkly && c.LaunchDarkly != nil {
+		other++
+	}
+	if c.Provider != TargetingProviderStatsig && c.Statsig != nil {
+		other++
+	}
+	if c.Provider != TargetingProviderUnleash && c.Unleash != nil {
+		other++
+	}
+	if other > 0 {
+		return fmt.Errorf("experiment: experimentTargeting carries a provider block that does not match provider %q", c.Provider)
+	}
+	return nil
+}
+
 // ResolveExternalVariant implements the §10.7 OpenFeature
 // external-targeting variant resolution. A `mode: external` experiment
 // is assigned by an OpenFeature provider, which returns an
