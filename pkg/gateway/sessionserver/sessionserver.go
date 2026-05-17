@@ -368,6 +368,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
+	mux.HandleFunc("GET /v1/models", s.handleListModels)
 	mux.HandleFunc("POST /v1/environments/{name}/sessions", s.handleEnvironmentSessions)
 	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)
 	mux.HandleFunc("GET /v1/sessions", s.handleList)

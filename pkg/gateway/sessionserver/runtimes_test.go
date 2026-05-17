@@ -65,6 +65,55 @@ func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
 	}
 }
 
+func TestListModelsOpenAIFormat(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Object string                      `json:"object"`
+		Data   []sessionserver.OpenAIModel `json:"data"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Object != "list" {
+		t.Errorf("object: got %q, want list", resp.Object)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("models: got %d, want 1 (%+v)", len(resp.Data), resp.Data)
+	}
+	m := resp.Data[0]
+	if m.ID != "claude-agent" || m.Object != "model" || m.OwnedBy != "lenny" {
+		t.Errorf("model entry: %+v", m)
+	}
+}
+
+func TestListModelsEmptyWhenUnwired(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp struct {
+		Data []sessionserver.OpenAIModel `json:"data"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Data) != 0 {
+		t.Errorf("models without a runtime registry must be empty: %+v", resp.Data)
+	}
+}
+
 func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

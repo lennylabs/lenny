@@ -53,6 +53,42 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"runtimes": out})
 }
 
+// OpenAIModel is one entry in the GET /v1/models OpenAI-compatible
+// model list. Each Lenny runtime is surfaced as a model so the
+// OpenAI Completions and Open Responses adapters can discover targets.
+type OpenAIModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+// handleListModels implements GET /v1/models — the §9.1 OpenAI
+// Completions / Open Responses model-discovery surface. Each runtime
+// the caller's §10.6 environment access authorizes is surfaced as an
+// OpenAI-compatible model object; a not-authorized runtime is absent.
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	models := []OpenAIModel{}
+	if s.runtimes != nil {
+		rows, err := s.runtimes.List(r.Context(), runtimestore.ListFilter{})
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			return
+		}
+		rows = s.filterRuntimesByEnvironment(r, rows)
+		for _, rt := range rows {
+			models = append(models, OpenAIModel{
+				ID:      rt.Name,
+				Object:  "model",
+				Created: rt.CreatedAt.Unix(),
+				OwnedBy: "lenny",
+			})
+		}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
+}
+
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
 // environment access the request principal holds. When the
 // environment or tenant registry is not wired, or the request carries
