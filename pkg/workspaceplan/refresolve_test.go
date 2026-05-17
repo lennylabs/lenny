@@ -288,6 +288,52 @@ func TestMarshalEmitsPinnedCommitSHA(t *testing.T) {
 	}
 }
 
+func TestParseStoredAcceptsResolvedCommitSha(t *testing.T) {
+	raw := []byte(`{"schemaVersion":1,"sources":[` +
+		`{"type":"gitClone","url":"https://example.com/r.git","ref":"main",` +
+		`"resolvedCommitSha":"` + shaA + `"}]}`)
+	// Parse rejects the gateway-written field on a client request body.
+	if _, _, err := workspaceplan.Parse(raw); err == nil {
+		t.Error("Parse must reject a client-supplied resolvedCommitSha")
+	}
+	// ParseStored accepts it — the pinned form read back from storage.
+	plan, _, err := workspaceplan.ParseStored(raw)
+	if err != nil {
+		t.Fatalf("ParseStored: %v", err)
+	}
+	gc := plan.Sources[0].Variant.(workspaceplan.GitClone)
+	if gc.ResolvedCommitSha != shaA {
+		t.Errorf("ResolvedCommitSha = %q, want %q", gc.ResolvedCommitSha, shaA)
+	}
+}
+
+func TestMarshalPinnedRoundTripsThroughParseStored(t *testing.T) {
+	// The full creation-time path: parse a client plan, pin its refs,
+	// Marshal to the stored form, and read it back with ParseStored.
+	raw := []byte(`{"schemaVersion":1,"sources":[` +
+		`{"type":"gitClone","url":"https://example.com/r.git","ref":"main"}]}`)
+	plan, _, err := workspaceplan.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if err := workspaceplan.PinCommitSHAs(context.Background(), &plan,
+		&fakeResolver{shas: map[string]string{"main": shaB}}); err != nil {
+		t.Fatalf("PinCommitSHAs: %v", err)
+	}
+	out, err := workspaceplan.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	stored, _, err := workspaceplan.ParseStored(out)
+	if err != nil {
+		t.Fatalf("ParseStored: %v", err)
+	}
+	gc := stored.Sources[0].Variant.(workspaceplan.GitClone)
+	if gc.ResolvedCommitSha != shaB {
+		t.Errorf("round-tripped ResolvedCommitSha = %q, want %q", gc.ResolvedCommitSha, shaB)
+	}
+}
+
 func TestMarshalPreservesUnknownSourceType(t *testing.T) {
 	raw := []byte(`{"schemaVersion":1,"sources":[{"type":"vendorThing","custom":"value"}]}`)
 	plan, warnings, err := workspaceplan.Parse(raw)

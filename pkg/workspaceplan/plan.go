@@ -235,7 +235,20 @@ var (
 // gateway-written-fields, modes, paths, gitClone URL). It does NOT
 // validate `uploadRef` against any blob store; callers run that check
 // later, when the upload pipeline resolves refs.
-func Parse(raw []byte) (Plan, []Warning, error) {
+func Parse(raw []byte) (Plan, []Warning, error) { return parse(raw, false) }
+
+// ParseStored decodes a §14 WorkspacePlan the gateway previously
+// stored. It is identical to Parse except that it accepts the
+// gateway-written sources[<n>].resolvedCommitSha field that Parse
+// rejects on a client request body. The start and resume handlers use
+// ParseStored to read back a plan whose gitClone refs were pinned at
+// session creation.
+func ParseStored(raw []byte) (Plan, []Warning, error) { return parse(raw, true) }
+
+// parse is the shared §14 decoder. When stored is true the
+// gateway-written resolvedCommitSha field is accepted on gitClone
+// sources.
+func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	// Step 1 — root structural decode.
 	var root struct {
 		SchemaVersion *int              `json:"schemaVersion"`
@@ -289,7 +302,7 @@ func Parse(raw []byte) (Plan, []Warning, error) {
 	var subErrs []SubErr
 
 	for i, rawSrc := range root.Sources {
-		src, warn, err := parseSource(rawSrc, i)
+		src, warn, err := parseSource(rawSrc, i, stored)
 		if err != nil {
 			subErrs = append(subErrs, *err)
 			continue
@@ -335,7 +348,7 @@ func Parse(raw []byte) (Plan, []Warning, error) {
 //   - (src, &Warning{Unknown}, nil) on a known structure with an
 //     unknown discriminator value (open-string passthrough per §14)
 //   - ({}, nil, *SubErr) on a hard validation error
-func parseSource(raw json.RawMessage, i int) (Source, *Warning, *SubErr) {
+func parseSource(raw json.RawMessage, i int, stored bool) (Source, *Warning, *SubErr) {
 	// Peek at type discriminator.
 	var head struct {
 		Type string `json:"type"`
@@ -406,7 +419,7 @@ func parseSource(raw json.RawMessage, i int) (Source, *Warning, *SubErr) {
 		if subErr := decodeVariant(raw, i, head.Type, &v); subErr != nil {
 			return Source{}, nil, subErr
 		}
-		if subErr := validateGitClone(&v, i); subErr != nil {
+		if subErr := validateGitClone(&v, i, stored); subErr != nil {
 			return Source{}, nil, subErr
 		}
 		return Source{Type: head.Type, Variant: v, Raw: rawMap}, nil, nil
@@ -539,9 +552,12 @@ func validateMkdir(v *Mkdir, i int) *SubErr {
 	return validateMode(v.Mode, i, "mode", true /*allowSticky*/)
 }
 
-// validateGitClone applies §14 gitClone rules.
-func validateGitClone(v *GitClone, i int) *SubErr {
-	if v.ResolvedCommitSha != "" {
+// validateGitClone applies §14 gitClone rules. When stored is false the
+// gateway-written resolvedCommitSha field is rejected as client input;
+// ParseStored sets stored to true so a pinned plan read back from
+// storage is accepted.
+func validateGitClone(v *GitClone, i int, stored bool) *SubErr {
+	if !stored && v.ResolvedCommitSha != "" {
 		return &SubErr{
 			SourceIndex: i,
 			Field:       fmt.Sprintf("sources[%d].resolvedCommitSha", i),
