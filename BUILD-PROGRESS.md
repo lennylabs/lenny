@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `1895901` — §10.7 `BuildEvaluationContext` — OpenFeature context assembly. Builds the
+  `evaluationContext` for a `mode: external` evaluation: `targetingKey` and `user_id`
+  are the session's user id or the deterministic `anon:<session_id>` pseudo-ID for an
+  anonymous session (§10.7), `tenant_id` and `runtime` are carried, and session labels
+  are merged with the reserved attributes shadow-protected. The map feeds
+  `ofrep.Client.Evaluate`. With `TargetingConfig`, the OFREP client, and
+  `ResolveExternalVariant`, the §10.7 `mode: external` pure-Go substrate is complete —
+  the remaining work is storing `TargetingConfig` on the tenant (the tenant pgstore
+  currently persists only a subset of `Tenant` fields, a pre-existing gap) and the
+  `ExperimentRouter` wiring.
 - `d381273` — §10.7 `TargetingConfig` — tenant experimentTargeting model. The typed
   §10.7 `experimentTargeting` block: the provider enum (`ofrep`, `launchdarkly`,
   `statsig`, `unleash`), the hot-path timeout, and the four provider sub-blocks.
