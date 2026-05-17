@@ -546,6 +546,101 @@ func TestUpdateRuntimeRegeneratesAgentCard(t *testing.T) {
 	}
 }
 
+func TestRegenerateCardsRegeneratesAndSkips(t *testing.T) {
+	// §5.1: regenerate-cards regenerates every runtime with an
+	// agentInterface and skips the rest, leaving hand-crafted cards be.
+	router, runtimes, _ := newRuntimeAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "withiface", Type: runtimestore.TypeAgent,
+		AgentInterface: &runtimestore.AgentInterface{Description: "has interface"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "noiface", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"hand":"crafted"}`},
+		},
+	})
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes/regenerate-cards",
+		admin.RegenerateCardsRequest{})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("regenerate: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.RegenerateCardsResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Regenerated) != 1 || resp.Regenerated[0] != "withiface" {
+		t.Errorf("regenerated: %+v, want [withiface]", resp.Regenerated)
+	}
+	if len(resp.Skipped) != 1 || resp.Skipped[0] != "noiface" {
+		t.Errorf("skipped: %+v, want [noiface]", resp.Skipped)
+	}
+	got, _ := runtimes.Get(context.Background(), "withiface")
+	var card agentcard.Card
+	_ = json.Unmarshal([]byte(agentCardEntry(t, got.PublishedMetadata).Content), &card)
+	if card.Name != "withiface" {
+		t.Errorf("regenerated card: %+v", card)
+	}
+	handcrafted, _ := runtimes.Get(context.Background(), "noiface")
+	if e := agentCardEntry(t, handcrafted.PublishedMetadata); e.Content != `{"hand":"crafted"}` {
+		t.Errorf("hand-crafted card must be left untouched: %q", e.Content)
+	}
+}
+
+func TestRegenerateCardsDryRun(t *testing.T) {
+	// §5.1: dryRun reports the affected runtimes without writing.
+	router, runtimes, _ := newRuntimeAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "withiface", Type: runtimestore.TypeAgent,
+		AgentInterface: &runtimestore.AgentInterface{Description: "x"},
+	})
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes/regenerate-cards",
+		admin.RegenerateCardsRequest{DryRun: true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dry run: status %d", rr.Code)
+	}
+	var resp admin.RegenerateCardsResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Regenerated) != 1 {
+		t.Errorf("dry run regenerated: %+v", resp.Regenerated)
+	}
+	got, _ := runtimes.Get(context.Background(), "withiface")
+	for _, e := range got.PublishedMetadata {
+		if e.Key == agentcard.Key {
+			t.Error("dry run must not write the card")
+		}
+	}
+}
+
+func TestRegenerateCardsVersionThreshold(t *testing.T) {
+	// §5.1: generatorVersionBefore regenerates only runtimes whose
+	// stored card is stamped by a strictly older generator.
+	router, runtimes, _ := newRuntimeAdmin(t)
+	stale := agentcard.Entry("stale", runtimestore.AgentInterface{Description: "stale"}, time.Now(), "1.0.0")
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "stale", Type: runtimestore.TypeAgent,
+		AgentInterface:    &runtimestore.AgentInterface{Description: "stale"},
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{stale},
+	})
+	fresh := agentcard.Entry("fresh", runtimestore.AgentInterface{Description: "fresh"}, time.Now(), "2.0.0")
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "fresh", Type: runtimestore.TypeAgent,
+		AgentInterface:    &runtimestore.AgentInterface{Description: "fresh"},
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{fresh},
+	})
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes/regenerate-cards",
+		admin.RegenerateCardsRequest{GeneratorVersionBefore: "2.0.0"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("regenerate: status %d", rr.Code)
+	}
+	var resp admin.RegenerateCardsResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Regenerated) != 1 || resp.Regenerated[0] != "stale" {
+		t.Errorf("regenerated: %+v, want [stale]", resp.Regenerated)
+	}
+	if len(resp.Skipped) != 1 || resp.Skipped[0] != "fresh" {
+		t.Errorf("skipped: %+v, want [fresh]", resp.Skipped)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

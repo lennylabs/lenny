@@ -189,6 +189,8 @@ func (r *Router) Handler() http.Handler {
 	}
 	if r.runtimes != nil {
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
+		mux.Handle("POST /v1/admin/runtimes/regenerate-cards",
+			r.requireAdmin(http.HandlerFunc(r.handleRegenerateCards)))
 		// §4: runtime reads are tenant-scoped — a tenant-admin sees the
 		// runtimes granted to their tenant; the handlers filter.
 		mux.Handle("GET /v1/admin/runtimes", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListRuntimes)))

@@ -5,6 +5,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -413,4 +414,87 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 		out = append(out, "publishedMetadata")
 	}
 	return out
+}
+
+// RegenerateCardsRequest is the §5.1 POST /v1/admin/runtimes/regenerate-cards
+// body. Every field is optional.
+type RegenerateCardsRequest struct {
+	// GeneratorVersionBefore regenerates only runtimes whose stored card
+	// has a generatorVersion strictly older than this value. An empty
+	// value regenerates every runtime that carries an agentInterface.
+	GeneratorVersionBefore string `json:"generatorVersionBefore,omitempty"`
+
+	// DryRun reports the affected runtimes without writing.
+	DryRun bool `json:"dryRun,omitempty"`
+}
+
+// RegenerateCardsResponse is the §5.1 regenerate-cards result.
+type RegenerateCardsResponse struct {
+	Regenerated []string `json:"regenerated"`
+	Skipped     []string `json:"skipped"`
+	Errors      []string `json:"errors"`
+}
+
+// storedGeneratorVersion reads the generatorVersion envelope field from
+// a runtime's stored agent-card entry. It returns "" when the runtime
+// has no agent-card entry or the entry is not a parseable card.
+func storedGeneratorVersion(entries []runtimestore.PublishedMetadataEntry) string {
+	for _, e := range entries {
+		if e.Key != agentcard.Key {
+			continue
+		}
+		var card struct {
+			GeneratorVersion string `json:"generatorVersion"`
+		}
+		_ = json.Unmarshal([]byte(e.Content), &card)
+		return card.GeneratorVersion
+	}
+	return ""
+}
+
+// handleRegenerateCards implements POST /v1/admin/runtimes/regenerate-cards
+// — the §5.1 bulk A2A agent-card regeneration. Each runtime carrying an
+// agentInterface whose stored card is older than generatorVersionBefore
+// has its agent-card publishedMetadata entry regenerated. A runtime with
+// no agentInterface is skipped, so a hand-crafted agent-card entry is
+// left untouched; a runtime whose card already satisfies the version
+// threshold is skipped. dryRun reports the affected runtimes without
+// writing.
+func (r *Router) handleRegenerateCards(w http.ResponseWriter, req *http.Request) {
+	var body RegenerateCardsRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return
+	}
+	rows, err := r.runtimes.List(req.Context(), runtimestore.ListFilter{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	resp := RegenerateCardsResponse{Regenerated: []string{}, Skipped: []string{}, Errors: []string{}}
+	for _, rt := range rows {
+		if rt.AgentInterface == nil {
+			// §5.1: a hand-crafted agent-card entry is left untouched.
+			resp.Skipped = append(resp.Skipped, rt.Name)
+			continue
+		}
+		if !agentcard.NeedsRegen(storedGeneratorVersion(rt.PublishedMetadata), body.GeneratorVersionBefore) {
+			resp.Skipped = append(resp.Skipped, rt.Name)
+			continue
+		}
+		if body.DryRun {
+			resp.Regenerated = append(resp.Regenerated, rt.Name)
+			continue
+		}
+		if _, uerr := r.runtimes.Update(req.Context(), rt.Name, func(u *runtimestore.Runtime) error {
+			r.applyGeneratedCard(u, r.clock())
+			return nil
+		}); uerr != nil {
+			resp.Errors = append(resp.Errors, rt.Name)
+			continue
+		}
+		resp.Regenerated = append(resp.Regenerated, rt.Name)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
