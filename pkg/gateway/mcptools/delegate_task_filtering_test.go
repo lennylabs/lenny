@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -151,5 +152,57 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("a cross-environment-reachable delegation should proceed: %q", text)
+	}
+}
+
+func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
+	store := memstore.New()
+	pools := poolstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:    store,
+		Executor: executor.NewEchoExecutor(),
+		Pools:    pools,
+		Delegation: delegation.NewService(store, delegation.Options{
+			IDFunc: func() string { return "sess_child" },
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+
+	ctxbg := context.Background()
+	_ = pools.Create(ctxbg, poolstore.Pool{
+		Name: "weak-pool", IsolationProfile: isolation.ProfileStandard,
+		AllowStandardIsolation: true,
+	})
+	_ = pools.Create(ctxbg, poolstore.Pool{
+		Name: "strong-pool", IsolationProfile: isolation.ProfileMicrovm,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = store.Create(ctxbg, sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	// §8.3 / §10.6: delegating to a pool whose §5.3 isolation profile is
+	// weaker than the parent session's is a monotonicity violation. The
+	// resolved child pool profile, not the inherited parent profile, is
+	// what the delegation service evaluates.
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"weak-pool"}`)
+	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+		t.Errorf("delegation to a weaker-isolation pool must be rejected: %+v", resp)
+	}
+	if _, err := store.Get(ctxbg, "acme", "sess_child"); err == nil {
+		t.Error("a monotonicity-violating delegation must not create a child session")
+	}
+
+	// A pool at least as restrictive as the parent is admitted.
+	text := resultText(t, call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"strong-pool"}`))
+	if !strings.Contains(text, "sess_child") {
+		t.Errorf("delegation to a stronger-isolation pool should proceed: %q", text)
 	}
 }

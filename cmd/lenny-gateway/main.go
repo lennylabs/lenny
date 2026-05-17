@@ -520,6 +520,7 @@ func main() {
 		Runtimes:                   runtimes,
 		Environments:               environments,
 		Tenants:                    tenants,
+		Pools:                      pools,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               interceptor.NewChain(),
 		Events:                     eventBus,

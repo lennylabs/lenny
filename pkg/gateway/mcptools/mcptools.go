@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -81,6 +82,12 @@ type Deps struct {
 	// Environments to read the caller tenant's noEnvironmentPolicy for
 	// the §10.6 transparent-filtering fallback.
 	Tenants tenantstore.Store
+
+	// Pools is the §5.2 pool registry. Optional — when set,
+	// lenny/delegate_task resolves the child pool's §5.3 isolation
+	// profile so the §8.3 monotonicity check evaluates the child pool
+	// rather than the profile inherited from the parent session.
+	Pools poolstore.Store
 
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied to a caller whose tenant has set no
@@ -829,10 +836,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				}
 			}
 			res, err := deps.Delegation.Delegate(ctx, tenant, delegation.Request{
-				ParentSessionID: in.ParentSessionID,
-				RuntimeRef:      in.RuntimeRef,
-				PoolRef:         in.PoolRef,
-				MaxDepth:        in.MaxDepth,
+				ParentSessionID:  in.ParentSessionID,
+				RuntimeRef:       in.RuntimeRef,
+				PoolRef:          in.PoolRef,
+				MaxDepth:         in.MaxDepth,
+				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 			})
 			if err != nil {
 				return mcp.ToolResult{}, err
@@ -1030,6 +1038,25 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 		return false, err
 	}
 	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, envs), nil
+}
+
+// resolvePoolIsolation returns the explicit §5.3 isolation profile of
+// the named pool. It returns the empty profile when the pool registry
+// is not wired, the pool cannot be resolved, or the pool inherits its
+// runtime's default profile. A resolved profile is handed to the
+// delegation service so the §8.3 monotonicity check evaluates the
+// child pool's isolation rather than the profile inherited from the
+// parent session — §10.6 requires that a delegation, including a
+// cross-environment one, never relaxes the isolation invariant.
+func resolvePoolIsolation(ctx context.Context, deps Deps, poolRef string) isolation.Profile {
+	if deps.Pools == nil || poolRef == "" {
+		return ""
+	}
+	pool, err := deps.Pools.Get(ctx, poolRef)
+	if err != nil {
+		return ""
+	}
+	return pool.IsolationProfile
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its
