@@ -41,7 +41,7 @@ const selectList = `name, type, image, execution_mode, isolation_profile,
 	integration_level, description, created_at, updated_at, deleted_at, labels,
 	agent_interface, published_metadata, capability_inference_mode,
 	tool_capability_overrides, setup_policy, capabilities, min_platform_version,
-	task_policy`
+	task_policy, base_runtime`
 
 // labelsJSON marshals a runtime's §5.1 label map to its jsonb text
 // form. A nil or empty map is stored as an empty JSON object so the
@@ -148,8 +148,8 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		integration_level, description, created_at, updated_at, deleted_at, labels,
 		agent_interface, published_metadata, capability_inference_mode,
 		tool_capability_overrides, setup_policy, capabilities, min_platform_version,
-		task_policy
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+		task_policy, base_runtime
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
@@ -157,7 +157,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		capabilityInferenceMode(r.CapabilityInferenceMode),
 		toolCapabilityOverridesJSON(r.ToolCapabilityOverrides),
 		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities),
-		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy))
+		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy), r.BaseRuntime)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -210,7 +210,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		labels = $10, agent_interface = $11, published_metadata = $12,
 		capability_inference_mode = $13, tool_capability_overrides = $14,
 		setup_policy = $15, capabilities = $16, min_platform_version = $17,
-		task_policy = $18
+		task_policy = $18, base_runtime = $19
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -219,7 +219,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		capabilityInferenceMode(r.CapabilityInferenceMode),
 		toolCapabilityOverridesJSON(r.ToolCapabilityOverrides),
 		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities),
-		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy)); err != nil {
+		r.MinPlatformVersion, taskPolicyJSON(r.TaskPolicy), r.BaseRuntime); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -306,7 +306,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
 		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw, &publishedMetaRaw,
 		&capInferMode, &toolOverridesRaw, &setupPolicyRaw, &capabilitiesRaw, &r.MinPlatformVersion,
-		&taskPolicyRaw,
+		&taskPolicyRaw, &r.BaseRuntime,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}

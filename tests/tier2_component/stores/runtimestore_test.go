@@ -311,6 +311,21 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("baseRuntime round-trips", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.BaseRuntime = "langgraph-runtime"
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.BaseRuntime != "langgraph-runtime" || !got.IsDerived() {
+			t.Errorf("baseRuntime: got %q (IsDerived=%v), want langgraph-runtime", got.BaseRuntime, got.IsDerived())
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {
