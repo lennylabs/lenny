@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `ae45aef` — §10.6 cross-environment delegation bilateral check.
+  `envaccess.CrossEnvironmentReachable` implements the §10.6 bilateral algorithm — a
+  target is reachable when a peer environment admits it and both environments declare
+  reciprocal outbound/inbound rules. `lenny/delegate_task` consults it for the parent
+  session's environment, additively widening the delegation scope beyond the caller's
+  own environment. The §10.6 cross-environment isolation-monotonicity step is not yet
+  enforced.
 - `5003c74` — §10.6 environment on `lenny/create_session`. The platform MCP
   session-creation tool records the environment, so every session-creation surface
   now carries the §10.6 session environment context.
