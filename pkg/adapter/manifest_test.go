@@ -29,6 +29,37 @@ func TestNewMCPNonce(t *testing.T) {
 	}
 }
 
+func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	if err := srv.writeSessionManifest("sess-t", nil, nil); err != nil {
+		t.Fatalf("writeSessionManifest: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if len(m.AdapterLocalTools) != 4 {
+		t.Fatalf("manifest advertises %d adapter-local tools, want 4", len(m.AdapterLocalTools))
+	}
+	names := map[string]bool{}
+	for _, tool := range m.AdapterLocalTools {
+		names[tool.Name] = true
+		if tool.Description == "" || len(tool.InputSchema) == 0 {
+			t.Errorf("manifest tool %q is missing a description or inputSchema", tool.Name)
+		}
+	}
+	for _, want := range []string{"read_file", "write_file", "list_dir", "delete_file"} {
+		if !names[want] {
+			t.Errorf("manifest does not advertise the %q tool", want)
+		}
+	}
+}
+
 func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}

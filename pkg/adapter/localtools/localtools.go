@@ -36,6 +36,38 @@ type Result struct {
 	IsError bool
 }
 
+// Descriptor advertises one adapter-local tool in the §4.7 manifest's
+// adapterLocalTools array: the tool name, a human-readable description,
+// and the JSON Schema for its arguments object.
+type Descriptor struct {
+	Name        string
+	Description string
+	InputSchema json.RawMessage
+}
+
+// pathSchema is the §15 inputSchema for a tool that takes a single
+// workspace path argument.
+var pathSchema = json.RawMessage(`{"type":"object","properties":` +
+	`{"path":{"type":"string","description":"Workspace-relative or absolute path within /workspace."}},` +
+	`"required":["path"]}`)
+
+// Descriptors returns the §4.7 manifest descriptors of the built-in
+// adapter-local tools, in a stable order. The adapter populates the
+// manifest's adapterLocalTools array from this set, and every name is
+// dispatchable by Dispatch.
+func Descriptors() []Descriptor {
+	return []Descriptor{
+		{ToolReadFile, "Read the contents of a file in the workspace.", pathSchema},
+		{ToolWriteFile, "Write content to a file in the workspace.", json.RawMessage(
+			`{"type":"object","properties":` +
+				`{"path":{"type":"string","description":"Workspace-relative or absolute path within /workspace."},` +
+				`"content":{"type":"string","description":"File content to write."}},` +
+				`"required":["path","content"]}`)},
+		{ToolListDir, "List the entries of a directory in the workspace.", pathSchema},
+		{ToolDeleteFile, "Delete a file in the workspace.", pathSchema},
+	}
+}
+
 // handler executes one tool against an already workspace-resolved path.
 type handler func(fullPath, content string) Result
 

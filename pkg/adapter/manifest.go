@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lennylabs/lenny/pkg/adapter/localtools"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -34,10 +35,20 @@ type ManifestExperimentContext struct {
 	Inherited    bool   `json:"inherited"`
 }
 
+// ManifestTool advertises one §15 adapter-local tool in the manifest's
+// adapterLocalTools array: the tool name, a human-readable description,
+// and the JSON Schema for its arguments object.
+type ManifestTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+}
+
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
-// v1 carries the session metadata a Basic-level runtime needs and the
-// §15.4.3 intra-pod MCP nonce; the platformMcpServer and
-// adapterLocalTools fields are added with the MCP server.
+// v1 carries the session metadata a Basic-level runtime needs, the
+// §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
+// descriptors; the platformMcpServer and connectorServers socket
+// fields are added with the MCP socket layer.
 type Manifest struct {
 	Version           int                        `json:"version"`
 	SessionID         string                     `json:"sessionId"`
@@ -53,6 +64,10 @@ type Manifest struct {
 	// adapter rejects an intra-pod MCP connection that does not present
 	// it. Omitted when no manifest directory is configured.
 	MCPNonce string `json:"mcpNonce,omitempty"`
+	// AdapterLocalTools advertises the §15 adapter-local tools the
+	// runtime may call over the tool_call binary protocol. The runtime
+	// discovers the tool set by reading this array.
+	AdapterLocalTools []ManifestTool `json:"adapterLocalTools"`
 }
 
 // newMCPNonce returns a fresh §15.4.3 intra-pod MCP nonce: a random
@@ -101,7 +116,24 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 		ExperimentContext: manifestExperimentContext(ec),
 		TracingContext:    tc,
 		MCPNonce:          nonce,
+		AdapterLocalTools: manifestLocalTools(),
 	})
+}
+
+// manifestLocalTools converts the localtools built-in descriptors into
+// their manifest form, the single source of the adapter-local tool set
+// the adapter both advertises and dispatches.
+func manifestLocalTools() []ManifestTool {
+	descriptors := localtools.Descriptors()
+	tools := make([]ManifestTool, len(descriptors))
+	for i, d := range descriptors {
+		tools[i] = ManifestTool{
+			Name:        d.Name,
+			Description: d.Description,
+			InputSchema: d.InputSchema,
+		}
+	}
+	return tools
 }
 
 // manifestExperimentContext converts the StartSession proto experiment

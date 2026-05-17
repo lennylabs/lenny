@@ -143,3 +143,49 @@ func TestDispatchReadMissingFile(t *testing.T) {
 		t.Error("read_file of a missing file did not yield an error result")
 	}
 }
+
+func TestDescriptors(t *testing.T) {
+	descriptors := localtools.Descriptors()
+	if len(descriptors) != 4 {
+		t.Fatalf("Descriptors returned %d entries, want 4", len(descriptors))
+	}
+	want := map[string]bool{
+		localtools.ToolReadFile: true, localtools.ToolWriteFile: true,
+		localtools.ToolListDir: true, localtools.ToolDeleteFile: true,
+	}
+	for _, d := range descriptors {
+		if !want[d.Name] {
+			t.Errorf("unexpected descriptor name %q", d.Name)
+		}
+		if d.Description == "" {
+			t.Errorf("descriptor %q has no description", d.Name)
+		}
+		var schema struct {
+			Type     string          `json:"type"`
+			Required []string        `json:"required"`
+			Props    json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(d.InputSchema, &schema); err != nil {
+			t.Errorf("descriptor %q inputSchema is not valid JSON: %v", d.Name, err)
+		}
+		if schema.Type != "object" {
+			t.Errorf("descriptor %q inputSchema type = %q, want object", d.Name, schema.Type)
+		}
+		// Every advertised tool must be dispatchable.
+		got := localtools.Dispatch(t.TempDir(), d.Name, args(t, map[string]string{"path": "x", "content": "y"}))
+		if got.IsError && got.Content == "unknown adapter-local tool "+d.Name {
+			t.Errorf("advertised tool %q is not dispatchable", d.Name)
+		}
+		if d.Name == localtools.ToolWriteFile {
+			hasContent := false
+			for _, r := range schema.Required {
+				if r == "content" {
+					hasContent = true
+				}
+			}
+			if !hasContent {
+				t.Error("write_file inputSchema does not require the content argument")
+			}
+		}
+	}
+}
