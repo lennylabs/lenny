@@ -245,6 +245,7 @@
             }
           },
           "minPlatformVersion": { "type": "string" },
+          "baseRuntime": { "type": "string" },
           "taskPolicy": {
             "type": "object",
             "properties": {
