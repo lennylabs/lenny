@@ -7,7 +7,46 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 )
+
+// LeaseScopeMode is the access half of a §14 gitClone.auth.leaseScope:
+// a read-only clone or a read-write clone.
+type LeaseScopeMode string
+
+const (
+	LeaseScopeRead  LeaseScopeMode = "read"
+	LeaseScopeWrite LeaseScopeMode = "write"
+)
+
+// ParseLeaseScope extracts the VCS provider and access mode from a §14
+// gitClone.auth.leaseScope of the form `vcs.<provider>.read` or
+// `vcs.<provider>.write`. ok is false when scope does not match that
+// form. The provider feeds the §14 host-to-pool binding
+// (credentialpoolstore.ResolveVCSPool).
+func ParseLeaseScope(scope string) (provider string, mode LeaseScopeMode, ok bool) {
+	if !leaseScopeRE.MatchString(scope) {
+		return "", "", false
+	}
+	// scope is "vcs." + provider + "." + mode; the regex restricts the
+	// provider to [a-z0-9_-]+, so it carries no dots and the final dot
+	// separates the provider from the mode.
+	inner := strings.TrimPrefix(scope, "vcs.")
+	dot := strings.LastIndex(inner, ".")
+	return inner[:dot], LeaseScopeMode(inner[dot+1:]), true
+}
+
+// GitCloneHost returns the lowercased host of a gitClone source's URL —
+// the §14 authority component used for VCS-pool host matching. ok is
+// false when the URL does not parse or carries no host.
+func GitCloneHost(gc GitClone) (host string, ok bool) {
+	u, err := url.Parse(gc.URL)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	return strings.ToLower(u.Host), true
+}
 
 // Marshal serializes a parsed Plan back to §14 WorkspacePlan JSON. It
 // is the inverse of Parse: each source is emitted from the Raw object

@@ -219,6 +219,50 @@ func TestPinCommitSHAsNilResolverNonSHARefErrors(t *testing.T) {
 	}
 }
 
+func TestParseLeaseScope(t *testing.T) {
+	cases := []struct {
+		scope    string
+		provider string
+		mode     workspaceplan.LeaseScopeMode
+		ok       bool
+	}{
+		{"vcs.github.read", "github", workspaceplan.LeaseScopeRead, true},
+		{"vcs.github.write", "github", workspaceplan.LeaseScopeWrite, true},
+		{"vcs.gitlab-self-hosted.read", "gitlab-self-hosted", workspaceplan.LeaseScopeRead, true},
+		{"vcs.github.delete", "", "", false},
+		{"github.read", "", "", false},
+		{"vcs..read", "", "", false},
+		{"", "", "", false},
+	}
+	for _, tc := range cases {
+		provider, mode, ok := workspaceplan.ParseLeaseScope(tc.scope)
+		if ok != tc.ok || provider != tc.provider || mode != tc.mode {
+			t.Errorf("ParseLeaseScope(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.scope, provider, mode, ok, tc.provider, tc.mode, tc.ok)
+		}
+	}
+}
+
+func TestGitCloneHost(t *testing.T) {
+	cases := []struct {
+		url  string
+		host string
+		ok   bool
+	}{
+		{"https://github.com/acme/repo.git", "github.com", true},
+		{"https://Git.ACME.com/x", "git.acme.com", true},
+		{"https://github.com:8443/acme/repo.git", "github.com:8443", true},
+		{"", "", false},
+		{"not-a-url", "", false},
+	}
+	for _, tc := range cases {
+		host, ok := workspaceplan.GitCloneHost(workspaceplan.GitClone{URL: tc.url})
+		if ok != tc.ok || host != tc.host {
+			t.Errorf("GitCloneHost(%q) = (%q, %v), want (%q, %v)", tc.url, host, ok, tc.host, tc.ok)
+		}
+	}
+}
+
 func TestPinCommitSHAsNilPlan(t *testing.T) {
 	if err := workspaceplan.PinCommitSHAs(context.Background(), nil, nil); err != nil {
 		t.Errorf("PinCommitSHAs(nil) = %v, want nil", err)
