@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `df9d053` — §15.1 OpenAPI: `setupPolicy` in the admin `Runtime` schema.
+- `27bec28` — §15.1 `setupPolicy` round-trip on the admin runtime API. `POST` / `GET`
+  carry it on `RuntimePayload`; `PUT` carries it as an optional pointer. Create and
+  update validate the non-negative timeout and the fail / warn `onTimeout` enum.
+- `f79b05b` — §5.1 `setupPolicy` runtime field. `runtimestore.Runtime` gains the §5.1
+  `setupPolicy` block (the pod setup-phase cap `timeoutSeconds` and the `onTimeout`
+  fail / warn disposition); the in-memory store copies the struct and the pgstore
+  persists it (migration 0019, `setup_policy` jsonb column). The adapter consuming the
+  policy at the pod setup phase is the remaining infra-coupled wiring.
 - `a9c60c6` — §15.1 OpenAPI: `toolCapabilityOverrides` in the admin `Runtime` schema.
 - `2350844` — §15.1 `toolCapabilityOverrides` round-trip on the admin runtime API. `POST`
   / `GET` carry the map on `RuntimePayload`; `PUT` carries it as an optional map
