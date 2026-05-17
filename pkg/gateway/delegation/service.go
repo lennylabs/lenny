@@ -23,6 +23,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
+	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -67,10 +69,11 @@ type Result struct {
 
 // Service creates child sessions from a delegation request.
 type Service struct {
-	store sessionstore.Store
-	clock func() time.Time
-	idFn  func() string
-	mode  cycle.Mode
+	store       sessionstore.Store
+	experiments experimentstore.Store
+	clock       func() time.Time
+	idFn        func() string
+	mode        cycle.Mode
 }
 
 // Options configures a Service.
@@ -85,6 +88,12 @@ type Options struct {
 	// CycleMode is the §8.2 cycle-detection mode. Defaults to
 	// `enforce`.
 	CycleMode cycle.Mode
+
+	// Experiments, when set, lets Delegate propagate the parent's §8.3
+	// experimentContext onto the child per the experiment's propagation
+	// mode. Nil disables propagation — a child is created with no
+	// experiment context.
+	Experiments experimentstore.Store
 }
 
 // NewService returns a delegation Service.
@@ -101,7 +110,13 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 	if mode == "" {
 		mode = cycle.ModeEnforce
 	}
-	return &Service{store: store, clock: clock, idFn: idFn, mode: mode}
+	return &Service{
+		store:       store,
+		experiments: opts.Experiments,
+		clock:       clock,
+		idFn:        idFn,
+		mode:        mode,
+	}
 }
 
 // Errors surfaced by Delegate. Each maps to a §15.1 error code.
@@ -204,13 +219,49 @@ func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (R
 		// §8.3: the gateway attaches the parent's registered
 		// tracingContext to every child it delegates.
 		TracingContext: copyTracingContext(parent.TracingContext),
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		// §8.3 / §10.7: the parent's experimentContext propagates onto
+		// the child per the experiment's propagation mode.
+		ExperimentContext: s.propagateExperimentContext(ctx, tenantID, parent),
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err
 	}
 	return Result{Child: child, Depth: depth + 1}, nil
+}
+
+// propagateExperimentContext applies the §8.3/§10.7 experiment-context
+// propagation rule to a delegation child. When the parent is enrolled
+// in an experiment, the experiment's propagation mode decides the
+// child's context: `inherit` copies the parent's enrollment verbatim,
+// `control` forces the parent's experiment onto the control variant,
+// and `independent` leaves the child unenrolled here — it is routed
+// afresh by the ExperimentRouter at its own creation. A propagated
+// context is recorded with inherited=true. Returns nil when no
+// experiment store is wired, the parent carries no experiment context,
+// or the experiment is unresolvable.
+func (s *Service) propagateExperimentContext(ctx context.Context, tenantID string, parent sessionstore.Session) *sessionstore.ExperimentContext {
+	if s.experiments == nil || parent.ExperimentContext == nil {
+		return nil
+	}
+	exp, err := s.experiments.Get(ctx, tenantID, parent.ExperimentContext.ExperimentID)
+	if err != nil {
+		return nil
+	}
+	prop := experiment.PropagateContext(
+		parent.ExperimentContext.ExperimentID,
+		parent.ExperimentContext.VariantID,
+		exp.Definition().Propagation,
+	)
+	if !prop.UseParentContext {
+		return nil
+	}
+	return &sessionstore.ExperimentContext{
+		ExperimentID: prop.ExperimentID,
+		VariantID:    prop.VariantID,
+		Inherited:    true,
+	}
 }
 
 // buildLineage walks the ParentSessionID chain from the parent up to

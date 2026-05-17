@@ -536,7 +536,7 @@ func main() {
 	credServer := credentialserver.New(credentialstore.NewMemory(nil))
 
 	// ----- MCP adapter -----
-	delegationSvc := delegation.NewService(sessions, delegation.Options{})
+	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,

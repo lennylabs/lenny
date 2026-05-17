@@ -11,7 +11,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
+	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -37,6 +39,121 @@ func newService(t *testing.T, store sessionstore.Store, idFn func() string) *del
 		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc: idFn,
 	})
+}
+
+// spec: §8.3 / §10.7 — a delegation child inherits the parent's
+// experimentContext per the experiment's propagation mode.
+
+func seedExperiment(t *testing.T, exps experimentstore.Store, id string, prop experiment.Propagation) {
+	t.Helper()
+	if err := exps.Create(context.Background(), experimentstore.Experiment{
+		ID: id, TenantID: "acme", Status: experiment.StatusActive,
+		BaseRuntime:   "claude",
+		Variants:      []experimentstore.Variant{{ID: "treatment", Weight: 0.5}},
+		TargetingMode: experiment.TargetingPercentage,
+		Sticky:        experiment.StickySession,
+		Propagation:   prop,
+	}); err != nil {
+		t.Fatalf("seed experiment %s: %v", id, err)
+	}
+}
+
+func seedEnrolledParent(t *testing.T, store sessionstore.Store, expID string) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		ExperimentContext: &sessionstore.ExperimentContext{ExperimentID: expID, VariantID: "treatment"},
+		CreatedAt:         now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed enrolled parent: %v", err)
+	}
+}
+
+func delegateChild(t *testing.T, svc *delegation.Service) sessionstore.Session {
+	t.Helper()
+	res, err := svc.Delegate(context.Background(), "acme", delegation.Request{
+		ParentSessionID:  "sess_parent",
+		RuntimeRef:       "gemini",
+		PoolRef:          "pool-b",
+		IsolationProfile: isolation.ProfileSandboxed,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	return res.Child
+}
+
+func TestDelegateInheritPropagatesParentContext(t *testing.T) {
+	store := memstore.New()
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp_1", experiment.PropagationInherit)
+	seedEnrolledParent(t, store, "exp_1")
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc: func() string { return "sess_child" }, Experiments: exps,
+	})
+	child := delegateChild(t, svc)
+	if child.ExperimentContext == nil {
+		t.Fatal("child has no experimentContext under inherit")
+	}
+	if child.ExperimentContext.ExperimentID != "exp_1" ||
+		child.ExperimentContext.VariantID != "treatment" || !child.ExperimentContext.Inherited {
+		t.Errorf("inherit: child context = %+v, want exp_1/treatment inherited", child.ExperimentContext)
+	}
+}
+
+func TestDelegateControlForcesControlVariant(t *testing.T) {
+	store := memstore.New()
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp_1", experiment.PropagationControl)
+	seedEnrolledParent(t, store, "exp_1")
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc: func() string { return "sess_child" }, Experiments: exps,
+	})
+	child := delegateChild(t, svc)
+	if child.ExperimentContext == nil {
+		t.Fatal("child has no experimentContext under control")
+	}
+	if child.ExperimentContext.VariantID != experiment.ControlVariantID || !child.ExperimentContext.Inherited {
+		t.Errorf("control: child context = %+v, want the control variant inherited", child.ExperimentContext)
+	}
+}
+
+func TestDelegateIndependentLeavesChildUnenrolled(t *testing.T) {
+	store := memstore.New()
+	exps := experimentstore.NewMemory()
+	seedExperiment(t, exps, "exp_1", experiment.PropagationIndependent)
+	seedEnrolledParent(t, store, "exp_1")
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc: func() string { return "sess_child" }, Experiments: exps,
+	})
+	if child := delegateChild(t, svc); child.ExperimentContext != nil {
+		t.Errorf("independent: child context = %+v, want nil — routed afresh", child.ExperimentContext)
+	}
+}
+
+func TestDelegateUnenrolledParentYieldsNoContext(t *testing.T) {
+	store := memstore.New()
+	exps := experimentstore.NewMemory()
+	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc: func() string { return "sess_child" }, Experiments: exps,
+	})
+	if child := delegateChild(t, svc); child.ExperimentContext != nil {
+		t.Errorf("child context = %+v, want nil — the parent is not enrolled", child.ExperimentContext)
+	}
+}
+
+func TestDelegateNoExperimentStoreYieldsNoContext(t *testing.T) {
+	store := memstore.New()
+	seedEnrolledParent(t, store, "exp_1")
+	svc := delegation.NewService(store, delegation.Options{
+		IDFunc: func() string { return "sess_child" },
+	})
+	if child := delegateChild(t, svc); child.ExperimentContext != nil {
+		t.Errorf("child context = %+v, want nil — no experiment store wired", child.ExperimentContext)
+	}
 }
 
 func TestDelegateHappyPath(t *testing.T) {
