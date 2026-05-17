@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
@@ -94,6 +95,7 @@ type Router struct {
 	connectors         connectorstore.Store
 	delegationPolicies delegationpolicystore.Store
 	credentialPools    credentialpoolstore.Store
+	customRoles        customrolestore.Store
 	tenantAccess       tenantaccessstore.Store
 	auditLog           AuditLog
 	tokenRevoker       IssuedTokenRevoker
@@ -252,6 +254,13 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetDelegationPolicy)))
 		mux.Handle("PUT /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
 		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
+	}
+	if r.customRoles != nil {
+		mux.Handle("POST /v1/admin/tenants/{id}/roles", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateCustomRole)))
+		mux.Handle("GET /v1/admin/tenants/{id}/roles", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListCustomRoles)))
+		mux.Handle("GET /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetCustomRole)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateCustomRole)))
+		mux.Handle("DELETE /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCustomRole)))
 	}
 	if r.credentialPools != nil {
 		mux.Handle("POST /v1/admin/credential-pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateCredentialPool)))

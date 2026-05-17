@@ -73,6 +73,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
@@ -520,6 +521,7 @@ func main() {
 		WithConnectors(connectors).
 		WithDelegationPolicies(delegationpolicystore.NewMemory()).
 		WithCredentialPools(credentialpoolstore.NewMemory()).
+		WithCustomRoles(customrolestore.NewMemory()).
 		WithTenantAccess(tenantaccessstore.NewMemory()).
 		WithSessions(sessions).
 		WithInteractions(interactions).
