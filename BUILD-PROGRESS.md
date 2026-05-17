@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8da4ca5` — §10.6 cross-environment membership verification (security fix). The
+  cross-environment delegation check previously trusted the parent session's
+  caller-supplied `Environment` field; `crossEnvReachable` now confirms the caller is a
+  genuine member of that environment before honoring its cross-environment
+  declarations, closing a path where a caller could borrow an environment's reach by
+  tagging a session with it.
 - `10282d0` — §15.1 OpenAPI: §4 runtime/pool tenant-access endpoints. With these, the
   embedded `openapi.json` covers every admin route the gateway registers.
 - `bb1df75` — §15.1 OpenAPI document completion. Adds the remaining undocumented admin
