@@ -231,6 +231,19 @@
               "onTimeout":      { "type": "string", "enum": ["fail","warn"] }
             }
           },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "interaction": { "type": "string", "enum": ["one_shot","multi_turn"] },
+              "injection": {
+                "type": "object",
+                "properties": {
+                  "supported": { "type": "boolean" },
+                  "modes":     { "type": "array", "items": { "type": "string", "enum": ["immediate","queued"] } }
+                }
+              }
+            }
+          },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
@@ -548,7 +561,11 @@
         "summary": "Inject a message batch into a session",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": { "200": { "description": "Delivered" }, "409": { "description": "Invalid state" } }
+        "responses": {
+          "200": { "description": "Delivered" },
+          "403": { "description": "Injection rejected — runtime has injection.supported false", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Invalid state" }
+        }
       }
     },
     "/v1/sessions/{id}/transcript": {
