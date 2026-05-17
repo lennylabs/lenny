@@ -69,7 +69,67 @@ func GatewayEventTypes() []EventType {
 // IsGatewayEventType reports whether t is a §16.6 gateway-emitted
 // operational-event type.
 func IsGatewayEventType(t EventType) bool {
-	for _, v := range gatewayEventCatalog {
+	return inCatalog(t, gatewayEventCatalog)
+}
+
+// The §16.6 lenny-ops-emitted operational-event short names. The
+// lenny-ops service writes these onto the same Redis stream and
+// in-memory buffer as the gateway-emitted events.
+const (
+	EventOpsHealthStatusChanged            EventType = "ops_health_status_changed"
+	EventEscalationCreated                 EventType = "escalation_created"
+	EventRemediationLockAcquired           EventType = "remediation_lock_acquired"
+	EventRemediationLockReleased           EventType = "remediation_lock_released"
+	EventRemediationLockExpired            EventType = "remediation_lock_expired"
+	EventRemediationLockStolen             EventType = "remediation_lock_stolen"
+	EventRemediationLockSplitBrainDetected EventType = "remediation_lock_split_brain_detected"
+	EventDriftDetected                     EventType = "drift_detected"
+	EventPlatformUpgradeCompleted          EventType = "platform_upgrade_completed"
+	EventPlatformUpgradeVerificationFailed EventType = "platform_upgrade_verification_failed"
+	EventPlatformUpgradeImagePullFailed    EventType = "platform_upgrade_image_pull_failed"
+	EventRestoreStarted                    EventType = "restore_started"
+	EventRestoreShardCompleted             EventType = "restore_shard_completed"
+	EventRestoreCompleted                  EventType = "restore_completed"
+	EventRestoreFailed                     EventType = "restore_failed"
+	EventEventDeliveryFailed               EventType = "event_delivery_failed"
+	EventPrometheusQueryTimeout            EventType = "prometheus_query_timeout"
+	EventLockSplitBrainDetected            EventType = "lock_split_brain_detected"
+	EventOperationProgressed               EventType = "operation_progressed"
+)
+
+// opsServiceEventCatalog is the §16.6 closed enumeration of the
+// operational-event types the lenny-ops service emits.
+var opsServiceEventCatalog = []EventType{
+	EventOpsHealthStatusChanged, EventEscalationCreated, EventRemediationLockAcquired,
+	EventRemediationLockReleased, EventRemediationLockExpired, EventRemediationLockStolen,
+	EventRemediationLockSplitBrainDetected, EventDriftDetected, EventPlatformUpgradeCompleted,
+	EventPlatformUpgradeVerificationFailed, EventPlatformUpgradeImagePullFailed,
+	EventRestoreStarted, EventRestoreShardCompleted, EventRestoreCompleted, EventRestoreFailed,
+	EventEventDeliveryFailed, EventPrometheusQueryTimeout, EventLockSplitBrainDetected,
+	EventOperationProgressed,
+}
+
+// OpsServiceEventTypes returns the §16.6 catalogue of lenny-ops-emitted
+// operational-event types. The slice is fresh on every call.
+func OpsServiceEventTypes() []EventType {
+	return append([]EventType(nil), opsServiceEventCatalog...)
+}
+
+// IsOpsServiceEventType reports whether t is a §16.6 lenny-ops-emitted
+// operational-event type.
+func IsOpsServiceEventType(t EventType) bool {
+	return inCatalog(t, opsServiceEventCatalog)
+}
+
+// IsKnownEventType reports whether t is in the §16.6 catalogue —
+// emitted by either the gateway or the lenny-ops service.
+func IsKnownEventType(t EventType) bool {
+	return IsGatewayEventType(t) || IsOpsServiceEventType(t)
+}
+
+// inCatalog reports whether t is one of the entries in catalog.
+func inCatalog(t EventType, catalog []EventType) bool {
+	for _, v := range catalog {
 		if t == v {
 			return true
 		}
