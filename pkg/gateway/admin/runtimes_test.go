@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/agentcard"
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -681,6 +682,67 @@ func TestCreateRuntimeRejectsInvalidCapabilityInferenceMode(t *testing.T) {
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("invalid capabilityInferenceMode: status %d, want 400", rr.Code)
+	}
+}
+
+func TestRuntimeToolCapabilityOverridesRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips toolCapabilityOverrides.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "rt",
+		Image: "lenny/rt@sha256:abc",
+		ToolCapabilityOverrides: map[string][]capabilityinference.Capability{
+			"deploy": {capabilityinference.CapExecute, capabilityinference.CapAdmin},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if len(created.ToolCapabilityOverrides["deploy"]) != 2 {
+		t.Errorf("create response toolCapabilityOverrides: %+v", created.ToolCapabilityOverrides)
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/rt", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if len(got.ToolCapabilityOverrides["deploy"]) != 2 ||
+		got.ToolCapabilityOverrides["deploy"][0] != capabilityinference.CapExecute {
+		t.Errorf("get response toolCapabilityOverrides: %+v", got.ToolCapabilityOverrides)
+	}
+
+	replacement := map[string][]capabilityinference.Capability{
+		"read_tool": {capabilityinference.CapRead},
+	}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{ToolCapabilityOverrides: &replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if _, ok := updated.ToolCapabilityOverrides["read_tool"]; !ok || len(updated.ToolCapabilityOverrides) != 1 {
+		t.Errorf("update did not replace toolCapabilityOverrides: %+v", updated.ToolCapabilityOverrides)
+	}
+}
+
+func TestCreateRuntimeRejectsInvalidToolCapabilityOverrides(t *testing.T) {
+	// §5.1: a toolCapabilityOverrides entry must name known §5.3
+	// capabilities.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "bad",
+		Image: "lenny/bad@sha256:abc",
+		ToolCapabilityOverrides: map[string][]capabilityinference.Capability{
+			"tool": {"superuser"},
+		},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid capability in overrides: status %d, want 400", rr.Code)
 	}
 }
 

@@ -44,21 +44,22 @@ func (r *Router) applyGeneratedCard(rt *runtimestore.Runtime, at time.Time) {
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name                    string                                `json:"name"`
-	Type                    string                                `json:"type,omitempty"`
-	Image                   string                                `json:"image,omitempty"`
-	ExecutionMode           string                                `json:"executionMode,omitempty"`
-	IsolationProfile        string                                `json:"isolationProfile,omitempty"`
-	IntegrationLevel        string                                `json:"integrationLevel,omitempty"`
-	Description             string                                `json:"description,omitempty"`
-	DelegationPolicyRef     string                                `json:"delegationPolicyRef,omitempty"`
-	Labels                  map[string]string                     `json:"labels,omitempty"`
-	AgentInterface          *runtimestore.AgentInterface          `json:"agentInterface,omitempty"`
-	PublishedMetadata       []runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
-	CapabilityInferenceMode string                                `json:"capabilityInferenceMode,omitempty"`
-	CreatedAt               string                                `json:"createdAt,omitempty"`
-	UpdatedAt               string                                `json:"updatedAt,omitempty"`
-	DeletedAt               string                                `json:"deletedAt,omitempty"`
+	Name                    string                                      `json:"name"`
+	Type                    string                                      `json:"type,omitempty"`
+	Image                   string                                      `json:"image,omitempty"`
+	ExecutionMode           string                                      `json:"executionMode,omitempty"`
+	IsolationProfile        string                                      `json:"isolationProfile,omitempty"`
+	IntegrationLevel        string                                      `json:"integrationLevel,omitempty"`
+	Description             string                                      `json:"description,omitempty"`
+	DelegationPolicyRef     string                                      `json:"delegationPolicyRef,omitempty"`
+	Labels                  map[string]string                           `json:"labels,omitempty"`
+	AgentInterface          *runtimestore.AgentInterface                `json:"agentInterface,omitempty"`
+	PublishedMetadata       []runtimestore.PublishedMetadataEntry       `json:"publishedMetadata,omitempty"`
+	CapabilityInferenceMode string                                      `json:"capabilityInferenceMode,omitempty"`
+	ToolCapabilityOverrides map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
+	CreatedAt               string                                      `json:"createdAt,omitempty"`
+	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
+	DeletedAt               string                                      `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
@@ -67,16 +68,17 @@ type RuntimePayload struct {
 // stay distinct: omitted leaves the descriptor unchanged, null clears
 // it, and an object replaces it.
 type UpdateRuntimeRequest struct {
-	Image                   *string                                `json:"image,omitempty"`
-	ExecutionMode           *string                                `json:"executionMode,omitempty"`
-	IsolationProfile        *string                                `json:"isolationProfile,omitempty"`
-	IntegrationLevel        *string                                `json:"integrationLevel,omitempty"`
-	Description             *string                                `json:"description,omitempty"`
-	DelegationPolicyRef     *string                                `json:"delegationPolicyRef,omitempty"`
-	Labels                  *map[string]string                     `json:"labels,omitempty"`
-	AgentInterface          json.RawMessage                        `json:"agentInterface,omitempty"`
-	PublishedMetadata       *[]runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
-	CapabilityInferenceMode *string                                `json:"capabilityInferenceMode,omitempty"`
+	Image                   *string                                      `json:"image,omitempty"`
+	ExecutionMode           *string                                      `json:"executionMode,omitempty"`
+	IsolationProfile        *string                                      `json:"isolationProfile,omitempty"`
+	IntegrationLevel        *string                                      `json:"integrationLevel,omitempty"`
+	Description             *string                                      `json:"description,omitempty"`
+	DelegationPolicyRef     *string                                      `json:"delegationPolicyRef,omitempty"`
+	Labels                  *map[string]string                           `json:"labels,omitempty"`
+	AgentInterface          json.RawMessage                              `json:"agentInterface,omitempty"`
+	PublishedMetadata       *[]runtimestore.PublishedMetadataEntry       `json:"publishedMetadata,omitempty"`
+	CapabilityInferenceMode *string                                      `json:"capabilityInferenceMode,omitempty"`
+	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 }
 
 // errAgentInterfaceOnMCP is returned from the update mutate closure when
@@ -97,6 +99,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		AgentInterface:          r.AgentInterface,
 		PublishedMetadata:       r.PublishedMetadata,
 		CapabilityInferenceMode: string(r.CapabilityInferenceMode),
+		ToolCapabilityOverrides: r.ToolCapabilityOverrides,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -161,6 +164,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := capabilityinference.ValidateOverrides(body.ToolCapabilityOverrides); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                    body.Name,
@@ -175,6 +182,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		AgentInterface:          body.AgentInterface,
 		PublishedMetadata:       body.PublishedMetadata,
 		CapabilityInferenceMode: capabilityinference.Mode(body.CapabilityInferenceMode),
+		ToolCapabilityOverrides: body.ToolCapabilityOverrides,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -322,6 +330,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.ToolCapabilityOverrides != nil {
+		if err := capabilityinference.ValidateOverrides(*body.ToolCapabilityOverrides); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -356,6 +370,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.CapabilityInferenceMode != nil {
 			rt.CapabilityInferenceMode = capabilityinference.Mode(*body.CapabilityInferenceMode)
+		}
+		if body.ToolCapabilityOverrides != nil {
+			rt.ToolCapabilityOverrides = *body.ToolCapabilityOverrides
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -432,6 +449,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.CapabilityInferenceMode != nil {
 		out = append(out, "capabilityInferenceMode")
+	}
+	if b.ToolCapabilityOverrides != nil {
+		out = append(out, "toolCapabilityOverrides")
 	}
 	return out
 }
