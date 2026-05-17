@@ -31,6 +31,12 @@ func sessionID(t *testing.T) string {
 	return "sess-" + hex.EncodeToString(b[:])
 }
 
+// spec: 12.2
+// diagnosis: the Redis-backed LeaseStore in pkg/gateway/leasestore did
+// not behave as specified. Acquire must be exclusive but idempotent
+// for the same holder, Renew and Release must guard against the wrong
+// holder, a lease must expire after its TTL, and a non-positive TTL
+// must be rejected.
 func TestLeaseStoreContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

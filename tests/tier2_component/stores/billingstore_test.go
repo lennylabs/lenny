@@ -18,6 +18,13 @@ import (
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
 )
 
+// spec: 11.2.1
+// diagnosis: the Postgres-backed billing event ledger in
+// pkg/gateway/billingstore/pgstore did not behave as specified. Append
+// must round-trip an event, the per-tenant sequence_number must be
+// monotonic, Since must replay events after a sequence and respect its
+// limit, the ledger must be isolated per tenant, and an event with no
+// event type must be rejected.
 func TestBillingStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

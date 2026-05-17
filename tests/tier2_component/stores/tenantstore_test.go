@@ -25,6 +25,14 @@ func tenantID(t *testing.T) string {
 	return "acme-" + newUUID(t)[:8]
 }
 
+// spec: 15.1, 10.2
+// diagnosis: the Postgres-backed tenant registry in
+// pkg/gateway/tenantstore/pgstore did not behave as specified. Create
+// and Get must round-trip a tenant, id validation must reject
+// duplicates and malformed ids, Update must re-apply and advance
+// updated_at, the soft-delete lifecycle must honor the IncludeDeleted
+// list filter, and the auth.TenantRegistry IsRegistered probe must
+// track the tenant lifecycle.
 func TestTenantStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

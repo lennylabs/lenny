@@ -32,6 +32,13 @@ func uniq(t *testing.T) string {
 
 var refTime = time.Date(2026, 5, 15, 14, 30, 0, 0, time.UTC)
 
+// spec: 11.2, 12.4
+// diagnosis: the Redis-backed token-usage counter in
+// pkg/gateway/quotastore did not behave as specified. Add must
+// accumulate within a window, distinct windows and periods must be
+// separate counters, tenant and user counters must be isolated, the
+// window key must carry a TTL, and Usage must compose with the
+// pkg/quota Check arithmetic.
 func TestQuotaCounterContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

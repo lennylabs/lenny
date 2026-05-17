@@ -38,6 +38,12 @@ func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id s
 	}
 }
 
+// spec: 11.7
+// diagnosis: the Postgres audit chain in pkg/gateway/auditstore did
+// not behave as specified. Append must build a verifiable per-tenant
+// chain with monotonic sequence numbers and prev_hash links, Verify
+// must detect a tampered row, chains must be isolated per tenant, and
+// Get must return ErrNotFound for an absent sequence number.
 func TestAuditStoreContract(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

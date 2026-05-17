@@ -23,6 +23,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
+// spec: 15.1, 15.2, 11.7, 25.3, 16.1
+// diagnosis: a surface of the real cmd/lenny-gateway binary failed to
+// compose end-to-end in dev mode. The admin API, session lifecycle,
+// message injection, transcript and tree introspection, derive flow,
+// §11.7 audit chain, §25.3 health API, §16.1 metrics endpoint, §15.1
+// OpenAPI document, or §15.2 MCP adapter did not behave as specified
+// when driven through one process.
 func TestGatewayFullSurfaceE2E(t *testing.T) {
 	gw := gateway.StartWith(t, "--dev-mode")
 	base := gw.BaseURL()

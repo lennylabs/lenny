@@ -20,6 +20,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/idempotency"
 )
 
+// spec: 11.5
+// diagnosis: the Postgres-backed idempotency-key store in
+// pkg/gateway/middleware/idempotency/pgstore did not behave as
+// specified. Put and Get must round-trip a record, Put must replace on
+// key conflict, keys must be isolated per tenant, a record past the
+// 24-hour TTL must read as absent, DeleteExpired must reclaim only
+// expired rows, and an over-long key must be rejected.
 func TestIdempotencyStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

@@ -38,6 +38,14 @@ func sampleRuntime(name string) runtimestore.Runtime {
 	}
 }
 
+// spec: 5.1
+// diagnosis: the Postgres-backed runtime registry in
+// pkg/gateway/runtimestore/pgstore did not behave as specified. Create
+// and Get must round-trip a runtime including its jsonb-encoded
+// descriptor blocks, name validation must reject duplicates and
+// invalid names, Update must re-apply and advance updated_at, and the
+// soft-delete lifecycle must honor the Type and IncludeDeleted list
+// filters.
 func TestRuntimeStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

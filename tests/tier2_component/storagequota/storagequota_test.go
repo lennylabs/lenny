@@ -31,6 +31,13 @@ func tenantID(t *testing.T) string {
 	return "t-" + hex.EncodeToString(b[:])
 }
 
+// spec: 11.2
+// diagnosis: the Redis-backed storage-quota counter in
+// pkg/gateway/storagequota/redisstore did not behave as specified.
+// Reserve must accumulate and report prior usage, an over-quota
+// reserve must be rejected and leave the counter intact, Adjust must
+// release and clamp at zero, and concurrent reservations must never
+// exceed the quota.
 func TestStorageQuotaCounterContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

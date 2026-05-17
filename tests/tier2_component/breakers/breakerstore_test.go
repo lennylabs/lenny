@@ -46,6 +46,13 @@ func runtimeBreaker(name, runtime string) circuitbreaker.Breaker {
 	}
 }
 
+// spec: 11.6, 12.4
+// diagnosis: the Redis-backed circuit-breaker registry in
+// pkg/gateway/breakerstore/redisstore did not behave as specified.
+// Open and Get must round-trip a breaker, the scope-immutability
+// invariant must reject a changed limit tier or scope, invalid
+// breakers must be rejected, Close must transition state, and List and
+// Snapshot must project the registry correctly.
 func TestBreakerStoreContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

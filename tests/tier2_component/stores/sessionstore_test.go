@@ -65,6 +65,13 @@ func startStore(t *testing.T) (*pgstore.Store, *containers.Postgres) {
 	return pgstore.New(pg.Pool), pg
 }
 
+// spec: 12.2.1
+// diagnosis: the Postgres-backed SessionStore in
+// pkg/gateway/sessionstore/pgstore did not behave as specified. Create
+// and Get must round-trip a session including its jsonb workspace
+// plan, the sentinel errors and cross-tenant isolation must hold, the
+// SELECT ... FOR UPDATE mutate path must strictly advance UpdatedAt,
+// List filters must apply, and Delete must cascade to session_messages.
 func TestSessionStoreContract(t *testing.T) {
 	t.Parallel()
 	store, pg := startStore(t)

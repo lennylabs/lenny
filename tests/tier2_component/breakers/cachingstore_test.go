@@ -44,6 +44,12 @@ func hasOpen(store *cachingstore.Store, name string) bool {
 	return false
 }
 
+// spec: 11.6
+// diagnosis: the circuit-breaker caching layer in
+// pkg/gateway/breakerstore/cachingstore did not propagate a change
+// across replicas. An open or close must reach peer caches via Redis
+// pub/sub, and the periodic-refresh fallback must reconcile a change
+// whose pub/sub message was missed.
 func TestBreakerCacheContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

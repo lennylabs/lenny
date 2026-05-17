@@ -45,6 +45,12 @@ func blobURI(part string, ttl time.Duration) blobstore.URI {
 	}
 }
 
+// spec: 4.5, 12.5
+// diagnosis: the MinIO-backed blob store in pkg/blobstore/miniostore
+// did not behave as specified. Put, Get, and Stat must round-trip a
+// blob, the §4.5 write-once guarantee must reject a second Put with
+// ErrConflict, an expired blob must read as ErrNotFound, and the §12.5
+// drain-readiness Probe must report the bucket healthy.
 func TestMinIOStoreContract(t *testing.T) {
 	store, _ := startMinIOStore(t)
 

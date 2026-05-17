@@ -50,6 +50,12 @@ func seedSession(t *testing.T, store *memstore.Store, tenant, id string, state s
 	}
 }
 
+// spec: 10.1
+// diagnosis: the lease coordination sweeper in
+// pkg/gateway/coordination did not behave as specified. A sweep must
+// acquire the coordination lease for every non-terminal session, leave
+// terminal sessions and other replicas' sessions alone, and be
+// idempotent across passes.
 func TestSweeperContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

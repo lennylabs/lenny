@@ -19,6 +19,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
+// spec: 25.3
+// diagnosis: the Postgres backend health checker in
+// pkg/gateway/health/backends did not behave as specified. It must
+// report healthy against a live database and unhealthy against an
+// unreachable one, with the §25.3 operability hints (SuggestedAction
+// and RunbookRef) populated on an unhealthy component.
 func TestPostgresChecker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -52,6 +58,12 @@ func TestPostgresChecker(t *testing.T) {
 	})
 }
 
+// spec: 25.3
+// diagnosis: the Redis backend health checker in
+// pkg/gateway/health/backends did not behave as specified. It must
+// report healthy against a live Redis and unhealthy against an
+// unreachable one, with the §25.3 operability hints (SuggestedAction
+// and RunbookRef) populated on an unhealthy component.
 func TestRedisChecker(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

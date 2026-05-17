@@ -58,6 +58,10 @@ func newServerWithRecorder(t *testing.T, rec tokenservice.IssuedTokenStore) (*ht
 
 // spec: 13.3 (write-before-issue: the issued token is recorded before
 // it is returned to the caller)
+// diagnosis: the Token Service in pkg/tokenservice did not record the
+// issued-token metadata before returning a minted token. The recorded
+// JTI, tenant, subject, audience, narrowed scope, SHA-256 token hash,
+// or timestamps disagree with the token actually handed back.
 func TestTokenServiceRecordsBeforeIssue(t *testing.T) {
 	rec := &fakeRecorder{}
 	ts, signer := newServerWithRecorder(t, rec)
@@ -112,6 +116,10 @@ func TestTokenServiceRecordsBeforeIssue(t *testing.T) {
 
 // spec: 13.3 (a record failure must block issuance — the token is
 // never handed out if it could not be recorded)
+// diagnosis: the Token Service in pkg/tokenservice handed out a token
+// even though the issued-token record failed. A failed Record must
+// abort issuance with HTTP 500 and an empty body, so no token exists
+// that the store has not recorded.
 func TestTokenServiceRefusesOnRecordFailure(t *testing.T) {
 	rec := &fakeRecorder{err: errors.New("postgres unavailable")}
 	ts, signer := newServerWithRecorder(t, rec)

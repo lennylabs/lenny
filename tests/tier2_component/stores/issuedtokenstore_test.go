@@ -20,6 +20,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 )
 
+// spec: 12.2
+// diagnosis: the Postgres-backed TokenIssuanceStore in
+// pkg/gateway/issuedtokenstore did not behave as specified. Record and
+// Get must round-trip a token, a duplicate JTI must be rejected,
+// cross-tenant Get must return ErrNotFound, Revoke must mark the
+// token, ListRevoked must return revoked tokens ordered by revoked_at,
+// and DeleteExpired must remove only past-expiry rows.
 func TestTokenIssuanceStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

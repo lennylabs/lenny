@@ -21,6 +21,13 @@ import (
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 )
 
+// spec: 10.2
+// diagnosis: the Postgres-backed user registry in
+// pkg/gateway/userstore/pgstore did not behave as specified. Create
+// and Get must round-trip a user, validation must reject duplicates,
+// malformed subjects, and unrecognised roles, cross-tenant Get must
+// return ErrNotFound, Update must re-validate roles, and the
+// soft-delete lifecycle must honor the list filters.
 func TestUserStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

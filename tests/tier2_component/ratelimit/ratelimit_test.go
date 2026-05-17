@@ -29,6 +29,12 @@ func rateKey(t *testing.T) string {
 	return "k-" + hex.EncodeToString(b[:])
 }
 
+// spec: 11.1
+// diagnosis: the Redis-backed request-rate counter in
+// pkg/gateway/ratelimit/redisstore did not behave as specified. Counts
+// must accumulate within a one-minute window, the window must reset
+// when the minute advances, and concurrent increments must be counted
+// atomically without losing an increment.
 func TestRateLimitCounterContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})

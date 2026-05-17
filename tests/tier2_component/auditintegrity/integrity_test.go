@@ -36,6 +36,9 @@ func mustExec(t *testing.T, pg *containers.Postgres, sql string) {
 }
 
 // spec: 11.7
+// diagnosis: integrity.Verify rejected a freshly migrated production
+// schema. The audit integrity checks in pkg/audit/integrity disagree
+// with the §11.7 schema produced by the migrations under migrations/.
 func TestVerifyAcceptsMigratedSchema(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -45,6 +48,10 @@ func TestVerifyAcceptsMigratedSchema(t *testing.T) {
 }
 
 // spec: 11.7 item 1
+// diagnosis: integrity.VerifyGrants did not detect an UPDATE grant on
+// the audit_log ledger. The grant-inspection query in
+// pkg/audit/integrity fails to flag forbidden write privileges on the
+// append-only audit tables.
 func TestVerifyGrantsDetectsForbiddenLedgerGrant(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -64,6 +71,10 @@ func TestVerifyGrantsDetectsForbiddenLedgerGrant(t *testing.T) {
 }
 
 // spec: 11.7 item 1 (trigger-enabled check)
+// diagnosis: integrity.VerifyTriggersEnabled did not report a disabled
+// or dropped integrity trigger. The trigger-enumeration query in
+// pkg/audit/integrity misses triggers that are disabled via ALTER
+// TABLE or removed via DROP TRIGGER.
 func TestVerifyTriggersDetectsDisabledAndDropped(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)
@@ -87,6 +98,10 @@ func TestVerifyTriggersDetectsDisabledAndDropped(t *testing.T) {
 }
 
 // spec: 11.7 item 7
+// diagnosis: integrity.VerifyErasureGuard did not detect a trigger
+// function rewritten without its erasure-mode guard clause. The
+// function-body inspection in pkg/audit/integrity fails to confirm the
+// guard is present in lenny_audit_immutability.
 func TestVerifyErasureGuardDetectsStrippedGuard(t *testing.T) {
 	t.Parallel()
 	pg := startPG(t)

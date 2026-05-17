@@ -43,6 +43,13 @@ func mustCreate(t *testing.T, ctx context.Context, c client.Client, obj client.O
 // unit tests in pkg/controller/warmpool, this exercises the real CRD
 // schema validation, the status subresource, GenerateName, and owner
 // references.
+//
+// spec: 12.2.4
+// diagnosis: the WarmPoolController in pkg/controller/warmpool failed
+// to converge a SandboxWarmPool toward its minWarm target against a
+// real API server. Either the lenny.dev CRD schema rejected a
+// controller write, the status subresource is misconfigured, owner
+// references are not stamped, or reconcile is not idempotent.
 func TestWarmPoolController(t *testing.T) {
 	env := envtest.Start(t)
 

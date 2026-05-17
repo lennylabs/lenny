@@ -26,6 +26,13 @@ func connectorID(t *testing.T) string {
 	return "conn-" + newUUID(t)[:8]
 }
 
+// spec: 9.3
+// diagnosis: the Postgres-backed connector registry in
+// pkg/gateway/connectorstore/pgstore did not behave as specified.
+// Create and Get must round-trip a connector, the §9.3 validation must
+// reject SSRF-prone http:// endpoints and inline client secrets,
+// Update must re-validate and advance updated_at, and the soft-delete
+// lifecycle must honor the IncludeDeleted list filter.
 func TestConnectorStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

@@ -38,6 +38,12 @@ func entry(role, content string) transcriptstore.Entry {
 	return transcriptstore.Entry{Role: role, Content: content}
 }
 
+// spec: 15.1
+// diagnosis: the Postgres-backed transcript registry in
+// pkg/gateway/transcriptstore/pgstore did not behave as specified.
+// Append must assign continuing monotonic sequence numbers, Get must
+// return entries in order, an empty append must be a no-op, Page must
+// walk the transcript, and cross-tenant Get must return ErrNotFound.
 func TestTranscriptStoreContract(t *testing.T) {
 	t.Parallel()
 	sess, pg := startStore(t)
