@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
 // spec: §10.7 ExperimentRouter — variant assignment at session creation.
@@ -121,6 +123,108 @@ func seedRoutableExperiment(t *testing.T, exps experimentstore.Store, id string,
 		CreatedAt:     createdAt,
 	}); err != nil {
 		t.Fatalf("seed experiment %s: %v", id, err)
+	}
+}
+
+// externalExperiment seeds an active mode:external experiment on the
+// claude-code base runtime with a single `treatment` variant.
+func externalExperiment(t *testing.T, exps experimentstore.Store, id, variantRuntime string) {
+	t.Helper()
+	if err := exps.Create(context.Background(), experimentstore.Experiment{
+		ID: id, TenantID: "default", Status: experiment.StatusActive,
+		BaseRuntime: "claude-code",
+		Variants: []experimentstore.Variant{
+			{ID: "treatment", Runtime: variantRuntime, Weight: 0.5},
+		},
+		TargetingMode: experiment.TargetingExternal,
+		Sticky:        experiment.StickySession,
+		Propagation:   experiment.PropagationInherit,
+	}); err != nil {
+		t.Fatalf("seed external experiment: %v", err)
+	}
+}
+
+// ofrepTenant seeds tenant `default` with an OFREP experimentTargeting
+// block pointing at endpoint.
+func ofrepTenant(t *testing.T, endpoint string) tenantstore.Store {
+	t.Helper()
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{
+		ID: "default",
+		ExperimentTargeting: experiment.TargetingConfig{
+			Provider: experiment.TargetingProviderOFREP,
+			OFREP:    &experiment.OFREPConfig{Endpoint: endpoint},
+		},
+	}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	return tenants
+}
+
+func TestExperimentRouterEnrollsViaOFREP(t *testing.T) {
+	ofrepSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"variant":"treatment","reason":"TARGETING_MATCH"}`))
+	}))
+	defer ofrepSrv.Close()
+
+	exps := experimentstore.NewMemory()
+	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Experiments: exps,
+		Tenants:     ofrepTenant(t, ofrepSrv.URL),
+		IDFunc:      func() string { return "sess_ext" },
+	})
+
+	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	got, _ := store.Get(context.Background(), "default", "sess_ext")
+	if got.ExperimentContext == nil || got.ExperimentContext.ExperimentID != "exp_ext" {
+		t.Fatalf("session not enrolled via OFREP: %+v", got.ExperimentContext)
+	}
+	if got.ExperimentContext.VariantID != "treatment" {
+		t.Errorf("variantId = %q, want treatment", got.ExperimentContext.VariantID)
+	}
+	if got.RuntimeRef != "claude-code-v2" {
+		t.Errorf("runtime = %q, want the variant runtime claude-code-v2", got.RuntimeRef)
+	}
+}
+
+func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
+	// A provider error makes no external assignment and emits the §16.6
+	// targeting_failed event.
+	ofrepSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ofrepSrv.Close()
+
+	exps := experimentstore.NewMemory()
+	externalExperiment(t, exps, "exp_ext", "claude-code-v2")
+	emitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), "test")
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		Experiments: exps,
+		Tenants:     ofrepTenant(t, ofrepSrv.URL),
+		OpsEmitter:  emitter,
+		IDFunc:      func() string { return "sess_fail" },
+	})
+
+	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	got, _ := store.Get(context.Background(), "default", "sess_fail")
+	if got.ExperimentContext != nil {
+		t.Errorf("session enrolled despite an OFREP failure: %+v", got.ExperimentContext)
+	}
+	page := emitter.Buffer().Query(0, opsevents.EventFilter{
+		EventType: string(opsevents.EventExperimentTargetingFailed),
+	}, 0)
+	if len(page.Events) != 1 {
+		t.Errorf("targeting_failed events = %d, want 1", len(page.Events))
 	}
 }
 

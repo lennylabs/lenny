@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/ofrep"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -93,7 +95,12 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 	for i, e := range candidates {
 		defs[i] = e.Definition()
 	}
-	assignment := experiment.Route(defs, row.UserID, row.ID)
+	// §10.7: percentage-mode experiments bucket by the built-in hash;
+	// mode:external experiments resolve through the tenant's OpenFeature
+	// provider. A tenant with no external targeting yields a nil
+	// evaluator and RouteMixed skips external-mode experiments.
+	assignment := experiment.RouteMixed(defs, row.UserID, row.ID,
+		s.buildExternalEvaluator(ctx, row, candidates))
 	if assignment.ExperimentID == "" {
 		return nil
 	}
@@ -143,6 +150,126 @@ func (s *Server) emitMultiEligibleSkipped(row *sessionstore.Session, enrolledID 
 		Source:          "/v1/sessions",
 		Type:            opsevents.EventExperimentMultiEligibleSkipped.CloudEventsType(),
 		Severity:        "info",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// buildExternalEvaluator returns the §10.7 OpenFeature external-targeting
+// evaluator for a session, or nil when the tenant configures no
+// external targeting or a provider this build does not ship. The
+// closure calls the OFREP endpoint once per mode:external experiment;
+// per §10.7 a provider failure makes no external assignment for any
+// experiment, so the closure latches the failure, emits
+// experiment.targeting_failed once, and returns no enrollment for
+// every subsequent experiment.
+func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.Session, candidates []experimentstore.Experiment) experiment.ExternalEvaluator {
+	if s.tenants == nil {
+		return nil
+	}
+	tenant, err := s.tenants.Get(ctx, row.TenantID)
+	if err != nil || !tenant.ExperimentTargeting.Configured() {
+		return nil
+	}
+	cfg := tenant.ExperimentTargeting
+	// v1 ships the OFREP transport; the built-in SDK providers
+	// (launchdarkly, statsig, unleash) need their vendor SDKs.
+	if cfg.Provider != experiment.TargetingProviderOFREP || cfg.OFREP == nil {
+		return nil
+	}
+	client, err := ofrep.New(ofrep.Options{
+		BaseURL: cfg.OFREP.Endpoint,
+		Headers: cfg.OFREP.Headers,
+		Timeout: time.Duration(cfg.EffectiveTimeoutMs()) * time.Millisecond,
+	})
+	if err != nil {
+		return nil
+	}
+	evalCtx := experiment.BuildEvaluationContext(experiment.EvaluationContextInput{
+		UserID:    row.UserID,
+		TenantID:  row.TenantID,
+		SessionID: row.ID,
+		Runtime:   row.RuntimeRef,
+	})
+	failed := false
+	return func(experimentID string) (string, bool) {
+		if failed {
+			return "", false
+		}
+		result, err := client.Evaluate(ctx, experimentID, evalCtx)
+		if err != nil {
+			failed = true
+			s.emitExperimentTargetingFailed(row, string(cfg.Provider), err)
+			return "", false
+		}
+		variantID, known := experiment.ResolveExternalVariant(
+			result.Variant, result.Value, variantIDsOf(candidates, experimentID))
+		if !known {
+			s.emitExperimentUnknownVariant(row, experimentID, string(cfg.Provider), result.Variant)
+			return "", false
+		}
+		return variantID, true
+	}
+}
+
+// variantIDsOf returns the registered variant IDs of the named
+// experiment among candidates — the set ResolveExternalVariant matches
+// a provider response against.
+func variantIDsOf(candidates []experimentstore.Experiment, experimentID string) []string {
+	for _, e := range candidates {
+		if e.ID != experimentID {
+			continue
+		}
+		ids := make([]string, len(e.Variants))
+		for i, v := range e.Variants {
+			ids[i] = v.ID
+		}
+		return ids
+	}
+	return nil
+}
+
+// emitExperimentTargetingFailed records the §16.6
+// experiment.targeting_failed operational event. Best-effort: a nil
+// emitter is a no-op.
+func (s *Server) emitExperimentTargetingFailed(row *sessionstore.Session, provider string, evalErr error) {
+	if s.opsEmitter == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"tenant_id": row.TenantID,
+		"user_id":   row.UserID,
+		"provider":  provider,
+		"error":     evalErr.Error(),
+	})
+	s.opsEmitter.Emit(opsevents.OperationalEvent{
+		Source:          "/v1/sessions",
+		Type:            opsevents.EventExperimentTargetingFailed.CloudEventsType(),
+		Severity:        "warning",
+		DataContentType: "application/json",
+		Data:            data,
+	})
+}
+
+// emitExperimentUnknownVariant records the §16.6
+// experiment.unknown_variant_from_provider operational event when an
+// OpenFeature provider returns a variant the experiment does not
+// register. Best-effort: a nil emitter is a no-op.
+func (s *Server) emitExperimentUnknownVariant(row *sessionstore.Session, experimentID, provider, rawVariant string) {
+	if s.opsEmitter == nil {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"tenant_id":     row.TenantID,
+		"user_id":       row.UserID,
+		"experiment_id": experimentID,
+		"provider":      provider,
+		"raw_variant":   rawVariant,
+	})
+	s.opsEmitter.Emit(opsevents.OperationalEvent{
+		Source:          "/v1/sessions",
+		Type:            opsevents.EventExperimentUnknownVariantFromProvider.CloudEventsType(),
+		Severity:        "warning",
 		DataContentType: "application/json",
 		Data:            data,
 	})
