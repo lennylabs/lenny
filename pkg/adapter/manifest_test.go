@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,53 @@ import (
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+func TestNewMCPNonce(t *testing.T) {
+	a, err := newMCPNonce()
+	if err != nil {
+		t.Fatalf("newMCPNonce: %v", err)
+	}
+	raw, err := hex.DecodeString(a)
+	if err != nil {
+		t.Errorf("MCP nonce %q is not valid hex: %v", a, err)
+	}
+	if len(raw) != MCPNonceBytes {
+		t.Errorf("MCP nonce decodes to %d bytes, want %d", len(raw), MCPNonceBytes)
+	}
+	if b, _ := newMCPNonce(); a == b {
+		t.Error("newMCPNonce returned the same value twice")
+	}
+}
+
+func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+
+	readNonce := func() string {
+		if err := srv.writeSessionManifest("sess-n", nil, nil); err != nil {
+			t.Fatalf("writeSessionManifest: %v", err)
+		}
+		b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		var m Manifest
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("decode manifest: %v", err)
+		}
+		return m.MCPNonce
+	}
+
+	first := readNonce()
+	raw, err := hex.DecodeString(first)
+	if err != nil || len(raw) != MCPNonceBytes {
+		t.Errorf("manifest mcpNonce = %q, want a %d-byte hex string", first, MCPNonceBytes)
+	}
+	// §15.4.3: the nonce is regenerated per session manifest write.
+	if second := readNonce(); second == first {
+		t.Error("writeSessionManifest reused the MCP nonce across writes")
+	}
+}
 
 func TestWriteManifest(t *testing.T) {
 	dir := t.TempDir()

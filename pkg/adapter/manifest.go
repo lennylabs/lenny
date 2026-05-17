@@ -3,6 +3,8 @@
 package adapter
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,9 @@ import (
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// MCPNonceBytes is the §15.4.3 intra-pod MCP nonce length: 256 bits.
+const MCPNonceBytes = 32
 
 // ManifestVersion is the §15.4 adapter-manifest schema version.
 const ManifestVersion = 1
@@ -30,9 +35,9 @@ type ManifestExperimentContext struct {
 }
 
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
-// v1 carries the session metadata a Basic-level runtime needs; the
-// intra-pod MCP fields (mcpNonce, platformMcpServer, adapterLocalTools)
-// are added with the MCP fabric.
+// v1 carries the session metadata a Basic-level runtime needs and the
+// §15.4.3 intra-pod MCP nonce; the platformMcpServer and
+// adapterLocalTools fields are added with the MCP server.
 type Manifest struct {
 	Version           int                        `json:"version"`
 	SessionID         string                     `json:"sessionId"`
@@ -42,6 +47,23 @@ type Manifest struct {
 	// runtime uses to stitch its native traces into the parent's trace
 	// tree. Omitted when no tracing context is set.
 	TracingContext map[string]string `json:"tracingContext,omitempty"`
+	// MCPNonce is the §15.4.3 intra-pod MCP authentication nonce: a
+	// random 256-bit hex string the runtime presents on the MCP
+	// initialize handshake to every adapter-local MCP server. The
+	// adapter rejects an intra-pod MCP connection that does not present
+	// it. Omitted when no manifest directory is configured.
+	MCPNonce string `json:"mcpNonce,omitempty"`
+}
+
+// newMCPNonce returns a fresh §15.4.3 intra-pod MCP nonce: a random
+// 256-bit value, lowercase hex-encoded. A new nonce is generated for
+// every session manifest write.
+func newMCPNonce() (string, error) {
+	b := make([]byte, MCPNonceBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("adapter: generate MCP nonce: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // WriteManifest writes m as adapter-manifest.json into dir. The file is
@@ -68,12 +90,17 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 	if s.ManifestDir == "" {
 		return nil
 	}
+	nonce, err := newMCPNonce()
+	if err != nil {
+		return err
+	}
 	return WriteManifest(s.ManifestDir, Manifest{
 		Version:           ManifestVersion,
 		SessionID:         sessionID,
 		WorkspaceRoot:     s.WorkspaceRoot,
 		ExperimentContext: manifestExperimentContext(ec),
 		TracingContext:    tc,
+		MCPNonce:          nonce,
 	})
 }
 
