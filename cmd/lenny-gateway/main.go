@@ -30,6 +30,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -674,6 +675,20 @@ func main() {
 	if breakerCache != nil {
 		healthAgg.Register(backends.CircuitBreakerCache(breakerCache, "circuit-breaker-cache"))
 	}
+	// §25.3: emit a health_status_changed operational event when the
+	// aggregate health verdict transitions.
+	healthAgg.OnTransition(func(prev, curr health.Status) {
+		data, _ := json.Marshal(map[string]any{
+			"oldStatus": string(prev), "newStatus": string(curr),
+		})
+		opsEmitter.Emit(opsevents.OperationalEvent{
+			Source:          "/v1/admin/health",
+			Type:            "dev.lenny.health_status_changed",
+			Severity:        "warning",
+			DataContentType: "application/json",
+			Data:            data,
+		})
+	})
 	healthHandler := health.Handler(healthAgg)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)

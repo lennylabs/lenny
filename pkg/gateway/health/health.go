@@ -104,13 +104,25 @@ type Report struct {
 // Aggregator holds the registered Checkers and rolls them up.
 // Goroutine-safe.
 type Aggregator struct {
-	mu       sync.RWMutex
-	checkers map[string]Checker
+	mu           sync.RWMutex
+	checkers     map[string]Checker
+	lastStatus   Status
+	onTransition func(prev, curr Status)
 }
 
 // NewAggregator returns an empty Aggregator.
 func NewAggregator() *Aggregator {
 	return &Aggregator{checkers: map[string]Checker{}}
+}
+
+// OnTransition registers a callback the Aggregator invokes when a
+// Report computes an aggregate status that differs from the previous
+// Report's. It is the §25.3 health_status_changed hook. The first
+// Report establishes the baseline and fires no transition.
+func (a *Aggregator) OnTransition(fn func(prev, curr Status)) {
+	a.mu.Lock()
+	a.onTransition = fn
+	a.mu.Unlock()
 }
 
 // Register adds a Checker. A later Register with the same Name
@@ -143,6 +155,17 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 		}
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
+
+	// §25.3: detect an aggregate-status transition against the previous
+	// Report and fire the health_status_changed hook outside the lock.
+	a.mu.Lock()
+	prev := a.lastStatus
+	a.lastStatus = worst
+	fn := a.onTransition
+	a.mu.Unlock()
+	if fn != nil && prev != "" && prev != worst {
+		fn(prev, worst)
+	}
 	return Report{Status: worst, Components: components}
 }
 

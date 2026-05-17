@@ -12,6 +12,35 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 )
 
+func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
+	// §25.3: the OnTransition hook fires when the aggregate status
+	// changes between Reports — the health_status_changed signal.
+	agg := health.NewAggregator()
+	status := health.StatusHealthy
+	agg.Register(health.CheckerFunc{
+		ComponentName: "db",
+		Fn:            func(context.Context) health.Component { return health.Component{Status: status} },
+	})
+	var transitions []string
+	agg.OnTransition(func(prev, curr health.Status) {
+		transitions = append(transitions, string(prev)+"->"+string(curr))
+	})
+
+	// The first Report establishes the baseline and fires nothing.
+	agg.Report(context.Background())
+	if len(transitions) != 0 {
+		t.Fatalf("first report must not fire a transition: %v", transitions)
+	}
+	// The status degrades — one transition fires.
+	status = health.StatusUnhealthy
+	agg.Report(context.Background())
+	// A further Report at the same status fires nothing.
+	agg.Report(context.Background())
+	if len(transitions) != 1 || transitions[0] != "healthy->unhealthy" {
+		t.Errorf("transitions = %v, want one healthy->unhealthy", transitions)
+	}
+}
+
 func healthy(name string) health.Checker {
 	return health.CheckerFunc{
 		ComponentName: name,
