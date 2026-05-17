@@ -82,6 +82,36 @@ type TargetingConfig struct {
 // Configured reports whether the tenant has set up external targeting.
 func (c TargetingConfig) Configured() bool { return c.Provider != "" }
 
+// Clone returns a deep copy of the config so a store never shares the
+// pointed-to provider sub-blocks or the OFREP header map with a
+// caller. The scalar fields are copied by value.
+func (c TargetingConfig) Clone() TargetingConfig {
+	cp := c
+	if c.OFREP != nil {
+		o := *c.OFREP
+		if c.OFREP.Headers != nil {
+			o.Headers = make(map[string]string, len(c.OFREP.Headers))
+			for k, v := range c.OFREP.Headers {
+				o.Headers[k] = v
+			}
+		}
+		cp.OFREP = &o
+	}
+	if c.LaunchDarkly != nil {
+		ld := *c.LaunchDarkly
+		cp.LaunchDarkly = &ld
+	}
+	if c.Statsig != nil {
+		s := *c.Statsig
+		cp.Statsig = &s
+	}
+	if c.Unleash != nil {
+		u := *c.Unleash
+		cp.Unleash = &u
+	}
+	return cp
+}
+
 // EffectiveTimeoutMs returns the configured hot-path timeout, or
 // DefaultTargetingTimeoutMs when none is set.
 func (c TargetingConfig) EffectiveTimeoutMs() int {

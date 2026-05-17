@@ -95,6 +95,53 @@ func TestTargetingConfigRejectsBadConfigs(t *testing.T) {
 	}
 }
 
+func TestTargetingConfigCloneIsolatesOFREPHeaders(t *testing.T) {
+	orig := TargetingConfig{
+		Provider:  TargetingProviderOFREP,
+		TimeoutMs: 200,
+		OFREP:     &OFREPConfig{Endpoint: "https://flags/ofrep", Headers: map[string]string{"Authorization": "Bearer x"}},
+	}
+	clone := orig.Clone()
+
+	// Mutating the clone's nested block and header map must not reach
+	// the original.
+	clone.OFREP.Endpoint = "https://other/ofrep"
+	clone.OFREP.Headers["Authorization"] = "Bearer mutated"
+	clone.OFREP.Headers["X-Added"] = "1"
+
+	if orig.OFREP.Endpoint != "https://flags/ofrep" {
+		t.Errorf("clone mutated the original endpoint: %q", orig.OFREP.Endpoint)
+	}
+	if orig.OFREP.Headers["Authorization"] != "Bearer x" {
+		t.Errorf("clone mutated an original header: %q", orig.OFREP.Headers["Authorization"])
+	}
+	if _, added := orig.OFREP.Headers["X-Added"]; added {
+		t.Error("clone added a header to the original map")
+	}
+}
+
+func TestTargetingConfigCloneCopiesProviderBlocks(t *testing.T) {
+	orig := TargetingConfig{
+		Provider:     TargetingProviderLaunchDarkly,
+		LaunchDarkly: &LaunchDarklyConfig{SDKKey: "sdk-1"},
+	}
+	clone := orig.Clone()
+	if clone.LaunchDarkly == orig.LaunchDarkly {
+		t.Error("clone shares the LaunchDarkly pointer with the original")
+	}
+	clone.LaunchDarkly.SDKKey = "sdk-2"
+	if orig.LaunchDarkly.SDKKey != "sdk-1" {
+		t.Errorf("clone mutated the original SDKKey: %q", orig.LaunchDarkly.SDKKey)
+	}
+}
+
+func TestTargetingConfigCloneZeroValue(t *testing.T) {
+	clone := TargetingConfig{}.Clone()
+	if clone.Configured() || clone.OFREP != nil || clone.LaunchDarkly != nil {
+		t.Errorf("cloning a zero config produced %+v, want a zero config", clone)
+	}
+}
+
 func TestBuildEvaluationContextWithUser(t *testing.T) {
 	ctx := BuildEvaluationContext(EvaluationContextInput{
 		UserID: "alice", TenantID: "acme", SessionID: "sess-1", Runtime: "claude-code",
