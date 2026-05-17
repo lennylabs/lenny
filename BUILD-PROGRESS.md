@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c634504` — §5.1 derived-runtime validation on the runtime update path. A PUT may not
+  change `baseRuntime` (so a standalone runtime cannot be converted to derived in
+  place), and a PUT against an already-derived runtime may not set the inherited or
+  prohibited fields. A violation returns `400 INVALID_DERIVED_RUNTIME`.
+- `6911dbd` — §5.1 resolve derived runtimes in the meta endpoints. `GET
+  /v1/runtimes/{name}/meta/{key}` and the `/internal` counterpart resolve through
+  `runtimestore.Resolve`, so a derived runtime serves the publishedMetadata entries it
+  inherits from its base. With this, the §5.1 derived-runtime feature is built end to
+  end: model, the `Merge` algorithm, `Resolve`, registration and update validation, and
+  resolution at every runtime read site (discovery, models, list_runtimes, the meta
+  endpoints, and the message-injection check).
 - `cd37e20` — §5.1 resolve derived runtimes in runtime discovery. `GET /v1/runtimes`,
   `GET /v1/models`, and `lenny/list_runtimes` resolve each derived runtime to its
   effective merged definition before the §10.6 environment filter and the discovery
