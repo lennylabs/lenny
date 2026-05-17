@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9ed9347` — §16.5 add `ExperimentIsolationRejections` to the rule catalog. The §10.7
+  ExperimentRouter isolation-monotonicity feature ships and emits
+  `lenny_experiment_isolation_rejections_total`, so its §16.5 warning alert now carries
+  weight and joins `rules.Catalog()`. The catalog grows as monitored feature surfaces
+  ship; rules whose metrics are not yet emitted (warm pool, Postgres replication) stay
+  representative-sample entries.
 - `d89b5b2` — §16.5 alert-rule evaluation state machine. `pkg/alerting/evaluator` drives
   each §16.5 PrometheusRule through the inactive → pending → firing lifecycle. Rule
   expressions resolve through the `ExprEvaluator` interface (a Prometheus query API in
