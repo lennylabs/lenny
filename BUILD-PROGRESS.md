@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `2097571` — §10.6 explicit-environment session endpoint. `POST
+  /v1/environments/{name}/sessions` creates a session pinned to the path environment;
+  `handleCreate` and the new handler share an extracted `createSession` core. The
+  `/mcp/environments/{name}` explicit MCP path remains unbuilt.
 - `8da4ca5` — §10.6 cross-environment membership verification (security fix). The
   cross-environment delegation check previously trusted the parent session's
   caller-supplied `Environment` field; `crossEnvReachable` now confirms the caller is a
