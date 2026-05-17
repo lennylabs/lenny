@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `aaa93c9` — §10.6 OIDC groups claim. `jwt.Claims` and the middleware `Principal` gain
+  a `Groups` field; the Bearer path copies the JWT `groups` claim and the dev-header
+  path parses `X-Lenny-Groups` under `AllowDevRoles` (dropped in production, like
+  `X-Lenny-Roles`). This is the authentication-layer prerequisite for §10.6 environment
+  membership — transparent filtering and cross-environment delegation resolve a
+  caller's groups against environment member lists, which is the consuming step.
 - `24455a5` — §10.6 / §15.1 tenant cross-environment `access-report` endpoint.
   `GET /v1/admin/tenants/{id}/access-report` aggregates every environment's §10.6
   member list into an access matrix keyed by identity: `environments` are the columns,
