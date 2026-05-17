@@ -95,6 +95,64 @@ func TestRouteSkipsPausedAndExternal(t *testing.T) {
 	}
 }
 
+func TestSkippedAfterListsLaterRoutableExperiments(t *testing.T) {
+	// The session enrolls in exp-a; exp-b and exp-c are routable
+	// percentage-mode experiments created after it.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, b, c}, "exp-a")
+	if len(got) != 2 || got[0] != "exp-b" || got[1] != "exp-c" {
+		t.Errorf("SkippedAfter = %v, want [exp-b exp-c]", got)
+	}
+}
+
+func TestSkippedAfterExcludesEarlierExperiments(t *testing.T) {
+	// exp-a is created before the enrolled exp-b. The first-match rule
+	// did not skip exp-a — it was evaluated and lost — so it is not in
+	// the audit set.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, b, c}, "exp-b")
+	if len(got) != 1 || got[0] != "exp-c" {
+		t.Errorf("SkippedAfter = %v, want [exp-c] — exp-a precedes the enrolled experiment", got)
+	}
+}
+
+func TestSkippedAfterExcludesNonRoutable(t *testing.T) {
+	// Only routable percentage-mode experiments after the enrolled one
+	// count: Route never evaluates paused, concluded, or external-mode
+	// experiments, so the first-match rule did not skip them.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	paused := routeExp("paused", 0.9999, StatusPaused, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	concluded := routeExp("concluded", 0.9999, StatusConcluded, TargetingPercentage)
+	live := routeExp("live", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, paused, external, concluded, live}, "exp-a")
+	if len(got) != 1 || got[0] != "live" {
+		t.Errorf("SkippedAfter = %v, want [live] only", got)
+	}
+}
+
+func TestSkippedAfterLastCandidateIsEmpty(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
+	if got := SkippedAfter([]Definition{a, b}, "exp-b"); got != nil {
+		t.Errorf("SkippedAfter = %v, want nil — the enrolled experiment is the last candidate", got)
+	}
+}
+
+func TestSkippedAfterEmptyOrUnknownEnrollment(t *testing.T) {
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	if got := SkippedAfter([]Definition{a}, ""); got != nil {
+		t.Errorf("SkippedAfter(\"\") = %v, want nil", got)
+	}
+	if got := SkippedAfter([]Definition{a}, "absent"); got != nil {
+		t.Errorf("SkippedAfter(unknown) = %v, want nil", got)
+	}
+}
+
 func TestRouteStickyUserUsesUserID(t *testing.T) {
 	e := routeExp("exp", 0.9999, StatusActive, TargetingPercentage) // sticky: user
 	// An anonymous session (empty userID) yields control under sticky:user.

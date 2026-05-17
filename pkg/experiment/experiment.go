@@ -282,6 +282,38 @@ func Route(experiments []Definition, userID, sessionID string) Assignment {
 	return Assignment{}
 }
 
+// SkippedAfter returns the §16.6 experiment.multi_eligible_skipped
+// audit set for a session that Route enrolled in enrolledID: the
+// routable percentage-mode experiments that the first-match rule left
+// unevaluated because enrolledID — an earlier candidate in evaluation
+// order — already assigned a non-control variant. The experiments
+// slice must be in the same evaluation order passed to Route. Paused,
+// concluded, and external-mode experiments are excluded: Route never
+// evaluates them, so they were not skipped by the first-match rule.
+// Returns nil when enrolledID is empty, is not present, or is the last
+// routable candidate.
+func SkippedAfter(experiments []Definition, enrolledID string) []string {
+	if enrolledID == "" {
+		return nil
+	}
+	var skipped []string
+	seenEnrolled := false
+	for _, e := range experiments {
+		if e.ID == enrolledID {
+			seenEnrolled = true
+			continue
+		}
+		if !seenEnrolled {
+			continue
+		}
+		if !e.Status.IsRoutable() || e.TargetingMode != TargetingPercentage {
+			continue
+		}
+		skipped = append(skipped, e.ID)
+	}
+	return skipped
+}
+
 // AssignVariantDeterministic verifies the §10.7 determinism
 // property: identical inputs always yield the same variant. Returns
 // nil when the property holds for the supplied set of test keys.
