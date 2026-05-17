@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7ae68ad` — adapter-local tools advertised in the manifest.
+  `localtools.Descriptors` returns the §4.7 manifest descriptors of the
+  built-in tools (name, description, JSON Schema `inputSchema`), the single
+  source of the tool set the adapter both advertises and dispatches. The
+  manifest gained the `adapterLocalTools` field, and `writeSessionManifest`
+  populates it, so every session manifest advertises `read_file`,
+  `write_file`, `list_dir`, and `delete_file` with their argument schemas.
+  Remaining: the `tool_call`-frame interception that routes a runtime's tool
+  calls into `localtools.Dispatch`, and the `platformMcpServer`/
+  `connectorServers`/`lifecycleChannel` socket fields the manifest still
+  lacks (added with the Linux abstract-socket layer).
 - `2fdb8fb` — §15 adapter-local filesystem tools. New package
   `pkg/adapter/localtools`. `Dispatch` executes the four §15 adapter-local
   tools — `read_file`, `write_file`, `list_dir`, `delete_file` — against a
