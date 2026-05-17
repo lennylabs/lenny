@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `1de3fa3` — §16.6 emit `experiment.variant_weaker_than_tenant_floor` to the event
+  buffer. The §10.7 tenant-floor advisory check (`checkTenantIsolationFloor`) emitted
+  the event only to the audit log; §16.6 classes it as an operational event. The check
+  now also emits it to the §25.3 event buffer via `emitOpsEvent` — one `warning` event
+  per offending variant, carrying the §16.6 payload fields (`tenant_id`,
+  `experiment_id`, `variant_id`, `variant_pool_isolation`, `tenant_floor`, `actor_sub`,
+  `emitted_at`). Covers the create and update admission paths through the single
+  chokepoint.
 - `29100ef` / `715ddf4` — §16.6 emit `experiment.multi_eligible_skipped`. `experiment`
   gains `SkippedAfter`: given the created_at-ordered experiments and the enrolled
   experiment id, it returns the routable percentage-mode experiments the §10.7
