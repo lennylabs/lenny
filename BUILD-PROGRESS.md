@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `21a529c` — §25.3 complete the recommendation catalog. Extends the catalog to all six
+  §25.3 categories — adds `ResourceLimitsMemoryPressure`, `RetentionTuningStoragePressure`,
+  and `QuotaAdjustmentRejections` rules with their `CapacityService` evaluators. The
+  §25.3 Capacity Recommendations service is now built end to end (rule substrate, the
+  `MetricReader` / `WindowStore`, the evaluation engine, the full six-category catalog,
+  and the `GET /v1/admin/recommendations` endpoint); the gateway feeding metrics into
+  the `WindowStore` and the `lenny-ops` Prometheus-backed `MetricReader` remain.
 - `97aae93` — §15.1 OpenAPI: `GET /v1/admin/recommendations` documented.
 - `4a68370` — §25.3 `GET /v1/admin/recommendations` endpoint. The capacity-recommendations
   endpoint is wired onto the admin Router (platform-admin gated, optional `?category=`
