@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `899bbc8` — §15.4.3 intra-pod MCP nonce in the adapter manifest. §15.4.3
+  authenticates every intra-pod MCP connection with a manifest-nonce
+  handshake. The manifest now carries the `mcpNonce` field;
+  `writeSessionManifest` generates a fresh random 256-bit hex nonce per
+  session manifest write, so each task execution gets its own nonce. This is
+  the first slice of the intra-pod MCP fabric. Remaining MCP-fabric work: the
+  adapter's local MCP servers over abstract Unix sockets (`@lenny-platform-mcp`
+  etc.), nonce validation on the MCP `initialize` handshake with `_lennyNonce`
+  stripping, the platform MCP server's tool surface (`lenny/delegate_task`,
+  `lenny/output`, etc.), and the `platformMcpServer`/`adapterLocalTools`
+  manifest fields. Abstract Unix sockets are Linux-only, so the socket layer
+  is exercised on Linux.
 - `2fbcb5b` — §14 `gitClone` clone-and-deliver (gateway side). The pod-side
   extraction was built; nothing performed the gateway-side clone.
   `gitref.CloneArchive` clones a repository at the pinned commit and returns
