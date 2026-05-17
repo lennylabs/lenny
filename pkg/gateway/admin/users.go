@@ -85,10 +85,12 @@ func (r *Router) WithInteractions(s interactionstore.Store) *Router {
 	return r
 }
 
-// authorizedTenantForUser enforces the §10.2 RBAC scoping rules for
-// user-management calls: platform-admin sees every tenant;
-// tenant-admin is constrained to its own tenant. Returns the tenant
-// the operation should target and a nil error on success.
+// authorizedTenantForUser resolves which tenant a tenant-scoped admin
+// call operates on. A platform-admin names the tenant explicitly; every
+// other authenticated principal operates within its own tenant.
+// Authorization for the operation itself is the route gate's
+// responsibility (requireUserAdmin and the requireTenantResourceAdmin
+// family); this resolver does not re-decide it.
 func (r *Router) authorizedTenantForUser(req *http.Request, requestedTenant string) (string, *http.Request, error) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
@@ -100,15 +102,44 @@ func (r *Router) authorizedTenantForUser(req *http.Request, requestedTenant stri
 		}
 		return requestedTenant, req, nil
 	}
-	if p.HasRole(auth.RoleTenantAdmin) {
-		return p.TenantID, req, nil
-	}
-	return "", req, errors.New("not authorized")
+	return p.TenantID, req, nil
 }
 
-// requireUserAdmin gates user-management endpoints. Platform-admin
-// and tenant-admin can manage users (per §11.4 admin endpoints);
-// other roles cannot.
+// principalGrantsPermission reports whether the principal holds a role
+// — built-in or tenant custom — that grants perm. A built-in role
+// resolves through auth.RolePermissions; a custom role resolves through
+// the tenant custom-role registry. With no registry wired, only
+// built-in roles are consulted.
+func (r *Router) principalGrantsPermission(ctx context.Context, p authmw.Principal, perm auth.Permission) bool {
+	for _, role := range p.Roles {
+		if role.IsValid() {
+			for _, granted := range auth.RolePermissions(role) {
+				if granted == perm {
+					return true
+				}
+			}
+			continue
+		}
+		if r.customRoles == nil {
+			continue
+		}
+		cr, err := r.customRoles.Get(ctx, p.TenantID, string(role))
+		if err != nil {
+			continue
+		}
+		for _, granted := range cr.Permissions {
+			if granted == perm {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requireUserAdmin gates the §11.4 / §15.1 user-management endpoints on
+// the §10.2 manage-users permission. platform-admin and tenant-admin
+// hold it through their permission-matrix rows; a tenant custom role
+// holds it when its permission set includes manage_users.
 func (r *Router) requireUserAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		principal, ok := authmw.FromContext(req.Context())
@@ -117,9 +148,9 @@ func (r *Router) requireUserAdmin(next http.Handler) http.Handler {
 				"endpoint requires authentication", nil)
 			return
 		}
-		if !principal.HasRole(auth.RolePlatformAdmin) && !principal.HasRole(auth.RoleTenantAdmin) {
+		if !r.principalGrantsPermission(req.Context(), principal, auth.PermManageUsers) {
 			writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"user management requires platform-admin or tenant-admin", nil)
+				"user management requires the manage-users permission", nil)
 			return
 		}
 		next.ServeHTTP(w, req)

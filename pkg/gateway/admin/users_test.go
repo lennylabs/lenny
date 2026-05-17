@@ -284,3 +284,84 @@ func TestUpdateUserRejectsUnknownRole(t *testing.T) {
 		t.Errorf("unknown role on update: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
+
+// newUserAdminWithRole builds a user-admin Router with the custom-role
+// registry wired and one custom role seeded.
+func newUserAdminWithRole(t *testing.T, role customrolestore.CustomRole) (*admin.Router, userstore.Store) {
+	t.Helper()
+	users := userstore.NewMemory()
+	roles := customrolestore.NewMemory()
+	if err := roles.Create(context.Background(), role); err != nil {
+		t.Fatalf("seed custom role: %v", err)
+	}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithUsers(users).WithCustomRoles(roles)
+	return router, users
+}
+
+// withRolesFor attaches a principal holding an arbitrary role set,
+// scoped to tenantID. Used to exercise custom-role principals.
+func withRolesFor(req *http.Request, tenantID string, roles ...pkgauth.Role) *http.Request {
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: "carol@" + tenantID, TenantID: tenantID,
+		Roles: roles,
+	})
+	return req.WithContext(ctx)
+}
+
+// §10.2: a tenant custom role whose permission set includes
+// manage_users passes the user-management gate.
+func TestUserEndpointsAllowCustomRoleWithManageUsers(t *testing.T) {
+	router, _ := newUserAdminWithRole(t, customrolestore.CustomRole{
+		TenantID: "acme", Name: "user-manager",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageUsers},
+	})
+	req := withRolesFor(httptest.NewRequest(http.MethodGet, "/v1/admin/users", nil), "acme", "user-manager")
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("custom role with manage_users: got %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// §10.2: a custom role without manage_users is denied user management,
+// even though it is a valid custom role.
+func TestUserEndpointsRejectCustomRoleWithoutManageUsers(t *testing.T) {
+	router, _ := newUserAdminWithRole(t, customrolestore.CustomRole{
+		TenantID: "acme", Name: "session-manager",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageOwnSessions},
+	})
+	req := withRolesFor(httptest.NewRequest(http.MethodGet, "/v1/admin/users", nil), "acme", "session-manager")
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("custom role without manage_users: got %d, want 403 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+// §10.2: a custom role is tenant-scoped. A custom-role principal that
+// names another tenant in the request body is still scoped to its own
+// tenant by the tenant resolver.
+func TestCreateUserCustomRoleScopedToOwnTenant(t *testing.T) {
+	router, users := newUserAdminWithRole(t, customrolestore.CustomRole{
+		TenantID: "acme", Name: "user-manager",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageUsers},
+	})
+	body, _ := json.Marshal(admin.UserPayload{
+		Subject: "dave@acme.com", TenantID: "globex",
+		Roles: []pkgauth.Role{pkgauth.RoleUser},
+	})
+	req := withRolesFor(httptest.NewRequest(http.MethodPost, "/v1/admin/users", bytes.NewReader(body)), "acme", "user-manager")
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("custom-role create: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if _, err := users.Get(context.Background(), "acme", "dave@acme.com"); err != nil {
+		t.Errorf("user not created in the principal's own tenant: %v", err)
+	}
+	if _, err := users.Get(context.Background(), "globex", "dave@acme.com"); err == nil {
+		t.Error("user leaked into the body-requested tenant globex")
+	}
+}
