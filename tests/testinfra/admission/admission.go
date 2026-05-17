@@ -54,15 +54,15 @@ func SkipUnlessAvailable(_ testing.TB) {}
 // k8s.io/api to keep the testinfra surface small; callers that
 // want the full type can cast Object to the corresponding struct.
 type Request struct {
-	UID         string
-	Kind        string
-	Resource    string
-	Namespace   string
-	Name        string
-	Operation   string
-	UserInfo    map[string]string
-	Object      json.RawMessage
-	OldObject   json.RawMessage
+	UID       string
+	Kind      string
+	Resource  string
+	Namespace string
+	Name      string
+	Operation string
+	UserInfo  map[string]string
+	Object    json.RawMessage
+	OldObject json.RawMessage
 }
 
 // Response mirrors admissionv1.AdmissionResponse.

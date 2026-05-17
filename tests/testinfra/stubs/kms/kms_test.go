@@ -110,6 +110,7 @@ func TestStubRotationLog(t *testing.T) {
 // spec: 11.7 (rotation gate — prior version is decryptable
 //
 //	inside the in-flight grace window)
+//
 // diagnosis: A ciphertext minted under v1 must Decrypt cleanly
 //
 //	after a rotation to v2, until the gate ceiling passes.

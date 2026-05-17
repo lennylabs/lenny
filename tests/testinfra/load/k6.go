@@ -270,4 +270,3 @@ func compareBaseline(stored, got Result, t Threshold) []string {
 	check("p999", stored.MetricMS["p999"], got.MetricMS["p999"], t.P999)
 	return regs
 }
-

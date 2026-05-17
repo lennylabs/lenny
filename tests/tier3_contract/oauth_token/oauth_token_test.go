@@ -43,10 +43,10 @@ func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 // any plausible test-run timestamp. IssuedAt sits an hour before
 // Expiry to maintain the not-before invariant.
 var (
-	farFutureExpiry  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	farFutureIssued  = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
-	farPastExpiry    = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	beyond24hExpiry  = time.Date(2099, 1, 1, 48, 0, 0, 0, time.UTC).Unix()
+	farFutureExpiry = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	farFutureIssued = time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Hour).Unix()
+	farPastExpiry   = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	beyond24hExpiry = time.Date(2099, 1, 1, 48, 0, 0, 0, time.UTC).Unix()
 )
 
 func mint(t *testing.T, signer *jwt.HMACSigner, c jwt.Claims) string {
