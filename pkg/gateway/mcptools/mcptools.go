@@ -56,6 +56,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
+// DelegationAuditor records §11.7 audit events for delegation
+// operations such as the §10.6 isolation-monotonicity violation.
+type DelegationAuditor interface {
+	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -88,6 +94,10 @@ type Deps struct {
 	// profile so the §8.3 monotonicity check evaluates the child pool
 	// rather than the profile inherited from the parent session.
 	Pools poolstore.Store
+
+	// Audit records §11.7 delegation audit events. Optional — a nil
+	// Audit disables delegation audit emission.
+	Audit DelegationAuditor
 
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied to a caller whose tenant has set no
@@ -796,6 +806,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
+			viaCrossEnv := false
 			if !authorized {
 				// §10.6: a runtime outside the caller's environment scope
 				// may still be reachable through a bilateral
@@ -806,6 +817,7 @@ func Register(srv *mcp.Server, deps Deps) {
 					return mcp.ToolResult{}, err
 				}
 				authorized = reachable
+				viaCrossEnv = reachable
 			}
 			if !authorized {
 				// §10.6: a target outside the effective delegation scope
@@ -845,9 +857,20 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err != nil {
 				// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
 				// is surfaced under the spec's ISOLATION_MONOTONICITY_VIOLATED
-				// reason so the caller can distinguish it.
+				// reason so the caller can distinguish it, and the §10.6
+				// delegation.isolation_violation audit event is emitted.
 				var isoErr *delegation.IsolationViolationError
 				if errors.As(err, &isoErr) {
+					if deps.Audit != nil {
+						deps.Audit.EmitDelegationEvent(ctx, "delegation.isolation_violation", map[string]any{
+							"parentSessionId":   in.ParentSessionID,
+							"runtimeRef":        in.RuntimeRef,
+							"poolRef":           in.PoolRef,
+							"parentProfile":     string(isoErr.ParentProfile),
+							"childProfile":      string(isoErr.ChildProfile),
+							"cross_environment": viaCrossEnv,
+						})
+					}
 					return mcp.ToolResult{}, fmt.Errorf("ISOLATION_MONOTONICITY_VIOLATED: %w", err)
 				}
 				return mcp.ToolResult{}, err

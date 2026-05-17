@@ -155,14 +155,29 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	}
 }
 
+// auditedEvent is one event a fakeDelegationAuditor recorded.
+type auditedEvent struct {
+	eventType string
+	detail    map[string]any
+}
+
+// fakeDelegationAuditor records the §11.7 delegation events emitted.
+type fakeDelegationAuditor struct{ events []auditedEvent }
+
+func (f *fakeDelegationAuditor) EmitDelegationEvent(_ context.Context, eventType string, detail map[string]any) {
+	f.events = append(f.events, auditedEvent{eventType, detail})
+}
+
 func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	store := memstore.New()
 	pools := poolstore.NewMemory()
+	audit := &fakeDelegationAuditor{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Store:    store,
 		Executor: executor.NewEchoExecutor(),
 		Pools:    pools,
+		Audit:    audit,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -206,11 +221,23 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	if _, err := store.Get(ctxbg, "acme", "sess_child"); err == nil {
 		t.Error("a monotonicity-violating delegation must not create a child session")
 	}
+	// §10.6: the violation emits a delegation.isolation_violation event.
+	if len(audit.events) != 1 || audit.events[0].eventType != "delegation.isolation_violation" {
+		t.Fatalf("isolation violation should emit one audit event: %+v", audit.events)
+	}
+	if audit.events[0].detail["cross_environment"] != false {
+		t.Errorf("a same-environment violation should record cross_environment=false: %+v",
+			audit.events[0].detail)
+	}
 
-	// A pool at least as restrictive as the parent is admitted.
+	// A pool at least as restrictive as the parent is admitted, and a
+	// successful delegation emits no isolation-violation event.
 	text := resultText(t, call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"strong-pool"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("delegation to a stronger-isolation pool should proceed: %q", text)
+	}
+	if len(audit.events) != 1 {
+		t.Errorf("a successful delegation must not emit an isolation-violation event: %+v", audit.events)
 	}
 }

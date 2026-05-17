@@ -521,6 +521,7 @@ func main() {
 		Environments:               environments,
 		Tenants:                    tenants,
 		Pools:                      pools,
+		Audit:                      mcpDelegationAuditor{sink: auditSink},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               interceptor.NewChain(),
 		Events:                     eventBus,
@@ -1056,6 +1057,25 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 			},
 		})
 	}
+}
+
+// mcpDelegationAuditor adapts the gateway audit sink to the
+// mcptools.DelegationAuditor interface, drawing the §11.7 actor fields
+// from the request principal on the context.
+type mcpDelegationAuditor struct {
+	sink admin.AuditSink
+}
+
+func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any) {
+	if a.sink == nil {
+		return
+	}
+	ev := admin.AuditEvent{Type: eventType, Detail: detail, At: time.Now().UTC()}
+	if p, ok := authmw.FromContext(ctx); ok {
+		ev.ActorSubject = p.Subject
+		ev.ActorTenantID = p.TenantID
+	}
+	a.sink.EmitAdminEvent(ctx, ev)
 }
 
 // tenantsLister adapts a tenantstore.Store into a
