@@ -11,6 +11,28 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9e44abd` — §15.1 OpenAPI: `POST /v1/admin/runtimes/regenerate-cards` documented with
+  its `generatorVersionBefore` / `dryRun` body and the regenerated / skipped / errors
+  response.
+- `c2777da` — §5.1 `POST /v1/admin/runtimes/regenerate-cards` bulk card regeneration.
+  Iterates every runtime carrying an `agentInterface` and regenerates the `agent-card`
+  entry; a runtime without an `agentInterface` is skipped, leaving a hand-crafted card
+  untouched. `generatorVersionBefore` filters to runtimes whose stored card is strictly
+  older; `dryRun` reports the affected runtimes without writing. Platform-admin gated.
+- `3b6d948` — §5.1 `agentcard.NeedsRegen` version-threshold check. The regenerate-cards
+  threshold rule with a numeric `MAJOR.MINOR.PATCH` comparator (so `1.9.0` sorts below
+  `1.10.0`); an empty threshold regenerates all, an empty or unparseable stored version
+  sorts oldest.
+- `bd64d9e` — §5.1 write-time A2A agent-card auto-generation. The admin runtime create
+  and update handlers generate the §5.1 A2A agent card whenever the runtime carries an
+  `agentInterface` and store it as the `agent-card` publishedMetadata entry, replacing
+  any prior entry with that key. A runtime with no `agentInterface` is left alone, so a
+  hand-crafted `agent-card` entry is preserved.
+- `545e579` — §5.1 A2A agent card generator (`pkg/gateway/agentcard`). `Generate` maps a
+  runtime's `agentInterface` (description, input/output modes, skills, examples) onto an
+  A2A-shaped card and injects the two §5.1 envelope fields `generatedAt` (RFC 3339) and
+  `generatorVersion`. `Entry` returns the card as a public `agent-card` publishedMetadata
+  entry.
 - `f2973f0` — §15.1 OpenAPI: `GET /internal/runtimes/{name}/meta/{key}` documented as a
   BearerAuth-gated path.
 - `380fa06` — §5.1 `GET /internal/runtimes/{name}/meta/{key}` internal/tenant fetch. The
