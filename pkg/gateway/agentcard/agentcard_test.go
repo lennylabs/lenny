@@ -92,6 +92,27 @@ func TestEntryProducesPublicAgentCardEntry(t *testing.T) {
 	}
 }
 
+func TestNeedsRegen(t *testing.T) {
+	cases := []struct {
+		stored, threshold string
+		want              bool
+	}{
+		{"1.4.0", "", true},           // empty threshold regenerates all
+		{"1.3.0", "1.4.0", true},      // stored strictly older
+		{"1.4.0", "1.4.0", false},     // stored equal to threshold
+		{"1.5.0", "1.4.0", false},     // stored newer
+		{"1.9.0", "1.10.0", true},     // numeric, not lexical, ordering
+		{"", "1.4.0", true},           // no stored card regenerates
+		{"dev", "1.4.0", true},        // unparseable stored sorts oldest
+		{"1.4.0-rc1", "1.4.0", false}, // pre-release suffix ignored
+	}
+	for _, tc := range cases {
+		if got := agentcard.NeedsRegen(tc.stored, tc.threshold); got != tc.want {
+			t.Errorf("NeedsRegen(%q, %q) = %v, want %v", tc.stored, tc.threshold, got, tc.want)
+		}
+	}
+}
+
 func TestGenerateEmptyInterface(t *testing.T) {
 	// A runtime with an empty agentInterface still yields a card with
 	// the envelope fields and name; the optional lists stay empty.

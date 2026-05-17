@@ -8,6 +8,8 @@ package agentcard
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -80,6 +82,66 @@ func Generate(name string, iface runtimestore.AgentInterface, generatedAt time.T
 		card.Examples = append(card.Examples, Example{Description: e.Description, Input: e.Input})
 	}
 	return card
+}
+
+// NeedsRegen reports whether a card stamped storedVersion should be
+// regenerated under the §5.1 regenerate-cards threshold. An empty
+// threshold regenerates unconditionally. Otherwise the card is
+// regenerated when storedVersion is strictly older than the threshold;
+// a stored version that is empty or unparseable sorts below any real
+// version and so is regenerated.
+func NeedsRegen(storedVersion, threshold string) bool {
+	if threshold == "" {
+		return true
+	}
+	return compareVersions(storedVersion, threshold) < 0
+}
+
+// parseVersion parses a MAJOR.MINOR.PATCH version into its numeric
+// components, tolerating a leading "v" and a pre-release or build
+// suffix. Missing trailing components default to zero. ok is false when
+// a component is non-numeric or the version is empty.
+func parseVersion(v string) (parts [3]int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" {
+		return parts, false
+	}
+	for i, seg := range strings.SplitN(v, ".", 3) {
+		n, err := strconv.Atoi(seg)
+		if err != nil {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
+}
+
+// compareVersions orders two version strings, returning -1, 0, or 1. An
+// unparseable version sorts below any parseable one; two unparseable
+// versions compare equal.
+func compareVersions(a, b string) int {
+	pa, aok := parseVersion(a)
+	pb, bok := parseVersion(b)
+	switch {
+	case !aok && !bok:
+		return 0
+	case !aok:
+		return -1
+	case !bok:
+		return 1
+	}
+	for i := range pa {
+		if pa[i] < pb[i] {
+			return -1
+		}
+		if pa[i] > pb[i] {
+			return 1
+		}
+	}
+	return 0
 }
 
 // Entry generates the §5.1 A2A agent card and returns it as a
