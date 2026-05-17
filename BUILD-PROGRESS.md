@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `996c38f` — §14 `ParseLeaseScope` and `GitCloneHost`. `ParseLeaseScope` extracts the
+  VCS provider and read/write mode from a `gitClone.auth.leaseScope`
+  (`vcs.<provider>.read|write`); `GitCloneHost` returns the lowercased URL authority.
+  They produce the provider and host that `credentialpoolstore.ResolveVCSPool` binds to
+  a VCS credential pool, completing the pure-Go inputs of the §14 authenticated-gitClone
+  resolution path. The session-creation wiring (resolve the pool, reject
+  `GIT_CLONE_AUTH_*`) and the §4.9 token minting remain.
 - `026b283` — §14 `ResolveVCSPool` — gitClone host-to-VCS-pool binding.
   `credentialpoolstore.ResolveVCSPool` selects, among a tenant's active credential pools
   whose `Provider` matches the `gitClone.auth.leaseScope` provider, the pool whose
