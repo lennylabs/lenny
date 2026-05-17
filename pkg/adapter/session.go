@@ -85,20 +85,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.releaseSession()
 		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
 	}
-	// §15.4: write the adapter manifest the runtime reads at startup,
-	// carrying the §8.3 experimentContext. Skipped when no ManifestDir
-	// is configured.
-	if s.ManifestDir != "" {
-		if err := WriteManifest(s.ManifestDir, Manifest{
-			Version:           ManifestVersion,
-			SessionID:         sessionID,
-			WorkspaceRoot:     s.WorkspaceRoot,
-			ExperimentContext: manifestExperimentContext(req.GetExperimentContext()),
-			TracingContext:    req.GetTracingContext(),
-		}); err != nil {
-			s.releaseSession()
-			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
-		}
+	// §15.4: write the adapter manifest the runtime reads at startup.
+	if err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext()); err != nil {
+		s.releaseSession()
+		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()

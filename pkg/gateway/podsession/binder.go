@@ -92,6 +92,10 @@ type ResumeRequest struct {
 	// CheckpointID is the §4.4 checkpoint the workspace is restored
 	// from.
 	CheckpointID string
+	// ExperimentContext and TracingContext are re-delivered to the
+	// restored runtime in the adapter manifest. Nil when unset.
+	ExperimentContext *adapterv1.ExperimentContext
+	TracingContext    map[string]string
 }
 
 // Bind claims an idle pod for the request's session, resolves the
@@ -128,7 +132,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, er
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cl.Resume(ctx, req.SessionID, req.Runtime, req.CheckpointID); err != nil {
+	if _, err := cl.Resume(ctx, req.SessionID, req.Runtime, req.CheckpointID, req.ExperimentContext, req.TracingContext); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, err)
 	}

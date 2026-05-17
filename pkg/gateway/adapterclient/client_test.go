@@ -308,7 +308,7 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 	srv.Restorer = stubCheckpointSource{archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
 
-	n, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1")
+	n, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1", nil, nil)
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestResumeRejectsAMissingCheckpointSource(t *testing.T) {
 	// No Restorer configured: the adapter cannot restore a checkpoint.
 	cl := dialAdapter(t, srv)
 
-	if _, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1"); err == nil {
+	if _, err := cl.Resume(context.Background(), "sess-r", "echo", "ckpt-1", nil, nil); err == nil {
 		t.Error("Resume succeeded with no checkpoint source, want a failure")
 	}
 }

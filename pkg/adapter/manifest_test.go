@@ -80,6 +80,36 @@ func TestWriteManifestWithExperimentContext(t *testing.T) {
 	}
 }
 
+func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
+	// An adapter with no ManifestDir writes nothing.
+	srv := &Server{WorkspaceRoot: "/workspace/current"}
+	if err := srv.writeSessionManifest("sess-x", nil, nil); err != nil {
+		t.Errorf("writeSessionManifest with no ManifestDir = %v, want nil", err)
+	}
+}
+
+func TestWriteSessionManifestWrites(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	if err := srv.writeSessionManifest("sess-y", &adapterv1.ExperimentContext{
+		ExperimentId: "exp_1", VariantId: "treatment",
+	}, map[string]string{"run": "r1"}); err != nil {
+		t.Fatalf("writeSessionManifest: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if m.SessionID != "sess-y" || m.ExperimentContext == nil ||
+		m.ExperimentContext.ExperimentID != "exp_1" || m.TracingContext["run"] != "r1" {
+		t.Errorf("manifest = %+v", m)
+	}
+}
+
 func TestManifestExperimentContextNil(t *testing.T) {
 	if got := manifestExperimentContext(nil); got != nil {
 		t.Errorf("manifestExperimentContext(nil) = %v, want nil", got)

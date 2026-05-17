@@ -60,6 +60,12 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
+	// §15.4: re-deliver the manifest so the restored runtime reads the
+	// same §8.3 experimentContext and tracingContext as before the resume.
+	if err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext()); err != nil {
+		s.releaseSession()
+		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
+	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)

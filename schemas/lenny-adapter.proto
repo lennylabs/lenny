@@ -393,6 +393,12 @@ message ResumeRequest {
   SessionId session_id = 1;
   string runtime = 2;        // runtime name, as in StartSessionRequest
   string checkpoint_id = 3;  // checkpoint to restore the workspace from
+  // experiment_context and tracing_context are re-delivered to the
+  // restored runtime in the adapter manifest — the session's §8.3
+  // enrollment and tracing identifiers survive a resume onto a fresh
+  // pod. Absent when unset.
+  ExperimentContext experiment_context = 4;
+  map<string, string> tracing_context = 5;
 }
 
 message ResumeResponse {

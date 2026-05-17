@@ -568,11 +568,13 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) erro
 		return err
 	}
 	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
-		Pool:         pool,
-		SessionID:    row.ID,
-		TenantID:     row.TenantID,
-		Runtime:      row.RuntimeRef,
-		CheckpointID: row.WorkspaceSnapshot.Ref,
+		Pool:              pool,
+		SessionID:         row.ID,
+		TenantID:          row.TenantID,
+		Runtime:           row.RuntimeRef,
+		CheckpointID:      row.WorkspaceSnapshot.Ref,
+		ExperimentContext: experimentContextToProto(row.ExperimentContext),
+		TracingContext:    row.TracingContext,
 	})
 	if err != nil {
 		return err

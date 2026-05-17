@@ -58,6 +58,25 @@ func WriteManifest(dir string, m Manifest) error {
 	return nil
 }
 
+// writeSessionManifest writes the §15.4 adapter manifest for a session
+// — carrying the §8.3 experimentContext and tracingContext — when a
+// ManifestDir is configured. It is a no-op when ManifestDir is empty,
+// so an adapter without one is unchanged. StartSession and Resume both
+// call it so a runtime started on a fresh or a resumed pod reads the
+// same manifest.
+func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.ExperimentContext, tc map[string]string) error {
+	if s.ManifestDir == "" {
+		return nil
+	}
+	return WriteManifest(s.ManifestDir, Manifest{
+		Version:           ManifestVersion,
+		SessionID:         sessionID,
+		WorkspaceRoot:     s.WorkspaceRoot,
+		ExperimentContext: manifestExperimentContext(ec),
+		TracingContext:    tc,
+	})
+}
+
 // manifestExperimentContext converts the StartSession proto experiment
 // context into its manifest form. It returns nil for an unenrolled
 // session.

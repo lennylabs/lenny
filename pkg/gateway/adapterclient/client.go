@@ -130,13 +130,17 @@ func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time
 
 // Resume asks the pod's adapter to restore the session workspace from
 // the named §4.4 checkpoint and start the runtime (§4.7, §7.1) — the
-// replacement-pod counterpart of StartSession. It returns the
-// uncompressed workspace bytes restored.
-func (c *Client) Resume(ctx context.Context, sessionID, runtimeName, checkpointID string) (int64, error) {
+// replacement-pod counterpart of StartSession. experimentContext and
+// tracingContext are re-delivered to the restored runtime in the
+// adapter manifest. It returns the uncompressed workspace bytes
+// restored.
+func (c *Client) Resume(ctx context.Context, sessionID, runtimeName, checkpointID string, experimentContext *adapterv1.ExperimentContext, tracingContext map[string]string) (int64, error) {
 	resp, err := c.rpc.Resume(ctx, &adapterv1.ResumeRequest{
-		SessionId:    &adapterv1.SessionId{Value: sessionID},
-		Runtime:      runtimeName,
-		CheckpointId: checkpointID,
+		SessionId:         &adapterv1.SessionId{Value: sessionID},
+		Runtime:           runtimeName,
+		CheckpointId:      checkpointID,
+		ExperimentContext: experimentContext,
+		TracingContext:    tracingContext,
 	})
 	if err != nil {
 		return 0, err
