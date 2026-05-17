@@ -11,6 +11,22 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e8375d8` — §10.2 / §15.1 custom-role admin CRUD. `POST` / `GET` / list / `PUT` /
+  `DELETE /v1/admin/tenants/{id}/roles` are wired onto the admin Router, gated on
+  platform-admin or tenant-admin; the tenant is taken from the path and a tenant-admin
+  is confined to their own. Create/update enforce the §10.2 subset rule; `DELETE` runs
+  the `RESOURCE_HAS_DEPENDENTS` guard against assigned users. Follow-up:
+  `userstore.Memory`'s role validation predates §10.2 custom roles and rejects
+  custom-role names in `User.Roles`; relaxing it (a well-formed-role-name check, with
+  custom-role existence verified at the role-assignment endpoint) lets the guard fire
+  against the real store.
+- `b91da25` — §10.2 custom-role registry (`pkg/gateway/customrolestore`). The
+  tenant-scoped store keyed by `(tenant_id, name)`; `Validate` enforces that every
+  permission is within the tenant-admin set and the name does not collide with a
+  built-in role.
+- `0c5754b` — §10.2 RBAC permission model. `pkg/auth.Permission` is the closed 19-entry
+  operation set from the §10.2 permission matrix; `TenantAdminPermissions` returns the
+  16 the tenant-admin column holds — the ceiling a custom role may not exceed.
 - `5c46127` — §8.3 DelegationPolicy contentPolicy defaults. `ApplyDefaults` fills the
   §8.3 ceilings (`maxInputSize` 128 KiB, `maxExportedFileSize` 10 MiB) on a policy whose
   size fields were left zero; the admin create/update handlers call it.
