@@ -152,7 +152,9 @@
     "4.5": {
       "title": "Artifact Store",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/stores/miniostore_test.go"
+      ],
       "packages": [
         "pkg/store/artifact"
       ],
@@ -308,7 +310,9 @@
     "5.1": {
       "title": "Runtime",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/stores/runtimestore_test.go"
+      ],
       "packages": [
         "pkg/runtime"
       ],
@@ -647,7 +651,9 @@
     "9.3": {
       "title": "Connector Definition and OAuth/OIDC",
       "spec_file": "spec/09_mcp-integration.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/stores/connectorstore_test.go"
+      ],
       "packages": [
         "pkg/connector",
         "pkg/oauth"
@@ -750,7 +756,9 @@
     "10.1": {
       "title": "Gateway Horizontal Scaling",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/coordination/..."
+      ],
       "packages": [
         "pkg/gateway"
       ],
@@ -779,7 +787,8 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestTamperedTokenReturns401",
         "tests/tier3_contract/rest_auth/auth_test.go::TestNoCredentialsRejectedWhenAuthRequired",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
-        "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403"
+        "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
+        "tests/tier2_component/stores/userstore_test.go"
       ],
       "packages": [
         "pkg/auth"
@@ -968,7 +977,9 @@
     "11.1": {
       "title": "Admission and Fairness",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/ratelimit/..."
+      ],
       "packages": [
         "pkg/policy/admission"
       ],
@@ -988,7 +999,10 @@
         "pkg/quota/quota_test.go::TestFailOpenCeilingFormula",
         "pkg/quota/quota_test.go::TestPerUserFailOpenCeiling",
         "pkg/quota/quota_test.go::TestMaxOvershootFormula",
-        "pkg/quota/quota_test.go::TestReconcileMaxImplementsMaxRule"
+        "pkg/quota/quota_test.go::TestReconcileMaxImplementsMaxRule",
+        "tests/tier2_component/quota/...",
+        "tests/tier2_component/storagequota/...",
+        "tests/tier2_component/stores/billingstore_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -1038,7 +1052,8 @@
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyReplayThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyDifferentBodyReusedThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyOversizeKeyThroughBinary",
-        "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary"
+        "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary",
+        "tests/tier2_component/stores/idempotencystore_test.go"
       ],
       "packages": [
         "pkg/idempotency",
@@ -1067,7 +1082,8 @@
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestClosedBreakerPassesThrough",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenOperationTypeBreakerRejects",
         "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestOpenBreakerWithDifferentScopeDoesNotMatch",
-        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins"
+        "tests/tier3_contract/rest_circuitbreaker/circuitbreaker_test.go::TestFirstOpenMatchWins",
+        "tests/tier2_component/breakers/..."
       ],
       "packages": [
         "pkg/circuitbreaker",
@@ -1090,7 +1106,9 @@
         "pkg/audit/audit_test.go::TestValidatePairingHappyPath",
         "pkg/audit/audit_test.go::TestValidatePairingMismatches",
         "pkg/audit/audit_test.go::TestAllOCSFStatesIsExhaustive",
-        "pkg/audit/audit_test.go::TestOCSFStateIsTerminal"
+        "pkg/audit/audit_test.go::TestOCSFStateIsTerminal",
+        "tests/tier2_component/auditintegrity/...",
+        "tests/tier2_component/auditstore/..."
       ],
       "packages": [
         "pkg/audit",
@@ -1150,7 +1168,12 @@
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
         "tests/tier2_component/migrations/migrations_test.go::TestIdempotencyApplyTwiceIsNoOp",
         "tests/tier2_component/migrations/migrations_test.go::TestRollbackRemovesAllObjects",
-        "tests/tier2_component/migrations/migrations_test.go::TestRegressionSeedSurvivesIndexUpAndDown"
+        "tests/tier2_component/migrations/migrations_test.go::TestRegressionSeedSurvivesIndexUpAndDown",
+        "tests/tier2_component/controllers/...",
+        "tests/tier2_component/leases/...",
+        "tests/tier2_component/migrations/...",
+        "tests/tier2_component/stores/issuedtokenstore_test.go",
+        "tests/tier2_component/stores/sessionstore_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1164,7 +1187,8 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
-        "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion"
+        "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
+        "tests/tier2_component/rls/..."
       ],
       "packages": [
         "pkg/store",
@@ -1352,7 +1376,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestCallerTypeElevationRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestMissingCallerRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
-        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp"
+        "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
+        "tests/tier3_contract/oauth_token/..."
       ],
       "packages": [
         "pkg/credential",
@@ -1537,7 +1562,10 @@
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestDeleteCancelsSession",
         "tests/tier3_contract/rest_sessions/sessions_test.go::TestListFiltersByState",
         "tests/tier4_integration/session_lifecycle_test.go::TestSessionLifecycleAgainstRealGateway",
-        "tests/tier4_integration/session_lifecycle_test.go::TestCrossTenantLookupRejectedAgainstRealGateway"
+        "tests/tier4_integration/session_lifecycle_test.go::TestCrossTenantLookupRejectedAgainstRealGateway",
+        "tests/tier2_component/stores/tenantstore_test.go",
+        "tests/tier2_component/stores/transcriptstore_test.go",
+        "tests/tier4_integration/..."
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -2282,7 +2310,9 @@
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/healthchecks/..."
+      ],
       "packages": [
         "pkg/gateway/ops"
       ],
