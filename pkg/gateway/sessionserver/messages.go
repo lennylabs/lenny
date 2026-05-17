@@ -157,6 +157,20 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §5.1 / §15.1: reject mid-session injection when the session's
+	// runtime declares capabilities.injection.supported: false. Per
+	// §5.1 injection support defaults to false. The check degrades
+	// safely when the runtime registry is not wired or the runtime is
+	// not found, so a gateway without a wired registry does not block
+	// injection.
+	if s.runtimes != nil && row.RuntimeRef != "" {
+		if rt, err := s.runtimes.Get(r.Context(), row.RuntimeRef); err == nil && !rt.InjectionSupported() {
+			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
+				"runtime does not support mid-session message injection", nil)
+			return
+		}
+	}
+
 	var req MessageRequest
 	body := jsonReader(w, r)
 	defer body.Close()

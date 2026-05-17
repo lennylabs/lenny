@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -156,6 +157,69 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	}
 	if resp.Entries[1].Role != "assistant" {
 		t.Errorf("entry[1] role: %q", resp.Entries[1].Role)
+	}
+}
+
+func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
+	// §5.1 / §15.1: a session whose runtime does not declare
+	// injection.supported true is rejected with INJECTION_REJECTED.
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "oneshot", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimes,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "oneshot", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status: %d, want 403 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "INJECTION_REJECTED") {
+		t.Errorf("body: %s, want INJECTION_REJECTED", rr.Body.String())
+	}
+}
+
+func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
+	// §5.1: a runtime declaring injection.supported true accepts
+	// mid-session message injection.
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection:   runtimestore.InjectionCapability{Supported: true},
+		},
+	})
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimes,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
 
