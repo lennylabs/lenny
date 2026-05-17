@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `df68410` — §5.1 runtime label set. `runtimestore.Runtime` gains a `Labels` map; §5.1
+  requires labels from v1 as the matching mechanism for environment `runtimeSelector`
+  (§10.6), and the model carried none. The in-memory store deep-copies the map through
+  a `cloneRuntime` helper, the Postgres store persists it as a jsonb column (migration
+  0013), and the §15.1 admin runtime API round-trips it on create, read, and update.
+  This is the prerequisite for the §10.6 environment `runtime-exposure` endpoint.
 - `61f8056` — §10.2 view_usage gating fix. `GET /v1/usage` carried no authorization
   check, so the `user` role could read the usage report; `GET /v1/metering/events`
   gated on a role list that omitted `tenant-viewer`, which §10.2 names for the usage
