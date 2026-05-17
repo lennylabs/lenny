@@ -277,6 +277,93 @@ func TestRuntimeLabelsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeAgentInterfaceRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the agentInterface
+	// descriptor on create, read, and update.
+	router, _, _ := newRuntimeAdmin(t)
+	iface := &runtimestore.AgentInterface{
+		Description:            "Analyzes codebases",
+		InputModes:             []runtimestore.AgentInterfaceMode{{Type: "text/plain"}},
+		SupportsWorkspaceFiles: true,
+		Skills:                 []runtimestore.AgentInterfaceSkill{{ID: "review", Name: "Code Review"}},
+	}
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:           "refactorer",
+		Image:          "lenny/refactorer@sha256:abc",
+		AgentInterface: iface,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.AgentInterface == nil || created.AgentInterface.Description != "Analyzes codebases" ||
+		!created.AgentInterface.SupportsWorkspaceFiles || len(created.AgentInterface.Skills) != 1 {
+		t.Errorf("create response agentInterface: %+v", created.AgentInterface)
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/refactorer", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got.AgentInterface == nil || len(got.AgentInterface.Skills) != 1 ||
+		got.AgentInterface.Skills[0].ID != "review" {
+		t.Errorf("get response agentInterface: %+v", got.AgentInterface)
+	}
+
+	// A PUT carrying an agentInterface object replaces the descriptor.
+	replacement, _ := json.Marshal(&runtimestore.AgentInterface{Description: "Refactors only"})
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/refactorer",
+		admin.UpdateRuntimeRequest{AgentInterface: replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.AgentInterface == nil || updated.AgentInterface.Description != "Refactors only" ||
+		len(updated.AgentInterface.Skills) != 0 {
+		t.Errorf("update did not replace agentInterface: %+v", updated.AgentInterface)
+	}
+
+	// A PUT carrying JSON null clears the descriptor.
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/refactorer",
+		admin.UpdateRuntimeRequest{AgentInterface: json.RawMessage("null")})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update-clear: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var cleared admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &cleared)
+	if cleared.AgentInterface != nil {
+		t.Errorf("PUT null did not clear agentInterface: %+v", cleared.AgentInterface)
+	}
+}
+
+func TestRuntimeAgentInterfaceRejectedOnMCP(t *testing.T) {
+	// §5.1: type:mcp runtimes do not carry an agentInterface.
+	router, runtimes, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:           "mcp-tool",
+		Type:           "mcp",
+		Image:          "lenny/mcp-tool@sha256:abc",
+		AgentInterface: &runtimestore.AgentInterface{Description: "should be rejected"},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("create with agentInterface on type:mcp: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "mcp-live", Type: runtimestore.TypeMCP, Image: "lenny/mcp-live@sha256:abc",
+	})
+	raw, _ := json.Marshal(&runtimestore.AgentInterface{Description: "nope"})
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/mcp-live",
+		admin.UpdateRuntimeRequest{AgentInterface: raw})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("update with agentInterface on type:mcp: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

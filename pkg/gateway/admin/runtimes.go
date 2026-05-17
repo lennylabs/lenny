@@ -16,22 +16,26 @@ import (
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name                string            `json:"name"`
-	Type                string            `json:"type,omitempty"`
-	Image               string            `json:"image,omitempty"`
-	ExecutionMode       string            `json:"executionMode,omitempty"`
-	IsolationProfile    string            `json:"isolationProfile,omitempty"`
-	IntegrationLevel    string            `json:"integrationLevel,omitempty"`
-	Description         string            `json:"description,omitempty"`
-	DelegationPolicyRef string            `json:"delegationPolicyRef,omitempty"`
-	Labels              map[string]string `json:"labels,omitempty"`
-	CreatedAt           string            `json:"createdAt,omitempty"`
-	UpdatedAt           string            `json:"updatedAt,omitempty"`
-	DeletedAt           string            `json:"deletedAt,omitempty"`
+	Name                string                       `json:"name"`
+	Type                string                       `json:"type,omitempty"`
+	Image               string                       `json:"image,omitempty"`
+	ExecutionMode       string                       `json:"executionMode,omitempty"`
+	IsolationProfile    string                       `json:"isolationProfile,omitempty"`
+	IntegrationLevel    string                       `json:"integrationLevel,omitempty"`
+	Description         string                       `json:"description,omitempty"`
+	DelegationPolicyRef string                       `json:"delegationPolicyRef,omitempty"`
+	Labels              map[string]string            `json:"labels,omitempty"`
+	AgentInterface      *runtimestore.AgentInterface `json:"agentInterface,omitempty"`
+	CreatedAt           string                       `json:"createdAt,omitempty"`
+	UpdatedAt           string                       `json:"updatedAt,omitempty"`
+	DeletedAt           string                       `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
-// fields signal "leave unchanged when omitted".
+// fields signal "leave unchanged when omitted". AgentInterface is a
+// raw message so the three states omitted, JSON null, and an object
+// stay distinct: omitted leaves the descriptor unchanged, null clears
+// it, and an object replaces it.
 type UpdateRuntimeRequest struct {
 	Image               *string            `json:"image,omitempty"`
 	ExecutionMode       *string            `json:"executionMode,omitempty"`
@@ -40,7 +44,12 @@ type UpdateRuntimeRequest struct {
 	Description         *string            `json:"description,omitempty"`
 	DelegationPolicyRef *string            `json:"delegationPolicyRef,omitempty"`
 	Labels              *map[string]string `json:"labels,omitempty"`
+	AgentInterface      json.RawMessage    `json:"agentInterface,omitempty"`
 }
+
+// errAgentInterfaceOnMCP is returned from the update mutate closure when
+// a PUT attaches an agentInterface to a type:mcp runtime (§5.1).
+var errAgentInterfaceOnMCP = errors.New("agentInterface is not valid on a type:mcp runtime")
 
 func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 	out := RuntimePayload{
@@ -53,6 +62,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		Description:         r.Description,
 		DelegationPolicyRef: r.DelegationPolicyRef,
 		Labels:              r.Labels,
+		AgentInterface:      r.AgentInterface,
 		CreatedAt:           rfc3339Nano(r.CreatedAt),
 		UpdatedAt:           rfc3339Nano(r.UpdatedAt),
 	}
@@ -121,10 +131,17 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		Description:         body.Description,
 		DelegationPolicyRef: body.DelegationPolicyRef,
 		Labels:              body.Labels,
+		AgentInterface:      body.AgentInterface,
 		CreatedAt:           r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
 	rt.UpdatedAt = rt.CreatedAt
+	// §5.1: type:mcp runtimes do not carry an agentInterface.
+	if rt.Type == runtimestore.TypeMCP && rt.AgentInterface != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"agentInterface is not valid on a type:mcp runtime", nil)
+		return
+	}
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -235,6 +252,18 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			"image must be digest-pinned (contain @sha256:...)", nil)
 		return
 	}
+	// agentInterface: an omitted key leaves the descriptor unchanged; a
+	// present key (JSON null or an object) is parsed here so malformed
+	// JSON fails as 400 before the store transaction opens.
+	agentInterfaceSet := len(body.AgentInterface) > 0
+	var newAgentInterface *runtimestore.AgentInterface
+	if agentInterfaceSet {
+		if err := json.Unmarshal(body.AgentInterface, &newAgentInterface); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				"agentInterface is not valid JSON", nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -257,11 +286,22 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.DelegationPolicyRef != nil {
 			rt.DelegationPolicyRef = *body.DelegationPolicyRef
 		}
+		if agentInterfaceSet {
+			// §5.1: type:mcp runtimes do not carry an agentInterface.
+			if rt.Type == runtimestore.TypeMCP && newAgentInterface != nil {
+				return errAgentInterfaceOnMCP
+			}
+			rt.AgentInterface = newAgentInterface
+		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, runtimestore.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "runtime not found", nil)
+			return
+		}
+		if errors.Is(err, errAgentInterfaceOnMCP) {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -316,6 +356,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.Description != nil {
 		out = append(out, "description")
+	}
+	if len(b.AgentInterface) > 0 {
+		out = append(out, "agentInterface")
 	}
 	return out
 }
