@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b42d882` — §10.6 transparent filtering on `lenny/discover_agents`. The tool narrows
+  its agent list to the runtimes the caller's environment membership authorizes,
+  resolved through `pkg/gateway/envaccess` from the request principal's groups, the
+  tenant's environments, and the tenant `noEnvironmentPolicy`. Filtering is conditional
+  on the new optional `Environments` / `Tenants` mcptools deps; without them the list
+  is unchanged. `cmd/lenny-gateway` does not yet wire those deps — production
+  activation should land with the §10.6 platform-level `global.noEnvironmentPolicy`
+  Helm value and its fatal-if-unset startup check, which are not built.
 - `338ea03` — §10.6 tenant `rbac-config` endpoint. `GET` / `PUT
   /v1/admin/tenants/{id}/rbac-config` store `noEnvironmentPolicy` on the tenant;
   deny-all is the platform default and an omitted value is treated as deny-all.
