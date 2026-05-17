@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `25fdf00` — §15.1 OpenAPI: explicit-environment session endpoint and field sync. Adds
+  `POST /v1/environments/{name}/sessions` and the `environment` / runtime `labels`
+  fields to the `Session`, `CreateSessionRequest`, and `Runtime` schemas.
 - `2097571` — §10.6 explicit-environment session endpoint. `POST
   /v1/environments/{name}/sessions` creates a session pinned to the path environment;
   `handleCreate` and the new handler share an extracted `createSession` core. The
