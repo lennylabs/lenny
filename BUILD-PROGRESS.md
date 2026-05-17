@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8311725` — standard five-field cron expression evaluator. The §25
+  `lenny-ops` backup scheduler, the platform upgrade-check cron, and the
+  verification schedules are configured as cron strings, but the codebase
+  had no cron evaluator. New pure package `pkg/cron`: `Parse` parses a
+  five-field expression (`*`, value, range, `*/s` / `a-b/s` step, lists)
+  into per-field bitmasks; `Next` computes the earliest firing time
+  strictly after a given instant, applies the standard day-of-month /
+  day-of-week OR rule, and errors on an unsatisfiable expression. Another
+  pure-logic building block of the (infrastructure-bound) `lenny-ops`
+  service, alongside the backup retention evaluator.
 - `88dca55` — §25 `lenny-ops` backup retention policy evaluator. §25 defines
   the backup retention policy (`retainDays`, `retainCount`, `retainMinFull`,
   `preRestoreRetainDays`) but nothing evaluated it. New pure package
