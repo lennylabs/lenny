@@ -1078,6 +1078,55 @@ func TestCreateRuntimeRejectsChainedDerivation(t *testing.T) {
 	}
 }
 
+func TestUpdateRuntimeRejectsInvalidDerivedRuntime(t *testing.T) {
+	// §5.1: baseRuntime is fixed at registration, and a PUT against a
+	// derived runtime may not set the inherited / prohibited fields.
+	router, _, _ := newRuntimeAdmin(t)
+	createBaseRuntime(t, router.Handler(), "base-rt")
+	createBaseRuntime(t, router.Handler(), "other-base")
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name: "derived-rt", BaseRuntime: "base-rt",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create derived: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	rebased := "other-base"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/derived-rt",
+		admin.UpdateRuntimeRequest{BaseRuntime: &rebased})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+		t.Errorf("PUT changing baseRuntime: status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	img := "lenny/x@sha256:abc"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/derived-rt",
+		admin.UpdateRuntimeRequest{Image: &img})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+		t.Errorf("PUT image on a derived runtime: status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/derived-rt",
+		admin.UpdateRuntimeRequest{Capabilities: &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionOneShot}})
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "INVALID_DERIVED_RUNTIME") {
+		t.Errorf("PUT capabilities on a derived runtime: status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	// A PUT cannot convert a standalone runtime into a derived one.
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/base-rt",
+		admin.UpdateRuntimeRequest{BaseRuntime: &rebased})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("PUT baseRuntime onto a standalone runtime: status %d, want 400", rr.Code)
+	}
+
+	// A benign field PUT against a derived runtime is accepted.
+	desc := "updated description"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/derived-rt",
+		admin.UpdateRuntimeRequest{Description: &desc})
+	if rr.Code != http.StatusOK {
+		t.Errorf("PUT description on a derived runtime: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

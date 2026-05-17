@@ -129,6 +129,34 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 	return nil
 }
 
+// validateDerivedRuntimeUpdate applies the §5.1 derived-runtime rules
+// to a PUT against an existing runtime. A runtime's baseRuntime is
+// fixed at registration, so a PUT may not change it. A PUT against an
+// already-derived runtime may not set the inherited or prohibited
+// fields (image, executionMode, isolationProfile, integrationLevel,
+// capabilities) — they are always taken from the base.
+func validateDerivedRuntimeUpdate(current runtimestore.Runtime, body UpdateRuntimeRequest) error {
+	if body.BaseRuntime != nil && *body.BaseRuntime != current.BaseRuntime {
+		return errors.New("baseRuntime cannot be changed after registration")
+	}
+	if !current.IsDerived() {
+		return nil
+	}
+	switch {
+	case body.Image != nil && *body.Image != "":
+		return errors.New("image is prohibited on derived runtimes")
+	case body.ExecutionMode != nil && *body.ExecutionMode != "":
+		return errors.New("executionMode is prohibited on derived runtimes")
+	case body.IsolationProfile != nil && *body.IsolationProfile != "":
+		return errors.New("isolationProfile is prohibited on derived runtimes")
+	case body.IntegrationLevel != nil && *body.IntegrationLevel != "":
+		return errors.New("integrationLevel is prohibited on derived runtimes")
+	case body.Capabilities != nil:
+		return errors.New("capabilities is prohibited on derived runtimes")
+	}
+	return nil
+}
+
 // validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
 // cleanup-failure enums and non-negative numeric fields. The §5.1
 // cross-field rules — allowCrossTenantReuse requires microvm isolation
@@ -515,6 +543,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 	if body.TaskPolicy != nil {
 		if err := validateTaskPolicy(body.TaskPolicy); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
+	if current, err := r.runtimes.Get(req.Context(), name); err == nil {
+		if derr := validateDerivedRuntimeUpdate(current, body); derr != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
 			return
 		}
 	}
