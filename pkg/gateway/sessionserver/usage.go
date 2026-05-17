@@ -80,6 +80,25 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 	}
 }
 
+// terminalSessionEvent maps a terminal session state to its §16.6
+// operational-event type and severity. ok is false for a non-terminal
+// state. Terminate is modeled as StateCompleted, so no session state
+// maps to the session_terminated catalogue entry.
+func terminalSessionEvent(st session.State) (et opsevents.EventType, severity string, ok bool) {
+	switch st {
+	case session.StateCompleted:
+		return opsevents.EventSessionCompleted, "info", true
+	case session.StateFailed:
+		return opsevents.EventSessionFailed, "error", true
+	case session.StateCancelled:
+		return opsevents.EventSessionCancelled, "info", true
+	case session.StateExpired:
+		return opsevents.EventSessionExpired, "warning", true
+	default:
+		return "", "", false
+	}
+}
+
 // recordSessionCompleted runs the side effects of a session reaching a
 // terminal state: it takes the §7.1 final workspace snapshot, releases
 // the session's executor state — for a pod-backed session this shuts
@@ -87,23 +106,28 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 // `session.completed` billing event. All are best-effort: a failure
 // never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
-	// §25.3: a session entering the failed state emits a session_failed
-	// operational event so an ops agent observes it through the event
-	// buffer. Best-effort — a nil emitter or marshal error never fails
-	// the transition.
-	if s.opsEmitter != nil && sess.State == session.StateFailed {
-		data, _ := json.Marshal(map[string]any{
-			"sessionId":    sess.ID,
-			"runtime":      sess.RuntimeRef,
-			"failureClass": string(sess.FailureClass),
-		})
-		s.opsEmitter.Emit(opsevents.OperationalEvent{
-			Source:          "/v1/sessions",
-			Type:            opsevents.EventSessionFailed.CloudEventsType(),
-			Severity:        "error",
-			DataContentType: "application/json",
-			Data:            data,
-		})
+	// §16.6 / §25.3: a session reaching a terminal state emits the
+	// matching session lifecycle operational event so an ops agent
+	// observes it through the event buffer. Best-effort — a nil emitter
+	// or marshal error never fails the transition.
+	if s.opsEmitter != nil {
+		if et, severity, ok := terminalSessionEvent(sess.State); ok {
+			payload := map[string]any{
+				"sessionId": sess.ID,
+				"runtime":   sess.RuntimeRef,
+			}
+			if sess.FailureClass != "" {
+				payload["failureClass"] = string(sess.FailureClass)
+			}
+			data, _ := json.Marshal(payload)
+			s.opsEmitter.Emit(opsevents.OperationalEvent{
+				Source:          "/v1/sessions",
+				Type:            et.CloudEventsType(),
+				Severity:        severity,
+				DataContentType: "application/json",
+				Data:            data,
+			})
+		}
 	}
 	// §7.1 seal-and-export: snapshot the final workspace before the pod
 	// is released. Best-effort — it no-ops for a session that never ran
