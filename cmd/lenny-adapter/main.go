@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net"
@@ -48,6 +49,8 @@ func main() {
 		"directory the §4.7 credential file is materialized into")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to the runtime binary the adapter starts at session start")
+	lifecycleSocket := flag.String("lifecycle-socket", "",
+		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -70,6 +73,24 @@ func main() {
 			BinPath: *runtimeBin,
 		})
 	}
+
+	// §15.4.6: when a lifecycle socket is configured, the adapter listens
+	// on it for the Full-level runtime's lifecycle connection and
+	// advertises it in the session manifest.
+	var lifecycle *adapter.LifecycleChannel
+	if *lifecycleSocket != "" {
+		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		adapterSrv.Lifecycle = lifecycle
+		go func() {
+			if err := lifecycle.Run(context.Background()); err != nil {
+				log.Printf("lenny-adapter: lifecycle channel stopped: %v", err)
+			}
+		}()
+	}
+
 	srv := adapter.NewGRPCServer(adapterSrv, opts...)
 
 	lis, err := net.Listen("tcp", *addr)
@@ -81,6 +102,9 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
+		if lifecycle != nil {
+			_ = lifecycle.Close()
+		}
 		srv.GracefulStop()
 	}()
 

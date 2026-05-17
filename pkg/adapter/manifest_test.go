@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -87,6 +88,56 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	// §15.4.3: the nonce is regenerated per session manifest write.
 	if second := readNonce(); second == first {
 		t.Error("writeSessionManifest reused the MCP nonce across writes")
+	}
+}
+
+func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+
+	// A Basic-level adapter has no lifecycle channel; the manifest omits
+	// the lifecycleChannel object entirely.
+	if _, err := srv.writeSessionManifest("sess-basic", nil, nil); err != nil {
+		t.Fatalf("writeSessionManifest: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if strings.Contains(string(raw), "lifecycleChannel") {
+		t.Error("Basic-level manifest should omit lifecycleChannel")
+	}
+
+	// With a lifecycle channel configured, the manifest advertises its
+	// socket so a Full-level runtime can dial it.
+	sockDir, err := os.MkdirTemp("", "lc-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	lc, err := NewLifecycleChannel(filepath.Join(sockDir, "lifecycle.sock"))
+	if err != nil {
+		t.Fatalf("NewLifecycleChannel: %v", err)
+	}
+	defer lc.Close()
+	srv.Lifecycle = lc
+
+	if _, err := srv.writeSessionManifest("sess-full", nil, nil); err != nil {
+		t.Fatalf("writeSessionManifest: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if m.LifecycleChannel == nil {
+		t.Fatal("Full-level manifest omits lifecycleChannel")
+	}
+	if m.LifecycleChannel.Socket != lc.SocketPath() {
+		t.Errorf("lifecycleChannel.socket = %q, want %q", m.LifecycleChannel.Socket, lc.SocketPath())
 	}
 }
 

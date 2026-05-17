@@ -57,6 +57,13 @@ type ManifestConnector struct {
 	Socket string `json:"socket"`
 }
 
+// ManifestLifecycleChannel is the §15.4.6 lifecycleChannel manifest
+// object: the Unix socket a Full-level runtime dials to reach the
+// lifecycle channel.
+type ManifestLifecycleChannel struct {
+	Socket string `json:"socket"`
+}
+
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
 // v1 carries the session metadata a Basic-level runtime needs, the
 // §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
@@ -91,6 +98,10 @@ type Manifest struct {
 	// RuntimeMcpServers is the §4.7 slot reserved for type:mcp runtimes.
 	// Empty in v1; never absent.
 	RuntimeMcpServers []ManifestConnector `json:"runtimeMcpServers"`
+	// LifecycleChannel points a Full-level runtime at the §15.4.6
+	// lifecycle channel's Unix socket. Omitted when the adapter runs no
+	// lifecycle channel (a Basic-level deployment).
+	LifecycleChannel *ManifestLifecycleChannel `json:"lifecycleChannel,omitempty"`
 }
 
 // newMCPNonce returns a fresh §15.4.3 intra-pod MCP nonce: a random
@@ -157,6 +168,9 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 	}
 	if s.MCPSocket != "" {
 		m.PlatformMcpServer = &ManifestMCPServer{Socket: s.MCPSocket}
+	}
+	if s.Lifecycle != nil {
+		m.LifecycleChannel = &ManifestLifecycleChannel{Socket: s.Lifecycle.SocketPath()}
 	}
 	if err := WriteManifest(s.ManifestDir, m); err != nil {
 		return "", err

@@ -77,6 +77,12 @@ type Server struct {
 	// Usage reports the session's token and wall-clock accounting the
 	// ReportUsage RPC returns. Nil leaves ReportUsage Unimplemented.
 	Usage UsageMeter
+	// Lifecycle is the §15.4.6 runtime lifecycle channel. When set, the
+	// adapter advertises its Unix socket in the session manifest so a
+	// Full-level runtime can connect for checkpoint, interrupt,
+	// credential-rotation, and deadline signals. Nil leaves the adapter
+	// Basic-level, with no lifecycle channel.
+	Lifecycle *LifecycleChannel
 
 	// mu guards sessionID, mcpCancel, and the credential fields.
 	mu sync.Mutex
