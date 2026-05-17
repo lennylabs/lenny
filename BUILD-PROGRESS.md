@@ -31,6 +31,14 @@ Newest first. Each entry is one increment toward the critical path below.
   - `credentials_acknowledged` (R→A): `type`, `leaseId`, `provider`
   - `deadline_approaching` (A→R): `type`, `remainingMs`, `trigger`
   - `terminate` (A→R): `type`, `deadlineMs`, `reason`
+  Semantic corrections beyond field renames (also from §4.7):
+  - `credentials_rotated` is request/reply: the adapter awaits the runtime's
+    `credentials_acknowledged` (correlated by `leaseId`, §4.7 enforces a
+    60s timeout). The current `NotifyCredentialsRotated` is fire-and-forget;
+    it must become a request that waits for the ack.
+  - `interrupt_request` carries no `reason` field — drop it from
+    `RequestInterrupt`.
+  - `checkpoint_request` carries no `level` field — drop it.
   Spec inconsistency to settle: §15.4.6 prose names a `deadline_signal` whose
   behavior (final response + exit) matches §4.7 `terminate`, while §4.7's
   `deadline_approaching` is only an advance warning. The §4.7 message-schema
