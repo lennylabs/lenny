@@ -49,7 +49,7 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	workspace_snapshot_at, parent_workspace_ref, retention_expires_at,
 	upload_token_digest, upload_token_expiry, created_at, updated_at,
 	workspace_plan, legal_hold,
-	experiment_id, experiment_variant_id, experiment_inherited`
+	experiment_id, experiment_variant_id, experiment_inherited, environment`
 
 // Create persists a fresh session row. root_session_id is set to the
 // session's own id: a standalone session is the root of its own tree.
@@ -69,12 +69,12 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		workspace_snapshot_ref, workspace_snapshot_source, workspace_snapshot_at,
 		parent_workspace_ref, retention_expires_at, upload_token_digest,
 		upload_token_expiry, created_at, updated_at, workspace_plan, legal_hold,
-		experiment_id, experiment_variant_id, experiment_inherited
+		experiment_id, experiment_variant_id, experiment_inherited, environment
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid, $1::uuid, $9, $10,
 		$11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21,
-		$22, $23, $24
+		$22, $23, $24, $25
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -87,7 +87,7 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			pgtenant.NullTime(sess.RetentionExpiresAt), sess.UploadTokenDigest,
 			pgtenant.NullTime(sess.UploadTokenExpiry), sess.CreatedAt, sess.UpdatedAt,
 			jsonbArg(sess.WorkspacePlan), sess.LegalHold,
-			expID, expVariant, expInherited)
+			expID, expVariant, expInherited, sess.Environment)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -131,7 +131,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		parent_workspace_ref = $14, retention_expires_at = $15,
 		upload_token_digest = $16, upload_token_expiry = $17, updated_at = $18,
 		legal_hold = $19, experiment_id = $20, experiment_variant_id = $21,
-		experiment_inherited = $22
+		experiment_inherited = $22, environment = $23
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -156,7 +156,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			string(sess.FailureClass), sess.FailureReason, ref, src, pgtenant.NullTime(at),
 			sess.ParentWorkspaceRef, pgtenant.NullTime(sess.RetentionExpiresAt),
 			sess.UploadTokenDigest, pgtenant.NullTime(sess.UploadTokenExpiry), sess.UpdatedAt,
-			sess.LegalHold, expID, expVariant, expInherited,
+			sess.LegalHold, expID, expVariant, expInherited, sess.Environment,
 		); err != nil {
 			return err
 		}
@@ -258,7 +258,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&isoProf, &s.ParentSessionID, &failCls, &s.FailureReason,
 		&wsRef, &wsSrc, &wsAt, &s.ParentWorkspaceRef, &retAt,
 		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
-		&s.LegalHold, &expID, &expVariant, &expInherited,
+		&s.LegalHold, &expID, &expVariant, &expInherited, &s.Environment,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
