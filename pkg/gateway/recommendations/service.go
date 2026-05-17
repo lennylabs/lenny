@@ -144,5 +144,36 @@ func defaultEvaluators() map[string]Evaluator {
 			}
 			return Evaluation{Triggered: true, DataAvailable: true, Value: cpu, Confidence: 0.7}
 		},
+		"ResourceLimitsMemoryPressure": func(m MetricReader) Evaluation {
+			rate, ok := m.WindowedRate("lenny_pod_oom_killed_total", nil, 24*time.Hour)
+			if !ok {
+				return Evaluation{}
+			}
+			oomCount := rate * (24 * time.Hour).Seconds()
+			if oomCount <= 0 {
+				return Evaluation{DataAvailable: true}
+			}
+			return Evaluation{Triggered: true, DataAvailable: true, Value: oomCount, Confidence: 0.9}
+		},
+		"RetentionTuningStoragePressure": func(m MetricReader) Evaluation {
+			util, ok := m.GaugeValue("lenny_storage_utilization_ratio", nil)
+			if !ok {
+				return Evaluation{}
+			}
+			if util <= 0.80 {
+				return Evaluation{DataAvailable: true}
+			}
+			return Evaluation{Triggered: true, DataAvailable: true, Value: util, Confidence: 0.75}
+		},
+		"QuotaAdjustmentRejections": func(m MetricReader) Evaluation {
+			ratio, ok := m.GaugeValue("lenny_quota_rejection_ratio", nil)
+			if !ok {
+				return Evaluation{}
+			}
+			if ratio <= 0.05 {
+				return Evaluation{DataAvailable: true}
+			}
+			return Evaluation{Triggered: true, DataAvailable: true, Value: ratio, Confidence: 0.8}
+		},
 	}
 }

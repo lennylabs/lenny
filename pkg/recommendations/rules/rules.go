@@ -152,5 +152,32 @@ func Catalog() []Rule {
 			Description: "Gateway CPU exceeded 70 percent for over 15 minutes. Recommend increasing the HPA max-replica ceiling.",
 			SpecRef:     "§25.3",
 		},
+		{
+			Name:        "ResourceLimitsMemoryPressure",
+			Category:    CategoryResourceLimits,
+			Condition:   `increase(lenny_pod_oom_killed_total[24h]) > 0`,
+			Window:      24 * time.Hour,
+			Summary:     "Pods OOM-killed in the last 24h — raise the memory limit",
+			Description: "One or more pods were OOM-killed in the 24h window. Recommend increasing the memory limit for the affected pool.",
+			SpecRef:     "§25.3",
+		},
+		{
+			Name:        "RetentionTuningStoragePressure",
+			Category:    CategoryRetentionTuning,
+			Condition:   `lenny_storage_utilization_ratio > 0.80`,
+			Window:      24 * time.Hour,
+			Summary:     "Artifact storage above 80 percent — shorten the retention TTL",
+			Description: "Artifact storage utilisation exceeds 80 percent. Recommend reducing the artifact retention TTL to relieve storage pressure.",
+			SpecRef:     "§25.3",
+		},
+		{
+			Name:        "QuotaAdjustmentRejections",
+			Category:    CategoryQuotaAdjustment,
+			Condition:   `lenny_quota_rejection_ratio > 0.05`,
+			Window:      24 * time.Hour,
+			Summary:     "Session quota rejection rate above 5 percent — raise the tenant quota",
+			Description: "More than 5 percent of session-creation requests were rejected by the tenant quota over the 24h window. Recommend increasing the tenant session quota.",
+			SpecRef:     "§25.3",
+		},
 	}
 }

@@ -76,6 +76,53 @@ func TestGetRecommendationsCategoryFilter(t *testing.T) {
 	}
 }
 
+func hasRule(resp *recommendations.RecommendationsResponse, rule string) bool {
+	for _, r := range resp.Recommendations {
+		if r.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGetRecommendationsResourceLimits(t *testing.T) {
+	// §25.3 resource_limits: OOM kills in the 24h window trigger a
+	// memory-limit recommendation.
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	store.Record("lenny_pod_oom_killed_total", nil, 0)
+	store.Record("lenny_pod_oom_killed_total", nil, 2)
+	svc := recommendations.NewCapacityService(store)
+	resp, _ := svc.GetRecommendations(context.Background(), nil)
+	if !hasRule(resp, "ResourceLimitsMemoryPressure") {
+		t.Errorf("ResourceLimitsMemoryPressure must trigger on OOM kills: %+v", resp.Recommendations)
+	}
+}
+
+func TestGetRecommendationsRetentionAndQuota(t *testing.T) {
+	// §25.3 retention_tuning and quota_adjustment.
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	store.Record("lenny_storage_utilization_ratio", nil, 0.92)
+	store.Record("lenny_quota_rejection_ratio", nil, 0.12)
+	svc := recommendations.NewCapacityService(store)
+	resp, _ := svc.GetRecommendations(context.Background(), nil)
+	if !hasRule(resp, "RetentionTuningStoragePressure") {
+		t.Errorf("RetentionTuningStoragePressure must trigger above 80%% storage: %+v", resp.Recommendations)
+	}
+	if !hasRule(resp, "QuotaAdjustmentRejections") {
+		t.Errorf("QuotaAdjustmentRejections must trigger above 5%% rejections: %+v", resp.Recommendations)
+	}
+}
+
+func TestGetRecommendationsRetentionBelowThreshold(t *testing.T) {
+	store := recommendations.NewWindowStore(7 * 24 * time.Hour)
+	store.Record("lenny_storage_utilization_ratio", nil, 0.50)
+	svc := recommendations.NewCapacityService(store)
+	resp, _ := svc.GetRecommendations(context.Background(), nil)
+	if hasRule(resp, "RetentionTuningStoragePressure") {
+		t.Error("RetentionTuningStoragePressure must not trigger at 50 percent storage")
+	}
+}
+
 func TestGetRecommendationsWarmPoolIncrease(t *testing.T) {
 	// §25.3: WarmPoolUndersized triggers when the pool was exhausted
 	// 3+ times across the 24h window.
