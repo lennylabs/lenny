@@ -11,6 +11,8 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `10282d0` — §15.1 OpenAPI: §4 runtime/pool tenant-access endpoints. With these, the
+  embedded `openapi.json` covers every admin route the gateway registers.
 - `bb1df75` — §15.1 OpenAPI document completion. Adds the remaining undocumented admin
   endpoints — the credential-pool and delegation-policy CRUD, the tenant
   elicitation-content-integrity GET/PUT, and the compliance-profile decommission. The
