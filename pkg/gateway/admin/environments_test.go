@@ -11,6 +11,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -194,5 +195,41 @@ func TestEnvironmentTenantAdminScoped(t *testing.T) {
 	}
 	if _, err := envs.Get(context.Background(), "acme", "env-ta"); err != nil {
 		t.Errorf("tenant-admin's environment not stored under its tenant: %v", err)
+	}
+}
+
+// §10.2: environment endpoints are gated on manage_environments. A
+// tenant custom role that holds the permission is admitted; one that
+// does not is rejected.
+func TestEnvironmentCustomRoleEnforcement(t *testing.T) {
+	envs := environmentstore.NewMemory()
+	roles := customrolestore.NewMemory()
+	_ = roles.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "env-admin",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageEnvironments},
+	})
+	_ = roles.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "usage-viewer",
+		Permissions: []pkgauth.Permission{pkgauth.PermViewUsage},
+	})
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+	}).WithEnvironments(envs).WithCustomRoles(roles)
+
+	asEnvAdmin := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "env-admin") }
+	body := validEnvironmentPayload("env-cr")
+	body.TenantID = ""
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments", body, asEnvAdmin)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("custom role with manage_environments: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+	if _, err := envs.Get(context.Background(), "acme", "env-cr"); err != nil {
+		t.Errorf("custom-role environment not stored under the principal's tenant: %v", err)
+	}
+
+	asUsageViewer := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "usage-viewer") }
+	rr = doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/environments", nil, asUsageViewer)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("custom role without manage_environments: got %d, want 403 (body=%s)", rr.Code, rr.Body.String())
 	}
 }

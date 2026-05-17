@@ -220,17 +220,19 @@ func (r *Router) Handler() http.Handler {
 		}
 	}
 	if r.environments != nil {
-		// §10.6 / §15.1 environment admin CRUD.
+		// §10.6 / §15.1 environment admin CRUD, gated on the §10.2
+		// manage_environments permission.
+		envAdmin := r.requirePermission(auth.PermManageEnvironments)
 		mux.Handle("POST /v1/admin/environments",
-			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateEnvironment)))
+			envAdmin(http.HandlerFunc(r.handleCreateEnvironment)))
 		mux.Handle("GET /v1/admin/environments",
-			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListEnvironments)))
+			envAdmin(http.HandlerFunc(r.handleListEnvironments)))
 		mux.Handle("GET /v1/admin/environments/{name}",
-			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetEnvironment)))
+			envAdmin(http.HandlerFunc(r.handleGetEnvironment)))
 		mux.Handle("PUT /v1/admin/environments/{name}",
-			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateEnvironment)))
+			envAdmin(http.HandlerFunc(r.handleUpdateEnvironment)))
 		mux.Handle("DELETE /v1/admin/environments/{name}",
-			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
+			envAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
@@ -263,11 +265,14 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("DELETE /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCustomRole)))
 	}
 	if r.credentialPools != nil {
-		mux.Handle("POST /v1/admin/credential-pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateCredentialPool)))
-		mux.Handle("GET /v1/admin/credential-pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListCredentialPools)))
-		mux.Handle("GET /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
-		mux.Handle("PUT /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
-		mux.Handle("DELETE /v1/admin/credential-pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
+		// §15.1 credential-pool admin CRUD, gated on the §10.2
+		// manage_credential_pools permission.
+		credPoolAdmin := r.requirePermission(auth.PermManageCredentialPools)
+		mux.Handle("POST /v1/admin/credential-pools", credPoolAdmin(http.HandlerFunc(r.handleCreateCredentialPool)))
+		mux.Handle("GET /v1/admin/credential-pools", credPoolAdmin(http.HandlerFunc(r.handleListCredentialPools)))
+		mux.Handle("GET /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
+		mux.Handle("PUT /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
+		mux.Handle("DELETE /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
 	}
 	if r.tenantAccess != nil {
 		mux.Handle("POST /v1/admin/runtimes/{name}/tenant-access", r.requireAdmin(r.grantAccessHandler(tenantaccessstore.KindRuntime)))
@@ -345,6 +350,33 @@ func (r *Router) requireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, req)
 	})
+}
+
+// requirePermission gates an endpoint on a §10.2 permission. A
+// principal passes when one of its roles — built-in or tenant custom —
+// grants perm. platform-admin and tenant-admin pass through their
+// permission-matrix rows; a tenant custom role passes when its
+// permission set includes perm. For a tenant-resource permission
+// (manage_environments, manage_credential_pools) the admitted built-in
+// set is identical to requireTenantResourceAdmin; the gate additionally
+// admits a custom role that holds the permission.
+func (r *Router) requirePermission(perm auth.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			p, ok := authmw.FromContext(req.Context())
+			if !ok {
+				writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"endpoint requires authentication", nil)
+				return
+			}
+			if !r.principalGrantsPermission(req.Context(), p, perm) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"this endpoint requires the "+string(perm)+" permission", nil)
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
 }
 
 // TenantPayload is the §15.1 admin-tenant request/response body.

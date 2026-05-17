@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
@@ -235,5 +237,37 @@ func TestCredentialPoolRejectsNonAdmin(t *testing.T) {
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("anonymous list: status %d, want 403", rr.Code)
+	}
+}
+
+// §10.2: credential-pool endpoints are gated on manage_credential_pools.
+// A tenant custom role that holds the permission is admitted; one that
+// does not is rejected.
+func TestCredentialPoolCustomRoleEnforcement(t *testing.T) {
+	store := credentialpoolstore.NewMemory()
+	roles := customrolestore.NewMemory()
+	_ = roles.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "cred-admin",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageCredentialPools},
+	})
+	_ = roles.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "usage-viewer",
+		Permissions: []pkgauth.Permission{pkgauth.PermViewUsage},
+	})
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithCredentialPools(store).WithCustomRoles(roles)
+
+	asCredAdmin := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "cred-admin") }
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",
+		validCredentialPool("acme", "p1"), asCredAdmin)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("custom role with manage_credential_pools: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	asUsageViewer := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "usage-viewer") }
+	rr = doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/credential-pools", nil, asUsageViewer)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("custom role without manage_credential_pools: got %d, want 403 (body=%s)", rr.Code, rr.Body.String())
 	}
 }
