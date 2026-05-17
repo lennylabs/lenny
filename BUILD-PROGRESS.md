@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d381273` — §10.7 `TargetingConfig` — tenant experimentTargeting model. The typed
+  §10.7 `experimentTargeting` block: the provider enum (`ofrep`, `launchdarkly`,
+  `statsig`, `unleash`), the hot-path timeout, and the four provider sub-blocks.
+  `Validate` enforces the §10.7 invariants (a known provider, a non-negative timeout,
+  the provider's own complete sub-block, no mismatched sub-block); a zero config means
+  the tenant runs no external targeting. With the OFREP client and
+  `ResolveExternalVariant`, the §10.7 `mode: external` substrate is complete; the
+  remaining work is storing `TargetingConfig` on the tenant (model field, admin API)
+  and the `ExperimentRouter` wiring that builds the OFREP client from it.
 - `b30da9c` — §10.7 OFREP client. `pkg/gateway/ofrep` is the OpenFeature Remote
   Evaluation Protocol transport for `mode: external` experiment resolution: `Evaluate`
   POSTs a single-flag evaluation and returns the provider's variant and value. A
