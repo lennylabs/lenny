@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `ab8fd17` — §25.6 pod-failure cause classification. New package
+  `pkg/ops/diagnostics`: `ClassifyPodFailure` maps pod-failure signals (exit
+  code, OOM flag, setup phase, image-pull and resource-pressure indications)
+  to a §25.6 `CauseChainEntry` category, with OOM kills and pre-start
+  failures taking precedence over exit-code analysis.
 - `942ecda` — §25.5 ops event-subscription webhook delivery policy. New pure
   package `pkg/webhookdelivery`: `RetryDelay`/`Exhausted` apply the §25.5
   retry budget (3 attempts, 1s/5s/30s backoff); `RetryableStatus` classifies
