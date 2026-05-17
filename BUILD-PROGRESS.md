@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `249847b` — §4.7 / §13 `SO_PEERCRED` peer-credential check on the platform
+  MCP server. `peerCheckedListener` wraps the platform MCP server's listener
+  and runs a per-connection check, closing and skipping any rejected
+  connection. `checkPeerUID` reads the peer UID via `SO_PEERCRED` on Linux
+  (build-tagged; cross-compile-verified and Linux-CI-tested) and rejects a
+  mismatch against the configured runtime UID; a non-Linux no-op keeps the
+  development build working. `startPlatformMCP` wraps the listener when
+  `Server.RuntimeUID` is set, so the check is opt-in. This is defense in
+  depth on top of the manifest-nonce handshake. Remaining MCP-fabric work:
+  the platform `lenny/...` tool surface (each tool relays a `tools/call` to
+  the gateway — a gateway-relay sub-arc) and the Full-level `lifecycleChannel`.
 - `9ee6b7e` — §4.7 `connectorServers` and `runtimeMcpServers` manifest arrays.
   §4.7 mandates both fields as "Required" and "never absent," each an empty
   array when no connectors and no `type:mcp` runtimes are present. The
