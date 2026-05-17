@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a39c60c` — §4.7 staging path complete: `Bind` stages plan uploads via
+  `PrepareWorkspace`. `PrepareWorkspace` had no caller; `Bind` ran
+  `FinalizeWorkspace`/`RunSetup`/`StartSession` but never staged the content
+  `uploadFile`/`uploadArchive` sources reference. `Bind` now collects the
+  `uploadRef` of every upload source, fetches each blob from the §4.5 blob
+  store, and streams it via `PrepareWorkspace` before `FinalizeWorkspace`.
+  The `Binder` gained a `Blobs` field, wired to the gateway blob store in
+  `lenny-gateway`. A workspace with `inlineFile`, `mkdir`, `uploadFile`, and
+  `uploadArchive` sources now materializes end to end through the four-RPC
+  session-assignment sequence. The §4.7 staging-RPC restructure is finished:
+  `gitClone` is the only `WorkspaceSource` type still returning
+  `ErrSourceUnsupported`, pending the VCS-client layer.
 - `e9da48c` — `StagingPath` hashes the upload ref. `StagingPath` required a
   plain file name, but a §14 WorkspaceSource `uploadRef` is a §4.5
   `lenny-blob://` URI (the upload API returns one), so every real
