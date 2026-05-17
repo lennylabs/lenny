@@ -79,6 +79,61 @@ func TestRuntimeLabelsUpdateReplaces(t *testing.T) {
 	}
 }
 
+func TestRuntimeAgentInterfaceRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a type:agent runtime carries an optional agentInterface
+	// descriptor. The store must deep-copy its slices so it never shares
+	// mutable state with a caller.
+	s := runtimestore.NewMemory()
+	iface := &runtimestore.AgentInterface{
+		Description:            "Analyzes codebases and produces refactoring plans",
+		InputModes:             []runtimestore.AgentInterfaceMode{{Type: "text/plain"}},
+		OutputModes:            []runtimestore.AgentInterfaceMode{{Type: "text/plain", Role: "primary"}},
+		SupportsWorkspaceFiles: true,
+		Skills:                 []runtimestore.AgentInterfaceSkill{{ID: "review", Name: "Code Review"}},
+		Examples:               []runtimestore.AgentInterfaceExample{{Description: "Review auth", Input: "Review the auth module"}},
+	}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "refactorer", Type: runtimestore.TypeAgent, AgentInterface: iface,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	iface.Skills[0].Name = "tampered" // mutate the caller's slice after Create
+
+	got, err := s.Get(context.Background(), "refactorer")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.AgentInterface == nil {
+		t.Fatalf("agentInterface not stored")
+	}
+	if got.AgentInterface.Description != iface.Description || !got.AgentInterface.SupportsWorkspaceFiles {
+		t.Errorf("agentInterface scalar fields lost: %+v", got.AgentInterface)
+	}
+	if len(got.AgentInterface.Skills) != 1 || got.AgentInterface.Skills[0].Name != "Code Review" {
+		t.Errorf("agentInterface skills not isolated from caller mutation: %+v", got.AgentInterface.Skills)
+	}
+	got.AgentInterface.Skills[0].Name = "tampered-again" // mutate the returned slice
+	again, _ := s.Get(context.Background(), "refactorer")
+	if again.AgentInterface.Skills[0].Name != "Code Review" {
+		t.Errorf("the returned slice aliases the stored slice: %+v", again.AgentInterface.Skills)
+	}
+}
+
+func TestRuntimeAgentInterfaceNilByDefault(t *testing.T) {
+	// A runtime registered without an agentInterface block reports nil,
+	// matching the type:mcp and type:agent-without-block cases in §5.1.
+	s := runtimestore.NewMemory()
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "plain", Type: runtimestore.TypeAgent,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, _ := s.Get(context.Background(), "plain")
+	if got.AgentInterface != nil {
+		t.Errorf("agentInterface must be nil when omitted: %+v", got.AgentInterface)
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{

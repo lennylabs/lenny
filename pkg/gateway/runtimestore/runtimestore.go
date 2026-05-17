@@ -62,6 +62,11 @@ type Runtime struct {
 	// (§10.6). A nil or empty map means the runtime carries no labels.
 	Labels map[string]string
 
+	// AgentInterface is the optional §5.1 agentInterface descriptor. It
+	// is nil for type:mcp runtimes and for type:agent runtimes that omit
+	// the block.
+	AgentInterface *AgentInterface
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -74,6 +79,79 @@ type Runtime struct {
 
 // IsActive reports whether the runtime has not been soft-deleted.
 func (r Runtime) IsActive() bool { return r.DeletedAt.IsZero() }
+
+// AgentInterface is the optional §5.1 agentInterface descriptor declared
+// on a type:agent runtime. It serves runtime discovery, A2A agent-card
+// auto-generation, and adapter manifest summaries. type:mcp runtimes do
+// not carry an agentInterface. The field names and JSON tags mirror the
+// §5.1 YAML shape, which §15 names the normative contract for adapters
+// that auto-generate native discovery formats.
+type AgentInterface struct {
+	// Description is the human-readable summary of the runtime's role.
+	Description string `json:"description,omitempty"`
+
+	// InputModes enumerates the media types the runtime accepts.
+	InputModes []AgentInterfaceMode `json:"inputModes,omitempty"`
+
+	// OutputModes enumerates the media types the runtime emits.
+	OutputModes []AgentInterfaceMode `json:"outputModes,omitempty"`
+
+	// SupportsWorkspaceFiles signals that the runtime honors workspace
+	// files in TaskSpec, distinguishing a Lenny-internal runtime from an
+	// external agent.
+	SupportsWorkspaceFiles bool `json:"supportsWorkspaceFiles,omitempty"`
+
+	// Skills enumerates the discrete capabilities the runtime advertises.
+	Skills []AgentInterfaceSkill `json:"skills,omitempty"`
+
+	// Examples provides worked usage samples.
+	Examples []AgentInterfaceExample `json:"examples,omitempty"`
+}
+
+// AgentInterfaceMode is one entry in AgentInterface.InputModes or
+// AgentInterface.OutputModes.
+type AgentInterfaceMode struct {
+	// Type is the IANA media type, for example "text/plain".
+	Type string `json:"type"`
+
+	// Role is an optional tag such as "primary". It is omitted when unset.
+	Role string `json:"role,omitempty"`
+}
+
+// AgentInterfaceSkill is one entry in AgentInterface.Skills.
+type AgentInterfaceSkill struct {
+	// ID is the stable skill identifier, for example "review".
+	ID string `json:"id"`
+
+	// Name is the human-readable skill name.
+	Name string `json:"name,omitempty"`
+
+	// Description elaborates on what the skill does.
+	Description string `json:"description,omitempty"`
+}
+
+// AgentInterfaceExample is one entry in AgentInterface.Examples.
+type AgentInterfaceExample struct {
+	// Description explains what the example demonstrates.
+	Description string `json:"description,omitempty"`
+
+	// Input is the prompt or input text the example submits.
+	Input string `json:"input,omitempty"`
+}
+
+// Clone returns a deep copy of the descriptor so the store never shares
+// mutable slice state with a caller. A nil receiver clones to nil.
+func (a *AgentInterface) Clone() *AgentInterface {
+	if a == nil {
+		return nil
+	}
+	cp := *a
+	cp.InputModes = append([]AgentInterfaceMode(nil), a.InputModes...)
+	cp.OutputModes = append([]AgentInterfaceMode(nil), a.OutputModes...)
+	cp.Skills = append([]AgentInterfaceSkill(nil), a.Skills...)
+	cp.Examples = append([]AgentInterfaceExample(nil), a.Examples...)
+	return &cp
+}
 
 // RuntimeType is the §5.1 type discriminator.
 type RuntimeType string
@@ -208,8 +286,9 @@ func ApplyDefaults(r *Runtime) {
 	}
 }
 
-// cloneRuntime returns a deep copy of r. The Labels map is copied so
-// the store never shares mutable state with a caller.
+// cloneRuntime returns a deep copy of r. The Labels map and the
+// AgentInterface descriptor are copied so the store never shares mutable
+// state with a caller.
 func cloneRuntime(r Runtime) Runtime {
 	if r.Labels != nil {
 		labels := make(map[string]string, len(r.Labels))
@@ -218,6 +297,7 @@ func cloneRuntime(r Runtime) Runtime {
 		}
 		r.Labels = labels
 	}
+	r.AgentInterface = r.AgentInterface.Clone()
 	return r
 }
 
