@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fa82e9c` — §10.6 `delegation.isolation_violation` audit event. `lenny/delegate_task`
+  emits the event through a new optional `DelegationAuditor` dep when the delegation
+  service reports a SEC-001 violation, recording the parent/child isolation profiles
+  and the `cross_environment` flag. `cmd/lenny-gateway` adapts its audit sink.
 - `06ad182` — §10.6 `ISOLATION_MONOTONICITY_VIOLATED` reason on `lenny/delegate_task`.
   A delegation refused for a §8.3 isolation-monotonicity violation now leads its error
   with the §10.6 reason token.
