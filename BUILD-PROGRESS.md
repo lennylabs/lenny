@@ -11,6 +11,24 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3c26b2e` — wired the lifecycle channel into the adapter. The `Server`
+  has a `Lifecycle *LifecycleChannel` field; when set, `writeSessionManifest`
+  advertises the §15.4.6 `lifecycleChannel.socket` so a Full-level runtime
+  can dial it (a Basic-level adapter omits the object). `cmd/lenny-adapter`
+  gained `--lifecycle-socket`: it constructs the channel, runs it, and closes
+  it on shutdown. A Full-level runtime connecting to the advertised socket
+  now completes the handshake against the real adapter.
+  Remaining lifecycle-channel work, for the next iteration:
+  - Drive the channel from the adapter RPCs: `Interrupt` →
+    `RequestInterrupt`, `Checkpoint` → `RequestCheckpoint` +
+    `CompleteCheckpoint`, the credential RPCs → `NotifyCredentialsRotated`,
+    and a session-deadline path → `SignalDeadline`. Read §15.4.6 first to
+    settle whether the lifecycle channel replaces or augments the existing
+    `s.Runtime` signal path for Full-level runtimes (Basic-level RPC tests
+    must still pass).
+  - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream so the
+    gateway observes them; resolve `ExtendLease` (proto-vs-§8.6 direction).
+  - Component-test the wired adapter against `cmd/runtimes/streaming-echo`.
 - `cf1e351` — §15.4.6 runtime lifecycle channel server (`pkg/adapter`,
   `LifecycleChannel`). Listens on a Unix socket, performs the
   `lifecycle_capabilities`/`lifecycle_support` handshake, and exposes
