@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fe5d62d` — §25.3 emit `health_status_changed` operational events. The health
+  `Aggregator` gains an `OnTransition` hook that fires when a `Report` computes an
+  aggregate status different from the previous Report's; `cmd/lenny-gateway` wires it to
+  emit a `health_status_changed` event into the §25.3 event buffer. The health package
+  stays decoupled from `opsevents` — the hook is a plain callback. Three §25.3 emit
+  sources are now wired (circuit breaker, session failure, health); pool, alert,
+  upgrade, and credential remain.
 - `51b7b8b` — §25.3 emit `session_failed` operational events. The sessionserver gains
   an optional `OpsEmitter`; `recordSessionCompleted` emits a `session_failed` event
   (session id, runtime, failure class) when a session reaches the failed state, so it
