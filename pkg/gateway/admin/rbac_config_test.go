@@ -118,3 +118,42 @@ func TestRBACConfigTenantNotFound(t *testing.T) {
 		t.Errorf("missing tenant: got %d, want 404", rr.Code)
 	}
 }
+
+// fakeRBACMetrics records the §10.6 allow-all counter calls.
+type fakeRBACMetrics struct{ allowAllTenants []string }
+
+func (f *fakeRBACMetrics) RecordNoEnvironmentPolicyAllowAll(tenantID string) {
+	f.allowAllTenants = append(f.allowAllTenants, tenantID)
+}
+
+func TestRBACConfigAllowAllRecordsMetric(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	fake := &fakeRBACMetrics{}
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock:   func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+		Metrics: fake,
+	})
+	put := func(policy string) {
+		body, _ := json.Marshal(admin.RBACConfigPayload{NoEnvironmentPolicy: policy})
+		req := withAdminPrincipal(httptest.NewRequest(http.MethodPut,
+			"/v1/admin/tenants/acme/rbac-config", bytes.NewReader(body)))
+		rr := httptest.NewRecorder()
+		router.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PUT %s: status %d, body=%s", policy, rr.Code, rr.Body.String())
+		}
+	}
+	// §10.6: deny-all does not increment the allow-all counter.
+	put("deny-all")
+	if len(fake.allowAllTenants) != 0 {
+		t.Errorf("deny-all must not record the allow-all counter: %v", fake.allowAllTenants)
+	}
+	// allow-all records the counter for the written tenant.
+	put("allow-all")
+	if len(fake.allowAllTenants) != 1 || fake.allowAllTenants[0] != "acme" {
+		t.Errorf("allow-all must record the counter for acme: got %v", fake.allowAllTenants)
+	}
+}

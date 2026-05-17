@@ -513,7 +513,7 @@ func main() {
 	revCache := revocation.NewCache()
 
 	// ----- Admin API -----
-	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink}).
+	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink, Metrics: gwMetrics}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).

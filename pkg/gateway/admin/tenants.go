@@ -109,10 +109,19 @@ type Router struct {
 	evals              evalstore.Store
 	clock              func() time.Time
 	audit              AuditSink
+	metrics            RBACConfigMetrics
 
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
 	platformWired  bool
+}
+
+// RBACConfigMetrics records the §10.6 observability counters the RBAC
+// config endpoints emit. *gatewaymetrics.Metrics satisfies it.
+type RBACConfigMetrics interface {
+	// RecordNoEnvironmentPolicyAllowAll counts a tenant rbac-config
+	// write that set noEnvironmentPolicy to allow-all.
+	RecordNoEnvironmentPolicyAllowAll(tenantID string)
 }
 
 // Options configures the Router.
@@ -124,6 +133,10 @@ type Options struct {
 	// mutation per §11.7. Nil disables emission (the operation still
 	// succeeds).
 	Audit AuditSink
+
+	// Metrics, when set, receives the §10.6 RBAC-config observability
+	// counters. Nil disables them (the operation still succeeds).
+	Metrics RBACConfigMetrics
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -132,7 +145,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Router{tenants: tenants, clock: clock, audit: opts.Audit}
+	return &Router{tenants: tenants, clock: clock, audit: opts.Audit, metrics: opts.Metrics}
 }
 
 // emit fires an audit event when an AuditSink is wired. Never

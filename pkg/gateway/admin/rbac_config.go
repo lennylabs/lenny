@@ -112,6 +112,9 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 	})
 	if policy == tenantstore.NoEnvPolicyAllowAll {
 		w.Header().Set("Warning", `299 - "`+allowAllWarning+`"`)
+		if r.metrics != nil {
+			r.metrics.RecordNoEnvironmentPolicyAllowAll(tenant)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(RBACConfigPayload{

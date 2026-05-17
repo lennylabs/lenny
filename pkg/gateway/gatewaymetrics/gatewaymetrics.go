@@ -22,16 +22,17 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
-	requestsTotal      *prometheus.CounterVec
-	requestDuration    *prometheus.HistogramVec
-	activeSessions     prometheus.Gauge
-	storageQuotaUsed   *prometheus.GaugeVec
-	storageQuotaLimit  *prometheus.GaugeVec
-	circuitBreakerOpen *prometheus.GaugeVec
-	cbCacheStale       prometheus.Gauge
-	cbCacheInitialized prometheus.Gauge
-	elicitationDropped *prometheus.CounterVec
-	experimentIsoRej   *prometheus.CounterVec
+	requestsTotal       *prometheus.CounterVec
+	requestDuration     *prometheus.HistogramVec
+	activeSessions      prometheus.Gauge
+	storageQuotaUsed    *prometheus.GaugeVec
+	storageQuotaLimit   *prometheus.GaugeVec
+	circuitBreakerOpen  *prometheus.GaugeVec
+	cbCacheStale        prometheus.Gauge
+	cbCacheInitialized  prometheus.Gauge
+	elicitationDropped  *prometheus.CounterVec
+	experimentIsoRej    *prometheus.CounterVec
+	noEnvPolicyAllowAll *prometheus.CounterVec
 }
 
 // New constructs and registers the gateway metric set against a
@@ -110,26 +111,35 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	noEnvPolicyAllowAll, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_noenvironmentpolicy_allowall_total",
+		Help: "Total tenant rbac-config writes that set noEnvironmentPolicy to allow-all (§10.6).",
+	}, []string{"tenant_id"})
+	if err != nil {
+		return nil, err
+	}
 
 	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
-		storageQuotaLimit, circuitBreakerOpen, elicitationDropped, experimentIsoRej)
+		storageQuotaLimit, circuitBreakerOpen, elicitationDropped, experimentIsoRej,
+		noEnvPolicyAllowAll)
 	gauge := activeSessions.WithLabelValues()
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
 	reg.MustRegister(activeSessions, cbCacheStale, cbCacheInitialized)
 
 	return &Metrics{
-		reg:                reg,
-		requestsTotal:      requestsTotal,
-		requestDuration:    requestDuration,
-		activeSessions:     gauge,
-		storageQuotaUsed:   storageQuotaUsed,
-		storageQuotaLimit:  storageQuotaLimit,
-		circuitBreakerOpen: circuitBreakerOpen,
-		cbCacheStale:       cbStale,
-		cbCacheInitialized: cbInit,
-		elicitationDropped: elicitationDropped,
-		experimentIsoRej:   experimentIsoRej,
+		reg:                 reg,
+		requestsTotal:       requestsTotal,
+		requestDuration:     requestDuration,
+		activeSessions:      gauge,
+		storageQuotaUsed:    storageQuotaUsed,
+		storageQuotaLimit:   storageQuotaLimit,
+		circuitBreakerOpen:  circuitBreakerOpen,
+		cbCacheStale:        cbStale,
+		cbCacheInitialized:  cbInit,
+		elicitationDropped:  elicitationDropped,
+		experimentIsoRej:    experimentIsoRej,
+		noEnvPolicyAllowAll: noEnvPolicyAllowAll,
 	}, nil
 }
 
@@ -145,6 +155,13 @@ func (m *Metrics) RecordElicitationDrop(reason string) {
 // isolation profile is weaker than the session's.
 func (m *Metrics) RecordExperimentIsolationRejection(tenantID, experimentID, variantID string) {
 	m.experimentIsoRej.WithLabelValues(tenantID, experimentID, variantID).Inc()
+}
+
+// RecordNoEnvironmentPolicyAllowAll increments the §10.6
+// lenny_noenvironmentpolicy_allowall_total counter when a tenant's
+// rbac-config is written with noEnvironmentPolicy set to allow-all.
+func (m *Metrics) RecordNoEnvironmentPolicyAllowAll(tenantID string) {
+	m.noEnvPolicyAllowAll.WithLabelValues(tenantID).Inc()
 }
 
 // SetCircuitBreakerOpen updates the §16.1 per-breaker open gauge: 1
