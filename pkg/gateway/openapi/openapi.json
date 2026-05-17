@@ -42,6 +42,7 @@
           "tenantId":   { "type": "string" },
           "userId":     { "type": "string" },
           "runtimeRef": { "type": "string" },
+          "environment": { "type": "string" },
           "state": {
             "type": "string",
             "enum": ["created","finalizing","ready","starting","running","suspended","resume_pending","awaiting_client_action","completed","failed","cancelled","expired"]
@@ -60,6 +61,7 @@
         "properties": {
           "runtimeRef":       { "type": "string" },
           "userId":           { "type": "string" },
+          "environment":      { "type": "string" },
           "workspacePlan":    { "type": "object", "additionalProperties": true },
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] }
         }
@@ -141,6 +143,7 @@
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
           "integrationLevel": { "type": "string", "enum": ["basic","standard","full"] },
           "description":      { "type": "string" },
+          "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
@@ -219,6 +222,32 @@
               }
             }
           }
+        }
+      }
+    },
+    "/v1/environments/{name}/sessions": {
+      "post": {
+        "summary": "Create a session in an environment",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateSessionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreateSessionResponse" }
+              }
+            }
+          },
+          "400": { "description": "Validation failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
