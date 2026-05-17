@@ -47,6 +47,42 @@
           "supportsInterrupt":         { "type": "boolean" }
         }
       },
+      "AgentInterface": {
+        "type": "object",
+        "description": "The §5.1 agentInterface descriptor declared on a type:agent runtime.",
+        "properties": {
+          "description":            { "type": "string" },
+          "inputModes":             { "type": "array", "items": { "$ref": "#/components/schemas/AgentInterfaceMode" } },
+          "outputModes":            { "type": "array", "items": { "$ref": "#/components/schemas/AgentInterfaceMode" } },
+          "supportsWorkspaceFiles": { "type": "boolean" },
+          "skills":                 { "type": "array", "items": { "$ref": "#/components/schemas/AgentInterfaceSkill" } },
+          "examples":               { "type": "array", "items": { "$ref": "#/components/schemas/AgentInterfaceExample" } }
+        }
+      },
+      "AgentInterfaceMode": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string" },
+          "role": { "type": "string" }
+        }
+      },
+      "AgentInterfaceSkill": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id":          { "type": "string" },
+          "name":        { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "AgentInterfaceExample": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "input":       { "type": "string" }
+        }
+      },
       "Session": {
         "type": "object",
         "required": ["id", "tenantId", "state", "createdAt", "updatedAt"],
@@ -157,6 +193,7 @@
           "integrationLevel": { "type": "string", "enum": ["basic","standard","full"] },
           "description":      { "type": "string" },
           "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
+          "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
@@ -285,7 +322,8 @@
                           "type":             { "type": "string", "enum": ["agent","mcp"] },
                           "integrationLevel": { "type": "string", "enum": ["basic","standard","full"] },
                           "description":      { "type": "string" },
-                          "labels":           { "type": "object", "additionalProperties": { "type": "string" } }
+                          "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
+                          "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" }
                         }
                       }
                     },
