@@ -164,6 +164,70 @@ func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
 	}
 }
 
+func TestEnvironmentSessionsEndpointSetsEnvironment(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_envpath" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+
+	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/environments/security-team/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.CreateSessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.Environment != "security-team" {
+		t.Errorf("environment from path: got %q, want security-team", resp.Environment)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_envpath")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if row.Environment != "security-team" {
+		t.Errorf("stored environment: got %q, want security-team", row.Environment)
+	}
+}
+
+func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_override" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+
+	// An environment in the request body is overridden by the URL path.
+	body, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "claude-code", Environment: "from-body",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/environments/from-path/sessions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_override")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if row.Environment != "from-path" {
+		t.Errorf("the URL path must override the body environment: got %q, want from-path", row.Environment)
+	}
+}
+
 func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_iso" }})

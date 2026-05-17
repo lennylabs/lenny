@@ -345,6 +345,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
+	mux.HandleFunc("POST /v1/environments/{name}/sessions", s.handleEnvironmentSessions)
 	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)
 	mux.HandleFunc("GET /v1/sessions", s.handleList)
 	mux.HandleFunc("GET /v1/sessions/{id}", s.handleGet)
@@ -461,19 +462,51 @@ type errorBody struct {
 // handleCreate implements POST /v1/sessions. Returns 201 with the
 // CreateSessionResponse envelope on success.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.requireActiveUser(w, r) {
+	req, ok := s.decodeCreateRequest(w, r)
+	if !ok {
 		return
 	}
-	tenantID := s.resolveTenant(r)
-	if !s.requireSessionQuota(w, r, tenantID) {
-		return
-	}
+	s.createSession(w, r, req)
+}
 
+// handleEnvironmentSessions implements POST /v1/environments/{name}/sessions
+// — the §10.6 explicit-environment session-creation path. It runs the
+// regular create flow with the session environment taken from the URL
+// path, overriding any environment supplied in the request body.
+func (s *Server) handleEnvironmentSessions(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.decodeCreateRequest(w, r)
+	if !ok {
+		return
+	}
+	req.Environment = r.PathValue("name")
+	s.createSession(w, r, req)
+}
+
+// decodeCreateRequest reads a CreateSessionRequest from the request
+// body, writing the §15.1 INVALID_REQUEST envelope and returning
+// ok=false on a malformed body.
+func (s *Server) decodeCreateRequest(w http.ResponseWriter, r *http.Request) (CreateSessionRequest, bool) {
 	var req CreateSessionRequest
 	body := jsonReader(w, r)
 	defer body.Close()
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "request body is not valid JSON", nil)
+		return CreateSessionRequest{}, false
+	}
+	return req, true
+}
+
+// createSession runs the §15.1 session-creation flow over an
+// already-decoded request: the active-user and quota gates, the
+// runtime, isolation-profile, and workspace-plan validation, the
+// session-row persist, the §7.1 uploadToken mint, and the
+// CreateSessionResponse.
+func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req CreateSessionRequest) {
+	if !s.requireActiveUser(w, r) {
+		return
+	}
+	tenantID := s.resolveTenant(r)
+	if !s.requireSessionQuota(w, r, tenantID) {
 		return
 	}
 	if req.RuntimeRef == "" {
