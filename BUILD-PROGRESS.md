@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `61f8056` — §10.2 view_usage gating fix. `GET /v1/usage` carried no authorization
+  check, so the `user` role could read the usage report; `GET /v1/metering/events`
+  gated on a role list that omitted `tenant-viewer`, which §10.2 names for the usage
+  endpoints. Both now gate on the view_usage permission through the new
+  `auth.RolesGrant`, admitting platform-admin, tenant-admin, tenant-viewer, and
+  billing-viewer and rejecting `user`. `principalGrantsPermission` reuses `RolesGrant`.
 - `cc8744b` — §10.2 custom-role enforcement for the custom-role admin endpoints. The
   `/v1/admin/tenants/{id}/roles` routes are gated on `PermManageRBACConfig`, the
   permission the matrix names "Configure tenant RBAC config". `authorizeTenantPath`
