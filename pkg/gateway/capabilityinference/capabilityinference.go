@@ -7,6 +7,11 @@
 // re-annotate tools that already carry MCP hints.
 package capabilityinference
 
+import (
+	"errors"
+	"fmt"
+)
+
 // Capability is a §5.3 tool capability. A pool must grant a capability
 // for a tool that requires it to be callable.
 type Capability string
@@ -20,9 +25,36 @@ const (
 	CapAdmin   Capability = "admin"
 )
 
-// capabilityOrder fixes the output order so an inferred set is stable.
+// capabilityOrder fixes the output order so a capability set is stable.
 var capabilityOrder = []Capability{
 	CapRead, CapWrite, CapDelete, CapNetwork, CapExecute, CapAdmin,
+}
+
+// AllCapabilities returns the closed §5.3 capability enum.
+func AllCapabilities() []Capability {
+	return append([]Capability(nil), capabilityOrder...)
+}
+
+// IsValid reports whether c is a known §5.3 capability.
+func (c Capability) IsValid() bool {
+	for _, v := range capabilityOrder {
+		if c == v {
+			return true
+		}
+	}
+	return false
+}
+
+// orderedCaps returns the members of have in the fixed capabilityOrder,
+// dropping any value outside the closed enum.
+func orderedCaps(have map[Capability]bool) []Capability {
+	var out []Capability
+	for _, c := range capabilityOrder {
+		if have[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Mode is the §5.1 capabilityInferenceMode. It sets the default
@@ -124,12 +156,41 @@ func Infer(a ToolAnnotations, mode Mode) Result {
 			res.InferredAdminUnannotated = a.Empty()
 		}
 	}
-	for _, c := range capabilityOrder {
-		if have[c] {
-			res.Capabilities = append(res.Capabilities, c)
+	res.Capabilities = orderedCaps(have)
+	return res
+}
+
+// Resolve determines a tool's effective §5.3 capability set. When the
+// tool has an entry in overrides, that explicit set wins and no
+// inference runs (§5.1: toolCapabilityOverrides always uses its
+// explicit value). Otherwise Infer applies the MCP-annotation table
+// under mode. The override path never sets Result.InferredAdminUnannotated
+// because an explicitly-overridden tool raises no inference warning.
+func Resolve(tool string, a ToolAnnotations, mode Mode, overrides map[string][]Capability) Result {
+	if caps, ok := overrides[tool]; ok {
+		have := make(map[Capability]bool, len(caps))
+		for _, c := range caps {
+			have[c] = true
+		}
+		return Result{Capabilities: orderedCaps(have)}
+	}
+	return Infer(a, mode)
+}
+
+// ValidateOverrides checks a §5.1 toolCapabilityOverrides map: every
+// tool name is non-empty and every capability is a known §5.3 value.
+func ValidateOverrides(overrides map[string][]Capability) error {
+	for tool, caps := range overrides {
+		if tool == "" {
+			return errors.New("toolCapabilityOverrides: tool name must not be empty")
+		}
+		for _, c := range caps {
+			if !c.IsValid() {
+				return fmt.Errorf("toolCapabilityOverrides[%q]: %q is not a recognised capability", tool, c)
+			}
 		}
 	}
-	return res
+	return nil
 }
 
 // WarnMessage returns the §5.1 registration-time WARN log message for a
