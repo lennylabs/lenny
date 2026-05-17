@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `97aae93` — §15.1 OpenAPI: `GET /v1/admin/recommendations` documented.
+- `4a68370` — §25.3 `GET /v1/admin/recommendations` endpoint. The capacity-recommendations
+  endpoint is wired onto the admin Router (platform-admin gated, optional `?category=`
+  filter); `cmd/lenny-gateway` serves it over a 7-day `WindowStore`. The store is not
+  yet fed by the gateway's metric emission, so the endpoint reports no recommendations
+  until that wiring lands — the §25.3 empty-window behaviour.
+- `5bb025e` — §25.3 `CapacityService` rule-evaluation engine. The service runs the
+  recommendation-rule catalog against a `MetricReader`: each catalog rule is paired with
+  a Go evaluator that reads its metrics and applies its threshold, a rule whose metric
+  is absent does not trigger, and `GetRecommendations` narrows the result by the
+  optional category filter. The §25.3 per-replica ring-buffer feeding (the gateway
+  emitting metrics into the `WindowStore`) and the `lenny-ops` Prometheus-backed
+  `MetricReader` remain unbuilt.
 - `737359d` — §25.3 `MetricReader` and the windowed metric store. New
   `pkg/gateway/recommendations` holds the §25.3 `MetricReader` interface the rules
   evaluate against and `WindowStore` — the in-memory sliding-window metric store that
