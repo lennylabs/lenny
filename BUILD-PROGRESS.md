@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `ecd95cb` — §14 `git ls-remote` `RefResolver` backend. `pkg/gateway/gitref`'s
+  `LsRemoteResolver` resolves a `gitClone` ref to a commit SHA by running `git ls-remote`
+  and implements `workspaceplan.RefResolver`. It reads the full ref advertisement and
+  matches locally (branch over same-named tag, annotated tag peeled to its commit)
+  because a ref-pattern argument suppresses the peeled lines git needs. Interactive
+  credential prompts are disabled so a private repo fails fast; failures classify into
+  the §14 transient / `auth_failed` / `ref_not_found` reasons. v1 covers public
+  repositories; the §4.9 VCS credential-lease path that authenticates a private clone
+  extends this resolver. Remaining gitClone follow-on: a `workspaceplan` plan
+  re-serializer (to persist `resolvedCommitSha` into the stored plan) and the
+  session-creation wiring that calls `PinCommitSHAs` and maps `ResolveError` to the
+  §15.1 response.
 - `3ea86ac` — §14 gitClone ref-to-commit-SHA resolution core. `workspaceplan.PinCommitSHAs`
   pins every `gitClone` source's ref to an immutable commit SHA — the §14 per-session
   immutability guarantee. A ref already in 40-character lowercase-hex form (`IsCommitSHA`)
