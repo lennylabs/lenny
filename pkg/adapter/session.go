@@ -74,7 +74,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	}
 
 	plan := req.GetWorkspacePlan()
-	if err := workspace.Materialize(s.WorkspaceRoot, plan.GetSources()); err != nil {
+	if err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir, plan.GetSources()); err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}

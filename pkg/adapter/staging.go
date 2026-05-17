@@ -4,10 +4,8 @@ package adapter
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -56,7 +54,7 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		ref := req.GetUploadRef()
 		f, ok := open[ref]
 		if !ok {
-			path, err := stagingPath(s.StagingDir, ref)
+			path, err := workspace.StagingPath(s.StagingDir, ref)
 			if err != nil {
 				closeAll()
 				return status.Errorf(codes.InvalidArgument, "%v", err)
@@ -82,17 +80,6 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 	})
 }
 
-// stagingPath resolves an upload ref to a path inside the staging
-// directory. The ref MUST be a plain file name: a path separator, an
-// empty string, ".", or ".." is rejected so a malicious ref cannot
-// escape the staging directory.
-func stagingPath(dir, ref string) (string, error) {
-	if ref == "" || ref == "." || ref == ".." || ref != filepath.Base(ref) {
-		return "", fmt.Errorf("upload ref %q is not a plain file name", ref)
-	}
-	return filepath.Join(dir, ref), nil
-}
-
 // FinalizeWorkspace materializes the §14 WorkspacePlan into the
 // workspace root. It is the second RPC of the §4.7 session assignment
 // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
@@ -110,7 +97,8 @@ func (s *Server) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWor
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	if err := workspace.Materialize(s.WorkspaceRoot, req.GetWorkspacePlan().GetSources()); err != nil {
+	if err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir,
+		req.GetWorkspacePlan().GetSources()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
 	return &adapterv1.FinalizeWorkspaceResponse{}, nil

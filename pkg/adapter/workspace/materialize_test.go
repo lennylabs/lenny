@@ -18,7 +18,7 @@ func source(typ, path, content, mode string) *adapterv1.WorkspaceSource {
 
 func TestMaterializeWritesInlineFile(t *testing.T) {
 	root := t.TempDir()
-	err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "CLAUDE.md", "# project notes", "640"),
 	})
 	if err != nil {
@@ -43,7 +43,7 @@ func TestMaterializeWritesInlineFile(t *testing.T) {
 
 func TestMaterializeInlineFileDefaultsMode(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "a.txt", "x", ""),
 	}); err != nil {
 		t.Fatalf("Materialize: %v", err)
@@ -56,7 +56,7 @@ func TestMaterializeInlineFileDefaultsMode(t *testing.T) {
 
 func TestMaterializeCreatesNestedParents(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "src/pkg/main.go", "package main", "644"),
 	}); err != nil {
 		t.Fatalf("Materialize: %v", err)
@@ -68,7 +68,7 @@ func TestMaterializeCreatesNestedParents(t *testing.T) {
 
 func TestMaterializeMakesDirectory(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("mkdir", "build", "", "750"),
 	}); err != nil {
 		t.Fatalf("Materialize: %v", err)
@@ -87,7 +87,7 @@ func TestMaterializeMakesDirectory(t *testing.T) {
 
 func TestMaterializeAppliesSourcesInOrder(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("mkdir", "docs", "", "755"),
 		source("inlineFile", "docs/readme.md", "hi", "644"),
 	}); err != nil {
@@ -100,7 +100,7 @@ func TestMaterializeAppliesSourcesInOrder(t *testing.T) {
 
 func TestMaterializeRejectsPathTraversal(t *testing.T) {
 	root := t.TempDir()
-	err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "../escape.txt", "x", "644"),
 	})
 	if err == nil {
@@ -113,7 +113,7 @@ func TestMaterializeRejectsPathTraversal(t *testing.T) {
 
 func TestMaterializeRejectsAbsolutePath(t *testing.T) {
 	root := t.TempDir()
-	err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "/etc/passwd", "x", "644"),
 	})
 	if err == nil {
@@ -123,7 +123,7 @@ func TestMaterializeRejectsAbsolutePath(t *testing.T) {
 
 func TestMaterializeRejectsEmptyPath(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "", "x", "644"),
 	}); err == nil {
 		t.Fatal("Materialize should reject an empty source path")
@@ -132,7 +132,7 @@ func TestMaterializeRejectsEmptyPath(t *testing.T) {
 
 func TestMaterializeRejectsSetuidMode(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "a.sh", "x", "4755"),
 	}); err == nil {
 		t.Fatal("Materialize should reject a setuid mode")
@@ -141,7 +141,7 @@ func TestMaterializeRejectsSetuidMode(t *testing.T) {
 
 func TestMaterializeRejectsInvalidMode(t *testing.T) {
 	root := t.TempDir()
-	if err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("inlineFile", "a.txt", "x", "not-octal"),
 	}); err == nil {
 		t.Fatal("Materialize should reject a non-octal mode string")
@@ -150,8 +150,8 @@ func TestMaterializeRejectsInvalidMode(t *testing.T) {
 
 func TestMaterializeRejectsUnsupportedSourceTypes(t *testing.T) {
 	root := t.TempDir()
-	for _, typ := range []string{"uploadFile", "uploadArchive", "gitClone"} {
-		err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	for _, typ := range []string{"uploadArchive", "gitClone"} {
+		err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 			source(typ, "x", "", ""),
 		})
 		if !errors.Is(err, workspace.ErrSourceUnsupported) {
@@ -162,10 +162,98 @@ func TestMaterializeRejectsUnsupportedSourceTypes(t *testing.T) {
 
 func TestMaterializeRejectsUnknownSourceType(t *testing.T) {
 	root := t.TempDir()
-	err := workspace.Materialize(root, []*adapterv1.WorkspaceSource{
+	err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
 		source("teleport", "x", "", ""),
 	})
 	if !errors.Is(err, workspace.ErrUnknownSourceType) {
 		t.Errorf("error = %v, want ErrUnknownSourceType", err)
+	}
+}
+
+func uploadSource(path, uploadRef, mode string) *adapterv1.WorkspaceSource {
+	return &adapterv1.WorkspaceSource{
+		Type: "uploadFile", Path: path, UploadRef: uploadRef, Mode: mode,
+	}
+}
+
+func TestMaterializeUploadFile(t *testing.T) {
+	root := t.TempDir()
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "upload_abc"),
+		[]byte("staged bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
+		uploadSource("data/input.bin", "upload_abc", ""),
+	}); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "data", "input.bin"))
+	if err != nil {
+		t.Fatalf("read materialized upload: %v", err)
+	}
+	if string(got) != "staged bytes" {
+		t.Errorf("uploadFile content = %q, want %q", got, "staged bytes")
+	}
+	info, _ := os.Stat(filepath.Join(root, "data", "input.bin"))
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("uploadFile default mode = %o, want 644", info.Mode().Perm())
+	}
+}
+
+func TestMaterializeUploadFileHonorsMode(t *testing.T) {
+	root := t.TempDir()
+	staging := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staging, "u1"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
+		uploadSource("run.sh", "u1", "750"),
+	}); err != nil {
+		t.Fatalf("Materialize: %v", err)
+	}
+	info, _ := os.Stat(filepath.Join(root, "run.sh"))
+	if info.Mode().Perm() != 0o750 {
+		t.Errorf("uploadFile mode = %o, want 750", info.Mode().Perm())
+	}
+}
+
+func TestMaterializeUploadFileMissingStagedContent(t *testing.T) {
+	root := t.TempDir()
+	staging := t.TempDir() // empty — nothing staged
+	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
+		uploadSource("f.txt", "never_staged", ""),
+	}); err == nil {
+		t.Fatal("Materialize should fail when the staged upload is absent")
+	}
+}
+
+func TestMaterializeUploadFileWithoutStagingDir(t *testing.T) {
+	root := t.TempDir()
+	if err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
+		uploadSource("f.txt", "u1", ""),
+	}); err == nil {
+		t.Fatal("Materialize should fail for an uploadFile source with no staging directory")
+	}
+}
+
+func TestMaterializeUploadFileRejectsEscapingRef(t *testing.T) {
+	root := t.TempDir()
+	staging := t.TempDir()
+	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
+		uploadSource("f.txt", "../escape", ""),
+	}); err == nil {
+		t.Fatal("Materialize should reject an upload ref that escapes the staging directory")
+	}
+}
+
+func TestStagingPath(t *testing.T) {
+	if _, err := workspace.StagingPath("/staging", "upload_abc"); err != nil {
+		t.Errorf("StagingPath with a plain ref = %v, want nil", err)
+	}
+	for _, ref := range []string{"", ".", "..", "a/b", "../escape", "/abs"} {
+		if _, err := workspace.StagingPath("/staging", ref); err == nil {
+			t.Errorf("StagingPath(%q) = nil, want a rejection", ref)
+		}
 	}
 }

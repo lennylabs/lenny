@@ -14,6 +14,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,8 +23,8 @@ import (
 )
 
 // ErrSourceUnsupported reports a workspace source whose type is valid
-// but not yet materialized by the adapter. uploadFile and uploadArchive
-// require upload-content delivery; gitClone requires a VCS client.
+// but not yet materialized by the adapter. uploadArchive requires
+// archive extraction; gitClone requires a VCS client.
 var ErrSourceUnsupported = errors.New("workspace source type not yet supported by the adapter")
 
 // ErrUnknownSourceType reports a workspace source whose type is not a
@@ -31,25 +32,29 @@ var ErrSourceUnsupported = errors.New("workspace source type not yet supported b
 var ErrUnknownSourceType = errors.New("unknown workspace source type")
 
 // Materialize writes the workspace sources into root in order. It
-// handles the filesystem-native source types inlineFile and mkdir;
-// uploadFile, uploadArchive, and gitClone return ErrSourceUnsupported
-// until the upload-delivery and VCS layers land.
-func Materialize(root string, sources []*adapterv1.WorkspaceSource) error {
+// handles the filesystem-native source types inlineFile and mkdir and
+// the uploadFile type, which copies a file staged under stagingDir by
+// PrepareWorkspace. uploadArchive and gitClone return
+// ErrSourceUnsupported until the archive-extraction and VCS layers
+// land.
+func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) error {
 	for i, src := range sources {
-		if err := materializeSource(root, src); err != nil {
+		if err := materializeSource(root, stagingDir, src); err != nil {
 			return fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
 		}
 	}
 	return nil
 }
 
-func materializeSource(root string, src *adapterv1.WorkspaceSource) error {
+func materializeSource(root, stagingDir string, src *adapterv1.WorkspaceSource) error {
 	switch src.GetType() {
 	case "inlineFile":
 		return writeInlineFile(root, src)
 	case "mkdir":
 		return makeDir(root, src)
-	case "uploadFile", "uploadArchive", "gitClone":
+	case "uploadFile":
+		return writeUploadFile(root, stagingDir, src)
+	case "uploadArchive", "gitClone":
 		return ErrSourceUnsupported
 	default:
 		return ErrUnknownSourceType
@@ -94,6 +99,63 @@ func makeDir(root string, src *adapterv1.WorkspaceSource) error {
 		return fmt.Errorf("set directory mode: %w", err)
 	}
 	return nil
+}
+
+// writeUploadFile places a file staged by PrepareWorkspace at the
+// source path. The staged content lives at stagingDir/<uploadRef>.
+func writeUploadFile(root, stagingDir string, src *adapterv1.WorkspaceSource) error {
+	if stagingDir == "" {
+		return errors.New("uploadFile source requires a staging directory")
+	}
+	staged, err := StagingPath(stagingDir, src.GetUploadRef())
+	if err != nil {
+		return err
+	}
+	dst, err := resolvePath(root, src.GetPath())
+	if err != nil {
+		return err
+	}
+	mode, err := parseMode(src.GetMode(), 0o644)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create parent directories: %w", err)
+	}
+	in, err := os.Open(staged)
+	if err != nil {
+		return fmt.Errorf("open staged upload: %w", err)
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("copy staged upload: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
+	}
+	// OpenFile honors the umask; pin the requested mode exactly.
+	if err := os.Chmod(dst, mode); err != nil {
+		return fmt.Errorf("set file mode: %w", err)
+	}
+	return nil
+}
+
+// StagingPath resolves an upload ref to a path inside the staging
+// directory. The ref MUST be a plain file name: a path separator, an
+// empty string, ".", or ".." is rejected so a malicious ref cannot
+// escape the staging directory. PrepareWorkspace and uploadFile
+// materialization share this resolution.
+func StagingPath(stagingDir, uploadRef string) (string, error) {
+	if uploadRef == "" || uploadRef == "." || uploadRef == ".." ||
+		uploadRef != filepath.Base(uploadRef) {
+		return "", fmt.Errorf("upload ref %q is not a plain file name", uploadRef)
+	}
+	return filepath.Join(stagingDir, uploadRef), nil
 }
 
 // resolvePath joins rel onto root and confirms the result stays within
