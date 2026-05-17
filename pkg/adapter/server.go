@@ -45,6 +45,10 @@ type Server struct {
 	// CredentialsDir is the directory the credential RPCs materialize
 	// the §4.7 credential file into — the pod's /run/lenny.
 	CredentialsDir string
+	// ManifestDir is the directory StartSession writes the §15.4
+	// adapter-manifest.json into — the pod's /run/lenny. Empty disables
+	// manifest writing.
+	ManifestDir string
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess

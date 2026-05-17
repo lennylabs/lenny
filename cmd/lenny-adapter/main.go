@@ -62,6 +62,9 @@ func main() {
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
 	adapterSrv.CredentialsDir = *credentialsDir
+	// §15.4: the adapter manifest is written into /run/lenny alongside
+	// the credential file.
+	adapterSrv.ManifestDir = *credentialsDir
 	if *runtimeBin != "" {
 		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
 			BinPath: *runtimeBin,
