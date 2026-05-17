@@ -580,6 +580,40 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/tenants/{id}/elicitation-content-integrity": {
+      "get": {
+        "summary": "Get the tenant elicitation content-integrity mode",
+        "x-lenny-mcp-tool": "admin.get_elicitation_content_integrity",
+        "x-lenny-scope": "admin.tenants.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Set the tenant elicitation content-integrity mode",
+        "x-lenny-mcp-tool": "admin.set_elicitation_content_integrity",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/tenants/{id}/compliance-profile/decommission": {
+      "post": {
+        "summary": "Decommission a tenant compliance profile",
+        "x-lenny-mcp-tool": "admin.decommission_compliance_profile",
+        "x-lenny-scope": "admin.tenants.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "tenant-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/runtimes": {
       "post": {
         "summary": "Create a runtime",
@@ -1085,6 +1119,110 @@
         "x-lenny-category": "connector-management",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/credential-pools": {
+      "post": {
+        "summary": "Create a credential pool",
+        "x-lenny-mcp-tool": "admin.create_credential_pool",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "summary": "List credential pools",
+        "x-lenny-mcp-tool": "admin.list_credential_pools",
+        "x-lenny-scope": "admin.credential-pools.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/credential-pools/{name}": {
+      "get": {
+        "summary": "Get a credential pool",
+        "x-lenny-mcp-tool": "admin.get_credential_pool",
+        "x-lenny-scope": "admin.credential-pools.read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Update a credential pool",
+        "x-lenny-mcp-tool": "admin.update_credential_pool",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Delete a credential pool",
+        "x-lenny-mcp-tool": "admin.delete_credential_pool",
+        "x-lenny-scope": "admin.credential-pools.write",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/delegation-policies": {
+      "post": {
+        "summary": "Create a delegation policy",
+        "x-lenny-mcp-tool": "admin.create_delegation_policy",
+        "x-lenny-scope": "admin.delegation-policies.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "201": { "description": "Created" } }
+      },
+      "get": {
+        "summary": "List delegation policies",
+        "x-lenny-mcp-tool": "admin.list_delegation_policies",
+        "x-lenny-scope": "admin.delegation-policies.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/delegation-policies/{name}": {
+      "get": {
+        "summary": "Get a delegation policy",
+        "x-lenny-mcp-tool": "admin.get_delegation_policy",
+        "x-lenny-scope": "admin.delegation-policies.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "put": {
+        "summary": "Update a delegation policy",
+        "x-lenny-mcp-tool": "admin.update_delegation_policy",
+        "x-lenny-scope": "admin.delegation-policies.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Delete a delegation policy",
+        "x-lenny-mcp-tool": "admin.delete_delegation_policy",
+        "x-lenny-scope": "admin.delegation-policies.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "policy-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
       }
     },
