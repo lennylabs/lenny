@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d0fc768` — §25.4 remediation-lock scope authorization. New pure package
+  `pkg/remediationlock`: `Authorize` applies the §25.4 scope-based
+  authorization table (platform-admin touches every scope; tenant-admin is
+  limited to its own tenant's pool/credential-pool/session/tenant scopes and
+  forbidden from platform-scoped locks so it cannot block a platform
+  upgrade; an unrecognized role or scope fails closed). `Expired` applies a
+  lock's TTL. A sixth pure-logic building block of the infrastructure-bound
+  `lenny-ops` service, with `pkg/backup/retention`, `pkg/cron`, `pkg/drift`,
+  `pkg/upgrade`, and `pkg/progress`.
 - `f1a57e7` — §25.2 long-running-operation progress computations. New pure
   package `pkg/progress`: `PercentSteps`/`PercentSize`/`PercentRate` compute
   the §25.2 percent-complete for the discrete-step, size-based, and
