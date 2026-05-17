@@ -11,6 +11,20 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7257dc5` — §5.1 `runtimestore.Resolve` and the derived-runtime injection check.
+  `Resolve` returns the effective runtime for a name — the runtime itself when
+  standalone, or `Merge(base, derived)` for a derived runtime. The §15.1
+  message-injection handler resolves the session's runtime through `Resolve` before the
+  injection-support check, so a session on a derived runtime is checked against the
+  `injection.supported` it inherits from its base. Other runtime-lookup sites (the §9.1
+  discovery surface) still read the declared runtime; resolving them is a follow-up.
+- `557c12a` — §5.1 derived-runtime registration validation. The admin runtime create
+  handler rejects a derived runtime that declares an inherited or prohibited field
+  (`image`, `type`, `executionMode`, `isolationProfile`, `integrationLevel`,
+  `capabilities`) or whose `baseRuntime` does not reference an existing standalone
+  runtime, with `400 INVALID_DERIVED_RUNTIME`. The §5.1 merge algorithm is single-level,
+  so a base that is itself derived is rejected. The PUT-update derived-runtime
+  validation is a follow-up.
 - `d5ab12b` — §15.1 OpenAPI: `baseRuntime` in the admin `Runtime` schema.
 - `38195a1` — §15.1 `baseRuntime` round-trip on the admin runtime API. `POST` / `GET`
   carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer. The §5.1
