@@ -76,9 +76,15 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	}
 
 	// §15.4: write the adapter manifest the runtime reads at startup.
-	if err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext()); err != nil {
+	nonce, err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext())
+	if err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
+	}
+	// §4.7: start the platform MCP server the runtime connects to.
+	if err := s.startPlatformMCP(nonce); err != nil {
+		s.releaseSession()
+		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
@@ -153,9 +159,15 @@ func (s *Server) claimSession(sessionID string) error {
 	return nil
 }
 
-// releaseSession returns the pod to the idle state.
+// releaseSession returns the pod to the idle state and stops the
+// session's platform MCP server, if one was started.
 func (s *Server) releaseSession() {
 	s.mu.Lock()
 	s.sessionID = ""
+	cancel := s.mcpCancel
+	s.mcpCancel = nil
 	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }

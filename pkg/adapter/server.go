@@ -54,6 +54,12 @@ type Server struct {
 	// adapter-manifest.json into — the pod's /run/lenny. Empty disables
 	// manifest writing.
 	ManifestDir string
+	// MCPSocket is the Unix socket address the §4.7 platform MCP server
+	// listens on for the session — the pod's abstract socket
+	// @lenny-platform-mcp in production. Empty disables the platform
+	// MCP server. A manifest directory must also be configured, since
+	// the runtime reads the authenticating nonce from the manifest.
+	MCPSocket string
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess
@@ -67,12 +73,15 @@ type Server struct {
 	// ReportUsage RPC returns. Nil leaves ReportUsage Unimplemented.
 	Usage UsageMeter
 
-	// mu guards sessionID and the credential fields.
+	// mu guards sessionID, mcpCancel, and the credential fields.
 	mu sync.Mutex
 	// sessionID is the session currently assigned to the pod, empty
 	// when the pod is idle. Per §6.1 a session-mode pod is
 	// one-session-only.
 	sessionID string
+	// mcpCancel stops the platform MCP server started for the current
+	// session. Nil when no platform MCP server is running.
+	mcpCancel context.CancelFunc
 	// credSessionID is the session the current credential leases were
 	// assigned for, empty when none are assigned.
 	credSessionID string

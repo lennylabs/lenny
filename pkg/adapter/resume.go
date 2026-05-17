@@ -62,9 +62,15 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	}
 	// §15.4: re-deliver the manifest so the restored runtime reads the
 	// same §8.3 experimentContext and tracingContext as before the resume.
-	if err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext()); err != nil {
+	nonce, err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext())
+	if err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
+	}
+	// §4.7: start the platform MCP server for the restored session.
+	if err := s.startPlatformMCP(nonce); err != nil {
+		s.releaseSession()
+		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()

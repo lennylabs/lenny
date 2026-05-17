@@ -44,6 +44,12 @@ type ManifestTool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
+// ManifestMCPServer is the §4.7 platformMcpServer manifest object: the
+// Unix socket the runtime connects to for the platform MCP server.
+type ManifestMCPServer struct {
+	Socket string `json:"socket"`
+}
+
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
 // v1 carries the session metadata a Basic-level runtime needs, the
 // §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
@@ -68,6 +74,10 @@ type Manifest struct {
 	// runtime may call over the tool_call binary protocol. The runtime
 	// discovers the tool set by reading this array.
 	AdapterLocalTools []ManifestTool `json:"adapterLocalTools"`
+	// PlatformMcpServer points the runtime at the §4.7 platform MCP
+	// server's Unix socket. Omitted when the adapter runs no platform
+	// MCP server (a Basic-level deployment).
+	PlatformMcpServer *ManifestMCPServer `json:"platformMcpServer,omitempty"`
 }
 
 // newMCPNonce returns a fresh §15.4.3 intra-pod MCP nonce: a random
@@ -96,20 +106,22 @@ func WriteManifest(dir string, m Manifest) error {
 }
 
 // writeSessionManifest writes the §15.4 adapter manifest for a session
-// — carrying the §8.3 experimentContext and tracingContext — when a
-// ManifestDir is configured. It is a no-op when ManifestDir is empty,
-// so an adapter without one is unchanged. StartSession and Resume both
-// call it so a runtime started on a fresh or a resumed pod reads the
-// same manifest.
-func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.ExperimentContext, tc map[string]string) error {
+// — carrying the §8.3 experimentContext and tracingContext, the §15
+// adapter-local tools, and the §15.4.3 MCP nonce — when a ManifestDir
+// is configured. StartSession and Resume both call it so a runtime
+// started on a fresh or a resumed pod reads the same manifest. It
+// returns the generated MCP nonce so the caller can start the platform
+// MCP server with the same nonce; when no ManifestDir is configured it
+// is a no-op and returns an empty nonce.
+func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.ExperimentContext, tc map[string]string) (string, error) {
 	if s.ManifestDir == "" {
-		return nil
+		return "", nil
 	}
 	nonce, err := newMCPNonce()
 	if err != nil {
-		return err
+		return "", err
 	}
-	return WriteManifest(s.ManifestDir, Manifest{
+	m := Manifest{
 		Version:           ManifestVersion,
 		SessionID:         sessionID,
 		WorkspaceRoot:     s.WorkspaceRoot,
@@ -117,7 +129,14 @@ func (s *Server) writeSessionManifest(sessionID string, ec *adapterv1.Experiment
 		TracingContext:    tc,
 		MCPNonce:          nonce,
 		AdapterLocalTools: manifestLocalTools(),
-	})
+	}
+	if s.MCPSocket != "" {
+		m.PlatformMcpServer = &ManifestMCPServer{Socket: s.MCPSocket}
+	}
+	if err := WriteManifest(s.ManifestDir, m); err != nil {
+		return "", err
+	}
+	return nonce, nil
 }
 
 // manifestLocalTools converts the localtools built-in descriptors into

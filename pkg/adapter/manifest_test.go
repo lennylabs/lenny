@@ -32,7 +32,7 @@ func TestNewMCPNonce(t *testing.T) {
 func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	if err := srv.writeSessionManifest("sess-t", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest("sess-t", nil, nil); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -65,7 +65,7 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
 
 	readNonce := func() string {
-		if err := srv.writeSessionManifest("sess-n", nil, nil); err != nil {
+		if _, err := srv.writeSessionManifest("sess-n", nil, nil); err != nil {
 			t.Fatalf("writeSessionManifest: %v", err)
 		}
 		b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -162,7 +162,7 @@ func TestWriteManifestWithExperimentContext(t *testing.T) {
 func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 	// An adapter with no ManifestDir writes nothing.
 	srv := &Server{WorkspaceRoot: "/workspace/current"}
-	if err := srv.writeSessionManifest("sess-x", nil, nil); err != nil {
+	if _, err := srv.writeSessionManifest("sess-x", nil, nil); err != nil {
 		t.Errorf("writeSessionManifest with no ManifestDir = %v, want nil", err)
 	}
 }
@@ -170,7 +170,7 @@ func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 func TestWriteSessionManifestWrites(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	if err := srv.writeSessionManifest("sess-y", &adapterv1.ExperimentContext{
+	if _, err := srv.writeSessionManifest("sess-y", &adapterv1.ExperimentContext{
 		ExperimentId: "exp_1", VariantId: "treatment",
 	}, map[string]string{"run": "r1"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
