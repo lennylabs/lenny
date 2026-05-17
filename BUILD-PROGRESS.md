@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d5a202e` — §10.7 `ResolveExternalVariant` — OpenFeature variant resolution. The
+  pure-Go core of `mode: external` experiment assignment: it resolves an OpenFeature
+  provider's evaluation result to a variant ID per the §10.7 precedence (the `Variant`
+  field, else a string `Value`, else `Value["variant_id"]`). A candidate that is
+  neither the control variant nor a registered variant ID is unresolvable — it returns
+  control with `known=false`, the signal for the §16.6
+  `experiment.unknown_variant_from_provider` event and a control-group fallback. The
+  OpenFeature/OFREP transport client, the provider configuration, and the wiring into
+  the `ExperimentRouter` remain — that transport is the infra-coupled half.
 - `5b9cc18` — §5.1 enforce the setupPolicy aggregate timeout. `workspace.RunSetup`
   bounded each setup command individually but never enforced the §5.1
   `setupPolicy.timeoutSeconds` cap on the whole setup phase. It now takes a
