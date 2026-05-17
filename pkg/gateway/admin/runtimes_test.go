@@ -746,6 +746,57 @@ func TestCreateRuntimeRejectsInvalidToolCapabilityOverrides(t *testing.T) {
 	}
 }
 
+func TestRuntimeSetupPolicyRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the setupPolicy block.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:        "rt",
+		Image:       "lenny/rt@sha256:abc",
+		SetupPolicy: &runtimestore.SetupPolicy{TimeoutSeconds: 300, OnTimeout: runtimestore.SetupTimeoutFail},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.SetupPolicy == nil || created.SetupPolicy.TimeoutSeconds != 300 {
+		t.Errorf("create response setupPolicy: %+v", created.SetupPolicy)
+	}
+
+	replacement := &runtimestore.SetupPolicy{TimeoutSeconds: 600, OnTimeout: runtimestore.SetupTimeoutWarn}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{SetupPolicy: replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.SetupPolicy == nil || updated.SetupPolicy.TimeoutSeconds != 600 ||
+		updated.SetupPolicy.OnTimeout != runtimestore.SetupTimeoutWarn {
+		t.Errorf("update did not replace setupPolicy: %+v", updated.SetupPolicy)
+	}
+}
+
+func TestCreateRuntimeRejectsInvalidSetupPolicy(t *testing.T) {
+	// §5.1: setupPolicy.onTimeout is the fail / warn enum and the
+	// timeout must not be negative.
+	router, _, _ := newRuntimeAdmin(t)
+	cases := []*runtimestore.SetupPolicy{
+		{TimeoutSeconds: 100, OnTimeout: "abort"},
+		{TimeoutSeconds: -5, OnTimeout: runtimestore.SetupTimeoutFail},
+	}
+	for i, p := range cases {
+		rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+			Name:        "bad",
+			Image:       "lenny/bad@sha256:abc",
+			SetupPolicy: p,
+		})
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("case %d: status %d, want 400 (body=%s)", i, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

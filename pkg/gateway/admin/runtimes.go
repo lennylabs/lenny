@@ -57,6 +57,7 @@ type RuntimePayload struct {
 	PublishedMetadata       []runtimestore.PublishedMetadataEntry       `json:"publishedMetadata,omitempty"`
 	CapabilityInferenceMode string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
+	SetupPolicy             *runtimestore.SetupPolicy                   `json:"setupPolicy,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
@@ -79,6 +80,22 @@ type UpdateRuntimeRequest struct {
 	PublishedMetadata       *[]runtimestore.PublishedMetadataEntry       `json:"publishedMetadata,omitempty"`
 	CapabilityInferenceMode *string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
+	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
+}
+
+// validateSetupPolicy checks a §5.1 setupPolicy: a non-negative
+// timeout and an onTimeout value within the fail / warn enum.
+func validateSetupPolicy(p *runtimestore.SetupPolicy) error {
+	if p == nil {
+		return nil
+	}
+	if p.TimeoutSeconds < 0 {
+		return errors.New("setupPolicy.timeoutSeconds must not be negative")
+	}
+	if p.OnTimeout != "" && !p.OnTimeout.IsValid() {
+		return errors.New("setupPolicy.onTimeout must be fail or warn")
+	}
+	return nil
 }
 
 // errAgentInterfaceOnMCP is returned from the update mutate closure when
@@ -100,6 +117,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		PublishedMetadata:       r.PublishedMetadata,
 		CapabilityInferenceMode: string(r.CapabilityInferenceMode),
 		ToolCapabilityOverrides: r.ToolCapabilityOverrides,
+		SetupPolicy:             r.SetupPolicy,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -168,6 +186,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := validateSetupPolicy(body.SetupPolicy); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                    body.Name,
@@ -183,6 +205,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		PublishedMetadata:       body.PublishedMetadata,
 		CapabilityInferenceMode: capabilityinference.Mode(body.CapabilityInferenceMode),
 		ToolCapabilityOverrides: body.ToolCapabilityOverrides,
+		SetupPolicy:             body.SetupPolicy,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -336,6 +359,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.SetupPolicy != nil {
+		if err := validateSetupPolicy(body.SetupPolicy); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -373,6 +402,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.ToolCapabilityOverrides != nil {
 			rt.ToolCapabilityOverrides = *body.ToolCapabilityOverrides
+		}
+		if body.SetupPolicy != nil {
+			rt.SetupPolicy = body.SetupPolicy
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -452,6 +484,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.ToolCapabilityOverrides != nil {
 		out = append(out, "toolCapabilityOverrides")
+	}
+	if b.SetupPolicy != nil {
+		out = append(out, "setupPolicy")
 	}
 	return out
 }
