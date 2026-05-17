@@ -236,6 +236,47 @@ func TestUpdateRuntimeMergesFields(t *testing.T) {
 	}
 }
 
+func TestRuntimeLabelsRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the label set on create,
+	// read, and update.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:   "scanner",
+		Image:  "lenny/scanner@sha256:abc",
+		Labels: map[string]string{"team": "security", "approved": "true"},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.Labels["team"] != "security" || created.Labels["approved"] != "true" {
+		t.Errorf("create response labels: %+v", created.Labels)
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/scanner", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get: status %d", rr.Code)
+	}
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got.Labels["team"] != "security" {
+		t.Errorf("get response labels: %+v", got.Labels)
+	}
+
+	newLabels := map[string]string{"team": "platform"}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/scanner",
+		admin.UpdateRuntimeRequest{Labels: &newLabels})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.Labels["team"] != "platform" || len(updated.Labels) != 1 {
+		t.Errorf("update did not replace labels: %+v", updated.Labels)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

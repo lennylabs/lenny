@@ -36,6 +36,49 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
+func TestRuntimeLabelsRoundTripAndIsolation(t *testing.T) {
+	// §5.1: runtimes carry a label set. The store must deep-copy it so
+	// it never shares the map with a caller.
+	s := runtimestore.NewMemory()
+	labels := map[string]string{"team": "security", "approved": "true"}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "scanner", Type: runtimestore.TypeAgent, Labels: labels,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	labels["team"] = "tampered" // mutate the caller's map after Create
+
+	got, err := s.Get(context.Background(), "scanner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Labels["team"] != "security" || got.Labels["approved"] != "true" {
+		t.Errorf("labels not stored or not isolated from caller mutation: %+v", got.Labels)
+	}
+	got.Labels["team"] = "tampered-again" // mutate the returned map
+	again, _ := s.Get(context.Background(), "scanner")
+	if again.Labels["team"] != "security" {
+		t.Errorf("the returned map aliases the stored map: %+v", again.Labels)
+	}
+}
+
+func TestRuntimeLabelsUpdateReplaces(t *testing.T) {
+	s := runtimestore.NewMemory()
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "scanner", Labels: map[string]string{"env": "staging"},
+	})
+	updated, err := s.Update(context.Background(), "scanner", func(rt *runtimestore.Runtime) error {
+		rt.Labels = map[string]string{"env": "prod", "tier": "gold"}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Labels["env"] != "prod" || updated.Labels["tier"] != "gold" {
+		t.Errorf("Update did not replace labels: %+v", updated.Labels)
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{

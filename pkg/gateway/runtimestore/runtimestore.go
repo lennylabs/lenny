@@ -57,6 +57,11 @@ type Runtime struct {
 	// runtime has no runtime-level delegation policy.
 	DelegationPolicyRef string
 
+	// Labels is the §5.1 label set. §5.1 requires labels from v1 as the
+	// primary mechanism for environment runtimeSelector matching
+	// (§10.6). A nil or empty map means the runtime carries no labels.
+	Labels map[string]string
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -203,6 +208,19 @@ func ApplyDefaults(r *Runtime) {
 	}
 }
 
+// cloneRuntime returns a deep copy of r. The Labels map is copied so
+// the store never shares mutable state with a caller.
+func cloneRuntime(r Runtime) Runtime {
+	if r.Labels != nil {
+		labels := make(map[string]string, len(r.Labels))
+		for k, v := range r.Labels {
+			labels[k] = v
+		}
+		r.Labels = labels
+	}
+	return r
+}
+
 // Memory is the in-memory Store implementation.
 type Memory struct {
 	mu       sync.RWMutex
@@ -229,7 +247,7 @@ func (m *Memory) Create(_ context.Context, r Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	m.runtimes[r.Name] = r
+	m.runtimes[r.Name] = cloneRuntime(r)
 	return nil
 }
 
@@ -241,17 +259,18 @@ func (m *Memory) Get(_ context.Context, name string) (Runtime, error) {
 	if !ok {
 		return Runtime{}, ErrNotFound
 	}
-	return row, nil
+	return cloneRuntime(row), nil
 }
 
 // Update implements Store.
 func (m *Memory) Update(_ context.Context, name string, mutate func(*Runtime) error) (Runtime, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.runtimes[name]
+	stored, ok := m.runtimes[name]
 	if !ok {
 		return Runtime{}, ErrNotFound
 	}
+	row := cloneRuntime(stored)
 	prev := row.UpdatedAt
 	if err := mutate(&row); err != nil {
 		return Runtime{}, err
@@ -261,8 +280,8 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Runtime) er
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	m.runtimes[name] = row
-	return row, nil
+	m.runtimes[name] = cloneRuntime(row)
+	return cloneRuntime(row), nil
 }
 
 // List implements Store.
@@ -277,7 +296,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Runtime, error) {
 		if filter.Type != "" && row.Type != filter.Type {
 			continue
 		}
-		out = append(out, row)
+		out = append(out, cloneRuntime(row))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil

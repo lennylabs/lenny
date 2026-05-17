@@ -16,28 +16,30 @@ import (
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name                string `json:"name"`
-	Type                string `json:"type,omitempty"`
-	Image               string `json:"image,omitempty"`
-	ExecutionMode       string `json:"executionMode,omitempty"`
-	IsolationProfile    string `json:"isolationProfile,omitempty"`
-	IntegrationLevel    string `json:"integrationLevel,omitempty"`
-	Description         string `json:"description,omitempty"`
-	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
-	CreatedAt           string `json:"createdAt,omitempty"`
-	UpdatedAt           string `json:"updatedAt,omitempty"`
-	DeletedAt           string `json:"deletedAt,omitempty"`
+	Name                string            `json:"name"`
+	Type                string            `json:"type,omitempty"`
+	Image               string            `json:"image,omitempty"`
+	ExecutionMode       string            `json:"executionMode,omitempty"`
+	IsolationProfile    string            `json:"isolationProfile,omitempty"`
+	IntegrationLevel    string            `json:"integrationLevel,omitempty"`
+	Description         string            `json:"description,omitempty"`
+	DelegationPolicyRef string            `json:"delegationPolicyRef,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	CreatedAt           string            `json:"createdAt,omitempty"`
+	UpdatedAt           string            `json:"updatedAt,omitempty"`
+	DeletedAt           string            `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
 // fields signal "leave unchanged when omitted".
 type UpdateRuntimeRequest struct {
-	Image               *string `json:"image,omitempty"`
-	ExecutionMode       *string `json:"executionMode,omitempty"`
-	IsolationProfile    *string `json:"isolationProfile,omitempty"`
-	IntegrationLevel    *string `json:"integrationLevel,omitempty"`
-	Description         *string `json:"description,omitempty"`
-	DelegationPolicyRef *string `json:"delegationPolicyRef,omitempty"`
+	Image               *string            `json:"image,omitempty"`
+	ExecutionMode       *string            `json:"executionMode,omitempty"`
+	IsolationProfile    *string            `json:"isolationProfile,omitempty"`
+	IntegrationLevel    *string            `json:"integrationLevel,omitempty"`
+	Description         *string            `json:"description,omitempty"`
+	DelegationPolicyRef *string            `json:"delegationPolicyRef,omitempty"`
+	Labels              *map[string]string `json:"labels,omitempty"`
 }
 
 func fromRuntime(r runtimestore.Runtime) RuntimePayload {
@@ -50,6 +52,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		IntegrationLevel:    string(r.IntegrationLevel),
 		Description:         r.Description,
 		DelegationPolicyRef: r.DelegationPolicyRef,
+		Labels:              r.Labels,
 		CreatedAt:           rfc3339Nano(r.CreatedAt),
 		UpdatedAt:           rfc3339Nano(r.UpdatedAt),
 	}
@@ -117,6 +120,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		IntegrationLevel:    runtimestore.IntegrationLevel(body.IntegrationLevel),
 		Description:         body.Description,
 		DelegationPolicyRef: body.DelegationPolicyRef,
+		Labels:              body.Labels,
 		CreatedAt:           r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -246,6 +250,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Description != nil {
 			rt.Description = *body.Description
+		}
+		if body.Labels != nil {
+			rt.Labels = *body.Labels
 		}
 		if body.DelegationPolicyRef != nil {
 			rt.DelegationPolicyRef = *body.DelegationPolicyRef

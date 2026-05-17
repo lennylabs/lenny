@@ -11,6 +11,7 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -36,7 +37,18 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ runtimestore.Store = (*Store)(nil)
 
 const selectList = `name, type, image, execution_mode, isolation_profile,
-	integration_level, description, created_at, updated_at, deleted_at`
+	integration_level, description, created_at, updated_at, deleted_at, labels`
+
+// labelsJSON marshals a runtime's §5.1 label map to its jsonb text
+// form. A nil or empty map is stored as an empty JSON object so the
+// labels column never holds JSON null.
+func labelsJSON(m map[string]string) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
 
 // Create inserts a new runtime row. Returns ErrAlreadyExists when the
 // name is taken.
@@ -53,11 +65,11 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO runtime_definitions (
 		name, type, image, execution_mode, isolation_profile,
-		integration_level, description, created_at, updated_at, deleted_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		integration_level, description, created_at, updated_at, deleted_at, labels
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
-		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt))
+		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -106,11 +118,12 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 	r.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
 	if _, err := tx.Exec(ctx, `UPDATE runtime_definitions SET
 		type = $2, image = $3, execution_mode = $4, isolation_profile = $5,
-		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9
+		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9,
+		labels = $10
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
-		r.UpdatedAt, pgtenant.NullTime(r.DeletedAt)); err != nil {
+		r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -188,10 +201,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		r                                          runtimestore.Runtime
 		typ, execMode, isoProf, level, description string
 		deletedAt                                  *time.Time
+		labelsRaw                                  []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
-		&r.CreatedAt, &r.UpdatedAt, &deletedAt,
+		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -202,6 +216,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	r.Description = description
 	if deletedAt != nil {
 		r.DeletedAt = *deletedAt
+	}
+	if len(labelsRaw) > 0 {
+		if err := json.Unmarshal(labelsRaw, &r.Labels); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode labels: %w", err)
+		}
 	}
 	return r, nil
 }
