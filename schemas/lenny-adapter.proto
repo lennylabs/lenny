@@ -28,6 +28,13 @@ option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the lifecycle channel).
 service Adapter {
+  // RunSetup executes the §14 WorkspacePlan setup commands against the
+  // materialized workspace. It is the third RPC in the §4.7 session
+  // assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
+  // StartSession). The §5.1 setupPolicy in the request bounds the
+  // aggregate setup phase.
+  rpc RunSetup(RunSetupRequest) returns (RunSetupResponse) {}
+
   // StartSession assigns a session to this pod. Workspace materialization
   // (per the supplied WorkspacePlan) and setup-command execution happen
   // before the response. Returns Unavailable if the pod is not in `idle`
@@ -265,6 +272,19 @@ message ExperimentContext {
   // session under the §8.3 inherit or control propagation mode.
   bool inherited = 3;
 }
+
+// RunSetupRequest carries the §14 WorkspacePlan setup commands the
+// adapter runs against the materialized workspace. setup_policy bounds
+// the aggregate setup phase per §5.1.
+message RunSetupRequest {
+  SessionId session_id = 1;
+  repeated SetupCommand setup_commands = 2;
+  SetupPolicy setup_policy = 3;
+}
+
+// RunSetupResponse is empty: RunSetup either completes the setup phase
+// or returns a gRPC error.
+message RunSetupResponse {}
 
 message StartSessionRequest {
   SessionId session_id = 1;
