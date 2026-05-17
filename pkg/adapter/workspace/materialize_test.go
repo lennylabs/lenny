@@ -148,18 +148,6 @@ func TestMaterializeRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-func TestMaterializeRejectsUnsupportedSourceTypes(t *testing.T) {
-	root := t.TempDir()
-	for _, typ := range []string{"gitClone"} {
-		err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
-			source(typ, "x", "", ""),
-		})
-		if !errors.Is(err, workspace.ErrSourceUnsupported) {
-			t.Errorf("source type %q: error = %v, want ErrSourceUnsupported", typ, err)
-		}
-	}
-}
-
 func TestMaterializeRejectsUnknownSourceType(t *testing.T) {
 	root := t.TempDir()
 	err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{

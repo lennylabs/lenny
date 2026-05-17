@@ -24,21 +24,15 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// ErrSourceUnsupported reports a workspace source whose type is valid
-// but not yet materialized by the adapter. gitClone requires a VCS
-// client.
-var ErrSourceUnsupported = errors.New("workspace source type not yet supported by the adapter")
-
 // ErrUnknownSourceType reports a workspace source whose type is not a
 // recognized §14 source type.
 var ErrUnknownSourceType = errors.New("unknown workspace source type")
 
 // Materialize writes the workspace sources into root in order. It
-// handles the filesystem-native source types inlineFile and mkdir, the
-// uploadFile type (a single file staged under stagingDir by
-// PrepareWorkspace), and the uploadArchive type (a staged tar, tar.gz,
-// or zip extracted under the source pathPrefix). gitClone returns
-// ErrSourceUnsupported until the VCS layer lands.
+// handles every §14 source type: inlineFile and mkdir write directly;
+// uploadFile and uploadArchive extract content staged under stagingDir
+// by PrepareWorkspace; gitClone extracts the repository archive the
+// gateway cloned and staged under stagingDir.
 func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) error {
 	for i, src := range sources {
 		if err := materializeSource(root, stagingDir, src); err != nil {
@@ -59,7 +53,7 @@ func materializeSource(root, stagingDir string, src *adapterv1.WorkspaceSource) 
 	case "uploadArchive":
 		return extractUploadArchive(root, stagingDir, src)
 	case "gitClone":
-		return ErrSourceUnsupported
+		return extractGitClone(root, stagingDir, src)
 	default:
 		return ErrUnknownSourceType
 	}
