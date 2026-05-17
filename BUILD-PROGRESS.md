@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `725c9ec` — §14 pin gitClone refs at session creation. `handleCreate` and
+  `handleCreateAndStart` resolve every `gitClone` source's ref to an immutable commit
+  SHA when a `RefResolver` is wired: `resolvePlanForCreate` parses the plan, calls
+  `PinCommitSHAs`, and persists the `Marshal`'d pinned form on the session row. A
+  `ResolveError` maps to the §15.1 `GIT_CLONE_REF_RESOLVE_TRANSIENT` (503) or
+  `GIT_CLONE_REF_UNRESOLVABLE` (422) response; the start and resume handlers read the
+  stored plan back with `ParseStored`. `cmd/lenny-gateway` wires the
+  `gitref.LsRemoteResolver`. With no resolver the plan is stored verbatim, so a gateway
+  without one is unchanged. This closes the §14 gitClone ref-pinning vertical slice for
+  public repositories; authenticated (private-repo) resolution awaits the §4.9 VCS
+  credential-lease path, and gitClone workspace materialization itself is still unbuilt.
 - `9d7c3e6` — §14 `workspaceplan.Marshal`. The inverse of `Parse`: re-serializes a
   parsed `Plan` to §14 WorkspacePlan JSON, emitting each source from the `Raw` object
   `Parse` preserved (unknown source types round-trip unchanged) and emitting
@@ -1332,15 +1343,13 @@ The gateway↔pod session path runs end to end through both `POST /v1/sessions/s
 the two-step §15.1 `create → finalize → start` lifecycle. The remaining gaps, in
 dependency order, are below.
 
-- **gitClone ref resolution.** §15.1 pins `gitClone.resolvedCommitSha` at session
-  creation. The substrate is built: `workspaceplan.PinCommitSHAs` with the `IsCommitSHA`
-  fast-path and the `RefResolver` interface, the `gitref.LsRemoteResolver` backend, and
-  `workspaceplan.Marshal` to emit the pinned plan. The gateway does not yet call them:
-  the session-creation wiring remains — parse the request plan, `PinCommitSHAs` against
-  a wired resolver, `Marshal` the result into the stored row, and map a `ResolveError`
-  to the §15.1 `GIT_CLONE_REF_RESOLVE_TRANSIENT` / `GIT_CLONE_REF_UNRESOLVABLE`
-  response. It also needs a stored-plan parse path that accepts the gateway-written
-  `resolvedCommitSha` when the start and resume handlers read the persisted plan.
+- **gitClone materialization.** The §14 `gitClone.ref` → `resolvedCommitSha` pinning is
+  built end to end for public repositories (`workspaceplan.PinCommitSHAs`,
+  `gitref.LsRemoteResolver`, the `handleCreate` / `handleCreateAndStart` wiring). The
+  remaining gitClone work is the materialization itself — the gateway-side clone of the
+  pinned commit into the workspace staging area — which the adapter materializer reports
+  as `ErrSourceUnsupported`, and authenticated (private-repo) ref resolution, which
+  awaits the §4.9 VCS credential-lease path that mints a short-lived HTTPS token.
 - **Adapter workspace-staging RPCs.** §15.4 mandates separate `PrepareWorkspace`,
   `FinalizeWorkspace`, and `RunSetup` RPCs. The adapter bundles materialization, setup,
   and runtime start into `StartSession`, so the §15.1 finalize step short-circuits
