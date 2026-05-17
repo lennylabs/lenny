@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `6aa1cb1` — §14 `uploadFile` materialization from staged content.
+  `workspace.Materialize` returned `ErrSourceUnsupported` for `uploadFile`; it
+  now takes a `stagingDir` and copies the file `PrepareWorkspace` streamed to
+  `stagingDir/<uploadRef>` into the workspace, applying the §14 mode (default
+  `0644`). The upload-ref-to-staging-path resolution and its plain-file-name
+  guard are consolidated as the exported `workspace.StagingPath`, shared by the
+  adapter `PrepareWorkspace` handler and `uploadFile` materialization. With
+  `PrepareWorkspace` + `FinalizeWorkspace`, a streamed-upload workspace now
+  materializes end to end. `uploadArchive` (tar, tar.gz, zip extraction with
+  `stripComponents`) and `gitClone` still return `ErrSourceUnsupported`.
+  Remaining staging work: `uploadArchive` extraction, then slim `StartSession`
+  to runtime start only with the gateway binder orchestrating the four-RPC
+  sequence.
 - `f9bf113` — §4.7 `PrepareWorkspace` adapter RPC, the third slice of the
   staging-RPC split. `PrepareWorkspace` is a client-streaming RPC that accepts
   streamed upload-file content into the pod's staging area (the new
