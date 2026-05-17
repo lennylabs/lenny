@@ -11,6 +11,8 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `3bf40f1` — §15.1 OpenAPI: `GET /v1/runtimes` documented with its discovery-entry
+  response schema.
 - `df6c5d8` — §9.1 `GET /v1/runtimes` runtime discovery. The REST discovery endpoint
   lists the runtime registry, identity-filtered by §10.6 environment access via the
   `envaccess` resolver. `cmd/lenny-gateway` wires the runtime and environment
