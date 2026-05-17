@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `57e876e` — §10.6 session environment persisted in Postgres. Migration 0014 adds the
+  `environment` column to `sessions`; the session pgstore writes and reads it. The
+  field had been in-memory-only.
 - `ae45aef` — §10.6 cross-environment delegation bilateral check.
   `envaccess.CrossEnvironmentReachable` implements the §10.6 bilateral algorithm — a
   target is reachable when a peer environment admits it and both environments declare
