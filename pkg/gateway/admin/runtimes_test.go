@@ -641,6 +641,49 @@ func TestRegenerateCardsVersionThreshold(t *testing.T) {
 	}
 }
 
+func TestRuntimeCapabilityInferenceModeRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips capabilityInferenceMode
+	// and defaults it to strict.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "defaulted",
+		Image: "lenny/defaulted@sha256:abc",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.CapabilityInferenceMode != "strict" {
+		t.Errorf("default capabilityInferenceMode: %q, want strict", created.CapabilityInferenceMode)
+	}
+
+	permissive := "permissive"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/defaulted",
+		admin.UpdateRuntimeRequest{CapabilityInferenceMode: &permissive})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.CapabilityInferenceMode != "permissive" {
+		t.Errorf("update did not switch capabilityInferenceMode: %q", updated.CapabilityInferenceMode)
+	}
+}
+
+func TestCreateRuntimeRejectsInvalidCapabilityInferenceMode(t *testing.T) {
+	// §5.1: capabilityInferenceMode is the strict / permissive enum.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:                    "bad",
+		Image:                   "lenny/bad@sha256:abc",
+		CapabilityInferenceMode: "loose",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("invalid capabilityInferenceMode: status %d, want 400", rr.Code)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

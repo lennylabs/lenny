@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/agentcard"
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -43,20 +44,21 @@ func (r *Router) applyGeneratedCard(rt *runtimestore.Runtime, at time.Time) {
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
-	Name                string                                `json:"name"`
-	Type                string                                `json:"type,omitempty"`
-	Image               string                                `json:"image,omitempty"`
-	ExecutionMode       string                                `json:"executionMode,omitempty"`
-	IsolationProfile    string                                `json:"isolationProfile,omitempty"`
-	IntegrationLevel    string                                `json:"integrationLevel,omitempty"`
-	Description         string                                `json:"description,omitempty"`
-	DelegationPolicyRef string                                `json:"delegationPolicyRef,omitempty"`
-	Labels              map[string]string                     `json:"labels,omitempty"`
-	AgentInterface      *runtimestore.AgentInterface          `json:"agentInterface,omitempty"`
-	PublishedMetadata   []runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
-	CreatedAt           string                                `json:"createdAt,omitempty"`
-	UpdatedAt           string                                `json:"updatedAt,omitempty"`
-	DeletedAt           string                                `json:"deletedAt,omitempty"`
+	Name                    string                                `json:"name"`
+	Type                    string                                `json:"type,omitempty"`
+	Image                   string                                `json:"image,omitempty"`
+	ExecutionMode           string                                `json:"executionMode,omitempty"`
+	IsolationProfile        string                                `json:"isolationProfile,omitempty"`
+	IntegrationLevel        string                                `json:"integrationLevel,omitempty"`
+	Description             string                                `json:"description,omitempty"`
+	DelegationPolicyRef     string                                `json:"delegationPolicyRef,omitempty"`
+	Labels                  map[string]string                     `json:"labels,omitempty"`
+	AgentInterface          *runtimestore.AgentInterface          `json:"agentInterface,omitempty"`
+	PublishedMetadata       []runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
+	CapabilityInferenceMode string                                `json:"capabilityInferenceMode,omitempty"`
+	CreatedAt               string                                `json:"createdAt,omitempty"`
+	UpdatedAt               string                                `json:"updatedAt,omitempty"`
+	DeletedAt               string                                `json:"deletedAt,omitempty"`
 }
 
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
@@ -65,15 +67,16 @@ type RuntimePayload struct {
 // stay distinct: omitted leaves the descriptor unchanged, null clears
 // it, and an object replaces it.
 type UpdateRuntimeRequest struct {
-	Image               *string                                `json:"image,omitempty"`
-	ExecutionMode       *string                                `json:"executionMode,omitempty"`
-	IsolationProfile    *string                                `json:"isolationProfile,omitempty"`
-	IntegrationLevel    *string                                `json:"integrationLevel,omitempty"`
-	Description         *string                                `json:"description,omitempty"`
-	DelegationPolicyRef *string                                `json:"delegationPolicyRef,omitempty"`
-	Labels              *map[string]string                     `json:"labels,omitempty"`
-	AgentInterface      json.RawMessage                        `json:"agentInterface,omitempty"`
-	PublishedMetadata   *[]runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
+	Image                   *string                                `json:"image,omitempty"`
+	ExecutionMode           *string                                `json:"executionMode,omitempty"`
+	IsolationProfile        *string                                `json:"isolationProfile,omitempty"`
+	IntegrationLevel        *string                                `json:"integrationLevel,omitempty"`
+	Description             *string                                `json:"description,omitempty"`
+	DelegationPolicyRef     *string                                `json:"delegationPolicyRef,omitempty"`
+	Labels                  *map[string]string                     `json:"labels,omitempty"`
+	AgentInterface          json.RawMessage                        `json:"agentInterface,omitempty"`
+	PublishedMetadata       *[]runtimestore.PublishedMetadataEntry `json:"publishedMetadata,omitempty"`
+	CapabilityInferenceMode *string                                `json:"capabilityInferenceMode,omitempty"`
 }
 
 // errAgentInterfaceOnMCP is returned from the update mutate closure when
@@ -82,19 +85,20 @@ var errAgentInterfaceOnMCP = errors.New("agentInterface is not valid on a type:m
 
 func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 	out := RuntimePayload{
-		Name:                r.Name,
-		Type:                string(r.Type),
-		Image:               r.Image,
-		ExecutionMode:       string(r.ExecutionMode),
-		IsolationProfile:    string(r.IsolationProfile),
-		IntegrationLevel:    string(r.IntegrationLevel),
-		Description:         r.Description,
-		DelegationPolicyRef: r.DelegationPolicyRef,
-		Labels:              r.Labels,
-		AgentInterface:      r.AgentInterface,
-		PublishedMetadata:   r.PublishedMetadata,
-		CreatedAt:           rfc3339Nano(r.CreatedAt),
-		UpdatedAt:           rfc3339Nano(r.UpdatedAt),
+		Name:                    r.Name,
+		Type:                    string(r.Type),
+		Image:                   r.Image,
+		ExecutionMode:           string(r.ExecutionMode),
+		IsolationProfile:        string(r.IsolationProfile),
+		IntegrationLevel:        string(r.IntegrationLevel),
+		Description:             r.Description,
+		DelegationPolicyRef:     r.DelegationPolicyRef,
+		Labels:                  r.Labels,
+		AgentInterface:          r.AgentInterface,
+		PublishedMetadata:       r.PublishedMetadata,
+		CapabilityInferenceMode: string(r.CapabilityInferenceMode),
+		CreatedAt:               rfc3339Nano(r.CreatedAt),
+		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
 	if !r.DeletedAt.IsZero() {
 		out.DeletedAt = rfc3339Nano(r.DeletedAt)
@@ -124,6 +128,9 @@ func (p RuntimePayload) validatePayloadEnums() error {
 	}
 	if p.IntegrationLevel != "" && !runtimestore.IntegrationLevel(p.IntegrationLevel).IsValid() {
 		return errors.New("integrationLevel is not a recognised level")
+	}
+	if p.CapabilityInferenceMode != "" && !capabilityinference.Mode(p.CapabilityInferenceMode).IsValid() {
+		return errors.New("capabilityInferenceMode must be strict or permissive")
 	}
 	if p.Image != "" {
 		// §5.1 / §13.1: digest-pinned references only. Accept the
@@ -156,18 +163,19 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	}
 
 	rt := runtimestore.Runtime{
-		Name:                body.Name,
-		Type:                runtimestore.RuntimeType(body.Type),
-		Image:               body.Image,
-		ExecutionMode:       runtimestore.ExecutionMode(body.ExecutionMode),
-		IsolationProfile:    isolation.Profile(body.IsolationProfile),
-		IntegrationLevel:    runtimestore.IntegrationLevel(body.IntegrationLevel),
-		Description:         body.Description,
-		DelegationPolicyRef: body.DelegationPolicyRef,
-		Labels:              body.Labels,
-		AgentInterface:      body.AgentInterface,
-		PublishedMetadata:   body.PublishedMetadata,
-		CreatedAt:           r.clock(),
+		Name:                    body.Name,
+		Type:                    runtimestore.RuntimeType(body.Type),
+		Image:                   body.Image,
+		ExecutionMode:           runtimestore.ExecutionMode(body.ExecutionMode),
+		IsolationProfile:        isolation.Profile(body.IsolationProfile),
+		IntegrationLevel:        runtimestore.IntegrationLevel(body.IntegrationLevel),
+		Description:             body.Description,
+		DelegationPolicyRef:     body.DelegationPolicyRef,
+		Labels:                  body.Labels,
+		AgentInterface:          body.AgentInterface,
+		PublishedMetadata:       body.PublishedMetadata,
+		CapabilityInferenceMode: capabilityinference.Mode(body.CapabilityInferenceMode),
+		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
 	rt.UpdatedAt = rt.CreatedAt
@@ -280,6 +288,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			"isolationProfile is not a recognised §5.3 profile", nil)
 		return
 	}
+	if body.CapabilityInferenceMode != nil && *body.CapabilityInferenceMode != "" &&
+		!capabilityinference.Mode(*body.CapabilityInferenceMode).IsValid() {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"capabilityInferenceMode must be strict or permissive", nil)
+		return
+	}
 	if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && !runtimestore.IntegrationLevel(*body.IntegrationLevel).IsValid() {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"integrationLevel is not a recognised level", nil)
@@ -339,6 +353,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.PublishedMetadata != nil {
 			rt.PublishedMetadata = *body.PublishedMetadata
+		}
+		if body.CapabilityInferenceMode != nil {
+			rt.CapabilityInferenceMode = capabilityinference.Mode(*body.CapabilityInferenceMode)
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -412,6 +429,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.PublishedMetadata != nil {
 		out = append(out, "publishedMetadata")
+	}
+	if b.CapabilityInferenceMode != nil {
+		out = append(out, "capabilityInferenceMode")
 	}
 	return out
 }
