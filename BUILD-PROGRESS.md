@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5003c74` — §10.6 environment on `lenny/create_session`. The platform MCP
+  session-creation tool records the environment, so every session-creation surface
+  now carries the §10.6 session environment context.
 - `3f3ec85` — §10.6 session environment on the two-step start path. `POST
   /v1/sessions/start` now records the environment on the session row, matching
   `POST /v1/sessions`.
