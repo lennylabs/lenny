@@ -118,6 +118,32 @@ func TestWriteManifest(t *testing.T) {
 	}
 }
 
+func TestWriteManifestNeverAbsentArrays(t *testing.T) {
+	// §4.7 / §15: connectorServers, runtimeMcpServers, and
+	// adapterLocalTools serialize as [], never null, never absent.
+	dir := t.TempDir()
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "s"}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if m.ConnectorServers == nil {
+		t.Error("connectorServers serialized as null, want an empty array")
+	}
+	if m.RuntimeMcpServers == nil {
+		t.Error("runtimeMcpServers serialized as null, want an empty array")
+	}
+	if m.AdapterLocalTools == nil {
+		t.Error("adapterLocalTools serialized as null, want an empty array")
+	}
+}
+
 func TestWriteManifestWithTracingContext(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteManifest(dir, Manifest{

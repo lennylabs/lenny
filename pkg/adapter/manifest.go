@@ -50,6 +50,13 @@ type ManifestMCPServer struct {
 	Socket string `json:"socket"`
 }
 
+// ManifestConnector is one §4.7 connector MCP server entry: a
+// connector identifier and the Unix socket its MCP server listens on.
+type ManifestConnector struct {
+	ID     string `json:"id"`
+	Socket string `json:"socket"`
+}
+
 // Manifest is the §15.4 adapter manifest the runtime reads at startup.
 // v1 carries the session metadata a Basic-level runtime needs, the
 // §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
@@ -78,6 +85,12 @@ type Manifest struct {
 	// server's Unix socket. Omitted when the adapter runs no platform
 	// MCP server (a Basic-level deployment).
 	PlatformMcpServer *ManifestMCPServer `json:"platformMcpServer,omitempty"`
+	// ConnectorServers lists the §4.7 per-connector MCP servers. Empty
+	// when no connectors are authorized; never absent.
+	ConnectorServers []ManifestConnector `json:"connectorServers"`
+	// RuntimeMcpServers is the §4.7 slot reserved for type:mcp runtimes.
+	// Empty in v1; never absent.
+	RuntimeMcpServers []ManifestConnector `json:"runtimeMcpServers"`
 }
 
 // newMCPNonce returns a fresh §15.4.3 intra-pod MCP nonce: a random
@@ -95,6 +108,18 @@ func newMCPNonce() (string, error) {
 // created mode 0644 so the agent-container runtime, which runs as a
 // different user, can read it.
 func WriteManifest(dir string, m Manifest) error {
+	// §4.7 / §15: connectorServers, runtimeMcpServers, and
+	// adapterLocalTools are "never absent" — a nil slice must serialize
+	// as an empty array, not null.
+	if m.ConnectorServers == nil {
+		m.ConnectorServers = []ManifestConnector{}
+	}
+	if m.RuntimeMcpServers == nil {
+		m.RuntimeMcpServers = []ManifestConnector{}
+	}
+	if m.AdapterLocalTools == nil {
+		m.AdapterLocalTools = []ManifestTool{}
+	}
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("adapter: encode manifest: %w", err)
