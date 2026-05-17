@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fce3a5c` — §15.1 OpenAPI: `GET /v1/admin/events/buffer` documented.
+- `73d3247` — §25.3 `GET /v1/admin/events/buffer` endpoint. Wires the Gateway Event
+  Buffer query onto the admin Router (platform-admin gated; `?since=` cursor,
+  `?eventType=` / `?severity=` filters, `?limit=` capped at 500); `cmd/lenny-gateway`
+  wires a 500-event buffer. Subsystems calling `Append` to emit events and the
+  Redis-stream emit destination remain.
+- `092ca65` — §25.3 Gateway Event Buffer (`pkg/gateway/opsevents`). The in-process ring
+  buffer of operational events that is the §25.3 fallback event source when Redis is
+  unavailable. `OperationalEvent` models the §12.6 CloudEvents v1.0.2 envelope;
+  `EventBuffer` retains the last 500 events with 1-based monotonic ids and `Query`
+  returns events after a cursor, narrowed by type and severity, reporting `hasMore`,
+  buffer age, and a gap signal when the cursor was evicted. Distinct from
+  `pkg/gateway/events`, the session SSE bus.
 - `21a529c` — §25.3 complete the recommendation catalog. Extends the catalog to all six
   §25.3 categories — adds `ResourceLimitsMemoryPressure`, `RetentionTuningStoragePressure`,
   and `QuotaAdjustmentRejections` rules with their `CapacityService` evaluators. The
