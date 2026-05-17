@@ -11,6 +11,21 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f27ee5a` — §15.1 OpenAPI: `taskPolicy` in the admin `Runtime` schema.
+- `09069c9` — §15.1 `taskPolicy` round-trip on the admin runtime API. `POST` / `GET`
+  carry it on `RuntimePayload`; `PUT` carries it as an optional pointer. Create and
+  update validate the `microvmScrubMode` / `onCleanupFailure` enums and the
+  non-negative numeric fields; the §5.1 cross-field rules stay with the pool controller.
+- `6b3aa09` — §5.1 `taskPolicy` runtime field. `runtimestore.Runtime` gains the §5.1
+  `taskPolicy` block — the §5.2 task-mode pod-reuse and workspace-cleanup policy
+  (best-effort-scrub acknowledgment, cross-tenant reuse, microvm scrub mode, cleanup
+  commands, pod retirement limits, the §6.6 per-task retry budget). `MicrovmScrubMode`
+  and `CleanupFailureDisposition` are closed enums; the in-memory store deep-copies the
+  command slice and retry pointer and the pgstore persists the block (migration 0022).
+  With `taskPolicy` the §5.1 RuntimeDefinition advanced-field model is complete:
+  `agentInterface`, `publishedMetadata`, `capabilityInferenceMode`,
+  `toolCapabilityOverrides`, `setupPolicy`, `capabilities`, `minPlatformVersion`, and
+  `taskPolicy` all round-trip through the model, pgstore, and the §15.1 admin API.
 - `a7a940d` — §15.1 OpenAPI: `minPlatformVersion` in the admin `Runtime` schema.
 - `86dae6a` — §15.1 `minPlatformVersion` round-trip and registration gate. `POST` / `GET`
   carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer. Per §5.1
