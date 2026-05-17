@@ -83,6 +83,27 @@
           "input":       { "type": "string" }
         }
       },
+      "PublishedMetadataEntry": {
+        "type": "object",
+        "description": "A §5.1 publishedMetadata entry: a named, opaque metadata value with a content type and a visibility class.",
+        "required": ["key", "visibility"],
+        "properties": {
+          "key":         { "type": "string" },
+          "contentType": { "type": "string" },
+          "visibility":  { "type": "string", "enum": ["internal","tenant","public"] },
+          "content":     { "type": "string" }
+        }
+      },
+      "PublishedMetadataRef": {
+        "type": "object",
+        "description": "The discovery-surface view of a publishedMetadata entry: key, content type, and visibility without the content.",
+        "required": ["key", "visibility"],
+        "properties": {
+          "key":         { "type": "string" },
+          "contentType": { "type": "string" },
+          "visibility":  { "type": "string", "enum": ["internal","tenant","public"] }
+        }
+      },
       "Session": {
         "type": "object",
         "required": ["id", "tenantId", "state", "createdAt", "updatedAt"],
@@ -194,6 +215,7 @@
           "description":      { "type": "string" },
           "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
           "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" },
+          "publishedMetadata": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedMetadataEntry" } },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
@@ -323,7 +345,8 @@
                           "integrationLevel": { "type": "string", "enum": ["basic","standard","full"] },
                           "description":      { "type": "string" },
                           "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
-                          "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" }
+                          "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" },
+                          "publishedMetadata": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedMetadataRef" } }
                         }
                       }
                     },
@@ -332,6 +355,25 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/runtimes/{name}/meta/{key}": {
+      "get": {
+        "summary": "Fetch a public publishedMetadata entry",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "key",  "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry content, served under its declared content type.",
+            "content": { "*/*": { "schema": { "type": "string" } } }
+          },
+          "404": {
+            "description": "No public entry with this key, or no such runtime.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           }
         }
       }
