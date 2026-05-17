@@ -108,6 +108,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -562,7 +563,9 @@ func main() {
 		WithInteractions(interactions).
 		WithExperiments(experiments).
 		WithEnvironments(environments).
-		WithEvalResults(evals)
+		WithEvalResults(evals).
+		WithRecommendations(recommendations.NewCapacityService(
+			recommendations.NewWindowStore(7 * 24 * time.Hour)))
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

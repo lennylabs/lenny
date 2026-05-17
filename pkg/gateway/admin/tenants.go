@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
@@ -114,6 +115,14 @@ type Router struct {
 	platformInfo   PlatformInfo
 	platformConfig map[string]string
 	platformWired  bool
+
+	recommendations RecommendationService
+}
+
+// RecommendationService is the §25.3 capacity-recommendation read
+// surface the admin Router exposes at GET /v1/admin/recommendations.
+type RecommendationService interface {
+	GetRecommendations(ctx context.Context, category *string) (*recommendations.RecommendationsResponse, error)
 }
 
 // RBACConfigMetrics records the §10.6 observability counters the RBAC
@@ -197,6 +206,10 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetRuntime)))
 		mux.Handle("PUT /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateRuntime)))
 		mux.Handle("DELETE /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteRuntime)))
+	}
+	if r.recommendations != nil {
+		mux.Handle("GET /v1/admin/recommendations",
+			r.requireAdmin(http.HandlerFunc(r.handleRecommendations)))
 	}
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))
