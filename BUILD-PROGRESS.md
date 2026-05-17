@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d89b5b2` — §16.5 alert-rule evaluation state machine. `pkg/alerting/evaluator` drives
+  each §16.5 PrometheusRule through the inactive → pending → firing lifecycle. Rule
+  expressions resolve through the `ExprEvaluator` interface (a Prometheus query API in
+  production, a fake in tests); a rule active for at least its `For` duration fires and
+  signals `OnFired`, a firing rule whose expression clears signals `OnResolved` — the
+  §16.6 `alert_fired` / `alert_resolved` extension points, consistent with the
+  `credrenewal` callback pattern. An evaluation error preserves the rule's state rather
+  than flapping it. The §16.6 emit wiring and the production PromQL-backed
+  `ExprEvaluator` are deferred — both await the gateway/lenny-ops metric pipeline; the
+  evaluator is not yet instantiated in a gateway binary.
 - `78648c1` — §16.6 emit the full session lifecycle event set. `recordSessionCompleted`
   emitted only `session_failed`; §16.6 lists the complete session lifecycle set. The
   terminal-state side-effect chokepoint now emits the matching event for every terminal
