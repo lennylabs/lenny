@@ -65,6 +65,56 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("agentInterface round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.AgentInterface = &runtimestore.AgentInterface{
+			Description:            "Analyzes codebases",
+			InputModes:             []runtimestore.AgentInterfaceMode{{Type: "text/plain"}},
+			OutputModes:            []runtimestore.AgentInterfaceMode{{Type: "text/plain", Role: "primary"}},
+			SupportsWorkspaceFiles: true,
+			Skills:                 []runtimestore.AgentInterfaceSkill{{ID: "review", Name: "Code Review"}},
+			Examples:               []runtimestore.AgentInterfaceExample{{Description: "review", Input: "review it"}},
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.AgentInterface == nil {
+			t.Fatalf("agentInterface lost through the jsonb round-trip")
+		}
+		if got.AgentInterface.Description != r.AgentInterface.Description ||
+			!got.AgentInterface.SupportsWorkspaceFiles ||
+			len(got.AgentInterface.Skills) != 1 || got.AgentInterface.Skills[0].ID != "review" ||
+			len(got.AgentInterface.InputModes) != 1 || len(got.AgentInterface.Examples) != 1 {
+			t.Errorf("agentInterface round-trip mismatch: %+v", got.AgentInterface)
+		}
+
+		// A runtime registered without the block reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.AgentInterface != nil {
+			t.Errorf("agentInterface must be nil when omitted: %+v", gotPlain.AgentInterface)
+		}
+
+		// Update can clear the descriptor back to SQL NULL.
+		cleared, err := store.Update(ctx, r.Name, func(rt *runtimestore.Runtime) error {
+			rt.AgentInterface = nil
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update clear: %v", err)
+		}
+		if cleared.AgentInterface != nil {
+			t.Errorf("Update did not clear agentInterface: %+v", cleared.AgentInterface)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {
