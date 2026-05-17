@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `41a57cc` — §16.6 emit `experiment.isolation_mismatch` to the §25.3 event buffer. The
+  `experimentRejectionReporter` recorded the §10.7 fail-closed isolation rejection only
+  on the audit chain and the metrics registry. §16.6 classes it as an operational
+  event, so the reporter now also emits a `warning` event to the §25.3 event buffer via
+  the shared `opsEmitter`. With this, all three runtime-side experiment operational
+  events (`multi_eligible_skipped`, `variant_weaker_than_tenant_floor`,
+  `isolation_mismatch`) reach the event buffer; the OpenFeature events
+  (`unknown_variant_from_provider`, `unknown_external_id`, `targeting_failed`) await the
+  external-targeting path.
 - `1de3fa3` — §16.6 emit `experiment.variant_weaker_than_tenant_floor` to the event
   buffer. The §10.7 tenant-floor advisory check (`checkTenantIsolationFloor`) emitted
   the event only to the audit log; §16.6 classes it as an operational event. The check
