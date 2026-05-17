@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `2fbcb5b` — §14 `gitClone` clone-and-deliver (gateway side). The pod-side
+  extraction was built; nothing performed the gateway-side clone.
+  `gitref.CloneArchive` clones a repository at the pinned commit and returns
+  the tree as a gzip-tar. The binder's `stageWorkspace` (formerly
+  `stageUploads`) clones every `gitClone` source, archives the tree, and
+  streams it via `PrepareWorkspace` under `GitCloneStagingRef` alongside
+  `uploadFile`/`uploadArchive` content. A public `gitClone` plan now binds
+  end to end: clone on the gateway, deliver, materialize. An authenticated
+  `gitClone` (`auth.mode=credential-lease`) fails to bind with a clear error
+  pending the §4.9 VCS credential-lease token path — the gateway minting a
+  short-lived HTTPS token, the in-pod git credential helper, and the §4.9
+  VCS `CredentialProvider` are the remaining gitClone work.
 - `317ac6d` — §14 `gitClone` materialization (pod side). `gitClone` was the
   last `WorkspaceSource` type returning `ErrSourceUnsupported`. Per §14 the
   gateway clones the repository on its own network path (the pod never sees
