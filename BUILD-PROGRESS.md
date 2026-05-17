@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c451c22` — the adapter runs the §4.7 platform MCP server per session.
+  The `mcp.Server` framework existed but nothing instantiated it. When
+  `MCPSocket` is configured, `StartSession` and `Resume` listen the platform
+  MCP server on that Unix socket (abstract `@lenny-platform-mcp` in
+  production), authenticated by the session's manifest nonce, and the
+  manifest's new `platformMcpServer` field points the runtime at it.
+  `releaseSession` (called by `Shutdown`) stops the server. The server is
+  opt-in via `MCPSocket`, so an adapter without it is unchanged. Its tool
+  registry is currently empty — the platform `lenny/...` tools are
+  gateway-mediated. Remaining MCP-fabric work: the platform tool surface
+  (each `lenny/...` tool relays a `tools/call` to the gateway — an
+  adapter↔gateway relay sub-arc), the `SO_PEERCRED` peer-UID check (Linux
+  syscall), and the `connectorServers`/`lifecycleChannel` manifest fields.
 - `1fe8ec5` — adapter-local `tool_call` interception in the content stream.
   `localtools` had a `Dispatch` entry point but no caller. `HandleToolCall`
   classifies a §15.4.1 stdout frame: a `tool_call` for an adapter-local tool
