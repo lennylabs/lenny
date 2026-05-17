@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9ee6b7e` — §4.7 `connectorServers` and `runtimeMcpServers` manifest arrays.
+  §4.7 mandates both fields as "Required" and "never absent," each an empty
+  array when no connectors and no `type:mcp` runtimes are present. The
+  manifest struct lacked both. Added `ConnectorServers` and
+  `RuntimeMcpServers` (and the `ManifestConnector` `{id, socket}` type);
+  `WriteManifest` normalizes a nil slice to `[]` for these and
+  `adapterLocalTools`, so the manifest serializes them as `[]` not `null`,
+  meeting the §4.7 / §15 "never absent" contract. The manifest's MCP-fabric
+  field set is now §4.7-conformant except `lifecycleChannel` (the Full-level
+  lifecycle channel, a separate subsystem). Remaining MCP-fabric work: the
+  platform `lenny/...` tool surface (gateway-relay sub-arc) and the
+  `SO_PEERCRED` peer-UID check (Linux syscall).
 - `c451c22` — the adapter runs the §4.7 platform MCP server per session.
   The `mcp.Server` framework existed but nothing instantiated it. When
   `MCPSocket` is configured, `StartSession` and `Resume` listen the platform
