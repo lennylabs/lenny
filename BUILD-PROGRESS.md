@@ -11,6 +11,22 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d5ab12b` — §15.1 OpenAPI: `baseRuntime` in the admin `Runtime` schema.
+- `38195a1` — §15.1 `baseRuntime` round-trip on the admin runtime API. `POST` / `GET`
+  carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer. The §5.1
+  derived-runtime registration validation (base existence, the prohibited-field rules)
+  is the next step.
+- `e32e697` — §5.1 `base_runtime` column (migration 0023). The pgstore persists the
+  §5.1 `baseRuntime` reference.
+- `cde6fbe` — §5.1 `baseRuntime` field and the derived-runtime merge algorithm.
+  `runtimestore.Runtime` gains the §5.1 `baseRuntime` reference (`Runtime.IsDerived`
+  reports a derived runtime). `runtimestore.Merge` implements the §5.1 normative merge
+  algorithm that resolves a derived runtime against its base into the effective
+  runtime: inherited security fields are taken from the base, override fields take the
+  derived value when set, `publishedMetadata` appends with a duplicate key won by
+  derived, `labels` overlay, and `setupPolicy.timeoutSeconds` takes the maximum. The
+  result shares no mutable state with either input. The derived-runtime registration
+  validation and the session-creation resolution that call `Merge` are the next steps.
 - `f27ee5a` — §15.1 OpenAPI: `taskPolicy` in the admin `Runtime` schema.
 - `09069c9` — §15.1 `taskPolicy` round-trip on the admin runtime API. `POST` / `GET`
   carry it on `RuntimePayload`; `PUT` carries it as an optional pointer. Create and
