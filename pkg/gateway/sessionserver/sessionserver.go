@@ -375,12 +375,17 @@ func (s *Server) Handler() http.Handler {
 
 // CreateSessionRequest is the §15.1 POST /v1/sessions body. Each
 // optional field is validated when present; only `runtimeRef` is
-// required by the minimal gateway. Future phases add `env`,
-// `timeouts`, `credentialPolicy`, `delegationPolicy`, etc.
+// required by the minimal gateway. Future phases add `timeouts`,
+// `credentialPolicy`, `delegationPolicy`, etc.
 type CreateSessionRequest struct {
 	RuntimeRef    string          `json:"runtimeRef"`
 	UserID        string          `json:"userId,omitempty"`
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
+
+	// Environment is the optional §10.6 environment the session is
+	// created in. Recorded on the session row; an empty value leaves
+	// the session unscoped to any environment.
+	Environment string `json:"environment,omitempty"`
 
 	// IsolationProfile is an optional override that pins the session
 	// to a specific §5.3 profile. Production resolves this from the
@@ -391,13 +396,14 @@ type CreateSessionRequest struct {
 
 // SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
 type SessionResponse struct {
-	ID         string `json:"id"`
-	TenantID   string `json:"tenantId"`
-	UserID     string `json:"userId,omitempty"`
-	RuntimeRef string `json:"runtimeRef,omitempty"`
-	State      string `json:"state"`
-	CreatedAt  string `json:"createdAt"`
-	UpdatedAt  string `json:"updatedAt"`
+	ID          string `json:"id"`
+	TenantID    string `json:"tenantId"`
+	UserID      string `json:"userId,omitempty"`
+	RuntimeRef  string `json:"runtimeRef,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	State       string `json:"state"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
 
 	FailureClass string `json:"failureClass,omitempty"`
 
@@ -513,6 +519,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		TenantID:         tenantID,
 		UserID:           req.UserID,
 		RuntimeRef:       req.RuntimeRef,
+		Environment:      req.Environment,
 		State:            session.StateCreated,
 		IsolationProfile: isoProf,
 		WorkspacePlan:    planJSON,
@@ -865,13 +872,14 @@ func (s *Server) writePreconditionError(w http.ResponseWriter, err error) {
 // toResponse converts a Session row into the §15.1 wire envelope.
 func toResponse(row sessionstore.Session) SessionResponse {
 	out := SessionResponse{
-		ID:         row.ID,
-		TenantID:   row.TenantID,
-		UserID:     row.UserID,
-		RuntimeRef: row.RuntimeRef,
-		State:      string(row.State),
-		CreatedAt:  row.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:  row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		UserID:      row.UserID,
+		RuntimeRef:  row.RuntimeRef,
+		Environment: row.Environment,
+		State:       string(row.State),
+		CreatedAt:   row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if row.FailureClass != "" {
 		out.FailureClass = string(row.FailureClass)

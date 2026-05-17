@@ -98,6 +98,72 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	}
 }
 
+func TestCreateRecordsEnvironment(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_env" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef:  "claude-code",
+		Environment: "security-team",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp sessionserver.CreateSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Environment != "security-team" {
+		t.Errorf("create response environment: got %q, want security-team", resp.Environment)
+	}
+	// The §10.6 environment is recorded on the stored row.
+	row, err := store.Get(context.Background(), "acme", "sess_env")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	if row.Environment != "security-team" {
+		t.Errorf("stored environment: got %q, want security-team", row.Environment)
+	}
+	// And it is echoed on GET /v1/sessions/{id}.
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_env", nil)
+	getReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	getRR := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("GET status: %d, body=%s", getRR.Code, getRR.Body.String())
+	}
+	var got sessionserver.SessionResponse
+	_ = json.Unmarshal(getRR.Body.Bytes(), &got)
+	if got.Environment != "security-team" {
+		t.Errorf("GET response environment: got %q, want security-team", got.Environment)
+	}
+}
+
+func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
+	store := memstore.New()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	srv := sessionserver.New(store, sessionserver.Options{
+		Clock:             clock,
+		IDFunc:            func() string { return "sess_noenv" },
+		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "acme", "sess_noenv")
+	if row.Environment != "" {
+		t.Errorf("an unscoped session must have an empty environment: got %q", row.Environment)
+	}
+}
+
 func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{IDFunc: func() string { return "sess_iso" }})

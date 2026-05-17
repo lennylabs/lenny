@@ -55,6 +55,12 @@ type Session struct {
 	// `POST /v1/sessions` row populates this at admission).
 	PoolRef string
 
+	// Environment is the §10.6 environment the session was created in,
+	// recorded at create time and immutable thereafter. Empty when the
+	// session is not scoped to an environment. It bounds the §10.6
+	// effective delegation scope for the session's delegations.
+	Environment string
+
 	// IsolationProfile is the §5.3 sandbox isolation profile the
 	// session is bound to. Used by the §7.1 derive monotonicity check,
 	// the §8.3 delegation monotonicity check, and the §15.1 replay
