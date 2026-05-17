@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -72,6 +73,12 @@ type Runtime struct {
 	// runtime's named, opaque metadata entries. A nil or empty slice
 	// means the runtime publishes no metadata.
 	PublishedMetadata []PublishedMetadataEntry
+
+	// CapabilityInferenceMode is the §5.1 capabilityInferenceMode: it
+	// sets the default §5.3 capability for an unannotated tool at
+	// connector or type:mcp runtime registration. ApplyDefaults fills
+	// the §5.1 default (strict) when it is empty.
+	CapabilityInferenceMode capabilityinference.Mode
 
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
@@ -387,6 +394,9 @@ func ApplyDefaults(r *Runtime) {
 	}
 	if r.Type == TypeAgent && r.IntegrationLevel == "" {
 		r.IntegrationLevel = IntegrationLevelBasic
+	}
+	if r.CapabilityInferenceMode == "" {
+		r.CapabilityInferenceMode = capabilityinference.DefaultMode
 	}
 }
 

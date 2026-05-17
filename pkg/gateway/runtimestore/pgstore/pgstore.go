@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -38,7 +39,7 @@ var _ runtimestore.Store = (*Store)(nil)
 
 const selectList = `name, type, image, execution_mode, isolation_profile,
 	integration_level, description, created_at, updated_at, deleted_at, labels,
-	agent_interface, published_metadata`
+	agent_interface, published_metadata, capability_inference_mode`
 
 // labelsJSON marshals a runtime's §5.1 label map to its jsonb text
 // form. A nil or empty map is stored as an empty JSON object so the
@@ -73,6 +74,16 @@ func publishedMetadataJSON(entries []runtimestore.PublishedMetadataEntry) any {
 	return string(b)
 }
 
+// capabilityInferenceMode renders the §5.1 capabilityInferenceMode for
+// storage, mapping an empty value to the strict default so the column
+// always holds a valid mode.
+func capabilityInferenceMode(m capabilityinference.Mode) string {
+	if m == "" {
+		return string(capabilityinference.DefaultMode)
+	}
+	return string(m)
+}
+
 // Create inserts a new runtime row. Returns ErrAlreadyExists when the
 // name is taken.
 func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
@@ -89,12 +100,13 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO runtime_definitions (
 		name, type, image, execution_mode, isolation_profile,
 		integration_level, description, created_at, updated_at, deleted_at, labels,
-		agent_interface, published_metadata
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		agent_interface, published_metadata, capability_inference_mode
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
-		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata))
+		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata),
+		capabilityInferenceMode(r.CapabilityInferenceMode))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -144,12 +156,14 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 	if _, err := tx.Exec(ctx, `UPDATE runtime_definitions SET
 		type = $2, image = $3, execution_mode = $4, isolation_profile = $5,
 		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9,
-		labels = $10, agent_interface = $11, published_metadata = $12
+		labels = $10, agent_interface = $11, published_metadata = $12,
+		capability_inference_mode = $13
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
-		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata)); err != nil {
+		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata),
+		capabilityInferenceMode(r.CapabilityInferenceMode)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -226,12 +240,14 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	var (
 		r                                          runtimestore.Runtime
 		typ, execMode, isoProf, level, description string
+		capInferMode                               string
 		deletedAt                                  *time.Time
 		labelsRaw, agentIfaceRaw, publishedMetaRaw []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
 		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw, &publishedMetaRaw,
+		&capInferMode,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -240,6 +256,7 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	r.IsolationProfile = isolation.Profile(isoProf)
 	r.IntegrationLevel = runtimestore.IntegrationLevel(level)
 	r.Description = description
+	r.CapabilityInferenceMode = capabilityinference.Mode(capInferMode)
 	if deletedAt != nil {
 		r.DeletedAt = *deletedAt
 	}

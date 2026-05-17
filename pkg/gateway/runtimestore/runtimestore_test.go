@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -194,6 +195,36 @@ func TestMetadataVisibilityIsValid(t *testing.T) {
 	}
 	if runtimestore.MetadataVisibility("world").IsValid() {
 		t.Error("an unknown visibility class must report invalid")
+	}
+}
+
+func TestRuntimeCapabilityInferenceModeDefault(t *testing.T) {
+	// §5.1: capabilityInferenceMode defaults to strict.
+	rt := runtimestore.Runtime{Name: "rt", Type: runtimestore.TypeAgent}
+	runtimestore.ApplyDefaults(&rt)
+	if rt.CapabilityInferenceMode != capabilityinference.ModeStrict {
+		t.Errorf("default capabilityInferenceMode = %q, want strict", rt.CapabilityInferenceMode)
+	}
+	// An explicit mode survives ApplyDefaults.
+	rt2 := runtimestore.Runtime{Name: "rt2", CapabilityInferenceMode: capabilityinference.ModePermissive}
+	runtimestore.ApplyDefaults(&rt2)
+	if rt2.CapabilityInferenceMode != capabilityinference.ModePermissive {
+		t.Errorf("explicit capabilityInferenceMode overwritten: %q", rt2.CapabilityInferenceMode)
+	}
+}
+
+func TestRuntimeCapabilityInferenceModeRoundTrip(t *testing.T) {
+	s := runtimestore.NewMemory()
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent,
+		CapabilityInferenceMode: capabilityinference.ModePermissive,
+	})
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CapabilityInferenceMode != capabilityinference.ModePermissive {
+		t.Errorf("capabilityInferenceMode not stored: %q", got.CapabilityInferenceMode)
 	}
 }
 

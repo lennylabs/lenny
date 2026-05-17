@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -154,6 +155,21 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 		if cleared.PublishedMetadata != nil {
 			t.Errorf("Update did not clear publishedMetadata: %+v", cleared.PublishedMetadata)
+		}
+	})
+
+	t.Run("capabilityInferenceMode round-trips", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.CapabilityInferenceMode = capabilityinference.ModePermissive
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CapabilityInferenceMode != capabilityinference.ModePermissive {
+			t.Errorf("capabilityInferenceMode: got %q, want permissive", got.CapabilityInferenceMode)
 		}
 	})
 
