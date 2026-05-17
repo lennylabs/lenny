@@ -126,9 +126,9 @@ func TestStartSessionWritesManifest(t *testing.T) {
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	err := cl.StartSession(context.Background(), "sess-m", "claude-code", nil,
+	err := cl.StartSession(context.Background(), "sess-m", "claude-code",
 		&adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment", Inherited: true},
-		map[string]string{"langsmith_run_id": "run_9"}, nil)
+		map[string]string{"langsmith_run_id": "run_9"})
 	if err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if rt.started != "sess-x" {
@@ -341,7 +341,7 @@ func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	ack, err := cl.Interrupt(ctx, "sess-x", true, 2*time.Second)
@@ -377,7 +377,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	stream, err := cl.Attach(ctx, "sess-x")
@@ -442,7 +442,7 @@ func TestCheckpointReturnsTheStoredCheckpoint(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	res, err := cl.Checkpoint(ctx, "sess-x", 30*time.Second)
@@ -533,7 +533,7 @@ func TestReportUsageReturnsAccounting(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	rep, err := cl.ReportUsage(ctx, "sess-x")
@@ -566,7 +566,7 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
-	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil, nil, nil); err != nil {
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {

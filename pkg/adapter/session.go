@@ -50,12 +50,14 @@ type RuntimeProcess interface {
 	Close(ctx context.Context, sessionID string) error
 }
 
-// StartSession assigns a session to the pod (§4.7, §6.1). It rejects
-// the call with Unavailable when the pod already holds a session,
-// materializes the workspace from the request's WorkspacePlan, runs
-// the plan's setup commands, and starts the runtime process. A
-// session-mode pod is one-session-only: the pod is terminated and
-// replaced after the session ends rather than reused.
+// StartSession assigns a session to the pod and starts the runtime
+// (§4.7, §6.1). It is the final RPC of the §4.7 session assignment
+// sequence: the workspace is already materialized by FinalizeWorkspace
+// and setup is already run by RunSetup, so StartSession claims the pod,
+// writes the §15.4 adapter manifest, and starts the runtime process. It
+// rejects the call with Unavailable when the pod already holds a
+// session. A session-mode pod is one-session-only: the pod is
+// terminated and replaced after the session ends rather than reused.
 //
 // On any failure after the session is tentatively claimed, the pod is
 // returned to the idle state so a retry can land on a fresh pod.
@@ -64,27 +66,15 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
-	if s.WorkspaceRoot == "" || s.Runtime == nil {
+	if s.Runtime == nil {
 		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root and runtime")
+			"adapter is not configured with a runtime")
 	}
 
 	if err := s.claimSession(sessionID); err != nil {
 		return nil, err
 	}
 
-	plan := req.GetWorkspacePlan()
-	if err := workspace.Materialize(s.WorkspaceRoot, s.StagingDir, plan.GetSources()); err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
-	}
-	// §5.1: bound the whole setup phase by the runtime's setupPolicy
-	// aggregate cap when StartSession carries one.
-	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, plan.GetSetupCommands(),
-		setupOptionsFromProto(req.GetSetupPolicy())); err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
-	}
 	// §15.4: write the adapter manifest the runtime reads at startup.
 	if err := s.writeSessionManifest(sessionID, req.GetExperimentContext(), req.GetTracingContext()); err != nil {
 		s.releaseSession()

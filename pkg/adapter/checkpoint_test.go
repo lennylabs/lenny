@@ -53,7 +53,7 @@ func checkpointReq(sessionID string) *adapterv1.CheckpointRequest {
 func startedServer(t *testing.T) (*adapter.Server, string) {
 	t.Helper()
 	s, _, root := sessionServer(t)
-	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("agent state"), 0o644); err != nil {

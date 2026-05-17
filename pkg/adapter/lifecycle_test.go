@@ -19,7 +19,7 @@ import (
 func startedSession(t *testing.T, sessionID string) (*adapter.Server, *fakeRuntime) {
 	t.Helper()
 	s, rt, _ := sessionServer(t)
-	if _, err := s.StartSession(context.Background(), startReq(sessionID, nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq(sessionID)); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	return s, rt

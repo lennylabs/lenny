@@ -111,7 +111,7 @@ func TestResumeUnimplementedWithoutACheckpointSource(t *testing.T) {
 func TestResumeRejectsANonIdlePod(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.Restorer = fakeCheckpointSource{archive: archiveOf(t, map[string]string{"f": "x"})}
-	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	// The pod already holds sess-1; resuming another session is rejected.

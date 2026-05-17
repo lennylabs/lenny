@@ -55,21 +55,19 @@ func (c *Client) NegotiateVersion(ctx context.Context, acceptedVersions []string
 	})
 }
 
-// StartSession assigns a session to the pod: the adapter materializes
-// the workspace from plan, runs the setup commands, and starts the
-// runtime (§4.7). experimentContext carries the session's §8.3 / §10.7
-// experiment enrollment for the adapter manifest (nil for an unenrolled
-// session); tracingContext carries the §8.3 opaque tracing identifiers
-// (nil when none is set); setupPolicy carries the §5.1 runtime
-// setup-phase aggregate cap (nil for no cap).
-func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string, plan *adapterv1.WorkspacePlan, experimentContext *adapterv1.ExperimentContext, tracingContext map[string]string, setupPolicy *adapterv1.SetupPolicy) error {
+// StartSession starts the runtime on a pod whose workspace is already
+// materialized by FinalizeWorkspace and whose setup commands are
+// already run by RunSetup (§4.7, the final session-assignment RPC).
+// experimentContext carries the session's §8.3 / §10.7 experiment
+// enrollment for the adapter manifest (nil for an unenrolled session);
+// tracingContext carries the §8.3 opaque tracing identifiers (nil when
+// none is set).
+func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string, experimentContext *adapterv1.ExperimentContext, tracingContext map[string]string) error {
 	_, err := c.rpc.StartSession(ctx, &adapterv1.StartSessionRequest{
 		SessionId:         &adapterv1.SessionId{Value: sessionID},
 		Runtime:           runtimeName,
-		WorkspacePlan:     plan,
 		ExperimentContext: experimentContext,
 		TracingContext:    tracingContext,
-		SetupPolicy:       setupPolicy,
 	})
 	return err
 }

@@ -17,7 +17,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	rt.output = make(chan []byte, 8)
 	rt.echoInput = true
-	if _, err := s.StartSession(context.Background(), startReq("sess-x", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-x")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	client, _ := adapterClient(t, s)
@@ -71,7 +71,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	rt.output = make(chan []byte, 4)
-	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	client, _ := adapterClient(t, s)
@@ -101,7 +101,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 
 func TestAttachRejectsMissingSessionID(t *testing.T) {
 	s, _, _ := sessionServer(t)
-	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	client, _ := adapterClient(t, s)
@@ -121,7 +121,7 @@ func TestAttachRejectsMissingSessionID(t *testing.T) {
 
 func TestAttachRejectsUnassignedSession(t *testing.T) {
 	s, _, _ := sessionServer(t)
-	if _, err := s.StartSession(context.Background(), startReq("sess-1", nil, nil)); err != nil {
+	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	client, _ := adapterClient(t, s)

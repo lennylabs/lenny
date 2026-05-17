@@ -303,8 +303,10 @@ func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	}
 }
 
-func TestBindFailsWhenStartSessionFails(t *testing.T) {
-	srv := adapter.New("adapter-test") // no WorkspaceRoot: StartSession fails
+func TestBindFailsWhenAStagingRPCFails(t *testing.T) {
+	// No WorkspaceRoot: the FinalizeWorkspace RPC in the §4.7 sequence
+	// fails, and Bind propagates that failure.
+	srv := adapter.New("adapter-test")
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder := newBinder(c, adapterDialer(t, srv))
@@ -313,6 +315,6 @@ func TestBindFailsWhenStartSessionFails(t *testing.T) {
 		Pool: testPool, SessionID: "sess-1",
 	})
 	if err == nil {
-		t.Error("Bind succeeded though StartSession could not run, want a failure")
+		t.Error("Bind succeeded though a staging RPC could not run, want a failure")
 	}
 }

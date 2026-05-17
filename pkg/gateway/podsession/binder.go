@@ -99,16 +99,27 @@ type ResumeRequest struct {
 }
 
 // Bind claims an idle pod for the request's session, resolves the
-// pod's adapter address, performs the §15.5 version handshake, and
-// starts the session via the adapter's StartSession. On success the
-// caller owns the returned live adapter connection. Any failure after
-// the claim is returned so the gateway can retry on a fresh pod.
+// pod's adapter address, performs the §15.5 version handshake, and runs
+// the §4.7 session-assignment sequence on the pod's adapter:
+// FinalizeWorkspace materializes the workspace, RunSetup runs the
+// plan's setup commands, and StartSession starts the runtime. On
+// success the caller owns the returned live adapter connection. Any
+// failure after the claim is returned so the gateway can retry on a
+// fresh pod.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan, req.ExperimentContext, req.TracingContext, req.SetupPolicy); err != nil {
+	if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
+	}
+	if err := cl.RunSetup(ctx, req.SessionID, req.Plan.GetSetupCommands(), req.SetupPolicy); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: run setup on pod %s: %w", sandboxName, err)
+	}
+	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.ExperimentContext, req.TracingContext); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}

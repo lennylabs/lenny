@@ -50,10 +50,11 @@ service Adapter {
   // aggregate setup phase.
   rpc RunSetup(RunSetupRequest) returns (RunSetupResponse) {}
 
-  // StartSession assigns a session to this pod. Workspace materialization
-  // (per the supplied WorkspacePlan) and setup-command execution happen
-  // before the response. Returns Unavailable if the pod is not in `idle`
-  // state.
+  // StartSession starts the agent runtime on this pod. It is the final
+  // RPC of the §4.7 session assignment sequence (PrepareWorkspace,
+  // FinalizeWorkspace, RunSetup, StartSession): the workspace is already
+  // materialized by FinalizeWorkspace and setup is already run by
+  // RunSetup. Returns Unavailable if the pod is not in `idle` state.
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse) {}
 
   // SendMessage delivers a content message to the agent over the adapter's
@@ -331,9 +332,13 @@ message RunSetupRequest {
 message RunSetupResponse {}
 
 message StartSessionRequest {
+  // Field 3 (workspace_plan) and field 7 (setup_policy) were removed
+  // when workspace materialization and setup-command execution moved to
+  // the FinalizeWorkspace and RunSetup staging RPCs (§4.7).
+  reserved 3, 7;
+  reserved "workspace_plan", "setup_policy";
   SessionId session_id = 1;
   string runtime = 2;
-  WorkspacePlan workspace_plan = 3;
   map<string, string> labels = 4;
   // experiment_context is the §8.3 / §10.7 experiment enrollment
   // delivered to the runtime in the adapter manifest. Absent for an
@@ -343,9 +348,6 @@ message StartSessionRequest {
   // runtime receives in the adapter manifest to stitch its native
   // traces into the parent's trace tree. Empty when none is set.
   map<string, string> tracing_context = 6;
-  // setup_policy is the §5.1 runtime setupPolicy bounding the whole
-  // setup phase. Absent when the runtime declares no aggregate cap.
-  SetupPolicy setup_policy = 7;
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the

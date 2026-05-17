@@ -84,10 +84,11 @@ type AdapterClient interface {
 	// StartSession). The §5.1 setupPolicy in the request bounds the
 	// aggregate setup phase.
 	RunSetup(ctx context.Context, in *RunSetupRequest, opts ...grpc.CallOption) (*RunSetupResponse, error)
-	// StartSession assigns a session to this pod. Workspace materialization
-	// (per the supplied WorkspacePlan) and setup-command execution happen
-	// before the response. Returns Unavailable if the pod is not in `idle`
-	// state.
+	// StartSession starts the agent runtime on this pod. It is the final
+	// RPC of the §4.7 session assignment sequence (PrepareWorkspace,
+	// FinalizeWorkspace, RunSetup, StartSession): the workspace is already
+	// materialized by FinalizeWorkspace and setup is already run by
+	// RunSetup. Returns Unavailable if the pod is not in `idle` state.
 	StartSession(ctx context.Context, in *StartSessionRequest, opts ...grpc.CallOption) (*StartSessionResponse, error)
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
@@ -381,10 +382,11 @@ type AdapterServer interface {
 	// StartSession). The §5.1 setupPolicy in the request bounds the
 	// aggregate setup phase.
 	RunSetup(context.Context, *RunSetupRequest) (*RunSetupResponse, error)
-	// StartSession assigns a session to this pod. Workspace materialization
-	// (per the supplied WorkspacePlan) and setup-command execution happen
-	// before the response. Returns Unavailable if the pod is not in `idle`
-	// state.
+	// StartSession starts the agent runtime on this pod. It is the final
+	// RPC of the §4.7 session assignment sequence (PrepareWorkspace,
+	// FinalizeWorkspace, RunSetup, StartSession): the workspace is already
+	// materialized by FinalizeWorkspace and setup is already run by
+	// RunSetup. Returns Unavailable if the pod is not in `idle` state.
 	StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error)
 	// SendMessage delivers a content message to the agent over the adapter's
 	// stdin JSONL channel. See lenny-adapter-jsonl.schema.json `message`.
