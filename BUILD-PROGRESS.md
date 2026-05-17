@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8b43a66` — §15.1 OpenAPI document sync. The embedded `openapi.json` gains path
+  entries for the custom-role CRUD, the tenant `rbac-config` endpoint, the tenant
+  `access-report`, and the environment `runtime-exposure` endpoint — all served by the
+  gateway but previously absent from the document SDK and MCP-tool generators consume.
 - `fa82e9c` — §10.6 `delegation.isolation_violation` audit event. `lenny/delegate_task`
   emits the event through a new optional `DelegationAuditor` dep when the delegation
   service reports a SEC-001 violation, recording the parent/child isolation profiles
