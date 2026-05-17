@@ -483,6 +483,10 @@ func main() {
 	// tenant-access endpoints and the §5.1 internal meta-fetch endpoint.
 	tenantAccess := tenantaccessstore.NewMemory()
 
+	// §25.3 operational-event emitter, shared by the gateway subsystems
+	// that emit and the admin event-buffer query endpoint.
+	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), buildVersion)
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -497,6 +501,7 @@ func main() {
 		Runtimes:                   runtimes,
 		Environments:               environments,
 		TenantAccess:               tenantAccess,
+		OpsEmitter:                 opsEmitter,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
@@ -567,7 +572,6 @@ func main() {
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityService(
 			recommendations.NewWindowStore(7 * 24 * time.Hour)))
-	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), buildVersion)
 	adminRouter = adminRouter.
 		WithEventBuffer(opsEmitter.Buffer()).
 		WithEventEmitter(opsEmitter)

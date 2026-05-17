@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -119,6 +120,7 @@ type Server struct {
 	runtimes           runtimestore.Store
 	environments       environmentstore.Store
 	tenantAccess       tenantaccessstore.Store
+	opsEmitter         *opsevents.Emitter
 	defaultNoEnvPolicy string
 }
 
@@ -303,6 +305,11 @@ type Options struct {
 	// tenant-visibility entry and fails closed.
 	TenantAccess tenantaccessstore.Store
 
+	// OpsEmitter records §25.3 operational events into the event
+	// buffer. Optional — when nil, the gateway emits no operational
+	// events for session transitions.
+	OpsEmitter *opsevents.Emitter
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
@@ -341,6 +348,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		runtimes:           opts.Runtimes,
 		environments:       opts.Environments,
 		tenantAccess:       opts.TenantAccess,
+		opsEmitter:         opts.OpsEmitter,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 	}
 	if s.clock == nil {

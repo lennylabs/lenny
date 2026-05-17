@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
@@ -86,6 +87,24 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 // `session.completed` billing event. All are best-effort: a failure
 // never fails the transition that triggered it.
 func (s *Server) recordSessionCompleted(ctx context.Context, sess sessionstore.Session) {
+	// §25.3: a session entering the failed state emits a session_failed
+	// operational event so an ops agent observes it through the event
+	// buffer. Best-effort — a nil emitter or marshal error never fails
+	// the transition.
+	if s.opsEmitter != nil && sess.State == session.StateFailed {
+		data, _ := json.Marshal(map[string]any{
+			"sessionId":    sess.ID,
+			"runtime":      sess.RuntimeRef,
+			"failureClass": string(sess.FailureClass),
+		})
+		s.opsEmitter.Emit(opsevents.OperationalEvent{
+			Source:          "/v1/sessions",
+			Type:            "dev.lenny.session_failed",
+			Severity:        "error",
+			DataContentType: "application/json",
+			Data:            data,
+		})
+	}
 	// §7.1 seal-and-export: snapshot the final workspace before the pod
 	// is released. Best-effort — it no-ops for a session that never ran
 	// on a pod, and a failed seal falls back to the latest periodic
