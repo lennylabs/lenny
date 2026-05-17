@@ -17,9 +17,11 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/podclaim"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -109,9 +111,10 @@ type ResumeRequest struct {
 // Bind claims an idle pod for the request's session, resolves the
 // pod's adapter address, performs the §15.5 version handshake, and runs
 // the §4.7 session-assignment sequence on the pod's adapter:
-// PrepareWorkspace stages any uploaded files, FinalizeWorkspace
-// materializes the workspace, RunSetup runs the plan's setup commands,
-// and StartSession starts the runtime. On success the caller owns the
+// PrepareWorkspace stages uploaded files and cloned repositories,
+// FinalizeWorkspace materializes the workspace, RunSetup runs the
+// plan's setup commands, and StartSession starts the runtime. On
+// success the caller owns the
 // returned live adapter connection. Any failure after the claim is
 // returned so the gateway can retry on a fresh pod.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
@@ -119,9 +122,9 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := b.stageUploads(ctx, cl, req.SessionID, req.Plan); err != nil {
+	if err := b.stageWorkspace(ctx, cl, req.SessionID, req.Plan); err != nil {
 		cl.Close()
-		return nil, fmt.Errorf("podsession: stage uploads on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
 	if err := cl.FinalizeWorkspace(ctx, req.SessionID, req.Plan); err != nil {
 		cl.Close()
@@ -144,36 +147,60 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	}, nil
 }
 
-// stageUploads fetches the blob content for every uploadFile and
-// uploadArchive source in the plan and streams it to the pod's staging
-// area via PrepareWorkspace, the first RPC of the §4.7 sequence. It is
-// a no-op when the plan has no upload sources. A plan that carries
-// upload sources but binds through a Binder with no blob store fails
-// rather than materializing an incomplete workspace.
-func (b *Binder) stageUploads(ctx context.Context, cl *adapterclient.Client, sessionID string, plan *adapterv1.WorkspacePlan) error {
-	refs := uploadRefs(plan)
-	if len(refs) == 0 {
+// stageWorkspace prepares the pod's staging area for the plan's
+// non-filesystem-native sources, ahead of FinalizeWorkspace. It fetches
+// the blob content of every uploadFile and uploadArchive source from
+// the §4.5 blob store, clones every gitClone source on the gateway's
+// network path and archives the tree, and streams all of it to the pod
+// via PrepareWorkspace. It is a no-op when the plan has no such
+// sources. A plan that carries upload sources but binds through a
+// Binder with no blob store fails rather than materializing an
+// incomplete workspace.
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID string, plan *adapterv1.WorkspacePlan) error {
+	uploads := make(map[string][]byte)
+
+	if refs := uploadRefs(plan); len(refs) > 0 {
+		if b.Blobs == nil {
+			return fmt.Errorf("plan has %d upload source(s) but the binder has no blob store", len(refs))
+		}
+		for _, ref := range refs {
+			uri, err := blobstore.ParseURI(ref)
+			if err != nil {
+				return fmt.Errorf("parse upload ref %q: %w", ref, err)
+			}
+			_, rc, err := b.Blobs.Get(uri)
+			if err != nil {
+				return fmt.Errorf("fetch upload %q: %w", ref, err)
+			}
+			content, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				return fmt.Errorf("read upload %q: %w", ref, err)
+			}
+			uploads[ref] = content
+		}
+	}
+
+	for _, src := range plan.GetSources() {
+		if src.GetType() != "gitClone" {
+			continue
+		}
+		// §14: an authenticated clone needs the §4.9 VCS credential-lease
+		// token, which is not yet wired. Public clones proceed.
+		if mode := src.GetAuth().GetMode(); mode != "" {
+			return fmt.Errorf("gitClone of %q uses auth.mode=%q; the §4.9 VCS credential-lease path is not yet wired",
+				src.GetUrl(), mode)
+		}
+		archive, err := gitref.CloneArchive(ctx, src.GetUrl(), src.GetResolvedCommitSha(),
+			gitref.CloneOptions{Depth: int(src.GetDepth()), Submodules: src.GetSubmodules()})
+		if err != nil {
+			return fmt.Errorf("clone %q: %w", src.GetUrl(), err)
+		}
+		uploads[workspace.GitCloneStagingRef(src)] = archive
+	}
+
+	if len(uploads) == 0 {
 		return nil
-	}
-	if b.Blobs == nil {
-		return fmt.Errorf("plan has %d upload source(s) but the binder has no blob store", len(refs))
-	}
-	uploads := make(map[string][]byte, len(refs))
-	for _, ref := range refs {
-		uri, err := blobstore.ParseURI(ref)
-		if err != nil {
-			return fmt.Errorf("parse upload ref %q: %w", ref, err)
-		}
-		_, rc, err := b.Blobs.Get(uri)
-		if err != nil {
-			return fmt.Errorf("fetch upload %q: %w", ref, err)
-		}
-		content, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			return fmt.Errorf("read upload %q: %w", ref, err)
-		}
-		uploads[ref] = content
 	}
 	_, err := cl.PrepareWorkspace(ctx, sessionID, uploads)
 	return err

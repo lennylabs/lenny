@@ -9,7 +9,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -368,6 +370,105 @@ func TestBindStagesUploadFile(t *testing.T) {
 	}
 	if string(got) != "uploaded payload" {
 		t.Errorf("materialized upload = %q, want %q", got, "uploaded payload")
+	}
+}
+
+// tempGitRepo creates a one-commit local git repository and returns
+// its path and the commit SHA.
+func tempGitRepo(t *testing.T) (dir, sha string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir = t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=alice", "GIT_AUTHOR_EMAIL=alice@acme.com",
+			"GIT_COMMITTER_NAME=alice", "GIT_COMMITTER_EMAIL=alice@acme.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte("package service"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "service.go")
+	run("commit", "-m", "initial")
+	return dir, run("rev-parse", "HEAD")
+}
+
+func TestBindClonesGitSource(t *testing.T) {
+	// A gitClone source: Bind clones the repository on the gateway's
+	// network path, streams the tree via PrepareWorkspace, and
+	// FinalizeWorkspace materializes it.
+	repo, sha := tempGitRepo(t)
+
+	srv := adapter.New("adapter-test")
+	root := t.TempDir()
+	srv.WorkspaceRoot = root
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{Type: "gitClone", Path: "checkout", Url: repo, ResolvedCommitSha: sha},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	got, err := os.ReadFile(filepath.Join(root, "checkout", "service.go"))
+	if err != nil {
+		t.Fatalf("read cloned file: %v", err)
+	}
+	if string(got) != "package service" {
+		t.Errorf("cloned file = %q, want %q", got, "package service")
+	}
+}
+
+func TestBindRejectsAuthenticatedGitClone(t *testing.T) {
+	// The §4.9 VCS credential-lease path is not yet wired, so an
+	// authenticated gitClone fails to bind rather than failing opaquely
+	// at clone time.
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.StagingDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
+		Plan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{
+					Type: "gitClone", Path: ".",
+					Url:               "https://example.com/acme/private.git",
+					ResolvedCommitSha: "0123456789abcdef0123456789abcdef01234567",
+					Auth:              &adapterv1.GitAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+				},
+			},
+		},
+	})
+	if err == nil {
+		t.Error("Bind succeeded for an authenticated gitClone, want a failure")
 	}
 }
 
