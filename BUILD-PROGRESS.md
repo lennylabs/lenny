@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `bb1df75` — §15.1 OpenAPI document completion. Adds the remaining undocumented admin
+  endpoints — the credential-pool and delegation-policy CRUD, the tenant
+  elicitation-content-integrity GET/PUT, and the compliance-profile decommission. The
+  embedded `openapi.json` now covers the admin API the gateway serves.
 - `8b43a66` — §15.1 OpenAPI document sync. The embedded `openapi.json` gains path
   entries for the custom-role CRUD, the tenant `rbac-config` endpoint, the tenant
   `access-report`, and the environment `runtime-exposure` endpoint — all served by the
