@@ -4,6 +4,7 @@ package sessionserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -114,7 +116,36 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 	if variant.Pool != "" {
 		row.PoolRef = variant.Pool
 	}
+	// §16.6: the first-match rule left every routable experiment created
+	// after the enrolled one unevaluated. Emit experiment.multi_eligible_skipped
+	// so deployers can audit enrollment overlap.
+	s.emitMultiEligibleSkipped(row, assignment.ExperimentID, experiment.SkippedAfter(defs, assignment.ExperimentID))
 	return nil
+}
+
+// emitMultiEligibleSkipped records the §16.6
+// experiment.multi_eligible_skipped operational event when the
+// first-match rule left one or more later-created experiments
+// unevaluated for an enrolled session. It is best-effort: a nil
+// emitter or an empty skipped set is a no-op, so experiment routing
+// never depends on the event buffer being wired.
+func (s *Server) emitMultiEligibleSkipped(row *sessionstore.Session, enrolledID string, skipped []string) {
+	if s.opsEmitter == nil || len(skipped) == 0 {
+		return
+	}
+	data, _ := json.Marshal(map[string]any{
+		"tenant_id":              row.TenantID,
+		"user_id":                row.UserID,
+		"enrolled_experiment_id": enrolledID,
+		"skipped_experiment_ids": skipped,
+	})
+	s.opsEmitter.Emit(opsevents.OperationalEvent{
+		Source:          "/v1/sessions",
+		Type:            opsevents.EventExperimentMultiEligibleSkipped.CloudEventsType(),
+		Severity:        "info",
+		DataContentType: "application/json",
+		Data:            data,
+	})
 }
 
 // routeExperiment applies the §10.7 ExperimentRouter to a session at
