@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4873072` — §8.3 propagate the experiment context onto delegation children.
+  `delegation.Delegate` now sets the child's `experimentContext` from the parent's per
+  the §10.7 propagation mode (via `experiment.PropagateContext`): `inherit` copies the
+  parent's enrollment verbatim, `control` forces the control variant, `independent`
+  leaves the child unenrolled. A propagated context records `inherited=true`. The
+  delegation `Service` takes an optional `Experiments` store; `cmd/lenny-gateway` wires
+  the shared one. The `independent`-mode child is left unenrolled rather than re-routed
+  through the `ExperimentRouter` — a delegation child is created by `delegation.Delegate`,
+  not `handleCreate`, so it never reaches `applyExperimentRouting`; full independent
+  re-routing of delegation children is the remaining §8.3 nuance.
 - `a2ea98a` — §10.7 `PropagateContext` — delegation experiment-context propagation
   decision. Encodes the §8.3/§10.7 propagation rule for a recursive-delegation child:
   `inherit` adopts the parent's enrollment verbatim, `control` forces the parent's
