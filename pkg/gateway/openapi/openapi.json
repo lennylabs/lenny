@@ -667,6 +667,43 @@
         "responses": { "204": { "description": "Deleted" } }
       }
     },
+    "/v1/admin/runtimes/{name}/tenant-access": {
+      "post": {
+        "summary": "Grant a tenant access to a runtime",
+        "x-lenny-mcp-tool": "admin.grant_runtime_access",
+        "x-lenny-scope": "admin.runtimes.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "201": { "description": "Granted" } }
+      },
+      "get": {
+        "summary": "List tenant access grants for a runtime",
+        "x-lenny-mcp-tool": "admin.list_runtime_access",
+        "x-lenny-scope": "admin.runtimes.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/runtimes/{name}/tenant-access/{tenantId}": {
+      "delete": {
+        "summary": "Revoke a tenant's access to a runtime",
+        "x-lenny-mcp-tool": "admin.revoke_runtime_access",
+        "x-lenny-scope": "admin.runtimes.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "runtime-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Revoked" } }
+      }
+    },
     "/v1/admin/users": {
       "post": {
         "summary": "Create a user",
@@ -1068,6 +1105,43 @@
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/v1/admin/pools/{name}/tenant-access": {
+      "post": {
+        "summary": "Grant a tenant access to a pool",
+        "x-lenny-mcp-tool": "admin.grant_pool_access",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "201": { "description": "Granted" } }
+      },
+      "get": {
+        "summary": "List tenant access grants for a pool",
+        "x-lenny-mcp-tool": "admin.list_pool_access",
+        "x-lenny-scope": "admin.pools.read",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/v1/admin/pools/{name}/tenant-access/{tenantId}": {
+      "delete": {
+        "summary": "Revoke a tenant's access to a pool",
+        "x-lenny-mcp-tool": "admin.revoke_pool_access",
+        "x-lenny-scope": "admin.pools.write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "pool-management",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "tenantId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "204": { "description": "Revoked" } }
       }
     },
     "/v1/admin/connectors": {
