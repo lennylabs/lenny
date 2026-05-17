@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -21,7 +22,7 @@ func TestRunSetupExecutesCommandsInOrder(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("echo first > a.txt", 30),
 		cmd("echo second > b.txt", 30),
-	})
+	}, workspace.SetupOptions{})
 	if err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
@@ -36,7 +37,7 @@ func TestRunSetupRunsInWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	if err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("touch in-workdir.marker", 30),
-	}); err != nil {
+	}, workspace.SetupOptions{}); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	// A relative path resolves against the command's working directory;
@@ -51,7 +52,7 @@ func TestRunSetupStopsAtFirstFailure(t *testing.T) {
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("exit 3", 30),
 		cmd("echo unreached > reached.txt", 30),
-	})
+	}, workspace.SetupOptions{})
 	if err == nil {
 		t.Fatal("RunSetup should return an error when a command exits non-zero")
 	}
@@ -64,7 +65,7 @@ func TestRunSetupEnforcesTimeout(t *testing.T) {
 	dir := t.TempDir()
 	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
 		cmd("sleep 30", 1),
-	})
+	}, workspace.SetupOptions{})
 	if err == nil {
 		t.Fatal("RunSetup should return an error when a command exceeds its timeout")
 	}
@@ -73,13 +74,59 @@ func TestRunSetupEnforcesTimeout(t *testing.T) {
 func TestRunSetupRejectsEmptyCommand(t *testing.T) {
 	if err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
 		cmd("", 30),
-	}); err == nil {
+	}, workspace.SetupOptions{}); err == nil {
 		t.Fatal("RunSetup should reject an empty command")
 	}
 }
 
 func TestRunSetupAcceptsNoCommands(t *testing.T) {
-	if err := workspace.RunSetup(context.Background(), t.TempDir(), nil); err != nil {
+	if err := workspace.RunSetup(context.Background(), t.TempDir(), nil, workspace.SetupOptions{}); err != nil {
 		t.Errorf("RunSetup with no commands should succeed, got %v", err)
+	}
+}
+
+func TestRunSetupWithinAggregateTimeout(t *testing.T) {
+	// Fast commands complete well within a generous aggregate cap.
+	dir := t.TempDir()
+	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("echo a > a.txt", 30),
+		cmd("echo b > b.txt", 30),
+	}, workspace.SetupOptions{AggregateTimeout: 30 * time.Second, FailOnAggregateTimeout: true})
+	if err != nil {
+		t.Fatalf("RunSetup within the aggregate cap: %v", err)
+	}
+}
+
+func TestRunSetupAggregateTimeoutFails(t *testing.T) {
+	// §5.1 onTimeout `fail`: exceeding the aggregate cap aborts.
+	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: true})
+	if err == nil {
+		t.Fatal("RunSetup should fail when the setup phase exceeds the aggregate cap under `fail`")
+	}
+}
+
+func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
+	// §5.1 onTimeout `warn`: exceeding the aggregate cap proceeds.
+	err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	if err != nil {
+		t.Fatalf("RunSetup under `warn` should proceed past the aggregate cap, got %v", err)
+	}
+}
+
+func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
+	dir := t.TempDir()
+	err := workspace.RunSetup(context.Background(), dir, []*adapterv1.SetupCommand{
+		cmd("sleep 30", 60),
+		cmd("touch reached.marker", 60),
+	}, workspace.SetupOptions{AggregateTimeout: 50 * time.Millisecond, FailOnAggregateTimeout: false})
+	if err != nil {
+		t.Fatalf("RunSetup under `warn`: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "reached.marker")); statErr == nil {
+		t.Error("a command after the aggregate cap was reached should not have run")
 	}
 }

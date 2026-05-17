@@ -62,7 +62,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.releaseSession()
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
-	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, plan.GetSetupCommands()); err != nil {
+	// §5.1 setupPolicy aggregate cap: the manifest does not yet carry
+	// the runtime's setupPolicy, so no aggregate cap applies. Only the
+	// per-command timeouts bound the setup phase until that wiring lands.
+	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, plan.GetSetupCommands(), workspace.SetupOptions{}); err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
 	}
