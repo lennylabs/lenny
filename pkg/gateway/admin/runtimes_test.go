@@ -797,6 +797,68 @@ func TestCreateRuntimeRejectsInvalidSetupPolicy(t *testing.T) {
 	}
 }
 
+func TestRuntimeCapabilitiesRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the capabilities block.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "rt",
+		Image: "lenny/rt@sha256:abc",
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection: runtimestore.InjectionCapability{
+				Supported: true,
+				Modes:     []runtimestore.InjectionMode{runtimestore.InjectionImmediate},
+			},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.Capabilities == nil || created.Capabilities.Interaction != runtimestore.InteractionMultiTurn ||
+		!created.Capabilities.Injection.Supported {
+		t.Errorf("create response capabilities: %+v", created.Capabilities)
+	}
+
+	replacement := &runtimestore.RuntimeCapabilities{Interaction: runtimestore.InteractionOneShot}
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/rt",
+		admin.UpdateRuntimeRequest{Capabilities: replacement})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.Capabilities == nil || updated.Capabilities.Interaction != runtimestore.InteractionOneShot {
+		t.Errorf("update did not replace capabilities: %+v", updated.Capabilities)
+	}
+}
+
+func TestCreateRuntimeRejectsIncoherentCapabilities(t *testing.T) {
+	// §5.1: a multi_turn runtime must declare injection.supported true.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "incoherent",
+		Image: "lenny/incoherent@sha256:abc",
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection:   runtimestore.InjectionCapability{Supported: false},
+		},
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("multi_turn without injection.supported: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	bad := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:         "badenum",
+		Image:        "lenny/badenum@sha256:abc",
+		Capabilities: &runtimestore.RuntimeCapabilities{Interaction: "batch"},
+	})
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("unknown interaction: status %d, want 400", bad.Code)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

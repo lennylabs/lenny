@@ -58,6 +58,7 @@ type RuntimePayload struct {
 	CapabilityInferenceMode string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                   `json:"setupPolicy,omitempty"`
+	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
@@ -81,6 +82,7 @@ type UpdateRuntimeRequest struct {
 	CapabilityInferenceMode *string                                      `json:"capabilityInferenceMode,omitempty"`
 	ToolCapabilityOverrides *map[string][]capabilityinference.Capability `json:"toolCapabilityOverrides,omitempty"`
 	SetupPolicy             *runtimestore.SetupPolicy                    `json:"setupPolicy,omitempty"`
+	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
 }
 
 // validateSetupPolicy checks a §5.1 setupPolicy: a non-negative
@@ -94,6 +96,27 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy) error {
 	}
 	if p.OnTimeout != "" && !p.OnTimeout.IsValid() {
 		return errors.New("setupPolicy.onTimeout must be fail or warn")
+	}
+	return nil
+}
+
+// validateCapabilities checks a §5.1 capabilities block: a known
+// interaction model, known injection modes, and the §5.1 coherence
+// rule that a multi_turn runtime must support injection.
+func validateCapabilities(c *runtimestore.RuntimeCapabilities) error {
+	if c == nil {
+		return nil
+	}
+	if c.Interaction != "" && !c.Interaction.IsValid() {
+		return errors.New("capabilities.interaction must be one_shot or multi_turn")
+	}
+	for _, m := range c.Injection.Modes {
+		if !m.IsValid() {
+			return errors.New("capabilities.injection.modes contains an unrecognised mode")
+		}
+	}
+	if c.Interaction == runtimestore.InteractionMultiTurn && !c.Injection.Supported {
+		return errors.New("capabilities.interaction multi_turn requires injection.supported true")
 	}
 	return nil
 }
@@ -118,6 +141,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		CapabilityInferenceMode: string(r.CapabilityInferenceMode),
 		ToolCapabilityOverrides: r.ToolCapabilityOverrides,
 		SetupPolicy:             r.SetupPolicy,
+		Capabilities:            r.Capabilities,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -190,6 +214,10 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
+	if err := validateCapabilities(body.Capabilities); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		return
+	}
 
 	rt := runtimestore.Runtime{
 		Name:                    body.Name,
@@ -206,6 +234,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		CapabilityInferenceMode: capabilityinference.Mode(body.CapabilityInferenceMode),
 		ToolCapabilityOverrides: body.ToolCapabilityOverrides,
 		SetupPolicy:             body.SetupPolicy,
+		Capabilities:            body.Capabilities,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -365,6 +394,12 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
+	if body.Capabilities != nil {
+		if err := validateCapabilities(body.Capabilities); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+			return
+		}
+	}
 	updated, err := r.runtimes.Update(req.Context(), name, func(rt *runtimestore.Runtime) error {
 		if body.Image != nil {
 			rt.Image = *body.Image
@@ -405,6 +440,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.SetupPolicy != nil {
 			rt.SetupPolicy = body.SetupPolicy
+		}
+		if body.Capabilities != nil {
+			rt.Capabilities = body.Capabilities
 		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
@@ -487,6 +525,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.SetupPolicy != nil {
 		out = append(out, "setupPolicy")
+	}
+	if b.Capabilities != nil {
+		out = append(out, "capabilities")
 	}
 	return out
 }
