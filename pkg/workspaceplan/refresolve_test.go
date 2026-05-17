@@ -4,6 +4,7 @@ package workspaceplan_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -221,5 +222,92 @@ func TestPinCommitSHAsNilResolverNonSHARefErrors(t *testing.T) {
 func TestPinCommitSHAsNilPlan(t *testing.T) {
 	if err := workspaceplan.PinCommitSHAs(context.Background(), nil, nil); err != nil {
 		t.Errorf("PinCommitSHAs(nil) = %v, want nil", err)
+	}
+}
+
+func TestMarshalRoundTrips(t *testing.T) {
+	raw := []byte(`{
+		"schemaVersion": 1,
+		"sources": [
+			{"type": "inlineFile", "path": "a.txt", "content": "hello"},
+			{"type": "gitClone", "url": "https://example.com/r.git", "ref": "main"}
+		],
+		"setupCommands": [{"cmd": "echo hi", "timeoutSeconds": 30}]
+	}`)
+	plan, _, err := workspaceplan.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err := workspaceplan.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// An unpinned plan round-trips back through Parse unchanged.
+	plan2, _, err := workspaceplan.Parse(out)
+	if err != nil {
+		t.Fatalf("re-Parse: %v\n%s", err, out)
+	}
+	if plan2.SchemaVersion != 1 || len(plan2.Sources) != 2 {
+		t.Fatalf("re-parsed plan = %d sources, schemaVersion %d; want 2 / 1",
+			len(plan2.Sources), plan2.SchemaVersion)
+	}
+	if len(plan2.SetupCommands) != 1 || plan2.SetupCommands[0].Cmd != "echo hi" {
+		t.Errorf("setupCommands = %+v, want one echo command", plan2.SetupCommands)
+	}
+	gc := plan2.Sources[1].Variant.(workspaceplan.GitClone)
+	if gc.URL != "https://example.com/r.git" || gc.Ref != "main" {
+		t.Errorf("gitClone source not preserved: %+v", gc)
+	}
+}
+
+func TestMarshalEmitsPinnedCommitSHA(t *testing.T) {
+	raw := []byte(`{"schemaVersion":1,"sources":[` +
+		`{"type":"gitClone","url":"https://example.com/r.git","ref":"main"}]}`)
+	plan, _, err := workspaceplan.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	fake := &fakeResolver{shas: map[string]string{"main": shaA}}
+	if err := workspaceplan.PinCommitSHAs(context.Background(), &plan, fake); err != nil {
+		t.Fatalf("PinCommitSHAs: %v", err)
+	}
+	out, err := workspaceplan.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// Parse rejects a client-supplied resolvedCommitSha, so the pinned
+	// stored form is verified by inspecting the marshalled JSON directly.
+	var doc struct {
+		Sources []map[string]any `json:"sources"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal marshalled plan: %v", err)
+	}
+	if got := doc.Sources[0]["resolvedCommitSha"]; got != shaA {
+		t.Errorf("resolvedCommitSha = %v, want %q", got, shaA)
+	}
+}
+
+func TestMarshalPreservesUnknownSourceType(t *testing.T) {
+	raw := []byte(`{"schemaVersion":1,"sources":[{"type":"vendorThing","custom":"value"}]}`)
+	plan, warnings, err := workspaceplan.Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("an unknown source type should produce a warning")
+	}
+	out, err := workspaceplan.Marshal(plan)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var doc struct {
+		Sources []map[string]any `json:"sources"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if doc.Sources[0]["type"] != "vendorThing" || doc.Sources[0]["custom"] != "value" {
+		t.Errorf("unknown source type not preserved: %v", doc.Sources[0])
 	}
 }

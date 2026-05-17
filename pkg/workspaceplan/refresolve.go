@@ -4,9 +4,42 @@ package workspaceplan
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
+
+// Marshal serializes a parsed Plan back to §14 WorkspacePlan JSON. It
+// is the inverse of Parse: each source is emitted from the Raw object
+// Parse preserved, so unknown source types and any fields the typed
+// model does not carry round-trip unchanged. A gitClone source whose
+// ResolvedCommitSha was set by PinCommitSHAs is emitted with the
+// resolvedCommitSha field — the canonical form §14 persists at session
+// creation. Marshal operates on a Plan produced by Parse.
+func Marshal(plan Plan) ([]byte, error) {
+	sources := make([]map[string]any, 0, len(plan.Sources))
+	for _, src := range plan.Sources {
+		obj := make(map[string]any, len(src.Raw)+1)
+		for k, v := range src.Raw {
+			obj[k] = v
+		}
+		if _, ok := obj["type"]; !ok && src.Type != "" {
+			obj["type"] = src.Type
+		}
+		if gc, ok := src.Variant.(GitClone); ok && gc.ResolvedCommitSha != "" {
+			obj["resolvedCommitSha"] = gc.ResolvedCommitSha
+		}
+		sources = append(sources, obj)
+	}
+	doc := map[string]any{
+		"schemaVersion": plan.SchemaVersion,
+		"sources":       sources,
+	}
+	if len(plan.SetupCommands) > 0 {
+		doc["setupCommands"] = plan.SetupCommands
+	}
+	return json.Marshal(doc)
+}
 
 // IsCommitSHA reports whether ref is a full 40-character lowercase
 // hexadecimal Git commit SHA — the §14 form that the gateway pins
