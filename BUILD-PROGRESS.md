@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f1a57e7` — §25.2 long-running-operation progress computations. New pure
+  package `pkg/progress`: `PercentSteps`/`PercentSize`/`PercentRate` compute
+  the §25.2 percent-complete for the discrete-step, size-based, and
+  rate-based operation shapes; `LinearETA` extrapolates remaining time from
+  the current rate; `P50` computes the historical-p50 baseline; `Stalled`
+  reports whether an operation exceeded its expected inter-step cadence. A
+  fifth pure-logic building block of the infrastructure-bound `lenny-ops`
+  service, with `pkg/backup/retention`, `pkg/cron`, `pkg/drift`, and
+  `pkg/upgrade`.
 - `7303406` — §25.8 platform upgrade phase state machine. New pure package
   `pkg/upgrade`: the §25.8 ordered phase progression (Preflight → OpsRoll →
   CRDUpdate → SchemaMigration → GatewayRoll → ControllerRoll → Verification →
