@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `857b90c` — bootstrap upsert dropped runtime capabilities (bug found by the
+  tier-4 integration suite). `POST /v1/admin/bootstrap` accepts a
+  `RuntimePayload` carrying the §5.1 `capabilities` block, but
+  `upsertRuntimes` built the runtime row from only a subset of the payload
+  and dropped `Capabilities` on create and update — so a bootstrapped
+  runtime never declared mid-session injection support, and
+  `TestGatewayFullSurfaceE2E` failed `INJECTION_REJECTED`. `upsertRuntimes`
+  now validates and applies `Capabilities`, mirroring `POST /v1/admin/runtimes`.
+  Tier 4 integration is now fully green. (Note: bootstrap's `upsertRuntimes`
+  still omits other `RuntimePayload` fields — `SetupPolicy`, `Labels`,
+  `AgentInterface`, `DelegationPolicyRef`, `TaskPolicy` — a separate gap.)
 - `b01bb08` — tier-test verification + tier-4 harness fix. The
   infrastructure-backed test tiers run locally (Docker, testcontainers,
   envtest available). Verified green: Tier 0 static, Tier 1 unit, Tier 2
