@@ -11,6 +11,25 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cf1e351` — §15.4.6 runtime lifecycle channel server (`pkg/adapter`,
+  `LifecycleChannel`). Listens on a Unix socket, performs the
+  `lifecycle_capabilities`/`lifecycle_support` handshake, and exposes
+  `RequestCheckpoint`, `CompleteCheckpoint`, `RequestInterrupt`,
+  `NotifyCredentialsRotated`, and `SignalDeadline`; request methods
+  correlate the runtime's `checkpoint_ready`/`interrupt_acknowledged`
+  replies by id and unwind on context cancel or channel close. Unit-tested
+  (handshake, both round-trips, credentials, deadline, ctx-cancel, close),
+  race-clean. Remaining lifecycle-channel wiring, for the next iteration:
+  - Add a `Lifecycle *LifecycleChannel` field to the adapter `Server` and
+    have `Checkpoint`/`Interrupt`/the credential RPCs drive it for
+    Full-level runtimes (the existing implementations drive the runtime
+    through `s.Runtime`; the lifecycle channel is the added Full-level path).
+  - Write `lifecycleChannel.socket` into the adapter manifest (`manifest.go`)
+    and set up the socket in `cmd/lenny-adapter`.
+  - Bridge the socket events to the gRPC `Adapter.LifecycleChannel` stream so
+    the gateway observes them; resolve `ExtendLease` (proto-vs-§8.6 direction)
+    separately.
+  - Component-test the wired adapter against `cmd/runtimes/streaming-echo`.
 - Scoped the Full-level lifecycle channel (next feature to build). Findings,
   so the next iteration can start directly:
   - Two unimplemented adapter RPCs remain: `LifecycleChannel` and
