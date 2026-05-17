@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
@@ -75,6 +76,45 @@ func TestEventBufferEndpointFiltersAndCursor(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &page)
 	if len(page.Events) != 1 || page.Events[0].ID != 3 {
 		t.Errorf("since cursor: %+v", page.Events)
+	}
+}
+
+func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
+	// §25.3: opening a circuit breaker via the admin API emits an
+	// operational event into the buffer the endpoint then surfaces.
+	buf := opsevents.NewEventBuffer(0)
+	emitter := opsevents.NewEmitter(buf, "test")
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithBreakers(breakerstore.NewMemory()).
+		WithEventBuffer(buf).
+		WithEventEmitter(emitter)
+
+	open := breakerReq(t, router.Handler(), http.MethodPost,
+		"/v1/admin/circuit-breakers/rt-emergency/open",
+		admin.OpenBreakerRequest{
+			Reason: "incident", LimitTier: "runtime",
+			Scope: admin.ScopePayload{Runtime: "echo"},
+		})
+	if open.Code != http.StatusOK {
+		t.Fatalf("open breaker: status %d, body=%s", open.Code, open.Body.String())
+	}
+
+	q := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/events/buffer", nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, q)
+	var page opsevents.BufferedEventPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, e := range page.Events {
+		if e.Event.Type == "dev.lenny.circuit_breaker_opened" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("opening a breaker must emit circuit_breaker_opened into the buffer: %+v", page.Events)
 	}
 }
 

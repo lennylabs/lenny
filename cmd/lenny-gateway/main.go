@@ -566,8 +566,11 @@ func main() {
 		WithEnvironments(environments).
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityService(
-			recommendations.NewWindowStore(7 * 24 * time.Hour))).
-		WithEventBuffer(opsevents.NewEventBuffer(0))
+			recommendations.NewWindowStore(7 * 24 * time.Hour)))
+	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), buildVersion)
+	adminRouter = adminRouter.
+		WithEventBuffer(opsEmitter.Buffer()).
+		WithEventEmitter(opsEmitter)
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.

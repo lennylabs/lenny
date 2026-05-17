@@ -119,6 +119,7 @@ type Router struct {
 
 	recommendations RecommendationService
 	eventBuffer     EventBufferQuerier
+	eventEmitter    *opsevents.Emitter
 }
 
 // RecommendationService is the §25.3 capacity-recommendation read
