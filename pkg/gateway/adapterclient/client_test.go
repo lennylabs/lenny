@@ -5,6 +5,7 @@ package adapterclient_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // fakeRuntime records what the adapter asks of the pod's runtime.
@@ -109,6 +111,43 @@ func TestNegotiateVersionReportsIncompatibleWhenNoVersionShared(t *testing.T) {
 	}
 	if !resp.GetIncompatible() {
 		t.Error("negotiation did not report incompatible for a disjoint version set")
+	}
+}
+
+func TestStartSessionWritesManifest(t *testing.T) {
+	// §15.4 / §8.3: StartSession writes the adapter manifest carrying
+	// the session's experimentContext and tracingContext end to end.
+	manifestDir := t.TempDir()
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.ManifestDir = manifestDir
+	srv.Runtime = &fakeRuntime{}
+	cl := dialAdapter(t, srv)
+
+	err := cl.StartSession(context.Background(), "sess-m", "claude-code", nil,
+		&adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment", Inherited: true},
+		map[string]string{"langsmith_run_id": "run_9"}, nil)
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(manifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if m.SessionID != "sess-m" {
+		t.Errorf("manifest sessionId = %q, want sess-m", m.SessionID)
+	}
+	if m.ExperimentContext == nil || m.ExperimentContext.ExperimentID != "exp_1" ||
+		m.ExperimentContext.VariantID != "treatment" || !m.ExperimentContext.Inherited {
+		t.Errorf("manifest experimentContext = %+v, want exp_1/treatment inherited", m.ExperimentContext)
+	}
+	if m.TracingContext["langsmith_run_id"] != "run_9" {
+		t.Errorf("manifest tracingContext = %v, want the langsmith run id", m.TracingContext)
 	}
 }
 
