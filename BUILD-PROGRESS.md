@@ -11,6 +11,21 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a83d44a` — §14 `uploadArchive` materialization by extraction.
+  `workspace.Materialize` returned `ErrSourceUnsupported` for `uploadArchive`;
+  `extractUploadArchive` now decodes the staged archive by format (`tar`,
+  `tar.gz`, `zip`) and writes each entry under the source `pathPrefix`,
+  dropping `stripComponents` leading path segments per §14. An entry with no
+  more than `stripComponents` segments is skipped rather than failing.
+  Regular-file writes reuse `extractRegular`, so the decompression-bomb cap and
+  permission masking already proven for checkpoint restore apply. Symlink and
+  device entries are skipped to close the symlink-traversal vector, and every
+  destination is re-checked for containment. The `workspace_plan_strip_components_skip`
+  warning event per skipped entry is deferred (it needs the adapter→gateway
+  lifecycle event channel); the skip behavior itself is correct. `gitClone` is
+  now the only `ErrSourceUnsupported` source type. Remaining staging work:
+  slim `StartSession` to runtime start only, with the gateway binder
+  orchestrating the four-RPC sequence.
 - `6aa1cb1` — §14 `uploadFile` materialization from staged content.
   `workspace.Materialize` returned `ErrSourceUnsupported` for `uploadFile`; it
   now takes a `stagingDir` and copies the file `PrepareWorkspace` streamed to
