@@ -311,16 +311,24 @@ func Route(experiments []Definition, userID, sessionID string) Assignment {
 }
 
 // SkippedAfter returns the §16.6 experiment.multi_eligible_skipped
-// audit set for a session that Route enrolled in enrolledID: the
-// routable percentage-mode experiments that the first-match rule left
-// unevaluated because enrolledID — an earlier candidate in evaluation
-// order — already assigned a non-control variant. The experiments
-// slice must be in the same evaluation order passed to Route. Paused,
-// concluded, and external-mode experiments are excluded: Route never
-// evaluates them, so they were not skipped by the first-match rule.
+// audit set for a session that RouteMixed enrolled in enrolledID: the
+// routable experiments that the first-match rule left unevaluated
+// because enrolledID — an earlier candidate in evaluation order —
+// already assigned a non-control variant. The experiments slice must
+// be in the same evaluation order passed to RouteMixed. Paused and
+// concluded experiments are always excluded — RouteMixed never
+// evaluates them.
+//
+// externalEvaluated reports whether RouteMixed ran with a non-nil
+// ExternalEvaluator. When false, external-mode experiments are
+// excluded because RouteMixed skipped every one of them regardless of
+// the first-match rule (the tenant configures no external targeting);
+// when true, an external-mode experiment after enrolledID was a live
+// candidate that the first-match rule skipped, so it is included.
+//
 // Returns nil when enrolledID is empty, is not present, or is the last
 // routable candidate.
-func SkippedAfter(experiments []Definition, enrolledID string) []string {
+func SkippedAfter(experiments []Definition, enrolledID string, externalEvaluated bool) []string {
 	if enrolledID == "" {
 		return nil
 	}
@@ -331,10 +339,10 @@ func SkippedAfter(experiments []Definition, enrolledID string) []string {
 			seenEnrolled = true
 			continue
 		}
-		if !seenEnrolled {
+		if !seenEnrolled || !e.Status.IsRoutable() {
 			continue
 		}
-		if !e.Status.IsRoutable() || e.TargetingMode != TargetingPercentage {
+		if e.TargetingMode == TargetingExternal && !externalEvaluated {
 			continue
 		}
 		skipped = append(skipped, e.ID)

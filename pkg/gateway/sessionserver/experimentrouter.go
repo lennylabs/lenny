@@ -99,8 +99,8 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 	// mode:external experiments resolve through the tenant's OpenFeature
 	// provider. A tenant with no external targeting yields a nil
 	// evaluator and RouteMixed skips external-mode experiments.
-	assignment := experiment.RouteMixed(defs, row.UserID, row.ID,
-		s.buildExternalEvaluator(ctx, row, candidates))
+	evaluator := s.buildExternalEvaluator(ctx, row, candidates)
+	assignment := experiment.RouteMixed(defs, row.UserID, row.ID, evaluator)
 	if assignment.ExperimentID == "" {
 		return nil
 	}
@@ -126,7 +126,8 @@ func (s *Server) applyExperimentRouting(ctx context.Context, row *sessionstore.S
 	// §16.6: the first-match rule left every routable experiment created
 	// after the enrolled one unevaluated. Emit experiment.multi_eligible_skipped
 	// so deployers can audit enrollment overlap.
-	s.emitMultiEligibleSkipped(row, assignment.ExperimentID, experiment.SkippedAfter(defs, assignment.ExperimentID))
+	s.emitMultiEligibleSkipped(row, assignment.ExperimentID,
+		experiment.SkippedAfter(defs, assignment.ExperimentID, evaluator != nil))
 	return nil
 }
 

@@ -101,7 +101,7 @@ func TestSkippedAfterListsLaterRoutableExperiments(t *testing.T) {
 	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
 	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
 	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
-	got := SkippedAfter([]Definition{a, b, c}, "exp-a")
+	got := SkippedAfter([]Definition{a, b, c}, "exp-a", false)
 	if len(got) != 2 || got[0] != "exp-b" || got[1] != "exp-c" {
 		t.Errorf("SkippedAfter = %v, want [exp-b exp-c]", got)
 	}
@@ -114,41 +114,55 @@ func TestSkippedAfterExcludesEarlierExperiments(t *testing.T) {
 	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
 	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
 	c := routeExp("exp-c", 0.9999, StatusActive, TargetingPercentage)
-	got := SkippedAfter([]Definition{a, b, c}, "exp-b")
+	got := SkippedAfter([]Definition{a, b, c}, "exp-b", false)
 	if len(got) != 1 || got[0] != "exp-c" {
 		t.Errorf("SkippedAfter = %v, want [exp-c] — exp-a precedes the enrolled experiment", got)
 	}
 }
 
 func TestSkippedAfterExcludesNonRoutable(t *testing.T) {
-	// Only routable percentage-mode experiments after the enrolled one
-	// count: Route never evaluates paused, concluded, or external-mode
-	// experiments, so the first-match rule did not skip them.
+	// Paused and concluded experiments are never routed, so the
+	// first-match rule did not skip them. With externalEvaluated false
+	// the external experiment is excluded too — RouteMixed skipped it
+	// regardless of first-match.
 	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
 	paused := routeExp("paused", 0.9999, StatusPaused, TargetingPercentage)
 	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
 	concluded := routeExp("concluded", 0.9999, StatusConcluded, TargetingPercentage)
 	live := routeExp("live", 0.9999, StatusActive, TargetingPercentage)
-	got := SkippedAfter([]Definition{a, paused, external, concluded, live}, "exp-a")
+	got := SkippedAfter([]Definition{a, paused, external, concluded, live}, "exp-a", false)
 	if len(got) != 1 || got[0] != "live" {
 		t.Errorf("SkippedAfter = %v, want [live] only", got)
+	}
+}
+
+func TestSkippedAfterIncludesExternalWhenEvaluated(t *testing.T) {
+	// When RouteMixed ran with an external evaluator, an external-mode
+	// experiment after the enrolled one was a live candidate the
+	// first-match rule skipped — it belongs in the audit set.
+	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
+	external := routeExp("external", 0.9999, StatusActive, TargetingExternal)
+	pct := routeExp("pct", 0.9999, StatusActive, TargetingPercentage)
+	got := SkippedAfter([]Definition{a, external, pct}, "exp-a", true)
+	if len(got) != 2 || got[0] != "external" || got[1] != "pct" {
+		t.Errorf("SkippedAfter(externalEvaluated) = %v, want [external pct]", got)
 	}
 }
 
 func TestSkippedAfterLastCandidateIsEmpty(t *testing.T) {
 	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
 	b := routeExp("exp-b", 0.9999, StatusActive, TargetingPercentage)
-	if got := SkippedAfter([]Definition{a, b}, "exp-b"); got != nil {
+	if got := SkippedAfter([]Definition{a, b}, "exp-b", false); got != nil {
 		t.Errorf("SkippedAfter = %v, want nil — the enrolled experiment is the last candidate", got)
 	}
 }
 
 func TestSkippedAfterEmptyOrUnknownEnrollment(t *testing.T) {
 	a := routeExp("exp-a", 0.9999, StatusActive, TargetingPercentage)
-	if got := SkippedAfter([]Definition{a}, ""); got != nil {
+	if got := SkippedAfter([]Definition{a}, "", false); got != nil {
 		t.Errorf("SkippedAfter(\"\") = %v, want nil", got)
 	}
-	if got := SkippedAfter([]Definition{a}, "absent"); got != nil {
+	if got := SkippedAfter([]Definition{a}, "absent", false); got != nil {
 		t.Errorf("SkippedAfter(unknown) = %v, want nil", got)
 	}
 }
