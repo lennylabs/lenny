@@ -201,6 +201,34 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("setupPolicy round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.SetupPolicy = &runtimestore.SetupPolicy{
+			TimeoutSeconds: 420, OnTimeout: runtimestore.SetupTimeoutWarn,
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.SetupPolicy == nil || got.SetupPolicy.TimeoutSeconds != 420 ||
+			got.SetupPolicy.OnTimeout != runtimestore.SetupTimeoutWarn {
+			t.Errorf("setupPolicy round-trip mismatch: %+v", got.SetupPolicy)
+		}
+
+		// A runtime with no setupPolicy reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.SetupPolicy != nil {
+			t.Errorf("setupPolicy must be nil when omitted: %+v", gotPlain.SetupPolicy)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {

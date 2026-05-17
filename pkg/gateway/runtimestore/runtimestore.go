@@ -86,6 +86,11 @@ type Runtime struct {
 	// inferred.
 	ToolCapabilityOverrides map[string][]capabilityinference.Capability
 
+	// SetupPolicy is the §5.1 setupPolicy: the aggregate cap and
+	// timeout disposition for the runtime's pod setup phase. It is nil
+	// when the runtime declares no setup policy.
+	SetupPolicy *SetupPolicy
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -270,6 +275,54 @@ func ValidatePublishedMetadata(entries []PublishedMetadataEntry) error {
 	return nil
 }
 
+// SetupTimeoutDisposition is the §5.1 setupPolicy.onTimeout enum: the
+// disposition when a runtime's pod setup phase exceeds its cap.
+type SetupTimeoutDisposition string
+
+const (
+	// SetupTimeoutFail aborts pod startup when the setup cap is hit.
+	SetupTimeoutFail SetupTimeoutDisposition = "fail"
+	// SetupTimeoutWarn continues pod startup, logging a warning.
+	SetupTimeoutWarn SetupTimeoutDisposition = "warn"
+)
+
+// AllSetupTimeoutDispositions returns the closed enum.
+func AllSetupTimeoutDispositions() []SetupTimeoutDisposition {
+	return []SetupTimeoutDisposition{SetupTimeoutFail, SetupTimeoutWarn}
+}
+
+// IsValid reports whether d is a known timeout disposition.
+func (d SetupTimeoutDisposition) IsValid() bool {
+	for _, v := range AllSetupTimeoutDispositions() {
+		if d == v {
+			return true
+		}
+	}
+	return false
+}
+
+// SetupPolicy is the §5.1 setupPolicy block on a runtime: the aggregate
+// cap on the pod setup phase and the disposition when the cap is hit.
+type SetupPolicy struct {
+	// TimeoutSeconds is the aggregate cap on the setup phase in
+	// seconds. Zero means the runtime declares no aggregate cap.
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+
+	// OnTimeout is the disposition when the cap is exceeded. An empty
+	// value is treated as the conservative "fail" default.
+	OnTimeout SetupTimeoutDisposition `json:"onTimeout,omitempty"`
+}
+
+// Clone returns a copy of the policy so the store never shares the
+// pointed-to struct with a caller. A nil receiver clones to nil.
+func (p *SetupPolicy) Clone() *SetupPolicy {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	return &cp
+}
+
 // RuntimeType is the §5.1 type discriminator.
 type RuntimeType string
 
@@ -428,6 +481,7 @@ func cloneRuntime(r Runtime) Runtime {
 		}
 		r.ToolCapabilityOverrides = m
 	}
+	r.SetupPolicy = r.SetupPolicy.Clone()
 	return r
 }
 

@@ -257,6 +257,44 @@ func TestRuntimeCapabilityInferenceModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeSetupPolicyRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries an optional setupPolicy. The store must
+	// copy the pointed-to struct so it never shares state with a caller.
+	s := runtimestore.NewMemory()
+	policy := &runtimestore.SetupPolicy{TimeoutSeconds: 300, OnTimeout: runtimestore.SetupTimeoutFail}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, SetupPolicy: policy,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	policy.TimeoutSeconds = 9999 // mutate the caller's struct after Create
+
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.SetupPolicy == nil || got.SetupPolicy.TimeoutSeconds != 300 ||
+		got.SetupPolicy.OnTimeout != runtimestore.SetupTimeoutFail {
+		t.Errorf("setupPolicy not stored or not isolated: %+v", got.SetupPolicy)
+	}
+	got.SetupPolicy.TimeoutSeconds = 1 // mutate the returned struct
+	again, _ := s.Get(context.Background(), "rt")
+	if again.SetupPolicy.TimeoutSeconds != 300 {
+		t.Errorf("the returned pointer aliases the stored struct: %+v", again.SetupPolicy)
+	}
+}
+
+func TestSetupTimeoutDispositionIsValid(t *testing.T) {
+	for _, d := range runtimestore.AllSetupTimeoutDispositions() {
+		if !d.IsValid() {
+			t.Errorf("%q from the closed enum reports invalid", d)
+		}
+	}
+	if runtimestore.SetupTimeoutDisposition("abort").IsValid() {
+		t.Error("an unknown disposition must report invalid")
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{
