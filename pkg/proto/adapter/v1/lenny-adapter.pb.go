@@ -885,8 +885,12 @@ type StartSessionRequest struct {
 	// delivered to the runtime in the adapter manifest. Absent for an
 	// unenrolled session.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,5,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// tracing_context is the §8.3 opaque tracing-identifier map the
+	// runtime receives in the adapter manifest to stitch its native
+	// traces into the parent's trace tree. Empty when none is set.
+	TracingContext map[string]string `protobuf:"bytes,6,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StartSessionRequest) Reset() {
@@ -950,6 +954,13 @@ func (x *StartSessionRequest) GetLabels() map[string]string {
 func (x *StartSessionRequest) GetExperimentContext() *ExperimentContext {
 	if x != nil {
 		return x.ExperimentContext
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetTracingContext() map[string]string {
+	if x != nil {
+		return x.TracingContext
 	}
 	return nil
 }
@@ -2619,15 +2630,19 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\rexperiment_id\x18\x01 \x01(\tR\fexperimentId\x12\x1d\n" +
 	"\n" +
 	"variant_id\x18\x02 \x01(\tR\tvariantId\x12\x1c\n" +
-	"\tinherited\x18\x03 \x01(\bR\tinherited\"\x8d\x03\n" +
+	"\tinherited\x18\x03 \x01(\bR\tinherited\"\xb4\x04\n" +
 	"\x13StartSessionRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12F\n" +
 	"\x0eworkspace_plan\x18\x03 \x01(\v2\x1f.lenny.adapter.v1.WorkspacePlanR\rworkspacePlan\x12I\n" +
 	"\x06labels\x18\x04 \x03(\v21.lenny.adapter.v1.StartSessionRequest.LabelsEntryR\x06labels\x12R\n" +
-	"\x12experiment_context\x18\x05 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x1a9\n" +
+	"\x12experiment_context\x18\x05 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x12b\n" +
+	"\x0ftracing_context\x18\x06 \x03(\v29.lenny.adapter.v1.StartSessionRequest.TracingContextEntryR\x0etracingContext\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
+	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
 	"\x14StartSessionResponse\x12%\n" +
@@ -2781,7 +2796,7 @@ func file_lenny_adapter_proto_rawDescGZIP() []byte {
 }
 
 var file_lenny_adapter_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_lenny_adapter_proto_goTypes = []any{
 	(Error_Category)(0),               // 0: lenny.adapter.v1.Error.Category
 	(Error_ErrorCode)(0),              // 1: lenny.adapter.v1.Error.ErrorCode
@@ -2827,8 +2842,9 @@ var file_lenny_adapter_proto_goTypes = []any{
 	(*LifecycleChannelRequest)(nil),   // 41: lenny.adapter.v1.LifecycleChannelRequest
 	(*LifecycleChannelResponse)(nil),  // 42: lenny.adapter.v1.LifecycleChannelResponse
 	nil,                               // 43: lenny.adapter.v1.StartSessionRequest.LabelsEntry
-	nil,                               // 44: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	nil,                               // 45: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	nil,                               // 44: lenny.adapter.v1.StartSessionRequest.TracingContextEntry
+	nil,                               // 45: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	nil,                               // 46: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
 }
 var file_lenny_adapter_proto_depIdxs = []int32{
 	1,  // 0: lenny.adapter.v1.Error.code:type_name -> lenny.adapter.v1.Error.ErrorCode
@@ -2840,60 +2856,61 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	7,  // 6: lenny.adapter.v1.StartSessionRequest.workspace_plan:type_name -> lenny.adapter.v1.WorkspacePlan
 	43, // 7: lenny.adapter.v1.StartSessionRequest.labels:type_name -> lenny.adapter.v1.StartSessionRequest.LabelsEntry
 	11, // 8: lenny.adapter.v1.StartSessionRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
-	5,  // 9: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	6,  // 10: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	5,  // 11: lenny.adapter.v1.AttachClientMessage.session_id:type_name -> lenny.adapter.v1.SessionId
-	6,  // 12: lenny.adapter.v1.AttachClientMessage.slot_id:type_name -> lenny.adapter.v1.SlotId
-	5,  // 13: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	44, // 14: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	5,  // 15: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	45, // 16: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
-	5,  // 17: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 18: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	2,  // 19: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
-	5,  // 20: lenny.adapter.v1.CheckpointRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 21: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 22: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 23: lenny.adapter.v1.ExtendLeaseRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	3,  // 24: lenny.adapter.v1.ExtendLeaseResponse.status:type_name -> lenny.adapter.v1.ExtendLeaseResponse.Status
-	5,  // 25: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	24, // 26: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	24, // 27: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	12, // 28: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
-	14, // 29: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
-	16, // 30: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachClientMessage
-	18, // 31: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
-	20, // 32: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
-	22, // 33: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
-	25, // 34: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
-	27, // 35: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
-	29, // 36: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
-	31, // 37: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
-	33, // 38: lenny.adapter.v1.Adapter.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
-	35, // 39: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
-	37, // 40: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
-	39, // 41: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
-	41, // 42: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
-	13, // 43: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
-	15, // 44: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
-	17, // 45: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachServerMessage
-	19, // 46: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
-	21, // 47: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
-	23, // 48: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
-	26, // 49: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
-	28, // 50: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
-	30, // 51: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
-	32, // 52: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
-	34, // 53: lenny.adapter.v1.Adapter.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
-	36, // 54: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
-	38, // 55: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
-	40, // 56: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
-	42, // 57: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
-	43, // [43:58] is the sub-list for method output_type
-	28, // [28:43] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	44, // 9: lenny.adapter.v1.StartSessionRequest.tracing_context:type_name -> lenny.adapter.v1.StartSessionRequest.TracingContextEntry
+	5,  // 10: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	6,  // 11: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	5,  // 12: lenny.adapter.v1.AttachClientMessage.session_id:type_name -> lenny.adapter.v1.SessionId
+	6,  // 13: lenny.adapter.v1.AttachClientMessage.slot_id:type_name -> lenny.adapter.v1.SlotId
+	5,  // 14: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	45, // 15: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	5,  // 16: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	46, // 17: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	5,  // 18: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 19: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	2,  // 20: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
+	5,  // 21: lenny.adapter.v1.CheckpointRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 22: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 23: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 24: lenny.adapter.v1.ExtendLeaseRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	3,  // 25: lenny.adapter.v1.ExtendLeaseResponse.status:type_name -> lenny.adapter.v1.ExtendLeaseResponse.Status
+	5,  // 26: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24, // 27: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	24, // 28: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	12, // 29: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
+	14, // 30: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
+	16, // 31: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachClientMessage
+	18, // 32: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
+	20, // 33: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
+	22, // 34: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
+	25, // 35: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
+	27, // 36: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
+	29, // 37: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
+	31, // 38: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
+	33, // 39: lenny.adapter.v1.Adapter.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
+	35, // 40: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
+	37, // 41: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
+	39, // 42: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
+	41, // 43: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	13, // 44: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
+	15, // 45: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
+	17, // 46: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachServerMessage
+	19, // 47: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
+	21, // 48: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
+	23, // 49: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
+	26, // 50: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
+	28, // 51: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
+	30, // 52: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
+	32, // 53: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
+	34, // 54: lenny.adapter.v1.Adapter.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
+	36, // 55: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
+	38, // 56: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
+	40, // 57: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
+	42, // 58: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	44, // [44:59] is the sub-list for method output_type
+	29, // [29:44] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_lenny_adapter_proto_init() }
@@ -2907,7 +2924,7 @@ func file_lenny_adapter_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lenny_adapter_proto_rawDesc), len(file_lenny_adapter_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   42,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

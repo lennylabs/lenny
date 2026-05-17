@@ -78,6 +78,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 			SessionID:         sessionID,
 			WorkspaceRoot:     s.WorkspaceRoot,
 			ExperimentContext: manifestExperimentContext(req.GetExperimentContext()),
+			TracingContext:    req.GetTracingContext(),
 		}); err != nil {
 			s.releaseSession()
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)

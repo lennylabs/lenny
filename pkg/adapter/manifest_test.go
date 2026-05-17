@@ -34,6 +34,28 @@ func TestWriteManifest(t *testing.T) {
 	if m.ExperimentContext != nil {
 		t.Errorf("experimentContext = %+v, want nil for an unenrolled session", m.ExperimentContext)
 	}
+	if len(m.TracingContext) != 0 {
+		t.Errorf("tracingContext = %v, want empty when none is set", m.TracingContext)
+	}
+}
+
+func TestWriteManifestWithTracingContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteManifest(dir, Manifest{
+		Version:        ManifestVersion,
+		SessionID:      "sess-3",
+		TracingContext: map[string]string{"langsmith_run_id": "run_abc"},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if m.TracingContext["langsmith_run_id"] != "run_abc" {
+		t.Errorf("tracingContext = %v, want the langsmith run id", m.TracingContext)
+	}
 }
 
 func TestWriteManifestWithExperimentContext(t *testing.T) {

@@ -38,6 +38,10 @@ type Manifest struct {
 	SessionID         string                     `json:"sessionId"`
 	WorkspaceRoot     string                     `json:"workspaceRoot"`
 	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
+	// TracingContext is the §8.3 opaque tracing-identifier map the
+	// runtime uses to stitch its native traces into the parent's trace
+	// tree. Omitted when no tracing context is set.
+	TracingContext map[string]string `json:"tracingContext,omitempty"`
 }
 
 // WriteManifest writes m as adapter-manifest.json into dir. The file is

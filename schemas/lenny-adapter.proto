@@ -275,6 +275,10 @@ message StartSessionRequest {
   // delivered to the runtime in the adapter manifest. Absent for an
   // unenrolled session.
   ExperimentContext experiment_context = 5;
+  // tracing_context is the §8.3 opaque tracing-identifier map the
+  // runtime receives in the adapter manifest to stitch its native
+  // traces into the parent's trace tree. Empty when none is set.
+  map<string, string> tracing_context = 6;
 }
 
 message StartSessionResponse {

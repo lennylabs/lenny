@@ -390,6 +390,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		Runtime:           row.RuntimeRef,
 		Plan:              podsession.WorkspacePlanToProto(plan),
 		ExperimentContext: experimentContextToProto(row.ExperimentContext),
+		TracingContext:    row.TracingContext,
 	})
 	if err != nil {
 		return err
