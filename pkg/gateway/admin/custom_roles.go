@@ -43,10 +43,12 @@ func (r *Router) WithCustomRoles(s customrolestore.Store) *Router {
 	return r
 }
 
-// authorizeTenantPath authorizes a caller against a tenant id taken
-// from the request path. A platform-admin may target any tenant; a
-// tenant-admin is confined to their own, and a path naming a different
-// tenant is rejected rather than silently retargeted.
+// authorizeTenantPath resolves the tenant id from the request path
+// against the caller. A platform-admin may target any tenant; every
+// other authenticated principal is confined to its own tenant, and a
+// path naming a different tenant is rejected rather than silently
+// retargeted. Authorization for the operation itself is the route
+// gate's responsibility.
 func authorizeTenantPath(req *http.Request, pathTenantID string) (string, error) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
@@ -55,13 +57,10 @@ func authorizeTenantPath(req *http.Request, pathTenantID string) (string, error)
 	if p.HasRole(auth.RolePlatformAdmin) {
 		return pathTenantID, nil
 	}
-	if p.HasRole(auth.RoleTenantAdmin) {
-		if p.TenantID != pathTenantID {
-			return "", errors.New("tenant-admin may only manage their own tenant")
-		}
-		return pathTenantID, nil
+	if p.TenantID != pathTenantID {
+		return "", errors.New("caller may only manage their own tenant")
 	}
-	return "", errors.New("not authorized")
+	return pathTenantID, nil
 }
 
 func (r *Router) handleCreateCustomRole(w http.ResponseWriter, req *http.Request) {

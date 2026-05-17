@@ -251,3 +251,35 @@ func TestCustomRoleRejectsNonAdmin(t *testing.T) {
 		t.Errorf("anonymous list: status %d, want 403", rr.Code)
 	}
 }
+
+// §10.2: custom roles are stored in the tenant RBAC config, so the
+// custom-role endpoints are gated on manage_rbac_config. A tenant
+// custom role holding that permission can manage custom roles; one
+// without it cannot.
+func TestCustomRoleManagementCustomRoleEnforcement(t *testing.T) {
+	store := customrolestore.NewMemory()
+	_ = store.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "rbac-manager",
+		Permissions: []auth.Permission{auth.PermManageRBACConfig},
+	})
+	_ = store.Create(context.Background(), customrolestore.CustomRole{
+		TenantID: "acme", Name: "weak-role",
+		Permissions: []auth.Permission{auth.PermViewUsage},
+	})
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithCustomRoles(store)
+
+	asRBACManager := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "rbac-manager") }
+	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/tenants/acme/roles",
+		validCustomRole("session-manager"), asRBACManager)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("custom role with manage_rbac_config: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+
+	asWeak := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "weak-role") }
+	rr = doAdminReq(t, router.Handler(), http.MethodGet, "/v1/admin/tenants/acme/roles", nil, asWeak)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("custom role without manage_rbac_config: got %d, want 403 (body=%s)", rr.Code, rr.Body.String())
+	}
+}

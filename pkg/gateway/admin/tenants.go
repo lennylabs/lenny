@@ -258,11 +258,14 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
 	}
 	if r.customRoles != nil {
-		mux.Handle("POST /v1/admin/tenants/{id}/roles", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleCreateCustomRole)))
-		mux.Handle("GET /v1/admin/tenants/{id}/roles", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListCustomRoles)))
-		mux.Handle("GET /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetCustomRole)))
-		mux.Handle("PUT /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleUpdateCustomRole)))
-		mux.Handle("DELETE /v1/admin/tenants/{id}/roles/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleDeleteCustomRole)))
+		// §10.2: custom roles are stored in the tenant RBAC config, so
+		// the routes are gated on the manage_rbac_config permission.
+		rbacAdmin := r.requirePermission(auth.PermManageRBACConfig)
+		mux.Handle("POST /v1/admin/tenants/{id}/roles", rbacAdmin(http.HandlerFunc(r.handleCreateCustomRole)))
+		mux.Handle("GET /v1/admin/tenants/{id}/roles", rbacAdmin(http.HandlerFunc(r.handleListCustomRoles)))
+		mux.Handle("GET /v1/admin/tenants/{id}/roles/{name}", rbacAdmin(http.HandlerFunc(r.handleGetCustomRole)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/roles/{name}", rbacAdmin(http.HandlerFunc(r.handleUpdateCustomRole)))
+		mux.Handle("DELETE /v1/admin/tenants/{id}/roles/{name}", rbacAdmin(http.HandlerFunc(r.handleDeleteCustomRole)))
 	}
 	if r.credentialPools != nil {
 		// §15.1 credential-pool admin CRUD, gated on the §10.2
