@@ -192,8 +192,16 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	// what the delegation service evaluates.
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"child-agent","poolRef":"weak-pool"}`)
-	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
 		t.Errorf("delegation to a weaker-isolation pool must be rejected: %+v", resp)
+	}
+	// §10.6: the rejection carries the ISOLATION_MONOTONICITY_VIOLATED reason.
+	if content, _ := result["content"].([]any); len(content) > 0 {
+		c0, _ := content[0].(map[string]any)
+		if text, _ := c0["text"].(string); !strings.Contains(text, "ISOLATION_MONOTONICITY_VIOLATED") {
+			t.Errorf("isolation rejection should carry the §10.6 reason: %q", text)
+		}
 	}
 	if _, err := store.Get(ctxbg, "acme", "sess_child"); err == nil {
 		t.Error("a monotonicity-violating delegation must not create a child session")

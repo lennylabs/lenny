@@ -843,6 +843,13 @@ func Register(srv *mcp.Server, deps Deps) {
 				IsolationProfile: resolvePoolIsolation(ctx, deps, in.PoolRef),
 			})
 			if err != nil {
+				// §10.6 / §8.3: a SEC-001 isolation-monotonicity failure
+				// is surfaced under the spec's ISOLATION_MONOTONICITY_VIOLATED
+				// reason so the caller can distinguish it.
+				var isoErr *delegation.IsolationViolationError
+				if errors.As(err, &isoErr) {
+					return mcp.ToolResult{}, fmt.Errorf("ISOLATION_MONOTONICITY_VIOLATED: %w", err)
+				}
 				return mcp.ToolResult{}, err
 			}
 			// Deliver the (possibly interceptor-modified) task input to
