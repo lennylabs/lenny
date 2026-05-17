@@ -170,6 +170,15 @@ func Catalog() []Rule {
 			Description: "An mTLS certificate is expiring within the hour. Cert-manager should auto-renew; firing indicates a renewal failure.",
 			SpecRef:     "§16.5",
 		},
+		{
+			Name:        "ExperimentIsolationRejections",
+			Expr:        `rate(lenny_experiment_isolation_rejections_total[5m]) > 0`,
+			For:         2 * time.Minute,
+			Severity:    SeverityWarning,
+			Summary:     "ExperimentRouter is failing closed on isolation-monotonicity checks",
+			Description: "A variant pool's isolationProfile is weaker than an enrolled session's minIsolationProfile, and affected sessions are rejected with VARIANT_ISOLATION_UNAVAILABLE. Steady-state value is zero; a sustained rate means the §10.7 admission-time monotonicity check was bypassed and an operator must re-validate every active experiment's variant pools.",
+			SpecRef:     "§16.5",
+		},
 	}
 	return rs
 }
