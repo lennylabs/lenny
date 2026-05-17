@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9a23cda` — bootstrap upsert applies the full runtime payload.
+  `POST /v1/admin/bootstrap` accepts a `RuntimePayload` but `upsertRuntimes`
+  built and merged the runtime row from only a subset of its fields,
+  dropping `delegationPolicyRef`, `labels`, `agentInterface`,
+  `publishedMetadata`, `capabilityInferenceMode`, `toolCapabilityOverrides`,
+  `setupPolicy`, `minPlatformVersion`, and `taskPolicy`. Extracted
+  `runtimeFromPayload` as the single `RuntimePayload`-to-`Runtime` builder
+  shared by the `POST /v1/admin/runtimes` handler and the bootstrap create
+  path so they cannot drift again; the bootstrap update path merges the same
+  fields, and bootstrap now rejects an `agentInterface` on a `type:mcp`
+  runtime per §5.1. Verified: tier 2 component and tier 4 integration green.
+  (Tier 5 e2e_kind is scaffold-only and passes as skip.)
 - `857b90c` — bootstrap upsert dropped runtime capabilities (bug found by the
   tier-4 integration suite). `POST /v1/admin/bootstrap` accepts a
   `RuntimePayload` carrying the §5.1 `capabilities` block, but
