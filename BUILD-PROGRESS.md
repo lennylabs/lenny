@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `82f4167` — §10.6 environment access resolver (`pkg/gateway/envaccess`). `Membership`
+  reports a caller's environment role by matching member identities against the
+  caller's OIDC groups or subject; `AuthorizedRuntimes` computes the transparent-filter
+  view — the union of every member environment's `runtimeSelector` matches, with the
+  `noEnvironmentPolicy` deny-all / allow-all fallback for callers in no environment.
+  The wiring into the user-facing runtime-discovery path, and the tenant
+  `noEnvironmentPolicy` stored field, are the remaining steps.
 - `aaa93c9` — §10.6 OIDC groups claim. `jwt.Claims` and the middleware `Principal` gain
   a `Groups` field; the Bearer path copies the JWT `groups` claim and the dev-header
   path parses `X-Lenny-Groups` under `AllowDevRoles` (dropped in production, like
