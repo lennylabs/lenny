@@ -69,6 +69,34 @@ type RuntimePayload struct {
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
 }
 
+// runtimeFromPayload builds a runtimestore.Runtime from a §15.1
+// RuntimePayload. The POST /v1/admin/runtimes handler and the
+// POST /v1/admin/bootstrap upsert share it so a runtime created
+// through either path carries the same field set.
+func runtimeFromPayload(p RuntimePayload, createdAt time.Time) runtimestore.Runtime {
+	return runtimestore.Runtime{
+		Name:                    p.Name,
+		Type:                    runtimestore.RuntimeType(p.Type),
+		Image:                   p.Image,
+		ExecutionMode:           runtimestore.ExecutionMode(p.ExecutionMode),
+		IsolationProfile:        isolation.Profile(p.IsolationProfile),
+		IntegrationLevel:        runtimestore.IntegrationLevel(p.IntegrationLevel),
+		Description:             p.Description,
+		DelegationPolicyRef:     p.DelegationPolicyRef,
+		Labels:                  p.Labels,
+		AgentInterface:          p.AgentInterface,
+		PublishedMetadata:       p.PublishedMetadata,
+		CapabilityInferenceMode: capabilityinference.Mode(p.CapabilityInferenceMode),
+		ToolCapabilityOverrides: p.ToolCapabilityOverrides,
+		SetupPolicy:             p.SetupPolicy,
+		Capabilities:            p.Capabilities,
+		MinPlatformVersion:      p.MinPlatformVersion,
+		TaskPolicy:              p.TaskPolicy,
+		BaseRuntime:             p.BaseRuntime,
+		CreatedAt:               createdAt,
+	}
+}
+
 // UpdateRuntimeRequest is the §15.1 PUT body. Optional pointer
 // fields signal "leave unchanged when omitted". AgentInterface is a
 // raw message so the three states omitted, JSON null, and an object
@@ -350,27 +378,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	rt := runtimestore.Runtime{
-		Name:                    body.Name,
-		Type:                    runtimestore.RuntimeType(body.Type),
-		Image:                   body.Image,
-		ExecutionMode:           runtimestore.ExecutionMode(body.ExecutionMode),
-		IsolationProfile:        isolation.Profile(body.IsolationProfile),
-		IntegrationLevel:        runtimestore.IntegrationLevel(body.IntegrationLevel),
-		Description:             body.Description,
-		DelegationPolicyRef:     body.DelegationPolicyRef,
-		Labels:                  body.Labels,
-		AgentInterface:          body.AgentInterface,
-		PublishedMetadata:       body.PublishedMetadata,
-		CapabilityInferenceMode: capabilityinference.Mode(body.CapabilityInferenceMode),
-		ToolCapabilityOverrides: body.ToolCapabilityOverrides,
-		SetupPolicy:             body.SetupPolicy,
-		Capabilities:            body.Capabilities,
-		MinPlatformVersion:      body.MinPlatformVersion,
-		TaskPolicy:              body.TaskPolicy,
-		BaseRuntime:             body.BaseRuntime,
-		CreatedAt:               r.clock(),
-	}
+	rt := runtimeFromPayload(body, r.clock())
 	runtimestore.ApplyDefaults(&rt)
 	rt.UpdatedAt = rt.CreatedAt
 	// §5.1: type:mcp runtimes do not carry an agentInterface.

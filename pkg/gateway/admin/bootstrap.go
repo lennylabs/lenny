@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -175,19 +176,15 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name, Message: err.Error()})
 			continue
 		}
+		// §5.1: a type:mcp runtime does not carry an agentInterface.
+		if runtimestore.RuntimeType(p.Type) == runtimestore.TypeMCP && p.AgentInterface != nil {
+			out.Errors = append(out.Errors, BootstrapError{Index: i, ID: p.Name,
+				Message: "agentInterface is not valid on a type:mcp runtime"})
+			continue
+		}
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
 		if errors.Is(err, runtimestore.ErrNotFound) {
-			row := runtimestore.Runtime{
-				Name:             p.Name,
-				Type:             runtimestore.RuntimeType(p.Type),
-				Image:            p.Image,
-				ExecutionMode:    runtimestore.ExecutionMode(p.ExecutionMode),
-				IsolationProfile: isolation.Profile(p.IsolationProfile),
-				IntegrationLevel: runtimestore.IntegrationLevel(p.IntegrationLevel),
-				Description:      p.Description,
-				Capabilities:     p.Capabilities,
-				CreatedAt:        r.clock(),
-			}
+			row := runtimeFromPayload(p, r.clock())
 			runtimestore.ApplyDefaults(&row)
 			row.UpdatedAt = row.CreatedAt
 			if err := r.runtimes.Create(req.Context(), row); err != nil {
@@ -220,6 +217,33 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload) Bootstra
 			}
 			if p.Capabilities != nil {
 				rt.Capabilities = p.Capabilities
+			}
+			if p.DelegationPolicyRef != "" {
+				rt.DelegationPolicyRef = p.DelegationPolicyRef
+			}
+			if p.Labels != nil {
+				rt.Labels = p.Labels
+			}
+			if p.AgentInterface != nil {
+				rt.AgentInterface = p.AgentInterface
+			}
+			if p.PublishedMetadata != nil {
+				rt.PublishedMetadata = p.PublishedMetadata
+			}
+			if p.CapabilityInferenceMode != "" {
+				rt.CapabilityInferenceMode = capabilityinference.Mode(p.CapabilityInferenceMode)
+			}
+			if p.ToolCapabilityOverrides != nil {
+				rt.ToolCapabilityOverrides = p.ToolCapabilityOverrides
+			}
+			if p.SetupPolicy != nil {
+				rt.SetupPolicy = p.SetupPolicy
+			}
+			if p.MinPlatformVersion != "" {
+				rt.MinPlatformVersion = p.MinPlatformVersion
+			}
+			if p.TaskPolicy != nil {
+				rt.TaskPolicy = p.TaskPolicy
 			}
 			return nil
 		})
