@@ -82,6 +82,12 @@ type Deps struct {
 	// the §10.6 transparent-filtering fallback.
 	Tenants tenantstore.Store
 
+	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
+	// noEnvironmentPolicy applied to a caller whose tenant has set no
+	// per-tenant value. The per-tenant value takes precedence; an empty
+	// default is treated as deny-all by the resolver.
+	DefaultNoEnvironmentPolicy string
+
 	// Interceptors is the §4 RequestInterceptor chain. Optional — when
 	// non-nil, lenny/send_message runs the PreMessageDelivery phase
 	// over the message body before delivery.
@@ -941,8 +947,14 @@ func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtim
 	if err != nil {
 		return nil, err
 	}
+	// §10.6: the per-tenant noEnvironmentPolicy takes precedence; an
+	// unset tenant value falls back to the platform-wide default.
+	policy := tenant.NoEnvironmentPolicy
+	if policy == "" {
+		policy = deps.DefaultNoEnvironmentPolicy
+	}
 	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
-	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, tenant.NoEnvironmentPolicy), nil
+	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, policy), nil
 }
 
 // awaitPollInterval is how often lenny/await_children re-reads its

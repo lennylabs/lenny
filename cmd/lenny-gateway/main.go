@@ -188,7 +188,25 @@ func main() {
 		"connect to MinIO over HTTPS. Override via LENNY_MINIO_USE_SSL.")
 	checkpointInterval := flag.Duration("checkpoint-interval", 5*time.Minute,
 		"§4.4 periodic-checkpoint cadence. The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace.")
+	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
+		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	flag.Parse()
+
+	// §10.6: the platform-wide noEnvironmentPolicy must be set
+	// explicitly. Dev mode derives allow-all for local convenience;
+	// outside dev mode an unset value is a fatal misconfiguration so a
+	// chart with the default stripped fails closed at startup.
+	resolvedNoEnvPolicy := *noEnvPolicy
+	if resolvedNoEnvPolicy == "" && *devMode {
+		resolvedNoEnvPolicy = tenantstore.NoEnvPolicyAllowAll
+	}
+	if resolvedNoEnvPolicy == "" {
+		log.Fatalf("lenny-gateway: LENNY_CONFIG_MISSING config_key=noEnvironmentPolicy scope=platform: " +
+			"set --no-environment-policy or LENNY_NO_ENVIRONMENT_POLICY to deny-all or allow-all (§10.6)")
+	}
+	if resolvedNoEnvPolicy != tenantstore.NoEnvPolicyDenyAll && resolvedNoEnvPolicy != tenantstore.NoEnvPolicyAllowAll {
+		log.Fatalf("lenny-gateway: --no-environment-policy must be deny-all or allow-all, got %q", resolvedNoEnvPolicy)
+	}
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
@@ -490,21 +508,27 @@ func main() {
 	credServer := credentialserver.New(credentialstore.NewMemory(nil))
 
 	// ----- MCP adapter -----
+	// environments backs both the §10.6 admin environment CRUD and the
+	// §10.6 transparent filtering lenny/discover_agents applies.
+	environments := environmentstore.NewMemory()
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:              sessions,
-		Executor:           exec,
-		Delegation:         delegationSvc,
-		Runtimes:           runtimes,
-		Interceptors:       interceptor.NewChain(),
-		Events:             eventBus,
-		InputWaits:         inputwait.NewRegistry(),
-		TreeArchive:        treeArchive,
-		Interactions:       interactions,
-		Memory:             memories,
-		ElicitationMetrics: gwMetrics,
-		TenantID:           "default",
+		Store:                      sessions,
+		Executor:                   exec,
+		Delegation:                 delegationSvc,
+		Runtimes:                   runtimes,
+		Environments:               environments,
+		Tenants:                    tenants,
+		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
+		Interceptors:               interceptor.NewChain(),
+		Events:                     eventBus,
+		InputWaits:                 inputwait.NewRegistry(),
+		TreeArchive:                treeArchive,
+		Interactions:               interactions,
+		Memory:                     memories,
+		ElicitationMetrics:         gwMetrics,
+		TenantID:                   "default",
 	})
 
 	// §13.3 revocation cache: the auth middleware rejects a token
@@ -526,7 +550,7 @@ func main() {
 		WithSessions(sessions).
 		WithInteractions(interactions).
 		WithExperiments(experiments).
-		WithEnvironments(environmentstore.NewMemory()).
+		WithEnvironments(environments).
 		WithEvalResults(evals)
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the

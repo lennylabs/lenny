@@ -132,3 +132,72 @@ func TestDiscoverAgentsAllowAllNoMembership(t *testing.T) {
 		t.Errorf("an allow-all non-member should reach all agents: %q", text)
 	}
 }
+
+// buildFilteredMCP builds an MCP server with the §10.6 filtering deps
+// and a platform-wide DefaultNoEnvironmentPolicy.
+func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimestore.Store, environmentstore.Store, tenantstore.Store) {
+	t.Helper()
+	runtimes := runtimestore.NewMemory()
+	envs := environmentstore.NewMemory()
+	tenants := tenantstore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:                      memstore.New(),
+		Executor:                   executor.NewEchoExecutor(),
+		Runtimes:                   runtimes,
+		Environments:               envs,
+		Tenants:                    tenants,
+		DefaultNoEnvironmentPolicy: defaultPolicy,
+		Clock:                      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:                     func() string { return "sess_mcp" },
+		TenantID:                   "acme",
+	})
+	return srv, runtimes, envs, tenants
+}
+
+func TestDiscoverAgentsPlatformDefaultFallback(t *testing.T) {
+	// The caller carries a realistic multi-group OIDC membership, none
+	// of which is the environment's member group — so the caller is in
+	// no environment and the §10.6 noEnvironmentPolicy governs access.
+	caller := authmw.Principal{
+		Subject: "alice", TenantID: "acme",
+		Groups: []string{
+			"infra", "leads", "oncall", "verifiers", "engineers", "billing",
+			"hardware", "auditors", "researchers", "analysts", "triage",
+		},
+	}
+
+	// A tenant that has set no noEnvironmentPolicy inherits the
+	// platform-wide default: allow-all reaches every agent.
+	srv, runtimes, envs, tenants := buildFilteredMCP(t, tenantstore.NoEnvPolicyAllowAll)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "sec-agent", Type: runtimestore.TypeAgent})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(environment.Selector{}))
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/discover_agents", `{}`))
+	if !strings.Contains(text, "sec-agent") {
+		t.Errorf("allow-all platform default should reach all agents: %q", text)
+	}
+
+	// Under a deny-all platform default the same caller reaches none.
+	srv, runtimes, envs, tenants = buildFilteredMCP(t, tenantstore.NoEnvPolicyDenyAll)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "sec-agent", Type: runtimestore.TypeAgent})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(environment.Selector{}))
+	text = resultText(t, callAs(t, srv.Handler(), caller, "lenny/discover_agents", `{}`))
+	if strings.Contains(text, "sec-agent") {
+		t.Errorf("deny-all platform default should reach no agents: %q", text)
+	}
+
+	// §10.6: a per-tenant noEnvironmentPolicy overrides the platform
+	// default — allow-all on the tenant beats a deny-all default.
+	srv, runtimes, envs, tenants = buildFilteredMCP(t, tenantstore.NoEnvPolicyDenyAll)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "sec-agent", Type: runtimestore.TypeAgent})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{
+		ID: "acme", NoEnvironmentPolicy: tenantstore.NoEnvPolicyAllowAll,
+	})
+	_ = envs.Create(context.Background(), securityEnv(environment.Selector{}))
+	text = resultText(t, callAs(t, srv.Handler(), caller, "lenny/discover_agents", `{}`))
+	if !strings.Contains(text, "sec-agent") {
+		t.Errorf("per-tenant allow-all should override the deny-all platform default: %q", text)
+	}
+}
