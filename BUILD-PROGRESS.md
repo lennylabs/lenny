@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `50af1f8` — §15.1 OpenAPI: `GET /v1/models` documented with its OpenAI-compatible
+  model-list response schema.
+- `4998c8c` — §9.1 `GET /v1/models` model discovery. The OpenAI Completions / Open
+  Responses model-discovery surface lists the runtime registry as OpenAI-compatible
+  model objects (`{"object":"list","data":[...]}`), each runtime surfaced as a model.
+  Results reuse the §10.6 environment-access filter `GET /v1/runtimes` applies.
 - `cef45cd` — §9.1 `lenny/list_runtimes` MCP discovery tool. The MCP-surface
   counterpart of `GET /v1/runtimes`; covers every runtime type (unlike
   `discover_agents`, which is type:agent-only) and is identity-filtered by §10.6
