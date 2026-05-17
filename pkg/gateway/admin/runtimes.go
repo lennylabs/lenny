@@ -7,12 +7,38 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/agentcard"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+// applyGeneratedCard regenerates the §5.1 A2A agent card from the
+// runtime's agentInterface and writes it into PublishedMetadata under
+// the agent-card key, replacing any existing entry with that key. It is
+// a no-op when the runtime carries no agentInterface, so a hand-crafted
+// agent-card entry on a runtime without an agentInterface is left
+// untouched per §5.1.
+func (r *Router) applyGeneratedCard(rt *runtimestore.Runtime, at time.Time) {
+	if rt.AgentInterface == nil {
+		return
+	}
+	version := r.platformInfo.Version
+	if version == "" {
+		version = "dev"
+	}
+	entry := agentcard.Entry(rt.Name, *rt.AgentInterface, at, version)
+	out := make([]runtimestore.PublishedMetadataEntry, 0, len(rt.PublishedMetadata)+1)
+	for _, e := range rt.PublishedMetadata {
+		if e.Key != agentcard.Key {
+			out = append(out, e)
+		}
+	}
+	rt.PublishedMetadata = append(out, entry)
+}
 
 // RuntimePayload is the §15.1 admin-runtime request/response body.
 type RuntimePayload struct {
@@ -150,6 +176,9 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 			"agentInterface is not valid on a type:mcp runtime", nil)
 		return
 	}
+	// §5.1: a runtime with an agentInterface gets a write-time
+	// auto-generated A2A agent card stored as a publishedMetadata entry.
+	r.applyGeneratedCard(&rt, rt.CreatedAt)
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "RESOURCE_CONFLICT",
@@ -310,6 +339,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.PublishedMetadata != nil {
 			rt.PublishedMetadata = *body.PublishedMetadata
 		}
+		// §5.1: regenerate the auto-generated A2A agent card at write
+		// time whenever the runtime carries an agentInterface.
+		r.applyGeneratedCard(rt, r.clock())
 		return nil
 	})
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/agentcard"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -451,6 +452,97 @@ func TestCreateRuntimeRejectsInvalidPublishedMetadata(t *testing.T) {
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400 (body=%s)", tc.name, rr.Code, rr.Body.String())
 		}
+	}
+}
+
+func agentCardEntry(t *testing.T, entries []runtimestore.PublishedMetadataEntry) runtimestore.PublishedMetadataEntry {
+	t.Helper()
+	for _, e := range entries {
+		if e.Key == agentcard.Key {
+			return e
+		}
+	}
+	t.Fatalf("no agent-card entry in %+v", entries)
+	return runtimestore.PublishedMetadataEntry{}
+}
+
+func TestCreateRuntimeAutoGeneratesAgentCard(t *testing.T) {
+	// §5.1: a runtime created with an agentInterface gets a write-time
+	// auto-generated A2A agent card stored as a publishedMetadata entry.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "refactorer",
+		Image: "lenny/refactorer@sha256:abc",
+		AgentInterface: &runtimestore.AgentInterface{
+			Description: "Analyzes codebases",
+			Skills:      []runtimestore.AgentInterfaceSkill{{ID: "review"}},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+
+	entry := agentCardEntry(t, created.PublishedMetadata)
+	if entry.Visibility != runtimestore.VisibilityPublic || entry.ContentType != "application/json" {
+		t.Errorf("agent-card entry: %+v", entry)
+	}
+	var card agentcard.Card
+	if err := json.Unmarshal([]byte(entry.Content), &card); err != nil {
+		t.Fatalf("agent-card content is not a card: %v", err)
+	}
+	if card.Name != "refactorer" || card.Description != "Analyzes codebases" || len(card.Skills) != 1 {
+		t.Errorf("generated card: %+v", card)
+	}
+	if card.GeneratedAt == "" || card.GeneratorVersion == "" {
+		t.Errorf("card missing the §5.1 envelope fields: %+v", card)
+	}
+}
+
+func TestCreateRuntimeKeepsHandcraftedCardWithoutAgentInterface(t *testing.T) {
+	// §5.1: a runtime with no agentInterface keeps its hand-crafted
+	// agent-card entry; the gateway does not auto-generate one.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:  "handcrafted",
+		Image: "lenny/handcrafted@sha256:abc",
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"hand":"crafted"}`},
+		},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if entry := agentCardEntry(t, created.PublishedMetadata); entry.Content != `{"hand":"crafted"}` {
+		t.Errorf("hand-crafted agent-card must be left untouched: %q", entry.Content)
+	}
+}
+
+func TestUpdateRuntimeRegeneratesAgentCard(t *testing.T) {
+	// §5.1: the auto-generated card is refreshed at update write time.
+	router, runtimes, _ := newRuntimeAdmin(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "refactorer", Type: runtimestore.TypeAgent,
+		AgentInterface: &runtimestore.AgentInterface{Description: "old"},
+	})
+	newIface, _ := json.Marshal(&runtimestore.AgentInterface{Description: "new and improved"})
+	rr := runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/refactorer",
+		admin.UpdateRuntimeRequest{AgentInterface: newIface})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	entry := agentCardEntry(t, updated.PublishedMetadata)
+	var card agentcard.Card
+	if err := json.Unmarshal([]byte(entry.Content), &card); err != nil {
+		t.Fatalf("regenerated card is not a card: %v", err)
+	}
+	if card.Description != "new and improved" {
+		t.Errorf("update did not regenerate the card: %+v", card)
 	}
 }
 
