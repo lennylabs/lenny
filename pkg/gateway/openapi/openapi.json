@@ -224,6 +224,13 @@
               "items": { "type": "string", "enum": ["read","write","delete","network","execute","admin"] }
             }
           },
+          "setupPolicy": {
+            "type": "object",
+            "properties": {
+              "timeoutSeconds": { "type": "integer" },
+              "onTimeout":      { "type": "string", "enum": ["fail","warn"] }
+            }
+          },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
