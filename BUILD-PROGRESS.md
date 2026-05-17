@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f020e1a` — §15.4 write the adapter manifest at session start. `StartSession` writes
+  `/run/lenny/adapter-manifest.json` — the §15.4 manifest the runtime reads at startup —
+  carrying the session id, workspace root, and the §8.3 `experimentContext`. This closes
+  the experimentContext-to-runtime last mile: a runtime can now read its experiment
+  enrollment to tag traces. v1 carries the metadata a Basic-level runtime needs; the
+  intra-pod MCP fields (`mcpNonce`, `platformMcpServer`, `adapterLocalTools`) join when
+  the MCP fabric lands. Manifest writing is gated on the `ManifestDir` field, which
+  `cmd/lenny-adapter` sets to `/run/lenny`.
 - `2b50f6f` — §8.3 deliver `experimentContext` in the adapter StartSession manifest.
   The adapter `StartSessionRequest` proto gained an `ExperimentContext` message
   (`experiment_id`, `variant_id`, `inherited`); the gateway populates it from the
