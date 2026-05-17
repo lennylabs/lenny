@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `62dfa18` — §10.6 environment scoping on `lenny/delegate_task`. The tool rejects a
+  delegation whose `runtimeRef` is outside the caller's environment scope, closing the
+  bypass where a hard-coded reference reached a runtime `discover_agents` would hide.
+  `runtimeAuthorizedForCaller` reuses the `envaccess` resolver. Cross-environment
+  delegation (the §10.6 bilateral checks) stays unbuilt — it needs session environment
+  context, which the session row does not carry.
 - `0ad15c1` — §10.6 transparent filtering activated in `cmd/lenny-gateway`. The gateway
   wires the environment and tenant stores into the mcptools deps, so
   `lenny/discover_agents` filters in the running gateway. A `--no-environment-policy`
