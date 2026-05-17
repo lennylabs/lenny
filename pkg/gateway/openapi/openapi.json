@@ -216,6 +216,7 @@
           "labels":           { "type": "object", "additionalProperties": { "type": "string" } },
           "agentInterface":   { "$ref": "#/components/schemas/AgentInterface" },
           "publishedMetadata": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedMetadataEntry" } },
+          "capabilityInferenceMode": { "type": "string", "enum": ["strict","permissive"] },
           "createdAt":        { "type": "string", "format": "date-time" },
           "updatedAt":        { "type": "string", "format": "date-time" },
           "deletedAt":        { "type": "string", "format": "date-time" }
