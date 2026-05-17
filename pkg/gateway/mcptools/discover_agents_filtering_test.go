@@ -240,6 +240,51 @@ func TestListRuntimesToolSurfacesPublicMetadataRefs(t *testing.T) {
 	}
 }
 
+func TestListRuntimesToolResolvesDerivedRuntime(t *testing.T) {
+	// §5.1: list_runtimes reports a derived runtime as its effective
+	// merged definition — it inherits the base's labels (so it passes
+	// the §10.6 environment filter) and the base's agentInterface.
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-base", Type: runtimestore.TypeAgent,
+		Labels:         map[string]string{"team": "security"},
+		AgentInterface: &runtimestore.AgentInterface{Description: "base iface"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-derived", BaseRuntime: "sec-base",
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+
+	var resp struct {
+		Runtimes []struct {
+			Name           string                       `json:"name"`
+			AgentInterface *runtimestore.AgentInterface `json:"agentInterface"`
+		} `json:"runtimes"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("decode: %v (%q)", err, text)
+	}
+	var derived *runtimestore.AgentInterface
+	found := false
+	for _, rt := range resp.Runtimes {
+		if rt.Name == "sec-derived" {
+			found = true
+			derived = rt.AgentInterface
+		}
+	}
+	if !found {
+		t.Fatalf("derived runtime missing — it must inherit the base's labels to pass the filter: %q", text)
+	}
+	if derived == nil || derived.Description != "base iface" {
+		t.Errorf("derived runtime must surface the effective agentInterface: %+v", derived)
+	}
+}
+
 func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
 	srv, runtimes, envs, tenants := newMCPFiltered(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

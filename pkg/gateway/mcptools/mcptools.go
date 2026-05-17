@@ -802,6 +802,10 @@ func Register(srv *mcp.Server, deps Deps) {
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
+			// §5.1: a derived runtime is reported as its effective
+			// merged definition so discovery shows the fields it
+			// inherits from its base.
+			runtimes = resolveDerivedRuntimes(ctx, deps.Runtimes, runtimes)
 			// §9.1: discovery is identity-filtered by §10.6 environment
 			// access — a not-authorized runtime is simply absent, so the
 			// response does not enable enumeration.
@@ -1066,6 +1070,26 @@ type discoveredAgent struct {
 	Name             string `json:"name"`
 	IntegrationLevel string `json:"integrationLevel"`
 	Description      string `json:"description,omitempty"`
+}
+
+// resolveDerivedRuntimes replaces each §5.1 derived runtime with its
+// effective merged definition, so the discovery surface reports the
+// fields a derived runtime inherits from its base. A derived runtime
+// whose base is missing is dropped — it is not usable.
+func resolveDerivedRuntimes(ctx context.Context, store runtimestore.Store, rows []runtimestore.Runtime) []runtimestore.Runtime {
+	out := make([]runtimestore.Runtime, 0, len(rows))
+	for _, rt := range rows {
+		if !rt.IsDerived() {
+			out = append(out, rt)
+			continue
+		}
+		eff, err := runtimestore.Resolve(ctx, store, rt.Name)
+		if err != nil {
+			continue
+		}
+		out = append(out, eff)
+	}
+	return out
 }
 
 // filterByEnvironmentAccess applies §10.6 transparent filtering to a

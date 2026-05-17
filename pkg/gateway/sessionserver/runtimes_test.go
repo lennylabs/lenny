@@ -392,6 +392,48 @@ func TestInternalRuntimeMetaTenantFailsClosedWithoutAccessStore(t *testing.T) {
 	}
 }
 
+func TestListRuntimesResolvesDerivedRuntime(t *testing.T) {
+	// §5.1: discovery reports a derived runtime as its effective merged
+	// definition — the fields it inherits from its base.
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "base", Type: runtimestore.TypeAgent,
+		Description:    "base description",
+		AgentInterface: &runtimestore.AgentInterface{Description: "base iface"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "derived", BaseRuntime: "base",
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp runtimeDiscoveryResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	byName := map[string]sessionserver.RuntimeDiscoveryEntry{}
+	for _, e := range resp.Runtimes {
+		byName[e.Name] = e
+	}
+	d, ok := byName["derived"]
+	if !ok {
+		t.Fatalf("derived runtime missing from discovery: %+v", resp.Runtimes)
+	}
+	if d.AgentInterface == nil || d.AgentInterface.Description != "base iface" {
+		t.Errorf("derived discovery entry must show the effective agentInterface: %+v", d.AgentInterface)
+	}
+	if d.Description != "base description" {
+		t.Errorf("derived discovery entry must inherit the base description: %q", d.Description)
+	}
+	if d.Type != "agent" {
+		t.Errorf("derived discovery entry must inherit the base type: %q", d.Type)
+	}
+}
+
 func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

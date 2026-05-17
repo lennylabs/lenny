@@ -66,6 +66,7 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	rows = s.resolveRuntimes(r.Context(), rows)
 	rows = s.filterRuntimesByEnvironment(r, rows)
 
 	out := make([]RuntimeDiscoveryEntry, 0, len(rows))
@@ -109,6 +110,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 			return
 		}
+		rows = s.resolveRuntimes(r.Context(), rows)
 		rows = s.filterRuntimesByEnvironment(r, rows)
 		for _, rt := range rows {
 			models = append(models, OpenAIModel{
@@ -230,6 +232,27 @@ func (s *Server) tenantReachesRuntime(ctx context.Context, tenantID, runtime str
 		}
 	}
 	return false
+}
+
+// resolveRuntimes replaces each §5.1 derived runtime in rows with its
+// effective merged definition, so the discovery surface reports the
+// fields a derived runtime inherits from its base rather than its
+// (partial) declared form. A derived runtime whose base is missing is
+// dropped from the result — it is not usable.
+func (s *Server) resolveRuntimes(ctx context.Context, rows []runtimestore.Runtime) []runtimestore.Runtime {
+	out := make([]runtimestore.Runtime, 0, len(rows))
+	for _, rt := range rows {
+		if !rt.IsDerived() {
+			out = append(out, rt)
+			continue
+		}
+		eff, err := runtimestore.Resolve(ctx, s.runtimes, rt.Name)
+		if err != nil {
+			continue
+		}
+		out = append(out, eff)
+	}
+	return out
 }
 
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
