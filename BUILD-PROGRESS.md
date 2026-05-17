@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `2fdb8fb` — §15 adapter-local filesystem tools. New package
+  `pkg/adapter/localtools`. `Dispatch` executes the four §15 adapter-local
+  tools — `read_file`, `write_file`, `list_dir`, `delete_file` — against a
+  workspace-resolved path: a relative path is joined onto the workspace root,
+  an absolute path is taken as given, and either way a path that escapes the
+  workspace yields the §15 `path_outside_workspace` error result.
+  `delete_file` refuses to remove the workspace root. Remaining: the
+  `tool_call`-frame interception that routes the runtime's calls into
+  `Dispatch`, and the `adapterLocalTools` manifest array that advertises the
+  tools (name, description, inputSchema) to the runtime.
 - `7d051ed` — accept loop for the adapter-local MCP server. `Server.Serve`
   accepts connections on a `net.Listener` until its context is cancelled or
   the listener fails, handling each with `ServeConn` in its own goroutine;
