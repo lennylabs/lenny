@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `783a4ed` — §10.7 `RouteMixed` — first-match over percentage and external. Applies the
+  §10.7 first-match multi-experiment rule across both targeting modes: percentage-mode
+  experiments bucket by the built-in HMAC hash, external-mode experiments resolve
+  through an injected `ExternalEvaluator` callback (the gateway's OpenFeature call).
+  `Route` now delegates to `RouteMixed` with a nil evaluator. The `ExperimentRouter`
+  wiring that supplies a real OFREP-backed evaluator — building the client from
+  `tenant.ExperimentTargeting`, calling it per external experiment, and emitting the
+  §16.6 events — is the remaining `mode: external` step.
 - `a308ac3` — §10.7 persist the tenant `experimentTargeting` config. `tenantstore.Tenant`
   carries `ExperimentTargeting` (the §10.7 `experimentTargeting` block). The in-memory
   store gains a `cloneTenant` helper so a caller cannot mutate stored state through the
