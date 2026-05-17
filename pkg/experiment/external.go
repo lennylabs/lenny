@@ -44,39 +44,40 @@ const DefaultTargetingTimeoutMs = 200
 
 // OFREPConfig is the §10.7 experimentTargeting.ofrep block.
 type OFREPConfig struct {
-	Endpoint string
-	Headers  map[string]string
+	Endpoint string            `json:"endpoint,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
 }
 
 // LaunchDarklyConfig is the §10.7 experimentTargeting.launchdarkly block.
 type LaunchDarklyConfig struct {
-	SDKKey  string
-	BaseURL string
+	SDKKey  string `json:"sdkKey,omitempty"`
+	BaseURL string `json:"baseUrl,omitempty"`
 }
 
 // StatsigConfig is the §10.7 experimentTargeting.statsig block.
 type StatsigConfig struct {
-	ServerSecret string
+	ServerSecret string `json:"serverSecret,omitempty"`
 }
 
 // UnleashConfig is the §10.7 experimentTargeting.unleash block.
 type UnleashConfig struct {
-	APIURL   string
-	APIToken string
+	APIURL   string `json:"apiUrl,omitempty"`
+	APIToken string `json:"apiToken,omitempty"`
 }
 
 // TargetingConfig is the §10.7 tenant experimentTargeting block: how a
 // tenant resolves mode:external experiment assignment. The zero value
 // (Provider == "") means the tenant configures no external targeting —
 // its mode:external experiments are skipped and only percentage-mode
-// experiments route.
+// experiments route. The JSON tags match the §10.7 experimentTargeting
+// field names; they are the gateway-stored and admin-API wire shape.
 type TargetingConfig struct {
-	Provider     TargetingProvider
-	TimeoutMs    int
-	OFREP        *OFREPConfig
-	LaunchDarkly *LaunchDarklyConfig
-	Statsig      *StatsigConfig
-	Unleash      *UnleashConfig
+	Provider     TargetingProvider   `json:"provider,omitempty"`
+	TimeoutMs    int                 `json:"timeoutMs,omitempty"`
+	OFREP        *OFREPConfig        `json:"ofrep,omitempty"`
+	LaunchDarkly *LaunchDarklyConfig `json:"launchdarkly,omitempty"`
+	Statsig      *StatsigConfig      `json:"statsig,omitempty"`
+	Unleash      *UnleashConfig      `json:"unleash,omitempty"`
 }
 
 // Configured reports whether the tenant has set up external targeting.

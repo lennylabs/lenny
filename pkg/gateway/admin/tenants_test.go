@@ -13,6 +13,7 @@ import (
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -102,6 +103,75 @@ func TestCreateTenantHappyPath(t *testing.T) {
 	}
 	if row.DisplayName != "Acme Corp" {
 		t.Errorf("row.DisplayName: got %q", row.DisplayName)
+	}
+}
+
+func TestCreateTenantWithExperimentTargeting(t *testing.T) {
+	router, store := newAdminServer(t)
+	body, _ := json.Marshal(admin.TenantPayload{
+		ID: "acme",
+		ExperimentTargeting: &experiment.TargetingConfig{
+			Provider:  experiment.TargetingProviderOFREP,
+			TimeoutMs: 250,
+			OFREP:     &experiment.OFREPConfig{Endpoint: "https://flags.internal/ofrep"},
+		},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp admin.TenantPayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.ExperimentTargeting == nil || resp.ExperimentTargeting.Provider != experiment.TargetingProviderOFREP {
+		t.Fatalf("response experimentTargeting = %+v, want an ofrep config", resp.ExperimentTargeting)
+	}
+	row, err := store.Get(req.Context(), "acme")
+	if err != nil {
+		t.Fatalf("store missing tenant: %v", err)
+	}
+	if !row.ExperimentTargeting.Configured() || row.ExperimentTargeting.OFREP == nil ||
+		row.ExperimentTargeting.OFREP.Endpoint != "https://flags.internal/ofrep" {
+		t.Errorf("stored experimentTargeting = %+v", row.ExperimentTargeting)
+	}
+}
+
+func TestCreateTenantRejectsInvalidExperimentTargeting(t *testing.T) {
+	router, _ := newAdminServer(t)
+	// provider ofrep with no ofrep block fails §10.7 validation.
+	body, _ := json.Marshal(admin.TenantPayload{
+		ID:                  "acme",
+		ExperimentTargeting: &experiment.TargetingConfig{Provider: experiment.TargetingProviderOFREP},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400 for an invalid experimentTargeting; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUpdateTenantSetsExperimentTargeting(t *testing.T) {
+	router, store := newAdminServer(t)
+	if err := store.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	body, _ := json.Marshal(admin.UpdateTenantRequest{
+		ExperimentTargeting: &experiment.TargetingConfig{
+			Provider:     experiment.TargetingProviderLaunchDarkly,
+			LaunchDarkly: &experiment.LaunchDarklyConfig{SDKKey: "sdk-1"},
+		},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/acme", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(req.Context(), "acme")
+	if row.ExperimentTargeting.Provider != experiment.TargetingProviderLaunchDarkly {
+		t.Errorf("stored provider = %q, want launchdarkly", row.ExperimentTargeting.Provider)
 	}
 }
 

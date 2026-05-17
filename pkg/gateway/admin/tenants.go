@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -436,23 +437,24 @@ func (r *Router) requirePermission(perm auth.Permission) func(http.Handler) http
 
 // TenantPayload is the §15.1 admin-tenant request/response body.
 type TenantPayload struct {
-	ID                    string `json:"id"`
-	DisplayName           string `json:"displayName,omitempty"`
-	ComplianceProfile     string `json:"complianceProfile,omitempty"`
-	DataResidencyRegion   string `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier         string `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions int    `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes     int64  `json:"storageQuotaBytes,omitempty"`
-	MinIsolationProfile   string `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy  string `json:"billingErasurePolicy,omitempty"`
-	CreatedAt             string `json:"createdAt,omitempty"`
-	UpdatedAt             string `json:"updatedAt,omitempty"`
-	DeletedAt             string `json:"deletedAt,omitempty"`
+	ID                    string                      `json:"id"`
+	DisplayName           string                      `json:"displayName,omitempty"`
+	ComplianceProfile     string                      `json:"complianceProfile,omitempty"`
+	DataResidencyRegion   string                      `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier         string                      `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions int                         `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes     int64                       `json:"storageQuotaBytes,omitempty"`
+	MinIsolationProfile   string                      `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy  string                      `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
+	CreatedAt             string                      `json:"createdAt,omitempty"`
+	UpdatedAt             string                      `json:"updatedAt,omitempty"`
+	DeletedAt             string                      `json:"deletedAt,omitempty"`
 }
 
 // fromTenant maps a stored row to the wire payload.
 func fromTenant(t tenantstore.Tenant) TenantPayload {
-	return TenantPayload{
+	p := TenantPayload{
 		ID:                    t.ID,
 		DisplayName:           t.DisplayName,
 		ComplianceProfile:     t.ComplianceProfile,
@@ -466,6 +468,11 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
 	}
+	if t.ExperimentTargeting.Configured() {
+		et := t.ExperimentTargeting.Clone()
+		p.ExperimentTargeting = &et
+	}
+	return p
 }
 
 // validBillingErasurePolicy reports whether s is an accepted §12.8
@@ -612,6 +619,13 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "billingErasurePolicy"})
 		return
 	}
+	if body.ExperimentTargeting != nil {
+		if err := body.ExperimentTargeting.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "experimentTargeting"})
+			return
+		}
+	}
 
 	t := tenantstore.Tenant{
 		ID:                    body.ID,
@@ -624,6 +638,9 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		MinIsolationProfile:   body.MinIsolationProfile,
 		BillingErasurePolicy:  body.BillingErasurePolicy,
 		CreatedAt:             r.clock(),
+	}
+	if body.ExperimentTargeting != nil {
+		t.ExperimentTargeting = body.ExperimentTargeting.Clone()
 	}
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
@@ -696,14 +713,15 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 // the fields explicitly present are mutated; omitting a field leaves
 // the stored value untouched. Empty-string clears the field.
 type UpdateTenantRequest struct {
-	DisplayName           *string `json:"displayName,omitempty"`
-	ComplianceProfile     *string `json:"complianceProfile,omitempty"`
-	DataResidencyRegion   *string `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier         *string `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions *int    `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes     *int64  `json:"storageQuotaBytes,omitempty"`
-	MinIsolationProfile   *string `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy  *string `json:"billingErasurePolicy,omitempty"`
+	DisplayName           *string                     `json:"displayName,omitempty"`
+	ComplianceProfile     *string                     `json:"complianceProfile,omitempty"`
+	DataResidencyRegion   *string                     `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier         *string                     `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions *int                        `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes     *int64                      `json:"storageQuotaBytes,omitempty"`
+	MinIsolationProfile   *string                     `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy  *string                     `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
 }
 
 // handleUpdateTenant implements PUT /v1/admin/tenants/{id}.
@@ -738,6 +756,13 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			"billingErasurePolicy must be pseudonymize or exempt",
 			map[string]any{"field": "billingErasurePolicy"})
 		return
+	}
+	if body.ExperimentTargeting != nil {
+		if err := body.ExperimentTargeting.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "experimentTargeting"})
+			return
+		}
 	}
 	// §11.7 compliance ratchet: complianceProfile may be tightened in
 	// place but never lowered through the generic update endpoint.
@@ -786,6 +811,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.BillingErasurePolicy != nil {
 			t.BillingErasurePolicy = *body.BillingErasurePolicy
+		}
+		if body.ExperimentTargeting != nil {
+			t.ExperimentTargeting = body.ExperimentTargeting.Clone()
 		}
 		return nil
 	})

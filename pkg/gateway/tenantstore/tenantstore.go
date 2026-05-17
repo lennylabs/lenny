@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/experiment"
 )
 
 // Tenant captures the platform-scoped registry row per §12.5 and
@@ -80,6 +81,12 @@ type Tenant struct {
 	// access; `allow-all` grants access to every runtime owned by the
 	// tenant.
 	NoEnvironmentPolicy string
+
+	// ExperimentTargeting is the §10.7 experimentTargeting block: how
+	// the tenant resolves mode:external experiment assignment. The zero
+	// value means the tenant configures no external targeting and only
+	// percentage-mode experiments route.
+	ExperimentTargeting experiment.TargetingConfig
 
 	// ErasureSalt is the §12.8 per-tenant billing-pseudonymization
 	// secret (256-bit). It is non-nil only transiently, while an
@@ -200,8 +207,21 @@ func (m *Memory) Create(_ context.Context, t Tenant) error {
 	if t.UpdatedAt.IsZero() {
 		t.UpdatedAt = t.CreatedAt
 	}
-	m.tenants[t.ID] = t
+	m.tenants[t.ID] = cloneTenant(t)
 	return nil
+}
+
+// cloneTenant returns a deep copy of t so the in-memory store never
+// shares the ExperimentTargeting sub-blocks or the ErasureSalt backing
+// array with a caller — a mutation through a returned or stored Tenant
+// cannot reach into the registry.
+func cloneTenant(t Tenant) Tenant {
+	cp := t
+	if t.ErasureSalt != nil {
+		cp.ErasureSalt = append([]byte(nil), t.ErasureSalt...)
+	}
+	cp.ExperimentTargeting = t.ExperimentTargeting.Clone()
+	return cp
 }
 
 // Get implements Store.
@@ -212,17 +232,18 @@ func (m *Memory) Get(_ context.Context, id string) (Tenant, error) {
 	if !ok {
 		return Tenant{}, ErrNotFound
 	}
-	return row, nil
+	return cloneTenant(row), nil
 }
 
 // Update implements Store.
 func (m *Memory) Update(_ context.Context, id string, mutate func(*Tenant) error) (Tenant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.tenants[id]
+	stored, ok := m.tenants[id]
 	if !ok {
 		return Tenant{}, ErrNotFound
 	}
+	row := cloneTenant(stored)
 	prev := row.UpdatedAt
 	if err := mutate(&row); err != nil {
 		return Tenant{}, err
@@ -233,7 +254,7 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Tenant) error
 	}
 	row.UpdatedAt = now
 	m.tenants[id] = row
-	return row, nil
+	return cloneTenant(row), nil
 }
 
 // List implements Store.
@@ -245,7 +266,7 @@ func (m *Memory) List(_ context.Context, filter ListFilter) ([]Tenant, error) {
 		if !filter.IncludeDeleted && !row.IsActive() {
 			continue
 		}
-		out = append(out, row)
+		out = append(out, cloneTenant(row))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
