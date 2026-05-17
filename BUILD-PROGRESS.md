@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8504ea2` — adapter-local MCP server with nonce-authenticated connection
+  handling. `Server.ServeConn` handles one MCP connection: the first message
+  must be the nonce-authenticated `initialize` request (a failed handshake
+  closes the connection without dispatching tools); it then answers
+  `initialize`, `tools/list`, and `tools/call`, dispatching to registered
+  `Tool` handlers and skipping JSON-RPC notifications. `ServeConn` takes a
+  `net.Conn` so the abstract-Unix-socket accept loop wraps it unchanged.
+  Remaining MCP-fabric work: the abstract-Unix-socket accept loop with the
+  `SO_PEERCRED` UID check (Linux-only), the platform MCP tool surface
+  (`lenny/delegate_task`, `lenny/output`, etc.) registered onto the server,
+  and the `platformMcpServer`/`adapterLocalTools` manifest fields that point
+  the runtime at the socket.
 - `d555b51` — §15.4.3 intra-pod MCP nonce handshake validation. New package
   `pkg/adapter/mcp`. `AuthenticateInitialize` validates the nonce on an MCP
   `initialize` JSON-RPC request — a constant-time exact compare against the
