@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e9da48c` — `StagingPath` hashes the upload ref. `StagingPath` required a
+  plain file name, but a §14 WorkspaceSource `uploadRef` is a §4.5
+  `lenny-blob://` URI (the upload API returns one), so every real
+  `uploadFile`/`uploadArchive` plan would have failed staging-path
+  resolution. `StagingPath` now SHA-256-hashes the ref and uses the hex
+  digest as the staging file name: a fixed-charset name that cannot escape
+  the staging directory, deterministic so `PrepareWorkspace` staging and
+  `uploadFile`/`uploadArchive` materialization agree, and accepting any ref
+  form. Remaining staging follow-on: the gateway upload-store-to-binder
+  content path — `Bind` collects `uploadFile`/`uploadArchive` `uploadRef`s
+  from the plan, fetches each blob from the blob store, and streams them via
+  `PrepareWorkspace` before `FinalizeWorkspace`.
 - `0ee2ed9` — §4.7 staging-RPC split complete: `StartSession` slimmed,
   binder orchestrates the sequence. The adapter bundled workspace
   materialization and setup-command execution into `StartSession`.
