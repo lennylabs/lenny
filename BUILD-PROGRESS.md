@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5b9cc18` — §5.1 enforce the setupPolicy aggregate timeout. `workspace.RunSetup`
+  bounded each setup command individually but never enforced the §5.1
+  `setupPolicy.timeoutSeconds` cap on the whole setup phase. It now takes a
+  `SetupOptions` carrying the aggregate cap and the `onTimeout` disposition — exceeding
+  the cap aborts under `fail` and proceeds to runtime start under `warn`. The adapter
+  passes a zero `SetupOptions` until the §15.4 manifest carries the runtime's
+  `setupPolicy`; that plumbing is the remaining wiring.
 - `17bf241` — §14 enforce gitClone auth host-to-pool binding at session creation.
   `resolvePlanForCreate` runs the §14 auth binding check for every gitClone source with
   an `auth` block: when a `CredentialPools` store is wired, the source's URL host must
