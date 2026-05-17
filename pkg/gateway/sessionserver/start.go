@@ -73,18 +73,9 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var planWarnings []workspaceplan.Warning
-	var parsedPlan workspaceplan.Plan
-	var planJSON json.RawMessage
-	if len(req.WorkspacePlan) > 0 && !isJSONNull(req.WorkspacePlan) {
-		plan, warnings, err := workspaceplan.Parse(req.WorkspacePlan)
-		if err != nil {
-			s.writeWorkspacePlanError(w, err)
-			return
-		}
-		parsedPlan = plan
-		planJSON = req.WorkspacePlan
-		planWarnings = warnings
+	parsedPlan, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	if !planOK {
+		return
 	}
 
 	row := sessionstore.Session{
@@ -218,12 +209,85 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 // session row at create. It returns the zero Plan when the session was
 // created without a plan. The plan was validated at create, so a parse
 // failure here indicates gateway-version skew against the stored plan.
+// ParseStored is used because the stored plan carries the
+// gateway-written resolvedCommitSha that Parse rejects as client input.
 func storedWorkspacePlan(row sessionstore.Session) (workspaceplan.Plan, error) {
 	if len(row.WorkspacePlan) == 0 || isJSONNull(row.WorkspacePlan) {
 		return workspaceplan.Plan{}, nil
 	}
-	plan, _, err := workspaceplan.Parse(row.WorkspacePlan)
+	plan, _, err := workspaceplan.ParseStored(row.WorkspacePlan)
 	return plan, err
+}
+
+// resolvePlanForCreate parses a client-submitted §14 WorkspacePlan and,
+// when a RefResolver is wired and the plan has a gitClone source, pins
+// each gitClone ref to an immutable commit SHA per §14. It returns the
+// parsed plan, the canonical JSON to persist on the session row (the
+// pinned form when pinning occurred, the submitted bytes otherwise),
+// and the consumer-advisory warnings. On a validation or
+// ref-resolution failure it writes the §15.1 error response and
+// returns ok=false; the caller must abort.
+func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, rawPlan json.RawMessage) (
+	plan workspaceplan.Plan, storedJSON json.RawMessage, warnings []workspaceplan.Warning, ok bool) {
+
+	if len(rawPlan) == 0 || isJSONNull(rawPlan) {
+		return workspaceplan.Plan{}, nil, nil, true
+	}
+	parsed, warns, err := workspaceplan.Parse(rawPlan)
+	if err != nil {
+		s.writeWorkspacePlanError(w, err)
+		return workspaceplan.Plan{}, nil, nil, false
+	}
+	storedJSON = rawPlan
+	if s.refResolver != nil && hasGitClone(parsed) {
+		if err := workspaceplan.PinCommitSHAs(r.Context(), &parsed, s.refResolver); err != nil {
+			s.writeRefResolveError(w, err)
+			return workspaceplan.Plan{}, nil, nil, false
+		}
+		pinned, err := workspaceplan.Marshal(parsed)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"could not serialize the resolved workspace plan: "+err.Error(), nil)
+			return workspaceplan.Plan{}, nil, nil, false
+		}
+		storedJSON = pinned
+	}
+	return parsed, storedJSON, warns, true
+}
+
+// hasGitClone reports whether the plan has at least one gitClone
+// source — the only source type whose ref the gateway must pin.
+func hasGitClone(plan workspaceplan.Plan) bool {
+	for _, src := range plan.Sources {
+		if src.Type == workspaceplan.TypeGitClone {
+			return true
+		}
+	}
+	return false
+}
+
+// writeRefResolveError maps a §14 gitClone ref-resolution failure to
+// its §15.1 response: a transient failure is GIT_CLONE_REF_RESOLVE_TRANSIENT
+// (503, retryable), a permanent one is GIT_CLONE_REF_UNRESOLVABLE (422).
+func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
+	var re *workspaceplan.ResolveError
+	if !errors.As(err, &re) {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	details := map[string]any{
+		"url":         re.URL,
+		"ref":         re.Ref,
+		"sourceIndex": re.SourceIndex,
+		"reason":      string(re.Reason),
+	}
+	if re.Reason.Transient() {
+		s.writeError(w, http.StatusServiceUnavailable, "GIT_CLONE_REF_RESOLVE_TRANSIENT",
+			"could not resolve a gitClone ref: "+re.Err.Error(), details)
+		return
+	}
+	s.writeError(w, http.StatusUnprocessableEntity, "GIT_CLONE_REF_UNRESOLVABLE",
+		"could not resolve a gitClone ref: "+re.Err.Error(), details)
 }
 
 // startOnPod places a started session on a Kubernetes warm pod. It

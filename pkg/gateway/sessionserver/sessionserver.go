@@ -121,6 +121,7 @@ type Server struct {
 	environments       environmentstore.Store
 	tenantAccess       tenantaccessstore.Store
 	opsEmitter         *opsevents.Emitter
+	refResolver        workspaceplan.RefResolver
 	defaultNoEnvPolicy string
 }
 
@@ -310,6 +311,11 @@ type Options struct {
 	// events for session transitions.
 	OpsEmitter *opsevents.Emitter
 
+	// RefResolver pins each §14 gitClone source's ref to an immutable
+	// commit SHA at session creation. Optional — when nil, the gateway
+	// stores the submitted plan without resolving git refs.
+	RefResolver workspaceplan.RefResolver
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
@@ -349,6 +355,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		environments:       opts.Environments,
 		tenantAccess:       opts.TenantAccess,
 		opsEmitter:         opts.OpsEmitter,
+		refResolver:        opts.RefResolver,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 	}
 	if s.clock == nil {
@@ -577,16 +584,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	// state-machine paths). The validated plan is stored on the row so
 	// the start handler can materialize it onto the claimed pod and
 	// GET /v1/sessions/{id} can return it per §15.1.
-	var planWarnings []workspaceplan.Warning
-	var planJSON json.RawMessage
-	if len(req.WorkspacePlan) > 0 && !isJSONNull(req.WorkspacePlan) {
-		_, warnings, err := workspaceplan.Parse(req.WorkspacePlan)
-		if err != nil {
-			s.writeWorkspacePlanError(w, err)
-			return
-		}
-		planJSON = req.WorkspacePlan
-		planWarnings = warnings
+	_, planJSON, planWarnings, planOK := s.resolvePlanForCreate(w, r, req.WorkspacePlan)
+	if !planOK {
+		return
 	}
 
 	row := sessionstore.Session{

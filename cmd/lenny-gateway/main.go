@@ -87,6 +87,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
@@ -503,6 +504,7 @@ func main() {
 		Environments:               environments,
 		TenantAccess:               tenantAccess,
 		OpsEmitter:                 opsEmitter,
+		RefResolver:                gitref.NewLsRemoteResolver(gitref.Options{}),
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
