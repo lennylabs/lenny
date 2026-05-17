@@ -130,6 +130,34 @@ func TestEvaluateTransportFailure(t *testing.T) {
 	}
 }
 
+func TestEvaluateSendsConfiguredHeaders(t *testing.T) {
+	var gotAuth, gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotContentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"variant":"control"}`))
+	}))
+	defer srv.Close()
+
+	c, err := ofrep.New(ofrep.Options{
+		BaseURL: srv.URL,
+		Headers: map[string]string{"Authorization": "Bearer tok-1", "Content-Type": "text/plain"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Evaluate(context.Background(), "x", nil); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if gotAuth != "Bearer tok-1" {
+		t.Errorf("Authorization header = %q, want the configured Bearer tok-1", gotAuth)
+	}
+	// A configured Content-Type must not override the protocol header.
+	if gotContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json (a config header cannot break it)", gotContentType)
+	}
+}
+
 func TestNewRejectsEmptyBaseURL(t *testing.T) {
 	if _, err := ofrep.New(ofrep.Options{}); err == nil {
 		t.Error("New must reject an empty BaseURL")

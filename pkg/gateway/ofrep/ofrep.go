@@ -37,6 +37,11 @@ type Options struct {
 	// HTTPClient overrides the default client. When set, Timeout is
 	// ignored — the caller owns the client's transport and timeout.
 	HTTPClient *http.Client
+	// Headers are static headers added to every evaluation request —
+	// the §10.7 experimentTargeting.ofrep.headers block, typically an
+	// Authorization header. A header that collides with a protocol
+	// header (Content-Type, Accept) does not override it.
+	Headers map[string]string
 }
 
 // Client evaluates flags against an OFREP endpoint. It is safe for
@@ -44,6 +49,7 @@ type Options struct {
 type Client struct {
 	baseURL string
 	http    *http.Client
+	headers map[string]string
 }
 
 // New returns a Client for the OFREP service at opts.BaseURL.
@@ -60,7 +66,14 @@ func New(opts Options) (*Client, error) {
 		}
 		hc = &http.Client{Timeout: timeout}
 	}
-	return &Client{baseURL: base, http: hc}, nil
+	c := &Client{baseURL: base, http: hc}
+	if len(opts.Headers) > 0 {
+		c.headers = make(map[string]string, len(opts.Headers))
+		for k, v := range opts.Headers {
+			c.headers[k] = v
+		}
+	}
+	return c, nil
 }
 
 // Result is a successful OFREP flag evaluation. The §10.7 caller feeds
@@ -104,6 +117,11 @@ func (c *Client) Evaluate(ctx context.Context, flagKey string, evalContext map[s
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return Result{}, fmt.Errorf("ofrep: build request: %w", err)
+	}
+	// Static config headers apply first; the protocol headers are set
+	// last so a configured header cannot break the request encoding.
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
