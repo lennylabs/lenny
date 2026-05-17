@@ -12,6 +12,8 @@
 package workspace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -147,17 +149,19 @@ func writeUploadFile(root, stagingDir string, src *adapterv1.WorkspaceSource) er
 	return nil
 }
 
-// StagingPath resolves an upload ref to a path inside the staging
-// directory. The ref MUST be a plain file name: a path separator, an
-// empty string, ".", or ".." is rejected so a malicious ref cannot
-// escape the staging directory. PrepareWorkspace and uploadFile
-// materialization share this resolution.
+// StagingPath maps an upload ref to a deterministic, contained path
+// inside the staging directory. The ref is a §14 WorkspaceSource
+// uploadRef — a §4.5 lenny-blob:// URI or any opaque token — so it is
+// hashed: the staging file name is always a fixed-charset hex string
+// that cannot contain a path separator and cannot escape the staging
+// directory. PrepareWorkspace staging and uploadFile/uploadArchive
+// materialization resolve the same ref to the same path.
 func StagingPath(stagingDir, uploadRef string) (string, error) {
-	if uploadRef == "" || uploadRef == "." || uploadRef == ".." ||
-		uploadRef != filepath.Base(uploadRef) {
-		return "", fmt.Errorf("upload ref %q is not a plain file name", uploadRef)
+	if uploadRef == "" {
+		return "", errors.New("upload ref is empty")
 	}
-	return filepath.Join(stagingDir, uploadRef), nil
+	sum := sha256.Sum256([]byte(uploadRef))
+	return filepath.Join(stagingDir, hex.EncodeToString(sum[:])), nil
 }
 
 // resolvePath joins rel onto root and confirms the result stays within

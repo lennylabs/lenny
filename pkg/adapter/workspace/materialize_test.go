@@ -176,13 +176,23 @@ func uploadSource(path, uploadRef, mode string) *adapterv1.WorkspaceSource {
 	}
 }
 
+// stageUpload writes content to the staging path StagingPath resolves
+// the ref to, mirroring what the PrepareWorkspace RPC does on the pod.
+func stageUpload(t *testing.T, stagingDir, ref string, content []byte) {
+	t.Helper()
+	p, err := workspace.StagingPath(stagingDir, ref)
+	if err != nil {
+		t.Fatalf("StagingPath(%q): %v", ref, err)
+	}
+	if err := os.WriteFile(p, content, 0o600); err != nil {
+		t.Fatalf("stage upload %q: %v", ref, err)
+	}
+}
+
 func TestMaterializeUploadFile(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir()
-	if err := os.WriteFile(filepath.Join(staging, "upload_abc"),
-		[]byte("staged bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	stageUpload(t, staging, "upload_abc", []byte("staged bytes"))
 	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
 		uploadSource("data/input.bin", "upload_abc", ""),
 	}); err != nil {
@@ -204,9 +214,7 @@ func TestMaterializeUploadFile(t *testing.T) {
 func TestMaterializeUploadFileHonorsMode(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir()
-	if err := os.WriteFile(filepath.Join(staging, "u1"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	stageUpload(t, staging, "u1", []byte("x"))
 	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
 		uploadSource("run.sh", "u1", "750"),
 	}); err != nil {
@@ -237,23 +245,34 @@ func TestMaterializeUploadFileWithoutStagingDir(t *testing.T) {
 	}
 }
 
-func TestMaterializeUploadFileRejectsEscapingRef(t *testing.T) {
-	root := t.TempDir()
-	staging := t.TempDir()
-	if err := workspace.Materialize(root, staging, []*adapterv1.WorkspaceSource{
-		uploadSource("f.txt", "../escape", ""),
-	}); err == nil {
-		t.Fatal("Materialize should reject an upload ref that escapes the staging directory")
-	}
-}
-
 func TestStagingPath(t *testing.T) {
-	if _, err := workspace.StagingPath("/staging", "upload_abc"); err != nil {
-		t.Errorf("StagingPath with a plain ref = %v, want nil", err)
+	if _, err := workspace.StagingPath("/staging", ""); err == nil {
+		t.Error("StagingPath with an empty ref = nil, want an error")
 	}
-	for _, ref := range []string{"", ".", "..", "a/b", "../escape", "/abs"} {
-		if _, err := workspace.StagingPath("/staging", ref); err == nil {
-			t.Errorf("StagingPath(%q) = nil, want a rejection", ref)
+	// Any ref, including a lenny-blob:// URI or a traversal attempt,
+	// hashes to a fixed-charset name strictly inside the staging dir.
+	for _, ref := range []string{
+		"upload_abc123",
+		"lenny-blob://acme/sess-1/part-9?ttl=600",
+		"../../etc/passwd",
+		"a/b/c",
+	} {
+		got, err := workspace.StagingPath("/staging", ref)
+		if err != nil {
+			t.Fatalf("StagingPath(%q): %v", ref, err)
 		}
+		if filepath.Dir(got) != "/staging" {
+			t.Errorf("StagingPath(%q) = %q, want a child of /staging", ref, got)
+		}
+	}
+	// The mapping is deterministic and collision-free for distinct refs.
+	a, _ := workspace.StagingPath("/staging", "ref-one")
+	again, _ := workspace.StagingPath("/staging", "ref-one")
+	b, _ := workspace.StagingPath("/staging", "ref-two")
+	if a != again {
+		t.Errorf("StagingPath is not deterministic: %q vs %q", a, again)
+	}
+	if a == b {
+		t.Error("StagingPath mapped distinct refs to the same path")
 	}
 }

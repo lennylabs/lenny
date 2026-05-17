@@ -177,7 +177,11 @@ func TestPrepareWorkspaceStagesUploads(t *testing.T) {
 		t.Errorf("stagedBytes = %d, want %d", resp.GetStagedBytes(), wantBytes)
 	}
 	for ref, want := range uploads {
-		got, err := os.ReadFile(filepath.Join(stagingDir, ref))
+		stagedAt, err := workspace.StagingPath(stagingDir, ref)
+		if err != nil {
+			t.Fatalf("StagingPath(%q): %v", ref, err)
+		}
+		got, err := os.ReadFile(stagedAt)
 		if err != nil {
 			t.Fatalf("read staged %s: %v", ref, err)
 		}
@@ -204,7 +208,11 @@ func TestPrepareWorkspaceConcatenatesChunks(t *testing.T) {
 	if resp.GetStagedBytes() != int64(len(large)) {
 		t.Errorf("stagedBytes = %d, want %d", resp.GetStagedBytes(), len(large))
 	}
-	got, err := os.ReadFile(filepath.Join(stagingDir, "big"))
+	stagedAt, err := workspace.StagingPath(stagingDir, "big")
+	if err != nil {
+		t.Fatalf("StagingPath: %v", err)
+	}
+	got, err := os.ReadFile(stagedAt)
 	if err != nil {
 		t.Fatalf("read staged file: %v", err)
 	}
@@ -224,14 +232,14 @@ func TestPrepareWorkspaceWithoutStagingDir(t *testing.T) {
 	}
 }
 
-func TestPrepareWorkspaceRejectsEscapingRef(t *testing.T) {
+func TestPrepareWorkspaceRejectsEmptyRef(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.StagingDir = t.TempDir()
 	cl := dialAdapter(t, srv)
 	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
-		map[string][]byte{"../escape": []byte("payload")})
+		map[string][]byte{"": []byte("payload")})
 	if status.Code(err) != codes.InvalidArgument {
-		t.Errorf("PrepareWorkspace with an escaping upload ref = %v, want InvalidArgument", err)
+		t.Errorf("PrepareWorkspace with an empty upload ref = %v, want InvalidArgument", err)
 	}
 }
 

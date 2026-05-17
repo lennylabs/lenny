@@ -70,9 +70,7 @@ func materializeArchive(t *testing.T, format, prefix string, strip int, archive 
 	t.Helper()
 	root := t.TempDir()
 	staging := t.TempDir()
-	if err := os.WriteFile(filepath.Join(staging, "arch"), archive, 0o600); err != nil {
-		t.Fatalf("stage archive: %v", err)
-	}
+	stageUpload(t, staging, "arch", archive)
 	src := &adapterv1.WorkspaceSource{
 		Type:            "uploadArchive",
 		Path:            prefix,
