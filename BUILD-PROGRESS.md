@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `317ac6d` — §14 `gitClone` materialization (pod side). `gitClone` was the
+  last `WorkspaceSource` type returning `ErrSourceUnsupported`. Per §14 the
+  gateway clones the repository on its own network path (the pod never sees
+  VCS credentials) and delivers the tree to the pod's staging area.
+  `extractGitClone` materializes a `gitClone` source by extracting that
+  staged gzip-tar under the source path, reusing `extractUploadTar`; the
+  staging key is `GitCloneStagingRef` (repository URL + pinned commit SHA).
+  `ErrSourceUnsupported` is removed — `Materialize` handles every §14 source
+  type. Remaining `gitClone` slice: the gateway-side clone-and-deliver —
+  `Bind` invokes the `gitref` clone primitive, archives the tree, and streams
+  it via `PrepareWorkspace` under `GitCloneStagingRef`. The authenticated
+  (`auth: credential-lease`) clone additionally needs the §4.9 VCS
+  credential-lease token path.
 - `a39c60c` — §4.7 staging path complete: `Bind` stages plan uploads via
   `PrepareWorkspace`. `PrepareWorkspace` had no caller; `Bind` ran
   `FinalizeWorkspace`/`RunSetup`/`StartSession` but never staged the content
