@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a268bd4` / `56ab88a` — §16.6 operational events catalog. `opsevents` gains a typed
+  `EventType` enum: the closed §16.6 enumeration of gateway-emitted operational-event
+  short names (the 19 core types plus the 6 ExperimentRouter types). `EventType` carries
+  `CloudEventsType()` to derive the `dev.lenny.*` CloudEvents type; `GatewayEventTypes()`
+  and `IsGatewayEventType()` expose the catalogue. The four wired emit sites (admin
+  circuit-breaker open/close, session failure, health-status transition) now reference
+  the `EventType` constants instead of `dev.lenny.*` string literals, and the admin
+  `emitOpsEvent` helper takes an `EventType`.
 - `bf10a61` — §25.3 `credrenewal.OnRenewed` hook. Adds the `OnRenewed` callback to the
   §4.9 CredentialRenewalWorker (the §25.3 `credential_rotated` extension point,
   consistent with the existing `OnExhausted`). The `credential_rotated` emit is wired
