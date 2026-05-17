@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `db9b182` — fix: `SkippedAfter` under-reported external experiments. `SkippedAfter`
+  excluded every external-mode experiment — correct when `Route` was percentage-only,
+  but stale once `RouteMixed` began evaluating external experiments. It now takes an
+  `externalEvaluated` flag: when `RouteMixed` ran with an `ExternalEvaluator`, an
+  external-mode experiment after the enrolled one was a live candidate the first-match
+  rule skipped and belongs in the §16.6 `multi_eligible_skipped` audit set.
+  `applyExperimentRouting` passes `evaluator != nil`.
 - `8be8b49` — §16.5 add `CircuitBreakerActive` and `CircuitBreakerStale` to the rule
   catalog. The §11.6 circuit-breaker metrics `lenny_circuit_breaker_open` and
   `lenny_circuit_breaker_cache_stale_seconds` are emitted by `gatewaymetrics`, so their
