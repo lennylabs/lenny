@@ -123,6 +123,31 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 	}
 }
 
+// FinalizeWorkspace materializes the §14 WorkspacePlan into the pod's
+// workspace root (§4.7, the second session-assignment RPC). For a plan
+// with uploadFile or uploadArchive sources, PrepareWorkspace must have
+// staged their content first.
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan) error {
+	_, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+		SessionId:     &adapterv1.SessionId{Value: sessionID},
+		WorkspacePlan: plan,
+	})
+	return err
+}
+
+// RunSetup executes the §14 WorkspacePlan setup commands in the pod's
+// workspace (§4.7, the third session-assignment RPC). setupPolicy
+// bounds the aggregate setup phase per §5.1; a nil policy applies no
+// aggregate cap.
+func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) error {
+	_, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
+		SessionId:     &adapterv1.SessionId{Value: sessionID},
+		SetupCommands: setupCommands,
+		SetupPolicy:   setupPolicy,
+	})
+	return err
+}
+
 // SendMessage forwards a pre-encoded §15.4.1 message envelope to the
 // pod's runtime.
 func (c *Client) SendMessage(ctx context.Context, sessionID string, envelope []byte) error {

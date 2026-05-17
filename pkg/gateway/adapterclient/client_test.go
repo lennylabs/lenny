@@ -235,6 +235,69 @@ func TestPrepareWorkspaceRejectsEscapingRef(t *testing.T) {
 	}
 }
 
+func TestClientFinalizeWorkspace(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	root := t.TempDir()
+	srv.WorkspaceRoot = root
+	cl := dialAdapter(t, srv)
+
+	if err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
+		SchemaVersion: 1,
+		Sources: []*adapterv1.WorkspaceSource{
+			{Type: "inlineFile", Path: "CLAUDE.md", Content: "notes", Mode: "644"},
+		},
+	}); err != nil {
+		t.Fatalf("FinalizeWorkspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
+		t.Errorf("FinalizeWorkspace did not materialize the workspace: %v", err)
+	}
+}
+
+func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	cl := dialAdapter(t, srv)
+
+	err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
+		SchemaVersion: 1,
+		Sources: []*adapterv1.WorkspaceSource{
+			{Type: "inlineFile", Path: "../escape", Content: "x", Mode: "644"},
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("FinalizeWorkspace with an escaping path = %v, want InvalidArgument", err)
+	}
+}
+
+func TestClientRunSetup(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	root := t.TempDir()
+	srv.WorkspaceRoot = root
+	cl := dialAdapter(t, srv)
+
+	if err := cl.RunSetup(context.Background(), "sess-1", []*adapterv1.SetupCommand{
+		{Cmd: "touch setup.done", TimeoutSeconds: 30},
+	}, nil); err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "setup.done")); err != nil {
+		t.Errorf("RunSetup did not run the setup command: %v", err)
+	}
+}
+
+func TestClientRunSetupFailingCommand(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	cl := dialAdapter(t, srv)
+
+	err := cl.RunSetup(context.Background(), "sess-1",
+		[]*adapterv1.SetupCommand{{Cmd: "exit 7"}}, nil)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
+	}
+}
+
 func TestSessionRoundTrip(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test-build")
