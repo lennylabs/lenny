@@ -179,6 +179,23 @@ func Catalog() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
+			Name:        "CircuitBreakerActive",
+			Expr:        `lenny_circuit_breaker_open == 1`,
+			For:         5 * time.Minute,
+			Severity:    SeverityWarning,
+			Summary:     "A circuit breaker has been open for over 5 minutes",
+			Description: "An operator-managed §11.6 circuit breaker has been open without a close action for more than 5 minutes. Requests scoped to the breaker are being rejected; an operator should confirm the breaker is still warranted or close it.",
+			SpecRef:     "§16.5",
+		},
+		{
+			Name:        "CircuitBreakerStale",
+			Expr:        `lenny_circuit_breaker_cache_stale_seconds > 60`,
+			Severity:    SeverityWarning,
+			Summary:     "Circuit-breaker admission cache is stale",
+			Description: "The AdmissionController's in-process circuit-breaker cache has not refreshed from Redis within its poll interval; admission decisions are being served against stale breaker state. Correlate with Redis-reachability alerts.",
+			SpecRef:     "§16.5",
+		},
+		{
 			Name:        "ExperimentIsolationRejections",
 			Expr:        `rate(lenny_experiment_isolation_rejections_total[5m]) > 0`,
 			For:         2 * time.Minute,
