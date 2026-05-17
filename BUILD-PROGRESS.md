@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7303406` — §25.8 platform upgrade phase state machine. New pure package
+  `pkg/upgrade`: the §25.8 ordered phase progression (Preflight → OpsRoll →
+  CRDUpdate → SchemaMigration → GatewayRoll → ControllerRoll → Verification →
+  Complete). `Next` advances a phase; `CanRollBack`/`Rollback` enforce the
+  rule that rollback is permitted only before SchemaMigration applies the
+  irreversible schema changes; `IsTerminal` identifies the end states;
+  `StepNumber`/`TotalSteps` give the 7-step progress numbering. A fourth
+  pure-logic building block of the infrastructure-bound `lenny-ops` service,
+  with `pkg/backup/retention`, `pkg/cron`, and `pkg/drift`.
 - `e4f8624` — §25.10 configuration drift detection comparison. New pure
   package `pkg/drift`: `Diff` walks the desired and actual JSON state field
   by field, recursing into nested objects with dotted paths, and reports
