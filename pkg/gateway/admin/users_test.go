@@ -13,6 +13,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
@@ -217,5 +218,69 @@ func TestUserEndpointsRejectRegularUser(t *testing.T) {
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("regular user: got %d, want 403", rr.Code)
+	}
+}
+
+// §10.2: a role assignment must name a built-in role or a custom role
+// registered in the tenant. A well-formed but unregistered name is
+// rejected at the admin layer even though the userstore accepts the
+// syntax.
+func TestCreateUserRejectsUnknownRole(t *testing.T) {
+	router, _, _ := newUserAdmin(t)
+	body, _ := json.Marshal(admin.UserPayload{
+		Subject: "alice@acme.com", TenantID: "acme",
+		Roles: []pkgauth.Role{"data-analyst"},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/users", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown role: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateUserAcceptsRegisteredCustomRole(t *testing.T) {
+	tenants := tenantstore.NewMemory()
+	users := userstore.NewMemory()
+	roles := customrolestore.NewMemory()
+	_ = roles.Create(context.Background(), customrolestore.CustomRole{
+		TenantID:    "acme",
+		Name:        "session-manager",
+		Permissions: []pkgauth.Permission{pkgauth.PermManageOwnSessions},
+	})
+	router := admin.NewRouter(tenants, admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithUsers(users).WithCustomRoles(roles)
+
+	body, _ := json.Marshal(admin.UserPayload{
+		Subject: "alice@acme.com", TenantID: "acme",
+		Roles: []pkgauth.Role{"session-manager"},
+	})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPost, "/v1/admin/users", bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("registered custom role: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+	row, err := users.Get(context.Background(), "acme", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if len(row.Roles) != 1 || row.Roles[0] != "session-manager" {
+		t.Errorf("Roles: %+v", row.Roles)
+	}
+}
+
+func TestUpdateUserRejectsUnknownRole(t *testing.T) {
+	router, store, _ := newUserAdmin(t)
+	_ = store.Create(context.Background(), userstore.User{Subject: "alice@acme.com", TenantID: "acme"})
+
+	roles := []pkgauth.Role{"data-analyst"}
+	body, _ := json.Marshal(admin.UpdateUserRequest{Roles: &roles})
+	req := withTenantAdminFor(httptest.NewRequest(http.MethodPut, "/v1/admin/users/alice@acme.com", bytes.NewReader(body)), "acme")
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown role on update: got %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
 }

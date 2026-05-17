@@ -126,6 +126,28 @@ func (r *Router) requireUserAdmin(next http.Handler) http.Handler {
 	})
 }
 
+// validateRoleNames rejects a role assignment that names something
+// that is neither a built-in §10.2 role nor an existing custom role
+// in the tenant. The userstore validates role-name syntax only; the
+// custom-role registry is keyed by tenant and is reachable from the
+// admin layer, so existence is checked here. When the registry is
+// not wired, only built-in roles are accepted.
+func (r *Router) validateRoleNames(ctx context.Context, tenant string, roles []auth.Role) error {
+	for _, role := range roles {
+		if role.IsValid() {
+			continue
+		}
+		if r.customRoles == nil {
+			return errors.New("role " + string(role) + " is not a recognised §10.2 role")
+		}
+		if _, err := r.customRoles.Get(ctx, tenant, string(role)); err != nil {
+			return errors.New("role " + string(role) +
+				" is not a built-in role or a custom role in this tenant")
+		}
+	}
+	return nil
+}
+
 func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	var body UserPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -153,6 +175,11 @@ func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+	}
+	if err := r.validateRoleNames(req.Context(), tenant, body.Roles); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+			map[string]any{"field": "roles"})
+		return
 	}
 
 	u := userstore.User{
@@ -248,6 +275,13 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 					"only platform-admin can grant platform-admin role", nil)
 				return
 			}
+		}
+	}
+	if body.Roles != nil {
+		if err := r.validateRoleNames(req.Context(), tenant, *body.Roles); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
+				map[string]any{"field": "roles"})
+			return
 		}
 	}
 	updated, err := r.users.Update(req.Context(), tenant, subject, func(u *userstore.User) error {

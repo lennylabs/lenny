@@ -73,6 +73,18 @@ func (r Role) IsTenantScoped() bool {
 	return r != RolePlatformAdmin
 }
 
+// roleNamePattern is the §10.2 role-name shape, shared by built-in and
+// custom role names. All five built-in roles match it.
+var roleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
+
+// IsWellFormedRoleName reports whether s is a syntactically valid role
+// name — the shape shared by built-in and §10.2 custom roles. It does
+// not verify that a custom role of that name exists; existence is
+// checked where the tenant's custom-role registry is available.
+func IsWellFormedRoleName(s string) bool {
+	return roleNamePattern.MatchString(s)
+}
+
 // Permission is one operation category from the §10.2 RBAC permission
 // matrix. The closed set below mirrors the matrix rows one to one; each
 // constant's comment quotes the matrix row it represents. §10.2 custom

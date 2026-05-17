@@ -130,8 +130,8 @@ func (m *Memory) Create(_ context.Context, u User) error {
 		return err
 	}
 	for _, r := range u.Roles {
-		if !r.IsValid() {
-			return errors.New("userstore: role " + string(r) + " is not a recognised §10.2 RBAC role")
+		if !auth.IsWellFormedRoleName(string(r)) {
+			return errors.New("userstore: role " + string(r) + " is not a well-formed role name")
 		}
 	}
 	m.mu.Lock()
@@ -176,8 +176,8 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 		return User{}, err
 	}
 	for _, r := range row.Roles {
-		if !r.IsValid() {
-			return User{}, errors.New("userstore: role " + string(r) + " is not a recognised §10.2 RBAC role")
+		if !auth.IsWellFormedRoleName(string(r)) {
+			return User{}, errors.New("userstore: role " + string(r) + " is not a well-formed role name")
 		}
 	}
 	now := time.Now().UTC()

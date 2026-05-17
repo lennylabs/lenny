@@ -58,8 +58,8 @@ var (
 	ErrAlreadyExists = errors.New("customrolestore: custom role already exists")
 )
 
-// namePattern follows the §10.2 role-name shape — lowercase
-// alphanumeric with hyphen and underscore separators.
+// namePattern is the §10.2 role-name format: lowercase alphanumeric
+// with hyphen and underscore separators.
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 
 // ValidateName reports whether name is a structurally valid custom-role

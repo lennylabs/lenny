@@ -52,15 +52,33 @@ func TestCreateRejectsBadSubject(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsBadRoles(t *testing.T) {
+func TestCreateRejectsMalformedRoleName(t *testing.T) {
 	s := userstore.NewMemory()
+	// A custom role name (e.g. "super-user") is well-formed and accepted;
+	// a syntactically malformed name is rejected. The store validates
+	// role-name syntax — custom-role existence is checked at the admin
+	// layer, which has the tenant's custom-role registry.
 	err := s.Create(context.Background(), userstore.User{
 		Subject:  "alice",
 		TenantID: "acme",
-		Roles:    []auth.Role{"super-user"},
+		Roles:    []auth.Role{"Bad Role"},
 	})
 	if err == nil {
-		t.Error("Create with unknown role should fail")
+		t.Error("Create with a malformed role name should fail")
+	}
+}
+
+func TestCreateAcceptsCustomRoleName(t *testing.T) {
+	s := userstore.NewMemory()
+	// A well-formed non-built-in role name is a §10.2 custom-role
+	// reference and is accepted by the storage layer.
+	err := s.Create(context.Background(), userstore.User{
+		Subject:  "alice",
+		TenantID: "acme",
+		Roles:    []auth.Role{"session-manager"},
+	})
+	if err != nil {
+		t.Errorf("Create with a well-formed custom role name: got %v, want nil", err)
 	}
 }
 
@@ -90,15 +108,15 @@ func TestUpdateAdvancesTimestamp(t *testing.T) {
 	}
 }
 
-func TestUpdateRejectsBadRolesAfterMutation(t *testing.T) {
+func TestUpdateRejectsMalformedRoleNameAfterMutation(t *testing.T) {
 	s := userstore.NewMemory()
 	_ = s.Create(context.Background(), userstore.User{Subject: "alice", TenantID: "acme"})
 	_, err := s.Update(context.Background(), "acme", "alice", func(u *userstore.User) error {
-		u.Roles = []auth.Role{"super-user"}
+		u.Roles = []auth.Role{"Bad Role"}
 		return nil
 	})
 	if err == nil {
-		t.Error("Update with unknown role should fail")
+		t.Error("Update with a malformed role name should fail")
 	}
 }
 
