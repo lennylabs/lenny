@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `0ad15c1` — §10.6 transparent filtering activated in `cmd/lenny-gateway`. The gateway
+  wires the environment and tenant stores into the mcptools deps, so
+  `lenny/discover_agents` filters in the running gateway. A `--no-environment-policy`
+  flag carries the platform-wide `noEnvironmentPolicy` — dev mode derives allow-all,
+  and outside dev mode an unset or invalid value is a fatal startup error.
+  `mcptools.Deps.DefaultNoEnvironmentPolicy` resolves the per-tenant value first and
+  the platform default second, matching §10.6 precedence.
 - `e78f57a` — §10.6 `lenny_noenvironmentpolicy_allowall_total` metric. `gatewaymetrics`
   registers the counter; `PUT /v1/admin/tenants/{id}/rbac-config` increments it
   (labelled by `tenant_id`) on an allow-all write through the admin Router's new
