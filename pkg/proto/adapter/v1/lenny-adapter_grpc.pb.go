@@ -99,7 +99,7 @@ type AdapterClient interface {
 	// streams the agent's response, tool-call, and status envelopes back.
 	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
-	Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage], error)
+	Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachRequest, AttachResponse], error)
 	// AssignCredentials pushes a per-session credential lease map to the
 	// adapter. Adapter writes the credential file under /run/lenny/. Atomic
 	// across providers; partial failures are rolled back.
@@ -216,18 +216,18 @@ func (c *adapterClient) SendMessage(ctx context.Context, in *SendMessageRequest,
 	return out, nil
 }
 
-func (c *adapterClient) Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage], error) {
+func (c *adapterClient) Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachRequest, AttachResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[1], Adapter_Attach_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[AttachClientMessage, AttachServerMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[AttachRequest, AttachResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_AttachClient = grpc.BidiStreamingClient[AttachClientMessage, AttachServerMessage]
+type Adapter_AttachClient = grpc.BidiStreamingClient[AttachRequest, AttachResponse]
 
 func (c *adapterClient) AssignCredentials(ctx context.Context, in *AssignCredentialsRequest, opts ...grpc.CallOption) (*AssignCredentialsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -397,7 +397,7 @@ type AdapterServer interface {
 	// streams the agent's response, tool-call, and status envelopes back.
 	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
-	Attach(grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]) error
+	Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error
 	// AssignCredentials pushes a per-session credential lease map to the
 	// adapter. Adapter writes the credential file under /run/lenny/. Atomic
 	// across providers; partial failures are rolled back.
@@ -475,7 +475,7 @@ func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionReq
 func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
-func (UnimplementedAdapterServer) Attach(grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]) error {
+func (UnimplementedAdapterServer) Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error {
 	return status.Error(codes.Unimplemented, "method Attach not implemented")
 }
 func (UnimplementedAdapterServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
@@ -614,11 +614,11 @@ func _Adapter_SendMessage_Handler(srv interface{}, ctx context.Context, dec func
 }
 
 func _Adapter_Attach_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AdapterServer).Attach(&grpc.GenericServerStream[AttachClientMessage, AttachServerMessage]{ServerStream: stream})
+	return srv.(AdapterServer).Attach(&grpc.GenericServerStream[AttachRequest, AttachResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_AttachServer = grpc.BidiStreamingServer[AttachClientMessage, AttachServerMessage]
+type Adapter_AttachServer = grpc.BidiStreamingServer[AttachRequest, AttachResponse]
 
 func _Adapter_AssignCredentials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AssignCredentialsRequest)

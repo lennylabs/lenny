@@ -14,13 +14,13 @@ import (
 )
 
 // Attach opens the §4.7 bidirectional content stream for a session. The
-// first AttachClientMessage binds the stream to the pod's session; from
+// first AttachRequest binds the stream to the pod's session; from
 // then on the gateway streams client-to-agent envelopes, which the
 // adapter writes to the runtime's stdin, and the adapter streams the
 // runtime's output envelopes back. The stream ends when the runtime's
 // output closes, the gateway half-closes the client direction, or
 // either side errors.
-func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachClientMessage, adapterv1.AttachServerMessage]) error {
+func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse]) error {
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachClientMe
 				}
 				continue
 			}
-			if err := stream.Send(&adapterv1.AttachServerMessage{EnvelopeJson: line}); err != nil {
+			if err := stream.Send(&adapterv1.AttachResponse{EnvelopeJson: line}); err != nil {
 				return err
 			}
 		case err := <-recvErr:
@@ -88,7 +88,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachClientMe
 
 // attachRecvLoop forwards each client envelope on the Attach stream to
 // the runtime's stdin until the stream ends.
-func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachClientMessage, adapterv1.AttachServerMessage], sessionID string) error {
+func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID string) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {

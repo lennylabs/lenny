@@ -1472,10 +1472,10 @@ func (*SendMessageResponse) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{18}
 }
 
-// AttachClientMessage is one frame the gateway streams to the adapter over
+// AttachRequest is one frame the gateway streams to the adapter over
 // Attach. session_id is set on every message so the adapter can reject a
 // stream bound to a session the pod does not hold.
-type AttachClientMessage struct {
+type AttachRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	SlotId    *SlotId                `protobuf:"bytes,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
@@ -1487,20 +1487,20 @@ type AttachClientMessage struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AttachClientMessage) Reset() {
-	*x = AttachClientMessage{}
+func (x *AttachRequest) Reset() {
+	*x = AttachRequest{}
 	mi := &file_lenny_adapter_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AttachClientMessage) String() string {
+func (x *AttachRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AttachClientMessage) ProtoMessage() {}
+func (*AttachRequest) ProtoMessage() {}
 
-func (x *AttachClientMessage) ProtoReflect() protoreflect.Message {
+func (x *AttachRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1512,35 +1512,35 @@ func (x *AttachClientMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AttachClientMessage.ProtoReflect.Descriptor instead.
-func (*AttachClientMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use AttachRequest.ProtoReflect.Descriptor instead.
+func (*AttachRequest) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{19}
 }
 
-func (x *AttachClientMessage) GetSessionId() *SessionId {
+func (x *AttachRequest) GetSessionId() *SessionId {
 	if x != nil {
 		return x.SessionId
 	}
 	return nil
 }
 
-func (x *AttachClientMessage) GetSlotId() *SlotId {
+func (x *AttachRequest) GetSlotId() *SlotId {
 	if x != nil {
 		return x.SlotId
 	}
 	return nil
 }
 
-func (x *AttachClientMessage) GetEnvelopeJson() []byte {
+func (x *AttachRequest) GetEnvelopeJson() []byte {
 	if x != nil {
 		return x.EnvelopeJson
 	}
 	return nil
 }
 
-// AttachServerMessage is one frame the adapter streams back over Attach as
+// AttachResponse is one frame the adapter streams back over Attach as
 // the agent produces output.
-type AttachServerMessage struct {
+type AttachResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Opaque JSON-encoded agent-to-gateway frame (lenny-adapter-jsonl.schema.json
 	// `response`, `tool_call`, `status`, `heartbeat_ack`, ...) read verbatim
@@ -1550,20 +1550,20 @@ type AttachServerMessage struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AttachServerMessage) Reset() {
-	*x = AttachServerMessage{}
+func (x *AttachResponse) Reset() {
+	*x = AttachResponse{}
 	mi := &file_lenny_adapter_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AttachServerMessage) String() string {
+func (x *AttachResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AttachServerMessage) ProtoMessage() {}
+func (*AttachResponse) ProtoMessage() {}
 
-func (x *AttachServerMessage) ProtoReflect() protoreflect.Message {
+func (x *AttachResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1575,12 +1575,12 @@ func (x *AttachServerMessage) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AttachServerMessage.ProtoReflect.Descriptor instead.
-func (*AttachServerMessage) Descriptor() ([]byte, []int) {
+// Deprecated: Use AttachResponse.ProtoReflect.Descriptor instead.
+func (*AttachResponse) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{20}
 }
 
-func (x *AttachServerMessage) GetEnvelopeJson() []byte {
+func (x *AttachResponse) GetEnvelopeJson() []byte {
 	if x != nil {
 		return x.EnvelopeJson
 	}
@@ -3058,13 +3058,13 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x121\n" +
 	"\aslot_id\x18\x02 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x12#\n" +
 	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\"\x15\n" +
-	"\x13SendMessageResponse\"\xa9\x01\n" +
-	"\x13AttachClientMessage\x12:\n" +
+	"\x13SendMessageResponse\"\xa3\x01\n" +
+	"\rAttachRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x121\n" +
 	"\aslot_id\x18\x02 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x12#\n" +
-	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\":\n" +
-	"\x13AttachServerMessage\x12#\n" +
+	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\"5\n" +
+	"\x0eAttachResponse\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"\x84\x02\n" +
 	"\x18AssignCredentialsRequest\x12:\n" +
 	"\n" +
@@ -3175,14 +3175,14 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x17LifecycleChannelRequest\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"?\n" +
 	"\x18LifecycleChannelResponse\x12#\n" +
-	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson2\xf3\r\n" +
+	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson2\xe8\r\n" +
 	"\aAdapter\x12m\n" +
 	"\x10PrepareWorkspace\x12).lenny.adapter.v1.PrepareWorkspaceRequest\x1a*.lenny.adapter.v1.PrepareWorkspaceResponse\"\x00(\x01\x12n\n" +
 	"\x11FinalizeWorkspace\x12*.lenny.adapter.v1.FinalizeWorkspaceRequest\x1a+.lenny.adapter.v1.FinalizeWorkspaceResponse\"\x00\x12S\n" +
 	"\bRunSetup\x12!.lenny.adapter.v1.RunSetupRequest\x1a\".lenny.adapter.v1.RunSetupResponse\"\x00\x12_\n" +
 	"\fStartSession\x12%.lenny.adapter.v1.StartSessionRequest\x1a&.lenny.adapter.v1.StartSessionResponse\"\x00\x12\\\n" +
-	"\vSendMessage\x12$.lenny.adapter.v1.SendMessageRequest\x1a%.lenny.adapter.v1.SendMessageResponse\"\x00\x12\\\n" +
-	"\x06Attach\x12%.lenny.adapter.v1.AttachClientMessage\x1a%.lenny.adapter.v1.AttachServerMessage\"\x00(\x010\x01\x12n\n" +
+	"\vSendMessage\x12$.lenny.adapter.v1.SendMessageRequest\x1a%.lenny.adapter.v1.SendMessageResponse\"\x00\x12Q\n" +
+	"\x06Attach\x12\x1f.lenny.adapter.v1.AttachRequest\x1a .lenny.adapter.v1.AttachResponse\"\x00(\x010\x01\x12n\n" +
 	"\x11AssignCredentials\x12*.lenny.adapter.v1.AssignCredentialsRequest\x1a+.lenny.adapter.v1.AssignCredentialsResponse\"\x00\x12n\n" +
 	"\x11RotateCredentials\x12*.lenny.adapter.v1.RotateCredentialsRequest\x1a+.lenny.adapter.v1.RotateCredentialsResponse\"\x00\x12n\n" +
 	"\x11RevokeCredentials\x12*.lenny.adapter.v1.RevokeCredentialsRequest\x1a+.lenny.adapter.v1.RevokeCredentialsResponse\"\x00\x12V\n" +
@@ -3235,8 +3235,8 @@ var file_lenny_adapter_proto_goTypes = []any{
 	(*StartSessionResponse)(nil),      // 20: lenny.adapter.v1.StartSessionResponse
 	(*SendMessageRequest)(nil),        // 21: lenny.adapter.v1.SendMessageRequest
 	(*SendMessageResponse)(nil),       // 22: lenny.adapter.v1.SendMessageResponse
-	(*AttachClientMessage)(nil),       // 23: lenny.adapter.v1.AttachClientMessage
-	(*AttachServerMessage)(nil),       // 24: lenny.adapter.v1.AttachServerMessage
+	(*AttachRequest)(nil),             // 23: lenny.adapter.v1.AttachRequest
+	(*AttachResponse)(nil),            // 24: lenny.adapter.v1.AttachResponse
 	(*AssignCredentialsRequest)(nil),  // 25: lenny.adapter.v1.AssignCredentialsRequest
 	(*AssignCredentialsResponse)(nil), // 26: lenny.adapter.v1.AssignCredentialsResponse
 	(*RotateCredentialsRequest)(nil),  // 27: lenny.adapter.v1.RotateCredentialsRequest
@@ -3286,8 +3286,8 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	51, // 14: lenny.adapter.v1.StartSessionRequest.tracing_context:type_name -> lenny.adapter.v1.StartSessionRequest.TracingContextEntry
 	5,  // 15: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	6,  // 16: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	5,  // 17: lenny.adapter.v1.AttachClientMessage.session_id:type_name -> lenny.adapter.v1.SessionId
-	6,  // 18: lenny.adapter.v1.AttachClientMessage.slot_id:type_name -> lenny.adapter.v1.SlotId
+	5,  // 17: lenny.adapter.v1.AttachRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	6,  // 18: lenny.adapter.v1.AttachRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
 	5,  // 19: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	52, // 20: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
 	5,  // 21: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
@@ -3310,7 +3310,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	16, // 38: lenny.adapter.v1.Adapter.RunSetup:input_type -> lenny.adapter.v1.RunSetupRequest
 	18, // 39: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
 	21, // 40: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
-	23, // 41: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachClientMessage
+	23, // 41: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachRequest
 	25, // 42: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
 	27, // 43: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
 	29, // 44: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
@@ -3328,7 +3328,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	17, // 56: lenny.adapter.v1.Adapter.RunSetup:output_type -> lenny.adapter.v1.RunSetupResponse
 	20, // 57: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
 	22, // 58: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
-	24, // 59: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachServerMessage
+	24, // 59: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachResponse
 	26, // 60: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
 	28, // 61: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
 	30, // 62: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse

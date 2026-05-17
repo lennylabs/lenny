@@ -34,7 +34,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 	// The first message binds the session and carries an envelope; the
 	// fake runtime echoes each written envelope to its output stream,
 	// so a successful Recv proves the input reached WriteEnvelope.
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId:    &adapterv1.SessionId{Value: "sess-x"},
 		EnvelopeJson: []byte(`{"type":"message","n":1}`),
 	}); err != nil {
@@ -49,7 +49,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 	}
 
 	// A subsequent message round-trips the same way.
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId:    &adapterv1.SessionId{Value: "sess-x"},
 		EnvelopeJson: []byte(`{"type":"message","n":2}`),
 	}); err != nil {
@@ -85,7 +85,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 	// Bind the session with an envelope-free first message.
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -119,7 +119,7 @@ func TestAttachInterceptsAdapterLocalToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -154,7 +154,7 @@ func TestAttachRejectsMissingSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if err := stream.Send(&adapterv1.AttachClientMessage{}); err != nil {
+	if err := stream.Send(&adapterv1.AttachRequest{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	_ = stream.CloseSend()
@@ -174,7 +174,7 @@ func TestAttachRejectsUnassignedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-other"},
 	}); err != nil {
 		t.Fatalf("Send: %v", err)

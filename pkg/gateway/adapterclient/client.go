@@ -255,7 +255,7 @@ func (c *Client) ReportUsage(ctx context.Context, sessionID string) (UsageReport
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
 // next agent-to-gateway envelope.
 type AttachStream struct {
-	stream    grpc.BidiStreamingClient[adapterv1.AttachClientMessage, adapterv1.AttachServerMessage]
+	stream    grpc.BidiStreamingClient[adapterv1.AttachRequest, adapterv1.AttachResponse]
 	sessionID string
 }
 
@@ -267,7 +267,7 @@ func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, e
 	if err != nil {
 		return nil, fmt.Errorf("adapterclient: open attach stream: %w", err)
 	}
-	if err := stream.Send(&adapterv1.AttachClientMessage{
+	if err := stream.Send(&adapterv1.AttachRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 	}); err != nil {
 		return nil, fmt.Errorf("adapterclient: bind attach stream: %w", err)
@@ -277,7 +277,7 @@ func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, e
 
 // Send forwards a §15.4.1 client-to-agent envelope to the agent.
 func (a *AttachStream) Send(envelope []byte) error {
-	return a.stream.Send(&adapterv1.AttachClientMessage{
+	return a.stream.Send(&adapterv1.AttachRequest{
 		SessionId:    &adapterv1.SessionId{Value: a.sessionID},
 		EnvelopeJson: envelope,
 	})
