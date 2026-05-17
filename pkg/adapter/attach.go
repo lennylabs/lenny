@@ -60,6 +60,14 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachClientMe
 				// The runtime's output ended; the session is done.
 				return nil
 			}
+			// §15.4.1: an adapter-local tool_call is answered by the
+			// adapter itself and never relayed to the gateway.
+			if result, handled := HandleToolCall(line, s.WorkspaceRoot); handled {
+				if err := s.Runtime.WriteEnvelope(sessionID, result); err != nil {
+					return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
+				}
+				continue
+			}
 			if err := stream.Send(&adapterv1.AttachServerMessage{EnvelopeJson: line}); err != nil {
 				return err
 			}

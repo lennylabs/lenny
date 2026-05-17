@@ -78,6 +78,14 @@ var toolHandlers = map[string]handler{
 	ToolDeleteFile: func(p, _ string) Result { return deleteFile(p) },
 }
 
+// IsLocalTool reports whether name is a built-in adapter-local tool.
+// The §15.4.1 tool_call dispatcher uses it to tell an adapter-local
+// call apart from a platform MCP tool call (lenny/...).
+func IsLocalTool(name string) bool {
+	_, ok := toolHandlers[name]
+	return ok
+}
+
 // Dispatch executes an adapter-local tool confined to workspaceRoot.
 // An unknown tool name, malformed arguments, a path that resolves
 // outside the workspace, or a filesystem error yields an error Result.
