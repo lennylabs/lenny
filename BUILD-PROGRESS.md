@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `29100ef` / `715ddf4` — §16.6 emit `experiment.multi_eligible_skipped`. `experiment`
+  gains `SkippedAfter`: given the created_at-ordered experiments and the enrolled
+  experiment id, it returns the routable percentage-mode experiments the §10.7
+  first-match rule left unevaluated (paused, concluded, and external-mode experiments
+  are excluded — `Route` never evaluates them). The sessionserver's
+  `applyExperimentRouting` emits the §16.6 `experiment.multi_eligible_skipped` event
+  (`tenant_id`, `user_id`, `enrolled_experiment_id`, `skipped_experiment_ids`) when an
+  enrolled session leaves later experiments unevaluated. The `isolation_mismatch`
+  experiment event has a hook; the OpenFeature events (`unknown_variant_from_provider`,
+  `unknown_external_id`, `targeting_failed`) await the external-targeting path.
 - `a268bd4` / `56ab88a` — §16.6 operational events catalog. `opsevents` gains a typed
   `EventType` enum: the closed §16.6 enumeration of gateway-emitted operational-event
   short names (the 19 core types plus the 6 ExperimentRouter types). `EventType` carries
