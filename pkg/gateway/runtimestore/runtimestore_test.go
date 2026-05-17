@@ -134,6 +134,69 @@ func TestRuntimeAgentInterfaceNilByDefault(t *testing.T) {
 	}
 }
 
+func TestRuntimePublishedMetadataRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries a publishedMetadata list. The store must
+	// deep-copy the slice so it never shares it with a caller.
+	s := runtimestore.NewMemory()
+	entries := []runtimestore.PublishedMetadataEntry{
+		{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"name":"x"}`},
+		{Key: "cost-manifest", ContentType: "application/json", Visibility: runtimestore.VisibilityTenant},
+	}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent, PublishedMetadata: entries,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	entries[0].Content = "tampered" // mutate the caller's slice after Create
+
+	got, err := s.Get(context.Background(), "carded")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.PublishedMetadata) != 2 || got.PublishedMetadata[0].Content != `{"name":"x"}` {
+		t.Errorf("publishedMetadata not stored or not isolated from caller mutation: %+v", got.PublishedMetadata)
+	}
+	got.PublishedMetadata[0].Content = "tampered-again" // mutate the returned slice
+	again, _ := s.Get(context.Background(), "carded")
+	if again.PublishedMetadata[0].Content != `{"name":"x"}` {
+		t.Errorf("the returned slice aliases the stored slice: %+v", again.PublishedMetadata)
+	}
+}
+
+func TestValidatePublishedMetadata(t *testing.T) {
+	ok := []runtimestore.PublishedMetadataEntry{
+		{Key: "agent-card", Visibility: runtimestore.VisibilityPublic},
+		{Key: "spec", Visibility: runtimestore.VisibilityInternal},
+	}
+	if err := runtimestore.ValidatePublishedMetadata(ok); err != nil {
+		t.Errorf("valid list rejected: %v", err)
+	}
+	cases := map[string][]runtimestore.PublishedMetadataEntry{
+		"empty key": {{Key: "", Visibility: runtimestore.VisibilityPublic}},
+		"duplicate key": {
+			{Key: "dup", Visibility: runtimestore.VisibilityPublic},
+			{Key: "dup", Visibility: runtimestore.VisibilityTenant},
+		},
+		"invalid visibility": {{Key: "k", Visibility: "world"}},
+	}
+	for name, entries := range cases {
+		if err := runtimestore.ValidatePublishedMetadata(entries); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
+	}
+}
+
+func TestMetadataVisibilityIsValid(t *testing.T) {
+	for _, v := range runtimestore.AllMetadataVisibilities() {
+		if !v.IsValid() {
+			t.Errorf("%q from the closed enum reports invalid", v)
+		}
+	}
+	if runtimestore.MetadataVisibility("world").IsValid() {
+		t.Error("an unknown visibility class must report invalid")
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{

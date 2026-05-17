@@ -14,6 +14,7 @@ package runtimestore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"sync"
@@ -66,6 +67,11 @@ type Runtime struct {
 	// is nil for type:mcp runtimes and for type:agent runtimes that omit
 	// the block.
 	AgentInterface *AgentInterface
+
+	// PublishedMetadata is the §5.1 publishedMetadata list — the
+	// runtime's named, opaque metadata entries. A nil or empty slice
+	// means the runtime publishes no metadata.
+	PublishedMetadata []PublishedMetadataEntry
 
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
@@ -151,6 +157,74 @@ func (a *AgentInterface) Clone() *AgentInterface {
 	cp.Skills = append([]AgentInterfaceSkill(nil), a.Skills...)
 	cp.Examples = append([]AgentInterfaceExample(nil), a.Examples...)
 	return &cp
+}
+
+// MetadataVisibility is the §5.1 publishedMetadata visibility class. It
+// governs which meta-fetch endpoint serves an entry and how the gateway
+// filters it: a public entry needs no auth, an internal entry needs a
+// valid session JWT, and a tenant entry is additionally scoped to the
+// JWT's tenant.
+type MetadataVisibility string
+
+const (
+	VisibilityInternal MetadataVisibility = "internal"
+	VisibilityTenant   MetadataVisibility = "tenant"
+	VisibilityPublic   MetadataVisibility = "public"
+)
+
+// AllMetadataVisibilities returns the closed enum.
+func AllMetadataVisibilities() []MetadataVisibility {
+	return []MetadataVisibility{VisibilityInternal, VisibilityTenant, VisibilityPublic}
+}
+
+// IsValid reports whether v is a known visibility class.
+func (v MetadataVisibility) IsValid() bool {
+	for _, known := range AllMetadataVisibilities() {
+		if v == known {
+			return true
+		}
+	}
+	return false
+}
+
+// PublishedMetadataEntry is one §5.1 publishedMetadata entry on a
+// runtime: a named, opaque value carrying a content type and a
+// visibility class. §5.1 makes the gateway treat Content as opaque
+// pass-through — it is stored and served without parsing or validation.
+type PublishedMetadataEntry struct {
+	// Key is the registration key, unique within a runtime's
+	// publishedMetadata list (for example "agent-card").
+	Key string `json:"key"`
+
+	// ContentType is the IANA media type of Content (for example
+	// "application/json").
+	ContentType string `json:"contentType"`
+
+	// Visibility is the entry's §5.1 visibility class.
+	Visibility MetadataVisibility `json:"visibility"`
+
+	// Content is the opaque entry value. The gateway never parses it.
+	Content string `json:"content,omitempty"`
+}
+
+// ValidatePublishedMetadata checks a §5.1 publishedMetadata list: every
+// entry needs a non-empty key and a valid visibility class, and keys
+// are unique within the list.
+func ValidatePublishedMetadata(entries []PublishedMetadataEntry) error {
+	seen := make(map[string]bool, len(entries))
+	for i, e := range entries {
+		if e.Key == "" {
+			return fmt.Errorf("publishedMetadata[%d]: key must not be empty", i)
+		}
+		if seen[e.Key] {
+			return fmt.Errorf("publishedMetadata: duplicate key %q", e.Key)
+		}
+		seen[e.Key] = true
+		if !e.Visibility.IsValid() {
+			return fmt.Errorf("publishedMetadata[%q]: %q is not a recognised visibility class", e.Key, e.Visibility)
+		}
+	}
+	return nil
 }
 
 // RuntimeType is the §5.1 type discriminator.
@@ -286,9 +360,9 @@ func ApplyDefaults(r *Runtime) {
 	}
 }
 
-// cloneRuntime returns a deep copy of r. The Labels map and the
-// AgentInterface descriptor are copied so the store never shares mutable
-// state with a caller.
+// cloneRuntime returns a deep copy of r. The Labels map, the
+// AgentInterface descriptor, and the PublishedMetadata list are copied
+// so the store never shares mutable state with a caller.
 func cloneRuntime(r Runtime) Runtime {
 	if r.Labels != nil {
 		labels := make(map[string]string, len(r.Labels))
@@ -298,6 +372,9 @@ func cloneRuntime(r Runtime) Runtime {
 		r.Labels = labels
 	}
 	r.AgentInterface = r.AgentInterface.Clone()
+	if r.PublishedMetadata != nil {
+		r.PublishedMetadata = append([]PublishedMetadataEntry(nil), r.PublishedMetadata...)
+	}
 	return r
 }
 
