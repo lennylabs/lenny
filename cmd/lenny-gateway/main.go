@@ -477,6 +477,10 @@ func main() {
 	// transparent filtering on lenny/discover_agents, and the §9.1
 	// GET /v1/runtimes discovery surface.
 	environments := environmentstore.NewMemory()
+	// §4 runtime tenant-access registry, shared by the admin
+	// tenant-access endpoints and the §5.1 internal meta-fetch endpoint.
+	tenantAccess := tenantaccessstore.NewMemory()
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -490,6 +494,7 @@ func main() {
 		Pools:                      pools,
 		Runtimes:                   runtimes,
 		Environments:               environments,
+		TenantAccess:               tenantAccess,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
@@ -552,7 +557,7 @@ func main() {
 		WithDelegationPolicies(delegationpolicystore.NewMemory()).
 		WithCredentialPools(credentialpoolstore.NewMemory()).
 		WithCustomRoles(customrolestore.NewMemory()).
-		WithTenantAccess(tenantaccessstore.NewMemory()).
+		WithTenantAccess(tenantAccess).
 		WithSessions(sessions).
 		WithInteractions(interactions).
 		WithExperiments(experiments).

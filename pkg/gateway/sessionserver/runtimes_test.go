@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 )
 
@@ -296,6 +297,98 @@ func TestRuntimeMetaHidesNonPublicAndMissing(t *testing.T) {
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("%s: status %d, want 404", path, rr.Code)
 		}
+	}
+}
+
+func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "spec", ContentType: "application/yaml", Visibility: runtimestore.VisibilityInternal, Content: "internal: yes"},
+			{Key: "card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"p":1}`},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	// §5.1: an internal entry is served to any authenticated caller.
+	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/spec", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Body.String() != "internal: yes" {
+		t.Fatalf("internal meta: status %d body %q", rr.Code, rr.Body.String())
+	}
+
+	// §5.1: an unauthenticated caller gets an identical 404 — the
+	// endpoint does not enumerate.
+	anon := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/spec", nil)
+	rrAnon := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrAnon, anon)
+	if rrAnon.Code != http.StatusNotFound {
+		t.Errorf("unauthenticated internal meta: status %d, want 404", rrAnon.Code)
+	}
+
+	// A public entry is served at /v1/...; requesting it here is a 404.
+	pub := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/card", nil)
+	pub = pub.WithContext(authmw.WithPrincipal(pub.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
+	rrPub := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrPub, pub)
+	if rrPub.Code != http.StatusNotFound {
+		t.Errorf("public entry at /internal: status %d, want 404", rrPub.Code)
+	}
+}
+
+func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "cost", ContentType: "application/json", Visibility: runtimestore.VisibilityTenant, Content: `{"rate":10}`},
+		},
+	})
+	access := tenantaccessstore.NewMemory()
+	_, _ = access.Grant(context.Background(), tenantaccessstore.KindRuntime, "carded", "acme", "platform-admin", time.Now())
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, TenantAccess: access})
+
+	// §5.1: a tenant entry is served to a caller whose tenant holds a
+	// §4 tenant-access grant for the runtime.
+	granted := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
+	granted = granted.WithContext(authmw.WithPrincipal(granted.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, granted)
+	if rr.Code != http.StatusOK || rr.Body.String() != `{"rate":10}` {
+		t.Fatalf("granted tenant meta: status %d body %q", rr.Code, rr.Body.String())
+	}
+
+	// §5.1: a caller whose tenant lacks the grant gets a 404 — an agent
+	// in one tenant cannot read another tenant's metadata.
+	other := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
+	other = other.WithContext(authmw.WithPrincipal(other.Context(), authmw.Principal{Subject: "bob", TenantID: "globex"}))
+	rrOther := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrOther, other)
+	if rrOther.Code != http.StatusNotFound {
+		t.Errorf("ungranted tenant meta: status %d, want 404", rrOther.Code)
+	}
+}
+
+func TestInternalRuntimeMetaTenantFailsClosedWithoutAccessStore(t *testing.T) {
+	// §5.1: when the tenant-access registry is not wired, a tenant
+	// entry cannot be served — the endpoint fails closed.
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "carded", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "cost", Visibility: runtimestore.VisibilityTenant, Content: "secret"},
+		},
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("tenant meta without access store: status %d, want 404 (fail closed)", rr.Code)
 	}
 }
 

@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
@@ -117,6 +118,7 @@ type Server struct {
 	experimentReporter ExperimentRejectionReporter
 	runtimes           runtimestore.Store
 	environments       environmentstore.Store
+	tenantAccess       tenantaccessstore.Store
 	defaultNoEnvPolicy string
 }
 
@@ -296,6 +298,11 @@ type Options struct {
 	// environment membership authorizes.
 	Environments environmentstore.Store
 
+	// TenantAccess is the §4 runtime tenant-access registry. Optional —
+	// when nil, GET /internal/runtimes/{name}/meta/{key} cannot serve a
+	// tenant-visibility entry and fails closed.
+	TenantAccess tenantaccessstore.Store
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
@@ -333,6 +340,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
 		runtimes:           opts.Runtimes,
 		environments:       opts.Environments,
+		tenantAccess:       opts.TenantAccess,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 	}
 	if s.clock == nil {
@@ -369,6 +377,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
 	mux.HandleFunc("GET /v1/runtimes/{name}/meta/{key}", s.handleRuntimeMeta)
+	mux.HandleFunc("GET /internal/runtimes/{name}/meta/{key}", s.handleInternalRuntimeMeta)
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
 	mux.HandleFunc("POST /v1/environments/{name}/sessions", s.handleEnvironmentSessions)
 	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)

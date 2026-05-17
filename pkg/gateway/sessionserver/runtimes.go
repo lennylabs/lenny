@@ -3,12 +3,14 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 )
 
 // restAdapterCapabilities reports the §15 AdapterCapabilities of the REST
@@ -156,6 +158,78 @@ func (s *Server) handleRuntimeMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
+}
+
+// handleInternalRuntimeMeta implements GET /internal/runtimes/{name}/meta/{key}
+// — the §5.1 internal and tenant publishedMetadata fetch endpoint. It
+// requires an authenticated session principal. An internal-visibility
+// entry is served to any authenticated caller; a tenant-visibility
+// entry is served only when the caller's tenant holds a §4 tenant-access
+// grant for the runtime. Per §5.1 a missing principal, a missing or
+// soft-deleted runtime, a missing key, a public entry (served instead
+// at /v1/runtimes/{name}/meta/{key}), and a tenant entry the caller's
+// tenant cannot reach all return an identical 404, so the endpoint does
+// not enable enumeration.
+func (s *Server) handleInternalRuntimeMeta(w http.ResponseWriter, r *http.Request) {
+	notFound := func() {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
+	}
+	principal, ok := getPrincipal(r)
+	if !ok || s.runtimes == nil {
+		notFound()
+		return
+	}
+	rt, err := s.runtimes.Get(r.Context(), r.PathValue("name"))
+	if err != nil || !rt.IsActive() {
+		notFound()
+		return
+	}
+	key := r.PathValue("key")
+	for _, e := range rt.PublishedMetadata {
+		if e.Key != key {
+			continue
+		}
+		switch e.Visibility {
+		case runtimestore.VisibilityInternal:
+			// An internal entry is served to any authenticated caller.
+		case runtimestore.VisibilityTenant:
+			if !s.tenantReachesRuntime(r.Context(), principal.TenantID, rt.Name) {
+				notFound()
+				return
+			}
+		default:
+			// A public entry is served at /v1/...; anything else is hidden.
+			notFound()
+			return
+		}
+		ct := e.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ct)
+		_, _ = w.Write([]byte(e.Content))
+		return
+	}
+	notFound()
+}
+
+// tenantReachesRuntime reports whether tenantID holds a §4 tenant-access
+// grant for the runtime. It fails closed when the tenant-access registry
+// is not wired or the tenant id is empty.
+func (s *Server) tenantReachesRuntime(ctx context.Context, tenantID, runtime string) bool {
+	if s.tenantAccess == nil || tenantID == "" {
+		return false
+	}
+	grants, err := s.tenantAccess.List(ctx, tenantaccessstore.KindRuntime, runtime)
+	if err != nil {
+		return false
+	}
+	for _, g := range grants {
+		if g.TenantID == tenantID {
+			return true
+		}
+	}
+	return false
 }
 
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
