@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -111,6 +112,64 @@ func TestListModelsEmptyWhenUnwired(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Data) != 0 {
 		t.Errorf("models without a runtime registry must be empty: %+v", resp.Data)
+	}
+}
+
+func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "claude-agent", Type: runtimestore.TypeAgent,
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	// §9.1: every discovery response embeds a top-level adapterCapabilities
+	// block describing the adapter serving the request.
+	for _, path := range []string{"/v1/runtimes", "/v1/models"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status: %d", path, rr.Code)
+		}
+		var resp struct {
+			AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s decode: %v", path, err)
+		}
+		caps := resp.AdapterCapabilities
+		if caps.PathPrefix != "/v1" || caps.Protocol != "rest" {
+			t.Errorf("%s: adapterCapabilities routing fields: %+v", path, caps)
+		}
+		// The REST adapter persists sessions and serves the resume,
+		// interrupt, and elicitation-respond endpoints.
+		if !caps.SupportsElicitation || !caps.SupportsInterrupt || !caps.SupportsSessionContinuity {
+			t.Errorf("%s: REST adapter must report elicitation, interrupt, continuity: %+v", path, caps)
+		}
+		if caps.SupportsDelegation {
+			t.Errorf("%s: REST adapter has no delegate route, SupportsDelegation must be false", path)
+		}
+	}
+}
+
+func TestDiscoveryAdapterCapabilitiesPresentWhenUnwired(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	var resp struct {
+		AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	// §9.1: the block is mandatory on every discovery response, including
+	// one returned with no runtime registry wired.
+	if resp.AdapterCapabilities.Protocol != "rest" {
+		t.Errorf("adapterCapabilities must be present even when unwired: %+v", resp.AdapterCapabilities)
 	}
 }
 

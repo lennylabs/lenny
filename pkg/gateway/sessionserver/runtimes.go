@@ -6,14 +6,34 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
 
+// restAdapterCapabilities reports the §15 AdapterCapabilities of the REST
+// adapter the sessionserver implements. The REST surface owns the /v1
+// path prefix. It persists sessions and serves the resume, interrupt, and
+// elicitation-respond endpoints, so it reports session continuity,
+// interrupt, and elicitation support. Delegation is an MCP platform tool
+// with no REST route, so SupportsDelegation is false. §9.1 requires every
+// discovery response to embed this block.
+func restAdapterCapabilities() adapter.Capabilities {
+	return adapter.Capabilities{
+		PathPrefix:                "/v1",
+		Protocol:                  "rest",
+		SupportsSessionContinuity: true,
+		SupportsDelegation:        false,
+		SupportsElicitation:       true,
+		SupportsInterrupt:         true,
+	}
+}
+
 // RuntimeDiscoveryEntry is one runtime in the §9.1 GET /v1/runtimes
 // discovery response. v1 reports the §5.1 registry fields; the §9.1
-// agentInterface, mcpEndpoint, and adapterCapabilities blocks are not
-// yet modelled on the runtime record.
+// per-runtime agentInterface and mcpEndpoint blocks are not yet modelled
+// on the runtime record. The §9.1 adapterCapabilities block is a
+// top-level response field, not a per-runtime one.
 type RuntimeDiscoveryEntry struct {
 	Name             string            `json:"name"`
 	Type             string            `json:"type,omitempty"`
@@ -30,7 +50,10 @@ type RuntimeDiscoveryEntry struct {
 func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.runtimes == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"runtimes": []RuntimeDiscoveryEntry{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"runtimes":            []RuntimeDiscoveryEntry{},
+			"adapterCapabilities": restAdapterCapabilities(),
+		})
 		return
 	}
 	rows, err := s.runtimes.List(r.Context(), runtimestore.ListFilter{})
@@ -50,7 +73,10 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 			Labels:           rt.Labels,
 		})
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"runtimes": out})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"runtimes":            out,
+		"adapterCapabilities": restAdapterCapabilities(),
+	})
 }
 
 // OpenAIModel is one entry in the GET /v1/models OpenAI-compatible
@@ -86,7 +112,11 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"object":              "list",
+		"data":                models,
+		"adapterCapabilities": restAdapterCapabilities(),
+	})
 }
 
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
