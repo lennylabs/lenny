@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `737359d` — §25.3 `MetricReader` and the windowed metric store. New
+  `pkg/gateway/recommendations` holds the §25.3 `MetricReader` interface the rules
+  evaluate against and `WindowStore` — the in-memory sliding-window metric store that
+  backs it on the gateway. `WindowStore` keeps a bounded per-series ring buffer:
+  `GaugeValue` / `CounterValue` return the latest sample, `WindowedRate` the per-second
+  increase across a trailing window, and `HistogramQuantile` a quantile over the
+  retained observations; samples past the retention window are evicted. The sub-second
+  downsampling optimisation, the rule-evaluation engine, and the
+  `GET /v1/admin/recommendations` endpoint remain unbuilt.
 - `66864b7` — §18 Phase 2.5 / §25.3 capacity-recommendation rule substrate
   (`pkg/recommendations/rules`). Ships the typed `Rule` (name, category, PromQL
   condition, sliding window), the `Category` closed enum, and `Validate` (the PromQL
