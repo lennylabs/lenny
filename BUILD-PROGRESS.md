@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cd37e20` — §5.1 resolve derived runtimes in runtime discovery. `GET /v1/runtimes`,
+  `GET /v1/models`, and `lenny/list_runtimes` resolve each derived runtime to its
+  effective merged definition before the §10.6 environment filter and the discovery
+  entry, so a derived runtime is reported (and label-filtered) with the fields it
+  inherits from its base. The §9.1 per-runtime meta endpoints still read the declared
+  runtime; resolving them is a follow-up.
 - `7257dc5` — §5.1 `runtimestore.Resolve` and the derived-runtime injection check.
   `Resolve` returns the effective runtime for a name — the runtime itself when
   standalone, or `Merge(base, derived)` for a derived runtime. The §15.1
