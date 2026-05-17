@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// fakeRuntime plays the agent-runtime end of the §15.4.6 lifecycle
+// fakeRuntime plays the agent-runtime end of the §4.7 lifecycle
 // channel: it dials the adapter's Unix socket and exchanges JSONL
 // frames.
 type fakeRuntime struct {
@@ -51,7 +51,7 @@ func (fr *fakeRuntime) handshake() {
 	if caps.Type != "lifecycle_capabilities" {
 		fr.t.Fatalf("first adapter frame = %q, want lifecycle_capabilities", caps.Type)
 	}
-	fr.write(lifecycleFrame{Type: "lifecycle_support", Supported: caps.Capabilities})
+	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
 }
 
 // startLifecycleChannel creates a LifecycleChannel on a temporary
@@ -94,6 +94,9 @@ func TestLifecycleChannelHandshake(t *testing.T) {
 	if caps.Type != "lifecycle_capabilities" {
 		t.Fatalf("first frame type = %q, want lifecycle_capabilities", caps.Type)
 	}
+	if caps.ProtocolVersion != lifecycleProtocolVersion {
+		t.Errorf("protocolVersion = %q, want %q", caps.ProtocolVersion, lifecycleProtocolVersion)
+	}
 	want := map[string]bool{
 		"checkpoint": true, "interrupt": true,
 		"credential_rotation": true, "deadline_signal": true,
@@ -106,7 +109,7 @@ func TestLifecycleChannelHandshake(t *testing.T) {
 	}
 
 	// The runtime declares support for a subset; the channel records it.
-	fr.write(lifecycleFrame{Type: "lifecycle_support", Supported: []string{"checkpoint", "interrupt"}})
+	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: []string{"checkpoint", "interrupt"}})
 	select {
 	case <-lc.ready:
 	case <-time.After(3 * time.Second):
@@ -126,27 +129,27 @@ func TestLifecycleChannelCheckpointRoundTrip(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- lc.RequestCheckpoint(context.Background(), "ckpt-1", 5000, "full")
+		errc <- lc.RequestCheckpoint(context.Background(), "ckpt-1", 5000)
 	}()
 
 	req := fr.read()
 	if req.Type != "checkpoint_request" || req.CheckpointID != "ckpt-1" {
 		t.Fatalf("request = %+v, want type checkpoint_request id ckpt-1", req)
 	}
-	if req.DeadlineMs != 5000 || req.Level != "full" {
-		t.Errorf("request deadline=%d level=%q, want 5000/full", req.DeadlineMs, req.Level)
+	if req.DeadlineMs != 5000 {
+		t.Errorf("request deadlineMs = %d, want 5000", req.DeadlineMs)
 	}
 	fr.write(lifecycleFrame{Type: "checkpoint_ready", CheckpointID: "ckpt-1"})
 	if err := <-errc; err != nil {
 		t.Fatalf("RequestCheckpoint: %v", err)
 	}
 
-	if err := lc.CompleteCheckpoint("ckpt-1", "success"); err != nil {
+	if err := lc.CompleteCheckpoint("ckpt-1", "ok", ""); err != nil {
 		t.Fatalf("CompleteCheckpoint: %v", err)
 	}
 	done := fr.read()
-	if done.Type != "checkpoint_complete" || done.CheckpointID != "ckpt-1" || done.Outcome != "success" {
-		t.Errorf("checkpoint_complete = %+v, want id ckpt-1 outcome success", done)
+	if done.Type != "checkpoint_complete" || done.CheckpointID != "ckpt-1" || done.Status != "ok" {
+		t.Errorf("checkpoint_complete = %+v, want id ckpt-1 status ok", done)
 	}
 }
 
@@ -156,15 +159,15 @@ func TestLifecycleChannelInterruptRoundTrip(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- lc.RequestInterrupt(context.Background(), "int-1", 2000, "drain")
+		errc <- lc.RequestInterrupt(context.Background(), "int-1", 2000)
 	}()
 
 	req := fr.read()
 	if req.Type != "interrupt_request" || req.InterruptID != "int-1" {
 		t.Fatalf("request = %+v, want type interrupt_request id int-1", req)
 	}
-	if req.Reason != "drain" {
-		t.Errorf("interrupt reason = %q, want drain", req.Reason)
+	if req.DeadlineMs != 2000 {
+		t.Errorf("interrupt deadlineMs = %d, want 2000", req.DeadlineMs)
 	}
 	fr.write(lifecycleFrame{Type: "interrupt_acknowledged", InterruptID: "int-1"})
 	if err := <-errc; err != nil {
@@ -172,29 +175,51 @@ func TestLifecycleChannelInterruptRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelCredentialsRotated(t *testing.T) {
+func TestLifecycleChannelCredentialRotation(t *testing.T) {
 	lc, fr := startLifecycleChannel(t)
 	fr.handshake()
 
-	if err := lc.NotifyCredentialsRotated("lease-9", "proactive_renewal"); err != nil {
-		t.Fatalf("NotifyCredentialsRotated: %v", err)
+	errc := make(chan error, 1)
+	go func() {
+		errc <- lc.RotateCredentials(context.Background(), "anthropic", "/run/lenny/credentials.json", "lease-9")
+	}()
+
+	req := fr.read()
+	if req.Type != "credentials_rotated" || req.LeaseID != "lease-9" {
+		t.Fatalf("request = %+v, want credentials_rotated lease-9", req)
 	}
-	got := fr.read()
-	if got.Type != "credentials_rotated" || got.LeaseID != "lease-9" || got.Trigger != "proactive_renewal" {
-		t.Errorf("frame = %+v, want credentials_rotated lease-9 proactive_renewal", got)
+	if req.Provider != "anthropic" || req.CredentialsPath != "/run/lenny/credentials.json" {
+		t.Errorf("credentials_rotated provider=%q credentialsPath=%q", req.Provider, req.CredentialsPath)
+	}
+	fr.write(lifecycleFrame{Type: "credentials_acknowledged", LeaseID: "lease-9", Provider: "anthropic"})
+	if err := <-errc; err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
 	}
 }
 
-func TestLifecycleChannelDeadlineSignal(t *testing.T) {
+func TestLifecycleChannelDeadlineApproaching(t *testing.T) {
 	lc, fr := startLifecycleChannel(t)
 	fr.handshake()
 
-	if err := lc.SignalDeadline(1000); err != nil {
-		t.Fatalf("SignalDeadline: %v", err)
+	if err := lc.SignalDeadlineApproaching(5000, "session_age"); err != nil {
+		t.Fatalf("SignalDeadlineApproaching: %v", err)
 	}
 	got := fr.read()
-	if got.Type != "deadline_signal" || got.DeadlineMs != 1000 {
-		t.Errorf("frame = %+v, want deadline_signal deadline_ms 1000", got)
+	if got.Type != "deadline_approaching" || got.RemainingMs != 5000 || got.Trigger != "session_age" {
+		t.Errorf("frame = %+v, want deadline_approaching remainingMs 5000 trigger session_age", got)
+	}
+}
+
+func TestLifecycleChannelTerminate(t *testing.T) {
+	lc, fr := startLifecycleChannel(t)
+	fr.handshake()
+
+	if err := lc.Terminate(2000, "session_complete"); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	got := fr.read()
+	if got.Type != "terminate" || got.DeadlineMs != 2000 || got.Reason != "session_complete" {
+		t.Errorf("frame = %+v, want terminate deadlineMs 2000 reason session_complete", got)
 	}
 }
 
@@ -205,7 +230,7 @@ func TestLifecycleChannelCheckpointContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	// The runtime never acknowledges, so the request unwinds on ctx.
-	err := lc.RequestCheckpoint(ctx, "ckpt-stall", 5000, "full")
+	err := lc.RequestCheckpoint(ctx, "ckpt-stall", 5000)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("RequestCheckpoint err = %v, want context.DeadlineExceeded", err)
 	}
@@ -220,7 +245,7 @@ func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- lc.RequestInterrupt(context.Background(), "int-x", 2000, "shutdown")
+		errc <- lc.RequestInterrupt(context.Background(), "int-x", 2000)
 	}()
 	// Once the runtime has the request, RequestInterrupt is parked on the
 	// acknowledgement; closing the channel must fail it rather than hang.
