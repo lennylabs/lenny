@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d39aab7` — §5.1 enforce the runtime `setupPolicy` aggregate cap at session start.
+  `StartSessionRequest` now carries the §5.1 `setup_policy` (the aggregate setup-phase
+  cap and `onTimeout` disposition). The gateway resolves the effective runtime's
+  `setupPolicy` via `runtimestore.Resolve` and sends it; the adapter converts it to
+  `workspace.SetupOptions` so `RunSetup` bounds the whole setup phase. This closes the
+  §5.1 last mile — `RunSetup` gained aggregate-cap enforcement earlier (`5b9cc18`) but
+  the adapter passed a zero `SetupOptions`; it now passes the runtime's policy.
 - `87febc6` — §8.3 deliver `tracingContext` in the runtime manifest. The adapter
   `StartSessionRequest` carries the §8.3 `tracing_context` map and the adapter writes it
   into the manifest the runtime reads, so a runtime stitches its native traces into the
