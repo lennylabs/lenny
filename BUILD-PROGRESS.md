@@ -11,6 +11,21 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `adf5411` — §4.7 `RunSetup` adapter RPC, the first slice of the staging-RPC
+  split. §4.7 specifies four distinct Gateway → Adapter RPCs for session
+  assignment (`PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`,
+  `StartSession`); the adapter bundles workspace materialization and
+  setup-command execution into `StartSession`. `RunSetup` is now a standalone
+  RPC that runs the §14 WorkspacePlan setup commands against the materialized
+  workspace, bounded by the §5.1 `setupPolicy` aggregate cap. It runs before
+  the session is claimed in the §4.7 sequence, so it neither claims nor checks
+  pod-assignment state; it reuses `workspace.RunSetup` and
+  `setupOptionsFromProto`. Handlers live in `pkg/adapter/staging.go`.
+  Remaining staging slices: `PrepareWorkspace` (streaming files into a staging
+  area) and `FinalizeWorkspace` (validate the staged files, materialize to
+  `/workspace/current`), then slim `StartSession` to runtime start only and
+  move workspace materialization and setup out of it, with the gateway binder
+  orchestrating the four-RPC sequence.
 - `c60dde3` — §7.1 re-deliver the §8.3 manifest contexts on Resume. `ResumeRequest`
   carries `experiment_context` and `tracing_context`, and the adapter `Resume` handler
   writes the §15.4 adapter manifest before starting the restored runtime — so a session
