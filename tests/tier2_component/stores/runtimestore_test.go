@@ -115,6 +115,48 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("publishedMetadata round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.PublishedMetadata = []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"name":"x"}`},
+			{Key: "cost-manifest", ContentType: "application/json", Visibility: runtimestore.VisibilityTenant},
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if len(got.PublishedMetadata) != 2 || got.PublishedMetadata[0].Key != "agent-card" ||
+			got.PublishedMetadata[0].Content != `{"name":"x"}` ||
+			got.PublishedMetadata[1].Visibility != runtimestore.VisibilityTenant {
+			t.Errorf("publishedMetadata round-trip mismatch: %+v", got.PublishedMetadata)
+		}
+
+		// A runtime registered without entries reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.PublishedMetadata != nil {
+			t.Errorf("publishedMetadata must be nil when omitted: %+v", gotPlain.PublishedMetadata)
+		}
+
+		// Update can clear the list back to SQL NULL.
+		cleared, err := store.Update(ctx, r.Name, func(rt *runtimestore.Runtime) error {
+			rt.PublishedMetadata = nil
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update clear: %v", err)
+		}
+		if cleared.PublishedMetadata != nil {
+			t.Errorf("Update did not clear publishedMetadata: %+v", cleared.PublishedMetadata)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {

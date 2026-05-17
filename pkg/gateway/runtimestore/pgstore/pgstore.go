@@ -38,7 +38,7 @@ var _ runtimestore.Store = (*Store)(nil)
 
 const selectList = `name, type, image, execution_mode, isolation_profile,
 	integration_level, description, created_at, updated_at, deleted_at, labels,
-	agent_interface`
+	agent_interface, published_metadata`
 
 // labelsJSON marshals a runtime's §5.1 label map to its jsonb text
 // form. A nil or empty map is stored as an empty JSON object so the
@@ -62,6 +62,17 @@ func agentInterfaceJSON(a *runtimestore.AgentInterface) any {
 	return string(b)
 }
 
+// publishedMetadataJSON marshals a runtime's §5.1 publishedMetadata list
+// to its jsonb text form. An empty list is stored as SQL NULL, which
+// scanRuntime reads back as a nil slice.
+func publishedMetadataJSON(entries []runtimestore.PublishedMetadataEntry) any {
+	if len(entries) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(entries)
+	return string(b)
+}
+
 // Create inserts a new runtime row. Returns ErrAlreadyExists when the
 // name is taken.
 func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
@@ -78,12 +89,12 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO runtime_definitions (
 		name, type, image, execution_mode, isolation_profile,
 		integration_level, description, created_at, updated_at, deleted_at, labels,
-		agent_interface
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		agent_interface, published_metadata
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
-		agentInterfaceJSON(r.AgentInterface))
+		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -133,12 +144,12 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 	if _, err := tx.Exec(ctx, `UPDATE runtime_definitions SET
 		type = $2, image = $3, execution_mode = $4, isolation_profile = $5,
 		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9,
-		labels = $10, agent_interface = $11
+		labels = $10, agent_interface = $11, published_metadata = $12
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
-		agentInterfaceJSON(r.AgentInterface)); err != nil {
+		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -216,11 +227,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		r                                          runtimestore.Runtime
 		typ, execMode, isoProf, level, description string
 		deletedAt                                  *time.Time
-		labelsRaw, agentIfaceRaw                   []byte
+		labelsRaw, agentIfaceRaw, publishedMetaRaw []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
-		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw,
+		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw, &publishedMetaRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -240,6 +251,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	if len(agentIfaceRaw) > 0 {
 		if err := json.Unmarshal(agentIfaceRaw, &r.AgentInterface); err != nil {
 			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode agentInterface: %w", err)
+		}
+	}
+	if len(publishedMetaRaw) > 0 {
+		if err := json.Unmarshal(publishedMetaRaw, &r.PublishedMetadata); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode publishedMetadata: %w", err)
 		}
 	}
 	return r, nil
