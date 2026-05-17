@@ -11,6 +11,20 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b6f5647` — tree-wide `gofmt` pass. 27 files had drifted out of `gofmt` compliance
+  on import ordering and struct-tag alignment; reformatted with no semantic change.
+- `798aa5a` — §10.2 custom-role assignment to users. `userstore.Memory`'s role
+  validation predated custom roles and rejected every non-built-in name in
+  `User.Roles`, so a user could not hold a tenant custom role. The storage layer
+  cannot resolve custom-role existence (the registry is keyed by tenant and reachable
+  only from the admin layer), so it now validates role-name syntax through the new
+  `auth.IsWellFormedRoleName`. An unknown but well-formed role in storage is
+  fail-safe, granting no permissions. `Router.validateRoleNames` resolves each role
+  against the built-in set and the tenant's custom-role registry, and
+  `handleCreateUser` / `handleUpdateUser` reject an unregistered role with
+  `400 VALIDATION_ERROR`. When the custom-role registry is not wired, only built-in
+  roles are accepted. This completes the `e8375d8` follow-up: the role-deletion
+  dependents guard now fires against the real store.
 - `e8375d8` — §10.2 / §15.1 custom-role admin CRUD. `POST` / `GET` / list / `PUT` /
   `DELETE /v1/admin/tenants/{id}/roles` are wired onto the admin Router, gated on
   platform-admin or tenant-admin; the tenant is taken from the path and a tenant-admin
