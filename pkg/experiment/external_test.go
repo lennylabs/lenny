@@ -95,6 +95,51 @@ func TestTargetingConfigRejectsBadConfigs(t *testing.T) {
 	}
 }
 
+func TestBuildEvaluationContextWithUser(t *testing.T) {
+	ctx := BuildEvaluationContext(EvaluationContextInput{
+		UserID: "alice", TenantID: "acme", SessionID: "sess-1", Runtime: "claude-code",
+	})
+	if ctx["targetingKey"] != "alice" || ctx["user_id"] != "alice" {
+		t.Errorf("targetingKey/user_id = %v/%v, want alice", ctx["targetingKey"], ctx["user_id"])
+	}
+	if ctx["tenant_id"] != "acme" || ctx["runtime"] != "claude-code" {
+		t.Errorf("tenant_id/runtime = %v/%v", ctx["tenant_id"], ctx["runtime"])
+	}
+}
+
+func TestBuildEvaluationContextAnonymousSession(t *testing.T) {
+	// §10.7: a session with no user gets the deterministic anon pseudo-ID.
+	ctx := BuildEvaluationContext(EvaluationContextInput{
+		TenantID: "acme", SessionID: "sess-9", Runtime: "echo",
+	})
+	if ctx["targetingKey"] != "anon:sess-9" || ctx["user_id"] != "anon:sess-9" {
+		t.Errorf("anonymous targetingKey/user_id = %v/%v, want anon:sess-9",
+			ctx["targetingKey"], ctx["user_id"])
+	}
+}
+
+func TestBuildEvaluationContextMergesLabels(t *testing.T) {
+	ctx := BuildEvaluationContext(EvaluationContextInput{
+		UserID: "bob", TenantID: "acme", SessionID: "s", Runtime: "echo",
+		Labels: map[string]string{"team": "platform", "tier": "gold"},
+	})
+	if ctx["team"] != "platform" || ctx["tier"] != "gold" {
+		t.Errorf("labels not merged: %v", ctx)
+	}
+}
+
+func TestBuildEvaluationContextLabelCannotShadowReserved(t *testing.T) {
+	// A label keyed like a reserved attribute must not override it.
+	ctx := BuildEvaluationContext(EvaluationContextInput{
+		UserID: "carol", TenantID: "acme", SessionID: "s", Runtime: "echo",
+		Labels: map[string]string{"tenant_id": "spoofed", "user_id": "spoofed"},
+	})
+	if ctx["tenant_id"] != "acme" || ctx["user_id"] != "carol" {
+		t.Errorf("a label shadowed a reserved attribute: tenant_id=%v user_id=%v",
+			ctx["tenant_id"], ctx["user_id"])
+	}
+}
+
 func TestResolveExternalVariantFromVariantField(t *testing.T) {
 	got, known := ResolveExternalVariant("treatment", nil, []string{"treatment", "holdback"})
 	if got != "treatment" || !known {

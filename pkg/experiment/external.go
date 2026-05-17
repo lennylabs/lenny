@@ -146,6 +146,40 @@ func (c TargetingConfig) Validate() error {
 	return nil
 }
 
+// EvaluationContextInput is the session data the §10.7 external
+// targeting evaluation feeds into an OpenFeature evaluationContext.
+type EvaluationContextInput struct {
+	UserID    string
+	TenantID  string
+	SessionID string
+	Runtime   string
+	Labels    map[string]string
+}
+
+// BuildEvaluationContext assembles the §10.7 OpenFeature
+// evaluationContext for a mode:external experiment evaluation. The
+// targetingKey and user_id are the session's user id, or the
+// deterministic anonymous pseudo-ID "anon:<session_id>" when the
+// session has no user (§10.7 anonymous session handling). tenant_id
+// and runtime are carried as attributes and any session labels are
+// merged in. The reserved attributes are written last, so a label
+// whose key collides with one of them cannot shadow it.
+func BuildEvaluationContext(in EvaluationContextInput) map[string]any {
+	userID := in.UserID
+	if userID == "" {
+		userID = "anon:" + in.SessionID
+	}
+	ctx := make(map[string]any, len(in.Labels)+4)
+	for k, v := range in.Labels {
+		ctx[k] = v
+	}
+	ctx["targetingKey"] = userID
+	ctx["user_id"] = userID
+	ctx["tenant_id"] = in.TenantID
+	ctx["runtime"] = in.Runtime
+	return ctx
+}
+
 // ResolveExternalVariant implements the §10.7 OpenFeature
 // external-targeting variant resolution. A `mode: external` experiment
 // is assigned by an OpenFeature provider, which returns an
