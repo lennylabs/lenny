@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4c54d71` — §10.2 built-in-role permission matrix. `auth.RolePermissions` returns the
+  permission-matrix row for each of the five built-in roles, and `TenantAdminPermissions`
+  now derives from `RolePermissions(RoleTenantAdmin)` rather than duplicating the list.
+  The read-only matrix cells for the manage categories contribute no permission; the
+  permission set models manage-level operations plus the explicit session-read
+  categories. A non-built-in role name resolves to nil, since a tenant custom role
+  draws its permissions from the custom-role registry. This is the resolution
+  foundation for permission-based authorization gating.
 - `b6f5647` — tree-wide `gofmt` pass. 27 files had drifted out of `gofmt` compliance
   on import ordering and struct-tag alignment; reformatted with no semantic change.
 - `798aa5a` — §10.2 custom-role assignment to users. `userstore.Memory`'s role
@@ -781,6 +789,17 @@ dependency order, are below.
   and the `anthropic_direct` translator are not built.
 - **Operational services.** `lenny-ops` and `lenny-backup` do not exist; `lenny-preflight`
   is built and deployable.
+- **Custom-role permission enforcement.** §10.2 custom roles can be created, validated
+  against the tenant-admin ceiling, and assigned to users, and `auth.RolePermissions`
+  resolves the built-in-role permission rows. Authorization gates still match `HasRole`
+  against built-in role names, so a principal holding only a custom role is denied
+  every gated operation and the custom role grants nothing. Enforcement requires
+  resolving a principal's roles to a permission set (built-in roles via
+  `RolePermissions`, custom roles via the `customrolestore` registry) and gating on the
+  permission. The coarse role gates, `authorizedTenantForUser`, and the
+  platform-admin-grant checks all assume built-in roles, so they move together. The
+  `requireUserAdmin` gate maps one-to-one onto `PermManageUsers` and is the smallest
+  starting vertical.
 
 Phases 13 through 17b are largely unbuilt beyond their logic substrate. The audit
 pipeline, the compliance webhooks, the GDPR erasure pipeline, the backup and restore
