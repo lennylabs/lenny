@@ -284,6 +284,39 @@
         }
       }
     },
+    "/v1/models": {
+      "get": {
+        "summary": "List models (OpenAI-compatible discovery)",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": { "type": "string" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id":       { "type": "string" },
+                          "object":   { "type": "string" },
+                          "created":  { "type": "integer" },
+                          "owned_by": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}": {
       "get": {
         "summary": "Get session",
