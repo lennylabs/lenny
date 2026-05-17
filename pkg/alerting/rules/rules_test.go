@@ -133,6 +133,7 @@ func TestCatalogCoversCanonicalAlerts(t *testing.T) {
 		"PostgresReplicationLagHigh",
 		"CredentialPoolLow",
 		"ExperimentIsolationRejections",
+		"StorageQuotaHigh",
 	}
 	got := map[string]bool{}
 	for _, r := range Catalog() {

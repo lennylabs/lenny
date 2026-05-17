@@ -171,6 +171,14 @@ func Catalog() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
+			Name:        "StorageQuotaHigh",
+			Expr:        `lenny_storage_quota_bytes_used / lenny_tenant_storage_quota_bytes > 0.80 and lenny_tenant_storage_quota_bytes > 0`,
+			Severity:    SeverityWarning,
+			Summary:     "Per-tenant storage quota above 80 percent",
+			Description: "A tenant's artifact storage has reached 80 percent of its configured storageQuotaBytes. New uploads and checkpoints are rejected once the quota is fully consumed.",
+			SpecRef:     "§16.5",
+		},
+		{
 			Name:        "ExperimentIsolationRejections",
 			Expr:        `rate(lenny_experiment_isolation_rejections_total[5m]) > 0`,
 			For:         2 * time.Minute,
