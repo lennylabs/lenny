@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -117,12 +118,19 @@ type Router struct {
 	platformWired  bool
 
 	recommendations RecommendationService
+	eventBuffer     EventBufferQuerier
 }
 
 // RecommendationService is the §25.3 capacity-recommendation read
 // surface the admin Router exposes at GET /v1/admin/recommendations.
 type RecommendationService interface {
 	GetRecommendations(ctx context.Context, category *string) (*recommendations.RecommendationsResponse, error)
+}
+
+// EventBufferQuerier is the §25.3 event-buffer read surface the admin
+// Router exposes at GET /v1/admin/events/buffer.
+type EventBufferQuerier interface {
+	Query(since uint64, filter opsevents.EventFilter, limit int) opsevents.BufferedEventPage
 }
 
 // RBACConfigMetrics records the §10.6 observability counters the RBAC
@@ -210,6 +218,10 @@ func (r *Router) Handler() http.Handler {
 	if r.recommendations != nil {
 		mux.Handle("GET /v1/admin/recommendations",
 			r.requireAdmin(http.HandlerFunc(r.handleRecommendations)))
+	}
+	if r.eventBuffer != nil {
+		mux.Handle("GET /v1/admin/events/buffer",
+			r.requireAdmin(http.HandlerFunc(r.handleEventBuffer)))
 	}
 	if r.users != nil {
 		mux.Handle("POST /v1/admin/users", r.requireUserAdmin(http.HandlerFunc(r.handleCreateUser)))

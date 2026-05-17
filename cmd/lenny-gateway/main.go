@@ -103,6 +103,7 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
@@ -565,7 +566,8 @@ func main() {
 		WithEnvironments(environments).
 		WithEvalResults(evals).
 		WithRecommendations(recommendations.NewCapacityService(
-			recommendations.NewWindowStore(7 * 24 * time.Hour)))
+			recommendations.NewWindowStore(7 * 24 * time.Hour))).
+		WithEventBuffer(opsevents.NewEventBuffer(0))
 	adminRouter = wireAudit(adminRouter)
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
