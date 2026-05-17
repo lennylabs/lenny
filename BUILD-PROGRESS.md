@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f9bf113` — §4.7 `PrepareWorkspace` adapter RPC, the third slice of the
+  staging-RPC split. `PrepareWorkspace` is a client-streaming RPC that accepts
+  streamed upload-file content into the pod's staging area (the new
+  `Server.StagingDir`). Frames sharing an `upload_ref` are concatenated in
+  arrival order into one staged file. The `upload_ref` must be a plain file
+  name; a path separator, `""`, `.`, or `..` is rejected so a malicious ref
+  cannot escape the staging directory. The gateway-side `adapterclient` gained
+  a `PrepareWorkspace` method that chunks each upload at 64 KiB and surfaces an
+  early adapter error via `CloseAndRecv`. Remaining staging slices:
+  `FinalizeWorkspace` resolving `uploadFile` and `uploadArchive` plan sources
+  from the staged content (`workspace.Materialize` currently returns
+  `ErrSourceUnsupported` for them), then slim `StartSession` to runtime start
+  only with the gateway binder orchestrating the four-RPC sequence.
 - `5f25913` — §4.7 `FinalizeWorkspace` adapter RPC, the second slice of the
   staging-RPC split. `FinalizeWorkspace` materializes the §14 WorkspacePlan
   into the workspace root via `workspace.Materialize`. Like `RunSetup` it runs
