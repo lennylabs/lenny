@@ -133,6 +133,38 @@ func TestDiscoverAgentsAllowAllNoMembership(t *testing.T) {
 	}
 }
 
+func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
+	srv, runtimes, envs, tenants := newMCPFiltered(t)
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "sec-mcp", Type: runtimestore.TypeMCP,
+		Labels: map[string]string{"team": "security"},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "research-agent", Type: runtimestore.TypeAgent,
+		Labels: map[string]string{"team": "research"},
+	})
+	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
+	_ = envs.Create(context.Background(), securityEnv(
+		environment.Selector{MatchLabels: map[string]string{"team": "security"}}))
+
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
+	// §9.1 discovery covers every runtime type — unlike discover_agents
+	// it includes type:mcp runtimes — and is environment-filtered.
+	for _, want := range []string{"sec-agent", "sec-mcp"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("list_runtimes should include %q: %q", want, text)
+		}
+	}
+	if strings.Contains(text, "research-agent") {
+		t.Errorf("list_runtimes must exclude an out-of-environment runtime: %q", text)
+	}
+}
+
 // buildFilteredMCP builds an MCP server with the §10.6 filtering deps
 // and a platform-wide DefaultNoEnvironmentPolicy.
 func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimestore.Store, environmentstore.Store, tenantstore.Store) {

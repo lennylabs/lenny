@@ -14,6 +14,7 @@
 //   - `lenny/cancel_child`        — cancel a child session and cascade.
 //   - `lenny/await_children`      — wait for child sessions to settle.
 //   - `lenny/discover_agents`     — list §8 delegation targets.
+//   - `lenny/list_runtimes`       — §9.1 runtime discovery.
 //   - `lenny/set_tracing_context` — register §8.3 tracing identifiers.
 //   - `lenny/output`              — emit output parts to the event stream.
 //   - `lenny/request_input`       — block until a peer provides input.
@@ -780,6 +781,51 @@ func Register(srv *mcp.Server, deps Deps) {
 			}{Agents: agents})
 			return textResult(string(body)), nil
 		})
+
+		srv.RegisterTool(mcp.Tool{
+			Name:        "lenny/list_runtimes",
+			Description: "List the runtimes available to the caller (§9.1 discovery).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"}}}`),
+		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+			var in struct {
+				NameContains string `json:"nameContains"`
+			}
+			if len(args) > 0 {
+				if err := json.Unmarshal(args, &in); err != nil {
+					return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+				}
+			}
+			// §9.1 discovery lists every runtime type; the store filter
+			// drops soft-deleted rows.
+			runtimes, err := deps.Runtimes.List(ctx, runtimestore.ListFilter{})
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			// §9.1: discovery is identity-filtered by §10.6 environment
+			// access — a not-authorized runtime is simply absent, so the
+			// response does not enable enumeration.
+			runtimes, err = filterByEnvironmentAccess(ctx, deps, runtimes)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			needle := strings.ToLower(in.NameContains)
+			out := make([]discoveredRuntime, 0, len(runtimes))
+			for _, rt := range runtimes {
+				if needle != "" && !strings.Contains(strings.ToLower(rt.Name), needle) {
+					continue
+				}
+				out = append(out, discoveredRuntime{
+					Name:             rt.Name,
+					Type:             string(rt.Type),
+					IntegrationLevel: string(rt.IntegrationLevel),
+					Description:      rt.Description,
+				})
+			}
+			body, _ := json.Marshal(struct {
+				Runtimes []discoveredRuntime `json:"runtimes"`
+			}{Runtimes: out})
+			return textResult(string(body)), nil
+		})
 	}
 
 	if deps.Delegation != nil {
@@ -981,6 +1027,15 @@ type treeNode struct {
 	SessionID string     `json:"sessionId"`
 	State     string     `json:"state"`
 	Children  []treeNode `json:"children"`
+}
+
+// discoveredRuntime is one entry in the lenny/list_runtimes result. It
+// covers every runtime type, so it carries the type discriminator.
+type discoveredRuntime struct {
+	Name             string `json:"name"`
+	Type             string `json:"type,omitempty"`
+	IntegrationLevel string `json:"integrationLevel,omitempty"`
+	Description      string `json:"description,omitempty"`
 }
 
 // discoveredAgent is one entry in the lenny/discover_agents result.
