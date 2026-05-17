@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cef45cd` — §9.1 `lenny/list_runtimes` MCP discovery tool. The MCP-surface
+  counterpart of `GET /v1/runtimes`; covers every runtime type (unlike
+  `discover_agents`, which is type:agent-only) and is identity-filtered by §10.6
+  environment access.
 - `3bf40f1` — §15.1 OpenAPI: `GET /v1/runtimes` documented with its discovery-entry
   response schema.
 - `df6c5d8` — §9.1 `GET /v1/runtimes` runtime discovery. The REST discovery endpoint
