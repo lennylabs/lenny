@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `53a1dab` — §10.6 session environment context. `sessionstore.Session` gains an
+  `Environment` field; `POST /v1/sessions` accepts it and `GET /v1/sessions/{id}`
+  echoes it. This is the session-side anchor for §10.6 cross-environment delegation,
+  whose bilateral checks resolve against the calling session's environment. The
+  two-step create path, the `lenny/create_session` tool, and the session Postgres
+  column do not yet carry the field.
 - `62dfa18` — §10.6 environment scoping on `lenny/delegate_task`. The tool rejects a
   delegation whose `runtimeRef` is outside the caller's environment scope, closing the
   bypass where a hard-coded reference reached a runtime `discover_agents` would hide.
