@@ -62,6 +62,11 @@ type Options struct {
 	// budget is exhausted. It is the §4.9 fall-through signal to fault
 	// rotation.
 	OnExhausted func(lease Lease)
+
+	// OnRenewed, when set, is called with the replacement lease each
+	// time proactive renewal rotates a lease onto a fresh credential.
+	// It is the §25.3 credential_rotated signal.
+	OnRenewed func(renewed Lease)
 }
 
 // Worker is the §4.9 CredentialRenewalWorker. It is goroutine-safe.
@@ -70,6 +75,7 @@ type Worker struct {
 	interval    time.Duration
 	clock       func() time.Time
 	onExhausted func(Lease)
+	onRenewed   func(Lease)
 
 	mu      sync.Mutex
 	tracked map[string]*trackedLease
@@ -89,6 +95,7 @@ func New(renewer Renewer, opts Options) *Worker {
 		interval:    opts.Interval,
 		clock:       opts.Clock,
 		onExhausted: opts.OnExhausted,
+		onRenewed:   opts.OnRenewed,
 		tracked:     map[string]*trackedLease{},
 		revoked:     map[string]bool{},
 	}
@@ -182,6 +189,9 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 		w.tracked[next.LeaseID] = &trackedLease{lease: next}
 		w.mu.Unlock()
 		renewed++
+		if w.onRenewed != nil {
+			w.onRenewed(next)
+		}
 	}
 	return renewed
 }

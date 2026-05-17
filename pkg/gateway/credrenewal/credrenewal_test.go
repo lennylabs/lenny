@@ -57,6 +57,39 @@ func TestTickRenewsDueLease(t *testing.T) {
 	}
 }
 
+func TestTickFiresOnRenewed(t *testing.T) {
+	// §25.3: a proactive renewal that rotates a lease onto a fresh
+	// credential fires the OnRenewed hook with the replacement lease.
+	r := &fakeRenewer{ttl: time.Hour}
+	var renewedLeases []credrenewal.Lease
+	w := credrenewal.New(r, credrenewal.Options{
+		OnRenewed: func(l credrenewal.Lease) { renewedLeases = append(renewedLeases, l) },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-1", SessionID: "sess-1",
+		RenewBefore: base, ExpiresAt: base.Add(5 * time.Minute),
+	})
+	w.Tick(context.Background(), base.Add(time.Second))
+	if len(renewedLeases) != 1 || renewedLeases[0].LeaseID != "lease-1-r" {
+		t.Errorf("OnRenewed: got %+v, want one replacement lease lease-1-r", renewedLeases)
+	}
+}
+
+func TestTickFutureLeaseDoesNotFireOnRenewed(t *testing.T) {
+	r := &fakeRenewer{ttl: time.Hour}
+	fired := false
+	w := credrenewal.New(r, credrenewal.Options{
+		OnRenewed: func(credrenewal.Lease) { fired = true },
+	})
+	w.Track(credrenewal.Lease{
+		LeaseID: "lease-1", RenewBefore: base.Add(time.Hour), ExpiresAt: base.Add(2 * time.Hour),
+	})
+	w.Tick(context.Background(), base)
+	if fired {
+		t.Error("OnRenewed must not fire when no lease was renewed")
+	}
+}
+
 func TestTickLeavesFutureLease(t *testing.T) {
 	r := &fakeRenewer{ttl: time.Hour}
 	w := credrenewal.New(r, credrenewal.Options{})
