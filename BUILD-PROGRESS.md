@@ -11,6 +11,29 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `4af8de2` — §15.1 OpenAPI: `AgentInterface` component schema (with its mode / skill /
+  example sub-schemas) referenced from the admin `Runtime` schema and the
+  `GET /v1/runtimes` discovery item.
+- `95f3271` — §9.1 `agentInterface` surfaced on runtime discovery. `GET /v1/runtimes`
+  and `lenny/list_runtimes` carry the per-runtime §5.1 `agentInterface` descriptor.
+  The §9.1 `mcpEndpoint` per-runtime field for `type:mcp` runtimes is the remaining
+  discovery block.
+- `6dc4b8b` — §15.1 `agentInterface` round-trip on the admin runtime API. `POST` / `GET`
+  carry the descriptor on `RuntimePayload`; `PUT` carries it as a raw message so an
+  omitted key leaves it unchanged, JSON null clears it, and an object replaces it. Per
+  §5.1 a `type:mcp` runtime carries no `agentInterface`, so create and update reject
+  the field with `400 VALIDATION_ERROR` when the type is `mcp`.
+- `ff4a690` — §5.1 `agent_interface` jsonb column. The §5.1 `agentInterface` descriptor
+  persists to a new nullable `agent_interface` jsonb column (migration 0015); a nil
+  descriptor stores as SQL NULL. The pgstore contract test gains an `agentInterface`
+  round-trip subtest.
+- `3f92006` — §5.1 `agentInterface` descriptor on the runtime model. `runtimestore.Runtime`
+  gains the optional §5.1 `agentInterface` field — the structured descriptor a
+  `type:agent` runtime declares for discovery, A2A agent-card auto-generation, and
+  adapter manifest summaries. The `AgentInterface` struct and its mode / skill /
+  example sub-types mirror the §5.1 YAML shape, which §15 names the normative contract.
+  The in-memory store deep-copies it through `AgentInterface.Clone`. The §5.1 A2A
+  agent-card auto-generation and the `publishedMetadata` store remain unbuilt.
 - `204ada6` — §9.1 `adapterCapabilities` on `lenny/list_runtimes`. The MCP discovery
   tool embeds the MCP adapter's capability block (`/mcp`, protocol `mcp`, session
   continuity / delegation / elicitation / interrupt all supported).
