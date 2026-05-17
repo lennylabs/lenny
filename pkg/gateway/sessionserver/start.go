@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
@@ -357,6 +358,20 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 		"could not resolve a gitClone ref: "+re.Err.Error(), details)
 }
 
+// experimentContextToProto converts a session's stored §10.7
+// experimentContext into the adapter-protocol message delivered in the
+// StartSession manifest. It returns nil for an unenrolled session.
+func experimentContextToProto(ec *sessionstore.ExperimentContext) *adapterv1.ExperimentContext {
+	if ec == nil {
+		return nil
+	}
+	return &adapterv1.ExperimentContext{
+		ExperimentId: ec.ExperimentID,
+		VariantId:    ec.VariantID,
+		Inherited:    ec.Inherited,
+	}
+}
+
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
 // isolation profile, claims an idle pod from it, starts the session on
@@ -369,11 +384,12 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		return err
 	}
 	result, err := s.podBinder.Bind(ctx, podsession.BindRequest{
-		Pool:      pool,
-		SessionID: row.ID,
-		TenantID:  row.TenantID,
-		Runtime:   row.RuntimeRef,
-		Plan:      podsession.WorkspacePlanToProto(plan),
+		Pool:              pool,
+		SessionID:         row.ID,
+		TenantID:          row.TenantID,
+		Runtime:           row.RuntimeRef,
+		Plan:              podsession.WorkspacePlanToProto(plan),
+		ExperimentContext: experimentContextToProto(row.ExperimentContext),
 	})
 	if err != nil {
 		return err

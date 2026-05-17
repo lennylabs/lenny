@@ -255,11 +255,26 @@ message SetupCommand {
 // RPC request/response messages
 // =====================================================================
 
+// ExperimentContext carries a session's §10.7 experiment enrollment so
+// the runtime can tag traces with variant metadata. Absent when the
+// session is not enrolled in any experiment.
+message ExperimentContext {
+  string experiment_id = 1;
+  string variant_id = 2;
+  // inherited is true when the context was propagated from a parent
+  // session under the §8.3 inherit or control propagation mode.
+  bool inherited = 3;
+}
+
 message StartSessionRequest {
   SessionId session_id = 1;
   string runtime = 2;
   WorkspacePlan workspace_plan = 3;
   map<string, string> labels = 4;
+  // experiment_context is the §8.3 / §10.7 experiment enrollment
+  // delivered to the runtime in the adapter manifest. Absent for an
+  // unenrolled session.
+  ExperimentContext experiment_context = 5;
 }
 
 message StartSessionResponse {

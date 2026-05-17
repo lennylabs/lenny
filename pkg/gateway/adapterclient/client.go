@@ -56,12 +56,15 @@ func (c *Client) NegotiateVersion(ctx context.Context, acceptedVersions []string
 
 // StartSession assigns a session to the pod: the adapter materializes
 // the workspace from plan, runs the setup commands, and starts the
-// runtime (§4.7).
-func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string, plan *adapterv1.WorkspacePlan) error {
+// runtime (§4.7). experimentContext carries the session's §8.3 / §10.7
+// experiment enrollment for the adapter manifest; pass nil for an
+// unenrolled session.
+func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string, plan *adapterv1.WorkspacePlan, experimentContext *adapterv1.ExperimentContext) error {
 	_, err := c.rpc.StartSession(ctx, &adapterv1.StartSessionRequest{
-		SessionId:     &adapterv1.SessionId{Value: sessionID},
-		Runtime:       runtimeName,
-		WorkspacePlan: plan,
+		SessionId:         &adapterv1.SessionId{Value: sessionID},
+		Runtime:           runtimeName,
+		WorkspacePlan:     plan,
+		ExperimentContext: experimentContext,
 	})
 	return err
 }

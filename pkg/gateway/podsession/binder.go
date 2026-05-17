@@ -52,6 +52,10 @@ type BindRequest struct {
 	Runtime string
 	// Plan is the workspace the adapter materializes before start.
 	Plan *adapterv1.WorkspacePlan
+	// ExperimentContext is the §8.3 / §10.7 experiment enrollment
+	// delivered to the runtime in the adapter manifest. Nil for an
+	// unenrolled session.
+	ExperimentContext *adapterv1.ExperimentContext
 }
 
 // BindResult reports the pod a session was bound to.
@@ -94,7 +98,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan); err != nil {
+	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan, req.ExperimentContext); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}

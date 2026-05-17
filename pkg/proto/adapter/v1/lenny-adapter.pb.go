@@ -265,7 +265,7 @@ func (x InterruptRequest_Mode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use InterruptRequest_Mode.Descriptor instead.
 func (InterruptRequest_Mode) EnumDescriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{20, 0}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{21, 0}
 }
 
 type ExtendLeaseResponse_Status int32
@@ -320,7 +320,7 @@ func (x ExtendLeaseResponse_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ExtendLeaseResponse_Status.Descriptor instead.
 func (ExtendLeaseResponse_Status) EnumDescriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{29, 0}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{30, 0}
 }
 
 type Error struct {
@@ -810,19 +810,88 @@ func (x *SetupCommand) GetTimeoutSeconds() int32 {
 	return 0
 }
 
+// ExperimentContext carries a session's §10.7 experiment enrollment so
+// the runtime can tag traces with variant metadata. Absent when the
+// session is not enrolled in any experiment.
+type ExperimentContext struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ExperimentId string                 `protobuf:"bytes,1,opt,name=experiment_id,json=experimentId,proto3" json:"experiment_id,omitempty"`
+	VariantId    string                 `protobuf:"bytes,2,opt,name=variant_id,json=variantId,proto3" json:"variant_id,omitempty"`
+	// inherited is true when the context was propagated from a parent
+	// session under the §8.3 inherit or control propagation mode.
+	Inherited     bool `protobuf:"varint,3,opt,name=inherited,proto3" json:"inherited,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExperimentContext) Reset() {
+	*x = ExperimentContext{}
+	mi := &file_lenny_adapter_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExperimentContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExperimentContext) ProtoMessage() {}
+
+func (x *ExperimentContext) ProtoReflect() protoreflect.Message {
+	mi := &file_lenny_adapter_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExperimentContext.ProtoReflect.Descriptor instead.
+func (*ExperimentContext) Descriptor() ([]byte, []int) {
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ExperimentContext) GetExperimentId() string {
+	if x != nil {
+		return x.ExperimentId
+	}
+	return ""
+}
+
+func (x *ExperimentContext) GetVariantId() string {
+	if x != nil {
+		return x.VariantId
+	}
+	return ""
+}
+
+func (x *ExperimentContext) GetInherited() bool {
+	if x != nil {
+		return x.Inherited
+	}
+	return false
+}
+
 type StartSessionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Runtime       string                 `protobuf:"bytes,2,opt,name=runtime,proto3" json:"runtime,omitempty"`
 	WorkspacePlan *WorkspacePlan         `protobuf:"bytes,3,opt,name=workspace_plan,json=workspacePlan,proto3" json:"workspace_plan,omitempty"`
 	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// experiment_context is the §8.3 / §10.7 experiment enrollment
+	// delivered to the runtime in the adapter manifest. Absent for an
+	// unenrolled session.
+	ExperimentContext *ExperimentContext `protobuf:"bytes,5,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *StartSessionRequest) Reset() {
 	*x = StartSessionRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[7]
+	mi := &file_lenny_adapter_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +903,7 @@ func (x *StartSessionRequest) String() string {
 func (*StartSessionRequest) ProtoMessage() {}
 
 func (x *StartSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[7]
+	mi := &file_lenny_adapter_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +916,7 @@ func (x *StartSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartSessionRequest.ProtoReflect.Descriptor instead.
 func (*StartSessionRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{7}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StartSessionRequest) GetSessionId() *SessionId {
@@ -878,6 +947,13 @@ func (x *StartSessionRequest) GetLabels() map[string]string {
 	return nil
 }
 
+func (x *StartSessionRequest) GetExperimentContext() *ExperimentContext {
+	if x != nil {
+		return x.ExperimentContext
+	}
+	return nil
+}
+
 type StartSessionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Empty on success. Non-empty on graceful refusal (the pod is degraded
@@ -889,7 +965,7 @@ type StartSessionResponse struct {
 
 func (x *StartSessionResponse) Reset() {
 	*x = StartSessionResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[8]
+	mi := &file_lenny_adapter_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -901,7 +977,7 @@ func (x *StartSessionResponse) String() string {
 func (*StartSessionResponse) ProtoMessage() {}
 
 func (x *StartSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[8]
+	mi := &file_lenny_adapter_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -914,7 +990,7 @@ func (x *StartSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartSessionResponse.ProtoReflect.Descriptor instead.
 func (*StartSessionResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{8}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StartSessionResponse) GetRefusalReason() string {
@@ -937,7 +1013,7 @@ type SendMessageRequest struct {
 
 func (x *SendMessageRequest) Reset() {
 	*x = SendMessageRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[9]
+	mi := &file_lenny_adapter_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -949,7 +1025,7 @@ func (x *SendMessageRequest) String() string {
 func (*SendMessageRequest) ProtoMessage() {}
 
 func (x *SendMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[9]
+	mi := &file_lenny_adapter_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -962,7 +1038,7 @@ func (x *SendMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendMessageRequest.ProtoReflect.Descriptor instead.
 func (*SendMessageRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{9}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SendMessageRequest) GetSessionId() *SessionId {
@@ -994,7 +1070,7 @@ type SendMessageResponse struct {
 
 func (x *SendMessageResponse) Reset() {
 	*x = SendMessageResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[10]
+	mi := &file_lenny_adapter_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1082,7 @@ func (x *SendMessageResponse) String() string {
 func (*SendMessageResponse) ProtoMessage() {}
 
 func (x *SendMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[10]
+	mi := &file_lenny_adapter_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1095,7 @@ func (x *SendMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendMessageResponse.ProtoReflect.Descriptor instead.
 func (*SendMessageResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{10}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{11}
 }
 
 // AttachClientMessage is one frame the gateway streams to the adapter over
@@ -1039,7 +1115,7 @@ type AttachClientMessage struct {
 
 func (x *AttachClientMessage) Reset() {
 	*x = AttachClientMessage{}
-	mi := &file_lenny_adapter_proto_msgTypes[11]
+	mi := &file_lenny_adapter_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1051,7 +1127,7 @@ func (x *AttachClientMessage) String() string {
 func (*AttachClientMessage) ProtoMessage() {}
 
 func (x *AttachClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[11]
+	mi := &file_lenny_adapter_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1064,7 +1140,7 @@ func (x *AttachClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachClientMessage.ProtoReflect.Descriptor instead.
 func (*AttachClientMessage) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{11}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AttachClientMessage) GetSessionId() *SessionId {
@@ -1102,7 +1178,7 @@ type AttachServerMessage struct {
 
 func (x *AttachServerMessage) Reset() {
 	*x = AttachServerMessage{}
-	mi := &file_lenny_adapter_proto_msgTypes[12]
+	mi := &file_lenny_adapter_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1114,7 +1190,7 @@ func (x *AttachServerMessage) String() string {
 func (*AttachServerMessage) ProtoMessage() {}
 
 func (x *AttachServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[12]
+	mi := &file_lenny_adapter_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1127,7 +1203,7 @@ func (x *AttachServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachServerMessage.ProtoReflect.Descriptor instead.
 func (*AttachServerMessage) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{12}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AttachServerMessage) GetEnvelopeJson() []byte {
@@ -1147,7 +1223,7 @@ type AssignCredentialsRequest struct {
 
 func (x *AssignCredentialsRequest) Reset() {
 	*x = AssignCredentialsRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[13]
+	mi := &file_lenny_adapter_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1159,7 +1235,7 @@ func (x *AssignCredentialsRequest) String() string {
 func (*AssignCredentialsRequest) ProtoMessage() {}
 
 func (x *AssignCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[13]
+	mi := &file_lenny_adapter_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1172,7 +1248,7 @@ func (x *AssignCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*AssignCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{13}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AssignCredentialsRequest) GetSessionId() *SessionId {
@@ -1197,7 +1273,7 @@ type AssignCredentialsResponse struct {
 
 func (x *AssignCredentialsResponse) Reset() {
 	*x = AssignCredentialsResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[14]
+	mi := &file_lenny_adapter_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1209,7 +1285,7 @@ func (x *AssignCredentialsResponse) String() string {
 func (*AssignCredentialsResponse) ProtoMessage() {}
 
 func (x *AssignCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[14]
+	mi := &file_lenny_adapter_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1222,7 +1298,7 @@ func (x *AssignCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*AssignCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{14}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{15}
 }
 
 type RotateCredentialsRequest struct {
@@ -1235,7 +1311,7 @@ type RotateCredentialsRequest struct {
 
 func (x *RotateCredentialsRequest) Reset() {
 	*x = RotateCredentialsRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[15]
+	mi := &file_lenny_adapter_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1247,7 +1323,7 @@ func (x *RotateCredentialsRequest) String() string {
 func (*RotateCredentialsRequest) ProtoMessage() {}
 
 func (x *RotateCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[15]
+	mi := &file_lenny_adapter_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1260,7 +1336,7 @@ func (x *RotateCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*RotateCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{15}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RotateCredentialsRequest) GetSessionId() *SessionId {
@@ -1285,7 +1361,7 @@ type RotateCredentialsResponse struct {
 
 func (x *RotateCredentialsResponse) Reset() {
 	*x = RotateCredentialsResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[16]
+	mi := &file_lenny_adapter_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1297,7 +1373,7 @@ func (x *RotateCredentialsResponse) String() string {
 func (*RotateCredentialsResponse) ProtoMessage() {}
 
 func (x *RotateCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[16]
+	mi := &file_lenny_adapter_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1310,7 +1386,7 @@ func (x *RotateCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*RotateCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{16}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{17}
 }
 
 type RevokeCredentialsRequest struct {
@@ -1324,7 +1400,7 @@ type RevokeCredentialsRequest struct {
 
 func (x *RevokeCredentialsRequest) Reset() {
 	*x = RevokeCredentialsRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[17]
+	mi := &file_lenny_adapter_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1336,7 +1412,7 @@ func (x *RevokeCredentialsRequest) String() string {
 func (*RevokeCredentialsRequest) ProtoMessage() {}
 
 func (x *RevokeCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[17]
+	mi := &file_lenny_adapter_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1349,7 +1425,7 @@ func (x *RevokeCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*RevokeCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{17}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *RevokeCredentialsRequest) GetSessionId() *SessionId {
@@ -1381,7 +1457,7 @@ type RevokeCredentialsResponse struct {
 
 func (x *RevokeCredentialsResponse) Reset() {
 	*x = RevokeCredentialsResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[18]
+	mi := &file_lenny_adapter_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1393,7 +1469,7 @@ func (x *RevokeCredentialsResponse) String() string {
 func (*RevokeCredentialsResponse) ProtoMessage() {}
 
 func (x *RevokeCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[18]
+	mi := &file_lenny_adapter_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1406,7 +1482,7 @@ func (x *RevokeCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*RevokeCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{18}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{19}
 }
 
 type CredentialLease struct {
@@ -1423,7 +1499,7 @@ type CredentialLease struct {
 
 func (x *CredentialLease) Reset() {
 	*x = CredentialLease{}
-	mi := &file_lenny_adapter_proto_msgTypes[19]
+	mi := &file_lenny_adapter_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1435,7 +1511,7 @@ func (x *CredentialLease) String() string {
 func (*CredentialLease) ProtoMessage() {}
 
 func (x *CredentialLease) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[19]
+	mi := &file_lenny_adapter_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1448,7 +1524,7 @@ func (x *CredentialLease) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialLease.ProtoReflect.Descriptor instead.
 func (*CredentialLease) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{19}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CredentialLease) GetLeaseId() string {
@@ -1497,7 +1573,7 @@ type InterruptRequest struct {
 
 func (x *InterruptRequest) Reset() {
 	*x = InterruptRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[20]
+	mi := &file_lenny_adapter_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1509,7 +1585,7 @@ func (x *InterruptRequest) String() string {
 func (*InterruptRequest) ProtoMessage() {}
 
 func (x *InterruptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[20]
+	mi := &file_lenny_adapter_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1522,7 +1598,7 @@ func (x *InterruptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptRequest.ProtoReflect.Descriptor instead.
 func (*InterruptRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{20}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *InterruptRequest) GetSessionId() *SessionId {
@@ -1555,7 +1631,7 @@ type InterruptResponse struct {
 
 func (x *InterruptResponse) Reset() {
 	*x = InterruptResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[21]
+	mi := &file_lenny_adapter_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1567,7 +1643,7 @@ func (x *InterruptResponse) String() string {
 func (*InterruptResponse) ProtoMessage() {}
 
 func (x *InterruptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[21]
+	mi := &file_lenny_adapter_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1580,7 +1656,7 @@ func (x *InterruptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterruptResponse.ProtoReflect.Descriptor instead.
 func (*InterruptResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{21}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *InterruptResponse) GetAcknowledged() bool {
@@ -1600,7 +1676,7 @@ type CheckpointRequest struct {
 
 func (x *CheckpointRequest) Reset() {
 	*x = CheckpointRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[22]
+	mi := &file_lenny_adapter_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1612,7 +1688,7 @@ func (x *CheckpointRequest) String() string {
 func (*CheckpointRequest) ProtoMessage() {}
 
 func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[22]
+	mi := &file_lenny_adapter_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1625,7 +1701,7 @@ func (x *CheckpointRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointRequest.ProtoReflect.Descriptor instead.
 func (*CheckpointRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{22}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CheckpointRequest) GetSessionId() *SessionId {
@@ -1652,7 +1728,7 @@ type CheckpointResponse struct {
 
 func (x *CheckpointResponse) Reset() {
 	*x = CheckpointResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[23]
+	mi := &file_lenny_adapter_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1664,7 +1740,7 @@ func (x *CheckpointResponse) String() string {
 func (*CheckpointResponse) ProtoMessage() {}
 
 func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[23]
+	mi := &file_lenny_adapter_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1677,7 +1753,7 @@ func (x *CheckpointResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointResponse.ProtoReflect.Descriptor instead.
 func (*CheckpointResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{23}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CheckpointResponse) GetCheckpointId() string {
@@ -1705,7 +1781,7 @@ type ResumeRequest struct {
 
 func (x *ResumeRequest) Reset() {
 	*x = ResumeRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[24]
+	mi := &file_lenny_adapter_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1717,7 +1793,7 @@ func (x *ResumeRequest) String() string {
 func (*ResumeRequest) ProtoMessage() {}
 
 func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[24]
+	mi := &file_lenny_adapter_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1730,7 +1806,7 @@ func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{24}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ResumeRequest) GetSessionId() *SessionId {
@@ -1763,7 +1839,7 @@ type ResumeResponse struct {
 
 func (x *ResumeResponse) Reset() {
 	*x = ResumeResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[25]
+	mi := &file_lenny_adapter_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1775,7 +1851,7 @@ func (x *ResumeResponse) String() string {
 func (*ResumeResponse) ProtoMessage() {}
 
 func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[25]
+	mi := &file_lenny_adapter_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1788,7 +1864,7 @@ func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
 func (*ResumeResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{25}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ResumeResponse) GetRestoredBytes() int64 {
@@ -1807,7 +1883,7 @@ type ReportUsageRequest struct {
 
 func (x *ReportUsageRequest) Reset() {
 	*x = ReportUsageRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[26]
+	mi := &file_lenny_adapter_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1819,7 +1895,7 @@ func (x *ReportUsageRequest) String() string {
 func (*ReportUsageRequest) ProtoMessage() {}
 
 func (x *ReportUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[26]
+	mi := &file_lenny_adapter_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1832,7 +1908,7 @@ func (x *ReportUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportUsageRequest.ProtoReflect.Descriptor instead.
 func (*ReportUsageRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{26}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ReportUsageRequest) GetSessionId() *SessionId {
@@ -1853,7 +1929,7 @@ type ReportUsageResponse struct {
 
 func (x *ReportUsageResponse) Reset() {
 	*x = ReportUsageResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[27]
+	mi := &file_lenny_adapter_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1865,7 +1941,7 @@ func (x *ReportUsageResponse) String() string {
 func (*ReportUsageResponse) ProtoMessage() {}
 
 func (x *ReportUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[27]
+	mi := &file_lenny_adapter_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1878,7 +1954,7 @@ func (x *ReportUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportUsageResponse.ProtoReflect.Descriptor instead.
 func (*ReportUsageResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{27}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ReportUsageResponse) GetInputTokens() int64 {
@@ -1913,7 +1989,7 @@ type ExtendLeaseRequest struct {
 
 func (x *ExtendLeaseRequest) Reset() {
 	*x = ExtendLeaseRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[28]
+	mi := &file_lenny_adapter_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1925,7 +2001,7 @@ func (x *ExtendLeaseRequest) String() string {
 func (*ExtendLeaseRequest) ProtoMessage() {}
 
 func (x *ExtendLeaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[28]
+	mi := &file_lenny_adapter_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1938,7 +2014,7 @@ func (x *ExtendLeaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtendLeaseRequest.ProtoReflect.Descriptor instead.
 func (*ExtendLeaseRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{28}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ExtendLeaseRequest) GetSessionId() *SessionId {
@@ -1975,7 +2051,7 @@ type ExtendLeaseResponse struct {
 
 func (x *ExtendLeaseResponse) Reset() {
 	*x = ExtendLeaseResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[29]
+	mi := &file_lenny_adapter_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1987,7 +2063,7 @@ func (x *ExtendLeaseResponse) String() string {
 func (*ExtendLeaseResponse) ProtoMessage() {}
 
 func (x *ExtendLeaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[29]
+	mi := &file_lenny_adapter_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2000,7 +2076,7 @@ func (x *ExtendLeaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtendLeaseResponse.ProtoReflect.Descriptor instead.
 func (*ExtendLeaseResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{29}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ExtendLeaseResponse) GetStatus() ExtendLeaseResponse_Status {
@@ -2042,7 +2118,7 @@ type ShutdownRequest struct {
 
 func (x *ShutdownRequest) Reset() {
 	*x = ShutdownRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[30]
+	mi := &file_lenny_adapter_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2054,7 +2130,7 @@ func (x *ShutdownRequest) String() string {
 func (*ShutdownRequest) ProtoMessage() {}
 
 func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[30]
+	mi := &file_lenny_adapter_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2067,7 +2143,7 @@ func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{30}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ShutdownRequest) GetSessionId() *SessionId {
@@ -2101,7 +2177,7 @@ type ShutdownResponse struct {
 
 func (x *ShutdownResponse) Reset() {
 	*x = ShutdownResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[31]
+	mi := &file_lenny_adapter_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2113,7 +2189,7 @@ func (x *ShutdownResponse) String() string {
 func (*ShutdownResponse) ProtoMessage() {}
 
 func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[31]
+	mi := &file_lenny_adapter_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2126,7 +2202,7 @@ func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
 func (*ShutdownResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{31}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ShutdownResponse) GetExitedCleanly() bool {
@@ -2154,7 +2230,7 @@ type DemoteSDKRequest struct {
 
 func (x *DemoteSDKRequest) Reset() {
 	*x = DemoteSDKRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[32]
+	mi := &file_lenny_adapter_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2166,7 +2242,7 @@ func (x *DemoteSDKRequest) String() string {
 func (*DemoteSDKRequest) ProtoMessage() {}
 
 func (x *DemoteSDKRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[32]
+	mi := &file_lenny_adapter_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2179,7 +2255,7 @@ func (x *DemoteSDKRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoteSDKRequest.ProtoReflect.Descriptor instead.
 func (*DemoteSDKRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{32}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DemoteSDKRequest) GetReason() string {
@@ -2200,7 +2276,7 @@ type DemoteSDKResponse struct {
 
 func (x *DemoteSDKResponse) Reset() {
 	*x = DemoteSDKResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[33]
+	mi := &file_lenny_adapter_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2212,7 +2288,7 @@ func (x *DemoteSDKResponse) String() string {
 func (*DemoteSDKResponse) ProtoMessage() {}
 
 func (x *DemoteSDKResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[33]
+	mi := &file_lenny_adapter_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2225,7 +2301,7 @@ func (x *DemoteSDKResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DemoteSDKResponse.ProtoReflect.Descriptor instead.
 func (*DemoteSDKResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{33}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *DemoteSDKResponse) GetDemoted() bool {
@@ -2250,7 +2326,7 @@ type NegotiateVersionRequest struct {
 
 func (x *NegotiateVersionRequest) Reset() {
 	*x = NegotiateVersionRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[34]
+	mi := &file_lenny_adapter_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2262,7 +2338,7 @@ func (x *NegotiateVersionRequest) String() string {
 func (*NegotiateVersionRequest) ProtoMessage() {}
 
 func (x *NegotiateVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[34]
+	mi := &file_lenny_adapter_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2275,7 +2351,7 @@ func (x *NegotiateVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NegotiateVersionRequest.ProtoReflect.Descriptor instead.
 func (*NegotiateVersionRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{34}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *NegotiateVersionRequest) GetAcceptedProtocolVersions() []string {
@@ -2311,7 +2387,7 @@ type NegotiateVersionResponse struct {
 
 func (x *NegotiateVersionResponse) Reset() {
 	*x = NegotiateVersionResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[35]
+	mi := &file_lenny_adapter_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2323,7 +2399,7 @@ func (x *NegotiateVersionResponse) String() string {
 func (*NegotiateVersionResponse) ProtoMessage() {}
 
 func (x *NegotiateVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[35]
+	mi := &file_lenny_adapter_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2336,7 +2412,7 @@ func (x *NegotiateVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NegotiateVersionResponse.ProtoReflect.Descriptor instead.
 func (*NegotiateVersionResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{35}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *NegotiateVersionResponse) GetSelectedProtocolVersion() string {
@@ -2381,7 +2457,7 @@ type LifecycleChannelRequest struct {
 
 func (x *LifecycleChannelRequest) Reset() {
 	*x = LifecycleChannelRequest{}
-	mi := &file_lenny_adapter_proto_msgTypes[36]
+	mi := &file_lenny_adapter_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2393,7 +2469,7 @@ func (x *LifecycleChannelRequest) String() string {
 func (*LifecycleChannelRequest) ProtoMessage() {}
 
 func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[36]
+	mi := &file_lenny_adapter_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2406,7 +2482,7 @@ func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifecycleChannelRequest.ProtoReflect.Descriptor instead.
 func (*LifecycleChannelRequest) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{36}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *LifecycleChannelRequest) GetEnvelopeJson() []byte {
@@ -2425,7 +2501,7 @@ type LifecycleChannelResponse struct {
 
 func (x *LifecycleChannelResponse) Reset() {
 	*x = LifecycleChannelResponse{}
-	mi := &file_lenny_adapter_proto_msgTypes[37]
+	mi := &file_lenny_adapter_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2437,7 +2513,7 @@ func (x *LifecycleChannelResponse) String() string {
 func (*LifecycleChannelResponse) ProtoMessage() {}
 
 func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lenny_adapter_proto_msgTypes[37]
+	mi := &file_lenny_adapter_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2450,7 +2526,7 @@ func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LifecycleChannelResponse.ProtoReflect.Descriptor instead.
 func (*LifecycleChannelResponse) Descriptor() ([]byte, []int) {
-	return file_lenny_adapter_proto_rawDescGZIP(), []int{37}
+	return file_lenny_adapter_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *LifecycleChannelResponse) GetEnvelopeJson() []byte {
@@ -2538,13 +2614,19 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"leaseScope\"I\n" +
 	"\fSetupCommand\x12\x10\n" +
 	"\x03cmd\x18\x01 \x01(\tR\x03cmd\x12'\n" +
-	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"\xb9\x02\n" +
+	"\x0ftimeout_seconds\x18\x02 \x01(\x05R\x0etimeoutSeconds\"u\n" +
+	"\x11ExperimentContext\x12#\n" +
+	"\rexperiment_id\x18\x01 \x01(\tR\fexperimentId\x12\x1d\n" +
+	"\n" +
+	"variant_id\x18\x02 \x01(\tR\tvariantId\x12\x1c\n" +
+	"\tinherited\x18\x03 \x01(\bR\tinherited\"\x8d\x03\n" +
 	"\x13StartSessionRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
 	"\aruntime\x18\x02 \x01(\tR\aruntime\x12F\n" +
 	"\x0eworkspace_plan\x18\x03 \x01(\v2\x1f.lenny.adapter.v1.WorkspacePlanR\rworkspacePlan\x12I\n" +
-	"\x06labels\x18\x04 \x03(\v21.lenny.adapter.v1.StartSessionRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\x06labels\x18\x04 \x03(\v21.lenny.adapter.v1.StartSessionRequest.LabelsEntryR\x06labels\x12R\n" +
+	"\x12experiment_context\x18\x05 \x01(\v2#.lenny.adapter.v1.ExperimentContextR\x11experimentContext\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
@@ -2699,7 +2781,7 @@ func file_lenny_adapter_proto_rawDescGZIP() []byte {
 }
 
 var file_lenny_adapter_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_lenny_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_lenny_adapter_proto_goTypes = []any{
 	(Error_Category)(0),               // 0: lenny.adapter.v1.Error.Category
 	(Error_ErrorCode)(0),              // 1: lenny.adapter.v1.Error.ErrorCode
@@ -2712,40 +2794,41 @@ var file_lenny_adapter_proto_goTypes = []any{
 	(*WorkspaceSource)(nil),           // 8: lenny.adapter.v1.WorkspaceSource
 	(*GitAuth)(nil),                   // 9: lenny.adapter.v1.GitAuth
 	(*SetupCommand)(nil),              // 10: lenny.adapter.v1.SetupCommand
-	(*StartSessionRequest)(nil),       // 11: lenny.adapter.v1.StartSessionRequest
-	(*StartSessionResponse)(nil),      // 12: lenny.adapter.v1.StartSessionResponse
-	(*SendMessageRequest)(nil),        // 13: lenny.adapter.v1.SendMessageRequest
-	(*SendMessageResponse)(nil),       // 14: lenny.adapter.v1.SendMessageResponse
-	(*AttachClientMessage)(nil),       // 15: lenny.adapter.v1.AttachClientMessage
-	(*AttachServerMessage)(nil),       // 16: lenny.adapter.v1.AttachServerMessage
-	(*AssignCredentialsRequest)(nil),  // 17: lenny.adapter.v1.AssignCredentialsRequest
-	(*AssignCredentialsResponse)(nil), // 18: lenny.adapter.v1.AssignCredentialsResponse
-	(*RotateCredentialsRequest)(nil),  // 19: lenny.adapter.v1.RotateCredentialsRequest
-	(*RotateCredentialsResponse)(nil), // 20: lenny.adapter.v1.RotateCredentialsResponse
-	(*RevokeCredentialsRequest)(nil),  // 21: lenny.adapter.v1.RevokeCredentialsRequest
-	(*RevokeCredentialsResponse)(nil), // 22: lenny.adapter.v1.RevokeCredentialsResponse
-	(*CredentialLease)(nil),           // 23: lenny.adapter.v1.CredentialLease
-	(*InterruptRequest)(nil),          // 24: lenny.adapter.v1.InterruptRequest
-	(*InterruptResponse)(nil),         // 25: lenny.adapter.v1.InterruptResponse
-	(*CheckpointRequest)(nil),         // 26: lenny.adapter.v1.CheckpointRequest
-	(*CheckpointResponse)(nil),        // 27: lenny.adapter.v1.CheckpointResponse
-	(*ResumeRequest)(nil),             // 28: lenny.adapter.v1.ResumeRequest
-	(*ResumeResponse)(nil),            // 29: lenny.adapter.v1.ResumeResponse
-	(*ReportUsageRequest)(nil),        // 30: lenny.adapter.v1.ReportUsageRequest
-	(*ReportUsageResponse)(nil),       // 31: lenny.adapter.v1.ReportUsageResponse
-	(*ExtendLeaseRequest)(nil),        // 32: lenny.adapter.v1.ExtendLeaseRequest
-	(*ExtendLeaseResponse)(nil),       // 33: lenny.adapter.v1.ExtendLeaseResponse
-	(*ShutdownRequest)(nil),           // 34: lenny.adapter.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),          // 35: lenny.adapter.v1.ShutdownResponse
-	(*DemoteSDKRequest)(nil),          // 36: lenny.adapter.v1.DemoteSDKRequest
-	(*DemoteSDKResponse)(nil),         // 37: lenny.adapter.v1.DemoteSDKResponse
-	(*NegotiateVersionRequest)(nil),   // 38: lenny.adapter.v1.NegotiateVersionRequest
-	(*NegotiateVersionResponse)(nil),  // 39: lenny.adapter.v1.NegotiateVersionResponse
-	(*LifecycleChannelRequest)(nil),   // 40: lenny.adapter.v1.LifecycleChannelRequest
-	(*LifecycleChannelResponse)(nil),  // 41: lenny.adapter.v1.LifecycleChannelResponse
-	nil,                               // 42: lenny.adapter.v1.StartSessionRequest.LabelsEntry
-	nil,                               // 43: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	nil,                               // 44: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	(*ExperimentContext)(nil),         // 11: lenny.adapter.v1.ExperimentContext
+	(*StartSessionRequest)(nil),       // 12: lenny.adapter.v1.StartSessionRequest
+	(*StartSessionResponse)(nil),      // 13: lenny.adapter.v1.StartSessionResponse
+	(*SendMessageRequest)(nil),        // 14: lenny.adapter.v1.SendMessageRequest
+	(*SendMessageResponse)(nil),       // 15: lenny.adapter.v1.SendMessageResponse
+	(*AttachClientMessage)(nil),       // 16: lenny.adapter.v1.AttachClientMessage
+	(*AttachServerMessage)(nil),       // 17: lenny.adapter.v1.AttachServerMessage
+	(*AssignCredentialsRequest)(nil),  // 18: lenny.adapter.v1.AssignCredentialsRequest
+	(*AssignCredentialsResponse)(nil), // 19: lenny.adapter.v1.AssignCredentialsResponse
+	(*RotateCredentialsRequest)(nil),  // 20: lenny.adapter.v1.RotateCredentialsRequest
+	(*RotateCredentialsResponse)(nil), // 21: lenny.adapter.v1.RotateCredentialsResponse
+	(*RevokeCredentialsRequest)(nil),  // 22: lenny.adapter.v1.RevokeCredentialsRequest
+	(*RevokeCredentialsResponse)(nil), // 23: lenny.adapter.v1.RevokeCredentialsResponse
+	(*CredentialLease)(nil),           // 24: lenny.adapter.v1.CredentialLease
+	(*InterruptRequest)(nil),          // 25: lenny.adapter.v1.InterruptRequest
+	(*InterruptResponse)(nil),         // 26: lenny.adapter.v1.InterruptResponse
+	(*CheckpointRequest)(nil),         // 27: lenny.adapter.v1.CheckpointRequest
+	(*CheckpointResponse)(nil),        // 28: lenny.adapter.v1.CheckpointResponse
+	(*ResumeRequest)(nil),             // 29: lenny.adapter.v1.ResumeRequest
+	(*ResumeResponse)(nil),            // 30: lenny.adapter.v1.ResumeResponse
+	(*ReportUsageRequest)(nil),        // 31: lenny.adapter.v1.ReportUsageRequest
+	(*ReportUsageResponse)(nil),       // 32: lenny.adapter.v1.ReportUsageResponse
+	(*ExtendLeaseRequest)(nil),        // 33: lenny.adapter.v1.ExtendLeaseRequest
+	(*ExtendLeaseResponse)(nil),       // 34: lenny.adapter.v1.ExtendLeaseResponse
+	(*ShutdownRequest)(nil),           // 35: lenny.adapter.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),          // 36: lenny.adapter.v1.ShutdownResponse
+	(*DemoteSDKRequest)(nil),          // 37: lenny.adapter.v1.DemoteSDKRequest
+	(*DemoteSDKResponse)(nil),         // 38: lenny.adapter.v1.DemoteSDKResponse
+	(*NegotiateVersionRequest)(nil),   // 39: lenny.adapter.v1.NegotiateVersionRequest
+	(*NegotiateVersionResponse)(nil),  // 40: lenny.adapter.v1.NegotiateVersionResponse
+	(*LifecycleChannelRequest)(nil),   // 41: lenny.adapter.v1.LifecycleChannelRequest
+	(*LifecycleChannelResponse)(nil),  // 42: lenny.adapter.v1.LifecycleChannelResponse
+	nil,                               // 43: lenny.adapter.v1.StartSessionRequest.LabelsEntry
+	nil,                               // 44: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	nil,                               // 45: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
 }
 var file_lenny_adapter_proto_depIdxs = []int32{
 	1,  // 0: lenny.adapter.v1.Error.code:type_name -> lenny.adapter.v1.Error.ErrorCode
@@ -2755,61 +2838,62 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	9,  // 4: lenny.adapter.v1.WorkspaceSource.auth:type_name -> lenny.adapter.v1.GitAuth
 	5,  // 5: lenny.adapter.v1.StartSessionRequest.session_id:type_name -> lenny.adapter.v1.SessionId
 	7,  // 6: lenny.adapter.v1.StartSessionRequest.workspace_plan:type_name -> lenny.adapter.v1.WorkspacePlan
-	42, // 7: lenny.adapter.v1.StartSessionRequest.labels:type_name -> lenny.adapter.v1.StartSessionRequest.LabelsEntry
-	5,  // 8: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	6,  // 9: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
-	5,  // 10: lenny.adapter.v1.AttachClientMessage.session_id:type_name -> lenny.adapter.v1.SessionId
-	6,  // 11: lenny.adapter.v1.AttachClientMessage.slot_id:type_name -> lenny.adapter.v1.SlotId
-	5,  // 12: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	43, // 13: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
-	5,  // 14: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	44, // 15: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
-	5,  // 16: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 17: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	2,  // 18: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
-	5,  // 19: lenny.adapter.v1.CheckpointRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 20: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 21: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	5,  // 22: lenny.adapter.v1.ExtendLeaseRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	3,  // 23: lenny.adapter.v1.ExtendLeaseResponse.status:type_name -> lenny.adapter.v1.ExtendLeaseResponse.Status
-	5,  // 24: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
-	23, // 25: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	23, // 26: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
-	11, // 27: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
-	13, // 28: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
-	15, // 29: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachClientMessage
-	17, // 30: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
-	19, // 31: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
-	21, // 32: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
-	24, // 33: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
-	26, // 34: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
-	28, // 35: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
-	30, // 36: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
-	32, // 37: lenny.adapter.v1.Adapter.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
-	34, // 38: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
-	36, // 39: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
-	38, // 40: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
-	40, // 41: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
-	12, // 42: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
-	14, // 43: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
-	16, // 44: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachServerMessage
-	18, // 45: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
-	20, // 46: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
-	22, // 47: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
-	25, // 48: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
-	27, // 49: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
-	29, // 50: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
-	31, // 51: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
-	33, // 52: lenny.adapter.v1.Adapter.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
-	35, // 53: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
-	37, // 54: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
-	39, // 55: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
-	41, // 56: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
-	42, // [42:57] is the sub-list for method output_type
-	27, // [27:42] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	43, // 7: lenny.adapter.v1.StartSessionRequest.labels:type_name -> lenny.adapter.v1.StartSessionRequest.LabelsEntry
+	11, // 8: lenny.adapter.v1.StartSessionRequest.experiment_context:type_name -> lenny.adapter.v1.ExperimentContext
+	5,  // 9: lenny.adapter.v1.SendMessageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	6,  // 10: lenny.adapter.v1.SendMessageRequest.slot_id:type_name -> lenny.adapter.v1.SlotId
+	5,  // 11: lenny.adapter.v1.AttachClientMessage.session_id:type_name -> lenny.adapter.v1.SessionId
+	6,  // 12: lenny.adapter.v1.AttachClientMessage.slot_id:type_name -> lenny.adapter.v1.SlotId
+	5,  // 13: lenny.adapter.v1.AssignCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	44, // 14: lenny.adapter.v1.AssignCredentialsRequest.leases:type_name -> lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
+	5,  // 15: lenny.adapter.v1.RotateCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	45, // 16: lenny.adapter.v1.RotateCredentialsRequest.leases:type_name -> lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry
+	5,  // 17: lenny.adapter.v1.RevokeCredentialsRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 18: lenny.adapter.v1.InterruptRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	2,  // 19: lenny.adapter.v1.InterruptRequest.mode:type_name -> lenny.adapter.v1.InterruptRequest.Mode
+	5,  // 20: lenny.adapter.v1.CheckpointRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 21: lenny.adapter.v1.ResumeRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 22: lenny.adapter.v1.ReportUsageRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	5,  // 23: lenny.adapter.v1.ExtendLeaseRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	3,  // 24: lenny.adapter.v1.ExtendLeaseResponse.status:type_name -> lenny.adapter.v1.ExtendLeaseResponse.Status
+	5,  // 25: lenny.adapter.v1.ShutdownRequest.session_id:type_name -> lenny.adapter.v1.SessionId
+	24, // 26: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	24, // 27: lenny.adapter.v1.RotateCredentialsRequest.LeasesEntry.value:type_name -> lenny.adapter.v1.CredentialLease
+	12, // 28: lenny.adapter.v1.Adapter.StartSession:input_type -> lenny.adapter.v1.StartSessionRequest
+	14, // 29: lenny.adapter.v1.Adapter.SendMessage:input_type -> lenny.adapter.v1.SendMessageRequest
+	16, // 30: lenny.adapter.v1.Adapter.Attach:input_type -> lenny.adapter.v1.AttachClientMessage
+	18, // 31: lenny.adapter.v1.Adapter.AssignCredentials:input_type -> lenny.adapter.v1.AssignCredentialsRequest
+	20, // 32: lenny.adapter.v1.Adapter.RotateCredentials:input_type -> lenny.adapter.v1.RotateCredentialsRequest
+	22, // 33: lenny.adapter.v1.Adapter.RevokeCredentials:input_type -> lenny.adapter.v1.RevokeCredentialsRequest
+	25, // 34: lenny.adapter.v1.Adapter.Interrupt:input_type -> lenny.adapter.v1.InterruptRequest
+	27, // 35: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
+	29, // 36: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
+	31, // 37: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
+	33, // 38: lenny.adapter.v1.Adapter.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
+	35, // 39: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
+	37, // 40: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
+	39, // 41: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
+	41, // 42: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	13, // 43: lenny.adapter.v1.Adapter.StartSession:output_type -> lenny.adapter.v1.StartSessionResponse
+	15, // 44: lenny.adapter.v1.Adapter.SendMessage:output_type -> lenny.adapter.v1.SendMessageResponse
+	17, // 45: lenny.adapter.v1.Adapter.Attach:output_type -> lenny.adapter.v1.AttachServerMessage
+	19, // 46: lenny.adapter.v1.Adapter.AssignCredentials:output_type -> lenny.adapter.v1.AssignCredentialsResponse
+	21, // 47: lenny.adapter.v1.Adapter.RotateCredentials:output_type -> lenny.adapter.v1.RotateCredentialsResponse
+	23, // 48: lenny.adapter.v1.Adapter.RevokeCredentials:output_type -> lenny.adapter.v1.RevokeCredentialsResponse
+	26, // 49: lenny.adapter.v1.Adapter.Interrupt:output_type -> lenny.adapter.v1.InterruptResponse
+	28, // 50: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
+	30, // 51: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
+	32, // 52: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
+	34, // 53: lenny.adapter.v1.Adapter.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
+	36, // 54: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
+	38, // 55: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
+	40, // 56: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
+	42, // 57: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	43, // [43:58] is the sub-list for method output_type
+	28, // [28:43] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_lenny_adapter_proto_init() }
@@ -2823,7 +2907,7 @@ func file_lenny_adapter_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lenny_adapter_proto_rawDesc), len(file_lenny_adapter_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   41,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
