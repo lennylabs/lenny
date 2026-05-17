@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `df6c5d8` — §9.1 `GET /v1/runtimes` runtime discovery. The REST discovery endpoint
+  lists the runtime registry, identity-filtered by §10.6 environment access via the
+  `envaccess` resolver. `cmd/lenny-gateway` wires the runtime and environment
+  registries into the sessionserver. The §9.1 `agentInterface` / `mcpEndpoint` /
+  `adapterCapabilities` response fields need a fuller runtime record and are deferred.
 - `25fdf00` — §15.1 OpenAPI: explicit-environment session endpoint and field sync. Adds
   `POST /v1/environments/{name}/sessions` and the `environment` / runtime `labels`
   fields to the `Session`, `CreateSessionRequest`, and `Runtime` schemas.
