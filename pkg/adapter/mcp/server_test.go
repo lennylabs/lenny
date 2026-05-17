@@ -3,9 +3,13 @@
 package mcp_test
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
 )
@@ -161,6 +165,81 @@ func TestServerUnknownMethod(t *testing.T) {
 	resp := readResponse(t, dec)
 	if _, isErr := resp["error"]; !isErr {
 		t.Error("an unknown method did not return an error")
+	}
+}
+
+// serveOnBufconn runs s.Serve on an in-memory listener and returns the
+// listener so tests can dial it.
+func serveOnBufconn(t *testing.T, s *mcp.Server, nonce string) *bufconn.Listener {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = s.Serve(ctx, lis, nonce)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return lis
+}
+
+func TestServerServeAcceptsConnections(t *testing.T) {
+	s := mcp.NewServer()
+	s.Register(mcp.Tool{
+		Name: "lenny/output", Handler: func(json.RawMessage) (any, error) { return nil, nil },
+	})
+	lis := serveOnBufconn(t, s, testNonce)
+
+	conn, err := lis.Dial()
+	if err != nil {
+		t.Fatalf("dial server: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+
+	sendRequest(t, enc, 1, "initialize", initParams(testNonce))
+	if resp := readResponse(t, dec); resp["result"] == nil {
+		t.Fatalf("initialize over Serve returned no result: %v", resp)
+	}
+	sendRequest(t, enc, 2, "tools/list", nil)
+	if resp := readResponse(t, dec); resp["result"] == nil {
+		t.Errorf("tools/list over Serve returned no result: %v", resp)
+	}
+}
+
+func TestServerServeHandlesMultipleConnections(t *testing.T) {
+	lis := serveOnBufconn(t, mcp.NewServer(), testNonce)
+	for i := 0; i < 3; i++ {
+		conn, err := lis.Dial()
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+		sendRequest(t, enc, 1, "initialize", initParams(testNonce))
+		if resp := readResponse(t, dec); resp["result"] == nil {
+			t.Errorf("connection %d: initialize returned no result", i)
+		}
+		_ = conn.Close()
+	}
+}
+
+func TestServerServeStopsOnContextCancel(t *testing.T) {
+	lis := bufconn.Listen(1 << 20)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- mcp.NewServer().Serve(ctx, lis, testNonce) }()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Error("Serve returned nil after context cancel, want a cancellation error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after context cancel")
 	}
 }
 

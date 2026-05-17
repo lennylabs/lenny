@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,6 +82,31 @@ type rpcError struct {
 // (no id): the server must not send a response to one.
 func (r rpcRequest) isNotification() bool {
 	return len(r.ID) == 0 || string(r.ID) == "null"
+}
+
+// Serve accepts MCP connections on lis until ctx is cancelled or the
+// listener fails, handling each accepted connection with ServeConn in
+// its own goroutine. Production passes an abstract-Unix-socket listener
+// (§15.4.3, Linux-only); the listener type does not affect the protocol
+// handling. Every connection is authenticated by the manifest-nonce
+// handshake before any tool is dispatched.
+func (s *Server) Serve(ctx context.Context, lis net.Listener, nonce string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		_ = lis.Close()
+	}()
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("mcp: accept connection: %w", err)
+		}
+		go func() { _ = s.ServeConn(conn, nonce) }()
+	}
 }
 
 // ServeConn handles one MCP connection. The first message must be the
