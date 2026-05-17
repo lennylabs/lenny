@@ -11,14 +11,21 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fc75e8e` — §15.1 OpenAPI: `capabilityInferenceMode` in the admin `Runtime` schema.
+- `1c758af` — §15.1 `capabilityInferenceMode` round-trip on the admin runtime API. `POST`
+  / `GET` carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer.
+  Create and update validate it against the strict / permissive enum.
+- `3ab3020` — §5.1 `capabilityInferenceMode` runtime field. `runtimestore.Runtime` gains
+  the §5.1 `capabilityInferenceMode` field; `ApplyDefaults` fills the strict default and
+  the pgstore persists it (migration 0017, `capability_inference_mode` text column).
 - `78c388f` — §5.1 capability inference from MCP ToolAnnotations
   (`pkg/gateway/capabilityinference`). The inference table maps a tool's MCP annotations
   onto its §5.3 capability set (read-only → `read`, not-read-only → `write`, destructive
   → `write` + `delete`, open-world → `network`); an annotation-free tool takes the
   `capabilityInferenceMode` default (strict → `admin` with the §5.1 registration WARN,
-  permissive → `write`). The `capabilityInferenceMode` runtime field and the live
-  `tools/list` read at connector / `type:mcp` runtime registration that feeds the
-  inferrer are the remaining wiring; the latter is infra-coupled.
+  permissive → `write`). The live `tools/list` read at connector / `type:mcp` runtime
+  registration that feeds the inferrer with real tool annotations is the remaining
+  wiring; it is infra-coupled.
 - `9e44abd` — §15.1 OpenAPI: `POST /v1/admin/runtimes/regenerate-cards` documented with
   its `generatorVersionBefore` / `dryRun` body and the regenerated / skipped / errors
   response.
