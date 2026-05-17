@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cb76325` — §8.3 / §10.6 `delegate_task` child-pool isolation. The tool resolves the
+  child pool's §5.3 isolation profile (new optional `Pools` dep) and hands it to the
+  delegation service, so the §8.3 monotonicity check evaluates the child pool rather
+  than the inherited parent profile — a delegation to a weaker-isolation pool is now
+  rejected. `cmd/lenny-gateway` wires the pool registry.
 - `9b4b270` — §10.6 `target_not_in_scope` reason on `lenny/delegate_task`. A delegation
   refused because its target is outside the effective delegation scope now leads its
   error with the §10.6 reason token.
