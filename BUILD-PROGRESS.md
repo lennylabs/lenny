@@ -11,6 +11,30 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- Tier-0 static gate sweep (`make lint` / `lenny-test --tier static`). The
+  static gate had not been run during the build-out, so a backlog of Tier-0
+  violations had accumulated. This pass works through them:
+  - `cfc8dfc` — renamed the `Attach` RPC stream messages to
+    `AttachRequest`/`AttachResponse` so `buf lint` (`RPC_REQUEST_STANDARD_NAME`)
+    passes; regenerated the adapter protobuf.
+  - `ae03566` — `buf breaking` diffs `schemas/` against `main`, which is
+    frozen at the Phase-1 skeleton; the v1 build branch is far ahead, so every
+    deliberate proto change was flagged. `lenny-test` now treats `buf breaking`
+    findings as advisory off the `main` branch (still hard-fails on `main`).
+  - `84d762c` — `gofumpt -w` + `goimports -w -local` across the tree (the
+    tree had only been `gofmt`-formatted); added a `goimports` step to
+    `generate-proto`.
+  - `52e3dce` — fixed collapsed YAML document separators in the
+    `system-network-policies` chart template so `helm lint` passes.
+  - `6661ed3` — added per-migration schema coverage (`prod_columns_test.go`)
+    for migrations 0003-0025 so `lint-migrations.sh` passes.
+  - `tests:` — added `// spec:` + `// diagnosis:` annotations to 28
+    component-tier test functions so `validate-diagnosis` passes.
+  - REMAINING: `validate-maps` fails — ~40 test files under
+    `tests/tier{2,3,4,5}_*/` are absent from `tests/spec-map.json` (many are
+    `scaffolds_test.go`). Each needs a `tests` entry in the matching
+    `spec-map.json` section. After that, re-run `make lint` for any further
+    Tier-0 linter failures.
 - `9a23cda` — bootstrap upsert applies the full runtime payload.
   `POST /v1/admin/bootstrap` accepts a `RuntimePayload` but `upsertRuntimes`
   built and merged the runtime row from only a subset of its fields,
