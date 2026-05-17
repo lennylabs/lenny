@@ -11,6 +11,18 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9ef7d3d` — §4.7 `FinalizeWorkspace` and `RunSetup` gateway client methods.
+  The three §4.7 staging RPCs are built on the adapter; only
+  `PrepareWorkspace` had a gateway-side `adapterclient` method. `Client` now
+  has `FinalizeWorkspace` and `RunSetup` methods too, completing the
+  staging-RPC client surface. Remaining staging slice: slim `StartSession` to
+  runtime start only (drop `workspace_plan` and `setup_policy` from
+  `StartSessionRequest`, drop the `Materialize`/`RunSetup` calls from the
+  handler) and rewire `podsession.Bind` to call `FinalizeWorkspace` then
+  `RunSetup` then `StartSession`. That change touches the `StartSession` call
+  signature across the adapter, gateway, executor, and checkpointer test
+  suites; it is scoped as one focused commit because it is the core session
+  path.
 - `a83d44a` — §14 `uploadArchive` materialization by extraction.
   `workspace.Materialize` returned `ErrSourceUnsupported` for `uploadArchive`;
   `extractUploadArchive` now decodes the staged archive by format (`tar`,
