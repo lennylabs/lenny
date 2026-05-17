@@ -206,6 +206,22 @@ func TestCreateSessionTool(t *testing.T) {
 	}
 }
 
+func TestCreateSessionToolRecordsEnvironment(t *testing.T) {
+	srv, store := newMCP(t)
+	resp := call(t, srv.Handler(), "lenny/create_session",
+		`{"runtimeRef":"echo","userId":"alice","environment":"security-team"}`)
+	if !strings.Contains(resultText(t, resp), "sess_mcp") {
+		t.Fatalf("create_session result: %+v", resp)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_mcp")
+	if err != nil {
+		t.Fatalf("session not stored: %v", err)
+	}
+	if row.Environment != "security-team" {
+		t.Errorf("stored §10.6 environment: got %q, want security-team", row.Environment)
+	}
+}
+
 func TestCreateSessionToolRejectsMissingRuntime(t *testing.T) {
 	srv, _ := newMCP(t)
 	resp := call(t, srv.Handler(), "lenny/create_session", `{}`)

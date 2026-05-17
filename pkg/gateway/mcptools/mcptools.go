@@ -199,11 +199,12 @@ func Register(srv *mcp.Server, deps Deps) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["runtimeRef"],"properties":{"runtimeRef":{"type":"string"},"userId":{"type":"string"},"environment":{"type":"string"}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
-			RuntimeRef string `json:"runtimeRef"`
-			UserID     string `json:"userId"`
+			RuntimeRef  string `json:"runtimeRef"`
+			UserID      string `json:"userId"`
+			Environment string `json:"environment"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -217,6 +218,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			TenantID:         tenant,
 			UserID:           in.UserID,
 			RuntimeRef:       in.RuntimeRef,
+			Environment:      in.Environment,
 			State:            session.StateRunning,
 			IsolationProfile: isolation.Default(),
 			CreatedAt:        now,
