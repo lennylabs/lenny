@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `5e0be0b` / `f057528` — §10.7 wire the `mode: external` ExperimentRouter path.
+  `applyExperimentRouting` routes `mode: external` experiments through the tenant's
+  OpenFeature provider: `buildExternalEvaluator` constructs an OFREP client from
+  `tenant.ExperimentTargeting`, builds the session evaluationContext, and returns the
+  `experiment.ExternalEvaluator` that `RouteMixed` calls per external experiment. A
+  provider failure latches (no external assignment for any experiment) and emits the
+  §16.6 `experiment.targeting_failed` event; an unregistered variant emits
+  `experiment.unknown_variant_from_provider`. The OFREP client gained support for the
+  §10.7 `experimentTargeting.ofrep.headers` block. The §10.7 `mode: external` arc is
+  complete for the OFREP provider; the built-in SDK providers (LaunchDarkly, Statsig,
+  Unleash) remain — they need their vendor SDKs linked into the gateway binary.
 - `783a4ed` — §10.7 `RouteMixed` — first-match over percentage and external. Applies the
   §10.7 first-match multi-experiment rule across both targeting modes: percentage-mode
   experiments bucket by the built-in HMAC hash, external-mode experiments resolve
