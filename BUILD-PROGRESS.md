@@ -11,6 +11,20 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b01bb08` — tier-test verification + tier-4 harness fix. The
+  infrastructure-backed test tiers run locally (Docker, testcontainers,
+  envtest available). Verified green: Tier 0 static, Tier 1 unit, Tier 2
+  component (all 16 packages — pgstores, migrations, RLS, circuit breakers,
+  leases, controllers via envtest, quota, ratelimit, MinIO blob store), and
+  Tier 3 contract (all 14 packages — REST/MCP/OpenAI wire equivalence,
+  adapter JSONL, OCSF audit, SDKs). So the infrastructure-coupled code is
+  built and passing, not merely substrate. Tier 4 integration: the harness
+  spawned `lenny-gateway` without the §10.6-required `--no-environment-policy`
+  and every test failed at gateway startup; fixed the harness to pass it.
+  One tier-4 test still fails — `TestGatewayFullSurfaceE2E` is rejected
+  `INJECTION_REJECTED` on `POST /v1/sessions/{id}/messages` (the echo runtime
+  does not declare mid-session message injection); next step is to determine
+  whether the test or the echo runtime fixture is at fault.
 - `ab8fd17` — §25.6 pod-failure cause classification. New package
   `pkg/ops/diagnostics`: `ClassifyPodFailure` maps pod-failure signals (exit
   code, OOM flag, setup phase, image-pull and resource-pressure indications)
