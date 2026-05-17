@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -41,6 +42,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
@@ -113,6 +115,9 @@ type Server struct {
 	experiments        experimentstore.Store
 	pools              poolstore.Store
 	experimentReporter ExperimentRejectionReporter
+	runtimes           runtimestore.Store
+	environments       environmentstore.Store
+	defaultNoEnvPolicy string
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -280,6 +285,20 @@ type Options struct {
 	// MaxOrphanTasksPerTenant caps a tenant's active orphan tasks per
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
+
+	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
+	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
+	Runtimes runtimestore.Store
+
+	// Environments is the §10.6 environment registry. Optional — when
+	// set together with Tenants, GET /v1/runtimes applies §10.6
+	// transparent filtering so a caller sees only the runtimes its
+	// environment membership authorizes.
+	Environments environmentstore.Store
+
+	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
+	// noEnvironmentPolicy applied when a caller's tenant has set none.
+	DefaultNoEnvironmentPolicy string
 }
 
 // New returns a Server bound to the supplied store.
@@ -312,6 +331,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		sealer:             opts.Sealer,
 		treeArchive:        opts.TreeArchive,
 		maxOrphanTasks:     opts.MaxOrphanTasksPerTenant,
+		runtimes:           opts.Runtimes,
+		environments:       opts.Environments,
+		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -345,6 +367,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
+	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
 	mux.HandleFunc("POST /v1/environments/{name}/sessions", s.handleEnvironmentSessions)
 	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)
 	mux.HandleFunc("GET /v1/sessions", s.handleList)

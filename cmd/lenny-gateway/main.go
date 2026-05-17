@@ -473,17 +473,24 @@ func main() {
 		log.Printf("lenny-gateway: WARNING: billing-erasure-exempt startup scan: %v", err)
 	}
 
+	// environments backs the §10.6 admin environment CRUD, the
+	// transparent filtering on lenny/discover_agents, and the §9.1
+	// GET /v1/runtimes discovery surface.
+	environments := environmentstore.NewMemory()
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
-		UploadTokenIssuer:   uploadIssuer,
-		UploadTokenVerifier: uploadVerifier,
-		Blobs:               blobs,
-		Executor:            exec,
-		Transcripts:         transcripts,
-		Events:              eventBus,
-		Interactions:        interactions,
-		Evals:               evals,
-		Experiments:         experiments,
-		Pools:               pools,
+		UploadTokenIssuer:          uploadIssuer,
+		UploadTokenVerifier:        uploadVerifier,
+		Blobs:                      blobs,
+		Executor:                   exec,
+		Transcripts:                transcripts,
+		Events:                     eventBus,
+		Interactions:               interactions,
+		Evals:                      evals,
+		Experiments:                experiments,
+		Pools:                      pools,
+		Runtimes:                   runtimes,
+		Environments:               environments,
+		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
 			metrics: gwMetrics,
@@ -508,9 +515,6 @@ func main() {
 	credServer := credentialserver.New(credentialstore.NewMemory(nil))
 
 	// ----- MCP adapter -----
-	// environments backs both the §10.6 admin environment CRUD and the
-	// §10.6 transparent filtering lenny/discover_agents applies.
-	environments := environmentstore.NewMemory()
 	delegationSvc := delegation.NewService(sessions, delegation.Options{})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
