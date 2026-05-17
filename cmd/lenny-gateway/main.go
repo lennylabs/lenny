@@ -489,6 +489,10 @@ func main() {
 	// that emit and the admin event-buffer query endpoint.
 	opsEmitter := opsevents.NewEmitter(opsevents.NewEventBuffer(0), buildVersion)
 
+	// §4.9 credential-pool registry, shared by the admin credential-pool
+	// CRUD and the §14 gitClone auth host-to-pool binding check.
+	credentialPools := credentialpoolstore.NewMemory()
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -505,6 +509,7 @@ func main() {
 		TenantAccess:               tenantAccess,
 		OpsEmitter:                 opsEmitter,
 		RefResolver:                gitref.NewLsRemoteResolver(gitref.Options{}),
+		CredentialPools:            credentialPools,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
@@ -566,7 +571,7 @@ func main() {
 		WithBreakers(breakers).
 		WithConnectors(connectors).
 		WithDelegationPolicies(delegationpolicystore.NewMemory()).
-		WithCredentialPools(credentialpoolstore.NewMemory()).
+		WithCredentialPools(credentialPools).
 		WithCustomRoles(customrolestore.NewMemory()).
 		WithTenantAccess(tenantAccess).
 		WithSessions(sessions).

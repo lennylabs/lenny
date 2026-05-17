@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -239,6 +240,9 @@ func (s *Server) resolvePlanForCreate(w http.ResponseWriter, r *http.Request, ra
 		return workspaceplan.Plan{}, nil, nil, false
 	}
 	storedJSON = rawPlan
+	if !s.checkGitCloneAuthBindings(w, r, parsed) {
+		return workspaceplan.Plan{}, nil, nil, false
+	}
 	if s.refResolver != nil && hasGitClone(parsed) {
 		if err := workspaceplan.PinCommitSHAs(r.Context(), &parsed, s.refResolver); err != nil {
 			s.writeRefResolveError(w, err)
@@ -264,6 +268,69 @@ func hasGitClone(plan workspaceplan.Plan) bool {
 		}
 	}
 	return false
+}
+
+// checkGitCloneAuthBindings runs the §14 gitClone auth host-to-pool
+// check for every gitClone source carrying an auth block. When a
+// CredentialPools store is wired, each such source's URL host must
+// bind to exactly one of the tenant's VCS credential pools whose
+// provider matches the leaseScope; a binding failure writes the §15.1
+// GIT_CLONE_AUTH_UNSUPPORTED_HOST or GIT_CLONE_AUTH_HOST_AMBIGUOUS
+// response and returns false. With no store wired the check is
+// skipped, so a gateway without one is unchanged.
+func (s *Server) checkGitCloneAuthBindings(w http.ResponseWriter, r *http.Request, plan workspaceplan.Plan) bool {
+	if s.credPools == nil {
+		return true
+	}
+	var pools []credentialpoolstore.CredentialPool
+	loaded := false
+	for i, src := range plan.Sources {
+		gc, ok := src.Variant.(workspaceplan.GitClone)
+		if !ok || gc.Auth == nil {
+			continue
+		}
+		host, hostOK := workspaceplan.GitCloneHost(gc)
+		provider, _, scopeOK := workspaceplan.ParseLeaseScope(gc.Auth.LeaseScope)
+		if !hostOK || !scopeOK {
+			// validateGitClone already guaranteed a parseable HTTPS URL
+			// and a well-formed leaseScope; nothing to bind otherwise.
+			continue
+		}
+		if !loaded {
+			ps, err := s.credPools.List(r.Context(), s.resolveTenant(r), credentialpoolstore.ListFilter{})
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+					"could not load credential pools: "+err.Error(), nil)
+				return false
+			}
+			pools, loaded = ps, true
+		}
+		if _, err := credentialpoolstore.ResolveVCSPool(pools, provider, host); err != nil {
+			s.writeVCSResolveError(w, err, i)
+			return false
+		}
+	}
+	return true
+}
+
+// writeVCSResolveError maps a §14 VCS-pool binding failure to its
+// §15.1 response: GIT_CLONE_AUTH_UNSUPPORTED_HOST or
+// GIT_CLONE_AUTH_HOST_AMBIGUOUS, both HTTP 422.
+func (s *Server) writeVCSResolveError(w http.ResponseWriter, err error, sourceIndex int) {
+	var ve *credentialpoolstore.VCSResolveError
+	if !errors.As(err, &ve) {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	details := map[string]any{"host": ve.Host, "sourceIndex": sourceIndex}
+	if ve.Reason == credentialpoolstore.VCSHostAmbiguous {
+		details["matchingPools"] = ve.MatchingPools
+		s.writeError(w, http.StatusUnprocessableEntity, "GIT_CLONE_AUTH_HOST_AMBIGUOUS",
+			"the gitClone URL host matches multiple VCS credential pools", details)
+		return
+	}
+	s.writeError(w, http.StatusUnprocessableEntity, "GIT_CLONE_AUTH_UNSUPPORTED_HOST",
+		"the gitClone URL host matches no VCS credential pool", details)
 }
 
 // writeRefResolveError maps a §14 gitClone ref-resolution failure to

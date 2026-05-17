@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -158,5 +159,112 @@ func TestCreateGitCloneNoResolverStoresVerbatim(t *testing.T) {
 	}
 	if _, pinned := storedPlanSource(t, h, "sess_noresolver")["resolvedCommitSha"]; pinned {
 		t.Error("a session created without a RefResolver must not carry a pinned resolvedCommitSha")
+	}
+}
+
+// spec: §14 gitClone auth host-to-pool binding — the gateway binds an
+// authenticated gitClone source to exactly one VCS credential pool.
+
+func vcsPoolStore(t *testing.T, pools ...credentialpoolstore.CredentialPool) credentialpoolstore.Store {
+	t.Helper()
+	store := credentialpoolstore.NewMemory()
+	for _, p := range pools {
+		if err := store.Create(context.Background(), p); err != nil {
+			t.Fatalf("seed pool %s: %v", p.Name, err)
+		}
+	}
+	return store
+}
+
+func githubPool(name string, patterns ...string) credentialpoolstore.CredentialPool {
+	return credentialpoolstore.CredentialPool{
+		TenantID: "acme", Name: name, Provider: "github", HostPatterns: patterns,
+	}
+}
+
+func gitCloneAuthPlanJSON(host, ref string) json.RawMessage {
+	return json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"gitClone",` +
+		`"url":"https://` + host + `/acme/r.git","ref":"` + ref + `",` +
+		`"auth":{"mode":"credential-lease","leaseScope":"vcs.github.read"}}]}`)
+}
+
+func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:          func() string { return "sess_auth_ok" },
+		RefResolver:     &pinStubResolver{},
+		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:          func() string { return "sess_auth_unsupported" },
+		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("git.acme.internal", pinSHA),
+	})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "GIT_CLONE_AUTH_UNSUPPORTED_HOST") {
+		t.Errorf("body = %s, want GIT_CLONE_AUTH_UNSUPPORTED_HOST", body)
+	}
+}
+
+func TestCreateGitCloneAuthAmbiguousHost(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc: func() string { return "sess_auth_ambiguous" },
+		CredentialPools: vcsPoolStore(t,
+			githubPool("gh-a", "github.com"),
+			githubPool("gh-b", "*.com"),
+		),
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
+	})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "GIT_CLONE_AUTH_HOST_AMBIGUOUS") {
+		t.Errorf("body = %s, want GIT_CLONE_AUTH_HOST_AMBIGUOUS", body)
+	}
+}
+
+func TestCreateGitCloneAuthNoPoolStoreSkipsCheck(t *testing.T) {
+	// With no CredentialPools store wired the §14 auth binding check is
+	// skipped, so a gateway without one is unchanged.
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:      func() string { return "sess_auth_skip" },
+		RefResolver: &pinStubResolver{},
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201 (auth check skipped); body %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
+	// A gitClone source with no auth block is public; the binding check
+	// does not apply even when a pool store is wired.
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:          func() string { return "sess_public" },
+		RefResolver:     &pinStubResolver{},
+		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
+	})
+	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON(pinSHA),
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status %d, want 201 (a public gitClone needs no auth binding); body %s",
+			rr.Code, rr.Body.String())
 	}
 }

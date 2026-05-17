@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -122,6 +123,7 @@ type Server struct {
 	tenantAccess       tenantaccessstore.Store
 	opsEmitter         *opsevents.Emitter
 	refResolver        workspaceplan.RefResolver
+	credPools          credentialpoolstore.Store
 	defaultNoEnvPolicy string
 }
 
@@ -316,6 +318,11 @@ type Options struct {
 	// stores the submitted plan without resolving git refs.
 	RefResolver workspaceplan.RefResolver
 
+	// CredentialPools is the §4.9 credential-pool registry. When set,
+	// session creation runs the §14 gitClone auth host-to-pool binding
+	// check. Optional — when nil, the binding check is skipped.
+	CredentialPools credentialpoolstore.Store
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
@@ -356,6 +363,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		tenantAccess:       opts.TenantAccess,
 		opsEmitter:         opts.OpsEmitter,
 		refResolver:        opts.RefResolver,
+		credPools:          opts.CredentialPools,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 	}
 	if s.clock == nil {
