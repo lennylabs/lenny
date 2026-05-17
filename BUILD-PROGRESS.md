@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `66864b7` — §18 Phase 2.5 / §25.3 capacity-recommendation rule substrate
+  (`pkg/recommendations/rules`). Ships the typed `Rule` (name, category, PromQL
+  condition, sliding window), the `Category` closed enum, and `Validate` (the PromQL
+  condition validator plus field checks), shared by the gateway and `lenny-ops`.
+  `Catalog` ships a representative sample; the full catalog is populated alongside the
+  §25.3 Capacity Recommendations service (the `GET /v1/admin/recommendations` endpoint
+  and the per-replica ring-buffer aggregation remain unbuilt).
 - `c634504` — §5.1 derived-runtime validation on the runtime update path. A PUT may not
   change `baseRuntime` (so a standalone runtime cannot be converted to derived in
   place), and a PUT against an already-derived runtime may not set the inherited or
