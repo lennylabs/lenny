@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `338ea03` — §10.6 tenant `rbac-config` endpoint. `GET` / `PUT
+  /v1/admin/tenants/{id}/rbac-config` store `noEnvironmentPolicy` on the tenant;
+  deny-all is the platform default and an omitted value is treated as deny-all.
+  Setting allow-all attaches the §10.6 advisory `Warning` response header. This is the
+  stored policy the §10.6 transparent-filtering resolver consumes. The other
+  RBAC-config fields (`identityProvider`, `tokenPolicy`, `capabilities`,
+  `mcpAnnotationMapping`), the allow-all metric counter, and the tenant Postgres
+  column are not yet built.
 - `82f4167` — §10.6 environment access resolver (`pkg/gateway/envaccess`). `Membership`
   reports a caller's environment role by matching member identities against the
   caller's OIDC groups or subject; `AuthorizedRuntimes` computes the transparent-filter
