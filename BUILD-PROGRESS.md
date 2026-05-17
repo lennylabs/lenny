@@ -11,6 +11,9 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9b4b270` — §10.6 `target_not_in_scope` reason on `lenny/delegate_task`. A delegation
+  refused because its target is outside the effective delegation scope now leads its
+  error with the §10.6 reason token.
 - `57e876e` — §10.6 session environment persisted in Postgres. Migration 0014 adds the
   `environment` column to `sessions`; the session pgstore writes and reads it. The
   field had been in-memory-only.
