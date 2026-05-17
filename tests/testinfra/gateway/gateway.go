@@ -89,7 +89,12 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		t.Fatalf("create stderr log: %v", err)
 	}
 
-	cmd := exec.Command(binary, append([]string{"--addr", addr}, extraArgs...)...)
+	// §10.6: the gateway fail-closes without an explicit
+	// environment-variable policy. The harness defaults to deny-all;
+	// a test may override it by passing --no-environment-policy in
+	// extraArgs, where the later value wins.
+	baseArgs := []string{"--addr", addr, "--no-environment-policy", "deny-all"}
+	cmd := exec.Command(binary, append(baseArgs, extraArgs...)...)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause
