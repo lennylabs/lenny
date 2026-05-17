@@ -166,6 +166,13 @@ func (r *Router) Handler() http.Handler {
 			r.requireAdmin(http.HandlerFunc(r.handlePutElicitationIntegrity)))
 		mux.Handle("POST /v1/admin/tenants/{id}/compliance-profile/decommission",
 			r.requireAdmin(http.HandlerFunc(r.handleDecommissionCompliance)))
+		// §10.6 / §15.1 tenant RBAC config, gated on manage_rbac_config:
+		// platform-admin or tenant-admin, scoped to the path tenant.
+		rbacConfigAdmin := r.requirePermission(auth.PermManageRBACConfig)
+		mux.Handle("GET /v1/admin/tenants/{id}/rbac-config",
+			rbacConfigAdmin(http.HandlerFunc(r.handleGetRBACConfig)))
+		mux.Handle("PUT /v1/admin/tenants/{id}/rbac-config",
+			rbacConfigAdmin(http.HandlerFunc(r.handlePutRBACConfig)))
 	}
 	if r.runtimes != nil {
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))

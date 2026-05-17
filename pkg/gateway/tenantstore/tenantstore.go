@@ -73,6 +73,14 @@ type Tenant struct {
 	// financial record-keeping.
 	BillingErasurePolicy string
 
+	// NoEnvironmentPolicy is the §10.6 tenant RBAC-config policy that
+	// governs runtime access for an authenticated caller who is a
+	// member of no environment. `deny-all` (the platform default,
+	// also the value an empty field is treated as) denies all runtime
+	// access; `allow-all` grants access to every runtime owned by the
+	// tenant.
+	NoEnvironmentPolicy string
+
 	// ErasureSalt is the §12.8 per-tenant billing-pseudonymization
 	// secret (256-bit). It is non-nil only transiently, while an
 	// erasure job pseudonymizes the tenant's billing events; the job
@@ -107,6 +115,17 @@ const (
 	// BillingErasureExempt retains billing events with the original
 	// user id under GDPR Article 17(3)(b).
 	BillingErasureExempt = "exempt"
+)
+
+// §10.6 NoEnvironmentPolicy values. The platform default is deny-all;
+// an empty NoEnvironmentPolicy is treated as deny-all.
+const (
+	// NoEnvPolicyDenyAll denies runtime access to a caller who is a
+	// member of no environment.
+	NoEnvPolicyDenyAll = "deny-all"
+	// NoEnvPolicyAllowAll grants such a caller access to every runtime
+	// owned by the tenant.
+	NoEnvPolicyAllowAll = "allow-all"
 )
 
 // Store is the §12.8 platform-tenant registry contract.
