@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
 )
@@ -159,12 +160,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	// §5.1 / §15.1: reject mid-session injection when the session's
 	// runtime declares capabilities.injection.supported: false. Per
-	// §5.1 injection support defaults to false. The check degrades
-	// safely when the runtime registry is not wired or the runtime is
-	// not found, so a gateway without a wired registry does not block
-	// injection.
+	// §5.1 injection support defaults to false. The runtime is resolved
+	// to its effective definition, so a derived runtime is checked
+	// against the injection support it inherits from its base. The
+	// check degrades safely when the runtime registry is not wired or
+	// the runtime is not found, so a gateway without a wired registry
+	// does not block injection.
 	if s.runtimes != nil && row.RuntimeRef != "" {
-		if rt, err := s.runtimes.Get(r.Context(), row.RuntimeRef); err == nil && !rt.InjectionSupported() {
+		if rt, err := runtimestore.Resolve(r.Context(), s.runtimes, row.RuntimeRef); err == nil && !rt.InjectionSupported() {
 			s.writeError(w, http.StatusForbidden, "INJECTION_REJECTED",
 				"runtime does not support mid-session message injection", nil)
 			return

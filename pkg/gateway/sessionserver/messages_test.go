@@ -223,6 +223,42 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 	}
 }
 
+func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
+	// §5.1: a session on a derived runtime is checked for injection
+	// support against the effective runtime it inherits from its base.
+	store := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty-base", Type: runtimestore.TypeAgent,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Injection: runtimestore.InjectionCapability{Supported: true},
+		},
+	})
+	// The derived runtime declares no capabilities — §5.1 prohibits it —
+	// so its effective injection support is inherited from the base.
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "chatty-derived", Type: runtimestore.TypeAgent, BaseRuntime: "chatty-base",
+	})
+	srv := sessionserver.New(store, sessionserver.Options{
+		Executor:    executor.NewEchoExecutor(),
+		Transcripts: transcriptstore.NewMemory(),
+		Runtimes:    runtimes,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		RuntimeRef: "chatty-derived", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
+		Messages: []sessionserver.MessagePayload{{Content: "hi"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("derived runtime inheriting injection support: status %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+	}
+}
+
 func TestTranscriptMissingSession(t *testing.T) {
 	srv, _ := newMessagesServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/transcript", nil)

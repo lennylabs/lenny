@@ -2,6 +2,31 @@
 
 package runtimestore
 
+import (
+	"context"
+	"fmt"
+)
+
+// Resolve returns the effective runtime registered under name. For a
+// standalone runtime the effective runtime is the runtime itself. For a
+// §5.1 derived runtime it is Merge(base, derived) — the derived runtime
+// resolved against its base. A derived runtime whose base is missing
+// resolves to an error.
+func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
+	rt, err := s.Get(ctx, name)
+	if err != nil {
+		return Runtime{}, err
+	}
+	if !rt.IsDerived() {
+		return rt, nil
+	}
+	base, err := s.Get(ctx, rt.BaseRuntime)
+	if err != nil {
+		return Runtime{}, fmt.Errorf("runtimestore: derived runtime %q base %q: %w", name, rt.BaseRuntime, err)
+	}
+	return Merge(base, rt), nil
+}
+
 // Merge resolves a §5.1 derived runtime against its base, returning the
 // effective runtime the gateway uses for pod scheduling and session
 // validation. It applies the §5.1 normative per-field merge rules:

@@ -3,12 +3,65 @@
 package runtimestore_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
+
+func TestResolveStandaloneRuntime(t *testing.T) {
+	s := runtimestore.NewMemory()
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "plain", Type: runtimestore.TypeAgent, Image: "lenny/plain@sha256:abc",
+	})
+	got, err := runtimestore.Resolve(context.Background(), s, "plain")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Name != "plain" || got.Image != "lenny/plain@sha256:abc" {
+		t.Errorf("standalone Resolve: %+v", got)
+	}
+}
+
+func TestResolveDerivedRuntimeMergesBase(t *testing.T) {
+	s := runtimestore.NewMemory()
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "base", Type: runtimestore.TypeAgent, Image: "lenny/base@sha256:abc",
+		IsolationProfile: isolation.ProfileMicrovm,
+		Capabilities: &runtimestore.RuntimeCapabilities{
+			Injection: runtimestore.InjectionCapability{Supported: true},
+		},
+	})
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "derived", BaseRuntime: "base", Description: "derived desc",
+	})
+	got, err := runtimestore.Resolve(context.Background(), s, "derived")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	// §5.1: the effective runtime inherits the base's security fields.
+	if got.Image != "lenny/base@sha256:abc" || got.IsolationProfile != isolation.ProfileMicrovm {
+		t.Errorf("derived Resolve must inherit base security fields: %+v", got)
+	}
+	if got.Description != "derived desc" {
+		t.Errorf("derived Resolve must keep the derived override: %q", got.Description)
+	}
+	if !got.InjectionSupported() {
+		t.Error("derived Resolve must inherit the base's injection support")
+	}
+}
+
+func TestResolveDerivedRuntimeMissingBase(t *testing.T) {
+	s := runtimestore.NewMemory()
+	_ = s.Create(context.Background(), runtimestore.Runtime{
+		Name: "orphan", BaseRuntime: "gone",
+	})
+	if _, err := runtimestore.Resolve(context.Background(), s, "orphan"); err == nil {
+		t.Error("Resolve must error when a derived runtime's base is missing")
+	}
+}
 
 func TestMergeInheritsSecurityFieldsFromBase(t *testing.T) {
 	// §5.1: image, type, executionMode, isolationProfile,
