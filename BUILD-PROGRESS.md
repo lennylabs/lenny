@@ -11,6 +11,21 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a9c60c6` — §15.1 OpenAPI: `toolCapabilityOverrides` in the admin `Runtime` schema.
+- `2350844` — §15.1 `toolCapabilityOverrides` round-trip on the admin runtime API. `POST`
+  / `GET` carry the map on `RuntimePayload`; `PUT` carries it as an optional map
+  pointer. Create and update validate it through `capabilityinference.ValidateOverrides`.
+- `b518911` — §5.1 `toolCapabilityOverrides` runtime field. `runtimestore.Runtime` gains
+  the §5.1 `toolCapabilityOverrides` map (explicit per-tool §5.3 capability set); the
+  in-memory store deep-copies the map of slices and the pgstore persists it (migration
+  0018, `tool_capability_overrides` jsonb column).
+- `f76aa30` — §5.1 `capabilityinference.Resolve` with toolCapabilityOverrides. The
+  override-aware resolution: a tool with a `toolCapabilityOverrides` entry uses that
+  explicit capability set and inference does not run, otherwise `Infer` applies the
+  MCP-annotation table. `ValidateOverrides` and `Capability.IsValid` expose the closed
+  §5.3 capability enum. With this the §5.1 capability-determination model and logic are
+  complete; the live `tools/list` read at registration is the remaining infra-coupled
+  wiring.
 - `fc75e8e` — §15.1 OpenAPI: `capabilityInferenceMode` in the admin `Runtime` schema.
 - `1c758af` — §15.1 `capabilityInferenceMode` round-trip on the admin runtime API. `POST`
   / `GET` carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer.
