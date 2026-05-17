@@ -295,6 +295,69 @@ func TestSetupTimeoutDispositionIsValid(t *testing.T) {
 	}
 }
 
+func TestRuntimeCapabilitiesRoundTripAndIsolation(t *testing.T) {
+	// §5.1: a runtime carries an optional capabilities block. The store
+	// must deep-copy the injection modes slice.
+	s := runtimestore.NewMemory()
+	caps := &runtimestore.RuntimeCapabilities{
+		Interaction: runtimestore.InteractionMultiTurn,
+		Injection: runtimestore.InjectionCapability{
+			Supported: true,
+			Modes:     []runtimestore.InjectionMode{runtimestore.InjectionImmediate, runtimestore.InjectionQueued},
+		},
+	}
+	if err := s.Create(context.Background(), runtimestore.Runtime{
+		Name: "rt", Type: runtimestore.TypeAgent, Capabilities: caps,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	caps.Injection.Modes[0] = runtimestore.InjectionQueued // mutate caller's slice
+
+	got, err := s.Get(context.Background(), "rt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Capabilities == nil || got.Capabilities.Interaction != runtimestore.InteractionMultiTurn ||
+		!got.Capabilities.Injection.Supported || len(got.Capabilities.Injection.Modes) != 2 ||
+		got.Capabilities.Injection.Modes[0] != runtimestore.InjectionImmediate {
+		t.Errorf("capabilities not stored or not isolated: %+v", got.Capabilities)
+	}
+}
+
+func TestRuntimeInjectionSupportedDefaultsFalse(t *testing.T) {
+	// §5.1: injection support defaults to false — a runtime with no
+	// capabilities block does not accept injection.
+	if (runtimestore.Runtime{Name: "bare"}).InjectionSupported() {
+		t.Error("a runtime with no capabilities block must report InjectionSupported false")
+	}
+	withCaps := runtimestore.Runtime{
+		Name:         "rt",
+		Capabilities: &runtimestore.RuntimeCapabilities{Injection: runtimestore.InjectionCapability{Supported: true}},
+	}
+	if !withCaps.InjectionSupported() {
+		t.Error("a runtime declaring injection.supported true must report InjectionSupported true")
+	}
+}
+
+func TestRuntimeInteractionAndInjectionModeIsValid(t *testing.T) {
+	for _, i := range runtimestore.AllRuntimeInteractions() {
+		if !i.IsValid() {
+			t.Errorf("interaction %q from the closed enum reports invalid", i)
+		}
+	}
+	if runtimestore.RuntimeInteraction("batch").IsValid() {
+		t.Error("an unknown interaction must report invalid")
+	}
+	for _, m := range runtimestore.AllInjectionModes() {
+		if !m.IsValid() {
+			t.Errorf("injection mode %q from the closed enum reports invalid", m)
+		}
+	}
+	if runtimestore.InjectionMode("deferred").IsValid() {
+		t.Error("an unknown injection mode must report invalid")
+	}
+}
+
 func TestCreateRejectsInvalidName(t *testing.T) {
 	s := runtimestore.NewMemory()
 	for _, name := range []string{

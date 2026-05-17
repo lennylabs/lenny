@@ -229,6 +229,38 @@ func TestRuntimeStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("capabilities round-trips through jsonb", func(t *testing.T) {
+		r := sampleRuntime(runtimeName(t))
+		r.Capabilities = &runtimestore.RuntimeCapabilities{
+			Interaction: runtimestore.InteractionMultiTurn,
+			Injection: runtimestore.InjectionCapability{
+				Supported: true,
+				Modes:     []runtimestore.InjectionMode{runtimestore.InjectionImmediate},
+			},
+		}
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, r.Name)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Capabilities == nil || got.Capabilities.Interaction != runtimestore.InteractionMultiTurn ||
+			!got.Capabilities.Injection.Supported || len(got.Capabilities.Injection.Modes) != 1 {
+			t.Errorf("capabilities round-trip mismatch: %+v", got.Capabilities)
+		}
+
+		// A runtime with no capabilities block reports nil (SQL NULL).
+		plain := sampleRuntime(runtimeName(t))
+		if err := store.Create(ctx, plain); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		gotPlain, _ := store.Get(ctx, plain.Name)
+		if gotPlain.Capabilities != nil {
+			t.Errorf("capabilities must be nil when omitted: %+v", gotPlain.Capabilities)
+		}
+	})
+
 	t.Run("duplicate and invalid names are rejected", func(t *testing.T) {
 		r := sampleRuntime(runtimeName(t))
 		if err := store.Create(ctx, r); err != nil {

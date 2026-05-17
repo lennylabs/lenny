@@ -40,7 +40,7 @@ var _ runtimestore.Store = (*Store)(nil)
 const selectList = `name, type, image, execution_mode, isolation_profile,
 	integration_level, description, created_at, updated_at, deleted_at, labels,
 	agent_interface, published_metadata, capability_inference_mode,
-	tool_capability_overrides, setup_policy`
+	tool_capability_overrides, setup_policy, capabilities`
 
 // labelsJSON marshals a runtime's §5.1 label map to its jsonb text
 // form. A nil or empty map is stored as an empty JSON object so the
@@ -107,6 +107,17 @@ func setupPolicyJSON(p *runtimestore.SetupPolicy) any {
 	return string(b)
 }
 
+// capabilitiesJSON marshals a runtime's §5.1 capabilities block to its
+// jsonb text form. A nil block is stored as SQL NULL, which scanRuntime
+// reads back as a nil pointer.
+func capabilitiesJSON(c *runtimestore.RuntimeCapabilities) any {
+	if c == nil {
+		return nil
+	}
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
 // Create inserts a new runtime row. Returns ErrAlreadyExists when the
 // name is taken.
 func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
@@ -124,15 +135,15 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 		name, type, image, execution_mode, isolation_profile,
 		integration_level, description, created_at, updated_at, deleted_at, labels,
 		agent_interface, published_metadata, capability_inference_mode,
-		tool_capability_overrides, setup_policy
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		tool_capability_overrides, setup_policy, capabilities
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		r.Name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
 		r.CreatedAt, r.UpdatedAt, pgtenant.NullTime(r.DeletedAt), labelsJSON(r.Labels),
 		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata),
 		capabilityInferenceMode(r.CapabilityInferenceMode),
 		toolCapabilityOverridesJSON(r.ToolCapabilityOverrides),
-		setupPolicyJSON(r.SetupPolicy))
+		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return runtimestore.ErrAlreadyExists
@@ -184,7 +195,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		integration_level = $6, description = $7, updated_at = $8, deleted_at = $9,
 		labels = $10, agent_interface = $11, published_metadata = $12,
 		capability_inference_mode = $13, tool_capability_overrides = $14,
-		setup_policy = $15
+		setup_policy = $15, capabilities = $16
 	WHERE name = $1`,
 		name, string(r.Type), r.Image, string(r.ExecutionMode),
 		string(r.IsolationProfile), string(r.IntegrationLevel), r.Description,
@@ -192,7 +203,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		agentInterfaceJSON(r.AgentInterface), publishedMetadataJSON(r.PublishedMetadata),
 		capabilityInferenceMode(r.CapabilityInferenceMode),
 		toolCapabilityOverridesJSON(r.ToolCapabilityOverrides),
-		setupPolicyJSON(r.SetupPolicy)); err != nil {
+		setupPolicyJSON(r.SetupPolicy), capabilitiesJSON(r.Capabilities)); err != nil {
 		return runtimestore.Runtime{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -273,11 +284,12 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 		deletedAt                                  *time.Time
 		labelsRaw, agentIfaceRaw, publishedMetaRaw []byte
 		toolOverridesRaw, setupPolicyRaw           []byte
+		capabilitiesRaw                            []byte
 	)
 	if err := row.Scan(
 		&r.Name, &typ, &r.Image, &execMode, &isoProf, &level, &description,
 		&r.CreatedAt, &r.UpdatedAt, &deletedAt, &labelsRaw, &agentIfaceRaw, &publishedMetaRaw,
-		&capInferMode, &toolOverridesRaw, &setupPolicyRaw,
+		&capInferMode, &toolOverridesRaw, &setupPolicyRaw, &capabilitiesRaw,
 	); err != nil {
 		return runtimestore.Runtime{}, err
 	}
@@ -313,6 +325,11 @@ func scanRuntime(row pgx.Row) (runtimestore.Runtime, error) {
 	if len(setupPolicyRaw) > 0 {
 		if err := json.Unmarshal(setupPolicyRaw, &r.SetupPolicy); err != nil {
 			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode setupPolicy: %w", err)
+		}
+	}
+	if len(capabilitiesRaw) > 0 {
+		if err := json.Unmarshal(capabilitiesRaw, &r.Capabilities); err != nil {
+			return runtimestore.Runtime{}, fmt.Errorf("runtimestore: decode capabilities: %w", err)
 		}
 	}
 	return r, nil

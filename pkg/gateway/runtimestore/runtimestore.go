@@ -91,6 +91,11 @@ type Runtime struct {
 	// when the runtime declares no setup policy.
 	SetupPolicy *SetupPolicy
 
+	// Capabilities is the §5.1 capabilities block: the runtime's
+	// interaction model and its mid-session injection support. It is
+	// nil when the runtime declares no capabilities block.
+	Capabilities *RuntimeCapabilities
+
 	// CreatedAt / UpdatedAt are the audit timestamps.
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -103,6 +108,93 @@ type Runtime struct {
 
 // IsActive reports whether the runtime has not been soft-deleted.
 func (r Runtime) IsActive() bool { return r.DeletedAt.IsZero() }
+
+// InjectionSupported reports whether the runtime accepts §7.2
+// mid-session message injection. Per §5.1 the default is false: a
+// runtime must declare capabilities.injection.supported: true to
+// accept injection.
+func (r Runtime) InjectionSupported() bool {
+	return r.Capabilities != nil && r.Capabilities.Injection.Supported
+}
+
+// RuntimeInteraction is the §5.1 capabilities.interaction enum: whether
+// a runtime handles a single message or a multi-turn exchange.
+type RuntimeInteraction string
+
+const (
+	// InteractionOneShot consumes one message and produces one response.
+	InteractionOneShot RuntimeInteraction = "one_shot"
+	// InteractionMultiTurn accepts repeated message delivery over a task.
+	InteractionMultiTurn RuntimeInteraction = "multi_turn"
+)
+
+// AllRuntimeInteractions returns the closed enum.
+func AllRuntimeInteractions() []RuntimeInteraction {
+	return []RuntimeInteraction{InteractionOneShot, InteractionMultiTurn}
+}
+
+// IsValid reports whether i is a known interaction model.
+func (i RuntimeInteraction) IsValid() bool {
+	for _, v := range AllRuntimeInteractions() {
+		if i == v {
+			return true
+		}
+	}
+	return false
+}
+
+// InjectionMode is one §5.1 capabilities.injection.modes entry.
+type InjectionMode string
+
+const (
+	// InjectionImmediate interrupts a suspended session to deliver.
+	InjectionImmediate InjectionMode = "immediate"
+	// InjectionQueued buffers the message for the next runtime turn.
+	InjectionQueued InjectionMode = "queued"
+)
+
+// AllInjectionModes returns the closed enum.
+func AllInjectionModes() []InjectionMode {
+	return []InjectionMode{InjectionImmediate, InjectionQueued}
+}
+
+// IsValid reports whether m is a known injection mode.
+func (m InjectionMode) IsValid() bool {
+	for _, v := range AllInjectionModes() {
+		if m == v {
+			return true
+		}
+	}
+	return false
+}
+
+// InjectionCapability is the §5.1 capabilities.injection block: whether
+// the runtime accepts mid-session message delivery and in which modes.
+// Per §5.1 Supported defaults to false.
+type InjectionCapability struct {
+	Supported bool            `json:"supported"`
+	Modes     []InjectionMode `json:"modes,omitempty"`
+}
+
+// RuntimeCapabilities is the §5.1 capabilities block on a runtime.
+type RuntimeCapabilities struct {
+	// Interaction is the runtime's §5.1 interaction model.
+	Interaction RuntimeInteraction `json:"interaction,omitempty"`
+
+	// Injection is the runtime's §5.1 mid-session injection support.
+	Injection InjectionCapability `json:"injection,omitempty"`
+}
+
+// Clone returns a deep copy of the capabilities so the store never
+// shares the Modes slice with a caller. A nil receiver clones to nil.
+func (c *RuntimeCapabilities) Clone() *RuntimeCapabilities {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	cp.Injection.Modes = append([]InjectionMode(nil), c.Injection.Modes...)
+	return &cp
+}
 
 // AgentInterface is the optional §5.1 agentInterface descriptor declared
 // on a type:agent runtime. It serves runtime discovery, A2A agent-card
@@ -482,6 +574,7 @@ func cloneRuntime(r Runtime) Runtime {
 		r.ToolCapabilityOverrides = m
 	}
 	r.SetupPolicy = r.SetupPolicy.Clone()
+	r.Capabilities = r.Capabilities.Clone()
 	return r
 }
 
