@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `942ecda` — §25.5 ops event-subscription webhook delivery policy. New pure
+  package `pkg/webhookdelivery`: `RetryDelay`/`Exhausted` apply the §25.5
+  retry budget (3 attempts, 1s/5s/30s backoff); `RetryableStatus` classifies
+  a receiver HTTP status as transient (5xx, 429) or permanent;
+  `ShouldRecord` applies the `full`/`failures-only`/`metric-only` delivery
+  tracking mode. Pairs with `pkg/webhooksig` for the ops event-subscription
+  delivery path.
 - `c2244eb` — §14 webhook HMAC signature scheme. New pure package
   `pkg/webhooksig`: `Sign` produces the `X-Lenny-Signature` header
   (`t=<unix>,v1=<hex>`, an HMAC-SHA256 over `<unix>.<body>`); `Verify`
