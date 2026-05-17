@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d41919f` — fix: tenant pgstore dropped three policy fields. The Postgres tenant
+  store persisted only a subset of `tenantstore.Tenant` — the §9.2
+  `elicitation_content_integrity` mode, the §12.8 `billing_erasure_policy`, and the
+  §10.6 `no_environment_policy` had no columns, so a pg-backed gateway silently lost
+  them (Create discarded them, Get/List returned them empty, Update overwrote them with
+  empty). Migration 0024 adds the columns and the pgstore now reads and writes them,
+  matching the in-memory store. `ErasureSalt` remains intentionally non-persisted
+  (it awaits KMS-envelope encryption).
 - `1895901` — §10.7 `BuildEvaluationContext` — OpenFeature context assembly. Builds the
   `evaluationContext` for a `mode: external` evaluation: `targetingKey` and `user_id`
   are the session's user id or the deterministic `anon:<session_id>` pseudo-ID for an
@@ -18,9 +26,8 @@ Newest first. Each entry is one increment toward the critical path below.
   are merged with the reserved attributes shadow-protected. The map feeds
   `ofrep.Client.Evaluate`. With `TargetingConfig`, the OFREP client, and
   `ResolveExternalVariant`, the §10.7 `mode: external` pure-Go substrate is complete —
-  the remaining work is storing `TargetingConfig` on the tenant (the tenant pgstore
-  currently persists only a subset of `Tenant` fields, a pre-existing gap) and the
-  `ExperimentRouter` wiring.
+  the remaining work is storing `TargetingConfig` on the tenant (a model field, a
+  JSONB pgstore column, and the admin API) and the `ExperimentRouter` wiring.
 - `d381273` — §10.7 `TargetingConfig` — tenant experimentTargeting model. The typed
   §10.7 `experimentTargeting` block: the provider enum (`ofrep`, `launchdarkly`,
   `statsig`, `unleash`), the hot-path timeout, and the four provider sub-blocks.
