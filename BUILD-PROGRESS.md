@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `c2244eb` — §14 webhook HMAC signature scheme. New pure package
+  `pkg/webhooksig`: `Sign` produces the `X-Lenny-Signature` header
+  (`t=<unix>,v1=<hex>`, an HMAC-SHA256 over `<unix>.<body>`); `Verify`
+  parses the header, enforces the five-minute replay window, recomputes
+  the HMAC with a constant-time comparison, and accepts any of the
+  supplied secrets so a receiver honors the §25.5 secret-rotation overlap.
+  Shared by §7.1 session callbacks and §25.5 ops event subscriptions —
+  neither had a webhook-signing implementation.
 - `d0fc768` — §25.4 remediation-lock scope authorization. New pure package
   `pkg/remediationlock`: `Authorize` applies the §25.4 scope-based
   authorization table (platform-admin touches every scope; tenant-admin is
