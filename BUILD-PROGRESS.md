@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `78648c1` — §16.6 emit the full session lifecycle event set. `recordSessionCompleted`
+  emitted only `session_failed`; §16.6 lists the complete session lifecycle set. The
+  terminal-state side-effect chokepoint now emits the matching event for every terminal
+  state — `session_completed`, `session_failed`, `session_cancelled`, `session_expired`
+  — each with an appropriate severity. `terminalSessionEvent` maps the state to its
+  catalogue type. `session_terminated` has no distinct state (terminate is modeled as
+  `StateCompleted`), so it stays a catalogue entry without an emit trigger;
+  `session_awaiting_action` is a non-terminal transition emitted on a separate path.
 - `41a57cc` — §16.6 emit `experiment.isolation_mismatch` to the §25.3 event buffer. The
   `experimentRejectionReporter` recorded the §10.7 fail-closed isolation rejection only
   on the audit chain and the metrics registry. §16.6 classes it as an operational
