@@ -11,6 +11,32 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- CONFORMANCE BUG found — fix first, before driving the lifecycle channel
+  from the RPCs. The §4.7 lifecycle message schema table is the authoritative
+  wire format and uses **camelCase** field names. The lifecycle channel built
+  this session (`cf1e351`), the compliance harness (`cmd/lenny-compliance/
+  full.go`), and `cmd/runtimes/streaming-echo` all use **snake_case** — they
+  do not conform. The §4.7 authoritative frames (each a JSON object, `type`
+  discriminator):
+  - `lifecycle_capabilities` (A→R): `type`, `protocolVersion`, `capabilities`
+  - `lifecycle_support` (R→A): `type`, `capabilities`
+  - `checkpoint_request` (A→R): `type`, `checkpointId`, `deadlineMs` (no `level`)
+  - `checkpoint_complete` (A→R): `type`, `checkpointId`, `status` (`ok`/`failed`),
+    `reason` (when failed) — not `outcome`
+  - `checkpoint_ready` (R→A): `type`, `checkpointId`
+  - `interrupt_request` (A→R): `type`, `interruptId`, `deadlineMs`
+  - `interrupt_acknowledged` (R→A): `type`, `interruptId`
+  - `credentials_rotated` (A→R): `type`, `provider`, `credentialsPath`,
+    `leaseId` — not `trigger`
+  - `credentials_acknowledged` (R→A): `type`, `leaseId`, `provider`
+  - `deadline_approaching` (A→R): `type`, `remainingMs`, `trigger`
+  - `terminate` (A→R): `type`, `deadlineMs`, `reason`
+  Spec inconsistency to settle: §15.4.6 prose names a `deadline_signal` whose
+  behavior (final response + exit) matches §4.7 `terminate`, while §4.7's
+  `deadline_approaching` is only an advance warning. The §4.7 message-schema
+  table is authoritative for wire format. Fix scope: `lifecyclechannel.go` +
+  its test, `cmd/lenny-compliance/full.go`, `cmd/runtimes/streaming-echo`;
+  re-run the adapter tests and the `lenny-compliance --level full` battery.
 - `3c26b2e` — wired the lifecycle channel into the adapter. The `Server`
   has a `Lifecycle *LifecycleChannel` field; when set, `writeSessionManifest`
   advertises the §15.4.6 `lifecycleChannel.socket` so a Full-level runtime
