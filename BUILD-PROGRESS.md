@@ -11,6 +11,15 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `026b283` — §14 `ResolveVCSPool` — gitClone host-to-VCS-pool binding.
+  `credentialpoolstore.ResolveVCSPool` selects, among a tenant's active credential pools
+  whose `Provider` matches the `gitClone.auth.leaseScope` provider, the pool whose
+  `HostPatterns` match the URL host. Zero matches raises `VCSHostUnsupported` and more
+  than one raises `VCSHostAmbiguous` — the §15.1 `GIT_CLONE_AUTH_UNSUPPORTED_HOST` /
+  `GIT_CLONE_AUTH_HOST_AMBIGUOUS` conditions. Host patterns match an exact host or a
+  `*.suffix` wildcard over proper subdomains. This is the pure-Go core of the §14
+  authenticated-gitClone binding; the session-creation wiring and the §4.9 credential
+  minting that turns the resolved pool into a short-lived HTTPS token remain.
 - `1f4e40a` — §16.5 `RenderPrometheusRule`. The `rules` package documented a
   PrometheusRule YAML renderer as a Phase 2.5 deliverable but shipped only the rule
   type, validator, and catalogue. `RenderPrometheusRule` renders a `Rule` catalogue
