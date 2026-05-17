@@ -28,6 +28,12 @@ option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the lifecycle channel).
 service Adapter {
+  // FinalizeWorkspace validates the staged workspace content and
+  // materializes the §14 WorkspacePlan into /workspace/current. It is
+  // the second RPC in the §4.7 session assignment sequence
+  // (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
+  rpc FinalizeWorkspace(FinalizeWorkspaceRequest) returns (FinalizeWorkspaceResponse) {}
+
   // RunSetup executes the §14 WorkspacePlan setup commands against the
   // materialized workspace. It is the third RPC in the §4.7 session
   // assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
@@ -272,6 +278,17 @@ message ExperimentContext {
   // session under the §8.3 inherit or control propagation mode.
   bool inherited = 3;
 }
+
+// FinalizeWorkspaceRequest carries the §14 WorkspacePlan the adapter
+// materializes into the workspace root.
+message FinalizeWorkspaceRequest {
+  SessionId session_id = 1;
+  WorkspacePlan workspace_plan = 2;
+}
+
+// FinalizeWorkspaceResponse is empty: FinalizeWorkspace either
+// materializes the workspace or returns a gRPC error.
+message FinalizeWorkspaceResponse {}
 
 // RunSetupRequest carries the §14 WorkspacePlan setup commands the
 // adapter runs against the materialized workspace. setup_policy bounds

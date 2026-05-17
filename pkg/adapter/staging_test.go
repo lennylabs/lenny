@@ -26,6 +26,72 @@ func runSetupReq(sessionID string, policy *adapterv1.SetupPolicy, cmds ...string
 	return req
 }
 
+func wsSource(typ, path, content, mode string) *adapterv1.WorkspaceSource {
+	return &adapterv1.WorkspaceSource{Type: typ, Path: path, Content: content, Mode: mode}
+}
+
+func finalizeReq(sessionID string, sources ...*adapterv1.WorkspaceSource) *adapterv1.FinalizeWorkspaceRequest {
+	return &adapterv1.FinalizeWorkspaceRequest{
+		SessionId:     &adapterv1.SessionId{Value: sessionID},
+		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
+	}
+}
+
+func TestFinalizeWorkspaceMaterializes(t *testing.T) {
+	root := t.TempDir()
+	srv := &Server{WorkspaceRoot: root}
+	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
+		wsSource("mkdir", "docs", "", "755"),
+		wsSource("inlineFile", "docs/readme.md", "hello", "644"))); err != nil {
+		t.Fatalf("FinalizeWorkspace: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "docs", "readme.md"))
+	if err != nil {
+		t.Fatalf("read materialized file: %v", err)
+	}
+	if string(b) != "hello" {
+		t.Errorf("readme.md = %q, want hello", b)
+	}
+}
+
+func TestFinalizeWorkspaceEmptyPlan(t *testing.T) {
+	// A session with an empty workspace plan finalizes as a no-op.
+	srv := &Server{WorkspaceRoot: t.TempDir()}
+	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1")); err != nil {
+		t.Errorf("FinalizeWorkspace with an empty plan = %v, want nil", err)
+	}
+}
+
+func TestFinalizeWorkspaceRequiresSessionID(t *testing.T) {
+	srv := &Server{WorkspaceRoot: t.TempDir()}
+	_, err := srv.FinalizeWorkspace(context.Background(),
+		finalizeReq("", wsSource("mkdir", "x", "", "")))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("FinalizeWorkspace without a session id = %v, want InvalidArgument", err)
+	}
+}
+
+func TestFinalizeWorkspaceRequiresWorkspaceRoot(t *testing.T) {
+	srv := &Server{}
+	_, err := srv.FinalizeWorkspace(context.Background(),
+		finalizeReq("sess-1", wsSource("mkdir", "x", "", "")))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("FinalizeWorkspace without a workspace root = %v, want FailedPrecondition", err)
+	}
+}
+
+func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
+	// The §14 path-containment guard in workspace.Materialize rejects a
+	// source that escapes the workspace root; the RPC surfaces it as
+	// InvalidArgument.
+	srv := &Server{WorkspaceRoot: t.TempDir()}
+	_, err := srv.FinalizeWorkspace(context.Background(),
+		finalizeReq("sess-1", wsSource("inlineFile", "../escape.txt", "x", "644")))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("FinalizeWorkspace with an escaping path = %v, want InvalidArgument", err)
+	}
+}
+
 func TestRunSetupExecutesCommands(t *testing.T) {
 	root := t.TempDir()
 	srv := &Server{WorkspaceRoot: root}
