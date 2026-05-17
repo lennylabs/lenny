@@ -1067,6 +1067,25 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 	if err != nil {
 		return false, err
 	}
+	// §10.6: the parent session's environment is caller-supplied at
+	// session creation and is only trusted here when the caller is
+	// genuinely a member of it. Without this check a session tagged
+	// with an environment the caller does not belong to could borrow
+	// that environment's cross-environment delegation reach.
+	principal, ok := authmw.FromContext(ctx)
+	if !ok {
+		return false, nil
+	}
+	var parentEnv environmentstore.Environment
+	for _, e := range envs {
+		if e.Name == parent.Environment {
+			parentEnv = e
+		}
+	}
+	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
+	if _, isMember := envaccess.Membership(caller, parentEnv); !isMember {
+		return false, nil
+	}
 	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, envs), nil
 }
 

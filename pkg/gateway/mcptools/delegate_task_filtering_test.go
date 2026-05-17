@@ -123,10 +123,18 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 		Labels: map[string]string{"shared": "true"},
 	})
 	_ = tenants.Create(ctxbg, tenantstore.Tenant{ID: "acme"})
-	// team-a declares outbound delegation to team-b; team-b admits the
-	// shared tool and accepts inbound delegation from team-a.
+	// team-a admits only its own team=a runtimes and declares outbound
+	// delegation to team-b; team-b admits the shared tool and accepts
+	// inbound delegation from team-a.
 	_ = envs.Create(ctxbg, environmentstore.Environment{
 		Name: "team-a", TenantID: "acme",
+		Members: []environmentstore.Member{
+			{
+				Identity: environmentstore.Identity{Type: "oidc-group", Value: "team-a-members"},
+				Role:     environment.RoleCreator,
+			},
+		},
+		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "a"}},
 		CrossEnvOutbound: []environmentstore.CrossEnvRule{
 			{Environment: "team-b", Runtimes: sharedSel},
 		},
@@ -144,14 +152,25 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
 	})
 
-	// The caller is a member of no environment, so the within-environment
-	// check denies the shared tool; the bilateral team-a <-> team-b
-	// declaration makes it reachable cross-environment.
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme"}
+	// The caller is a genuine member of team-a (the parent session's
+	// environment), but shared-tool is outside team-a's runtimeSelector,
+	// so the within-environment check denies it; the bilateral
+	// team-a <-> team-b declaration makes it reachable cross-environment.
+	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`))
 	if !strings.Contains(text, "sess_child") {
 		t.Errorf("a cross-environment-reachable delegation should proceed: %q", text)
+	}
+
+	// §10.6 security: a caller who is not a member of team-a cannot
+	// borrow its cross-environment reach by delegating from a session
+	// tagged with that environment.
+	outsider := authmw.Principal{Subject: "mallory", TenantID: "acme", Groups: []string{"outsiders"}}
+	resp := callAs(t, srv.Handler(), outsider, "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","runtimeRef":"shared-tool","poolRef":"pool-b"}`)
+	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+		t.Errorf("a non-member must not borrow the parent environment's cross-environment reach: %+v", resp)
 	}
 }
 
