@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9d7c3e6` — §14 `workspaceplan.Marshal`. The inverse of `Parse`: re-serializes a
+  parsed `Plan` to §14 WorkspacePlan JSON, emitting each source from the `Raw` object
+  `Parse` preserved (unknown source types round-trip unchanged) and emitting
+  `resolvedCommitSha` for a `gitClone` source pinned by `PinCommitSHAs`. This is the
+  canonical stored form the gateway will persist at session creation. Note: `Parse`
+  rejects a `resolvedCommitSha` on a client request body, so the session-creation
+  wiring also needs a stored-plan parse path that accepts the gateway-written field
+  when the start and resume handlers read the persisted plan back.
 - `ecd95cb` — §14 `git ls-remote` `RefResolver` backend. `pkg/gateway/gitref`'s
   `LsRemoteResolver` resolves a `gitClone` ref to a commit SHA by running `git ls-remote`
   and implements `workspaceplan.RefResolver`. It reads the full ref advertisement and
@@ -1325,11 +1333,14 @@ the two-step §15.1 `create → finalize → start` lifecycle. The remaining gap
 dependency order, are below.
 
 - **gitClone ref resolution.** §15.1 pins `gitClone.resolvedCommitSha` at session
-  creation. The resolution core is built — `workspaceplan.PinCommitSHAs` with the
-  `IsCommitSHA` fast-path and the `RefResolver` interface — but the gateway does not
-  yet call it: the `git ls-remote` `RefResolver` backend and the session-creation
-  wiring remain, so the gateway still stores the submitted plan without pinning a
-  non-SHA ref.
+  creation. The substrate is built: `workspaceplan.PinCommitSHAs` with the `IsCommitSHA`
+  fast-path and the `RefResolver` interface, the `gitref.LsRemoteResolver` backend, and
+  `workspaceplan.Marshal` to emit the pinned plan. The gateway does not yet call them:
+  the session-creation wiring remains — parse the request plan, `PinCommitSHAs` against
+  a wired resolver, `Marshal` the result into the stored row, and map a `ResolveError`
+  to the §15.1 `GIT_CLONE_REF_RESOLVE_TRANSIENT` / `GIT_CLONE_REF_UNRESOLVABLE`
+  response. It also needs a stored-plan parse path that accepts the gateway-written
+  `resolvedCommitSha` when the start and resume handlers read the persisted plan.
 - **Adapter workspace-staging RPCs.** §15.4 mandates separate `PrepareWorkspace`,
   `FinalizeWorkspace`, and `RunSetup` RPCs. The adapter bundles materialization, setup,
   and runtime start into `StartSession`, so the §15.1 finalize step short-circuits
