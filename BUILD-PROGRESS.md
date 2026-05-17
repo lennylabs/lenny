@@ -11,6 +11,19 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `a7a940d` — §15.1 OpenAPI: `minPlatformVersion` in the admin `Runtime` schema.
+- `86dae6a` — §15.1 `minPlatformVersion` round-trip and registration gate. `POST` / `GET`
+  carry it on `RuntimePayload`; `PUT` carries it as an optional string pointer. Per §5.1
+  create and update reject registration when `minPlatformVersion` is not a valid
+  version or the running gateway's version is below it; the floor check is skipped for
+  a dev build whose version does not parse.
+- `a2a984a` — §5.1 `minPlatformVersion` runtime field. `runtimestore.Runtime` gains the
+  §5.1 `minPlatformVersion` field; the pgstore persists it (migration 0021,
+  `min_platform_version` text column).
+- `1eb941f` — `pkg/gateway/semver` shared version comparator. The MAJOR.MINOR.PATCH
+  comparator `agentcard.NeedsRegen` used privately is extracted to a shared package so
+  the runtime `minPlatformVersion` registration check can reuse it; `agentcard` now
+  consumes `semver.Compare`.
 - `88393ef` — §15.1 OpenAPI: `capabilities` in the admin `Runtime` schema and the
   `403 INJECTION_REJECTED` response on `POST /v1/sessions/{id}/messages`.
 - `98d9151` — §15.1 injection rejected against unsupported runtimes. `POST
