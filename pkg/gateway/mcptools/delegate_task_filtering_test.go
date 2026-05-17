@@ -71,8 +71,16 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	// research-agent is outside the caller's environment scope — reject.
 	resp := callAs(t, srv.Handler(), caller, "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","runtimeRef":"research-agent","poolRef":"pool-b"}`)
-	if result, _ := resp["result"].(map[string]any); result["isError"] != true {
+	result, _ := resp["result"].(map[string]any)
+	if result["isError"] != true {
 		t.Errorf("delegation to an out-of-scope runtime must be a tool error: %+v", resp)
+	}
+	// §10.6: the rejection carries the target_not_in_scope reason.
+	if content, _ := result["content"].([]any); len(content) > 0 {
+		c0, _ := content[0].(map[string]any)
+		if text, _ := c0["text"].(string); !strings.Contains(text, "target_not_in_scope") {
+			t.Errorf("scope rejection should carry the §10.6 target_not_in_scope reason: %q", text)
+		}
 	}
 	if _, err := store.Get(ctxbg, "acme", "sess_child"); err == nil {
 		t.Error("a rejected delegation must not create a child session")

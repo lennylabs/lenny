@@ -801,8 +801,11 @@ func Register(srv *mcp.Server, deps Deps) {
 				authorized = reachable
 			}
 			if !authorized {
+				// §10.6: a target outside the effective delegation scope
+				// is rejected with the target_not_in_scope reason.
 				return mcp.ToolResult{}, fmt.Errorf(
-					"delegation target %q is not within the caller's environment scope (§10.6)", in.RuntimeRef)
+					"target_not_in_scope: delegation target %q is not within the caller's environment scope (§10.6)",
+					in.RuntimeRef)
 			}
 			// §4 PreDelegation: run the interceptor chain over the
 			// TaskSpec.input before the gateway processes the delegation.
