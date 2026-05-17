@@ -59,6 +59,9 @@ type BindRequest struct {
 	// TracingContext is the §8.3 opaque tracing-identifier map delivered
 	// to the runtime in the adapter manifest. Nil when none is set.
 	TracingContext map[string]string
+	// SetupPolicy is the §5.1 runtime setupPolicy bounding the setup
+	// phase. Nil when the runtime declares no aggregate cap.
+	SetupPolicy *adapterv1.SetupPolicy
 }
 
 // BindResult reports the pod a session was bound to.
@@ -101,7 +104,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan, req.ExperimentContext, req.TracingContext); err != nil {
+	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.Plan, req.ExperimentContext, req.TracingContext, req.SetupPolicy); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}

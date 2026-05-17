@@ -279,6 +279,21 @@ message StartSessionRequest {
   // runtime receives in the adapter manifest to stitch its native
   // traces into the parent's trace tree. Empty when none is set.
   map<string, string> tracing_context = 6;
+  // setup_policy is the §5.1 runtime setupPolicy bounding the whole
+  // setup phase. Absent when the runtime declares no aggregate cap.
+  SetupPolicy setup_policy = 7;
+}
+
+// SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
+// setup phase and the disposition when it is exceeded.
+message SetupPolicy {
+  // timeout_seconds is the aggregate cap on the setup phase. Zero means
+  // no aggregate cap.
+  int32 timeout_seconds = 1;
+  // on_timeout is the §5.1 disposition when the cap is hit: "fail"
+  // aborts pod startup, "warn" proceeds to runtime start. An empty
+  // value is the conservative "fail" default.
+  string on_timeout = 2;
 }
 
 message StartSessionResponse {

@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -11,6 +12,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// setupOptionsFromProto converts the §5.1 setupPolicy message into the
+// workspace.SetupOptions bounding the setup phase. A nil policy yields
+// a zero SetupOptions — no aggregate cap. on_timeout "warn" proceeds
+// past the cap; any other value, including empty, is the conservative
+// "fail" default.
+func setupOptionsFromProto(p *adapterv1.SetupPolicy) workspace.SetupOptions {
+	if p == nil {
+		return workspace.SetupOptions{}
+	}
+	return workspace.SetupOptions{
+		AggregateTimeout:       time.Duration(p.GetTimeoutSeconds()) * time.Second,
+		FailOnAggregateTimeout: p.GetOnTimeout() != "warn",
+	}
+}
 
 // RuntimeProcess manages the pod's runtime process. The §4.7 adapter
 // starts it at session start, forwards message envelopes to it,
@@ -62,10 +78,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.releaseSession()
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
-	// §5.1 setupPolicy aggregate cap: the manifest does not yet carry
-	// the runtime's setupPolicy, so no aggregate cap applies. Only the
-	// per-command timeouts bound the setup phase until that wiring lands.
-	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, plan.GetSetupCommands(), workspace.SetupOptions{}); err != nil {
+	// §5.1: bound the whole setup phase by the runtime's setupPolicy
+	// aggregate cap when StartSession carries one.
+	if err := workspace.RunSetup(ctx, s.WorkspaceRoot, plan.GetSetupCommands(),
+		setupOptionsFromProto(req.GetSetupPolicy())); err != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.FailedPrecondition, "run setup commands: %v", err)
 	}

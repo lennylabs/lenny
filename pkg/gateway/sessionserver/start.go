@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -372,6 +373,25 @@ func experimentContextToProto(ec *sessionstore.ExperimentContext) *adapterv1.Exp
 	}
 }
 
+// runtimeSetupPolicy resolves the effective §5.1 setupPolicy of the
+// named runtime into the adapter-protocol message the adapter uses to
+// bound the setup phase. It returns nil when no runtime store is
+// wired, the runtime is unresolvable, or the runtime declares no
+// setupPolicy.
+func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *adapterv1.SetupPolicy {
+	if s.runtimes == nil {
+		return nil
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeName)
+	if err != nil || rt.SetupPolicy == nil {
+		return nil
+	}
+	return &adapterv1.SetupPolicy{
+		TimeoutSeconds: int32(rt.SetupPolicy.TimeoutSeconds),
+		OnTimeout:      string(rt.SetupPolicy.OnTimeout),
+	}
+}
+
 // startOnPod places a started session on a Kubernetes warm pod. It
 // resolves the warm pool serving the session's runtime and §5.3
 // isolation profile, claims an idle pod from it, starts the session on
@@ -391,6 +411,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		Plan:              podsession.WorkspacePlanToProto(plan),
 		ExperimentContext: experimentContextToProto(row.ExperimentContext),
 		TracingContext:    row.TracingContext,
+		SetupPolicy:       s.runtimeSetupPolicy(ctx, row.RuntimeRef),
 	})
 	if err != nil {
 		return err

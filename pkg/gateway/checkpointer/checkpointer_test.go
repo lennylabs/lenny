@@ -92,7 +92,7 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = stubSink{id: "ckpt-7"}
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil, nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestCheckpointSurfacesAnAdapterFailure(t *testing.T) {
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = stubSink{err: errors.New("artifact store down")}
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), "s1", "echo", nil, nil, nil, nil); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func bindSession(t *testing.T, registry *podsession.Registry, store sessionstore
 	srv.Runtime = stubRuntime{}
 	srv.Checkpoints = sink
 	client := dialAdapter(t, srv)
-	if err := client.StartSession(context.Background(), sessionID, "echo", nil, nil, nil); err != nil {
+	if err := client.StartSession(context.Background(), sessionID, "echo", nil, nil, nil, nil); err != nil {
 		t.Fatalf("StartSession %s: %v", sessionID, err)
 	}
 	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: tenantID, Adapter: client})
