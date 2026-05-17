@@ -235,6 +235,8 @@ func (r *Router) Handler() http.Handler {
 			envAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
 		mux.Handle("GET /v1/admin/environments/{name}/runtime-exposure",
 			envAdmin(http.HandlerFunc(r.handleEnvironmentRuntimeExposure)))
+		mux.Handle("GET /v1/admin/tenants/{id}/access-report",
+			envAdmin(http.HandlerFunc(r.handleTenantAccessReport)))
 	}
 	if r.pools != nil {
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
