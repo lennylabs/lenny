@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `51b7b8b` — §25.3 emit `session_failed` operational events. The sessionserver gains
+  an optional `OpsEmitter`; `recordSessionCompleted` emits a `session_failed` event
+  (session id, runtime, failure class) when a session reaches the failed state, so it
+  surfaces through `GET /v1/admin/events/buffer`. `cmd/lenny-gateway` shares one
+  `Emitter` across the sessionserver and the admin event-buffer endpoints. The
+  remaining §25.3 emit sources are pool, alert, upgrade, credential, and health.
 - `541755e` — §25.3 emit circuit-breaker operational events. The admin Router gains
   `WithEventEmitter` (the emit counterpart of the event-buffer query side); opening or
   closing a circuit breaker via the admin API emits a `circuit_breaker_opened` /
