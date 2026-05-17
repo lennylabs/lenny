@@ -984,6 +984,43 @@ func TestCreateRuntimeRejectsInvalidTaskPolicy(t *testing.T) {
 	}
 }
 
+func TestRuntimeBaseRuntimeRoundTrip(t *testing.T) {
+	// §5.1: the admin runtime API round-trips the baseRuntime reference.
+	router, _, _ := newRuntimeAdmin(t)
+	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
+		Name:        "research-pipeline",
+		Image:       "lenny/research@sha256:abc",
+		BaseRuntime: "langgraph-runtime",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var created admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &created)
+	if created.BaseRuntime != "langgraph-runtime" {
+		t.Errorf("create response baseRuntime: %q", created.BaseRuntime)
+	}
+
+	rr = runtimeRequest(t, router.Handler(), http.MethodGet, "/v1/admin/runtimes/research-pipeline", nil)
+	var got admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got.BaseRuntime != "langgraph-runtime" {
+		t.Errorf("get response baseRuntime: %q", got.BaseRuntime)
+	}
+
+	rebased := "newer-base"
+	rr = runtimeRequest(t, router.Handler(), http.MethodPut, "/v1/admin/runtimes/research-pipeline",
+		admin.UpdateRuntimeRequest{BaseRuntime: &rebased})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var updated admin.RuntimePayload
+	_ = json.Unmarshal(rr.Body.Bytes(), &updated)
+	if updated.BaseRuntime != "newer-base" {
+		t.Errorf("update did not replace baseRuntime: %q", updated.BaseRuntime)
+	}
+}
+
 func TestUpdateRuntimeRejectsInvalidEnum(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})

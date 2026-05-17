@@ -62,6 +62,7 @@ type RuntimePayload struct {
 	Capabilities            *runtimestore.RuntimeCapabilities           `json:"capabilities,omitempty"`
 	MinPlatformVersion      string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                    `json:"taskPolicy,omitempty"`
+	BaseRuntime             string                                      `json:"baseRuntime,omitempty"`
 	CreatedAt               string                                      `json:"createdAt,omitempty"`
 	UpdatedAt               string                                      `json:"updatedAt,omitempty"`
 	DeletedAt               string                                      `json:"deletedAt,omitempty"`
@@ -88,6 +89,7 @@ type UpdateRuntimeRequest struct {
 	Capabilities            *runtimestore.RuntimeCapabilities            `json:"capabilities,omitempty"`
 	MinPlatformVersion      *string                                      `json:"minPlatformVersion,omitempty"`
 	TaskPolicy              *runtimestore.TaskPolicy                     `json:"taskPolicy,omitempty"`
+	BaseRuntime             *string                                      `json:"baseRuntime,omitempty"`
 }
 
 // validateTaskPolicy checks a §5.1 taskPolicy: known scrub-mode and
@@ -193,6 +195,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		Capabilities:            r.Capabilities,
 		MinPlatformVersion:      r.MinPlatformVersion,
 		TaskPolicy:              r.TaskPolicy,
+		BaseRuntime:             r.BaseRuntime,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
 	}
@@ -296,6 +299,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		Capabilities:            body.Capabilities,
 		MinPlatformVersion:      body.MinPlatformVersion,
 		TaskPolicy:              body.TaskPolicy,
+		BaseRuntime:             body.BaseRuntime,
 		CreatedAt:               r.clock(),
 	}
 	runtimestore.ApplyDefaults(&rt)
@@ -523,6 +527,9 @@ func (r *Router) handleUpdateRuntime(w http.ResponseWriter, req *http.Request) {
 		if body.TaskPolicy != nil {
 			rt.TaskPolicy = body.TaskPolicy
 		}
+		if body.BaseRuntime != nil {
+			rt.BaseRuntime = *body.BaseRuntime
+		}
 		// §5.1: regenerate the auto-generated A2A agent card at write
 		// time whenever the runtime carries an agentInterface.
 		r.applyGeneratedCard(rt, r.clock())
@@ -613,6 +620,9 @@ func changedRuntimeFields(b UpdateRuntimeRequest) []string {
 	}
 	if b.TaskPolicy != nil {
 		out = append(out, "taskPolicy")
+	}
+	if b.BaseRuntime != nil {
+		out = append(out, "baseRuntime")
 	}
 	return out
 }
