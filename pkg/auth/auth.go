@@ -73,13 +73,13 @@ func (r Role) IsTenantScoped() bool {
 	return r != RolePlatformAdmin
 }
 
-// roleNamePattern is the §10.2 role-name shape, shared by built-in and
-// custom role names. All five built-in roles match it.
+// roleNamePattern is the §10.2 role-name format, shared by built-in
+// and custom role names. All five built-in roles match it.
 var roleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 
 // IsWellFormedRoleName reports whether s is a syntactically valid role
-// name — the shape shared by built-in and §10.2 custom roles. It does
-// not verify that a custom role of that name exists; existence is
+// name in the format shared by built-in and §10.2 custom roles. It
+// does not verify that a custom role of that name exists; existence is
 // checked where the tenant's custom-role registry is available.
 func IsWellFormedRoleName(s string) bool {
 	return roleNamePattern.MatchString(s)
@@ -162,14 +162,7 @@ func (p Permission) IsValid() bool {
 // platform-wide settings, access other tenants' data). A §10.2 custom
 // role's permission set must be a subset of this.
 func TenantAdminPermissions() []Permission {
-	return []Permission{
-		PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
-		PermReadTenantSessions, PermManageRuntimes, PermManagePools,
-		PermManageCredentialPools, PermViewUsage, PermManageQuotas,
-		PermManageUsers, PermManageLegalHolds, PermManageWebhooks,
-		PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
-		PermManageEgressProfiles,
-	}
+	return RolePermissions(RoleTenantAdmin)
 }
 
 // IsTenantAdminPermission reports whether p is within the `tenant-admin`
@@ -181,6 +174,47 @@ func IsTenantAdminPermission(p Permission) bool {
 		}
 	}
 	return false
+}
+
+// RolePermissions returns the §10.2 permission-matrix row for a
+// built-in role. The matrix grades each operation category as full
+// access, read-only, or none; RolePermissions returns the permission
+// for every category the role holds at the access level the
+// permission denotes. The read-only cells for the manage categories
+// (a `tenant-viewer` may read runtimes but not manage them) do not map
+// to a permission, because the permission set models manage-level
+// operations and the explicit session-read categories. Resource reads
+// are gated separately.
+//
+// A non-built-in role name (a tenant custom role) has no matrix row;
+// its permissions come from the tenant custom-role registry, so
+// RolePermissions returns nil for it.
+func RolePermissions(r Role) []Permission {
+	switch r {
+	case RolePlatformAdmin:
+		return AllPermissions()
+	case RoleTenantAdmin:
+		return []Permission{
+			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+			PermReadTenantSessions, PermManageRuntimes, PermManagePools,
+			PermManageCredentialPools, PermViewUsage, PermManageQuotas,
+			PermManageUsers, PermManageLegalHolds, PermManageWebhooks,
+			PermManageRBACConfig, PermManageEnvironments, PermManageDelegationPolicies,
+			PermManageEgressProfiles,
+		}
+	case RoleTenantViewer:
+		return []Permission{
+			PermReadOwnSessions, PermReadTenantSessions, PermViewUsage,
+		}
+	case RoleBillingViewer:
+		return []Permission{PermViewUsage}
+	case RoleUser:
+		return []Permission{
+			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+		}
+	default:
+		return nil
+	}
 }
 
 // tenantIDPattern is the regex from §10.2: `^[a-zA-Z0-9_-]{1,128}$`.

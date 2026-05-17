@@ -92,6 +92,83 @@ func TestTenantAdminPermissionsExcludesPlatformOnly(t *testing.T) {
 	}
 }
 
+func permSet(ps []Permission) map[Permission]bool {
+	m := map[Permission]bool{}
+	for _, p := range ps {
+		m[p] = true
+	}
+	return m
+}
+
+func samePermSet(a, b []Permission) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa, sb := permSet(a), permSet(b)
+	if len(sa) != len(a) || len(sb) != len(b) {
+		return false // a duplicate entry on either side
+	}
+	for p := range sa {
+		if !sb[p] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestRolePermissionsMatchMatrix(t *testing.T) {
+	// Each set is the §10.2 permission matrix read down the role's
+	// column. A "read-only" cell for a manage category contributes no
+	// permission; only the explicit session-read categories and the
+	// view-usage category give a viewer role any permission.
+	cases := []struct {
+		role Role
+		want []Permission
+	}{
+		{RolePlatformAdmin, AllPermissions()},
+		{RoleTenantAdmin, TenantAdminPermissions()},
+		{RoleTenantViewer, []Permission{
+			PermReadOwnSessions, PermReadTenantSessions, PermViewUsage,
+		}},
+		{RoleBillingViewer, []Permission{PermViewUsage}},
+		{RoleUser, []Permission{
+			PermManageOwnSessions, PermReadOwnSessions, PermManageOwnCredentials,
+		}},
+	}
+	for _, c := range cases {
+		got := RolePermissions(c.role)
+		if !samePermSet(got, c.want) {
+			t.Errorf("RolePermissions(%q) = %v, want %v", c.role, got, c.want)
+		}
+		for _, p := range got {
+			if !p.IsValid() {
+				t.Errorf("RolePermissions(%q) returned invalid permission %q", c.role, p)
+			}
+		}
+	}
+}
+
+func TestRolePermissionsUnknownRoleIsEmpty(t *testing.T) {
+	// A tenant custom role has no built-in matrix row; its permissions
+	// come from the custom-role registry, not from RolePermissions.
+	if got := RolePermissions(Role("session-manager")); len(got) != 0 {
+		t.Errorf("RolePermissions(custom role) = %v, want empty", got)
+	}
+}
+
+func TestNonPlatformRolesAreBoundedByTenantAdmin(t *testing.T) {
+	// §10.2: only platform-admin holds the three platform-only
+	// permissions. Every other built-in role is within the tenant-admin
+	// ceiling, the same ceiling a custom role may not exceed.
+	for _, r := range []Role{RoleTenantAdmin, RoleTenantViewer, RoleBillingViewer, RoleUser} {
+		for _, p := range RolePermissions(r) {
+			if !IsTenantAdminPermission(p) {
+				t.Errorf("role %q holds %q, which exceeds the tenant-admin ceiling", r, p)
+			}
+		}
+	}
+}
+
 func TestValidateTenantIDAcceptsCanonicalValues(t *testing.T) {
 	cases := []string{
 		"acme",
