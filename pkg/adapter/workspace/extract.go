@@ -19,8 +19,9 @@ const maxExtractBytes = 2 << 30
 // Extract reads a gzip-compressed tar from r and writes its entries
 // into the workspace directory at root. It is the inverse of Archive:
 // the §4.7 adapter calls it to restore a session workspace from a §4.4
-// checkpoint or a §7.1 snapshot, and to materialize a §14 uploadArchive
-// source.
+// checkpoint or a §7.1 snapshot. The §14 uploadArchive source type is
+// materialized separately by extractUploadArchive, which also handles
+// the plain-tar and zip formats and stripComponents.
 //
 // Every entry is contained within root: an entry whose path escapes
 // root via `..` or an absolute path fails the extract fail-closed. A

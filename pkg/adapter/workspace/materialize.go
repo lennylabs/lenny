@@ -23,8 +23,8 @@ import (
 )
 
 // ErrSourceUnsupported reports a workspace source whose type is valid
-// but not yet materialized by the adapter. uploadArchive requires
-// archive extraction; gitClone requires a VCS client.
+// but not yet materialized by the adapter. gitClone requires a VCS
+// client.
 var ErrSourceUnsupported = errors.New("workspace source type not yet supported by the adapter")
 
 // ErrUnknownSourceType reports a workspace source whose type is not a
@@ -32,11 +32,11 @@ var ErrSourceUnsupported = errors.New("workspace source type not yet supported b
 var ErrUnknownSourceType = errors.New("unknown workspace source type")
 
 // Materialize writes the workspace sources into root in order. It
-// handles the filesystem-native source types inlineFile and mkdir and
-// the uploadFile type, which copies a file staged under stagingDir by
-// PrepareWorkspace. uploadArchive and gitClone return
-// ErrSourceUnsupported until the archive-extraction and VCS layers
-// land.
+// handles the filesystem-native source types inlineFile and mkdir, the
+// uploadFile type (a single file staged under stagingDir by
+// PrepareWorkspace), and the uploadArchive type (a staged tar, tar.gz,
+// or zip extracted under the source pathPrefix). gitClone returns
+// ErrSourceUnsupported until the VCS layer lands.
 func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) error {
 	for i, src := range sources {
 		if err := materializeSource(root, stagingDir, src); err != nil {
@@ -54,7 +54,9 @@ func materializeSource(root, stagingDir string, src *adapterv1.WorkspaceSource) 
 		return makeDir(root, src)
 	case "uploadFile":
 		return writeUploadFile(root, stagingDir, src)
-	case "uploadArchive", "gitClone":
+	case "uploadArchive":
+		return extractUploadArchive(root, stagingDir, src)
+	case "gitClone":
 		return ErrSourceUnsupported
 	default:
 		return ErrUnknownSourceType
