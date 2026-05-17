@@ -434,6 +434,32 @@ func TestListRuntimesResolvesDerivedRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetaResolvesDerivedRuntime(t *testing.T) {
+	// §5.1: the meta endpoint serves a derived runtime's effective
+	// publishedMetadata — the entries it inherits from its base.
+	runtimes := runtimestore.NewMemory()
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "base", Type: runtimestore.TypeAgent,
+		PublishedMetadata: []runtimestore.PublishedMetadataEntry{
+			{Key: "agent-card", ContentType: "application/json", Visibility: runtimestore.VisibilityPublic, Content: `{"from":"base"}`},
+		},
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+		Name: "derived", BaseRuntime: "base",
+	})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/derived/meta/agent-card", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("derived runtime meta: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != `{"from":"base"}` {
+		t.Errorf("derived meta must serve the inherited entry: %q", rr.Body.String())
+	}
+}
+
 func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

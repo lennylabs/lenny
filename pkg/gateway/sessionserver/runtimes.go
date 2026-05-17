@@ -142,7 +142,10 @@ func (s *Server) handleRuntimeMeta(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
 		return
 	}
-	rt, err := s.runtimes.Get(r.Context(), name)
+	// §5.1: a derived runtime resolves to its effective definition, so
+	// the meta lookup sees the publishedMetadata it inherits from its
+	// base. A derived runtime with a missing base resolves to an error.
+	rt, err := runtimestore.Resolve(r.Context(), s.runtimes, name)
 	if err != nil || !rt.IsActive() {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "metadata not found", nil)
 		return
@@ -181,7 +184,9 @@ func (s *Server) handleInternalRuntimeMeta(w http.ResponseWriter, r *http.Reques
 		notFound()
 		return
 	}
-	rt, err := s.runtimes.Get(r.Context(), r.PathValue("name"))
+	// §5.1: a derived runtime resolves to its effective definition so
+	// the meta lookup sees the inherited publishedMetadata.
+	rt, err := runtimestore.Resolve(r.Context(), s.runtimes, r.PathValue("name"))
 	if err != nil || !rt.IsActive() {
 		notFound()
 		return
