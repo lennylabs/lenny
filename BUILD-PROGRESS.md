@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f7d5152` — §16.6 lenny-ops-emitted event catalog. Completes the §16.6 operational-event
+  enumeration: `opsevents` now models the lenny-ops service's emitted types (escalation,
+  remediation-lock, drift, restore, upgrade-verification, operation, and event-delivery
+  events) alongside the gateway-emitted half. `OpsServiceEventTypes`,
+  `IsOpsServiceEventType`, and `IsKnownEventType` (spanning both halves) round out the
+  catalogue API. The lenny-ops service that emits these types is still unbuilt; the
+  catalogue is its event-type contract.
 - `4cb0d1e` — §16.5 add `StorageQuotaHigh` to the rule catalog. The per-tenant
   storage-quota gauges `lenny_storage_quota_bytes_used` and
   `lenny_tenant_storage_quota_bytes` are emitted by `gatewaymetrics`, so the §16.5
