@@ -359,6 +359,26 @@
         }
       }
     },
+    "/internal/runtimes/{name}/meta/{key}": {
+      "get": {
+        "summary": "Fetch an internal or tenant publishedMetadata entry",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "key",  "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry content, served under its declared content type.",
+            "content": { "*/*": { "schema": { "type": "string" } } }
+          },
+          "404": {
+            "description": "No reachable internal or tenant entry with this key, or no such runtime.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
     "/v1/runtimes/{name}/meta/{key}": {
       "get": {
         "summary": "Fetch a public publishedMetadata entry",
