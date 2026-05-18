@@ -19,6 +19,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 )
 
+// LeaseStore is the §4.9 gateway-replica credential-lease store
+// contract. The in-memory Store and the Postgres-backed
+// credleasestore/pgstore both satisfy it, so a deployment can choose a
+// per-replica working set or a durable backend without the §4.9 LLM
+// proxy or the lease lifecycle observing a difference.
+type LeaseStore interface {
+	Put(lease credential.Lease) error
+	GetByToken(token string) (lease credential.Lease, ok bool)
+	GetByID(leaseID string) (lease credential.Lease, ok bool)
+	Remove(leaseID string)
+	Len() int
+}
+
 // Store indexes issued credential leases by lease ID and, for
 // proxy-mode leases, by the opaque lease token the agent pod presents.
 // Every method is goroutine-safe.
@@ -27,6 +40,8 @@ type Store struct {
 	byID    map[string]credential.Lease
 	byToken map[string]string // lease token -> lease ID
 }
+
+var _ LeaseStore = (*Store)(nil)
 
 // New returns an empty Store.
 func New() *Store {
