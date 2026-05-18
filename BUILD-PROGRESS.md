@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `f42c185` — wired the dependency-probe runner into the lenny-ops
+  readiness endpoint. `opsserver.New` takes the named §25 dependency
+  probes; `GET /readyz` runs them and reports per-dependency status in the
+  body, staying ready (200) while a dependency is down per §25's
+  graceful-degradation rule. The probe set is empty until the Postgres/
+  Redis/MinIO/K8s clients are wired.
 - `e4734ff` — §25 parallel dependency-probe runner (`pkg/ops/probe`). `Run`
   executes named dependency probes (Postgres, Redis, MinIO, K8s API,
   gateway) concurrently with a per-probe timeout, recording a timeout
