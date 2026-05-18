@@ -84,6 +84,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
+	credentialdenylistprop "github.com/lennylabs/lenny/pkg/gateway/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
@@ -121,11 +122,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/revocation"
+	revocationprop "github.com/lennylabs/lenny/pkg/gateway/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -148,6 +151,8 @@ import (
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
+	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -344,6 +349,19 @@ func main() {
 		log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
 	} else {
 		breakers = breakerstore.NewMemory()
+	}
+
+	// §4.9 / §10.3 / §13.3 security-cache pub/sub substrate. The
+	// gateway's revocation cache and the two deny lists are per-replica
+	// in-memory sets; the Bus fans a local mutation out to peer replicas
+	// over Redis pub/sub so a revocation takes effect fleet-wide. With
+	// no Redis the Bus is nil, which the propagators treat as the
+	// single-replica mode: every cache stays local and nothing is
+	// published. pubsub.New returns nil for a nil client, so this is
+	// nil whenever redisClient is.
+	securityBus := pubsub.New(redisClient)
+	if securityBus != nil {
+		log.Printf("lenny-gateway: security caches converge across replicas over Redis pub/sub")
 	}
 
 	// ----- §7.1 uploadToken KeyRing -----
@@ -618,8 +636,25 @@ func main() {
 
 	// §13.3 revocation cache: the auth middleware rejects a token
 	// whose jti is in this set. It is rehydrated from the Postgres
-	// issued-token index below.
+	// issued-token index below. The propagator wraps the cache with
+	// Redis pub/sub fan-out so a revocation on any replica reaches every
+	// replica within pub/sub latency; with no Redis the propagator is a
+	// local-only pass-through. revCache stays the read primitive the
+	// auth middleware and the rehydration loop use directly.
 	revCache := revocation.NewCache()
+	revProp := revocationprop.New(revCache, securityBus, revocationprop.WithErrorHandler(func(err error) {
+		log.Printf("lenny-gateway: token-revocation pub/sub publish failed: %v", err)
+	}))
+
+	// §10.3 mTLS certificate deny list: the per-replica SPIFFE-URI deny
+	// set checked on every mTLS handshake. Its propagator carries an
+	// Add or Remove across replicas over Redis pub/sub. The deny list is
+	// a single-replica primitive; the propagator owns the fan-out the
+	// package doc defers to a wrapping controller.
+	mtlsDeny := mtlsdenylist.New()
+	mtlsDenyProp := mtlsdenylistprop.New(mtlsDeny, securityBus, mtlsdenylistprop.WithErrorHandler(func(err error) {
+		log.Printf("lenny-gateway: mTLS deny-list pub/sub publish failed: %v", err)
+	}))
 
 	// ----- Admin API -----
 	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
@@ -708,8 +743,11 @@ func main() {
 	}
 	if pgPool != nil {
 		// §13.3 operator-initiated token revocation, durable in the
-		// issued-token index and reflected in the revocation cache.
-		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(pgPool), revCache)
+		// issued-token index and reflected in the revocation cache. The
+		// admin endpoint routes through the propagator so a revocation
+		// fans out to every replica's cache over Redis pub/sub, not just
+		// the replica that served the request.
+		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(pgPool), revProp)
 	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
@@ -838,7 +876,7 @@ func main() {
 		AllowDevHeaders: true,
 		AllowDevRoles:   *devMode,
 		Verifier:        jwtSigner,
-		Revocations:     revCache,
+		Revocations:     revProp,
 	}
 	if !*multiTenant {
 		// Even in single-tenant mode, dev-header callers carry the
@@ -867,7 +905,17 @@ func main() {
 	if pgPool != nil {
 		llmLeases = credleasepg.New(pgPool)
 	}
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases)
+	// §4.9 credential deny list: the per-replica set of revoked
+	// credential identities the proxy checks before every upstream
+	// call. The propagator carries a revocation across replicas over
+	// Redis pub/sub. The proxy handler reads the wrapped deny list
+	// directly on the hot path; a revocation entered on any replica
+	// fans out to every replica's deny list.
+	credDeny := denylist.New()
+	credDenyProp := credentialdenylistprop.New(credDeny, securityBus, credentialdenylistprop.WithErrorHandler(func(err error) {
+		log.Printf("lenny-gateway: credential deny-list pub/sub publish failed: %v", err)
+	}))
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credDenyProp.Local())
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----
 	// Sweeps every 5 s; transitions stuck sessions to failed.
@@ -945,6 +993,18 @@ func main() {
 	// current via pub/sub and a periodic refresh.
 	if breakerCache != nil {
 		go breakerCache.Run(watchdogCtx)
+	}
+
+	// ----- §4.9 / §10.3 / §13.3 security-cache pub/sub subscribers -----
+	// Active only with Redis: each subscribe loop applies a peer
+	// replica's revocations and deny-list mutations onto this replica's
+	// local cache, so a §13.3 token revocation, a §10.3 mTLS
+	// certificate revocation, and a §4.9 credential revocation each
+	// converge fleet-wide. With no Redis the caches stay per-replica.
+	if securityBus != nil {
+		go revProp.Run(watchdogCtx)
+		go mtlsDenyProp.Run(watchdogCtx)
+		go credDenyProp.Run(watchdogCtx)
 	}
 
 	// ----- §4.4 periodic-checkpoint loop -----
@@ -1070,10 +1130,12 @@ type breakerRegistry interface {
 // newLLMProxyServer builds the §4.9 LLM reverse-proxy HTTP server,
 // serving the Anthropic Messages endpoint at POST /llm-proxy/v1/messages.
 // It returns nil when addr is empty, which disables the proxy listener.
-// The credential-lease store, the credential cache, and the deny list
-// start empty; the §4.9 credential-assignment path populates them, and
-// a request that arrives before then is cleanly rejected.
-func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore) *http.Server {
+// The credential-lease store and the credential cache start empty; the
+// §4.9 credential-assignment path populates them, and a request that
+// arrives before then is cleanly rejected. denyList is the per-replica
+// credential deny list, owned by a propagator the caller drives so
+// revocations converge across replicas.
+func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, denyList *denylist.DenyList) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -1083,7 +1145,7 @@ func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.Leas
 		Translator:  &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
 		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
 		Credentials: credcache.New(),
-		DenyList:    denylist.New(),
+		DenyList:    denyList,
 	})
 	return &http.Server{
 		Addr:              addr,

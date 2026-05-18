@@ -324,7 +324,8 @@
       ],
       "packages": [
         "pkg/credential",
-        "pkg/store/credentialpool"
+        "pkg/store/credentialpool",
+        "pkg/gateway/denylist/propagator"
       ],
       "blocked_until_phase": "5.5",
       "notes": "Phase 5.5 ships the \u00a74.9 Provider, AssignmentStrategy, LeaseSource, and RotationTrigger enums plus the \u00a74.7 ceiling-applicable rule and the \u00a74.9 proactive-renewal budget-exclusion rule as Go-callable methods. The full Credential Leasing Service binary (Token Service binding, KMS rotation, materializedConfig schemas, the CredentialRenewalWorker) is deferred to the K8s-integration phase that ships the Token Service."
@@ -907,7 +908,8 @@
       ],
       "packages": [
         "pkg/mtls/spiffe",
-        "pkg/mtls/denylist"
+        "pkg/mtls/denylist",
+        "pkg/mtls/denylist/propagator"
       ],
       "blocked_until_phase": "3",
       "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The cert-manager integration, the Helm-rendered Certificate resources, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
@@ -1497,12 +1499,15 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestMissingCallerRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
-        "tests/tier3_contract/oauth_token/..."
+        "tests/tier3_contract/oauth_token/...",
+        "tests/tier2_component/securitycaches/propagation_test.go"
       ],
       "packages": [
         "pkg/credential",
         "pkg/admission/credfsgroup",
-        "pkg/tokenexchange"
+        "pkg/tokenexchange",
+        "pkg/gateway/pubsub",
+        "pkg/gateway/revocation/propagator"
       ],
       "blocked_until_phase": "12a",
       "notes": "Phase 12a ships the \u00a713.3 RFC 8693 token-exchange invariants as a pure Validate function: scope narrowing (subject \u2286), tenant-scope (issued.tenant_id == subject.tenant_id == caller.tenant_id), caller_type cannot elevate (agent < service < human), audience cannot broaden, typ rules (a2a_delegation only via actor_token), delegation_depth = parent+1 on child minting, exp = min(requested, subject.exp, actor.exp, perDialectCap) with the \u00a713.3 \u00b11s skew and Unix-seconds truncation per RFC 7519. The Postgres-backed write-before-issue transaction, the KMS signing path, the cluster-wide revocation propagation via Redis EventBus, and the Token Service binary are deferred to the K8s-integration phase."

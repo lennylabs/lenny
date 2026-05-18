@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -18,13 +19,13 @@ import (
 // spec: §4.9 — the gateway's LLM reverse-proxy listener wiring.
 
 func TestNewLLMProxyServerDisabledWhenAddrEmpty(t *testing.T) {
-	if srv := newLLMProxyServer("", "2023-06-01", credleasestore.New()); srv != nil {
+	if srv := newLLMProxyServer("", "2023-06-01", credleasestore.New(), denylist.New()); srv != nil {
 		t.Errorf("newLLMProxyServer with an empty address returned %v, want nil", srv)
 	}
 }
 
 func TestNewLLMProxyServerBindsConfiguredAddress(t *testing.T) {
-	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New())
+	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New(), denylist.New())
 	if srv == nil {
 		t.Fatal("newLLMProxyServer returned nil for a configured address")
 	}
@@ -34,7 +35,7 @@ func TestNewLLMProxyServerBindsConfiguredAddress(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRoutesTheMessagesEndpoint(t *testing.T) {
-	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New())
+	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New(), denylist.New())
 	if srv == nil {
 		t.Fatal("newLLMProxyServer returned nil")
 	}
@@ -54,7 +55,7 @@ func TestNewLLMProxyServerRoutesTheMessagesEndpoint(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRejectsUnknownPath(t *testing.T) {
-	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New())
+	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New(), denylist.New())
 	req := httptest.NewRequest(http.MethodPost, "/llm-proxy/v1/no-such-endpoint", nil)
 	rr := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rr, req)
@@ -64,7 +65,7 @@ func TestNewLLMProxyServerRejectsUnknownPath(t *testing.T) {
 }
 
 func TestNewLLMProxyServerRejectsNonPost(t *testing.T) {
-	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New())
+	srv := newLLMProxyServer(":8443", "2023-06-01", credleasestore.New(), denylist.New())
 	req := httptest.NewRequest(http.MethodGet, "/llm-proxy/v1/messages", nil)
 	rr := httptest.NewRecorder()
 	srv.Handler.ServeHTTP(rr, req)
