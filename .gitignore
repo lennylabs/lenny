@@ -10,6 +10,7 @@ tmp/
 /lenny-compliance
 /lenny-controller
 /lenny-gateway
+/lenny-migrate
 /lenny-token-service
 /lenny-webhook
 /echo
