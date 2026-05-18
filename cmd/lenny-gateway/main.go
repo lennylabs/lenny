@@ -120,6 +120,7 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
@@ -1039,6 +1040,22 @@ func main() {
 		Counter:          rateLimiter,
 		GlobalPerMinute:  *rlGlobalPerMin,
 		PerUserPerMinute: *rlPerUserPerMin,
+	})
+
+	// §10.6 transparent-filtering environment resolver — runs
+	// immediately after auth so the caller's identity and OIDC groups
+	// are resolved. It lists the caller tenant's environments, resolves
+	// the noEnvironmentPolicy (per-tenant value over the platform-wide
+	// resolvedNoEnvPolicy), and attaches a Resolution to the request
+	// context. The §9.1 runtime-discovery surfaces and the
+	// session-creation path read that Resolution and filter through it,
+	// so a caller sees only the runtimes its environments authorize
+	// without naming an environment. The resolver is a no-op when the
+	// environment or tenant registry is not wired.
+	handler = environmentmw.Wrap(handler, environmentmw.Options{
+		Environments:               environments,
+		Tenants:                    tenants,
+		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 	})
 
 	// Auth next-to-outermost. AllowDevRoles is only honoured when the

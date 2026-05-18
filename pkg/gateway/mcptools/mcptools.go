@@ -50,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -1158,37 +1159,41 @@ func resolveDerivedRuntimes(ctx context.Context, store runtimestore.Store, rows 
 	return out
 }
 
+// environmentResolution returns the §10.6 transparent-filtering
+// Resolution for the request. It prefers the Resolution the
+// environment-resolver middleware (pkg/gateway/middleware/environment)
+// attached to the request context — the production path, where the MCP
+// server is mounted under that middleware. When no Resolution is on the
+// context (an MCP tool exercised directly without the HTTP middleware
+// chain), it resolves the same Resolution from the Deps registries via
+// the shared environmentmw.Resolve. Either way the §10.6 filtering goes
+// through a single Resolution type and a single envaccess code path.
+func environmentResolution(ctx context.Context, deps Deps) (environmentmw.Resolution, error) {
+	if res := environmentmw.FromContext(ctx); res.Configured {
+		return res, nil
+	}
+	principal, ok := authmw.FromContext(ctx)
+	if !ok {
+		return environmentmw.Resolution{}, nil
+	}
+	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
+	return environmentmw.Resolve(ctx, deps.Environments, deps.Tenants,
+		deps.DefaultNoEnvironmentPolicy, caller, principal.TenantID)
+}
+
 // filterByEnvironmentAccess applies §10.6 transparent filtering to a
 // runtime list: it returns only the runtimes the caller's environment
 // membership authorizes. Filtering runs when the environment and
-// tenant registries are wired and the request context carries an
-// authenticated principal; otherwise the list is returned unchanged
-// (a minimal deployment with no environment registry). A caller in no
-// environment is governed by the tenant's §10.6 noEnvironmentPolicy.
+// tenant registries are wired and the request carries an authenticated
+// principal; otherwise the list is returned unchanged (a minimal
+// deployment with no environment registry). A caller in no environment
+// is governed by the tenant's §10.6 noEnvironmentPolicy.
 func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtimestore.Runtime) ([]runtimestore.Runtime, error) {
-	if deps.Environments == nil || deps.Tenants == nil {
-		return runtimes, nil
-	}
-	principal, ok := authmw.FromContext(ctx)
-	if !ok || principal.TenantID == "" {
-		return runtimes, nil
-	}
-	envs, err := deps.Environments.List(ctx, principal.TenantID)
+	res, err := environmentResolution(ctx, deps)
 	if err != nil {
 		return nil, err
 	}
-	tenant, err := deps.Tenants.Get(ctx, principal.TenantID)
-	if err != nil {
-		return nil, err
-	}
-	// §10.6: the per-tenant noEnvironmentPolicy takes precedence; an
-	// unset tenant value falls back to the platform-wide default.
-	policy := tenant.NoEnvironmentPolicy
-	if policy == "" {
-		policy = deps.DefaultNoEnvironmentPolicy
-	}
-	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
-	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, policy), nil
+	return res.FilterRuntimes(runtimes), nil
 }
 
 // runtimeAuthorizedForCaller reports whether the caller's §10.6
@@ -1231,30 +1236,37 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 	if err != nil {
 		return false, nil
 	}
-	envs, err := deps.Environments.List(ctx, parent.TenantID)
+	// The §10.6 environment Resolution carries every environment defined
+	// for the tenant and the subset the caller is a member of — the same
+	// set the transparent-filter discovery surfaces resolved from.
+	res, err := environmentResolution(ctx, deps)
 	if err != nil {
 		return false, err
+	}
+	if !res.Configured {
+		return false, nil
 	}
 	// §10.6: the parent session's environment is caller-supplied at
 	// session creation and is only trusted here when the caller is
 	// genuinely a member of it. Without this check a session tagged
 	// with an environment the caller does not belong to could borrow
 	// that environment's cross-environment delegation reach.
-	principal, ok := authmw.FromContext(ctx)
-	if !ok {
+	if !memberOfEnvironment(res, parent.Environment) {
 		return false, nil
 	}
-	var parentEnv environmentstore.Environment
-	for _, e := range envs {
-		if e.Name == parent.Environment {
-			parentEnv = e
+	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, res.AllEnvironments), nil
+}
+
+// memberOfEnvironment reports whether the resolved caller is a member
+// of the named environment, consulting the §10.6 Resolution's already-
+// resolved member-environment set.
+func memberOfEnvironment(res environmentmw.Resolution, name string) bool {
+	for _, e := range res.MemberEnvironments {
+		if e.Name == name {
+			return true
 		}
 	}
-	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
-	if _, isMember := envaccess.Membership(caller, parentEnv); !isMember {
-		return false, nil
-	}
-	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, envs), nil
+	return false
 }
 
 // resolvePoolIsolation returns the explicit §5.3 isolation profile of

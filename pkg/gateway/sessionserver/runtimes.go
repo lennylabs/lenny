@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
+	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
 )
@@ -261,26 +262,39 @@ func (s *Server) resolveRuntimes(ctx context.Context, rows []runtimestore.Runtim
 }
 
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
-// environment access the request principal holds. When the
-// environment or tenant registry is not wired, or the request carries
-// no principal, the list is returned unchanged — the transparent
+// transparent-filtering view the request principal holds. It reads the
+// Resolution the §10.6 environment-resolver middleware
+// (pkg/gateway/middleware/environment) attached to the request context
+// — the single filtering path the §9.1 discovery surfaces share with
+// the MCP discovery tools. When the environment or tenant registry is
+// not wired, or the request carries no principal, the Resolution is not
+// Configured and the list is returned unchanged — the transparent
 // filter is not in effect.
+//
+// For a request reaching the sessionserver outside the HTTP middleware
+// chain (a unit test that calls the handler directly), the Resolution
+// is resolved on demand from the server's registries via the shared
+// environmentmw.Resolve, so the filtering result is identical either
+// way. A store read failure fails closed: the §10.6 filter is an
+// authorization boundary, so an empty runtime list is returned rather
+// than an unfiltered one.
 func (s *Server) filterRuntimesByEnvironment(r *http.Request, runtimes []runtimestore.Runtime) []runtimestore.Runtime {
-	if s.environments == nil || s.tenants == nil {
-		return runtimes
+	res := environmentmw.FromContext(r.Context())
+	if !res.Configured {
+		principal, ok := getPrincipal(r)
+		if !ok || principal.TenantID == "" {
+			return runtimes
+		}
+		caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
+		resolved, err := environmentmw.Resolve(r.Context(), s.environments, s.tenants,
+			s.defaultNoEnvPolicy, caller, principal.TenantID)
+		if err != nil {
+			// Fail closed: the §10.6 transparent filter is an
+			// authorization boundary, so a registry read failure must
+			// not yield an unfiltered runtime list.
+			return []runtimestore.Runtime{}
+		}
+		res = resolved
 	}
-	principal, ok := getPrincipal(r)
-	if !ok || principal.TenantID == "" {
-		return runtimes
-	}
-	envs, err := s.environments.List(r.Context(), principal.TenantID)
-	if err != nil {
-		return runtimes
-	}
-	policy := s.defaultNoEnvPolicy
-	if tenant, err := s.tenants.Get(r.Context(), principal.TenantID); err == nil && tenant.NoEnvironmentPolicy != "" {
-		policy = tenant.NoEnvironmentPolicy
-	}
-	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
-	return envaccess.AuthorizedRuntimes(caller, envs, runtimes, policy)
+	return res.FilterRuntimes(runtimes)
 }

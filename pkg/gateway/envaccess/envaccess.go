@@ -12,6 +12,7 @@ import (
 	"sort"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 )
@@ -123,6 +124,47 @@ func AuthorizedRuntimes(caller Caller, envs []environmentstore.Environment, runt
 	return out
 }
 
+// AuthorizedConnectors returns the connectors in scope for the caller
+// under §10.6 transparent filtering: the union of connectors admitted
+// by the connectorSelector of every environment the caller belongs to.
+// A caller with no environment membership reaches every supplied
+// connector when noEnvPolicy is allow-all and none under deny-all (the
+// platform default). The result is deduplicated by id and id-sorted.
+//
+// §10.6 scopes connectorSelector to the internal connector surface —
+// "Connectors are never cross-environment", so unlike AuthorizedRuntimes
+// there is no cross-environment widening. connectors must already be
+// scoped to the caller's tenant; this resolver does not perform tenant
+// filtering.
+func AuthorizedConnectors(caller Caller, envs []environmentstore.Environment, connectors []connectorstore.Connector, noEnvPolicy string) []connectorstore.Connector {
+	memberEnvs := MemberEnvironments(caller, envs)
+	if len(memberEnvs) == 0 {
+		if noEnvPolicy == PolicyAllowAll {
+			return sortedConnectorsByID(connectors)
+		}
+		return []connectorstore.Connector{}
+	}
+	admitted := map[string]connectorstore.Connector{}
+	for _, env := range memberEnvs {
+		for _, c := range connectors {
+			if _, seen := admitted[c.ID]; seen {
+				continue
+			}
+			if env.ConnectorSelector.Matches(environment.Candidate{
+				Name: c.ID, Labels: c.Labels,
+			}) {
+				admitted[c.ID] = c
+			}
+		}
+	}
+	out := make([]connectorstore.Connector, 0, len(admitted))
+	for _, c := range admitted {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 // CrossEnvironmentReachable reports whether the target runtime is
 // reachable from the caller's environment through a §10.6 bilateral
 // cross-environment-delegation declaration. It is reachable when some
@@ -193,5 +235,12 @@ func inboundPermits(env environmentstore.Environment, sourceEnv string, cand env
 func sortedByName(runtimes []runtimestore.Runtime) []runtimestore.Runtime {
 	out := append([]runtimestore.Runtime(nil), runtimes...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// sortedConnectorsByID returns an id-sorted copy of connectors.
+func sortedConnectorsByID(connectors []connectorstore.Connector) []connectorstore.Connector {
+	out := append([]connectorstore.Connector(nil), connectors...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }

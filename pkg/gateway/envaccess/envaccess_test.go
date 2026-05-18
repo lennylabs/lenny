@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
@@ -266,6 +267,95 @@ func TestCrossEnvironmentUnreachableWhenTargetNotInPeer(t *testing.T) {
 func TestCrossEnvironmentReachableUnknownCallerEnv(t *testing.T) {
 	if envaccess.CrossEnvironmentReachable("ghost", sharedTool, nil) {
 		t.Error("an unknown caller environment must not be cross-environment reachable")
+	}
+}
+
+// connectorWithTeam is a §9.3 connector tagged for one team. The §10.6
+// connectorSelector matches on the connector's label map.
+func connectorWithTeam(id, team string) connectorstore.Connector {
+	return connectorstore.Connector{
+		ID: id, Labels: map[string]string{"team": team},
+	}
+}
+
+// teamConnectorEnv is an environment whose connectorSelector admits
+// connectors tagged for one team.
+func teamConnectorEnv(name, team string, members ...environmentstore.Member) environmentstore.Environment {
+	return environmentstore.Environment{
+		Name: name, TenantID: "acme", Members: members,
+		ConnectorSelector: environment.Selector{MatchLabels: map[string]string{"team": team}},
+	}
+}
+
+func connectorIDs(cs []connectorstore.Connector) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.ID
+	}
+	return out
+}
+
+func TestAuthorizedConnectorsUnionAndDedup(t *testing.T) {
+	connectors := []connectorstore.Connector{
+		connectorWithTeam("sec-vault", "security"),
+		connectorWithTeam("research-index", "research"),
+		connectorWithTeam("shared-store", "security"),
+	}
+	envs := []environmentstore.Environment{
+		teamConnectorEnv("security-team", "security", groupMember("eng", environment.RoleCreator)),
+		teamConnectorEnv("research-team", "research", groupMember("eng", environment.RoleViewer)),
+	}
+	// The caller belongs to both environments via the "eng" group, so
+	// the result unions both connectorSelectors.
+	got := envaccess.AuthorizedConnectors(
+		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}},
+		envs, connectors, envaccess.PolicyDenyAll,
+	)
+	want := []string{"research-index", "sec-vault", "shared-store"}
+	if got2 := connectorIDs(got); !equalStrings(got2, want) {
+		t.Errorf("connector union: got %v, want %v", got2, want)
+	}
+}
+
+func TestAuthorizedConnectorsNoMembershipDenyAll(t *testing.T) {
+	connectors := []connectorstore.Connector{connectorWithTeam("sec-vault", "security")}
+	got := envaccess.AuthorizedConnectors(
+		envaccess.Caller{Subject: "bob", Groups: []string{"outsiders"}},
+		nil, connectors, envaccess.PolicyDenyAll,
+	)
+	if len(got) != 0 {
+		t.Errorf("deny-all with no membership: got %v, want empty", connectorIDs(got))
+	}
+}
+
+func TestAuthorizedConnectorsNoMembershipAllowAll(t *testing.T) {
+	connectors := []connectorstore.Connector{
+		connectorWithTeam("b-conn", "x"), connectorWithTeam("a-conn", "y"),
+	}
+	got := envaccess.AuthorizedConnectors(
+		envaccess.Caller{Subject: "bob"}, nil, connectors, envaccess.PolicyAllowAll,
+	)
+	if got2 := connectorIDs(got); !equalStrings(got2, []string{"a-conn", "b-conn"}) {
+		t.Errorf("allow-all with no membership: got %v, want all connectors id-sorted", got2)
+	}
+}
+
+func TestAuthorizedConnectorsMemberScopedBySelector(t *testing.T) {
+	// A member sees only what their environment's connectorSelector
+	// admits — noEnvironmentPolicy does not widen a member's view.
+	connectors := []connectorstore.Connector{
+		connectorWithTeam("sec-vault", "security"),
+		connectorWithTeam("research-index", "research"),
+	}
+	envs := []environmentstore.Environment{
+		teamConnectorEnv("security-team", "security", groupMember("eng", environment.RoleCreator)),
+	}
+	got := envaccess.AuthorizedConnectors(
+		envaccess.Caller{Subject: "alice", Groups: []string{"eng"}},
+		envs, connectors, envaccess.PolicyAllowAll,
+	)
+	if got2 := connectorIDs(got); !equalStrings(got2, []string{"sec-vault"}) {
+		t.Errorf("member scoped by selector: got %v, want only sec-vault", got2)
 	}
 }
 
