@@ -160,6 +160,18 @@ type Deps struct {
 	// the `suppress_at_depth` policy starts suppressing elicitations.
 	ElicitationSuppressAtDepth int
 
+	// ElicitationURLModeAllowlist is the §9.2 per-pool agent-initiated
+	// url-mode elicitation allowlist. The zero value blocks every
+	// agent-initiated url-mode elicitation, which is the §9.2 default.
+	ElicitationURLModeAllowlist elicitation.URLModeAllowlist
+
+	// ElicitationIntercepts, when non-nil, reports whether an ancestor
+	// session on the §9.2 elicitation chain is configured to intercept
+	// the elicitation rather than forward it onward. A nil predicate
+	// means no parent intercepts — every elicitation forwards up the
+	// task tree to the human-facing edge.
+	ElicitationIntercepts func(sess sessionstore.Session) bool
+
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
 	Clock  func() time.Time
@@ -612,16 +624,32 @@ func Register(srv *mcp.Server, deps Deps) {
 		if maxElicitations <= 0 {
 			maxElicitations = defaultMaxElicitationsPerSession
 		}
+		dispatcher := &elicitationDispatcher{
+			store:            deps.Store,
+			tenantID:         tenant,
+			depthPolicy:      deps.ElicitationDepthPolicy,
+			suppressAtDepth:  deps.ElicitationSuppressAtDepth,
+			urlModeAllowlist: deps.ElicitationURLModeAllowlist,
+			intercepts:       deps.ElicitationIntercepts,
+			audit:            deps.Audit,
+		}
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/request_elicitation",
 			Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
-			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"}}}`),
+			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","message"],"properties":{"sessionId":{"type":"string"},"message":{"type":"string"},"schema":{"type":"object"},"elicitationId":{"type":"string"},"url":{"type":"string"},"initiatorType":{"type":"string","enum":["connector","agent"]}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			var in struct {
 				SessionID     string          `json:"sessionId"`
 				Message       string          `json:"message"`
 				Schema        json.RawMessage `json:"schema"`
 				ElicitationID string          `json:"elicitationId"`
+				// URL is set for a §9.2 url-mode elicitation (an OAuth
+				// flow, for example). Empty for a non-url-mode prompt.
+				URL string `json:"url"`
+				// InitiatorType is the §9.2 provenance initiator_type.
+				// Defaults to `agent` — a connector-initiated elicitation
+				// is tagged `connector` by the gateway connector path.
+				InitiatorType string `json:"initiatorType"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -635,6 +663,12 @@ func Register(srv *mcp.Server, deps Deps) {
 			}
 			if session.IsTerminal(row.State) {
 				return mcp.ToolResult{}, fmt.Errorf("session %s is terminal (%s)", in.SessionID, row.State)
+			}
+			// §9.2 provenance initiator_type. An unrecognised value
+			// resolves to `agent` — the lower-trust default.
+			initiator := elicitation.InitiatorAgent
+			if elicitation.InitiatorType(in.InitiatorType) == elicitation.InitiatorConnector {
+				initiator = elicitation.InitiatorConnector
 			}
 			// §9.1: the per-session elicitation budget bounds how many
 			// elicitations an agent may raise — an over-budget request
@@ -652,37 +686,62 @@ func Register(srv *mcp.Server, deps Deps) {
 					in.SessionID, maxElicitations,
 				)
 			}
-			// §9.2: the depth policy suppresses an agent elicitation
-			// raised too deep in the delegation tree.
-			depthPolicy := deps.ElicitationDepthPolicy
-			if !depthPolicy.IsValid() {
-				depthPolicy = elicitation.DepthAllowAll
+			// §9.2: the gateway records the original {message, schema}
+			// pair at origination. Its SHA-256 digest is the
+			// content-integrity reference verified at every forward hop.
+			var schemaValue any
+			if len(in.Schema) > 0 {
+				_ = json.Unmarshal(in.Schema, &schemaValue)
 			}
-			depth := sessionDepth(ctx, deps.Store, tenant, row)
-			if depthPolicy.ShouldSuppress(elicitation.InitiatorAgent, depth, deps.ElicitationSuppressAtDepth) {
+			originalContent := elicitation.Content{Message: in.Message, Schema: schemaValue}
+			originalDigest, err := originalContent.Digest()
+			if err != nil {
+				return mcp.ToolResult{}, fmt.Errorf("elicitation content is not canonicalizable: %w", err)
+			}
+			// §9.2: dispatch the elicitation up the hop-by-hop chain. The
+			// dispatcher runs the url-mode provenance check, walks the
+			// delegation tree from this session upward verifying the
+			// content-integrity digest at each forward hop, applies the
+			// depth policy, and reports the chain resolver.
+			dr, err := dispatcher.dispatch(ctx, row, originalContent, initiator, in.URL)
+			if err != nil {
+				return mcp.ToolResult{}, err
+			}
+			if dr.Suppressed {
+				// §9.2: a depth-suppressed elicitation returns a SUPPRESSED
+				// response the originating pod handles as "user declined".
 				if deps.ElicitationMetrics != nil {
 					deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropDepthSuppressed)
 				}
-				return mcp.ToolResult{}, fmt.Errorf(
-					"elicitation suppressed: the %q depth policy suppresses an agent elicitation at delegation depth %d",
-					depthPolicy, depth,
-				)
+				return textResult(fmt.Sprintf(`{"elicitationId":%q,"suppressed":true}`, elicitationOrGen(in.ElicitationID, idFn))), nil
 			}
 			elicitationID := in.ElicitationID
 			if elicitationID == "" {
 				elicitationID = idFn()
 			}
-			detail := map[string]any{"message": in.Message}
-			if len(in.Schema) > 0 {
-				var schema any
-				if json.Unmarshal(in.Schema, &schema) == nil {
-					detail["schema"] = schema
-				}
+			// §9.2: the elicitation is recorded against the chain
+			// resolver session — the human-facing edge or an intercepting
+			// parent. The §15.1 respond/dismiss authorization triple then
+			// targets the resolver, not an intermediate hop.
+			resolverSessionID := dr.ResolverSessionID
+			detail := map[string]any{
+				"message": in.Message,
+				// §9.2 gateway-origin binding: the recorded digest lets a
+				// forward-hop re-emission be verified against the original.
+				"contentDigest": originalDigest,
+				"originPod":     row.ID,
+				"initiatorType": string(initiator),
+			}
+			if schemaValue != nil {
+				detail["schema"] = schemaValue
+			}
+			if in.URL != "" {
+				detail["url"] = in.URL
 			}
 			if err := deps.Interactions.Put(ctx, interactionstore.Interaction{
 				ID:        elicitationID,
 				Kind:      interactionstore.KindElicitation,
-				SessionID: in.SessionID,
+				SessionID: resolverSessionID,
 				TenantID:  tenant,
 				UserID:    row.UserID,
 				Phase:     interactionstore.PhasePending,
@@ -690,22 +749,24 @@ func Register(srv *mcp.Server, deps Deps) {
 			}); err != nil {
 				return mcp.ToolResult{}, err
 			}
-			// §9.2: surface the elicitation on the session event stream so
-			// the human responder (and the elicitation chain) can see it.
+			// §9.2: surface the elicitation on the resolver session's
+			// event stream so the human responder (and the elicitation
+			// chain) can see it.
 			if deps.Events != nil {
 				data, _ := json.Marshal(struct {
 					ElicitationID string `json:"elicitationId"`
 					Message       string `json:"message"`
-				}{ElicitationID: elicitationID, Message: in.Message})
-				deps.Events.Publish(in.SessionID, "elicitation_requested", string(data), clock())
+					OriginPod     string `json:"originPod"`
+				}{ElicitationID: elicitationID, Message: in.Message, OriginPod: row.ID})
+				deps.Events.Publish(resolverSessionID, "elicitation_requested", string(data), clock())
 			}
-			// Block until a human resolves the elicitation or the §9.1
-			// maxElicitationWait timeout fires.
+			// Block until the chain resolver resolves the elicitation or
+			// the §9.1 maxElicitationWait timeout fires.
 			ticker := time.NewTicker(awaitPollInterval)
 			defer ticker.Stop()
 			timeout := time.After(elicitationTimeout)
 			for {
-				cur, err := deps.Interactions.Get(ctx, tenant, in.SessionID, row.UserID, elicitationID)
+				cur, err := deps.Interactions.Get(ctx, tenant, resolverSessionID, row.UserID, elicitationID)
 				if err != nil {
 					return mcp.ToolResult{}, fmt.Errorf("elicitation lookup: %w", err)
 				}
@@ -725,7 +786,7 @@ func Register(srv *mcp.Server, deps Deps) {
 				case <-timeout:
 					// §9.1: on timeout the elicitation is dismissed and the
 					// agent receives a timeout error.
-					_, _ = deps.Interactions.Resolve(ctx, tenant, in.SessionID, row.UserID, elicitationID,
+					_, _ = deps.Interactions.Resolve(ctx, tenant, resolverSessionID, row.UserID, elicitationID,
 						func(i *interactionstore.Interaction) error {
 							if i.Phase == interactionstore.PhasePending {
 								i.Phase = interactionstore.PhaseDismissed
@@ -1412,25 +1473,6 @@ func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
 	return cancelled, nil
 }
 
-// sessionDepth returns sess's delegation depth — the number of hops
-// from sess up to the §8 delegation tree root (root = 0). The seen set
-// guards against a malformed cyclic chain.
-func sessionDepth(ctx context.Context, store sessionstore.Store, tenant string, sess sessionstore.Session) int {
-	depth := 0
-	cur := sess
-	seen := map[string]bool{}
-	for cur.ParentSessionID != "" && !seen[cur.ID] {
-		seen[cur.ID] = true
-		parent, err := store.Get(ctx, tenant, cur.ParentSessionID)
-		if err != nil {
-			break
-		}
-		cur = parent
-		depth++
-	}
-	return depth
-}
-
 // treeRoot returns the id of the §8 delegation tree's root by walking
 // the ParentSessionID chain up from start. The seen set guards against
 // a malformed cyclic chain.
@@ -1487,4 +1529,15 @@ func archiveCancelled(ctx context.Context, archive treearchive.Store,
 
 func textResult(s string) mcp.ToolResult {
 	return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: s}}}
+}
+
+// elicitationOrGen returns id when non-empty, otherwise a freshly
+// generated identifier. It lets the §9.2 SUPPRESSED response carry an
+// elicitation_id even though a suppressed elicitation is never
+// recorded in the interaction store.
+func elicitationOrGen(id string, gen func() string) string {
+	if id != "" {
+		return id
+	}
+	return gen()
 }

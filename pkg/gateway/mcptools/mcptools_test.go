@@ -1085,18 +1085,18 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ask","elicitationId":"elic_x"}`)
-	result, _ := resp["result"].(map[string]any)
-	if result["isError"] != true {
-		t.Fatalf("an elicitation at the suppression depth should be a tool error: %+v", resp)
+	// §9.2: a suppressed elicitation returns a SUPPRESSED response (not
+	// an error) the originating pod handles as "user declined".
+	text := resultText(t, resp)
+	if !strings.Contains(text, "suppressed") {
+		t.Errorf("result = %q, want a suppressed response", text)
 	}
-	content, _ := result["content"].([]any)
-	c0, _ := content[0].(map[string]any)
-	if msg, _ := c0["text"].(string); !strings.Contains(msg, "suppressed") {
-		t.Errorf("error = %q, want a suppression message", msg)
-	}
-	// The suppressed elicitation was not recorded.
-	if _, err := interactions.Get(context.Background(), "acme", "sess_leaf", "", "elic_x"); err == nil {
-		t.Error("a suppressed elicitation was recorded in the interaction store")
+	// The suppressed elicitation was not recorded against any session
+	// in the chain.
+	for _, sid := range []string{"sess_leaf", "sess_mid", "sess_root"} {
+		if _, err := interactions.Get(context.Background(), "acme", sid, "", "elic_x"); err == nil {
+			t.Errorf("a suppressed elicitation was recorded against %s", sid)
+		}
 	}
 }
 
@@ -1122,9 +1122,11 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 		got <- call(t, h, "lenny/request_elicitation",
 			`{"sessionId":"sess_mid","message":"ask","elicitationId":"elic_x"}`)
 	}()
-	// The elicitation is recorded — it was not suppressed below the depth.
-	waitElicitation(t, interactions, "sess_mid", "elic_x")
-	if _, err := interactions.Resolve(context.Background(), "acme", "sess_mid", "", "elic_x",
+	// §9.2: the elicitation was not suppressed below the depth and
+	// forwards up the chain to the human-facing root. It is recorded
+	// against the chain resolver, sess_root.
+	waitElicitation(t, interactions, "sess_root", "elic_x")
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_root", "", "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseResponded
 			i.Response = "ok"
