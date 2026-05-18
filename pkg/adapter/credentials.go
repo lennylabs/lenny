@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 
 	"google.golang.org/grpc/codes"
@@ -52,27 +53,59 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 // providers not named in the request are retained. The request payload
 // carries credential material; per §4.7 item 6 it must never be
 // written to access logs or telemetry.
-func (s *Server) RotateCredentials(_ context.Context, req *adapterv1.RotateCredentialsRequest) (*adapterv1.RotateCredentialsResponse, error) {
+func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCredentialsRequest) (*adapterv1.RotateCredentialsResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RotateCredentials requires a session id")
 	}
 
+	rotated, err := s.applyRotation(sessionID, req.GetLeases())
+	if err != nil {
+		return nil, err
+	}
+
+	// §4.7: a Full-level runtime rebinds the rotated credential in place.
+	// The adapter sends credentials_rotated on the lifecycle channel and
+	// waits for the runtime's credentials_acknowledged.
+	if s.Lifecycle != nil && s.Lifecycle.Supports("credential_rotation") {
+		path := filepath.Join(s.CredentialsDir, credfile.FileName)
+		for _, r := range rotated {
+			if err := s.Lifecycle.RotateCredentials(ctx, r.provider, path, r.leaseID); err != nil {
+				return nil, status.Errorf(codes.Internal, "lifecycle credential rotation: %v", err)
+			}
+		}
+	}
+	return &adapterv1.RotateCredentialsResponse{}, nil
+}
+
+// rotatedLease names one provider's credential lease rotated by a
+// RotateCredentials call, for the lifecycle-channel notification.
+type rotatedLease struct {
+	provider string
+	leaseID  string
+}
+
+// applyRotation merges the new leases into the credential file under
+// s.mu and returns the rotated providers. The lock is released before
+// the caller's lifecycle-channel round-trip so a slow runtime does not
+// block other credential RPCs.
+func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1.CredentialLease) ([]rotatedLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkCredentialSession(sessionID); err != nil {
 		return nil, err
 	}
-
 	leases := s.cloneCredentialLeases()
-	for provider, lease := range req.GetLeases() {
+	rotated := make([]rotatedLease, 0, len(newLeases))
+	for provider, lease := range newLeases {
 		leases[provider] = lease
+		rotated = append(rotated, rotatedLease{provider: provider, leaseID: lease.GetLeaseId()})
 	}
 	if err := s.writeCredentialFile(leases); err != nil {
 		return nil, err
 	}
 	s.credLeases = leases
-	return &adapterv1.RotateCredentialsResponse{}, nil
+	return rotated, nil
 }
 
 // RevokeCredentials removes the named providers' leases and rewrites

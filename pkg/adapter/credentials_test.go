@@ -32,6 +32,50 @@ func credLease(id, provider, payload string) *adapterv1.CredentialLease {
 	}
 }
 
+func TestRotateCredentialsNotifiesLifecycleChannel(t *testing.T) {
+	s := credServer(t)
+	ctx := context.Background()
+	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
+		},
+	}); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
+			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			Leases: map[string]*adapterv1.CredentialLease{
+				"anthropic": credLease("l-anth-2", "anthropic", `{}`),
+			},
+		})
+		errc <- err
+	}()
+
+	req := lr.recv()
+	if req["type"] != "credentials_rotated" {
+		t.Fatalf("runtime saw %v, want credentials_rotated", req["type"])
+	}
+	if req["provider"] != "anthropic" || req["leaseId"] != "l-anth-2" {
+		t.Errorf("credentials_rotated = %v, want provider anthropic leaseId l-anth-2", req)
+	}
+	lr.send(map[string]any{
+		"type":     "credentials_acknowledged",
+		"leaseId":  req["leaseId"],
+		"provider": "anthropic",
+	})
+
+	if err := <-errc; err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+}
+
 // credProviders reads the materialized credential file and indexes its
 // entries by provider.
 func credProviders(t *testing.T, dir string) map[string]map[string]any {
