@@ -325,7 +325,8 @@
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
         "tests/tier2_component/stores/credentialstore_test.go",
         "tests/tier2_component/stores/credentialpoolstore_test.go",
-        "tests/tier2_component/stores/credleasestore_test.go"
+        "tests/tier2_component/stores/credleasestore_test.go",
+        "tests/tier4_integration/credential_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -735,7 +736,8 @@
         "pkg/elicitation/elicitation_test.go::TestVerifyContentRejectsTampered",
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateHappyPath",
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID",
-        "tests/tier2_component/stores/interactionstore_test.go"
+        "tests/tier2_component/stores/interactionstore_test.go",
+        "tests/tier4_integration/elicitation_test.go"
       ],
       "packages": [
         "pkg/elicitation"
@@ -747,7 +749,8 @@
       "title": "Connector Definition and OAuth/OIDC",
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
-        "tests/tier2_component/stores/connectorstore_test.go"
+        "tests/tier2_component/stores/connectorstore_test.go",
+        "tests/tier4_integration/connector_oauth_test.go"
       ],
       "packages": [
         "pkg/connector",
@@ -968,7 +971,8 @@
         "pkg/environment/environment_test.go::TestSelectorIncludeOverridesSelector",
         "pkg/environment/environment_test.go::TestSelectorExcludeBeatsInclude",
         "pkg/environment/environment_test.go::TestFilterReturnsAdmittedSubset",
-        "tests/tier2_component/stores/environmentstore_test.go"
+        "tests/tier2_component/stores/environmentstore_test.go",
+        "tests/tier4_integration/environment_test.go"
       ],
       "packages": [
         "pkg/environment",

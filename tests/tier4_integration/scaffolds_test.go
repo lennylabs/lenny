@@ -21,43 +21,32 @@ package tier4_integration_test
 
 import "testing"
 
-// §13.12 / §13.23 / §13.25 — credential lifecycle. Requires the
-// Token Service binary wired into the gateway for /v1/credentials
-// CRUD + credential pool admin endpoints + AssignCredentials RPC
-// down to the runtime. Phase 12a ships pkg/tokenservice; the runtime
-// integration lands with the Token Service Postgres + KMS work.
-func TestCredentialLifecycle(t *testing.T) {
-	t.Skip("not implemented: §4.9 / §13.12 — requires Token Service Postgres-backed credential store, /v1/credentials admin surface, and AssignCredentials/RotateCredentials/RevokeCredentials RPCs from the gateway to the runtime")
-}
+// §13.12 / §13.23 / §13.25 — credential lifecycle. The §4.9 / §15.1
+// end-user credential lifecycle (TestCredentialLifecycle,
+// TestCredentialRotation, TestCredentialRevocation) is converted in
+// credential_test.go: the /v1/credentials register / list / rotate /
+// revoke / delete surface is exercised against the live gateway. The
+// §4.7 runtime-side AssignCredentials / RotateCredentials fan-out and
+// the cross-replica revocation propagation need a pod and a Redis
+// EventBus the integration harness does not provide.
 
-func TestCredentialRotation(t *testing.T) {
-	t.Skip("not implemented: §4.9 Fallback Flow + §4.7 RotateCredentials RPC — requires fault-driven rotation pipeline + lifecycle channel credentials_rotated emission")
-}
-
-func TestCredentialRevocation(t *testing.T) {
-	t.Skip("not implemented: §4.9 Emergency Credential Revocation — requires POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke + cross-replica revocation propagation via Redis EventBus")
-}
-
-// §13.20 — delegation. Requires the §8 delegation lease, the
-// virtual MCP child interface, and the lenny/delegate_task tool
-// implementation in the gateway's MCP fabric.
+// §13.20 — delegation. The platform MCP server and the
+// lenny/delegate_task tool are built; the full §8 delegation contract
+// still needs the delegation lease, the budget primitives, and a
+// delegation-aware runtime.
 func TestDelegation(t *testing.T) {
-	t.Skip("not implemented: §8.2 lenny/delegate_task — requires platform MCP server, virtual child interface, Redis-backed delegation budget Lua scripts, and the delegation-echo Standard-level runtime")
+	t.Skip("not implemented: §8.2 delegation contract — the platform MCP server hosts lenny/delegate_task and it spawns child sessions, but the full §8 delegation lease, the Redis-backed delegation budget Lua scripts, and the delegation-echo Standard-level runtime that runs the delegated task are not yet built")
 }
 
-// §13.22 — MCP fabric. Requires the §9.2 elicitation chain dispatcher
-// and the §9 platform MCP server hosted in the gateway.
-func TestMCPElicitationChain(t *testing.T) {
-	t.Skip("not implemented: §9.2 elicitation chain — requires hop-by-hop forwarding through the platform MCP server, the maxElicitationWait timer, and the respond_to_elicitation authorization triple")
-}
-
-func TestMCPProvenance(t *testing.T) {
-	t.Skip("not implemented: §9.2 URL-mode elicitation provenance — requires connector-domain allowlist enforcement and the §11.7 audit emission for url-mode rejections")
-}
+// §13.22 — MCP fabric.
+// TestMCPElicitationChain and TestMCPProvenance are converted in
+// elicitation_test.go: the §9.2 hop-by-hop elicitation chain through
+// the platform MCP server and the url-mode provenance controls are
+// built and exercised against the live gateway.
 
 // §13.9 — admin API + bootstrap.
 func TestAdminBootstrap(t *testing.T) {
-	t.Skip("not implemented: §10.2 / §17.6 — requires lenny-ctl bootstrap subcommand, lenny-bootstrap Helm Job, and the admin /v1/admin/tenants endpoint")
+	t.Skip("not implemented: §10.2 / §17.6 — the gateway's POST /v1/admin/bootstrap and /v1/admin/tenants endpoints exist, but this test exercises the lenny-ctl bootstrap subcommand and the lenny-bootstrap Helm Job that drive a from-empty platform bring-up, neither of which is gateway-resident")
 }
 
 // §13.28 — audit pipeline.
@@ -82,7 +71,7 @@ func TestLLMProxyAnthropic(t *testing.T) {
 
 // §13.18 — policy engine end-to-end.
 func TestPolicyGate(t *testing.T) {
-	t.Skip("not implemented: §11 policy interceptor chain — requires AuthEvaluator + QuotaEvaluator + audit emission wired into the gateway admission path")
+	t.Skip("not implemented: §11 policy interceptor chain — pkg/gateway/interceptor exists, but cmd/lenny-gateway wires an empty interceptor.NewChain() with no built-in AuthEvaluator/QuotaEvaluator interceptors and no admin endpoint or flag to register one, so the admission-path policy gate cannot be exercised through the live gateway subprocess")
 }
 
 func TestPolicyAudit(t *testing.T) {
@@ -104,13 +93,10 @@ func TestMigrationUpgrade(t *testing.T) {
 }
 
 // §13.32 — environments + cross-environment delegation.
-func TestEnvironmentResource(t *testing.T) {
-	t.Skip("not implemented: §10.6 admin API for /v1/admin/environments — requires environment CRUD endpoints + OIDC group resolver")
-}
-
-func TestEnvironmentFiltering(t *testing.T) {
-	t.Skip("not implemented: §10.6 transparent-filtering middleware — requires the environment-resolver middleware that joins authorized runtimes across the user's environments")
-}
+// TestEnvironmentResource and TestEnvironmentFiltering are converted
+// in environment_test.go: the §10.6 admin /v1/admin/environments CRUD
+// and the transparent-filtering environment-resolver middleware are
+// built and exercised against the live gateway.
 
 // §13.33 — experiments.
 func TestExperimentRouting(t *testing.T) {
@@ -118,9 +104,10 @@ func TestExperimentRouting(t *testing.T) {
 }
 
 // §13.25 — OAuth connectors.
-func TestOAuthConnector(t *testing.T) {
-	t.Skip("not implemented: §9.3 ConnectorDefinition + OAuth/OIDC flow — requires the gateway's connector OAuth callback handler, PKCE state store, and the connector-credential exchange")
-}
+// TestOAuthConnector is converted in connector_oauth_test.go: the §9.3
+// connector OAuth 2.1 authorize→callback flow, the PKCE state store,
+// and the connector-credential exchange are built and exercised
+// against the live gateway with a fake provider token endpoint.
 
 // §13.26 — type:mcp runtime support.
 func TestMCPRuntimeLifecycle(t *testing.T) {

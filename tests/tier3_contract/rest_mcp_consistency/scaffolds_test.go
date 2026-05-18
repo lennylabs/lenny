@@ -32,7 +32,7 @@ func TestRESTMCPTasks(t *testing.T) {
 // TestRESTMCPElicitation — elicitation request, respond, dismiss.
 // Identical denial behavior on authz rejections.
 func TestRESTMCPElicitation(t *testing.T) {
-	t.Skip("not implemented: §12.3.1 REST↔MCP elicitation — requires §9.2 elicitation chain plus the MCP and REST elicitation tools sharing the same dispatcher")
+	t.Skip("not implemented: §12.3.1 REST↔MCP elicitation — the §9.2 chain and the REST respond/dismiss endpoints exist, and the MCP adapter exposes lenny/request_elicitation, but the MCP adapter registers no respond_to_elicitation / dismiss_elicitation tool, so there is no MCP resolution surface to compare against the REST endpoints for the consistency contract")
 }
 
 // TestRESTMCPMemory — memory write, query, delete. Identical

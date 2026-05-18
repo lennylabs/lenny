@@ -30,6 +30,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -227,6 +229,8 @@ func main() {
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	connectorOAuthCallbackURL := flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),
 		"§9.3 absolute URL the connector OAuth provider redirects back to (the gateway's GET /v1/admin/connectors/oauth/callback). Wiring the connector OAuth 2.1 flow requires it. Override via LENNY_CONNECTOR_OAUTH_CALLBACK_URL.")
+	connectorOAuthCA := flag.String("connector-oauth-ca", os.Getenv("LENNY_CONNECTOR_OAUTH_CA"),
+		"path to a CA bundle that verifies the §9.3 connector OAuth provider's token-endpoint TLS certificate. Empty uses the system trust store. Set this for a provider behind a private CA. Override via LENNY_CONNECTOR_OAUTH_CA.")
 	flag.Parse()
 
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
@@ -711,6 +715,24 @@ func main() {
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,
 		}
+		// §9.3: when the provider's token endpoint is behind a private
+		// CA, --connector-oauth-ca supplies the bundle that verifies it.
+		if *connectorOAuthCA != "" {
+			caPEM, err := os.ReadFile(*connectorOAuthCA)
+			if err != nil {
+				log.Fatalf("lenny-gateway: connector OAuth CA bundle: %v", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caPEM) {
+				log.Fatalf("lenny-gateway: connector OAuth CA bundle %s contains no PEM certificates", *connectorOAuthCA)
+			}
+			connectorOAuth.HTTPClient = &http.Client{
+				Timeout: 15 * time.Second,
+				Transport: &http.Transport{
+					TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+				},
+			}
+		}
 		log.Printf("lenny-gateway: §9.3 connector OAuth 2.1 flow enabled, callback %s", *connectorOAuthCallbackURL)
 	}
 
@@ -953,6 +975,14 @@ func main() {
 	mux.Handle("/v1/sessions", sessionSrv.Handler())
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
 	mux.Handle("/v1/blobs/", sessionSrv.Handler())
+	// §9.1 / §15.1 runtime-discovery and model-list surfaces. The
+	// sessionserver mux serves GET /v1/runtimes, /v1/runtimes/{name}/
+	// meta/{key}, /v1/models, and the §5.1 internal meta-fetch path;
+	// each is identity-filtered by §10.6 environment access.
+	mux.Handle("/v1/runtimes", sessionSrv.Handler())
+	mux.Handle("/v1/runtimes/", sessionSrv.Handler())
+	mux.Handle("/v1/models", sessionSrv.Handler())
+	mux.Handle("/internal/runtimes/", sessionSrv.Handler())
 	mux.Handle("/v1/admin/", adminRouter.Handler())
 
 	// §25.3 Platform Health API. Registered at the specific
