@@ -48,7 +48,8 @@ point, and execution continues from that wave.
    does not count as complete.
 2. **The spec is the source of truth and is read-only.** Do not modify anything under
    `spec/`. When the spec is silent or self-contradictory, log the gap (see "Autonomous
-   execution") and do not invent behavior, wire formats, or error codes.
+   execution") and do not invent behavior, wire formats, or error codes. The
+   implementation _must match the spec exactly_.
 3. **Real backing services, every tier.** Per TESTING.md §1, the component and
    integration tiers run against real Postgres, Redis, MinIO, and envtest, and the test
    dependencies are installed and available. Reference TESTING.md and exercise every
@@ -58,6 +59,7 @@ point, and execution continues from that wave.
    it. Un-skip as you build: each `t.Skip` removed becomes a passing test in the same
    change, and `tests/spec-map.json` and `tests/change-graph.json` are updated in that
    change so `lenny-test validate-maps` stays green.
+   If infrastructure, end-to-end, or integration tests are incomplete, improve them.
 5. **A failing test is a code defect until proven otherwise.** Existing tests can carry
    bugs, but the default diagnosis is that the product code is wrong. Change a test
    only after confirming the test itself is wrong, and record that reasoning in the
