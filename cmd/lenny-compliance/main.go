@@ -11,8 +11,10 @@
 //	lenny-compliance --binary ./bin/echo --level basic
 //	lenny-compliance --binary ./bin/echo --level basic --json
 //
-// Phase 2 ships the Basic-level battery. Standard and Full ship in
-// later phases alongside the adapter manifest and lifecycle channel.
+// The Basic-level battery exercises the stdin/stdout binary protocol.
+// The Standard-level battery adds the §15.4.3 intra-pod MCP integration
+// and the §8.5 delegation tool surface; the Full-level battery adds the
+// lifecycle channel.
 //
 // The harness exits 0 when every check passed and non-zero (one per
 // failed check) otherwise. The JSON form produces a single document
@@ -53,11 +55,10 @@ func main() {
 	switch *level {
 	case "basic":
 		report = runBasicBattery(*binaryPath, *timeout, *verbose)
+	case "standard":
+		report = runStandardBattery(*binaryPath, *timeout, *verbose)
 	case "full":
 		report = runFullBattery(*binaryPath, *timeout, *verbose)
-	case "standard":
-		fmt.Fprintln(os.Stderr, "lenny-compliance: --level=standard ships in a later phase (Phase 2.8 covers full; Phase 9 ships standard alongside delegation-echo)")
-		os.Exit(2)
 	default:
 		fmt.Fprintf(os.Stderr, "lenny-compliance: unknown --level %q (basic|standard|full)\n", *level)
 		os.Exit(2)

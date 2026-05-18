@@ -905,9 +905,10 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	// Tier 10 conformance exercises the runtime adapters against the
 	// lenny-compliance harness. The subset names map to integration
 	// levels: "basic" → cmd/runtimes/echo at lenny-compliance --level
-	// basic; "full" → cmd/runtimes/streaming-echo at lenny-compliance
-	// --level full. An empty subset list runs every level whose target
-	// runtime is built.
+	// basic; "standard" → cmd/runtimes/delegation-echo at
+	// lenny-compliance --level standard; "full" →
+	// cmd/runtimes/streaming-echo at lenny-compliance --level full. An
+	// empty subset list runs every level whose target runtime is built.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
@@ -924,14 +925,14 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 		pkg     string
 	}
 	available := map[string]runtimeBuild{
-		"basic": {level: "basic", runtime: "echo", pkg: "./cmd/runtimes/echo"},
-		"full":  {level: "full", runtime: "streaming-echo", pkg: "./cmd/runtimes/streaming-echo"},
+		"basic":    {level: "basic", runtime: "echo", pkg: "./cmd/runtimes/echo"},
+		"standard": {level: "standard", runtime: "delegation-echo", pkg: "./cmd/runtimes/delegation-echo"},
+		"full":     {level: "full", runtime: "streaming-echo", pkg: "./cmd/runtimes/streaming-echo"},
 	}
 	// "bundled-runtimes" is the pr-group alias for every in-tree
 	// reference runtime. It expands to each available level whose
 	// runtime package is present on disk, so the conformance gate
-	// tracks the bundled runtimes as they land (delegation-echo
-	// joins at Standard level in Wave 3).
+	// tracks the bundled runtimes as they land.
 	expandBundled := func() []string {
 		levels := []string{}
 		for _, lvl := range []string{"basic", "standard", "full"} {
