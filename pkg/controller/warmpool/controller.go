@@ -14,13 +14,16 @@ package warmpool
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -47,6 +50,13 @@ type Reconciler struct {
 	// Scheme is required to stamp owner references on created
 	// Sandboxes.
 	Scheme *runtime.Scheme
+	// Mirror is the optional §4.6.1 agent_pod_state mirror store. When
+	// set, every reconcile converges the Postgres-side mirror of this
+	// pool's Sandbox status. It is nil when no Postgres is configured;
+	// every call site treats nil as "mirroring disabled". The mirror is
+	// a read-optimized copy for the gateway's fallback claim path, so a
+	// mirror write failure never fails the reconcile.
+	Mirror agentpodstate.Store
 }
 
 // Reconcile sizes one pool: it lists the pool's Sandboxes, computes
@@ -72,6 +82,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		client.MatchingLabels{LabelPool: pool.Name}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list sandboxes for pool %s: %w", pool.Name, err)
 	}
+
+	// Mirror the observed Sandbox status to the §4.6.1 agent_pod_state
+	// table. The mirror is a read-optimized copy for the gateway's
+	// fallback claim path; a write failure is logged and the reconcile
+	// continues, because the authoritative store is the Sandbox status
+	// subresource, not the mirror.
+	r.syncMirror(ctx, &pool, tmpl, sandboxes.Items)
 
 	in := plan.Inputs{
 		MinWarm: int(pool.Spec.MinWarm),
@@ -113,6 +130,69 @@ func observedPhase(sb *lennyv1.Sandbox) state.State {
 		return state.Warming
 	}
 	return state.State(sb.Status.Phase)
+}
+
+// syncMirror converges the §4.6.1 agent_pod_state mirror for the pool
+// to the observed Sandbox set. It is a no-op when no Mirror store is
+// configured. A mirror write failure is logged and swallowed: the
+// mirror is a read-optimized copy for the gateway's fallback claim
+// path, so a stale mirror must never block pod-pool reconciliation.
+func (r *Reconciler) syncMirror(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate, sandboxes []lennyv1.Sandbox) {
+	if r.Mirror == nil {
+		return
+	}
+	observed := derivePodStates(pool, tmpl, sandboxes)
+	if err := r.Mirror.Sync(ctx, pool.Name, observed); err != nil {
+		logf.FromContext(ctx).Error(err, "agent_pod_state mirror sync failed; continuing",
+			"pool", pool.Name)
+	}
+}
+
+// derivePodStates projects the pool's live Sandbox set onto the
+// §4.6.1 agent_pod_state row set. Each row mirrors one Sandbox: pod_id
+// is the Sandbox name, pool_id is the pool name, state is the observed
+// §6.2 phase, and isolation_profile / execution_mode are the pool-level
+// properties (the Sandbox spec carries the isolation profile; execution
+// mode is a §5.2 pool property sourced from the SandboxTemplate).
+// tenant_id and session_id are left empty because a warm-pool reconcile
+// only ever observes idle and warming pods, which carry no session; the
+// claim path writes those columns when a pod is claimed.
+//
+// derivePodStates is a pure function with no I/O so the projection can
+// be unit-tested without a cluster or a database.
+func derivePodStates(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate, sandboxes []lennyv1.Sandbox) []agentpodstate.PodState {
+	execMode := ""
+	if tmpl != nil {
+		execMode = tmpl.Spec.ExecutionMode
+	}
+	out := make([]agentpodstate.PodState, 0, len(sandboxes))
+	for i := range sandboxes {
+		sb := &sandboxes[i]
+		out = append(out, agentpodstate.PodState{
+			PodID:            sb.Name,
+			PoolID:           pool.Name,
+			State:            string(observedPhase(sb)),
+			IsolationProfile: sb.Spec.IsolationProfile,
+			ExecutionMode:    execMode,
+			ResourceVersion:  parseResourceVersion(sb.ResourceVersion),
+			NodeName:         sb.Status.NodeName,
+		})
+	}
+	return out
+}
+
+// parseResourceVersion parses a Sandbox metadata.resourceVersion into
+// the BIGINT the agent_pod_state.resource_version column expects. The
+// Kubernetes API server's resourceVersion is an opaque string;
+// etcd-backed clusters return a decimal integer, and the fake client
+// used in tests returns the same form. An unparseable or empty value
+// mirrors as 0 rather than failing the reconcile.
+func parseResourceVersion(rv string) int64 {
+	n, err := strconv.ParseInt(rv, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // poolTemplate fetches the SandboxTemplate the pool's pods are created

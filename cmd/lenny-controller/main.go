@@ -24,10 +24,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -36,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
@@ -66,6 +70,7 @@ func main() {
 		leaderElect   bool
 		leaderElectNS string
 		adapterImage  string
+		postgresDSN   string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -77,6 +82,8 @@ func main() {
 		"namespace that holds the leader-election Lease")
 	flag.StringVar(&adapterImage, "adapter-image", "",
 		"the lenny-adapter sidecar image stamped into agent pods")
+	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
+		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -100,10 +107,32 @@ func main() {
 		log.Fatalf("lenny-controller: create manager: %v", err)
 	}
 
-	if err := (&warmpool.Reconciler{
+	// The §4.6.1 agent_pod_state mirror is durable under --postgres-dsn:
+	// the WarmPoolController writes the Postgres-side copy of Sandbox
+	// status that the gateway's fallback claim path reads. When the flag
+	// is empty the mirror store is left nil and the controller skips
+	// mirroring.
+	var mirror *agentpodstatepg.Store
+	if postgresDSN != "" {
+		pool, err := pgxpool.New(context.Background(), postgresDSN)
+		if err != nil {
+			log.Fatalf("lenny-controller: postgres: %v", err)
+		}
+		defer pool.Close()
+		mirror = agentpodstatepg.New(pool)
+	}
+
+	warmPool := &warmpool.Reconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	}
+	// A nil *agentpodstatepg.Store assigned to the agentpodstate.Store
+	// interface field would be a non-nil interface; only assign when a
+	// store was actually constructed so the controller's nil check holds.
+	if mirror != nil {
+		warmPool.Mirror = mirror
+	}
+	if err := warmPool.SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up WarmPoolController: %v", err)
 	}
 

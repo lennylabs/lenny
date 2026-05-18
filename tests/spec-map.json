@@ -210,13 +210,16 @@
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestCreateAdmitsWhenNoExistingClaim",
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestCreateRejectsWhenNonTerminalClaimExists",
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed",
-        "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed"
+        "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed",
+        "tests/tier2_component/stores/agentpodstatestore_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
         "pkg/store/podregistry",
         "pkg/sandboxclaim/state",
-        "pkg/admission/sandboxclaim_guard"
+        "pkg/admission/sandboxclaim_guard",
+        "pkg/agentpodstate",
+        "pkg/agentpodstate/pgstore"
       ],
       "schemas": [],
       "migrations": [],
