@@ -51,6 +51,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
+	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
 	return s
 }
 

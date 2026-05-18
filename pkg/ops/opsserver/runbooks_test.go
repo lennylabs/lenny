@@ -12,9 +12,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/runbooks"
 )
 
-type fakeRunbookSource struct{ books []opsserver.Runbook }
+type fakeRunbookSource struct {
+	books []opsserver.Runbook
+	md    map[string][]byte
+}
 
 func (f fakeRunbookSource) Runbooks() []opsserver.Runbook { return f.books }
+
+func (f fakeRunbookSource) Markdown(name string) ([]byte, bool) {
+	md, ok := f.md[name]
+	return md, ok
+}
 
 type runbookList struct {
 	Runbooks []opsserver.Runbook `json:"runbooks"`
@@ -76,5 +84,45 @@ func TestListRunbooks(t *testing.T) {
 	none := getRunbooks(t, srv, "/v1/admin/runbooks?alert=NoSuchAlert")
 	if len(none.Runbooks) != 0 {
 		t.Errorf("no-match filter returned %d runbooks, want 0", len(none.Runbooks))
+	}
+}
+
+func TestRunbookSteps(t *testing.T) {
+	body := "### Step 1: Check pool\n" +
+		"\n" +
+		"<!-- access: api method=GET path=/v1/admin/diagnostics/pools/{name} -->\n" +
+		"```\n" +
+		"GET /v1/admin/diagnostics/pools/x\n" +
+		"```\n"
+	src := fakeRunbookSource{md: map[string][]byte{"warm-pool-exhaustion": []byte(body)}}
+	srv := opsserver.New(opsserver.Options{Runbooks: src})
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/runbooks/warm-pool-exhaustion/steps", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Steps []runbooks.Step `json:"steps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Steps) != 1 || got.Steps[0].ID != "step-1" {
+		t.Fatalf("steps = %+v, want one step-1", got.Steps)
+	}
+	if len(got.Steps[0].Paths) != 1 || got.Steps[0].Paths[0].Method != "GET" {
+		t.Errorf("step path = %+v, want a GET api path", got.Steps[0].Paths)
+	}
+}
+
+func TestRunbookStepsNotFound(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{Runbooks: fakeRunbookSource{md: map[string][]byte{}}})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/runbooks/nonexistent/steps", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for an unknown runbook", rec.Code)
 	}
 }
