@@ -36,10 +36,26 @@ type SandboxSpec struct {
 // single source of truth that the §4.6 claim path and the
 // lenny-sandboxclaim-guard webhook read.
 type SandboxStatus struct {
-	// Phase is the §6.2 pod lifecycle state.
-	// +kubebuilder:validation:Enum=warming;sdk_connecting;idle;claimed;receiving_uploads;finalizing_workspace;running_setup;attached;task_cleanup;resuming;suspended;resume_pending;awaiting_client_action;completed;failed;cancelled;expired;draining;terminated
+	// Phase is the §6.2 pod lifecycle state. `slot_active` is the
+	// concurrent-mode (§5.2) pod-level phase: the pod hosts one or more
+	// simultaneous slots.
+	// +kubebuilder:validation:Enum=warming;sdk_connecting;idle;claimed;slot_active;receiving_uploads;finalizing_workspace;running_setup;attached;task_cleanup;resuming;suspended;resume_pending;awaiting_client_action;completed;failed;cancelled;expired;draining;terminated
 	// +optional
 	Phase string `json:"phase,omitempty"`
+
+	// ActiveSlots is the count of concurrent-mode (§5.2) slots currently
+	// assigned to this pod. It is 0 for session-mode and task-mode pods,
+	// and for an idle concurrent-mode pod. It never exceeds the pool's
+	// maxConcurrent. The gateway slot-claim path is the sole writer.
+	// +optional
+	ActiveSlots int32 `json:"activeSlots,omitempty"`
+
+	// TenantID records the tenant a concurrent-mode or task-mode pod is
+	// pinned to (§5.2 tenant pinning). It is set on the pod's first slot
+	// or task assignment and is never reassigned to a different tenant
+	// for the pod's lifetime. Empty for an unassigned pod.
+	// +optional
+	TenantID string `json:"tenantId,omitempty"`
 
 	// PodName is the underlying Pod backing this Sandbox. Empty until
 	// the pod is created.

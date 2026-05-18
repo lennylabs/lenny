@@ -41,7 +41,9 @@ var _ poolstore.Store = (*Store)(nil)
 
 const selectList = `name, runtime_ref, isolation_profile, execution_mode,
 	resource_class, warm_count, max_session_age_seconds,
-	allow_standard_isolation, created_at, updated_at, deleted_at`
+	allow_standard_isolation, concurrency_style, max_concurrent,
+	acknowledge_process_level_isolation, cleanup_timeout_seconds,
+	allow_cross_tenant_reuse, created_at, updated_at, deleted_at`
 
 // validatePool runs the §5.2 / §5.3 invariants poolstore.Memory
 // enforces on Create and after Update's mutate. The error strings
@@ -56,7 +58,7 @@ func validatePool(p poolstore.Pool) error {
 	if p.IsolationProfile == isolation.ProfileStandard && !p.AllowStandardIsolation {
 		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
-	return nil
+	return poolstore.ValidateConcurrentConfig(p)
 }
 
 // Create inserts a new pool row after running the §5.2 name
@@ -79,11 +81,15 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
-		allow_standard_isolation, created_at, updated_at, deleted_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		allow_standard_isolation, concurrency_style, max_concurrent,
+		acknowledge_process_level_isolation, cleanup_timeout_seconds,
+		allow_cross_tenant_reuse, created_at, updated_at, deleted_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		p.Name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
+		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
+		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
+		p.AllowCrossTenantReuse, p.CreatedAt, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return poolstore.ErrAlreadyExists
@@ -136,11 +142,15 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
-		allow_standard_isolation = $8, updated_at = $9, deleted_at = $10
+		allow_standard_isolation = $8, concurrency_style = $9, max_concurrent = $10,
+		acknowledge_process_level_isolation = $11, cleanup_timeout_seconds = $12,
+		allow_cross_tenant_reuse = $13, updated_at = $14, deleted_at = $15
 	WHERE name = $1`,
 		name, p.RuntimeRef, string(p.IsolationProfile), string(p.ExecutionMode),
 		p.ResourceClass, p.WarmCount, p.MaxSessionAgeSeconds,
-		p.AllowStandardIsolation, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
+		p.AllowStandardIsolation, string(p.ConcurrencyStyle), p.MaxConcurrent,
+		p.AcknowledgeProcessLevelIsolation, p.CleanupTimeoutSeconds,
+		p.AllowCrossTenantReuse, p.UpdatedAt, pgtenant.NullTime(p.DeletedAt)); err != nil {
 		return poolstore.Pool{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -215,19 +225,22 @@ func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error
 // scanPool reads one row in selectList order into a Pool.
 func scanPool(row pgx.Row) (poolstore.Pool, error) {
 	var (
-		p                               poolstore.Pool
-		isolationProfile, executionMode string
-		deletedAt                       *time.Time
+		p                                                 poolstore.Pool
+		isolationProfile, executionMode, concurrencyStyle string
+		deletedAt                                         *time.Time
 	)
 	if err := row.Scan(
 		&p.Name, &p.RuntimeRef, &isolationProfile, &executionMode,
 		&p.ResourceClass, &p.WarmCount, &p.MaxSessionAgeSeconds,
-		&p.AllowStandardIsolation, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
+		&p.AllowStandardIsolation, &concurrencyStyle, &p.MaxConcurrent,
+		&p.AcknowledgeProcessLevelIsolation, &p.CleanupTimeoutSeconds,
+		&p.AllowCrossTenantReuse, &p.CreatedAt, &p.UpdatedAt, &deletedAt,
 	); err != nil {
 		return poolstore.Pool{}, err
 	}
 	p.IsolationProfile = isolation.Profile(isolationProfile)
 	p.ExecutionMode = runtimestore.ExecutionMode(executionMode)
+	p.ConcurrencyStyle = poolstore.ConcurrencyStyle(concurrencyStyle)
 	if deletedAt != nil {
 		p.DeletedAt = *deletedAt
 	}

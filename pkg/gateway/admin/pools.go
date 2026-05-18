@@ -24,35 +24,57 @@ type PoolPayload struct {
 	WarmCount              int    `json:"warmCount,omitempty"`
 	MaxSessionAgeSeconds   int    `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation bool   `json:"allowStandardIsolation,omitempty"`
-	CreatedAt              string `json:"createdAt,omitempty"`
-	UpdatedAt              string `json:"updatedAt,omitempty"`
-	DeletedAt              string `json:"deletedAt,omitempty"`
+
+	// ConcurrencyStyle, MaxConcurrent, AcknowledgeProcessLevelIsolation,
+	// CleanupTimeoutSeconds, and AllowCrossTenantReuse are the §5.2
+	// concurrent-mode (`executionMode: concurrent`) configuration. They
+	// are meaningful only on a concurrent-mode pool; the pool store's
+	// ValidateConcurrentConfig rejects them on any other pool.
+	ConcurrencyStyle                 string `json:"concurrencyStyle,omitempty"`
+	MaxConcurrent                    int    `json:"maxConcurrent,omitempty"`
+	AcknowledgeProcessLevelIsolation bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
+	CleanupTimeoutSeconds            int    `json:"cleanupTimeoutSeconds,omitempty"`
+	AllowCrossTenantReuse            bool   `json:"allowCrossTenantReuse,omitempty"`
+
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	DeletedAt string `json:"deletedAt,omitempty"`
 }
 
 // UpdatePoolRequest is the §15.1 PUT body.
 type UpdatePoolRequest struct {
-	RuntimeRef             *string `json:"runtimeRef,omitempty"`
-	IsolationProfile       *string `json:"isolationProfile,omitempty"`
-	ExecutionMode          *string `json:"executionMode,omitempty"`
-	ResourceClass          *string `json:"resourceClass,omitempty"`
-	WarmCount              *int    `json:"warmCount,omitempty"`
-	MaxSessionAgeSeconds   *int    `json:"maxSessionAgeSeconds,omitempty"`
-	AllowStandardIsolation *bool   `json:"allowStandardIsolation,omitempty"`
+	RuntimeRef                       *string `json:"runtimeRef,omitempty"`
+	IsolationProfile                 *string `json:"isolationProfile,omitempty"`
+	ExecutionMode                    *string `json:"executionMode,omitempty"`
+	ResourceClass                    *string `json:"resourceClass,omitempty"`
+	WarmCount                        *int    `json:"warmCount,omitempty"`
+	MaxSessionAgeSeconds             *int    `json:"maxSessionAgeSeconds,omitempty"`
+	AllowStandardIsolation           *bool   `json:"allowStandardIsolation,omitempty"`
+	ConcurrencyStyle                 *string `json:"concurrencyStyle,omitempty"`
+	MaxConcurrent                    *int    `json:"maxConcurrent,omitempty"`
+	AcknowledgeProcessLevelIsolation *bool   `json:"acknowledgeProcessLevelIsolation,omitempty"`
+	CleanupTimeoutSeconds            *int    `json:"cleanupTimeoutSeconds,omitempty"`
+	AllowCrossTenantReuse            *bool   `json:"allowCrossTenantReuse,omitempty"`
 }
 
 func fromPool(p poolstore.Pool) PoolPayload {
 	return PoolPayload{
-		Name:                   p.Name,
-		RuntimeRef:             p.RuntimeRef,
-		IsolationProfile:       string(p.IsolationProfile),
-		ExecutionMode:          string(p.ExecutionMode),
-		ResourceClass:          p.ResourceClass,
-		WarmCount:              p.WarmCount,
-		MaxSessionAgeSeconds:   p.MaxSessionAgeSeconds,
-		AllowStandardIsolation: p.AllowStandardIsolation,
-		CreatedAt:              rfc3339Nano(p.CreatedAt),
-		UpdatedAt:              rfc3339Nano(p.UpdatedAt),
-		DeletedAt:              rfc3339Nano(p.DeletedAt),
+		Name:                             p.Name,
+		RuntimeRef:                       p.RuntimeRef,
+		IsolationProfile:                 string(p.IsolationProfile),
+		ExecutionMode:                    string(p.ExecutionMode),
+		ResourceClass:                    p.ResourceClass,
+		WarmCount:                        p.WarmCount,
+		MaxSessionAgeSeconds:             p.MaxSessionAgeSeconds,
+		AllowStandardIsolation:           p.AllowStandardIsolation,
+		ConcurrencyStyle:                 string(p.ConcurrencyStyle),
+		MaxConcurrent:                    p.MaxConcurrent,
+		AcknowledgeProcessLevelIsolation: p.AcknowledgeProcessLevelIsolation,
+		CleanupTimeoutSeconds:            p.CleanupTimeoutSeconds,
+		AllowCrossTenantReuse:            p.AllowCrossTenantReuse,
+		CreatedAt:                        rfc3339Nano(p.CreatedAt),
+		UpdatedAt:                        rfc3339Nano(p.UpdatedAt),
+		DeletedAt:                        rfc3339Nano(p.DeletedAt),
 	}
 }
 
@@ -68,6 +90,9 @@ func (p PoolPayload) validateEnums() error {
 	}
 	if p.ExecutionMode != "" && !runtimestore.ExecutionMode(p.ExecutionMode).IsValid() {
 		return errors.New("executionMode is not a recognised mode")
+	}
+	if p.ConcurrencyStyle != "" && !poolstore.ConcurrencyStyle(p.ConcurrencyStyle).IsValid() {
+		return errors.New("concurrencyStyle is not a recognised §5.2 style (workspace, stateless)")
 	}
 	return nil
 }
@@ -101,15 +126,20 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 
 	pl := poolstore.Pool{
-		Name:                   body.Name,
-		RuntimeRef:             body.RuntimeRef,
-		IsolationProfile:       isolation.Profile(body.IsolationProfile),
-		ExecutionMode:          runtimestore.ExecutionMode(body.ExecutionMode),
-		ResourceClass:          body.ResourceClass,
-		WarmCount:              body.WarmCount,
-		MaxSessionAgeSeconds:   body.MaxSessionAgeSeconds,
-		AllowStandardIsolation: body.AllowStandardIsolation,
-		CreatedAt:              r.clock(),
+		Name:                             body.Name,
+		RuntimeRef:                       body.RuntimeRef,
+		IsolationProfile:                 isolation.Profile(body.IsolationProfile),
+		ExecutionMode:                    runtimestore.ExecutionMode(body.ExecutionMode),
+		ConcurrencyStyle:                 poolstore.ConcurrencyStyle(body.ConcurrencyStyle),
+		MaxConcurrent:                    body.MaxConcurrent,
+		AcknowledgeProcessLevelIsolation: body.AcknowledgeProcessLevelIsolation,
+		CleanupTimeoutSeconds:            body.CleanupTimeoutSeconds,
+		AllowCrossTenantReuse:            body.AllowCrossTenantReuse,
+		ResourceClass:                    body.ResourceClass,
+		WarmCount:                        body.WarmCount,
+		MaxSessionAgeSeconds:             body.MaxSessionAgeSeconds,
+		AllowStandardIsolation:           body.AllowStandardIsolation,
+		CreatedAt:                        r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
 	if pl.IsolationProfile == "" {
@@ -217,6 +247,12 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 			"executionMode is not a recognised mode", nil)
 		return
 	}
+	if body.ConcurrencyStyle != nil && *body.ConcurrencyStyle != "" &&
+		!poolstore.ConcurrencyStyle(*body.ConcurrencyStyle).IsValid() {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"concurrencyStyle is not a recognised §5.2 style (workspace, stateless)", nil)
+		return
+	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
 		if _, err := r.runtimes.Get(req.Context(), *body.RuntimeRef); err != nil {
@@ -246,6 +282,21 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.AllowStandardIsolation != nil {
 			p.AllowStandardIsolation = *body.AllowStandardIsolation
+		}
+		if body.ConcurrencyStyle != nil {
+			p.ConcurrencyStyle = poolstore.ConcurrencyStyle(*body.ConcurrencyStyle)
+		}
+		if body.MaxConcurrent != nil {
+			p.MaxConcurrent = *body.MaxConcurrent
+		}
+		if body.AcknowledgeProcessLevelIsolation != nil {
+			p.AcknowledgeProcessLevelIsolation = *body.AcknowledgeProcessLevelIsolation
+		}
+		if body.CleanupTimeoutSeconds != nil {
+			p.CleanupTimeoutSeconds = *body.CleanupTimeoutSeconds
+		}
+		if body.AllowCrossTenantReuse != nil {
+			p.AllowCrossTenantReuse = *body.AllowCrossTenantReuse
 		}
 		return nil
 	})
@@ -312,6 +363,21 @@ func changedPoolFields(b UpdatePoolRequest) []string {
 	}
 	if b.AllowStandardIsolation != nil {
 		out = append(out, "allowStandardIsolation")
+	}
+	if b.ConcurrencyStyle != nil {
+		out = append(out, "concurrencyStyle")
+	}
+	if b.MaxConcurrent != nil {
+		out = append(out, "maxConcurrent")
+	}
+	if b.AcknowledgeProcessLevelIsolation != nil {
+		out = append(out, "acknowledgeProcessLevelIsolation")
+	}
+	if b.CleanupTimeoutSeconds != nil {
+		out = append(out, "cleanupTimeoutSeconds")
+	}
+	if b.AllowCrossTenantReuse != nil {
+		out = append(out, "allowCrossTenantReuse")
 	}
 	return out
 }

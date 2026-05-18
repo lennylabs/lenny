@@ -32,6 +32,41 @@ func TestAllStatesIncludePhase1Additions(t *testing.T) {
 	}
 }
 
+// spec: 5.2
+// diagnosis: the concurrent-mode (§5.2) slot_active phase or one of its
+// §6.2 transitions is missing from the Sandbox state machine. Phase 12c
+// adds slot_active: a concurrent-mode pod hosts up to maxConcurrent
+// slots, entering slot_active on the first slot and returning to idle
+// when the last slot drains.
+func TestSlotActivePhaseAndTransitions(t *testing.T) {
+	t.Parallel()
+	found := false
+	for _, s := range state.All() {
+		if s == state.SlotActive {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("state.All() is missing slot_active (added in Phase 12c)")
+	}
+	// §6.2 concurrent-mode slot edges.
+	required := []state.Transition{
+		{From: state.Idle, To: state.SlotActive},       // first slot
+		{From: state.SlotActive, To: state.SlotActive}, // further slot / sibling drains
+		{From: state.SlotActive, To: state.Idle},       // last slot drains
+		{From: state.SlotActive, To: state.Draining},   // unhealthy threshold / uptime
+	}
+	for _, tr := range required {
+		if err := state.IsValid(tr.From, tr.To); err != nil {
+			t.Errorf("IsValid(%q, %q) = %v, want nil — concurrent-mode edge", tr.From, tr.To, err)
+		}
+	}
+	// slot_active is not a terminal phase.
+	if state.IsTerminal(state.SlotActive) {
+		t.Error("slot_active must not be a terminal phase")
+	}
+}
+
 // spec: 6.2
 // diagnosis: state.IsTerminal returned the wrong value. Sandbox terminal
 //

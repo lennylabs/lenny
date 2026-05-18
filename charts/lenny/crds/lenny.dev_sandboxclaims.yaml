@@ -68,6 +68,15 @@ spec:
               sessionId:
                 description: SessionID is the §15.1 session this claim serves.
                 type: string
+              slotId:
+                description: |-
+                  SlotID identifies a concurrent-mode (§5.2) slot on the referenced
+                  Sandbox. In session and task mode one SandboxClaim binds one pod
+                  exclusively and SlotID is empty. In `executionMode: concurrent`
+                  each slot on a shared pod has its own SandboxClaim carrying a
+                  distinct SlotID, so the pod's active-slot count is the number of
+                  SandboxClaims referencing it.
+                type: string
               tenantId:
                 description: TenantID is the tenant that owns the session.
                 type: string

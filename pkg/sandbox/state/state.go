@@ -21,6 +21,7 @@ const (
 	SDKConnecting        State = "sdk_connecting"
 	Idle                 State = "idle"
 	Claimed              State = "claimed"
+	SlotActive           State = "slot_active"
 	ReceivingUploads     State = "receiving_uploads"
 	FinalizingWorkspace  State = "finalizing_workspace"
 	RunningSetup         State = "running_setup"
@@ -40,7 +41,7 @@ const (
 
 func All() []State {
 	return []State{
-		Warming, SDKConnecting, Idle, Claimed, ReceivingUploads,
+		Warming, SDKConnecting, Idle, Claimed, SlotActive, ReceivingUploads,
 		FinalizingWorkspace, RunningSetup, Attached, TaskCleanup,
 		Resuming, Suspended, ResumePending, AwaitingClientAction,
 		Completed, Failed, Cancelled, Expired, Draining, Terminated,
@@ -67,9 +68,10 @@ type Transition struct {
 
 // ValidTransitions per spec §6.2. The list captures the pod-warm path,
 // the SDK-warm path, the claim/setup chain, the attached/session edges,
-// the suspension/recovery loop, and the task-cleanup edges. The
-// host-schedulable gate (lenny.dev/host-schedulable: "true") chooses
-// between task_cleanup → sdk_connecting/idle (schedulable) and
+// the suspension/recovery loop, the task-cleanup edges, and the
+// concurrent-mode slot edges. The host-schedulable gate
+// (lenny.dev/host-schedulable: "true") chooses between
+// task_cleanup → sdk_connecting/idle (schedulable) and
 // task_cleanup → draining (not schedulable); both edges appear here.
 func ValidTransitions() []Transition {
 	return []Transition{
@@ -121,6 +123,16 @@ func ValidTransitions() []Transition {
 		{TaskCleanup, Idle},          // host-schedulable, non-preConnect
 		{TaskCleanup, Draining},      // not host-schedulable, or maxTasksPerPod reached
 		{TaskCleanup, Failed},
+		// Concurrent-mode slot edges (§5.2 / §6.2). A concurrent-mode pod
+		// hosts up to maxConcurrent slots simultaneously: idle → slot_active
+		// on the first slot, slot_active → slot_active for each further
+		// slot assignment and for a slot completing while siblings remain,
+		// slot_active → idle when the last slot drains.
+		{Idle, SlotActive},
+		{SlotActive, SlotActive},
+		{SlotActive, Idle},
+		{SlotActive, Draining}, // unhealthy slot threshold or maxPodUptimeSeconds
+		{SlotActive, Failed},
 		// Drain and terminate.
 		{Idle, Draining},
 		{Claimed, Draining},

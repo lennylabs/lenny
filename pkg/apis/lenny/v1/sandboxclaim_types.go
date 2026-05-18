@@ -25,6 +25,15 @@ type SandboxClaimSpec struct {
 	// TenantID is the tenant that owns the session.
 	// +optional
 	TenantID string `json:"tenantId,omitempty"`
+
+	// SlotID identifies a concurrent-mode (§5.2) slot on the referenced
+	// Sandbox. In session and task mode one SandboxClaim binds one pod
+	// exclusively and SlotID is empty. In `executionMode: concurrent`
+	// each slot on a shared pod has its own SandboxClaim carrying a
+	// distinct SlotID, so the pod's active-slot count is the number of
+	// SandboxClaims referencing it.
+	// +optional
+	SlotID string `json:"slotId,omitempty"`
 }
 
 // SandboxClaimStatus is the observed state of a SandboxClaim. Per

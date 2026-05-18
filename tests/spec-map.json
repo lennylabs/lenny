@@ -375,14 +375,22 @@
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsCrossTenantRewrite",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation",
-        "tests/tier2_component/stores/poolstore_test.go"
+        "pkg/gateway/podclaim/slotclaimer_test.go",
+        "pkg/gateway/podsession/slotbinder_test.go",
+        "pkg/gateway/poolstore/poolstore_test.go::TestValidateConcurrentConfig",
+        "pkg/sandbox/state/state_test.go::TestSlotActivePhaseAndTransitions",
+        "tests/tier2_component/stores/poolstore_test.go",
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier4_integration/concurrent_stateless_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
-        "pkg/pool"
+        "pkg/pool",
+        "pkg/gateway/podclaim",
+        "pkg/gateway/podsession"
       ],
       "blocked_until_phase": "3",
-      "notes": "Phase 3.5 ships the \u00a75.2 NET-003 / \u00a717.2 item 5 label-immutability admission-decision logic. The webhook binary that wires this to AdmissionReview transport and the Kind-based admission integration test are deferred to the K8s-integration phase."
+      "notes": "Phase 3.5 ships the \u00a75.2 NET-003 / \u00a717.2 item 5 label-immutability admission-decision logic. The webhook binary that wires this to AdmissionReview transport and the Kind-based admission integration test are deferred to the K8s-integration phase. Phase 12c adds the \u00a75.2 concurrent execution modes (workspace-concurrent and stateless-concurrent): pkg/gateway/podclaim.SlotClaimer is the per-pod slot claim/assignment path, pkg/gateway/podsession.Binder.BindSlot is the concurrent-mode bind path, and poolstore.ValidateConcurrentConfig is the concurrent-pool admission enforcement. The Tier 5 concurrent_modes_test exercises the slot path against real warm pods."
     },
     "5.3": {
       "title": "Isolation Profiles",

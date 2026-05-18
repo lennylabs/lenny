@@ -157,3 +157,145 @@ func TestValidateName(t *testing.T) {
 		}
 	}
 }
+
+// spec: 5.2
+// TestValidateConcurrentConfig covers the §5.2 / §13.1 admission rules
+// for a pool's concurrent-mode configuration: the deployer
+// acknowledgment, the slot bound, the categorical cross-tenant-reuse
+// rejection, the per-slot cleanup floor, and the rule that
+// concurrent-only fields are valid only on a concurrent-mode pool.
+func TestValidateConcurrentConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		pool poolstore.Pool
+		ok   bool
+	}{
+		{
+			name: "session-mode pool with no concurrent fields is valid",
+			pool: poolstore.Pool{Name: "p", ExecutionMode: runtimestore.ExecutionModeSession},
+			ok:   true,
+		},
+		{
+			name: "session-mode pool with concurrencyStyle is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace,
+			},
+		},
+		{
+			name: "session-mode pool with maxConcurrent is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeSession, MaxConcurrent: 4,
+			},
+		},
+		{
+			name: "concurrent pool without a style is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent, MaxConcurrent: 4,
+			},
+		},
+		{
+			name: "concurrent pool with maxConcurrent below 1 is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless,
+			},
+		},
+		{
+			name: "concurrent-workspace pool without acknowledgment is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+			},
+		},
+		{
+			name: "concurrent-workspace pool with the acknowledgment is valid",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+				AcknowledgeProcessLevelIsolation: true,
+			},
+			ok: true,
+		},
+		{
+			name: "concurrent-stateless pool needs no acknowledgment",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
+			},
+			ok: true,
+		},
+		{
+			name: "concurrent pool with allowCrossTenantReuse is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 4,
+				AllowCrossTenantReuse: true,
+			},
+		},
+		{
+			name: "concurrent-workspace cleanupTimeoutSeconds below maxConcurrent*5 is rejected",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+				AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 30,
+			},
+		},
+		{
+			name: "concurrent-workspace cleanupTimeoutSeconds at maxConcurrent*5 is valid",
+			pool: poolstore.Pool{
+				Name: "p", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+				ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+				AcknowledgeProcessLevelIsolation: true, CleanupTimeoutSeconds: 40,
+			},
+			ok: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := poolstore.ValidateConcurrentConfig(c.pool)
+			if c.ok && err != nil {
+				t.Errorf("ValidateConcurrentConfig: unexpected error %v", err)
+			}
+			if !c.ok && err == nil {
+				t.Error("ValidateConcurrentConfig: expected a rejection, got nil")
+			}
+		})
+	}
+}
+
+// spec: 5.2
+// diagnosis: the in-memory poolstore did not run ValidateConcurrentConfig
+// on Create — a concurrent-workspace pool without the deployer
+// acknowledgment must be rejected at Create time.
+func TestCreateRejectsConcurrentWorkspaceWithoutAcknowledgment(t *testing.T) {
+	s := poolstore.NewMemory()
+	err := s.Create(context.Background(), poolstore.Pool{
+		Name: "cw-pool", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+		ConcurrencyStyle: poolstore.ConcurrencyStyleWorkspace, MaxConcurrent: 8,
+	})
+	if err == nil {
+		t.Error("concurrent-workspace pool without acknowledgeProcessLevelIsolation should fail")
+	}
+}
+
+// spec: 5.2
+// diagnosis: the in-memory poolstore admitted a concurrent-mode pool
+// configuration. A valid concurrent-stateless pool must round-trip
+// through Create and Get with its concurrency fields intact.
+func TestCreateAdmitsValidConcurrentPool(t *testing.T) {
+	s := poolstore.NewMemory()
+	if err := s.Create(context.Background(), poolstore.Pool{
+		Name: "cs-pool", ExecutionMode: runtimestore.ExecutionModeConcurrent,
+		ConcurrencyStyle: poolstore.ConcurrencyStyleStateless, MaxConcurrent: 6,
+	}); err != nil {
+		t.Fatalf("Create valid concurrent pool: %v", err)
+	}
+	got, err := s.Get(context.Background(), "cs-pool")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ConcurrencyStyle != poolstore.ConcurrencyStyleStateless || got.MaxConcurrent != 6 {
+		t.Errorf("concurrent fields did not round-trip: %+v", got)
+	}
+}

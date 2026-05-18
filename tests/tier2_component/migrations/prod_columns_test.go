@@ -51,6 +51,12 @@ var prodMigrationSchema = []struct {
 	// credentials table; the secret column's type change to BYTEA is
 	// covered by TestCredentialSecretEnvelopeColumn below.
 	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
+	// 0040 adds the §5.2 concurrent-execution-mode columns to the
+	// sandbox_warm_pools registry.
+	{migration: "0040", table: "sandbox_warm_pools", columns: []string{
+		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
+		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
+	}},
 }
 
 // spec: 12.2, 18.5

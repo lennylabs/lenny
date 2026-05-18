@@ -41,6 +41,36 @@ type Pool struct {
 	// ExecutionMode is the §5.2 mode (session, task, concurrent).
 	ExecutionMode runtimestore.ExecutionMode
 
+	// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant
+	// (`workspace`, `stateless`). It is meaningful only when
+	// ExecutionMode is `concurrent`, where ValidateConcurrentConfig
+	// requires it.
+	ConcurrencyStyle ConcurrencyStyle
+
+	// MaxConcurrent is the §5.2 per-pod slot bound for concurrent mode.
+	// A concurrent-mode pod hosts at most this many slots
+	// simultaneously. It must be >= 1 on a concurrent-mode pool.
+	MaxConcurrent int
+
+	// AcknowledgeProcessLevelIsolation records the §5.2 deployer
+	// acknowledgment that concurrent-workspace slots share the pod
+	// process namespace, /tmp, cgroup memory, network stack, and
+	// credential group-read access. A concurrent-workspace pool is
+	// rejected without it.
+	AcknowledgeProcessLevelIsolation bool
+
+	// CleanupTimeoutSeconds bounds per-slot cleanup on a
+	// concurrent-workspace pool. The §5.2 rule requires
+	// CleanupTimeoutSeconds >= MaxConcurrent * 5 so each slot's cleanup
+	// budget clears the 5-second floor.
+	CleanupTimeoutSeconds int
+
+	// AllowCrossTenantReuse mirrors the §5.2 task-mode field. Concurrent
+	// modes have no cross-tenant isolation boundary, so
+	// ValidateConcurrentConfig rejects a concurrent-mode pool that sets
+	// it.
+	AllowCrossTenantReuse bool
+
 	// ResourceClass is the §5.2 size bucket (`small`, `medium`,
 	// `large`); free-form per pool admin.
 	ResourceClass string
@@ -65,6 +95,105 @@ type Pool struct {
 
 // IsActive reports whether the pool has not been soft-deleted.
 func (p Pool) IsActive() bool { return p.DeletedAt.IsZero() }
+
+// ConcurrencyStyle is the §5.2 concurrent-mode sub-variant.
+type ConcurrencyStyle string
+
+const (
+	// ConcurrencyStyleWorkspace is `concurrencyStyle: workspace` —
+	// workspace-concurrent. Each slot gets its own per-slot workspace
+	// tree and the pod's /workspace/shared/ is shared read-only across
+	// the pod's slots (§6.4).
+	ConcurrencyStyleWorkspace ConcurrencyStyle = "workspace"
+
+	// ConcurrencyStyleStateless is `concurrencyStyle: stateless` —
+	// stateless-concurrent. No workspace is materialized and the pod
+	// holds no Lenny-managed per-slot session state (§5.2).
+	ConcurrencyStyleStateless ConcurrencyStyle = "stateless"
+)
+
+// AllConcurrencyStyles returns the closed §5.2 enum.
+func AllConcurrencyStyles() []ConcurrencyStyle {
+	return []ConcurrencyStyle{ConcurrencyStyleWorkspace, ConcurrencyStyleStateless}
+}
+
+// IsValid reports whether s is a known concurrency style.
+func (s ConcurrencyStyle) IsValid() bool {
+	for _, v := range AllConcurrencyStyles() {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateConcurrentConfig enforces the §5.2 / §13.1 admission rules for
+// a pool's concurrent-mode configuration. It is the pool-side half of
+// the Phase 12c pod-level isolation enforcement: a `concurrent`-mode
+// pool cannot be created without the §5.2 deployer acknowledgment, and
+// it cannot weaken the cross-tenant boundary that §5.2 reserves to
+// task-mode microvm pools.
+//
+// The rules:
+//
+//   - A non-concurrent pool must not set concurrent-only fields
+//     (concurrencyStyle, maxConcurrent), so a stray field on a
+//     session-mode or task-mode pool is rejected rather than silently
+//     ignored.
+//   - A concurrent pool must name a valid concurrencyStyle (`workspace`
+//     or `stateless`).
+//   - A concurrent pool must set maxConcurrent >= 1 — the §5.2 per-pod
+//     slot bound.
+//   - A concurrent pool must never set allowCrossTenantReuse: §5.2
+//     gives simultaneous process-level co-tenancy no isolation boundary,
+//     so cross-tenant slot sharing is categorically rejected (unlike
+//     task mode's microvm option).
+//   - A concurrent-workspace pool must set
+//     acknowledgeProcessLevelIsolation: §5.2 requires the deployer to
+//     accept the shared process namespace, /tmp, cgroup memory, network
+//     stack, and credential group-read access between simultaneous
+//     slots before the mode is enabled.
+//   - A concurrent-workspace pool that sets cleanupTimeoutSeconds must
+//     satisfy cleanupTimeoutSeconds >= maxConcurrent * 5 so each slot's
+//     per-slot cleanup budget clears the §5.2 5-second floor.
+//
+// It returns nil for a session-mode or task-mode pool. Callers invoke
+// it at the admin-API boundary and surface the error as a §15.1
+// VALIDATION_ERROR.
+func ValidateConcurrentConfig(p Pool) error {
+	if p.ExecutionMode != runtimestore.ExecutionModeConcurrent {
+		if p.ConcurrencyStyle != "" {
+			return errors.New("poolstore: concurrencyStyle is valid only when executionMode is concurrent (§5.2)")
+		}
+		if p.MaxConcurrent != 0 {
+			return errors.New("poolstore: maxConcurrent is valid only when executionMode is concurrent (§5.2)")
+		}
+		return nil
+	}
+
+	if !p.ConcurrencyStyle.IsValid() {
+		return errors.New("poolstore: concurrent-mode pool requires concurrencyStyle to be workspace or stateless (§5.2)")
+	}
+	if p.MaxConcurrent < 1 {
+		return errors.New("poolstore: concurrent-mode pool requires maxConcurrent >= 1 (§5.2)")
+	}
+	if p.AllowCrossTenantReuse {
+		return errors.New("poolstore: allowCrossTenantReuse is not permitted for concurrent-mode pools; " +
+			"cross-tenant slot sharing has no isolation boundary in concurrent mode (§5.2)")
+	}
+	if p.ConcurrencyStyle == ConcurrencyStyleWorkspace {
+		if !p.AcknowledgeProcessLevelIsolation {
+			return errors.New("poolstore: concurrent-workspace pool requires acknowledgeProcessLevelIsolation=true; " +
+				"concurrent slots share the pod process namespace, /tmp, cgroup memory, network stack, " +
+				"and credential group-read access (§5.2)")
+		}
+		if p.CleanupTimeoutSeconds != 0 && p.CleanupTimeoutSeconds < p.MaxConcurrent*5 {
+			return errors.New("poolstore: cleanupTimeoutSeconds / maxConcurrent would produce a per-slot " +
+				"cleanup timeout below the 5s minimum; set cleanupTimeoutSeconds >= maxConcurrent * 5 (§5.2)")
+		}
+	}
+	return nil
+}
 
 // Store is the §5.2 pool registry contract.
 type Store interface {
@@ -125,6 +254,9 @@ func (m *Memory) Create(_ context.Context, p Pool) error {
 	if p.IsolationProfile == isolation.ProfileStandard && !p.AllowStandardIsolation {
 		return errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
 	}
+	if err := ValidateConcurrentConfig(p); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.pools[p.Name]; exists {
@@ -172,6 +304,9 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Pool) error
 	}
 	if row.IsolationProfile == isolation.ProfileStandard && !row.AllowStandardIsolation {
 		return Pool{}, errors.New("poolstore: isolationProfile=standard requires allowStandardIsolation=true (§5.3)")
+	}
+	if err := ValidateConcurrentConfig(row); err != nil {
+		return Pool{}, err
 	}
 	now := time.Now().UTC()
 	if !now.After(prev) {

@@ -141,6 +141,11 @@ type BindResult struct {
 	SandboxName string
 	// PodIP is the bound pod's address.
 	PodIP string
+	// SlotID identifies the concurrent-mode (§5.2) slot the session was
+	// placed on. It is empty for a session-mode or task-mode bind, where
+	// the pod is claimed exclusively for the session. It is non-empty
+	// only for a BindSlot result.
+	SlotID string
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client
