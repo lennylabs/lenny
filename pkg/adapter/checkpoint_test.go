@@ -87,6 +87,57 @@ func TestCheckpointArchivesAndStoresTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestCheckpointViaLifecycleChannelQuiescesAndResumes(t *testing.T) {
+	s, _ := startedServer(t)
+	sink := &fakeCheckpointSink{id: "ckpt-full"}
+	s.Checkpoints = sink
+	lc := startLifecycle(t)
+	s.Lifecycle = lc
+	lr := dialLifecycle(t, lc)
+
+	respc := make(chan *adapterv1.CheckpointResponse, 1)
+	go func() {
+		resp, err := s.Checkpoint(context.Background(), checkpointReq("sess-1"))
+		if err != nil {
+			t.Errorf("Checkpoint: %v", err)
+			respc <- nil
+			return
+		}
+		respc <- resp
+	}()
+
+	// The adapter asks the runtime to quiesce, then waits for ready.
+	req := lr.recv()
+	if req["type"] != "checkpoint_request" {
+		t.Fatalf("runtime saw %v, want checkpoint_request", req["type"])
+	}
+	corrID, _ := req["checkpointId"].(string)
+	if corrID == "" {
+		t.Fatal("checkpoint_request carried no checkpointId")
+	}
+	lr.send(map[string]any{"type": "checkpoint_ready", "checkpointId": corrID})
+
+	// Once the snapshot is stored the adapter resumes the runtime.
+	done := lr.recv()
+	if done["type"] != "checkpoint_complete" || done["status"] != "ok" {
+		t.Fatalf("runtime saw %v, want checkpoint_complete status ok", done)
+	}
+	if done["checkpointId"] != corrID {
+		t.Errorf("checkpoint_complete checkpointId = %v, want %v", done["checkpointId"], corrID)
+	}
+
+	resp := <-respc
+	if resp == nil {
+		return
+	}
+	if resp.GetCheckpointId() != "ckpt-full" {
+		t.Errorf("checkpoint id = %q, want ckpt-full", resp.GetCheckpointId())
+	}
+	if content := tarEntry(t, sink.received, "notes.txt"); content != "agent state" {
+		t.Errorf("archived notes.txt = %q, want the workspace content", content)
+	}
+}
+
 func TestCheckpointRejectsMissingSessionID(t *testing.T) {
 	s, _ := startedServer(t)
 	s.Checkpoints = &fakeCheckpointSink{id: "x"}

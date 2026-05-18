@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -59,6 +60,35 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
+	// §4.7: Checkpoint and Interrupt are serialized per session.
+	release, err := s.ops.Begin(ctx, opCheckpoint)
+	if err != nil {
+		if errors.Is(err, errOpCoalesced) || errors.Is(err, errOpBusy) {
+			return nil, status.Error(codes.Aborted,
+				"checkpoint coalesced into an in-flight operation; retry")
+		}
+		return nil, status.FromContextError(err).Err()
+	}
+	defer release()
+
+	// §4.7: a Full-level runtime checkpoints cooperatively over the
+	// lifecycle channel — quiesce, snapshot, resume. Other runtimes are
+	// archived live (best-effort consistency).
+	if s.Lifecycle != nil && s.Lifecycle.Supports("checkpoint") {
+		return s.checkpointViaLifecycle(ctx, req, sessionID)
+	}
+	id, size, err := s.archiveAndStore(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return &adapterv1.CheckpointResponse{CheckpointId: id, SizeBytes: size}, nil
+}
+
+// archiveAndStore archives the session workspace and streams it to the
+// checkpoint sink through an in-process pipe, so a large workspace is
+// never buffered in memory. It returns the stored checkpoint id and the
+// compressed archive size.
+func (s *Server) archiveAndStore(ctx context.Context, sessionID string) (string, int64, error) {
 	type archiveResult struct {
 		n   int64
 		err error
@@ -70,21 +100,38 @@ func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointReques
 		_ = pw.CloseWithError(err)
 		archived <- archiveResult{n: n, err: err}
 	}()
-
 	id, saveErr := s.Checkpoints.SaveCheckpoint(ctx, sessionID, pr)
 	// Closing the read end unblocks the archive goroutine if the sink
 	// stopped reading before EOF (an error or a deadline).
 	_ = pr.Close()
 	res := <-archived
-
 	if res.err != nil {
-		return nil, status.Errorf(codes.Internal, "archive workspace: %v", res.err)
+		return "", 0, status.Errorf(codes.Internal, "archive workspace: %v", res.err)
 	}
 	if saveErr != nil {
-		return nil, status.Errorf(codes.Internal, "store checkpoint: %v", saveErr)
+		return "", 0, status.Errorf(codes.Internal, "store checkpoint: %v", saveErr)
 	}
-	return &adapterv1.CheckpointResponse{
-		CheckpointId: id,
-		SizeBytes:    res.n,
-	}, nil
+	return id, res.n, nil
+}
+
+// checkpointViaLifecycle runs the §4.7 cooperative checkpoint: it asks
+// the runtime to quiesce, captures the workspace snapshot once the
+// runtime reports checkpoint_ready, and resumes the runtime with the
+// snapshot outcome via checkpoint_complete.
+func (s *Server) checkpointViaLifecycle(ctx context.Context, req *adapterv1.CheckpointRequest, sessionID string) (*adapterv1.CheckpointResponse, error) {
+	corrID := newLifecycleID()
+	if err := s.Lifecycle.RequestCheckpoint(ctx, corrID, req.GetDeadlineMs()); err != nil {
+		return nil, status.Errorf(codes.Internal, "checkpoint quiesce: %v", err)
+	}
+	id, size, archiveErr := s.archiveAndStore(ctx, sessionID)
+	// Resume the runtime whatever the snapshot outcome.
+	cpStatus, reason := "ok", ""
+	if archiveErr != nil {
+		cpStatus, reason = "failed", archiveErr.Error()
+	}
+	_ = s.Lifecycle.CompleteCheckpoint(corrID, cpStatus, reason)
+	if archiveErr != nil {
+		return nil, archiveErr
+	}
+	return &adapterv1.CheckpointResponse{CheckpointId: id, SizeBytes: size}, nil
 }
