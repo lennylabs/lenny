@@ -61,6 +61,8 @@ var prodTables = []struct{ migration, name string }{
 	{"0036", "credentials"},
 	{"0037", "credential_pools"},
 	{"0038", "credential_leases"},
+	// §12.8 GDPR erasure-job registry.
+	{"0042", "erasure_jobs"},
 }
 
 // execTenant runs sql inside a transaction that has set
@@ -252,6 +254,83 @@ func TestLedgerImmutability(t *testing.T) {
 		if err := execTenant(ctx, pg, "acme",
 			`DELETE FROM billing_events WHERE tenant_id = 'acme'`); err == nil {
 			t.Error("billing_events DELETE should be rejected")
+		}
+	})
+}
+
+// spec: 12.8
+// diagnosis: the migration-0042 processing-restriction trigger did not
+//
+//	behave as specified. §12.8 (GDPR Article 18) requires that
+//	users.processing_restricted cannot be cleared while a non-terminal
+//	erasure job exists for that user, except for the lenny_erasure
+//	role and the explicit clear-processing-restriction admin endpoint
+//	(which sets lenny.clear_processing_restriction = 'true').
+func TestProcessingRestrictionTrigger(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	if _, err := pg.Pool.Exec(
+		ctx, `INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`,
+	); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+	// Seed a restricted user and an active erasure job for that user.
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO users (tenant_id, subject, processing_restricted)
+		 VALUES ('acme', 'alice', true)`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := execTenant(ctx, pg, "acme",
+		`INSERT INTO erasure_jobs (id, tenant_id, user_id, status)
+		 VALUES ('erasure_1', 'acme', 'alice', 'store_deleting')`); err != nil {
+		t.Fatalf("seed erasure job: %v", err)
+	}
+
+	t.Run("rejects clearing the flag while a job is active", func(t *testing.T) {
+		err := execTenant(ctx, pg, "acme",
+			`UPDATE users SET processing_restricted = false
+			 WHERE tenant_id = 'acme' AND subject = 'alice'`)
+		if err == nil {
+			t.Fatal("clearing processing_restricted with an active erasure job should be rejected")
+		}
+		if !strings.Contains(err.Error(), "ERASURE_JOB_ACTIVE") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("permits clearing via the session-variable bypass", func(t *testing.T) {
+		// The clear-processing-restriction admin endpoint sets the
+		// session-local variable for the duration of its transaction.
+		tx, err := pg.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', 'acme', true)"); err != nil {
+			t.Fatalf("set tenant: %v", err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('lenny.clear_processing_restriction', 'true', true)"); err != nil {
+			t.Fatalf("set bypass: %v", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE users SET processing_restricted = false
+			 WHERE tenant_id = 'acme' AND subject = 'alice'`); err != nil {
+			t.Errorf("clear with the bypass set must succeed: %v", err)
+		}
+	})
+
+	t.Run("permits clearing once the job reaches a terminal phase", func(t *testing.T) {
+		if err := execTenant(ctx, pg, "acme",
+			`UPDATE erasure_jobs SET status = 'completed' WHERE id = 'erasure_1'`); err != nil {
+			t.Fatalf("complete erasure job: %v", err)
+		}
+		if err := execTenant(ctx, pg, "acme",
+			`UPDATE users SET processing_restricted = false
+			 WHERE tenant_id = 'acme' AND subject = 'alice'`); err != nil {
+			t.Errorf("clearing the flag after the job completes must succeed: %v", err)
 		}
 	})
 }

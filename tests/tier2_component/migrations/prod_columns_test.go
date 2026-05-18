@@ -57,6 +57,10 @@ var prodMigrationSchema = []struct {
 		"concurrency_style", "max_concurrent", "acknowledge_process_level_isolation",
 		"cleanup_timeout_seconds", "allow_cross_tenant_reuse",
 	}},
+	// 0042 creates the §12.8 GDPR erasure-job registry. The
+	// processing-restriction trigger it also installs is covered by
+	// TestProcessingRestrictionTrigger.
+	{migration: "0042", table: "erasure_jobs", create: true},
 }
 
 // spec: 12.2, 18.5

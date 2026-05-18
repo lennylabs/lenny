@@ -12,6 +12,8 @@
 //	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
 //	/direct-mode-isolation          — lenny-direct-mode-isolation (§4.9, §13.2)
 //	/drain-readiness                — lenny-drain-readiness (§12.5)
+//	/data-residency-validator       — lenny-data-residency-validator (§12.8, §12.9)
+//	/t4-node-isolation              — lenny-t4-node-isolation (§6.4, §12.9)
 //	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
@@ -35,6 +37,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,8 +65,10 @@ func buildScheme() *runtime.Scheme {
 // sandboxclaim-guard and drain-readiness routes' API-server lookups;
 // tenancyMode and devMode configure the direct-mode-isolation route's
 // §4.9 enforcement; drainReadinessURL is the gateway endpoint the
-// drain-readiness route probes.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string) *http.ServeMux {
+// drain-readiness route probes; declaredRegions is the deployment's
+// storage.regions key set the §12.8 data-residency-validator route
+// validates against.
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
@@ -74,6 +79,14 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	mux.Handle("/drain-readiness", webhook.Handler(webhook.DrainReadiness(
 		reader, webhook.HTTPDrainProbe{URL: drainReadinessURL}, logForcedDrain,
 	)))
+	// §12.8 data-residency-validator: a nil TenantRegionResolver leaves
+	// inheritance to the gateway path; the webhook then validates each
+	// resource on its own declared region against storage.regions.
+	mux.Handle("/data-residency-validator", webhook.Handler(
+		webhook.DataResidencyValidator(declaredRegions, nil)))
+	// §6.4 t4-node-isolation: enforces T4 dedicated-node placement on
+	// agent-namespace Pod resources.
+	mux.Handle("/t4-node-isolation", webhook.Handler(webhook.T4NodeIsolation()))
 	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -82,6 +95,23 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		w.WriteHeader(http.StatusOK)
 	})
 	return mux
+}
+
+// parseRegions splits the --storage-regions flag into the declared
+// region list the §12.8 data-residency-validator validates against.
+// Whitespace around each entry is trimmed and empty entries are
+// dropped, so a trailing comma or a spaced list is tolerated.
+func parseRegions(csv string) []string {
+	if strings.TrimSpace(csv) == "" {
+		return nil
+	}
+	var out []string
+	for _, r := range strings.Split(csv, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // logForcedDrain records a §12.5 forced node drain. The drain-readiness
@@ -108,7 +138,11 @@ func main() {
 		"platform global.devMode. When true the direct-mode-isolation webhook admits every template, matching the §4.9 development-mode allowance.")
 	drainReadinessURL := flag.String("gateway-drain-readiness-url", os.Getenv("LENNY_GATEWAY_DRAIN_READINESS_URL"),
 		"gateway GET /internal/drain-readiness endpoint the §12.5 drain-readiness webhook probes before admitting a node-drain pod eviction.")
+	storageRegions := flag.String("storage-regions", os.Getenv("LENNY_STORAGE_REGIONS"),
+		"comma-separated list of regions declared in the storage.regions Helm map. The §12.8 data-residency-validator webhook rejects, fail-closed, any resource whose resolved dataResidencyRegion is not in this set.")
 	flag.Parse()
+
+	declaredRegions := parseRegions(*storageRegions)
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -121,7 +155,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
