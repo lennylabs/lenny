@@ -253,8 +253,9 @@ func checkLifecycleHandshake(binary string, _ time.Duration, _ bool) (string, er
 		return "", err
 	}
 	if err := fa.send(map[string]any{
-		"type":         "lifecycle_capabilities",
-		"capabilities": []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"},
+		"type":            "lifecycle_capabilities",
+		"protocolVersion": "1.0",
+		"capabilities":    []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"},
 	}); err != nil {
 		return "", err
 	}
@@ -265,11 +266,11 @@ func checkLifecycleHandshake(binary string, _ time.Duration, _ bool) (string, er
 	if reply["type"] != "lifecycle_support" {
 		return "", fmt.Errorf("expected lifecycle_support, got %v", reply)
 	}
-	supported, _ := reply["supported"].([]any)
-	if len(supported) == 0 {
-		return "", errors.New("lifecycle_support.supported is empty")
+	capabilities, _ := reply["capabilities"].([]any)
+	if len(capabilities) == 0 {
+		return "", errors.New("lifecycle_support.capabilities is empty")
 	}
-	return fmt.Sprintf("supported=%d capabilities", len(supported)), nil
+	return fmt.Sprintf("supported=%d capabilities", len(capabilities)), nil
 }
 
 func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, error) {
@@ -295,10 +296,9 @@ func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, err
 	}
 	cpID := "ckpt_" + randomID()
 	if err := fa.send(map[string]any{
-		"type":          "checkpoint_request",
-		"checkpoint_id": cpID,
-		"deadline_ms":   5000,
-		"level":         "full",
+		"type":         "checkpoint_request",
+		"checkpointId": cpID,
+		"deadlineMs":   5000,
 	}); err != nil {
 		return "", err
 	}
@@ -306,11 +306,11 @@ func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, err
 	if err != nil {
 		return "", err
 	}
-	if reply["type"] != "checkpoint_ready" || reply["checkpoint_id"] != cpID {
+	if reply["type"] != "checkpoint_ready" || reply["checkpointId"] != cpID {
 		return "", fmt.Errorf("expected checkpoint_ready with id %q, got %v", cpID, reply)
 	}
 	// Complete the checkpoint so the runtime can resume.
-	_ = fa.send(map[string]any{"type": "checkpoint_complete", "checkpoint_id": cpID, "outcome": "success"})
+	_ = fa.send(map[string]any{"type": "checkpoint_complete", "checkpointId": cpID, "status": "ok"})
 	return "checkpoint_request → checkpoint_ready round-trip", nil
 }
 
@@ -336,10 +336,9 @@ func checkInterruptAck(binary string, _ time.Duration, _ bool) (string, error) {
 	}
 	intID := "int_" + randomID()
 	if err := fa.send(map[string]any{
-		"type":         "interrupt_request",
-		"interrupt_id": intID,
-		"deadline_ms":  2000,
-		"reason":       "compliance_harness",
+		"type":        "interrupt_request",
+		"interruptId": intID,
+		"deadlineMs":  2000,
 	}); err != nil {
 		return "", err
 	}
@@ -347,7 +346,7 @@ func checkInterruptAck(binary string, _ time.Duration, _ bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if reply["type"] != "interrupt_acknowledged" || reply["interrupt_id"] != intID {
+	if reply["type"] != "interrupt_acknowledged" || reply["interruptId"] != intID {
 		return "", fmt.Errorf("expected interrupt_acknowledged with id %q, got %v", intID, reply)
 	}
 	return "interrupt_request → interrupt_acknowledged round-trip", nil
@@ -373,26 +372,25 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 	if err := handshake(fa); err != nil {
 		return "", err
 	}
+	leaseID := "lease_" + randomID()
 	if err := fa.send(map[string]any{
-		"type":     "credentials_rotated",
-		"lease_id": "lease_compliance_harness",
-		"trigger":  "proactive_renewal",
+		"type":            "credentials_rotated",
+		"provider":        "anthropic",
+		"credentialsPath": "/run/lenny/credentials.json",
+		"leaseId":         leaseID,
 	}); err != nil {
 		return "", err
 	}
-	// credentials_rotated does not require a lifecycle reply; the
-	// expectation is that the runtime continues to service stdin. Send
-	// a heartbeat on stdin and verify the runtime answers — that proves
-	// the runtime processed the rotation without disrupting the stdin
-	// path.
-	if _, err := io.WriteString(stdin, `{"type":"heartbeat","ts":1}`+"\n"); err != nil {
+	// §4.7: the runtime rebinds the credential and replies
+	// credentials_acknowledged carrying the same leaseId.
+	reply, err := fa.recvJSONLine(3 * time.Second)
+	if err != nil {
 		return "", err
 	}
-	// Drain stdout briefly via a one-off scanner. We use the cmd's
-	// stdout pipe through a fresh exec since we did not capture it
-	// above; instead, allow a small sleep and then send shutdown.
-	time.Sleep(200 * time.Millisecond)
-	return "credentials_rotated dispatched; runtime continued running", nil
+	if reply["type"] != "credentials_acknowledged" || reply["leaseId"] != leaseID {
+		return "", fmt.Errorf("expected credentials_acknowledged with leaseId %q, got %v", leaseID, reply)
+	}
+	return "credentials_rotated → credentials_acknowledged round-trip", nil
 }
 
 func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error) {
@@ -415,9 +413,12 @@ func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error)
 	if err := handshake(fa); err != nil {
 		return "", err
 	}
+	// §15.4.6 "deadline signal handling" is exercised via the §4.7
+	// terminate frame: the runtime emits a final response and exits.
 	if err := fa.send(map[string]any{
-		"type":        "deadline_signal",
-		"deadline_ms": 1000,
+		"type":       "terminate",
+		"deadlineMs": 1000,
+		"reason":     "session_complete",
 	}); err != nil {
 		return "", err
 	}
@@ -449,7 +450,7 @@ func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error)
 		}
 		return "deadline_signal → final response emitted", nil
 	case <-time.After(3 * time.Second):
-		return "", errors.New("runtime did not emit a final response within 3s of deadline_signal")
+		return "", errors.New("runtime did not emit a final response within 3s of terminate")
 	}
 }
 
@@ -457,8 +458,9 @@ func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error)
 // by every full-level check.
 func handshake(fa *fakeAdapter) error {
 	if err := fa.send(map[string]any{
-		"type":         "lifecycle_capabilities",
-		"capabilities": []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"},
+		"type":            "lifecycle_capabilities",
+		"protocolVersion": "1.0",
+		"capabilities":    []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"},
 	}); err != nil {
 		return err
 	}

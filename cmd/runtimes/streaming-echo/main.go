@@ -8,10 +8,9 @@
 //   - lifecycle_capabilities / lifecycle_support  — handshake on connect
 //   - checkpoint_request / checkpoint_ready / checkpoint_complete
 //   - interrupt_request / interrupt_acknowledged
-//   - credentials_rotated  — re-read manifest credentials (no-op for echo)
-//   - deadline_signal      — emit a final response and exit
-//   - draining             — soft drain notification (logged, no behaviour
-//     change for echo since it has no in-flight work)
+//   - credentials_rotated / credentials_acknowledged
+//   - deadline_approaching — advance warning, logged (no exit)
+//   - terminate            — emit a final response and exit
 //
 // The lifecycle channel transport is a Unix socket whose path is taken
 // from the adapter manifest (`/run/lenny/adapter-manifest.json` by
@@ -53,7 +52,6 @@ const (
 	exitProtocolError = 2
 
 	defaultManifestPath = "/run/lenny/adapter-manifest.json"
-	runtimeVersion      = "streaming-echo/0.1.0"
 )
 
 func main() {
@@ -190,14 +188,12 @@ func runLifecycleChannel(ctx context.Context, socket string, stdoutWriter *write
 	}
 	if err := w.write(map[string]any{
 		"type": "lifecycle_support",
-		"supported": []string{
+		"capabilities": []string{
 			"checkpoint",
 			"interrupt",
 			"credential_rotation",
 			"deadline_signal",
-			"draining",
 		},
-		"runtime_version": runtimeVersion,
 	}); err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: lifecycle support write: %v\n", err)
 		return
@@ -231,14 +227,14 @@ func runLifecycleChannel(ctx context.Context, socket string, stdoutWriter *write
 		case "checkpoint_request":
 			handleCheckpoint(line, w, stderr)
 		case "interrupt_request":
-			handleInterrupt(line, stdoutWriter, w, stderr)
+			handleInterrupt(line, w, stderr)
 		case "credentials_rotated":
-			handleCredentialsRotated(line, stderr)
-		case "deadline_signal":
-			handleDeadline(line, stdoutWriter, stderr, cancel)
+			handleCredentialsRotated(line, w, stderr)
+		case "deadline_approaching":
+			fmt.Fprintf(stderr, "streaming-echo: lifecycle: deadline approaching: %s\n", strings.TrimSpace(string(line)))
+		case "terminate":
+			handleTerminate(line, stdoutWriter, stderr, cancel)
 			return
-		case "draining":
-			fmt.Fprintln(stderr, "streaming-echo: lifecycle: draining notification received")
 		default:
 			fmt.Fprintf(stderr, "streaming-echo: lifecycle: ignoring unknown event type %q\n", env.Type)
 		}
@@ -286,8 +282,8 @@ func readJSONLine(r *bufio.Reader) ([]byte, error) {
 func handleCheckpoint(line []byte, w *writer, stderr io.Writer) {
 	var req struct {
 		Type         string `json:"type"`
-		CheckpointID string `json:"checkpoint_id"`
-		DeadlineMS   int    `json:"deadline_ms"`
+		CheckpointID string `json:"checkpointId"`
+		DeadlineMS   int    `json:"deadlineMs"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: checkpoint_request decode: %v\n", err)
@@ -297,16 +293,16 @@ func handleCheckpoint(line []byte, w *writer, stderr io.Writer) {
 	// quiescent immediately. A real Full-level runtime would flush
 	// pending output and wait for in-flight tool calls to settle.
 	_ = w.write(map[string]any{
-		"type":          "checkpoint_ready",
-		"checkpoint_id": req.CheckpointID,
+		"type":         "checkpoint_ready",
+		"checkpointId": req.CheckpointID,
 	})
 }
 
-func handleInterrupt(line []byte, stdoutWriter, w *writer, stderr io.Writer) {
+func handleInterrupt(line []byte, w *writer, stderr io.Writer) {
 	var req struct {
 		Type        string `json:"type"`
-		InterruptID string `json:"interrupt_id"`
-		DeadlineMS  int    `json:"deadline_ms"`
+		InterruptID string `json:"interruptId"`
+		DeadlineMS  int    `json:"deadlineMs"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: interrupt_request decode: %v\n", err)
@@ -316,23 +312,36 @@ func handleInterrupt(line []byte, stdoutWriter, w *writer, stderr io.Writer) {
 	// reaches the "safe stop point" trivially. A real runtime would
 	// stop emitting output before sending the ack.
 	_ = w.write(map[string]any{
-		"type":         "interrupt_acknowledged",
-		"interrupt_id": req.InterruptID,
+		"type":        "interrupt_acknowledged",
+		"interruptId": req.InterruptID,
 	})
 }
 
-func handleCredentialsRotated(line []byte, stderr io.Writer) {
-	// streaming-echo has no upstream credentials to refresh; the event
-	// is acknowledged via lifecycle_support advertising credential_
-	// rotation, and the runtime would now re-read the manifest if it
-	// kept credentials in memory.
-	fmt.Fprintf(stderr, "streaming-echo: credentials rotated (no-op): %s\n", strings.TrimSpace(string(line)))
+func handleCredentialsRotated(line []byte, w *writer, stderr io.Writer) {
+	var req struct {
+		Type     string `json:"type"`
+		Provider string `json:"provider"`
+		LeaseID  string `json:"leaseId"`
+	}
+	if err := json.Unmarshal(line, &req); err != nil {
+		fmt.Fprintf(stderr, "streaming-echo: credentials_rotated decode: %v\n", err)
+		return
+	}
+	// streaming-echo has no upstream credentials to refresh; a real
+	// runtime would re-read the rotated credential file here. §4.7
+	// requires the runtime to acknowledge the rotation regardless.
+	_ = w.write(map[string]any{
+		"type":     "credentials_acknowledged",
+		"leaseId":  req.LeaseID,
+		"provider": req.Provider,
+	})
 }
 
-func handleDeadline(line []byte, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
+func handleTerminate(line []byte, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
 	var req struct {
 		Type       string `json:"type"`
-		DeadlineMS int    `json:"deadline_ms"`
+		DeadlineMS int    `json:"deadlineMs"`
+		Reason     string `json:"reason"`
 	}
 	_ = json.Unmarshal(line, &req)
 	// Emit a final response with the DEADLINE_EXCEEDED marker per
