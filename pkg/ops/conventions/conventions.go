@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -217,4 +218,44 @@ type Progress struct {
 	StartedAt         string      `json:"startedAt,omitempty"`
 	LastProgressAt    string      `json:"lastProgressAt,omitempty"`
 	StalledForSeconds *int        `json:"stalledForSeconds"`
+}
+
+// SuggestedAction is the §25.3 machine-executable remediation hint
+// returned for a degraded or unhealthy component. Confidence and Risk
+// are populated only on ranked alternatives (the suggestedActions
+// array form); a singular canonical action omits them.
+type SuggestedAction struct {
+	Action     string          `json:"action"`
+	Endpoint   string          `json:"endpoint"`
+	Body       json.RawMessage `json:"body,omitempty"`
+	Reasoning  string          `json:"reasoning"`
+	Runbook    string          `json:"runbook,omitempty"`
+	Confidence float64         `json:"confidence,omitempty"`
+	Risk       string          `json:"risk,omitempty"`
+}
+
+// rankedActionIssues are the §25.3 issues that present multiple ranked
+// remediation alternatives rather than a single canonical action.
+var rankedActionIssues = map[string]bool{
+	"WARM_POOL_EXHAUSTED":       true,
+	"WARM_POOL_LOW":             true,
+	"CREDENTIAL_POOL_EXHAUSTED": true,
+	"CIRCUIT_BREAKER_OPEN":      true,
+}
+
+// UsesRankedActions reports whether a §25.3 issue is presented with the
+// ordered suggestedActions array (multiple reasonable responses) as
+// opposed to a single canonical suggestedAction.
+func UsesRankedActions(issue string) bool {
+	return rankedActionIssues[issue]
+}
+
+// SortByConfidence orders ranked remediation alternatives by descending
+// confidence in place, as §25.3 requires of the suggestedActions
+// array. The sort is stable, so equal-confidence entries keep their
+// original order.
+func SortByConfidence(actions []SuggestedAction) {
+	sort.SliceStable(actions, func(i, j int) bool {
+		return actions[i].Confidence > actions[j].Confidence
+	})
 }

@@ -177,6 +177,41 @@ func TestProgressCarriesValues(t *testing.T) {
 	}
 }
 
+func TestUsesRankedActions(t *testing.T) {
+	ranked := []string{
+		"WARM_POOL_EXHAUSTED", "WARM_POOL_LOW",
+		"CREDENTIAL_POOL_EXHAUSTED", "CIRCUIT_BREAKER_OPEN",
+	}
+	for _, issue := range ranked {
+		if !conventions.UsesRankedActions(issue) {
+			t.Errorf("UsesRankedActions(%q) = false, want true", issue)
+		}
+	}
+	for _, issue := range []string{"SESSION_STORE_UNAVAILABLE", "MINIO_UNREACHABLE", ""} {
+		if conventions.UsesRankedActions(issue) {
+			t.Errorf("UsesRankedActions(%q) = true, want false (singular action)", issue)
+		}
+	}
+}
+
+func TestSortByConfidence(t *testing.T) {
+	actions := []conventions.SuggestedAction{
+		{Action: "INVESTIGATE_UPSTREAM", Confidence: 0.55},
+		{Action: "SCALE_WARM_POOL", Confidence: 0.85},
+		{Action: "WAIT", Confidence: 0.55},
+	}
+	conventions.SortByConfidence(actions)
+
+	if actions[0].Action != "SCALE_WARM_POOL" {
+		t.Errorf("highest-confidence action = %q, want SCALE_WARM_POOL", actions[0].Action)
+	}
+	// Stable: the two 0.55 entries keep their original relative order.
+	if actions[1].Action != "INVESTIGATE_UPSTREAM" || actions[2].Action != "WAIT" {
+		t.Errorf("equal-confidence order = %q,%q, want INVESTIGATE_UPSTREAM,WAIT",
+			actions[1].Action, actions[2].Action)
+	}
+}
+
 func TestWriteError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	conventions.WriteError(rec, http.StatusConflict, "REMEDIATION_LOCK_CONFLICT",
