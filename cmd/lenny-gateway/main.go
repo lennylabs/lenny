@@ -355,12 +355,16 @@ func main() {
 	// gateway's revocation cache and the two deny lists are per-replica
 	// in-memory sets; the Bus fans a local mutation out to peer replicas
 	// over Redis pub/sub so a revocation takes effect fleet-wide. With
-	// no Redis the Bus is nil, which the propagators treat as the
+	// no Redis the Bus stays nil, which the propagators treat as the
 	// single-replica mode: every cache stays local and nothing is
-	// published. pubsub.New returns nil for a nil client, so this is
-	// nil whenever redisClient is.
-	securityBus := pubsub.New(redisClient)
-	if securityBus != nil {
+	// published. The Bus is constructed only when redisClient is a real
+	// client — a nil *redis.Client passed through the UniversalClient
+	// interface is a non-nil typed-nil interface, so pubsub.New cannot
+	// detect it; the guard here is the gateway's, matching the
+	// breakerstore cachingstore wiring.
+	var securityBus *pubsub.Bus
+	if redisClient != nil {
+		securityBus = pubsub.New(redisClient)
 		log.Printf("lenny-gateway: security caches converge across replicas over Redis pub/sub")
 	}
 
