@@ -492,6 +492,120 @@ func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
 	}
 }
 
+// spec: §4.7 Terminate RPC — graceful shutdown carrying a reason and a
+// grace deadline. The §11.4 full_revoke fan-out uses it.
+
+// recordingAdapter is a minimal Adapter gRPC server that captures the
+// ShutdownRequest so a test can assert the reason and deadline reached
+// the wire. Every other RPC stays unimplemented.
+type recordingAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	gotShutdown *adapterv1.ShutdownRequest
+}
+
+func (r *recordingAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	r.gotShutdown = req
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+}
+
+// dialRecordingAdapter serves rec over an in-memory connection and
+// returns a Client wired to it.
+func dialRecordingAdapter(t *testing.T, rec *recordingAdapter) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, rec)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial recording adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+func TestTerminateSendsReasonAndDeadline(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	clean, err := cl.Terminate(context.Background(), "sess-t", "USER_REVOKED", 10*time.Second)
+	if err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	if !clean {
+		t.Error("Terminate reported an unclean exit for a clean runtime close")
+	}
+	if rec.gotShutdown == nil {
+		t.Fatal("the adapter received no Shutdown request")
+	}
+	if got := rec.gotShutdown.GetSessionId().GetValue(); got != "sess-t" {
+		t.Errorf("Shutdown session id = %q, want sess-t", got)
+	}
+	if got := rec.gotShutdown.GetReason(); got != "USER_REVOKED" {
+		t.Errorf("Shutdown reason = %q, want USER_REVOKED", got)
+	}
+	if got := rec.gotShutdown.GetDeadlineMs(); got != 10_000 {
+		t.Errorf("Shutdown deadline = %d ms, want 10000", got)
+	}
+}
+
+func TestTerminateZeroDeadlineSendsZero(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	if _, err := cl.Terminate(context.Background(), "sess-t", "USER_REVOKED", 0); err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	if rec.gotShutdown.GetDeadlineMs() != 0 {
+		t.Errorf("a zero deadline sent %d ms, want 0 so the adapter applies its default",
+			rec.gotShutdown.GetDeadlineMs())
+	}
+}
+
+func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = rt
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	if err := cl.StartSession(ctx, "sess-x", "claude-code", nil, nil); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	clean, err := cl.Terminate(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
+	if err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+	if !clean {
+		t.Error("Terminate reported an unclean exit for a clean runtime close")
+	}
+	if !rt.closed {
+		t.Error("the runtime was not closed on Terminate")
+	}
+}
+
+func TestTerminateRejectsAnUnassignedSession(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+	cl := dialAdapter(t, srv)
+
+	clean, err := cl.Terminate(context.Background(), "sess-absent", "USER_REVOKED", 10*time.Second)
+	if err == nil {
+		t.Error("Terminate of an unassigned session succeeded, want a failure")
+	}
+	if clean {
+		t.Error("Terminate reported a clean exit on an error")
+	}
+}
+
 // countingSink is an adapter.CheckpointSink that tallies the archive
 // bytes it receives and returns a fixed checkpoint id.
 type countingSink struct {

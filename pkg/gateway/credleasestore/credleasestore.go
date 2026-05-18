@@ -116,3 +116,29 @@ func (s *Store) Len() int {
 	defer s.mu.RUnlock()
 	return len(s.byID)
 }
+
+// LeasesBySession returns every lease this replica holds whose
+// SessionID is one of sessionIDs. It backs the §11.4 full_revoke
+// credential-lease revocation step: the caller resolves a revoked
+// user's sessions, collects their leases here, removes them, and adds
+// each lease's credential to the §4.9 deny list. The returned slice is
+// a copy, so the caller may iterate it while removing the leases. An
+// empty sessionIDs set yields no leases.
+func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(sessionIDs))
+	for _, id := range sessionIDs {
+		want[id] = struct{}{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []credential.Lease
+	for _, lease := range s.byID {
+		if _, ok := want[lease.SessionID]; ok {
+			out = append(out, lease)
+		}
+	}
+	return out
+}

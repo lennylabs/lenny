@@ -140,3 +140,58 @@ func TestPutReplacesStaleTokenIndex(t *testing.T) {
 		t.Errorf("store holds %d leases after re-Put, want 1", s.Len())
 	}
 }
+
+// spec: §11.4 full_revoke — the credential-lease revocation step
+// resolves a revoked user's sessions and collects their leases.
+
+// sessionLease returns a valid pool-backed proxy lease bound to the
+// given session.
+func sessionLease(leaseID, token, sessionID string) credential.Lease {
+	l := proxyLease(leaseID, token)
+	l.SessionID = sessionID
+	return l
+}
+
+func TestLeasesBySession(t *testing.T) {
+	s := credleasestore.New()
+	_ = s.Put(sessionLease("cl_1", "lt-1", "run_a"))
+	_ = s.Put(sessionLease("cl_2", "lt-2", "run_a"))
+	_ = s.Put(sessionLease("cl_3", "lt-3", "run_b"))
+	_ = s.Put(sessionLease("cl_4", "lt-4", "run_c"))
+
+	got := s.LeasesBySession([]string{"run_a", "run_b"})
+	if len(got) != 3 {
+		t.Fatalf("LeasesBySession returned %d leases, want 3 (run_a x2, run_b x1)", len(got))
+	}
+	ids := map[string]bool{}
+	for _, l := range got {
+		ids[l.LeaseID] = true
+	}
+	for _, want := range []string{"cl_1", "cl_2", "cl_3"} {
+		if !ids[want] {
+			t.Errorf("LeasesBySession missing lease %s", want)
+		}
+	}
+	if ids["cl_4"] {
+		t.Error("LeasesBySession returned a lease for an unrequested session")
+	}
+}
+
+func TestLeasesBySessionEmptyRequest(t *testing.T) {
+	s := credleasestore.New()
+	_ = s.Put(sessionLease("cl_1", "lt-1", "run_a"))
+	if got := s.LeasesBySession(nil); got != nil {
+		t.Errorf("LeasesBySession(nil) = %v, want nil", got)
+	}
+	if got := s.LeasesBySession([]string{}); len(got) != 0 {
+		t.Errorf("LeasesBySession([]) returned %d leases, want 0", len(got))
+	}
+}
+
+func TestLeasesBySessionNoMatch(t *testing.T) {
+	s := credleasestore.New()
+	_ = s.Put(sessionLease("cl_1", "lt-1", "run_a"))
+	if got := s.LeasesBySession([]string{"run_absent"}); len(got) != 0 {
+		t.Errorf("LeasesBySession for an unknown session returned %d leases, want 0", len(got))
+	}
+}

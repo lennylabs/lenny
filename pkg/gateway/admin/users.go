@@ -368,16 +368,20 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 
 // terminateUserSessions transitions every non-terminal session owned
 // by the user to `cancelled` — the §11.4 full_revoke SessionStore
-// step. It returns the count terminated. An already-terminal session
-// is left untouched, and a concurrent terminal transition is honored.
-// The forced transition mirrors the §8.10 orphan-cleanup sweep: an
-// administrative termination overrides the normal state machine.
-func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) (int, error) {
+// step. It returns the IDs of the sessions it transitioned. An
+// already-terminal session is left untouched, and a concurrent terminal
+// transition is honored. The forced transition mirrors the §8.10
+// orphan-cleanup sweep: an administrative termination overrides the
+// normal state machine. The returned IDs are the input to the §11.4
+// pod-RPC `Terminate` fan-out and the credential-lease revocation: a
+// session this step cancelled was non-terminal, so its pod may still be
+// running and its leases may still be live.
+func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
 	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	terminated := 0
+	var terminated []string
 	for _, row := range rows {
 		if row.UserID != userID || session.IsTerminal(row.State) {
 			continue
@@ -393,7 +397,7 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 			return terminated, err
 		}
 		if updated.State == session.StateCancelled {
-			terminated++
+			terminated = append(terminated, row.ID)
 		}
 	}
 	return terminated, nil
@@ -403,10 +407,15 @@ func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID str
 // — the §11.4 three-tier user invalidation. soft_disable sets the
 // disabled flag so the user is denied new sessions; hard_disable and
 // full_revoke also raise the deleted_at tombstone so the user is
-// blocked from delegated tasks. full_revoke additionally transitions
-// the user's non-terminal sessions to `cancelled` in the SessionStore.
-// The §11.4 full_revoke pod-RPC `Terminate` fan-out and cached-auth
-// invalidation remain infrastructure-bound.
+// blocked from delegated tasks. full_revoke additionally runs the
+// §11.4 propagation: it transitions the user's non-terminal sessions to
+// `cancelled` in the SessionStore, sends the §4.7 `Terminate` RPC to
+// the pods hosting those sessions, revokes the §4.9 credential leases
+// the sessions hold, invalidates the user's §13.3 cached auth, and
+// dismisses the user's pending elicitations. The pod, lease, and token
+// steps run only when their gateway dependencies are wired; each is
+// best-effort and a partial propagation is reported rather than failing
+// the request.
 func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) {
 	subject := req.PathValue("user_id")
 	var body InvalidateUserRequest
@@ -443,20 +452,30 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// §11.4 full_revoke: terminate the user's active sessions in the
-	// SessionStore and dismiss their pending elicitations. soft_disable
+	// §11.4 full_revoke: cancel the user's active sessions in the
+	// SessionStore, fan the §4.7 Terminate RPC out to their pods, revoke
+	// the §4.9 leases those sessions hold, invalidate the user's §13.3
+	// cached auth, and dismiss their pending elicitations. soft_disable
 	// and hard_disable leave running sessions alone — they only gate
 	// new work.
-	sessionsTerminated, elicitationsDismissed := 0, 0
+	var (
+		liveSessions          []string
+		elicitationsDismissed int
+		fanOut                fullRevokeOutcome
+	)
 	if body.Mode == InvalidateFullRevoke {
 		if r.sessions != nil {
-			sessionsTerminated, err = r.terminateUserSessions(req.Context(), tenant, subject)
+			liveSessions, err = r.terminateUserSessions(req.Context(), tenant, subject)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 					"session termination failed: "+err.Error(), nil)
 				return
 			}
 		}
+		// Pod-RPC Terminate, credential-lease revocation, and cached-auth
+		// invalidation. Each step is best-effort and a partial result is
+		// reported, so the fan-out never fails the request.
+		fanOut = r.runFullRevokeFanOut(req.Context(), tenant, subject, body.Reason, liveSessions)
 		if r.interactions != nil {
 			elicitationsDismissed, err = r.interactions.DismissByUser(req.Context(), tenant, subject)
 			if err != nil {
@@ -466,23 +485,44 @@ func (r *Router) handleInvalidateUser(w http.ResponseWriter, req *http.Request) 
 			}
 		}
 	}
-	principal, _ := authmw.FromContext(req.Context())
-	r.emit(req.Context(), principal, "admin.user.invalidated", subject, map[string]any{
+	sessionsTerminated := len(liveSessions)
+	detail := map[string]any{
 		"tenantId":              tenant,
 		"mode":                  body.Mode,
 		"reason":                body.Reason,
 		"sessionsTerminated":    sessionsTerminated,
+		"podsTerminated":        fanOut.podsTerminated,
+		"leasesRevoked":         fanOut.leasesRevoked,
+		"tokensRevoked":         fanOut.tokensRevoked,
 		"elicitationsDismissed": elicitationsDismissed,
-	})
+	}
+	if len(fanOut.podTerminateFailed) > 0 {
+		detail["podTerminationFailures"] = fanOut.podTerminateFailed
+	}
+	if fanOut.tokenRevokeError != "" {
+		detail["tokenRevocationError"] = fanOut.tokenRevokeError
+	}
+	principal, _ := authmw.FromContext(req.Context())
+	r.emit(req.Context(), principal, "admin.user.invalidated", subject, detail)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"subject":               subject,
 		"tenantId":              tenant,
 		"mode":                  body.Mode,
 		"sessionsTerminated":    sessionsTerminated,
+		"podsTerminated":        fanOut.podsTerminated,
+		"leasesRevoked":         fanOut.leasesRevoked,
+		"tokensRevoked":         fanOut.tokensRevoked,
 		"elicitationsDismissed": elicitationsDismissed,
 		"user":                  fromUser(updated),
-	})
+	}
+	if len(fanOut.podTerminateFailed) > 0 {
+		resp["podTerminationFailures"] = fanOut.podTerminateFailed
+	}
+	if fanOut.tokenRevokeError != "" {
+		resp["tokenRevocationError"] = fanOut.tokenRevokeError
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func changedUserFields(b UpdateUserRequest) []string {

@@ -689,6 +689,18 @@ func main() {
 		log.Printf("lenny-gateway: mTLS deny-list pub/sub publish failed: %v", err)
 	}))
 
+	// §4.9 credential deny list: the per-replica set of revoked
+	// credential identities the LLM proxy checks before every upstream
+	// call. The propagator carries a revocation across replicas over
+	// Redis pub/sub. The §4.9 LLM proxy below reads the wrapped deny
+	// list directly on the hot path, and the admin router's §11.4
+	// full_revoke fan-out revokes a user's leases onto it; a revocation
+	// entered on any replica fans out to every replica's deny list.
+	credDeny := denylist.New()
+	credDenyProp := credentialdenylistprop.New(credDeny, securityBus, credentialdenylistprop.WithErrorHandler(func(err error) {
+		log.Printf("lenny-gateway: credential deny-list pub/sub publish failed: %v", err)
+	}))
+
 	// ----- Admin API -----
 	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
 	if pgPool != nil {
@@ -781,6 +793,33 @@ func main() {
 		// fans out to every replica's cache over Redis pub/sub, not just
 		// the replica that served the request.
 		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(pgPool), revProp)
+	}
+	// §11.4 full_revoke fan-out. Each dependency is independently
+	// optional: the pod terminator is wired only with warm-pod placement
+	// (--agent-namespace), the lease revoker only when the lease store
+	// exposes per-session lookup, and the token revoker only with a
+	// Postgres-backed issued-token index. A minimal gateway wires none
+	// of them and still soft/hard disables a user.
+	{
+		var (
+			userPods   admin.UserPodTerminator
+			userLeases admin.UserLeaseRevoker
+			userTokens admin.UserTokenRevoker
+		)
+		if podRegistry != nil {
+			userPods = &podTerminateFanOut{registry: podRegistry}
+		}
+		// llmLeases is the §4.9 credential-lease store; both the in-memory
+		// and Postgres-backed implementations expose LeasesBySession, so
+		// the assertion succeeds for either backend. The deny-list
+		// propagator carries a revoked lease's credential across replicas.
+		if ls, ok := llmLeases.(userLeaseStore); ok {
+			userLeases = &userLeaseRevoker{leases: ls, denyList: credDenyProp}
+		}
+		if pgPool != nil {
+			userTokens = &userTokenRevoker{store: issuedtokenstore.New(pgPool)}
+		}
+		adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)
 	}
 	adminRouter = adminRouter.WithPlatformInfo(
 		admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
@@ -936,17 +975,9 @@ func main() {
 	// proxy-mode agent pods on a listener separate from the REST API. It
 	// resolves an inbound lease token against llmLeases — the same store
 	// the credassign service records minted leases in — and the upstream
-	// credential against credCache.
-	// §4.9 credential deny list: the per-replica set of revoked
-	// credential identities the proxy checks before every upstream
-	// call. The propagator carries a revocation across replicas over
-	// Redis pub/sub. The proxy handler reads the wrapped deny list
-	// directly on the hot path; a revocation entered on any replica
-	// fans out to every replica's deny list.
-	credDeny := denylist.New()
-	credDenyProp := credentialdenylistprop.New(credDeny, securityBus, credentialdenylistprop.WithErrorHandler(func(err error) {
-		log.Printf("lenny-gateway: credential deny-list pub/sub publish failed: %v", err)
-	}))
+	// credential against credCache. The credential deny list credDeny
+	// and its propagator are built earlier so the admin router's §11.4
+	// full_revoke fan-out can revoke a user's leases onto the same list.
 	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDenyProp.Local())
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----

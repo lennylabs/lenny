@@ -103,6 +103,9 @@ type Router struct {
 	auditLog           AuditLog
 	tokenRevoker       IssuedTokenRevoker
 	revocationCache    RevocationCache
+	userPods           UserPodTerminator
+	userLeases         UserLeaseRevoker
+	userTokens         UserTokenRevoker
 	erasureRunner      ErasureRunner
 	erasureJobs        erasurejob.Store
 	sessions           sessionstore.Store

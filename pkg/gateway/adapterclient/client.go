@@ -327,3 +327,28 @@ func (c *Client) Shutdown(ctx context.Context, sessionID string) (bool, error) {
 	}
 	return resp.GetExitedCleanly(), nil
 }
+
+// Terminate is the §4.7 `Terminate` RPC: it asks the pod's adapter to
+// shut the runtime down gracefully, carrying the reason for the
+// termination and a deadline for the graceful phase. The adapter sends
+// SIGTERM to the agent, waits up to the deadline, then sends SIGKILL.
+// reason is an opaque cause string surfaced to the adapter — the §11.4
+// full_revoke fan-out passes `USER_REVOKED`. A zero deadline lets the
+// adapter apply its default grace period. The returned bool reports
+// whether the runtime exited cleanly.
+//
+// The §4.7 RPC table names this RPC `Terminate`; the wire contract in
+// schemas/lenny-adapter.proto carries it as the `Shutdown` RPC, whose
+// ShutdownRequest carries the reason and deadline fields the plain
+// Shutdown helper above leaves unset.
+func (c *Client) Terminate(ctx context.Context, sessionID, reason string, deadline time.Duration) (bool, error) {
+	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:  &adapterv1.SessionId{Value: sessionID},
+		Reason:     reason,
+		DeadlineMs: int32(deadline.Milliseconds()),
+	})
+	if err != nil {
+		return false, err
+	}
+	return resp.GetExitedCleanly(), nil
+}

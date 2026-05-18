@@ -145,6 +145,45 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 	})
 }
 
+// RevokeBySubject marks every not-yet-revoked token issued for
+// (tenantID, subject) as revoked with the given reason and instant, and
+// returns the JTIs it revoked. It backs the §11.4 full_revoke
+// cached-auth invalidation step: the caller pushes the returned JTIs
+// into the in-memory revocation cache so the user's issued tokens are
+// rejected on the next request without waiting for a rehydration. An
+// already-revoked token is left untouched and its JTI is not returned,
+// so the operation is idempotent across repeated full_revoke calls. A
+// user with no issued tokens yields an empty slice and no error.
+func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var revoked []string
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
+			 WHERE tenant_id = $1 AND sub = $2 AND revoked_at IS NULL
+			 RETURNING jti`,
+			tenantID, subject, at, pgtenant.NullString(reason))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var jti string
+			if err := rows.Scan(&jti); err != nil {
+				return err
+			}
+			revoked = append(revoked, jti)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return revoked, nil
+}
+
 // ListRevoked returns every revoked token for the tenant, supporting
 // the §12.2 revocation-cache rehydration path. The result is ordered
 // by revocation instant.

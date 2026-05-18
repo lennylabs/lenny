@@ -189,4 +189,33 @@ func TestCredLeaseStoreContract(t *testing.T) {
 			t.Error("GetByID resolved an unknown lease id")
 		}
 	})
+
+	t.Run("leases by session returns every lease for the given sessions", func(t *testing.T) {
+		// credleaseProxy stamps SessionID as "s_" + leaseID.
+		a := credleaseProxy("cl-"+newUUID(t), "lt-"+newUUID(t))
+		b := credleaseProxy("cl-"+newUUID(t), "lt-"+newUUID(t))
+		other := credleaseProxy("cl-"+newUUID(t), "lt-"+newUUID(t))
+		for _, l := range []credential.Lease{a, b, other} {
+			if err := store.Put(l); err != nil {
+				t.Fatalf("Put %s: %v", l.LeaseID, err)
+			}
+		}
+		got := store.LeasesBySession([]string{a.SessionID, b.SessionID})
+		ids := map[string]bool{}
+		for _, l := range got {
+			ids[l.LeaseID] = true
+		}
+		if !ids[a.LeaseID] || !ids[b.LeaseID] {
+			t.Errorf("LeasesBySession missed a requested lease: got %v", ids)
+		}
+		if ids[other.LeaseID] {
+			t.Error("LeasesBySession returned a lease for an unrequested session")
+		}
+		if n := len(store.LeasesBySession(nil)); n != 0 {
+			t.Errorf("LeasesBySession(nil) returned %d leases, want 0", n)
+		}
+		if n := len(store.LeasesBySession([]string{"s_absent-" + newUUID(t)})); n != 0 {
+			t.Errorf("LeasesBySession for an unknown session returned %d, want 0", n)
+		}
+	})
 }

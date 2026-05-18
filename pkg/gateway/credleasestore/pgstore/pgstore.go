@@ -104,6 +104,37 @@ func (s *Store) Len() int {
 	return n
 }
 
+// LeasesBySession returns every lease the store holds whose SessionID
+// is one of sessionIDs, the Postgres-backed counterpart of the
+// in-memory store's method. It backs the §11.4 full_revoke
+// credential-lease revocation step. The lease is stored as a JSONB
+// document; the query matches on the document's SessionID field, which
+// the credential.Lease struct serialises verbatim. An empty sessionIDs
+// set yields no leases, and a row whose JSONB does not decode is
+// skipped.
+func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	rows, err := s.pool.Query(context.Background(),
+		`SELECT lease FROM credential_leases WHERE lease->>'SessionID' = ANY($1)`,
+		sessionIDs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []credential.Lease
+	for rows.Next() {
+		if lease, ok := scanLease(rows); ok {
+			out = append(out, lease)
+		}
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return out
+}
+
 // scanLease decodes the lease JSONB column into a credential.Lease. A
 // missing row yields the zero Lease and ok = false, matching the
 // in-memory store's lookup miss.
