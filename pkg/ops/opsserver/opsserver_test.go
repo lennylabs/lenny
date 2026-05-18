@@ -16,7 +16,7 @@ import (
 
 func TestHealthzReportsOK(t *testing.T) {
 	rec := httptest.NewRecorder()
-	opsserver.New(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -32,7 +32,7 @@ func TestHealthzReportsOK(t *testing.T) {
 
 func TestReadyzReportsReady(t *testing.T) {
 	rec := httptest.NewRecorder()
-	opsserver.New(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -58,7 +58,7 @@ func TestReadyzReportsDependencyHealth(t *testing.T) {
 		"redis":    func(context.Context) error { return errors.New("connection refused") },
 	}
 	rec := httptest.NewRecorder()
-	opsserver.New(probes).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	// §25: lenny-ops degrades gracefully — it stays ready (200) while a
 	// dependency is down and reports the per-dependency status.
@@ -87,7 +87,7 @@ func TestConnectivityReportsDependencyHealth(t *testing.T) {
 		"minio":    func(context.Context) error { return errors.New("dial timeout") },
 	}
 	rec := httptest.NewRecorder()
-	opsserver.New(probes).ServeHTTP(rec,
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
 		httptest.NewRequest(http.MethodGet, "/v1/admin/diagnostics/connectivity", nil))
 
 	if rec.Code != http.StatusOK {
@@ -119,7 +119,7 @@ func TestConnectivityHealthyWithAllProbesPassing(t *testing.T) {
 		"postgres": func(context.Context) error { return nil },
 	}
 	rec := httptest.NewRecorder()
-	opsserver.New(probes).ServeHTTP(rec,
+	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
 		httptest.NewRequest(http.MethodGet, "/v1/admin/diagnostics/connectivity", nil))
 
 	var body struct {
@@ -133,7 +133,7 @@ func TestConnectivityHealthyWithAllProbesPassing(t *testing.T) {
 
 func TestUnknownPathIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
-	opsserver.New(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/ops/nonexistent", nil))
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/ops/nonexistent", nil))
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for an unregistered path", rec.Code)
@@ -142,7 +142,7 @@ func TestUnknownPathIs404(t *testing.T) {
 
 func TestHealthzRejectsNonGET(t *testing.T) {
 	rec := httptest.NewRecorder()
-	opsserver.New(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/healthz", nil))
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/healthz", nil))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405 for POST /healthz", rec.Code)

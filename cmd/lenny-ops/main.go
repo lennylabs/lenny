@@ -30,12 +30,13 @@ func main() {
 	addr := flag.String("addr", ":8080", "address the lenny-ops HTTP server binds to")
 	flag.Parse()
 
-	// The §25 dependency probes (Postgres, Redis, MinIO, the Kubernetes
-	// API, the gateway) are registered once their clients are wired;
-	// until then the readiness report carries no dependency entries.
+	// The §25 dependency probes and the §25.7 runbook index source are
+	// registered once their backing clients are wired; until then the
+	// readiness report carries no dependency entries and the runbook
+	// endpoint reports the index unavailable.
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           opsserver.New(nil),
+		Handler:           opsserver.New(opsserver.Options{}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

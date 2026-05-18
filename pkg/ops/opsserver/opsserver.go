@@ -26,21 +26,31 @@ const probeTimeout = 2 * time.Second
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux    *http.ServeMux
-	probes map[string]probe.Func
+	mux      *http.ServeMux
+	probes   map[string]probe.Func
+	runbooks RunbookSource
 }
 
-// New returns a Server with the liveness probe, readiness probe, and
-// §25.6 connectivity diagnostic registered. probes are the §25
-// dependency checks (Postgres, Redis, MinIO, the Kubernetes API, the
-// gateway) the readiness and connectivity endpoints run; a nil or
-// empty map leaves the dependency report empty. Operability endpoints
-// are added as they are built.
-func New(probes map[string]probe.Func) *Server {
-	s := &Server{mux: http.NewServeMux(), probes: probes}
+// Options configures a lenny-ops Server.
+type Options struct {
+	// Probes are the §25 dependency checks (Postgres, Redis, MinIO, the
+	// Kubernetes API, the gateway) the readiness and connectivity
+	// endpoints run. A nil map leaves the dependency report empty.
+	Probes map[string]probe.Func
+	// Runbooks is the §25.7 runbook index source. A nil source leaves
+	// the runbook endpoint reporting the index unavailable.
+	Runbooks RunbookSource
+}
+
+// New returns a Server with the liveness probe, readiness probe, the
+// §25.6 connectivity diagnostic, and the §25.7 runbook index
+// registered. Operability endpoints are added as they are built.
+func New(opts Options) *Server {
+	s := &Server{mux: http.NewServeMux(), probes: opts.Probes, runbooks: opts.Runbooks}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
+	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	return s
 }
 
