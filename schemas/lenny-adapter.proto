@@ -443,6 +443,13 @@ message InterruptRequest {
 
 message InterruptResponse {
   bool acknowledged = 1;
+  Status status = 2;
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_ACKNOWLEDGED = 1;     // runtime reached a safe stop point
+    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)
+    STATUS_BUSY = 3;             // operation lock rejected the interrupt (§4.7)
+  }
 }
 
 message CheckpointRequest {

@@ -84,6 +84,9 @@ type Server struct {
 	// Basic-level, with no lifecycle channel.
 	Lifecycle *LifecycleChannel
 
+	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
+	ops opLock
+
 	// mu guards sessionID, mcpCancel, and the credential fields.
 	mu sync.Mutex
 	// sessionID is the session currently assigned to the pod, empty

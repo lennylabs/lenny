@@ -5,6 +5,8 @@ package adapter
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,14 @@ import (
 	"net"
 	"sync"
 )
+
+// newLifecycleID returns a short random identifier for correlating a
+// lifecycle request with its acknowledgement.
+func newLifecycleID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // lifecycleProtocolVersion is the §4.7 lifecycle-channel protocol
 // version the adapter advertises in the lifecycle_capabilities frame.
