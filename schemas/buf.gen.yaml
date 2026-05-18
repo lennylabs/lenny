@@ -1,20 +1,25 @@
 version: v2
 
-# Generates the Go bindings for the gateway <-> adapter gRPC contract.
-# The locally-installed protoc-gen-go / protoc-gen-go-grpc plugins
-# (installed by scripts/setup-dev.sh) are used so codegen needs no
-# Buf Schema Registry network access. `make generate-proto` runs this
-# and prepends the SPDX header the generated files would otherwise lack.
-# The single proto declares go_package .../pkg/proto/adapter/v1, so the
-# output directory is pinned to match that import path.
+# Generates the Go bindings for the gateway's gRPC contracts. The
+# locally-installed protoc-gen-go / protoc-gen-go-grpc plugins (installed
+# by scripts/setup-dev.sh) are used so codegen needs no Buf Schema
+# Registry network access. `make generate-proto` runs this and prepends
+# the SPDX header the generated files would otherwise lack.
+#
+# Each proto declares its own go_package (lenny-adapter.proto →
+# .../pkg/proto/adapter/v1, lenny-interceptor.proto →
+# .../pkg/proto/interceptor/v1). The output root is pinned to
+# ../pkg/proto and the generated file is placed under the directory the
+# go_package import path names, so adding a proto needs no buf.gen.yaml
+# change.
 
 plugins:
   - local: protoc-gen-go
-    out: ../pkg/proto/adapter/v1
+    out: ../pkg/proto
     opt:
-      - paths=source_relative
+      - module=github.com/lennylabs/lenny/pkg/proto
   - local: protoc-gen-go-grpc
-    out: ../pkg/proto/adapter/v1
+    out: ../pkg/proto
     opt:
-      - paths=source_relative
+      - module=github.com/lennylabs/lenny/pkg/proto
       - require_unimplemented_servers=false

@@ -12,6 +12,7 @@ modules:
       except:
         - FILE_LOWER_SNAKE_CASE
         - PACKAGE_DIRECTORY_MATCH
+        - DIRECTORY_SAME_PACKAGE
         - SERVICE_SUFFIX
       enum_zero_value_suffix: _UNSPECIFIED
       rpc_allow_google_protobuf_empty_requests: false

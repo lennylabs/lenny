@@ -50,7 +50,7 @@ generate: ## Regenerate DeepCopy + CRD manifests via controller-gen
 generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
 	@echo "  buf generate → pkg/proto"
 	@cd schemas && PATH="$(GOPATH_BIN):$$PATH" buf generate
-	@for f in pkg/proto/adapter/v1/*.go; do \
+	@find pkg/proto -name '*.go' | while read -r f; do \
 		head -1 "$$f" | grep -q SPDX-License-Identifier || \
 		{ printf '// SPDX-License-Identifier: MIT\n\n' | cat - "$$f" > "$$f.tmp" && mv "$$f.tmp" "$$f"; }; \
 	done

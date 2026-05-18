@@ -5,6 +5,7 @@ Wire-contract artifacts. Spec-first: each file is the authoritative shape of the
 | File | Surface | Spec section |
 |:-----|:--------|:-------------|
 | `lenny-adapter.proto` | Gateway ↔ pod gRPC control protocol | [§15.3](../spec/15_external-api-surface.md), [§15.4](../spec/15_external-api-surface.md) |
+| `lenny-interceptor.proto` | Gateway ↔ external interceptor gRPC SPI | [§4.8](../spec/04_system-components.md), [§8.7](../spec/08_recursive-delegation.md) |
 | `lenny-adapter-jsonl.schema.json` | Adapter sidecar ↔ agent binary stdin/stdout JSONL | [§15.4](../spec/15_external-api-surface.md) |
 | `outputpart.schema.json` | OutputPart shape used in sessions, tasks, and audit | [§15.4](../spec/15_external-api-surface.md) |
 | `workspaceplan-v1.json` | WorkspacePlan used at session creation | [§14](../spec/14_workspace-plan-schema.md) |
@@ -27,7 +28,7 @@ buf lint                                # proto only
 
 `outputpart.schema.json` and `lenny-adapter-jsonl.schema.json` carry a `schemaVersion` field internally. Forward-compatibility rules: see [`spec/14_workspace-plan-schema.md`](../spec/14_workspace-plan-schema.md) §14.1.
 
-The proto file uses the buf-canonical `lenny.adapter.v1` package suffix. Breaking changes require a `v2` package suffix and `buf breaking` flags the diff.
+Each proto file uses a buf-canonical `v1` package suffix (`lenny.adapter.v1`, `lenny.interceptor.v1`). Breaking changes require a `v2` package suffix and `buf breaking` flags the diff.
 
 ## Examples
 
