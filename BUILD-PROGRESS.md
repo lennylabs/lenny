@@ -11,6 +11,15 @@ not an append-only log.
 
 **Current wave:** Wave 0 — Restore the verification gate.
 
+This line is the authoritative execution pointer. The build proceeds wave by wave in
+the order defined in [`BUILD-PLAN.md`](BUILD-PLAN.md), and this line advances only when
+a wave's exit gate reports PASS. The phase-status table below is a separate axis. It
+records how much of each §18 phase's code exists. Earlier sessions built deliverables
+out of §18 order, so most phases read "Partial" or "Mostly done" regardless of which
+wave is current. A later-phase row reading "Partial" does not mean that phase's wave
+has started. Recover position from this line. The table and the latest commit do not
+define the wave pointer.
+
 ## Phase status
 
 | Phase | Title                                                        | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |

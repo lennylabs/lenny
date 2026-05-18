@@ -32,6 +32,15 @@ pass before the next wave starts. A wave that "closes" a phase finishes that pha
 deferred deliverables and runs its §18 exit gate. The §18 phase sequence remains the
 authoritative deliverable list; the waves only regroup the remaining work.
 
+Waves execute in strict order. Wave N begins only after Wave N-1's exit gate reports
+PASS. Earlier build sessions wrote deliverables out of §18 order, so packages,
+endpoints, controllers, and binaries that belong to later phases already exist in
+partial form. Pre-existing out-of-order work does not advance the wave pointer and is
+not a reason to skip a wave or to resume from a later one. Each wave audits, completes,
+tests, and gates its own phases regardless of how much of their code was written in
+advance. The `Current wave` line in `BUILD-PROGRESS.md` is the authoritative resume
+point, and execution continues from that wave.
+
 ## Completion principles
 
 1. **The harness is the definition of done.** A phase is complete when `lenny-test`
@@ -96,8 +105,12 @@ a multi-day run.
 
 **Operating loop.** Repeat until the Definition of complete is met.
 
-1. Re-read `BUILD-PROGRESS.md` (the current wave, the phase-status table, the blocker
-   log) and the current wave in this file. Identify the next unfinished deliverable.
+1. Re-read `BUILD-PROGRESS.md` (the `Current wave` line, the phase-status table, the
+   blocker log) and the current wave's section in this file. The `Current wave` line is
+   authoritative for where execution resumes. Identify the next unfinished deliverable
+   within that wave. Do not resume from a later wave because its code was partially
+   built in an earlier session; the phase-status table records the code that exists,
+   and the `Current wave` line records the wave pointer.
 2. Read the spec sections that deliverable implements and the test that gates it.
 3. Implement it directly when small, or delegate it to a fully briefed sub-agent. Run
    sub-agents in parallel only for deliverables in separate packages.
@@ -118,7 +131,9 @@ independent deliverable. A blocked item never stops the run.
 - **State lives in the repo.** A multi-day run compacts its working context many times.
   The durable state is the git history, the `BUILD-PROGRESS.md` phase-status table, and
   its blocker log. Re-read this file and `BUILD-PROGRESS.md` at each session boundary to
-  recover position before continuing.
+  recover position before continuing. Position is the `Current wave` line plus that
+  wave's unfinished deliverables. The phase of the most recent commit does not define
+  position, because deliverables were built out of wave order.
 
 ## Open spec item
 
