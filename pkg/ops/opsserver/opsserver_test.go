@@ -148,3 +148,87 @@ func TestHealthzRejectsNonGET(t *testing.T) {
 		t.Errorf("status = %d, want 405 for POST /healthz", rec.Code)
 	}
 }
+
+// fakeSelfHealth is a test SelfHealthReporter returning a fixed report.
+type fakeSelfHealth struct{ body map[string]any }
+
+func (f fakeSelfHealth) SelfHealth() map[string]any { return f.body }
+
+// fakeLeader is a test LeaderReporter.
+type fakeLeader struct {
+	leader  bool
+	running bool
+	loops   []string
+}
+
+func (f fakeLeader) IsLeader() bool           { return f.leader }
+func (f fakeLeader) LoopNames() []string      { return f.loops }
+func (f fakeLeader) LeaderLoopsRunning() bool { return f.running }
+
+func TestOpsHealthUnavailableWithoutReporter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/v1/admin/ops/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["status"] != "unknown" {
+		t.Errorf("status = %v, want unknown when no self-health reporter is configured", body["status"])
+	}
+}
+
+func TestOpsHealthServesSelfHealthReport(t *testing.T) {
+	report := map[string]any{
+		"status": "degraded",
+		"checks": []map[string]any{{"name": "postgres_pool", "status": "degraded"}},
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{SelfHealth: fakeSelfHealth{body: report}}).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/v1/admin/ops/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["status"] != "degraded" {
+		t.Errorf("status = %v, want degraded", body["status"])
+	}
+}
+
+func TestReadyzReportsLeaderState(t *testing.T) {
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{Leader: fakeLeader{
+		leader: true, running: true, loops: []string{"cron-evaluator", "webhook-delivery"},
+	}}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Leader             bool     `json:"leader"`
+		LeaderLoopsRunning bool     `json:"leaderLoopsRunning"`
+		Loops              []string `json:"loops"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Leader || !body.LeaderLoopsRunning {
+		t.Errorf("leader=%v running=%v, want both true", body.Leader, body.LeaderLoopsRunning)
+	}
+	if len(body.Loops) != 2 {
+		t.Errorf("loops = %v, want the 2 configured loops", body.Loops)
+	}
+}
+
+func TestReadyzOmitsLeaderStateWithoutReporter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if _, present := body["leader"]; present {
+		t.Error("readyz reported a leader field with no LeaderReporter configured")
+	}
+}

@@ -3,12 +3,70 @@
 package opsserver
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/runbooks"
 )
+
+// DirRunbookSource is the §25.7 runbook index backed by a directory of
+// runbook markdown files (docs/runbooks/ in the repository). Each
+// `.md` file is one runbook; its name is the filename without the
+// extension. The index is read once at construction so serving a
+// request does no filesystem I/O.
+type DirRunbookSource struct {
+	books []Runbook
+	md    map[string][]byte
+}
+
+// LoadRunbookDir reads every `.md` file under dir, parses its §25.7
+// front matter, and returns a DirRunbookSource over the result. A file
+// whose front matter does not parse is skipped with a logged-style
+// error rather than failing the whole index; a runbook without front
+// matter is indexed with an empty FrontMatter so it is still
+// retrievable by name. It returns an error only when dir cannot be
+// read at all.
+func LoadRunbookDir(dir string) (*DirRunbookSource, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read runbook directory %s: %w", dir, err)
+	}
+	src := &DirRunbookSource{md: make(map[string][]byte)}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".md")
+		fm, err := runbooks.Parse(raw)
+		if err != nil {
+			// A runbook without parseable front matter is still served
+			// by name; it just carries no discovery metadata.
+			fm = runbooks.FrontMatter{}
+		}
+		src.books = append(src.books, Runbook{Name: name, FrontMatter: fm})
+		src.md[name] = raw
+	}
+	sort.Slice(src.books, func(i, j int) bool { return src.books[i].Name < src.books[j].Name })
+	return src, nil
+}
+
+// Runbooks returns every indexed runbook.
+func (d *DirRunbookSource) Runbooks() []Runbook { return d.books }
+
+// Markdown returns the raw markdown of the named runbook.
+func (d *DirRunbookSource) Markdown(name string) ([]byte, bool) {
+	md, ok := d.md[name]
+	return md, ok
+}
 
 // Runbook is one entry of the §25.7 runbook index: a runbook's name
 // and its parsed front matter.

@@ -7,9 +7,23 @@
 // installation; it is reachable only from outside the cluster via an
 // Ingress, never from internal cluster workloads.
 //
+// lenny-ops runs as a Deployment with one or more replicas. The §25.4
+// service body has two parts: the HTTP surface (pkg/ops/opsserver),
+// which every replica serves, and the leader-elected background loops
+// (pkg/ops/opsservice) — the cron evaluator, the webhook delivery
+// worker, the scheduled-backup runner, and the reconciliation
+// goroutines — which only the replica holding the lenny-ops-leader
+// Lease runs. Every replica also runs its own §25.4 self-monitor.
+//
 // Usage:
 //
-//	lenny-ops --addr :8080
+//	lenny-ops --addr :8090 --leader-election-namespace lenny-system \
+//	  --postgres-dsn $LENNY_POSTGRES_DSN --redis-url $LENNY_REDIS_URL
+//
+// The cluster connection is resolved from the in-cluster service
+// account when running as a pod, or from KUBECONFIG otherwise. When no
+// cluster connection is available the binary still serves the HTTP
+// surface in degraded mode and skips leader election.
 package main
 
 import (
@@ -20,37 +34,236 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
+
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "address the lenny-ops HTTP server binds to")
+	addr := flag.String("addr", ":8090", "address the lenny-ops HTTP server binds to")
+	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
+		"Postgres connection string. When set, lenny-ops uses it for audit, backup, "+
+			"and upgrade state; when empty those features degrade. Override via LENNY_POSTGRES_DSN.")
+	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
+		"Redis connection URL for the §25.5 operational event stream. When empty the "+
+			"event stream falls back to the gateway buffer. Override via LENNY_REDIS_URL.")
+	gatewayURL := flag.String("gateway-url", os.Getenv("LENNY_GATEWAY_URL"),
+		"§25.4 gateway admin API base URL (the internal ClusterIP Service). Used for the "+
+			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
+	leaderElectNS := flag.String("leader-election-namespace", envOr("LENNY_LEADER_ELECTION_NAMESPACE", "lenny-system"),
+		"namespace that holds the §25.4 lenny-ops-leader Lease")
+	runbookDir := flag.String("runbook-dir", envOr("LENNY_RUNBOOK_DIR", "docs/runbooks"),
+		"directory of §25.7 operational-runbook markdown files the runbook index serves")
+	selfHealthInterval := flag.Duration("self-health-interval", 10*time.Second,
+		"§25.4 ops.selfHealth.checkIntervalSeconds — how often the self-monitor runs")
+	memoryLimitBytes := flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
+		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
+			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
+	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
-	// The §25 dependency probes and the §25.7 runbook index source are
-	// registered once their backing clients are wired; until then the
-	// readiness report carries no dependency entries and the runbook
-	// endpoint reports the index unavailable.
+	// Replica identity: the pod name (the Helm chart sets POD_NAME from
+	// the downward API), falling back to the hostname.
+	replicaID := envOr("POD_NAME", "")
+	if replicaID == "" {
+		replicaID, _ = os.Hostname()
+	}
+	if replicaID == "" {
+		replicaID = "lenny-ops"
+	}
+
+	// Root context cancelled on SIGTERM/SIGINT; it bounds the background
+	// loops and the leader-election goroutine.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	// Postgres: optional. §25.4 has lenny-ops degrade gracefully when
+	// Postgres is unavailable, so a missing DSN is not fatal.
+	var pgPool *pgxpool.Pool
+	if *postgresDSN != "" {
+		pool, err := pgxpool.New(ctx, *postgresDSN)
+		if err != nil {
+			log.Fatalf("lenny-ops: postgres: %v", err)
+		}
+		defer pool.Close()
+		pgPool = pool
+	}
+
+	// Redis: optional. The §25.5 event stream falls back to the gateway
+	// buffer when Redis is absent.
+	var redisClient redis.UniversalClient
+	if *redisURL != "" {
+		opts, err := redis.ParseURL(*redisURL)
+		if err != nil {
+			log.Fatalf("lenny-ops: redis URL: %v", err)
+		}
+		client := redis.NewClient(opts)
+		defer func() { _ = client.Close() }()
+		redisClient = client
+	}
+
+	// Kubernetes API: the §25.4 required dependency for diagnostics,
+	// upgrade orchestration, backup Jobs, and leader election. When no
+	// cluster connection is available lenny-ops still serves the HTTP
+	// surface (the K8s probe reports unreachable) and skips leader
+	// election — a single-process degraded mode for local development.
+	var clientset *kubernetes.Clientset
+	if cfg, err := ctrlconfig.GetConfig(); err != nil {
+		log.Printf("lenny-ops: no Kubernetes config (%v); running without leader election", err)
+	} else if cs, err := kubernetes.NewForConfig(cfg); err != nil {
+		log.Printf("lenny-ops: build Kubernetes clientset: %v; running without leader election", err)
+	} else {
+		clientset = cs
+	}
+
+	// The §25.4 dependency probes feed the readiness signal and the
+	// §25.6 connectivity diagnostic.
+	gatewayHTTP := &http.Client{Timeout: 5 * time.Second}
+	probes := map[string]probe.Func{
+		opsservice.ProbePostgres: opsservice.PostgresProbe(pgPool),
+		opsservice.ProbeRedis:    opsservice.RedisProbe(redisClient),
+	}
+	if clientset != nil {
+		probes[opsservice.ProbeK8sAPI] = opsservice.K8sAPIProbe(clientset.Discovery())
+	}
+	if *gatewayURL != "" {
+		probes[opsservice.ProbeGateway] = opsservice.GatewayProbe(gatewayHTTP, *gatewayURL+"/healthz")
+	}
+
+	// The §25.7 runbook index, read from docs/runbooks/.
+	var runbookSource opsserver.RunbookSource
+	if src, err := opsserver.LoadRunbookDir(*runbookDir); err != nil {
+		log.Printf("lenny-ops: runbook index unavailable: %v", err)
+	} else {
+		runbookSource = src
+		log.Printf("lenny-ops: indexed %d runbooks from %s", len(src.Runbooks()), *runbookDir)
+	}
+
+	// The §25.4 leader elector. Without a clientset, a noop elector
+	// keeps lenny-ops a follower so the leader-only loops never start.
+	var elector opsservice.Elector = noopElector{}
+	if clientset != nil {
+		le, err := opsservice.NewLeaseElector(*leaderElectNS, replicaID,
+			clientset.CoreV1(), clientset.CoordinationV1())
+		if err != nil {
+			log.Fatalf("lenny-ops: build leader elector: %v", err)
+		}
+		elector = le
+	}
+
+	// The §25.5 webhook delivery worker. Its event and subscription
+	// sources are wired from Redis and Postgres as those subsystems are
+	// built; until then it runs against empty sources and delivers
+	// nothing, which is the correct cold-start behavior.
+	webhook := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
+		Events:        emptyEventSource{},
+		Subscriptions: emptySubscriptionSource{},
+		HTTPTimeout:   10 * time.Second,
+	})
+
+	// The §25.4 self-health checks every replica runs.
+	var disc discovery.DiscoveryInterface
+	if clientset != nil {
+		disc = clientset.Discovery()
+	}
+	selfChecks := map[string]opsservice.SelfCheck{
+		opsservice.CheckPostgresPool:   opsservice.PostgresPoolCheck(pgPool),
+		opsservice.CheckRedisLag:       opsservice.RedisLagCheck(redisClient, nil),
+		opsservice.CheckWebhookBacklog: opsservice.WebhookBacklogCheck(webhook.Backlog),
+		opsservice.CheckK8sAPI:         opsservice.K8sAPICheck(disc),
+		opsservice.CheckMemoryPressure: opsservice.MemoryPressureCheck(*memoryLimitBytes),
+	}
+
+	// The §25.4 service body: leader election plus the background loops.
+	// CronJobs and Reconcilers are wired as the backup, upgrade, and
+	// escalation subsystems are built; the loop machinery and the
+	// self-monitor run regardless.
+	svc, err := opsservice.New(opsservice.Config{
+		ReplicaID:          replicaID,
+		Elector:            elector,
+		Webhook:            webhook,
+		SelfHealthChecks:   selfChecks,
+		SelfHealthInterval: *selfHealthInterval,
+		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {
+			// §25.4: emit ops_health_status_changed. Event emission is
+			// wired with the §25.5 event stream; until then the
+			// transition is logged so operators see it.
+			log.Printf("lenny-ops: self-health %s -> %s (replica %s)",
+				prev.StatusText, next.StatusText, replicaID)
+		},
+	})
+	if err != nil {
+		log.Fatalf("lenny-ops: build service: %v", err)
+	}
+
+	// The §25.4 HTTP surface. Every replica serves it, leader or not.
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           opsserver.New(opsserver.Options{}),
+		Addr: *addr,
+		Handler: opsserver.New(opsserver.Options{
+			Probes:     probes,
+			Runbooks:   runbookSource,
+			SelfHealth: svc.Monitor(),
+			Leader:     svc,
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// The background loops run on their own goroutine; the leader-only
+	// loops start when this replica wins the lease.
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-		<-stop
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
+		defer wg.Done()
+		svc.Run(ctx)
 	}()
 
-	log.Printf("lenny-ops: serving the operability API on %s", *addr)
+	// On shutdown signal, stop the HTTP server within the grace window.
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+
+	log.Printf("lenny-ops: replica %s serving the operability API on %s (loops: %v)",
+		replicaID, *addr, svc.LoopNames())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("lenny-ops: serve: %v", err)
 	}
+
+	// The HTTP server has stopped; wait for the background loops to
+	// drain (StopLeaderLoops blocks until the singleton loops return).
+	stop()
+	wg.Wait()
+	log.Printf("lenny-ops: replica %s stopped", replicaID)
+}
+
+// envOr returns the environment variable name when set, else fallback.
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// envInt64 parses the named environment variable as an int64, falling
+// back when it is unset or malformed.
+func envInt64(name string, fallback int64) int64 {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return fallback
 }

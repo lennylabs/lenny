@@ -23,12 +23,37 @@ import (
 // probeTimeout bounds each §25 dependency probe (§25.6: 2s timeouts).
 const probeTimeout = 2 * time.Second
 
+// SelfHealthReporter yields the §25.4 lenny-ops self-health report the
+// GET /v1/admin/ops/health endpoint serves. pkg/ops/opsservice's
+// SelfHealthMonitor satisfies it.
+type SelfHealthReporter interface {
+	// SelfHealth returns the current self-health report as a JSON object.
+	SelfHealth() map[string]any
+}
+
+// LeaderReporter reports this replica's §25.4 leader-election state and
+// the background loops it owns. pkg/ops/opsservice's Service satisfies
+// it. The readiness endpoint surfaces this so an operator querying any
+// replica can see which one is the leader.
+type LeaderReporter interface {
+	// IsLeader reports whether this replica holds the lenny-ops-leader
+	// Lease.
+	IsLeader() bool
+	// LoopNames returns the names of the background loops.
+	LoopNames() []string
+	// LeaderLoopsRunning reports whether the leader-only loops are
+	// active on this replica.
+	LeaderLoopsRunning() bool
+}
+
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux      *http.ServeMux
-	probes   map[string]probe.Func
-	runbooks RunbookSource
+	mux        *http.ServeMux
+	probes     map[string]probe.Func
+	runbooks   RunbookSource
+	selfHealth SelfHealthReporter
+	leader     LeaderReporter
 }
 
 // Options configures a lenny-ops Server.
@@ -40,18 +65,33 @@ type Options struct {
 	// Runbooks is the §25.7 runbook index source. A nil source leaves
 	// the runbook endpoint reporting the index unavailable.
 	Runbooks RunbookSource
+	// SelfHealth is the §25.4 self-health report source for GET
+	// /v1/admin/ops/health. A nil source reports the self-health report
+	// unavailable.
+	SelfHealth SelfHealthReporter
+	// Leader is the §25.4 leader-election state source. A nil source
+	// omits the leader-election fields from the readiness report.
+	Leader LeaderReporter
 }
 
 // New returns a Server with the liveness probe, readiness probe, the
-// §25.6 connectivity diagnostic, and the §25.7 runbook index
-// registered. Operability endpoints are added as they are built.
+// §25.6 connectivity diagnostic, the §25.7 runbook index, and the
+// §25.4 self-health endpoint registered. Operability endpoints are
+// added as they are built.
 func New(opts Options) *Server {
-	s := &Server{mux: http.NewServeMux(), probes: opts.Probes, runbooks: opts.Runbooks}
+	s := &Server{
+		mux:        http.NewServeMux(),
+		probes:     opts.Probes,
+		runbooks:   opts.Runbooks,
+		selfHealth: opts.SelfHealth,
+		leader:     opts.Leader,
+	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
+	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
 	return s
 }
 
@@ -76,10 +116,33 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // down.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"status":       "ready",
 		"dependencies": dependencyReport(results),
-	})
+	}
+	// §25.4: an operator querying any replica sees which one holds the
+	// lenny-ops-leader Lease and runs the singleton background loops.
+	if s.leader != nil {
+		body["leader"] = s.leader.IsLeader()
+		body["leaderLoopsRunning"] = s.leader.LeaderLoopsRunning()
+		body["loops"] = s.leader.LoopNames()
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleOpsHealth serves the §25.4 GET /v1/admin/ops/health endpoint:
+// the structured lenny-ops self-health report (Postgres pool, Redis
+// consumer lag, webhook backlog, K8s API connectivity, memory
+// pressure) the watchdog polls as a complement to the event stream.
+func (s *Server) handleOpsHealth(w http.ResponseWriter, _ *http.Request) {
+	if s.selfHealth == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "unknown",
+			"detail": "self-health monitoring is not configured",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.selfHealth.SelfHealth())
 }
 
 // handleConnectivity serves the §25.6 GET /v1/admin/diagnostics/-
