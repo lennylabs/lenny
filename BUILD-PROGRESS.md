@@ -11,6 +11,10 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `69b8374` — §25.7 runbook steps endpoint. `GET /v1/admin/runbooks/
+  {name}/steps` on lenny-ops returns the structured access-path steps
+  (via `ParseSteps`); an unknown name returns a §25.2 RUNBOOK_NOT_FOUND
+  envelope. `RunbookSource` gained a `Markdown` accessor.
 - `8f00086` — §25.7 runbook index endpoint. `GET /v1/admin/runbooks` on
   lenny-ops applies the Path A alert/component/tag/symptom filters and
   returns matching runbooks sorted by name (a `RunbookSource` interface
