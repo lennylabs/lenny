@@ -72,6 +72,23 @@ func (c *Client) StartSession(ctx context.Context, sessionID, runtimeName string
 	return err
 }
 
+// AssignCredentials pushes the session's per-provider §4.9 credential
+// leases to the pod's adapter ahead of StartSession (§4.7, the fourth
+// session-assignment RPC). leases is keyed by provider; the adapter
+// materializes them into the pod's credential file. The call replaces
+// any previously assigned set. A nil or empty map assigns no
+// credentials.
+//
+// The request carries credential material; per §4.7 item 6 the call
+// site must keep it out of access logs and telemetry.
+func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease) error {
+	_, err := c.rpc.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Leases:    leases,
+	})
+	return err
+}
+
 // prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
 const prepareWorkspaceChunkSize = 64 * 1024
 

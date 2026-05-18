@@ -306,6 +306,73 @@ func TestClientRunSetupFailingCommand(t *testing.T) {
 	}
 }
 
+func TestClientAssignCredentials(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	credDir := t.TempDir()
+	srv.CredentialsDir = credDir
+	cl := dialAdapter(t, srv)
+
+	err := cl.AssignCredentials(context.Background(), "sess-1",
+		map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": {
+				LeaseId:  "cl-1",
+				Provider: "anthropic_direct",
+				Payload: []byte(`{"deliveryMode":"proxy",` +
+					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-x"}}`),
+			},
+		})
+	if err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+
+	// The adapter materialized the lease into the runtime credential file.
+	data, err := os.ReadFile(filepath.Join(credDir, "credentials.json"))
+	if err != nil {
+		t.Fatalf("read credential file: %v", err)
+	}
+	var doc struct {
+		Providers []map[string]any `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode credential file: %v", err)
+	}
+	if len(doc.Providers) != 1 || doc.Providers[0]["leaseId"] != "cl-1" {
+		t.Errorf("credential file providers = %v, want one entry for lease cl-1", doc.Providers)
+	}
+}
+
+func TestClientAssignCredentialsEmptyMapIsAccepted(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.CredentialsDir = t.TempDir()
+	cl := dialAdapter(t, srv)
+
+	// A session that needs no upstream credentials assigns an empty set.
+	if err := cl.AssignCredentials(context.Background(), "sess-1", nil); err != nil {
+		t.Fatalf("AssignCredentials with no leases: %v", err)
+	}
+}
+
+func TestClientAssignCredentialsRejectsEmptySessionID(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.CredentialsDir = t.TempDir()
+	cl := dialAdapter(t, srv)
+
+	err := cl.AssignCredentials(context.Background(), "", nil)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("AssignCredentials with no session id = %v, want InvalidArgument", err)
+	}
+}
+
+func TestClientAssignCredentialsRejectsUnconfiguredAdapter(t *testing.T) {
+	srv := adapter.New("adapter-test-build") // no CredentialsDir
+	cl := dialAdapter(t, srv)
+
+	err := cl.AssignCredentials(context.Background(), "sess-1", nil)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("AssignCredentials on an adapter with no credentials dir = %v, want FailedPrecondition", err)
+	}
+}
+
 func TestSessionRoundTrip(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test-build")

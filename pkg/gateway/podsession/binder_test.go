@@ -5,6 +5,7 @@ package podsession_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -183,6 +184,33 @@ func newBinder(c client.Client, dial func(string) (*adapterclient.Client, error)
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      dial,
 	}
+}
+
+// fakeAssigner is a podsession.CredentialAssigner for the binder's §4.9
+// credential-assignment path. It returns a fixed proxy-mode lease per
+// pool and records every Assign call, or fails when err is set.
+type fakeAssigner struct {
+	// err, when non-nil, is returned by every AssignProto call.
+	err error
+	// calls records each (pool, session, spiffeURI) AssignProto served.
+	calls []assignerCall
+}
+
+type assignerCall struct {
+	pool, session, spiffe string
+}
+
+func (a *fakeAssigner) AssignProto(pool, session, spiffe string) (*adapterv1.CredentialLease, error) {
+	a.calls = append(a.calls, assignerCall{pool: pool, session: session, spiffe: spiffe})
+	if a.err != nil {
+		return nil, a.err
+	}
+	return &adapterv1.CredentialLease{
+		LeaseId:  "cl-" + pool,
+		Provider: pool,
+		Payload: []byte(`{"deliveryMode":"proxy",` +
+			`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-` + pool + `"}}`),
+	}, nil
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
@@ -729,5 +757,149 @@ func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 	})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Errorf("error = %v, want ErrNoIdlePod with no fallback configured", err)
+	}
+}
+
+// spec: §4.7 / §4.9 — the binder's session-assignment sequence runs
+// AssignCredentials before StartSession: when a BindRequest names
+// credential pools the binder mints a lease per pool and pushes the set
+// to the pod's adapter, which materializes the runtime credential file.
+
+// credEntries reads the runtime credential file the adapter materialized
+// into dir and indexes its entries by provider.
+func credEntries(t *testing.T, dir string) map[string]map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "credentials.json"))
+	if err != nil {
+		t.Fatalf("read credential file: %v", err)
+	}
+	var doc struct {
+		Providers []map[string]any `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode credential file: %v", err)
+	}
+	byProvider := map[string]map[string]any{}
+	for _, entry := range doc.Providers {
+		name, _ := entry["provider"].(string)
+		byProvider[name] = entry
+	}
+	return byProvider
+}
+
+func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
+	rt := &fakeRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	credDir := t.TempDir()
+	srv.CredentialsDir = credDir
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic_direct": "claude-direct-prod"},
+		PodSpiffeURI:    "spiffe://lenny.test/agent/claude-direct-prod/sbx-1",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	// The binder leased from the pool the request resolved for the
+	// anthropic_direct provider, stamping the session and the issuing
+	// pod's SPIFFE identity onto the request.
+	if len(assigner.calls) != 1 {
+		t.Fatalf("assigner served %d calls, want 1", len(assigner.calls))
+	}
+	got := assigner.calls[0]
+	if got.pool != "claude-direct-prod" || got.session != "sess-1" ||
+		got.spiffe != "spiffe://lenny.test/agent/claude-direct-prod/sbx-1" {
+		t.Errorf("assigner call = %+v, want claude-direct-prod / sess-1 / the pod SPIFFE URI", got)
+	}
+
+	// The adapter materialized the minted lease into the credential file,
+	// keyed by the provider the binder filed the lease under.
+	entry, ok := credEntries(t, credDir)["anthropic_direct"]
+	if !ok {
+		t.Fatalf("the credential file has no anthropic_direct entry after Bind: %v", credEntries(t, credDir))
+	}
+	if entry["leaseId"] != "cl-claude-direct-prod" {
+		t.Errorf("credential file leaseId = %v, want the minted cl-claude-direct-prod", entry["leaseId"])
+	}
+
+	// The runtime still started — credential assignment precedes it.
+	if rt.started != "sess-1" {
+		t.Errorf("runtime started for %q, want sess-1", rt.started)
+	}
+}
+
+func TestBindWithoutCredentialPoolsAssignsNothing(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.CredentialsDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	assigner := &fakeAssigner{}
+	binder.Credentials = assigner
+
+	// A BindRequest that names no credential pools: the binder assigns
+	// nothing even though a credential service is wired.
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer res.Adapter.Close()
+
+	if len(assigner.calls) != 0 {
+		t.Errorf("assigner served %d calls for a request with no pools, want 0", len(assigner.calls))
+	}
+}
+
+func TestBindWithoutCredentialServiceSkipsAssignment(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.CredentialsDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv)) // no Credentials wired
+
+	// Even with credential pools named, a binder with no credential
+	// service assigns nothing rather than failing.
+	res, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic_direct": "claude-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	res.Adapter.Close()
+}
+
+func TestBindFailsWhenCredentialAssignmentFails(t *testing.T) {
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceRoot = t.TempDir()
+	srv.CredentialsDir = t.TempDir()
+	srv.Runtime = &fakeRuntime{}
+
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	binder := newBinder(c, adapterDialer(t, srv))
+	binder.Credentials = &fakeAssigner{err: errors.New("pool exhausted")}
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		CredentialPools: map[string]string{"anthropic_direct": "claude-prod"},
+	})
+	if err == nil {
+		t.Error("Bind succeeded though credential assignment failed, want a failure")
 	}
 }

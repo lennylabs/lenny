@@ -72,7 +72,7 @@ type poolState struct {
 // Service is the §4.9 credential-assignment service. It is
 // goroutine-safe.
 type Service struct {
-	leases *credleasestore.Store
+	leases credleasestore.LeaseStore
 	creds  *credcache.Cache
 
 	mu    sync.Mutex
@@ -81,8 +81,11 @@ type Service struct {
 }
 
 // New returns a credential-assignment service that records leases in
-// leases and upstream credentials in creds.
-func New(leases *credleasestore.Store, creds *credcache.Cache) *Service {
+// leases and upstream credentials in creds. leases is the
+// credleasestore.LeaseStore the §4.9 LLM reverse proxy resolves a lease
+// token against; passing the proxy's store lets a lease the service
+// mints resolve on the proxy hot path.
+func New(leases credleasestore.LeaseStore, creds *credcache.Cache) *Service {
 	return &Service{
 		leases: leases,
 		creds:  creds,

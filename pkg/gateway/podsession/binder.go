@@ -65,6 +65,28 @@ type Binder struct {
 	// and returns ErrNoIdlePod. A zero value selects the default of
 	// DefaultFallbackMaxMirrorLagSeconds.
 	FallbackMaxMirrorLagSeconds float64
+	// Credentials is the §4.9 credential-assignment service. When a
+	// BindRequest names credential pools, Bind mints a lease from each
+	// pool and pushes the set to the pod via the adapter's
+	// AssignCredentials RPC before StartSession (§4.7 item 4). Nil when
+	// the deployment configures no credential pools; a BindRequest then
+	// names no pools and Bind assigns nothing.
+	Credentials CredentialAssigner
+}
+
+// CredentialAssigner mints a session's §4.9 credential leases. The
+// gateway's credassign.Service satisfies it; binder tests substitute a
+// fake. AssignProto leases a credential from the named pool to the
+// session, records the lease in the gateway's credential-lease store,
+// caches the upstream credential for the §4.9 LLM proxy, and returns
+// the wire-form lease the adapter materializes into the runtime
+// credential file.
+type CredentialAssigner interface {
+	// AssignProto leases a credential from poolName to sessionID and
+	// returns the wire-form CredentialLease. spiffeURI is the issuing
+	// pod's SPIFFE identity for proxy-mode SPIFFE-binding; an empty value
+	// disables binding.
+	AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1.CredentialLease, error)
 }
 
 // DefaultFallbackMaxMirrorLagSeconds is the §4.6.1
@@ -94,6 +116,19 @@ type BindRequest struct {
 	// SetupPolicy is the §5.1 runtime setupPolicy bounding the setup
 	// phase. Nil when the runtime declares no aggregate cap.
 	SetupPolicy *adapterv1.SetupPolicy
+	// CredentialPools names the §4.9 credential pool to lease from for
+	// each authorized provider, keyed by provider. The caller resolves it
+	// from the §4.9 intersection of the Runtime's supportedProviders and
+	// the tenant's credentialPolicy.providerPools. Bind mints one lease
+	// per entry and pushes the set to the pod via AssignCredentials
+	// before StartSession. Empty (or nil) when the session needs no
+	// upstream LLM credentials; Bind then assigns nothing.
+	CredentialPools map[string]string
+	// PodSpiffeURI is the issuing pod's SPIFFE identity, recorded on each
+	// minted lease for the §4.9 proxy-mode SPIFFE-binding check. Empty
+	// disables binding, which §4.9 permits only in single-tenant and
+	// development deployments.
+	PodSpiffeURI string
 }
 
 // BindResult reports the pod a session was bound to.
@@ -135,10 +170,10 @@ type ResumeRequest struct {
 // the §4.7 session-assignment sequence on the pod's adapter:
 // PrepareWorkspace stages uploaded files and cloned repositories,
 // FinalizeWorkspace materializes the workspace, RunSetup runs the
-// plan's setup commands, and StartSession starts the runtime. On
-// success the caller owns the
-// returned live adapter connection. Any failure after the claim is
-// returned so the gateway can retry on a fresh pod.
+// plan's setup commands, AssignCredentials delivers the session's §4.9
+// credential leases, and StartSession starts the runtime. On success
+// the caller owns the returned live adapter connection. Any failure
+// after the claim is returned so the gateway can retry on a fresh pod.
 func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sandboxName, podIP, cl, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
 	if err != nil {
@@ -156,6 +191,10 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		cl.Close()
 		return nil, fmt.Errorf("podsession: run setup on pod %s: %w", sandboxName, err)
 	}
+	if err := b.assignCredentials(ctx, cl, req); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
+	}
 	if err := cl.StartSession(ctx, req.SessionID, req.Runtime, req.ExperimentContext, req.TracingContext); err != nil {
 		cl.Close()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
@@ -167,6 +206,38 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 		PodIP:       podIP,
 		Adapter:     cl,
 	}, nil
+}
+
+// assignCredentials mints the session's §4.9 credential leases and
+// pushes them to the pod via the adapter's AssignCredentials RPC, the
+// fourth §4.7 session-assignment RPC (after RunSetup, before
+// StartSession). It mints one lease per provider named in
+// req.CredentialPools, leasing from the pool the caller resolved for
+// that provider. It is a no-op when the binder has no credential
+// service or the request names no pools, so a session that needs no
+// upstream LLM credentials, or a deployment with no credential pools,
+// assigns nothing.
+//
+// The minted leases carry credential material; per §4.7 item 6 the
+// payload is excluded from access logs and telemetry.
+func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest) error {
+	if b.Credentials == nil || len(req.CredentialPools) == 0 {
+		return nil
+	}
+	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools))
+	for provider, pool := range req.CredentialPools {
+		lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI)
+		if err != nil {
+			return fmt.Errorf("lease %s credential from pool %s: %w", provider, pool, err)
+		}
+		// The §4.7 AssignCredentials leases map is keyed by provider, and
+		// the adapter writes each runtime credential-file entry under the
+		// lease's own Provider field. Stamp it from the resolved provider
+		// so both agree on the provider the binder leased for.
+		lease.Provider = provider
+		leases[provider] = lease
+	}
+	return cl.AssignCredentials(ctx, req.SessionID, leases)
 }
 
 // stageWorkspace prepares the pod's staging area for the plan's

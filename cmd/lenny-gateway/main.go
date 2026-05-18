@@ -70,6 +70,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
@@ -418,6 +419,29 @@ func main() {
 		log.Printf("lenny-gateway: dispatching sessions to runtime binary %s", *runtimeBin)
 	}
 
+	// ----- §4.9 credential-assignment service -----
+	// credCache is the §4.9 upstream-credential cache. The §4.7 binder's
+	// credential-assignment path populates it through the credassign
+	// service below, and the §4.9 LLM reverse proxy reads it on every
+	// upstream call. Both reference this one instance, so a lease the
+	// binder assigns resolves on the proxy hot path.
+	credCache := credcache.New()
+	// llmLeases is the §4.9 credential-lease store: the credassign
+	// service records each minted lease here, and the §4.9 LLM proxy
+	// resolves an inbound lease token against it. Postgres-backed when
+	// configured, otherwise the in-memory per-replica working set.
+	var llmLeases credleasestore.LeaseStore = credleasestore.New()
+	if pgPool != nil {
+		llmLeases = credleasepg.New(pgPool)
+	}
+	// credAssign mints a session's §4.9 credential leases: it records
+	// each lease in llmLeases and caches the upstream credential in
+	// credCache. The §4.7 binder pushes the minted leases to a pod via
+	// the adapter's AssignCredentials RPC. Deployer-configured credential
+	// pools are registered via RegisterPool; with no pools registered
+	// the binder assigns nothing.
+	credAssign := credassign.New(llmLeases, credCache)
+
 	// §15.1 pod placement: with --agent-namespace the gateway claims a
 	// §5 warm pod for each started session and dispatches its messages
 	// to the pod's §4.7 adapter. The in-process and subprocess
@@ -453,6 +477,11 @@ func main() {
 				return adapterclient.Dial(addr, dialOpt)
 			},
 			Blobs: blobs,
+			// §4.9: the binder mints a session's credential leases and
+			// pushes them to the pod via AssignCredentials before
+			// StartSession. A BindRequest that names no credential pools
+			// assigns nothing.
+			Credentials: credAssign,
 		}
 		// §4.6.1 Postgres-backed fallback claim: when Postgres is
 		// configured the binder reads the agent_pod_state mirror to
@@ -904,11 +933,10 @@ func main() {
 
 	// ----- §4.9 LLM reverse proxy -----
 	// With --llm-proxy-addr the gateway serves the §4.9 LLM proxy for
-	// proxy-mode agent pods on a listener separate from the REST API.
-	var llmLeases credleasestore.LeaseStore = credleasestore.New()
-	if pgPool != nil {
-		llmLeases = credleasepg.New(pgPool)
-	}
+	// proxy-mode agent pods on a listener separate from the REST API. It
+	// resolves an inbound lease token against llmLeases — the same store
+	// the credassign service records minted leases in — and the upstream
+	// credential against credCache.
 	// §4.9 credential deny list: the per-replica set of revoked
 	// credential identities the proxy checks before every upstream
 	// call. The propagator carries a revocation across replicas over
@@ -919,7 +947,7 @@ func main() {
 	credDenyProp := credentialdenylistprop.New(credDeny, securityBus, credentialdenylistprop.WithErrorHandler(func(err error) {
 		log.Printf("lenny-gateway: credential deny-list pub/sub publish failed: %v", err)
 	}))
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credDenyProp.Local())
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDenyProp.Local())
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----
 	// Sweeps every 5 s; transitions stuck sessions to failed.
@@ -1136,10 +1164,13 @@ type breakerRegistry interface {
 // It returns nil when addr is empty, which disables the proxy listener.
 // The credential-lease store and the credential cache start empty; the
 // §4.9 credential-assignment path populates them, and a request that
-// arrives before then is cleanly rejected. denyList is the per-replica
-// credential deny list, owned by a propagator the caller drives so
-// revocations converge across replicas.
-func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, denyList *denylist.DenyList) *http.Server {
+// arrives before then is cleanly rejected. creds is the §4.9
+// upstream-credential cache the binder's credential-assignment path
+// populates, so the proxy resolves a lease's upstream credential from
+// the same instance the assignment wrote it to. denyList is the
+// per-replica credential deny list, owned by a propagator the caller
+// drives so revocations converge across replicas.
+func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -1148,7 +1179,7 @@ func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.Leas
 		Leases:      leases,
 		Translator:  &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
 		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
-		Credentials: credcache.New(),
+		Credentials: creds,
 		DenyList:    denyList,
 	})
 	return &http.Server{
