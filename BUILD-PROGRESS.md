@@ -11,6 +11,7 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `27183e3` — §25.6 warm-pool bottleneck classifier (`pkg/ops/diagnostics`). `ClassifyPoolBottleneck` maps warm-pool metric signals (image-pull / node-pressure / quota warm-up failures, replenishment-vs-claim rates) to a `BottleneckCategory`, specific failures taking precedence over the rate shortfall. The kernel for the §25.6 `GET /v1/admin/diagnostics/pools/{name}` endpoint.
 - `48fa020` — §25.6 cause-chain builder (`pkg/ops/diagnostics`). Added the
   `CauseChainEntry` type and `PodFailureChain`, which builds the
   proximate-cause chain entry from pod signals (category + a
