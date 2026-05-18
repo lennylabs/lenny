@@ -3242,7 +3242,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x17LifecycleChannelRequest\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"?\n" +
 	"\x18LifecycleChannelResponse\x12#\n" +
-	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson2\xe8\r\n" +
+	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson2\x8a\r\n" +
 	"\aAdapter\x12m\n" +
 	"\x10PrepareWorkspace\x12).lenny.adapter.v1.PrepareWorkspaceRequest\x1a*.lenny.adapter.v1.PrepareWorkspaceResponse\"\x00(\x01\x12n\n" +
 	"\x11FinalizeWorkspace\x12*.lenny.adapter.v1.FinalizeWorkspaceRequest\x1a+.lenny.adapter.v1.FinalizeWorkspaceResponse\"\x00\x12S\n" +
@@ -3257,12 +3257,13 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\n" +
 	"Checkpoint\x12#.lenny.adapter.v1.CheckpointRequest\x1a$.lenny.adapter.v1.CheckpointResponse\"\x00\x12M\n" +
 	"\x06Resume\x12\x1f.lenny.adapter.v1.ResumeRequest\x1a .lenny.adapter.v1.ResumeResponse\"\x00\x12\\\n" +
-	"\vReportUsage\x12$.lenny.adapter.v1.ReportUsageRequest\x1a%.lenny.adapter.v1.ReportUsageResponse\"\x00\x12\\\n" +
-	"\vExtendLease\x12$.lenny.adapter.v1.ExtendLeaseRequest\x1a%.lenny.adapter.v1.ExtendLeaseResponse\"\x00\x12S\n" +
+	"\vReportUsage\x12$.lenny.adapter.v1.ReportUsageRequest\x1a%.lenny.adapter.v1.ReportUsageResponse\"\x00\x12S\n" +
 	"\bShutdown\x12!.lenny.adapter.v1.ShutdownRequest\x1a\".lenny.adapter.v1.ShutdownResponse\"\x00\x12V\n" +
 	"\tDemoteSDK\x12\".lenny.adapter.v1.DemoteSDKRequest\x1a#.lenny.adapter.v1.DemoteSDKResponse\"\x00\x12k\n" +
 	"\x10NegotiateVersion\x12).lenny.adapter.v1.NegotiateVersionRequest\x1a*.lenny.adapter.v1.NegotiateVersionResponse\"\x00\x12o\n" +
-	"\x10LifecycleChannel\x12).lenny.adapter.v1.LifecycleChannelRequest\x1a*.lenny.adapter.v1.LifecycleChannelResponse\"\x00(\x010\x01B;Z9github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1b\x06proto3"
+	"\x10LifecycleChannel\x12).lenny.adapter.v1.LifecycleChannelRequest\x1a*.lenny.adapter.v1.LifecycleChannelResponse\"\x00(\x010\x012n\n" +
+	"\x0eGatewayControl\x12\\\n" +
+	"\vExtendLease\x12$.lenny.adapter.v1.ExtendLeaseRequest\x1a%.lenny.adapter.v1.ExtendLeaseResponse\"\x00B;Z9github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1b\x06proto3"
 
 var (
 	file_lenny_adapter_proto_rawDescOnce sync.Once
@@ -3387,11 +3388,11 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	35, // 47: lenny.adapter.v1.Adapter.Checkpoint:input_type -> lenny.adapter.v1.CheckpointRequest
 	37, // 48: lenny.adapter.v1.Adapter.Resume:input_type -> lenny.adapter.v1.ResumeRequest
 	39, // 49: lenny.adapter.v1.Adapter.ReportUsage:input_type -> lenny.adapter.v1.ReportUsageRequest
-	41, // 50: lenny.adapter.v1.Adapter.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
-	43, // 51: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
-	45, // 52: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
-	47, // 53: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
-	49, // 54: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	43, // 50: lenny.adapter.v1.Adapter.Shutdown:input_type -> lenny.adapter.v1.ShutdownRequest
+	45, // 51: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
+	47, // 52: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
+	49, // 53: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	41, // 54: lenny.adapter.v1.GatewayControl.ExtendLease:input_type -> lenny.adapter.v1.ExtendLeaseRequest
 	14, // 55: lenny.adapter.v1.Adapter.PrepareWorkspace:output_type -> lenny.adapter.v1.PrepareWorkspaceResponse
 	16, // 56: lenny.adapter.v1.Adapter.FinalizeWorkspace:output_type -> lenny.adapter.v1.FinalizeWorkspaceResponse
 	18, // 57: lenny.adapter.v1.Adapter.RunSetup:output_type -> lenny.adapter.v1.RunSetupResponse
@@ -3405,11 +3406,11 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	36, // 65: lenny.adapter.v1.Adapter.Checkpoint:output_type -> lenny.adapter.v1.CheckpointResponse
 	38, // 66: lenny.adapter.v1.Adapter.Resume:output_type -> lenny.adapter.v1.ResumeResponse
 	40, // 67: lenny.adapter.v1.Adapter.ReportUsage:output_type -> lenny.adapter.v1.ReportUsageResponse
-	42, // 68: lenny.adapter.v1.Adapter.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
-	44, // 69: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
-	46, // 70: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
-	48, // 71: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
-	50, // 72: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	44, // 68: lenny.adapter.v1.Adapter.Shutdown:output_type -> lenny.adapter.v1.ShutdownResponse
+	46, // 69: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
+	48, // 70: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
+	50, // 71: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	42, // 72: lenny.adapter.v1.GatewayControl.ExtendLease:output_type -> lenny.adapter.v1.ExtendLeaseResponse
 	55, // [55:73] is the sub-list for method output_type
 	37, // [37:55] is the sub-list for method input_type
 	37, // [37:37] is the sub-list for extension type_name
@@ -3430,7 +3431,7 @@ func file_lenny_adapter_proto_init() {
 			NumEnums:      5,
 			NumMessages:   51,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_lenny_adapter_proto_goTypes,
 		DependencyIndexes: file_lenny_adapter_proto_depIdxs,

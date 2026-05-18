@@ -83,6 +83,12 @@ type Server struct {
 	// credential-rotation, and deadline signals. Nil leaves the adapter
 	// Basic-level, with no lifecycle channel.
 	Lifecycle *LifecycleChannel
+	// LeaseExtender is the §8.6 adapter→gateway lease-extension client.
+	// When set, HandleBudgetExhaustion uses it to request additional
+	// token budget after the LLM proxy rejects a call for budget
+	// exhaustion. Nil leaves the §8.6 trigger path returning
+	// ErrLeaseExtenderUnset.
+	LeaseExtender LeaseExtender
 
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock

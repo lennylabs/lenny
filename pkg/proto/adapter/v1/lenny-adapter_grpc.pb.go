@@ -48,7 +48,6 @@ const (
 	Adapter_Checkpoint_FullMethodName        = "/lenny.adapter.v1.Adapter/Checkpoint"
 	Adapter_Resume_FullMethodName            = "/lenny.adapter.v1.Adapter/Resume"
 	Adapter_ReportUsage_FullMethodName       = "/lenny.adapter.v1.Adapter/ReportUsage"
-	Adapter_ExtendLease_FullMethodName       = "/lenny.adapter.v1.Adapter/ExtendLease"
 	Adapter_Shutdown_FullMethodName          = "/lenny.adapter.v1.Adapter/Shutdown"
 	Adapter_DemoteSDK_FullMethodName         = "/lenny.adapter.v1.Adapter/DemoteSDK"
 	Adapter_NegotiateVersion_FullMethodName  = "/lenny.adapter.v1.Adapter/NegotiateVersion"
@@ -127,11 +126,6 @@ type AdapterClient interface {
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
-	// ExtendLease is the adapter's request to the gateway for additional
-	// token budget when the current session lease is about to expire.
-	// Response carries one of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED,
-	// REJECTED (see spec §8.6).
-	ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error)
 	// Shutdown asks the adapter to terminate the agent and release the pod.
 	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
 	// deadline. Returns when the agent process has exited.
@@ -300,16 +294,6 @@ func (c *adapterClient) ReportUsage(ctx context.Context, in *ReportUsageRequest,
 	return out, nil
 }
 
-func (c *adapterClient) ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExtendLeaseResponse)
-	err := c.cc.Invoke(ctx, Adapter_ExtendLease_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *adapterClient) Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ShutdownResponse)
@@ -425,11 +409,6 @@ type AdapterServer interface {
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
-	// ExtendLease is the adapter's request to the gateway for additional
-	// token budget when the current session lease is about to expire.
-	// Response carries one of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED,
-	// REJECTED (see spec §8.6).
-	ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error)
 	// Shutdown asks the adapter to terminate the agent and release the pod.
 	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
 	// deadline. Returns when the agent process has exited.
@@ -499,9 +478,6 @@ func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*Resu
 }
 func (UnimplementedAdapterServer) ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportUsage not implemented")
-}
-func (UnimplementedAdapterServer) ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ExtendLease not implemented")
 }
 func (UnimplementedAdapterServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
@@ -747,24 +723,6 @@ func _Adapter_ReportUsage_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Adapter_ExtendLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExtendLeaseRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AdapterServer).ExtendLease(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Adapter_ExtendLease_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdapterServer).ExtendLease(ctx, req.(*ExtendLeaseRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Adapter_Shutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShutdownRequest)
 	if err := dec(in); err != nil {
@@ -878,10 +836,6 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Adapter_ReportUsage_Handler,
 		},
 		{
-			MethodName: "ExtendLease",
-			Handler:    _Adapter_ExtendLease_Handler,
-		},
-		{
 			MethodName: "Shutdown",
 			Handler:    _Adapter_Shutdown_Handler,
 		},
@@ -913,5 +867,141 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
+	Metadata: "lenny-adapter.proto",
+}
+
+const (
+	GatewayControl_ExtendLease_FullMethodName = "/lenny.adapter.v1.GatewayControl/ExtendLease"
+)
+
+// GatewayControlClient is the client API for GatewayControl service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// GatewayControl is the adapter→gateway control surface. It is the
+// inverse direction of the Adapter service: the gateway hosts this
+// gRPC server and the adapter dials it as a client. Adapter traffic
+// on this service is initiated by the adapter, in contrast to the
+// Adapter service where the gateway initiates every RPC.
+//
+// The service exists because a few §8 control operations originate at
+// the pod and need a gateway decision. ExtendLease is the first such
+// operation: the adapter cannot resolve a token-budget extension
+// itself because the layered §8.6 ceiling and the per-tree budget
+// state live on the gateway.
+type GatewayControlClient interface {
+	// ExtendLease is the adapter's request to the gateway for additional
+	// token budget. Per spec §8.6 the adapter issues it when the LLM
+	// proxy rejects a call for budget exhaustion. Response carries one
+	// of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED, REJECTED. On
+	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
+	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
+	ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error)
+}
+
+type gatewayControlClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewGatewayControlClient(cc grpc.ClientConnInterface) GatewayControlClient {
+	return &gatewayControlClient{cc}
+}
+
+func (c *gatewayControlClient) ExtendLease(ctx context.Context, in *ExtendLeaseRequest, opts ...grpc.CallOption) (*ExtendLeaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExtendLeaseResponse)
+	err := c.cc.Invoke(ctx, GatewayControl_ExtendLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GatewayControlServer is the server API for GatewayControl service.
+// All implementations should embed UnimplementedGatewayControlServer
+// for forward compatibility.
+//
+// GatewayControl is the adapter→gateway control surface. It is the
+// inverse direction of the Adapter service: the gateway hosts this
+// gRPC server and the adapter dials it as a client. Adapter traffic
+// on this service is initiated by the adapter, in contrast to the
+// Adapter service where the gateway initiates every RPC.
+//
+// The service exists because a few §8 control operations originate at
+// the pod and need a gateway decision. ExtendLease is the first such
+// operation: the adapter cannot resolve a token-budget extension
+// itself because the layered §8.6 ceiling and the per-tree budget
+// state live on the gateway.
+type GatewayControlServer interface {
+	// ExtendLease is the adapter's request to the gateway for additional
+	// token budget. Per spec §8.6 the adapter issues it when the LLM
+	// proxy rejects a call for budget exhaustion. Response carries one
+	// of GRANTED, PARTIALLY_GRANTED, CEILING_REACHED, REJECTED. On
+	// CEILING_REACHED or REJECTED the adapter MUST NOT retry the
+	// extension; it propagates BUDGET_EXHAUSTED to the runtime.
+	ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error)
+}
+
+// UnimplementedGatewayControlServer should be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedGatewayControlServer struct{}
+
+func (UnimplementedGatewayControlServer) ExtendLease(context.Context, *ExtendLeaseRequest) (*ExtendLeaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExtendLease not implemented")
+}
+func (UnimplementedGatewayControlServer) testEmbeddedByValue() {}
+
+// UnsafeGatewayControlServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to GatewayControlServer will
+// result in compilation errors.
+type UnsafeGatewayControlServer interface {
+	mustEmbedUnimplementedGatewayControlServer()
+}
+
+func RegisterGatewayControlServer(s grpc.ServiceRegistrar, srv GatewayControlServer) {
+	// If the following call panics, it indicates UnimplementedGatewayControlServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&GatewayControl_ServiceDesc, srv)
+}
+
+func _GatewayControl_ExtendLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExtendLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayControlServer).ExtendLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayControl_ExtendLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayControlServer).ExtendLease(ctx, req.(*ExtendLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// GatewayControl_ServiceDesc is the grpc.ServiceDesc for GatewayControl service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var GatewayControl_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "lenny.adapter.v1.GatewayControl",
+	HandlerType: (*GatewayControlServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ExtendLease",
+			Handler:    _GatewayControl_ExtendLease_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "lenny-adapter.proto",
 }

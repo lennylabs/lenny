@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -106,6 +108,7 @@ import (
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
@@ -154,6 +157,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -196,6 +200,8 @@ func main() {
 		"path to the private key for --adapter-tls-cert.")
 	adapterCA := flag.String("adapter-ca", os.Getenv("LENNY_ADAPTER_CA"),
 		"path to the CA bundle that verifies a pod adapter's server certificate on the §4.7 mTLS link.")
+	grpcAddr := flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
+		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — currently the ExtendLease lease-extension RPC — on this address. Empty disables the GatewayControl listener.")
 	llmProxyAddr := flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	anthropicVersion := flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
@@ -980,6 +986,17 @@ func main() {
 	// full_revoke fan-out can revoke a user's leases onto the same list.
 	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDenyProp.Local())
 
+	// ----- §8.6 GatewayControl gRPC server -----
+	// With --grpc-addr the gateway serves the adapter→gateway control
+	// surface — the inverse direction of the pod-facing Adapter service.
+	// It currently hosts the §8.6 ExtendLease RPC: a pod's adapter calls
+	// it when its LLM proxy rejects a request for budget exhaustion, and
+	// the gateway computes the lease-extension grant.
+	gatewayCtrlSrv, gatewayCtrlLis, err := newGatewayControlServer(*grpcAddr)
+	if err != nil {
+		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
+	}
+
 	// ----- §6.2 / §11.3 pre-running watchdog -----
 	// Sweeps every 5 s; transitions stuck sessions to failed.
 	// Tenants list is sourced from the in-memory store so newly
@@ -1164,6 +1181,14 @@ func main() {
 			}
 		}()
 	}
+	if gatewayCtrlSrv != nil {
+		go func() {
+			log.Printf("lenny-gateway: §8.6 GatewayControl gRPC listening on %s", gatewayCtrlLis.Addr())
+			if err := gatewayCtrlSrv.Serve(gatewayCtrlLis); err != nil && err != grpc.ErrServerStopped {
+				log.Fatalf("lenny-gateway: GatewayControl listen: %v", err)
+			}
+		}()
+	}
 
 	<-stopCh
 	log.Printf("lenny-gateway: shutting down")
@@ -1172,6 +1197,9 @@ func main() {
 	_ = httpSrv.Shutdown(ctx)
 	if llmProxySrv != nil {
 		_ = llmProxySrv.Shutdown(ctx)
+	}
+	if gatewayCtrlSrv != nil {
+		gatewayCtrlSrv.GracefulStop()
 	}
 	if pgPool != nil {
 		pgPool.Close()
@@ -1218,6 +1246,40 @@ func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.Leas
 		Handler:           proxyMux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+}
+
+// newGatewayControlServer builds the §8.6 GatewayControl gRPC server
+// and binds its listener. It returns (nil, nil, nil) when addr is
+// empty, which disables the GatewayControl listener. A non-empty addr
+// that cannot be bound returns the error so the gateway fails fast.
+//
+// The server hosts the §8.6 ExtendLease RPC. Its budget state is held
+// in a MemoryBudgetSource, which doubles as the TenantResolver. The
+// §8.6 durability requirement — persisting the extension-denied flag
+// and cool-off expiry to the delegation_tree_budget Postgres table so
+// a coordinator handoff cannot bypass a user rejection — is met by
+// swapping in a Postgres-backed leasecontrol.BudgetSource with the
+// Wave 1 store-persistence work; leasecontrol.Service depends only on
+// the interface.
+func newGatewayControlServer(addr string) (*grpc.Server, net.Listener, error) {
+	if addr == "" {
+		return nil, nil, nil
+	}
+	budgets := leasecontrol.NewMemoryBudgetSource()
+	svc, err := leasecontrol.NewService(leasecontrol.Options{
+		Budgets: budgets,
+		Tenants: budgets,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
+	}
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("bind GatewayControl listener on %s: %w", addr, err)
+	}
+	gs := grpc.NewServer()
+	adapterv1.RegisterGatewayControlServer(gs, svc)
+	return gs, lis, nil
 }
 
 // verifyPostgresSchema fails fast when the gateway is pointed at a

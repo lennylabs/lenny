@@ -137,11 +137,17 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 func TestGRPCServerReportsUnimplementedForUnbuiltRPCs(t *testing.T) {
 	client, _ := adapterClient(t, adapter.New("served"))
 
-	// ExtendLease is not yet implemented; the embedded
-	// UnimplementedAdapterServer answers with codes.Unimplemented.
-	_, err := client.ExtendLease(context.Background(), &adapterv1.ExtendLeaseRequest{})
+	// The gRPC LifecycleChannel RPC is not yet implemented on the
+	// Adapter server; the embedded UnimplementedAdapterServer answers
+	// with codes.Unimplemented. For a streaming RPC the status
+	// surfaces on the first Recv.
+	stream, err := client.LifecycleChannel(context.Background())
+	if err != nil {
+		t.Fatalf("open LifecycleChannel stream: %v", err)
+	}
+	_, err = stream.Recv()
 	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("ExtendLease error code = %v, want Unimplemented", status.Code(err))
+		t.Errorf("LifecycleChannel error code = %v, want Unimplemented", status.Code(err))
 	}
 }
 
