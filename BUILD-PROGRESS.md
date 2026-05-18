@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `cmd/lenny-ops` service skeleton. §25 makes the `lenny-ops` operability
+  service mandatory in every installation; the binary did not exist. Added
+  `cmd/lenny-ops` and `pkg/ops/opsserver`: an HTTP service with the
+  Kubernetes liveness (`/healthz`) and readiness (`/readyz`) probes,
+  method-routed via `http.ServeMux`, and graceful shutdown. The §25.4+
+  operability endpoints (diagnostics, drift, backup/restore, platform
+  lifecycle, event stream) register on the same `Server` as they are built;
+  the pure kernels several of them need are already in place (`pkg/drift`,
+  `pkg/backup/retention`, `pkg/ops/diagnostics`, `pkg/upgrade`,
+  `pkg/progress`, `pkg/cron`, `pkg/remediationlock`). Handler unit-tested.
 - `9947654` — §8.6 lease-extension grant computations (`pkg/leaseextension`).
   Pure package: `ResolveEffectiveMax` resolves the effective
   `maxExtendableBudget` from the layered deployment/tenant/runtime config
