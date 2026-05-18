@@ -5,6 +5,8 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 | Workflow | Trigger | Purpose |
 |:---------|:--------|:--------|
 | `pr.yml` | `pull_request`, `push` to feature branches | PR gate. Tiers 0–4 plus critical-path higher tiers. Target < 15 minutes. |
+| `dco.yml` | `pull_request` | Verifies every PR commit carries a DCO `Signed-off-by` trailer. |
+| `secret-scan.yml` | `pull_request`, `push` to feature branches | Runs gitleaks over the introduced commits; fails on a positive hit. |
 | `nightly.yml` | `schedule` daily 05:00 UTC, `workflow_dispatch` | Full e2e Kind, rotated cloud subset, security, path-specific load. Target < 2 hours. |
 | `weekly.yml` | `schedule` Sundays 06:00 UTC, `workflow_dispatch` | All three providers in `cloud-small` shape. Full-system load. Target < 4 hours. |
 | `pre-release.yml` | `workflow_dispatch` (tag input) | All three providers × both shapes. Full chaos. Pen-test driver. SLO baseline diff. Target < 8 hours. |
@@ -15,7 +17,7 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 
 ## Phase 0 state
 
-Most jobs are placeholders that echo the phase in which the tier ships. The PR pipeline's `pr-fast`, `static`, `unit`, and `docs` jobs are functional and run on every push. The rest light up incrementally per TESTING.md §13.
+The PR pipeline runs tiers 0–4 (`static`, `unit`, `component`, `contract`, `integration`) plus `docs` on every push and pull request, alongside `pr-fast`, `dco`, and `secret-scan`. The `e2e-kind-critical` and `conformance-bundled` jobs run their critical-path subsets; for a community fork PR the Kind tier is held until a maintainer applies the `ok-to-test` label. Higher cluster, cloud, and load tiers light up incrementally per TESTING.md §13.
 
 ## Self-hosted runners
 

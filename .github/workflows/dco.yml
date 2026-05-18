@@ -1,0 +1,60 @@
+# DCO sign-off check. Every commit in a pull request must carry a
+# Signed-off-by trailer per the Developer Certificate of Origin.
+# See CONTRIBUTING.md and https://developercertificate.org/.
+
+name: dco
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dco-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dco-check:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0     # full history so the PR commit range resolves
+      - name: Verify Signed-off-by on every PR commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          missing=0
+          # Non-merge commits the PR introduces over its base.
+          commits=$(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
+          if [[ -z "${commits}" ]]; then
+            echo "No non-merge commits to check."
+            exit 0
+          fi
+          for sha in ${commits}; do
+            subject=$(git log -1 --format='%s' "${sha}")
+            author=$(git log -1 --format='%an <%ae>' "${sha}")
+            if git log -1 --format='%B' "${sha}" \
+                 | grep -qE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "ok    ${sha:0:12}  ${subject}"
+            else
+              echo "FAIL  ${sha:0:12}  ${subject}"
+              echo "      missing 'Signed-off-by:' trailer (author: ${author})"
+              missing=$((missing + 1))
+            fi
+          done
+          if (( missing > 0 )); then
+            echo ""
+            echo "${missing} commit(s) are missing a DCO sign-off."
+            echo "Run 'git commit -s' (or 'git rebase --signoff <base>') and force-push."
+            echo "See CONTRIBUTING.md and https://developercertificate.org/."
+            exit 1
+          fi
+          echo ""
+          echo "All $(echo "${commits}" | wc -l | tr -d ' ') commit(s) carry a DCO sign-off."

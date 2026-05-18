@@ -201,6 +201,14 @@ jobs:
     runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
     timeout-minutes: 30
     needs: [integration]
+    # Community-PR matrix (§18.3): fork PRs run tiers 0-4 and docs by
+    # default; the Kind tier runs for same-repo PRs and feature-branch
+    # pushes, and for a fork PR only after a maintainer applies the
+    # 'ok-to-test' label as explicit reviewer approval.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'ok-to-test')
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
