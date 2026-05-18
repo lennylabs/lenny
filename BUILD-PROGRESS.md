@@ -11,6 +11,17 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9947654` — §8.6 lease-extension grant computations (`pkg/leaseextension`).
+  Pure package: `ResolveEffectiveMax` resolves the effective
+  `maxExtendableBudget` from the layered deployment/tenant/runtime config
+  (verified against the §8.6 worked-example table); `Grant` computes a
+  one-dimension extension grant (`GRANTED`/`PARTIALLY_GRANTED`/
+  `CEILING_REACHED`). This is the computational kernel for the gateway-side
+  `ExtendLease` handler. Remaining `ExtendLease` work: a gateway-hosted gRPC
+  control service (the adapter is the client, per §8.6), the handler
+  wrapping this kernel with elicitation / cool-off / auto-mode rate limit /
+  the extension-denied flag and its Postgres durability, an adapter-side
+  client, and the adapter LLM-proxy budget-rejection wiring.
 - `085ed48` — credential rotation notifies the lifecycle channel. When
   `RotateCredentials` rotates a Full-level runtime's credential, the adapter
   sends `credentials_rotated` (provider, credential-file path, lease) over
