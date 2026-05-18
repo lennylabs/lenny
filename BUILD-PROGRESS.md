@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `96e6cd0` — §25.6 connectivity diagnostic endpoint. `GET /v1/admin/
+  diagnostics/connectivity` on lenny-ops runs the dependency probes in
+  parallel and returns the per-dependency report with an overall verdict —
+  the first §25.6 diagnostic endpoint wired onto the service. The §25.6
+  session (`/diagnostics/sessions/{id}`), pool (`/diagnostics/pools/
+  {name}`), and credential-pool diagnostics follow; their cause-chain
+  kernel is `pkg/ops/diagnostics.ClassifyPodFailure`, and they need the
+  Postgres `sessions`/`agent_pod_state` and K8s data sources wired.
 - `f42c185` — wired the dependency-probe runner into the lenny-ops
   readiness endpoint. `opsserver.New` takes the named §25 dependency
   probes; `GET /readyz` runs them and reports per-dependency status in the
