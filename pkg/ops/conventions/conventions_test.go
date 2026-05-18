@@ -128,6 +128,55 @@ func TestNewErrorRetryability(t *testing.T) {
 	}
 }
 
+func TestProgressNullSemantics(t *testing.T) {
+	// §25.2: a progress field with no meaningful value serializes as
+	// JSON null, distinct from zero.
+	raw, err := json.Marshal(conventions.Progress{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, field := range []string{"percent", "completedSteps", "totalSteps", "etaSeconds", "stalledForSeconds"} {
+		v, present := generic[field]
+		if !present {
+			t.Errorf("%s is absent, want present as null", field)
+		}
+		if v != nil {
+			t.Errorf("%s = %v, want null when unset", field, v)
+		}
+	}
+}
+
+func TestProgressCarriesValues(t *testing.T) {
+	pct, steps := 47.0, 5
+	raw, err := json.Marshal(conventions.Progress{
+		Percent:        &pct,
+		CompletedSteps: &steps,
+		CurrentStep:    "migrating_shard_3",
+		EtaMethod:      conventions.EtaHistoricalP50,
+		RateMetric:     &conventions.RateMetric{Name: "shards_per_minute", Value: 0.5},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got conventions.Progress
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Percent == nil || *got.Percent != 47.0 {
+		t.Errorf("percent round-trip = %v, want 47", got.Percent)
+	}
+	if got.EtaMethod != conventions.EtaHistoricalP50 {
+		t.Errorf("etaMethod = %q, want historical_p50", got.EtaMethod)
+	}
+	if got.RateMetric == nil || got.RateMetric.Name != "shards_per_minute" {
+		t.Errorf("rateMetric round-trip = %v", got.RateMetric)
+	}
+}
+
 func TestWriteError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	conventions.WriteError(rec, http.StatusConflict, "REMEDIATION_LOCK_CONFLICT",

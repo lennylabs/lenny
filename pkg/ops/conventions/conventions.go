@@ -181,3 +181,40 @@ func WriteError(w http.ResponseWriter, status int, code string, category ErrorCa
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(NewError(code, category, message))
 }
+
+// EtaMethod is the §25.2 method by which a progress ETA was produced.
+type EtaMethod string
+
+const (
+	EtaHistoricalP50       EtaMethod = "historical_p50"
+	EtaLinearExtrapolation EtaMethod = "linear_extrapolation"
+	EtaFixedPhaseDurations EtaMethod = "fixed_phase_durations"
+	EtaRateBased           EtaMethod = "rate_based"
+	EtaNone                EtaMethod = "none"
+)
+
+// RateMetric is the §25.2 progress throughput metric: an agent that
+// distrusts the server ETA can recompute its own from this value.
+type RateMetric struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+}
+
+// Progress is the §25.2 canonical progress envelope, included in the
+// status responses of long-running operations (upgrades, restores,
+// backups, drift reconciliations). The nullable fields are pointers so
+// "no meaningful value" serializes as JSON null, distinct from zero.
+type Progress struct {
+	Percent           *float64    `json:"percent"`
+	CompletedSteps    *int        `json:"completedSteps"`
+	TotalSteps        *int        `json:"totalSteps"`
+	CurrentStep       string      `json:"currentStep,omitempty"`
+	CurrentStepDetail string      `json:"currentStepDetail,omitempty"`
+	EtaSeconds        *int        `json:"etaSeconds"`
+	EtaConfidence     float64     `json:"etaConfidence,omitempty"`
+	EtaMethod         EtaMethod   `json:"etaMethod,omitempty"`
+	RateMetric        *RateMetric `json:"rateMetric,omitempty"`
+	StartedAt         string      `json:"startedAt,omitempty"`
+	LastProgressAt    string      `json:"lastProgressAt,omitempty"`
+	StalledForSeconds *int        `json:"stalledForSeconds"`
+}
