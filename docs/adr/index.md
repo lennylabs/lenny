@@ -69,7 +69,7 @@ Decision content stays in the Markdown body; the front matter only carries metad
 
 ### Platform
 
-The table below seeds every resolved decision from [Spec §19](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md). Each row becomes a full ADR as contributors backfill context, alternatives, and consequences from the spec and design-conversation archives. ADR numbers are reserved — do not renumber.
+The table below seeds the resolved decisions from [Spec §19](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) together with the architectural decisions the spec assigns an ADR number outside §19 (ADR-0007). Each row becomes a full ADR as contributors backfill context, alternatives, and consequences from the spec and design-conversation archives. ADR numbers are reserved — do not renumber.
 
 | # | Title | Status | Spec ref |
 |:--|:------|:-------|:---------|
@@ -79,14 +79,15 @@ The table below seeds every resolved decision from [Spec §19](https://github.co
 | ADR-0004 | `kubernetes-sigs/agent-sandbox` + controller-runtime | Planned | [§19 #4](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0005 | cert-manager + manual mTLS (no service-mesh dep) | Planned | [§19 #5](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0006 | gVisor as the default isolation profile | Planned | [§19 #6](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
-| ADR-0007 | MinIO for blob storage (never Postgres) | Planned | [§19 #7](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
-| ADR-0008 | Open-source license selection (MIT) | Planned | [§19 #14](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
+| [ADR-0007](0007-sandboxclaim-optimistic-locking.html) | SandboxClaim optimistic locking and failover fencing | Accepted | [§4.6.1](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md) |
+| [ADR-0008](0008-open-source-license.html) | Open-source license selection (MIT) | Accepted | [§19 #14](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0009 | Delegation file export structure (strip + rebase) | Planned | [§19 #8](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0010 | No first-class `pipe_artifacts`; reuse export flow | Planned | [§19 #9](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0011 | Allowlist-default setup command policy | Planned | [§19 #10](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0012 | Per-session / token / minute usage tracking | Planned | [§19 #11](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0013 | No session forking; derive via workspace snapshot | Planned | [§19 #12](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 | ADR-0014 | Lease extension via adapter↔gateway gRPC | Planned | [§19 #13](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
+| ADR-0015 | MinIO for blob storage (never Postgres) | Planned | [§19 #7](https://github.com/lennylabs/lenny/blob/main/spec/19_resolved-decisions.md) |
 
 `Planned` ADRs have reserved numbers but no file yet. When a contributor writes one, they flip the status in both the ADR and this table (to `Accepted` or whatever the outcome is) in the same PR. Inbound links from the rest of the docs should reference the ADR number, not the path — renumbering is not allowed, so the number is stable.
 
