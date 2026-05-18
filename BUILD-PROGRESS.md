@@ -62,8 +62,21 @@ Newest first. Each entry is one increment toward the critical path below.
     `Checkpoint` (`63b8d3e`), and credential-rotation (`085ed48`) Full
     paths are done. The runtime↔adapter lifecycle channel is complete.
   - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream so
-    the gateway observes lifecycle events; resolve `ExtendLease`
-    (proto-vs-§8.6 direction).
+    the gateway observes lifecycle events. The proto `LifecycleChannelRequest`
+    /`Response` carry opaque `envelope_json`; the exact payload taxonomy is
+    spread across §4.7, §8.3, §10, and §15.4 and needs synthesis before
+    building (do not guess the wire contract — that produced the earlier
+    snake_case bug).
+  - `ExtendLease` direction RESOLVED: §8.6 states the adapter requests a
+    lease extension *from the gateway* over the gRPC control channel when
+    the LLM proxy rejects a call for budget exhaustion. The proto wrongly
+    places `ExtendLease` in the `Adapter` service (gateway→adapter); it
+    belongs in a gateway-hosted gRPC control service the adapter calls.
+    Building it: add that gateway service + handler, an adapter-side client,
+    and wire the adapter's LLM-proxy budget-rejection path to call it
+    (GRANTED/PARTIALLY_GRANTED → retry; CEILING_REACHED/REJECTED →
+    propagate BUDGET_EXHAUSTED). Extendable vs non-extendable fields and the
+    hard ceilings are enumerated in §8.6.
   - Surface `InterruptResponse.Status` through `adapterclient.Interrupt`
     and the gateway session path.
 - `3c26b2e` — wired the lifecycle channel into the adapter. The `Server`
