@@ -59,8 +59,12 @@ func repoRootForMCPTest(t *testing.T) string {
 	return ""
 }
 
-// TestMCPRuntimeLifecycle exercises the type: mcp runtime-side adapter
-// path end to end against the reference type: mcp runtime.
+// spec: 15.4
+// diagnosis: the §12b type: mcp runtime-side adapter path did not drive
+// the reference type: mcp runtime through the §4.7 start / message /
+// shutdown lifecycle — the adapter failed to spawn the MCP-server
+// agent, complete the MCP initialize handshake, map a message envelope
+// onto an MCP tools/call, or shut the runtime down cleanly.
 func TestMCPRuntimeLifecycle(t *testing.T) {
 	bin := buildMCPReference(t)
 
