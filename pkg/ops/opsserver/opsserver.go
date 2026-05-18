@@ -6,27 +6,39 @@
 // (Postgres, Redis, the Kubernetes API, Prometheus) rather than
 // in-process gateway state.
 //
-// This package carries the service's routing and its own liveness and
-// readiness probes. The §25.4 and later operability endpoints —
-// diagnostics, drift detection, backup and restore, platform
-// lifecycle, the event stream — are registered here as they are built.
+// This package carries the service's routing, its own liveness and
+// readiness probes, and the dependency-connectivity reporting. The
+// §25.4 and later operability endpoints — diagnostics, drift
+// detection, backup and restore, platform lifecycle, the event stream
+// — are registered here as they are built.
 package opsserver
 
 import (
 	"encoding/json"
 	"net/http"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
+
+// probeTimeout bounds each §25 dependency probe the readiness endpoint
+// runs.
+const probeTimeout = 2 * time.Second
 
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux *http.ServeMux
+	mux    *http.ServeMux
+	probes map[string]probe.Func
 }
 
 // New returns a Server with the liveness and readiness probes
-// registered. Operability endpoints are added as they are built.
-func New() *Server {
-	s := &Server{mux: http.NewServeMux()}
+// registered. probes are the §25 dependency checks (Postgres, Redis,
+// MinIO, the Kubernetes API, the gateway) the readiness endpoint runs;
+// a nil or empty map leaves the dependency report empty. Operability
+// endpoints are added as they are built.
+func New(probes map[string]probe.Func) *Server {
+	s := &Server{mux: http.NewServeMux(), probes: probes}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	return s
@@ -45,12 +57,26 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleReadyz is the readiness probe. lenny-ops degrades gracefully
-// when a downstream dependency is transiently unavailable (§25), so the
-// process is ready to serve once it is listening; per-endpoint
-// dependency health is reported by the endpoints themselves.
-func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+// handleReadyz is the readiness probe. §25 has lenny-ops degrade
+// gracefully when a downstream dependency is transiently unavailable,
+// so the process reports ready (HTTP 200) as long as it is serving;
+// the per-dependency probe results are reported in the body so an
+// operator or agent reading the endpoint sees which dependency is
+// down.
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	results := probe.Run(r.Context(), s.probes, probeTimeout)
+	deps := make(map[string]map[string]any, len(results))
+	for name, res := range results {
+		entry := map[string]any{"ok": res.OK}
+		if res.Detail != "" {
+			entry["detail"] = res.Detail
+		}
+		deps[name] = entry
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ready",
+		"dependencies": deps,
+	})
 }
 
 // writeJSON writes v as a JSON response with the given status code.
