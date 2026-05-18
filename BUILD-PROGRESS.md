@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `d3e5e4f` — §25.4 operability-endpoint conventions (`pkg/ops/conventions`).
+  Pure package shared by every gateway and lenny-ops operability endpoint:
+  `ParsePageParams` (the canonical `cursor`/`limit`/`since`/`until`/
+  `sortOrder` parameters — limit default 100, capped 1000), `WantsConfirm`
+  (the dry-run/confirm pattern for mutating endpoints), and the
+  `Degradation` envelope and `Pagination` response structs. Unit-tested.
 - `cmd/lenny-ops` service skeleton. §25 makes the `lenny-ops` operability
   service mandatory in every installation; the binary did not exist. Added
   `cmd/lenny-ops` and `pkg/ops/opsserver`: an HTTP service with the
