@@ -80,6 +80,57 @@ func TestReadyzReportsDependencyHealth(t *testing.T) {
 	}
 }
 
+func TestConnectivityReportsDependencyHealth(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres": func(context.Context) error { return nil },
+		"redis":    func(context.Context) error { return nil },
+		"minio":    func(context.Context) error { return errors.New("dial timeout") },
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(probes).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/v1/admin/diagnostics/connectivity", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Dependencies map[string]map[string]any `json:"dependencies"`
+		Healthy      bool                      `json:"healthy"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Healthy {
+		t.Error("healthy = true, want false when a dependency probe fails")
+	}
+	if len(body.Dependencies) != 3 {
+		t.Fatalf("got %d dependencies, want 3", len(body.Dependencies))
+	}
+	if ok, _ := body.Dependencies["minio"]["ok"].(bool); ok {
+		t.Error("minio reported ok, want a failure")
+	}
+	if body.Dependencies["minio"]["detail"] != "dial timeout" {
+		t.Errorf("minio detail = %v, want the probe failure", body.Dependencies["minio"]["detail"])
+	}
+}
+
+func TestConnectivityHealthyWithAllProbesPassing(t *testing.T) {
+	probes := map[string]probe.Func{
+		"postgres": func(context.Context) error { return nil },
+	}
+	rec := httptest.NewRecorder()
+	opsserver.New(probes).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/v1/admin/diagnostics/connectivity", nil))
+
+	var body struct {
+		Healthy bool `json:"healthy"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if !body.Healthy {
+		t.Error("healthy = false, want true when every probe passes")
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	opsserver.New(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/ops/nonexistent", nil))

@@ -7,10 +7,9 @@
 // in-process gateway state.
 //
 // This package carries the service's routing, its own liveness and
-// readiness probes, and the dependency-connectivity reporting. The
-// §25.4 and later operability endpoints — diagnostics, drift
-// detection, backup and restore, platform lifecycle, the event stream
-// — are registered here as they are built.
+// readiness probes, and the §25.6 connectivity diagnostic. The §25.6
+// session and pool diagnostics and the §25.4 and later operability
+// endpoints register here as they are built.
 package opsserver
 
 import (
@@ -21,8 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
 
-// probeTimeout bounds each §25 dependency probe the readiness endpoint
-// runs.
+// probeTimeout bounds each §25 dependency probe (§25.6: 2s timeouts).
 const probeTimeout = 2 * time.Second
 
 // Server is the lenny-ops HTTP handler. It routes the operability
@@ -32,15 +30,17 @@ type Server struct {
 	probes map[string]probe.Func
 }
 
-// New returns a Server with the liveness and readiness probes
-// registered. probes are the §25 dependency checks (Postgres, Redis,
-// MinIO, the Kubernetes API, the gateway) the readiness endpoint runs;
-// a nil or empty map leaves the dependency report empty. Operability
-// endpoints are added as they are built.
+// New returns a Server with the liveness probe, readiness probe, and
+// §25.6 connectivity diagnostic registered. probes are the §25
+// dependency checks (Postgres, Redis, MinIO, the Kubernetes API, the
+// gateway) the readiness and connectivity endpoints run; a nil or
+// empty map leaves the dependency report empty. Operability endpoints
+// are added as they are built.
 func New(probes map[string]probe.Func) *Server {
 	s := &Server{mux: http.NewServeMux(), probes: probes}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	return s
 }
 
@@ -65,18 +65,38 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // down.
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ready",
+		"dependencies": dependencyReport(results),
+	})
+}
+
+// handleConnectivity serves the §25.6 GET /v1/admin/diagnostics/-
+// connectivity endpoint: it runs the dependency probes in parallel and
+// returns the per-dependency report together with an overall verdict.
+func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
+	results := probe.Run(r.Context(), s.probes, probeTimeout)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"dependencies": dependencyReport(results),
+		"healthy":      probe.AllOK(results),
+	})
+}
+
+// dependencyReport projects probe results into the JSON body shape the
+// readiness and connectivity endpoints share.
+func dependencyReport(results map[string]probe.Result) map[string]map[string]any {
 	deps := make(map[string]map[string]any, len(results))
 	for name, res := range results {
-		entry := map[string]any{"ok": res.OK}
+		entry := map[string]any{
+			"ok":         res.OK,
+			"durationMs": res.Duration.Milliseconds(),
+		}
 		if res.Detail != "" {
 			entry["detail"] = res.Detail
 		}
 		deps[name] = entry
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "ready",
-		"dependencies": deps,
-	})
+	return deps
 }
 
 // writeJSON writes v as a JSON response with the given status code.
