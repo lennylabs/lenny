@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `9f528a9` — §25.3 suggestedAction remediation contract, added to
+  `pkg/ops/conventions`: the `SuggestedAction` type, `UsesRankedActions`
+  (which issues present ranked alternatives vs. a single canonical
+  action), and `SortByConfidence` (descending, stable). Shared by the
+  §25.3 health endpoints and §25.6 diagnostics.
 - `8cc3649` — §25.2 canonical progress envelope, added to
   `pkg/ops/conventions`: the `Progress` struct long-running operations
   include in status responses, plus the `EtaMethod` taxonomy and
