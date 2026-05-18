@@ -71,9 +71,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
+	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
+	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
@@ -86,6 +89,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
+	evalpg "github.com/lennylabs/lenny/pkg/gateway/evalstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
@@ -96,6 +100,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
@@ -103,6 +108,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
+	memorypg "github.com/lennylabs/lenny/pkg/gateway/memorystore/pgstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
@@ -128,6 +134,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/gateway/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore"
+	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/transcriptstore"
@@ -451,13 +458,22 @@ func main() {
 	// serves the respond/dismiss endpoints) and the platform MCP tools
 	// (lenny/request_elicitation), so an elicitation a tool records is
 	// resolvable through the REST surface.
-	interactions := interactionstore.NewMemory()
-	evals := evalstore.NewMemory(0, nil)
+	var interactions interactionstore.Store = interactionstore.NewMemory()
+	if pgPool != nil {
+		interactions = interactionpg.New(pgPool)
+	}
+	var evals evalstore.Store = evalstore.NewMemory(0, nil)
+	if pgPool != nil {
+		evals = evalpg.New(pgPool)
+	}
 	var experiments experimentstore.Store = experimentstore.NewMemory()
 	if pgPool != nil {
 		experiments = experimentpg.New(pgPool)
 	}
-	memories := memorystore.NewInMemory(0, nil)
+	var memories memorystore.Store = memorystore.NewInMemory(0, nil)
+	if pgPool != nil {
+		memories = memorypg.New(pgPool)
+	}
 
 	// ----- §16.1 Prometheus metrics -----
 	gwMetrics, err := gatewaymetrics.New()
@@ -501,7 +517,10 @@ func main() {
 	}
 	// §4 runtime tenant-access registry, shared by the admin
 	// tenant-access endpoints and the §5.1 internal meta-fetch endpoint.
-	tenantAccess := tenantaccessstore.NewMemory()
+	var tenantAccess tenantaccessstore.Store = tenantaccessstore.NewMemory()
+	if pgPool != nil {
+		tenantAccess = tenantaccesspg.New(pgPool)
+	}
 
 	// §25.3 operational-event emitter, shared by the gateway subsystems
 	// that emit and the admin event-buffer query endpoint.
@@ -509,7 +528,10 @@ func main() {
 
 	// §4.9 credential-pool registry, shared by the admin credential-pool
 	// CRUD and the §14 gitClone auth host-to-pool binding check.
-	credentialPools := credentialpoolstore.NewMemory()
+	var credentialPools credentialpoolstore.Store = credentialpoolstore.NewMemory()
+	if pgPool != nil {
+		credentialPools = credentialpoolpg.New(pgPool)
+	}
 
 	var usage usagestore.Store = usagestore.NewMemory()
 	if pgPool != nil {
@@ -555,7 +577,11 @@ func main() {
 	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
 	// ----- §4.9 end-user credential registry -----
-	credServer := credentialserver.New(credentialstore.NewMemory(nil))
+	var credentials credentialstore.Store = credentialstore.NewMemory(nil)
+	if pgPool != nil {
+		credentials = credentialpg.New(pgPool)
+	}
+	credServer := credentialserver.New(credentials)
 
 	// ----- MCP adapter -----
 	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments})
@@ -827,7 +853,11 @@ func main() {
 	// ----- §4.9 LLM reverse proxy -----
 	// With --llm-proxy-addr the gateway serves the §4.9 LLM proxy for
 	// proxy-mode agent pods on a listener separate from the REST API.
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion)
+	var llmLeases credleasestore.LeaseStore = credleasestore.New()
+	if pgPool != nil {
+		llmLeases = credleasepg.New(pgPool)
+	}
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases)
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----
 	// Sweeps every 5 s; transitions stuck sessions to failed.
@@ -1033,13 +1063,13 @@ type breakerRegistry interface {
 // The credential-lease store, the credential cache, and the deny list
 // start empty; the §4.9 credential-assignment path populates them, and
 // a request that arrives before then is cleanly rejected.
-func newLLMProxyServer(addr, anthropicVersion string) *http.Server {
+func newLLMProxyServer(addr, anthropicVersion string, leases credleasestore.LeaseStore) *http.Server {
 	if addr == "" {
 		return nil
 	}
 	proxyMux := http.NewServeMux()
 	proxyMux.Handle("POST /llm-proxy/v1/messages", &llmproxy.Handler{
-		Leases:      credleasestore.New(),
+		Leases:      leases,
 		Translator:  &llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: anthropicVersion},
 		Forwarder:   &llmproxy.Forwarder{Breaker: &llmproxy.CircuitBreaker{}},
 		Credentials: credcache.New(),

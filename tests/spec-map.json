@@ -81,7 +81,8 @@
         "pkg/credential/credential_test.go::TestRotationTriggerIsCeilingApplicable",
         "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
-        "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields"
+        "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
+        "tests/tier2_component/stores/tenantaccessstore_test.go"
       ],
       "packages": [
         "pkg/gateway",
@@ -313,7 +314,10 @@
         "pkg/credential/credential_test.go::TestRotationTriggerIsCeilingApplicable",
         "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
-        "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields"
+        "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
+        "tests/tier2_component/stores/credentialstore_test.go",
+        "tests/tier2_component/stores/credentialpoolstore_test.go",
+        "tests/tier2_component/stores/credleasestore_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -721,7 +725,8 @@
         "pkg/elicitation/elicitation_test.go::TestContentDigestCanonicalKeyOrder",
         "pkg/elicitation/elicitation_test.go::TestVerifyContentRejectsTampered",
         "pkg/elicitation/elicitation_test.go::TestProvenanceValidateHappyPath",
-        "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID"
+        "pkg/elicitation/elicitation_test.go::TestProvenanceValidateRejectsConnectorWithoutID",
+        "tests/tier2_component/stores/interactionstore_test.go"
       ],
       "packages": [
         "pkg/elicitation"
@@ -746,7 +751,8 @@
       "spec_file": "spec/09_mcp-integration.md",
       "tests": [
         "pkg/gateway/memorystore/...",
-        "pkg/gateway/mcptools/memorytools_test.go"
+        "pkg/gateway/mcptools/memorytools_test.go",
+        "tests/tier2_component/stores/memorystore_test.go"
       ],
       "packages": [
         "pkg/store/memory"
@@ -979,7 +985,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantApproximatesWeightDistribution",
         "pkg/experiment/experiment_test.go::TestAssignVariantHonoursDefinitionOrder",
         "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
-        "tests/tier2_component/stores/experimentstore_test.go"
+        "tests/tier2_component/stores/experimentstore_test.go",
+        "tests/tier2_component/stores/evalstore_test.go"
       ],
       "packages": [
         "pkg/experiment"

@@ -71,12 +71,9 @@ func TestEventStoreContract(t *testing.T) {
 	t.Skip("not implemented: §12.2.1 EventStore — requires pkg/audit-backed Postgres event ledger + retranscribe worker + OCSF translation pipeline")
 }
 
-// TestCredentialPoolStoreContract — Postgres encrypted credential
-// pool. Coverage: pool CRUD, lease assignment, health scoring,
-// deny-list, revocation, encryption, RLS, erasure.
-func TestCredentialPoolStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 CredentialPoolStore — requires the Token Service Postgres credential-pool tables and the health/deny-list scoring loop")
-}
+// TestCredentialPoolStoreContract is implemented in
+// credentialpoolstore_test.go, which exercises the Postgres-backed
+// pkg/gateway/credentialpoolstore/pgstore against a real container.
 
 // TestEvictionStateStoreContract — Postgres eviction state. Coverage:
 // eviction-state CRUD, MinIO context-key storage, terminal-state
@@ -85,20 +82,13 @@ func TestEvictionStateStoreContract(t *testing.T) {
 	t.Skip("not implemented: §12.2.1 EvictionStateStore — requires pkg/checkpoint-backed eviction tracking table and MinIO context-key index")
 }
 
-// TestMemoryStoreContract — Postgres + pgvector memory store with
-// pluggable backends. Coverage: RLS, user-scope isolation,
-// tenant-scope isolation, mandatory DeleteByUser/DeleteByTenant,
-// startup preflight, per-job preflight, custom-backend contract
-// validation, retention TTL, capacity eviction.
-func TestMemoryStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 MemoryStore — requires Postgres+pgvector default backend and the MemoryStore interface contract (mandatory DeleteByUser/DeleteByTenant)")
-}
+// TestMemoryStoreContract is implemented in memorystore_test.go, which
+// exercises the Postgres-backed pkg/gateway/memorystore/pgstore. The
+// pgvector default backend is a later-wave addition.
 
-// TestEvalResultStoreContract — Postgres eval result store. Coverage:
-// score CRUD, FK to sessions, RLS, erasure cascade.
-func TestEvalResultStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EvalResultStore — Phase 17b feature; requires eval_results schema and the session FK cascade")
-}
+// TestEvalResultStoreContract is implemented in evalstore_test.go,
+// which exercises the Postgres-backed pkg/gateway/evalstore/pgstore
+// against a real container, including the sessions FK cascade.
 
 // TestSemanticCacheContract — Redis semantic cache with pluggable
 // backends. Coverage: scope isolation (u:/s:/t:), per-tenant prefix,

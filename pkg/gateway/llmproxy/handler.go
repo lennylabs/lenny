@@ -55,8 +55,10 @@ type UsageRecorder interface {
 // credential, forwards through the circuit breaker, and translates the
 // response back. The real upstream key never leaves the gateway.
 type Handler struct {
-	// Leases resolves a bearer lease token to its §4.9 lease.
-	Leases *credleasestore.Store
+	// Leases resolves a bearer lease token to its §4.9 lease. The
+	// interface admits both the in-memory store and the Postgres
+	// backend.
+	Leases credleasestore.LeaseStore
 	// Translator converts the proxy-dialect request and response to and
 	// from the upstream provider's wire format.
 	Translator Translator
