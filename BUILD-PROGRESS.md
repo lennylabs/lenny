@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `84a1a7e` — §25.11 backup-and-restore request validation
+  (`pkg/ops/backup`). `ValidType`, `RequiresConfirm` (the §25.4 confirm
+  gate for full backups in production), `ValidateSchedule` (cron via
+  `pkg/cron`), and `ValidateRetentionPolicy`. The pre-Job validation
+  kernel for the §25.11 backup endpoints.
 - `69b8374` — §25.7 runbook steps endpoint. `GET /v1/admin/runbooks/
   {name}/steps` on lenny-ops returns the structured access-path steps
   (via `ParseSteps`); an unknown name returns a §25.2 RUNBOOK_NOT_FOUND
