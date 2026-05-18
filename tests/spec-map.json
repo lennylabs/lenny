@@ -82,7 +82,9 @@
         "pkg/credential/credential_test.go::TestRotationTriggerCountsAgainstBudget",
         "pkg/credential/credential_test.go::TestPoolConfigValidateHappy",
         "pkg/credential/credential_test.go::TestPoolConfigValidateRejectsBadFields",
-        "tests/tier2_component/stores/tenantaccessstore_test.go"
+        "tests/tier2_component/stores/tenantaccessstore_test.go",
+        "tests/tier5_e2e_kind/etcd_encryption_test.go",
+        "charts/lenny/tests/etcd-encryption_test.yaml"
       ],
       "packages": [
         "pkg/gateway",
@@ -108,7 +110,10 @@
         "pkg/store/credentialpool"
       ],
       "blocked_until_phase": "2",
-      "notes": "\u00a74 is the umbrella section for system components. Behavioral surface lives in its subsections (\u00a74.1, \u00a74.2, \u00a74.3, \u00a74.4, \u00a74.5, \u00a74.6, \u00a74.6.1, \u00a74.6.2, \u00a74.6.3, \u00a74.7, \u00a74.8, \u00a74.9); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a74 surfaces the same coverage as drilling into each subsection."
+      "notes": "\u00a74 is the umbrella section for system components. Behavioral surface lives in its subsections (\u00a74.1, \u00a74.2, \u00a74.3, \u00a74.4, \u00a74.5, \u00a74.6, \u00a74.6.1, \u00a74.6.2, \u00a74.6.3, \u00a74.7, \u00a74.8, \u00a74.9); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a74 surfaces the same coverage as drilling into each subsection.",
+      "chart_templates": [
+        "charts/lenny/templates/etcd-encryption.yaml"
+      ]
     },
     "4.1": {
       "title": "Edge Gateway Replicas",

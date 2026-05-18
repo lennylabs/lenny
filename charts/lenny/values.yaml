@@ -167,6 +167,32 @@ security:
 # to true to allow rendering a previously-enabled flag as false.
 acceptFeatureFlagDowngrade: {}
 
+# etcdEncryption controls the §13.1 etcd encryption-at-rest posture.
+# When enabled (the default), the chart renders the lenny-etcd-encryption
+# ConfigMap carrying an apiserver.config.k8s.io/v1 EncryptionConfiguration
+# that encrypts Kubernetes Secrets at rest with an aescbc provider.
+# Kubernetes does not encrypt Secrets in etcd by default, and Lenny
+# stores credential-pool API keys in Secrets, so the default is on.
+#
+# A Helm chart cannot reconfigure the kube-apiserver: the rendered
+# ConfigMap is the document the operator wires into every control-plane
+# apiserver via --encryption-provider-config. See the template comment
+# in templates/etcd-encryption.yaml and the key-rotation runbook at
+# docs/runbooks/etcd-key-rotation.md.
+etcdEncryption:
+  # enabled gates the lenny-etcd-encryption ConfigMap. Leave true for
+  # any cluster that stores real credentials; set false only for a
+  # cloud-managed cluster where provider envelope encryption (AWS KMS,
+  # GCP Cloud KMS, Azure Key Vault) covers the secrets resource instead.
+  enabled: true
+  # aescbcKeys optionally pins the aescbc key list. Each entry is an
+  # object {name, secret} where secret is 32 random bytes base64-encoded.
+  # When left empty the chart generates one key on first render and
+  # preserves it verbatim across re-renders, so helm upgrade does not
+  # silently rotate the key. Supply this list to manage keys out of
+  # band or to stage a rotation per docs/runbooks/etcd-key-rotation.md.
+  aescbcKeys: []
+
 # preflight configures the lenny-preflight pre-install/pre-upgrade Job
 # (§17.9), which runs the admission-plane checks before the install
 # proceeds.

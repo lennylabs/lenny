@@ -31,8 +31,8 @@ func TestLabelImmutability(t *testing.T)     { kind.SkipUnlessAvailable(t) }
 func TestLennyOpsFirstDeploy(t *testing.T)   { kind.SkipUnlessAvailable(t) }
 func TestBootstrapFirstInstall(t *testing.T) { kind.SkipUnlessAvailable(t) }
 
-// §13.11 Phase 5.4 — etcd encryption at rest.
-func TestEtcdEncryption(t *testing.T) { kind.SkipUnlessAvailable(t) }
+// §13.11 Phase 5.4 — etcd encryption at rest is exercised by the real
+// test in etcd_encryption_test.go (TestEtcdEncryption).
 
 // §13.15 Phase 5.8 — LLM Proxy + direct-mode isolation.
 func TestLLMProxyProxyMode(t *testing.T)            { kind.SkipUnlessAvailable(t) }

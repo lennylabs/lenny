@@ -133,7 +133,7 @@ When the health API (`GET /v1/admin/health`) returns `degraded` or `unhealthy` f
 | `audit` | [audit-pipeline-degraded](audit-pipeline-degraded.html), [audit-grant-drift](audit-grant-drift.html) |
 | `billing` | [billing-stream-backlog](billing-stream-backlog.html) |
 | `compliance` | [erasure-job-failed](erasure-job-failed.html), [tenant-deletion-overdue](tenant-deletion-overdue.html), [data-residency-violation](data-residency-violation.html), [legal-hold-quota-pressure](legal-hold-quota-pressure.html) |
-| `controlPlane` | [etcd-operations](etcd-operations.html) |
+| `controlPlane` | [etcd-operations](etcd-operations.html), [etcd-key-rotation](etcd-key-rotation.html) |
 | `cluster` | [dns-outage](dns-outage.html), [network-policy-drift](network-policy-drift.html) |
 
 The health API's `issueRunbooks` lookup returns the same mapping; `lenny-ops` populates it from this catalog.
@@ -265,6 +265,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [delegation-budget-recovery](delegation-budget-recovery.html)
 - [dns-outage](dns-outage.html)
 - [dual-store-unavailable](dual-store-unavailable.html)
+- [etcd-key-rotation](etcd-key-rotation.html)
 - [etcd-operations](etcd-operations.html)
 - [minio-failure](minio-failure.html)
 - [pgbouncer-saturation](pgbouncer-saturation.html)

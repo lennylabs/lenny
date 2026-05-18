@@ -1,0 +1,94 @@
+{{- /*
+lenny-etcd-encryption ConfigMap (§13.1 Pod Security, §17.9 preflight
+warning "etcd Secret encryption"). Carries the
+apiserver.config.k8s.io/v1 EncryptionConfiguration that encrypts the
+`secrets` resource at rest in etcd with an aescbc provider, falling
+back to identity so already-stored plaintext Secrets remain readable
+until they are rewritten.
+
+OPERATOR STEP — REQUIRED. A Helm chart cannot reconfigure the
+kube-apiserver, so this template only renders the EncryptionConfiguration
+document; it does not activate it. The operator must wire the rendered
+file into every control-plane apiserver:
+
+  1. Extract the document onto each control-plane node, for example:
+       kubectl -n {{ .Release.Namespace }} get configmap lenny-etcd-encryption \
+         -o jsonpath='{.data.encryption-config\.yaml}' \
+         > /etc/kubernetes/enc/encryption-config.yaml
+  2. Add --encryption-provider-config=/etc/kubernetes/enc/encryption-config.yaml
+     to the kube-apiserver flags (static-pod manifest, kubeadm
+     ClusterConfiguration apiServer.extraArgs, or the managed-cluster
+     equivalent) and mount the file into the apiserver.
+  3. Restart the apiservers, then rewrite existing Secrets so they are
+     re-encrypted under the new provider:
+       kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+
+Cloud-managed clusters (EKS, GKE, AKS) cannot take a custom
+EncryptionConfiguration; enable the provider's envelope encryption
+(AWS KMS, GCP Cloud KMS, Azure Key Vault) for the `secrets` resource
+instead and treat this ConfigMap as documentation of intent.
+
+Key rotation is documented in docs/runbooks/etcd-key-rotation.md.
+
+The aescbc key is 32 random bytes, base64-encoded. The chart is the
+sole writer: the key is generated once on first render and preserved
+verbatim across re-renders by reading the live ConfigMap through
+lookup, so `helm upgrade` does not silently rotate the key (an
+unintended rotation without the rewrite step in the runbook would
+leave Secrets encrypted under a key the apiserver no longer holds).
+An operator who wants a specific key, an external secret manager, or
+a longer key list can set etcdEncryption.aescbcKeys explicitly.
+*/ -}}
+{{- if .Values.etcdEncryption.enabled }}
+{{- $keys := .Values.etcdEncryption.aescbcKeys }}
+{{- if not $keys }}
+{{-   $existing := lookup "v1" "ConfigMap" .Release.Namespace "lenny-etcd-encryption" }}
+{{-   $priorKey := "" }}
+{{-   if $existing }}
+{{-     $priorConfig := index $existing.data "encryption-config.yaml" }}
+{{-     if $priorConfig }}
+{{-       range $line := splitList "\n" $priorConfig }}
+{{-         $trimmed := trim $line }}
+{{-         if hasPrefix "secret:" $trimmed }}
+{{-           if eq $priorKey "" }}
+{{-             $priorKey = trim (trimPrefix "secret:" $trimmed) }}
+{{-           end }}
+{{-         end }}
+{{-       end }}
+{{-     end }}
+{{-   end }}
+{{-   if eq $priorKey "" }}
+{{-     $priorKey = randAlphaNum 32 | b64enc }}
+{{-   end }}
+{{-   $keys = list (dict "name" "key1" "secret" $priorKey) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-etcd-encryption
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/etcd-encryption: "true"
+  annotations:
+    lenny.dev/operator-action: "wire encryption-config.yaml into the kube-apiserver --encryption-provider-config flag; see docs/runbooks/etcd-key-rotation.md"
+data:
+  encryption-config.yaml: |
+    # apiserver EncryptionConfiguration — encrypts Kubernetes Secrets at
+    # rest in etcd. Wire this file into the kube-apiserver with
+    # --encryption-provider-config; see the lenny-etcd-encryption
+    # ConfigMap annotations and docs/runbooks/etcd-key-rotation.md.
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: EncryptionConfiguration
+    resources:
+      - resources:
+          - secrets
+        providers:
+          {{- range $key := $keys }}
+          - aescbc:
+              keys:
+                - name: {{ $key.name }}
+                  secret: {{ $key.secret }}
+          {{- end }}
+          - identity: {}
+{{- end }}
