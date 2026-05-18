@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `085ed48` — credential rotation notifies the lifecycle channel. When
+  `RotateCredentials` rotates a Full-level runtime's credential, the adapter
+  sends `credentials_rotated` (provider, credential-file path, lease) over
+  the channel and waits for `credentials_acknowledged`. The credential file
+  is written under `s.mu`; the lock is released before the lifecycle
+  round-trip. Verified: adapter tests race-clean, `lenny-compliance
+  --level full` 12/12.
 - `63b8d3e` — drove the `Checkpoint` RPC through the lifecycle channel. A
   Full-level runtime now checkpoints cooperatively per §4.7: the adapter
   sends `checkpoint_request`, waits for `checkpoint_ready`, snapshots and
@@ -51,12 +58,9 @@ Newest first. Each entry is one increment toward the critical path below.
   `lenny-compliance --level full` passes all 12 checks against
   `streaming-echo`; adapter tests race-clean.
   Remaining lifecycle work, for the next iteration:
-  - The §4.7 operation lock (`fb25535`), `Interrupt` (`7a09197`), and
-    `Checkpoint` (`63b8d3e`) Full paths are done.
-  - Credential RPCs: `RotateCredentials` (and the rotation path of
-    `AssignCredentials`) should drive the lifecycle channel's
-    `RotateCredentials` for Full-level runtimes so the runtime rebinds and
-    replies `credentials_acknowledged`.
+  - The operation lock (`fb25535`) and the `Interrupt` (`7a09197`),
+    `Checkpoint` (`63b8d3e`), and credential-rotation (`085ed48`) Full
+    paths are done. The runtime↔adapter lifecycle channel is complete.
   - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream so
     the gateway observes lifecycle events; resolve `ExtendLease`
     (proto-vs-§8.6 direction).
