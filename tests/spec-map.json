@@ -1234,15 +1234,25 @@
         "pkg/audit/audit_test.go::TestValidatePairingMismatches",
         "pkg/audit/audit_test.go::TestAllOCSFStatesIsExhaustive",
         "pkg/audit/audit_test.go::TestOCSFStateIsTerminal",
+        "pkg/audit/ocsf/ocsf_test.go",
+        "pkg/audit/ocsf/translator_test.go",
+        "pkg/audit/siem/siem_test.go",
         "tests/tier2_component/auditintegrity/...",
-        "tests/tier2_component/auditstore/..."
+        "tests/tier2_component/auditstore/...",
+        "tests/tier2_component/stores/eventstore_test.go",
+        "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
+        "tests/tier4_integration/audit_pipeline_test.go"
       ],
       "packages": [
         "pkg/audit",
+        "pkg/audit/ocsf",
+        "pkg/audit/siem",
+        "pkg/audit/integrity",
+        "pkg/gateway/auditstore",
         "pkg/store/event"
       ],
       "blocked_until_phase": "13",
-      "notes": "Phase 13 ships the \u00a711.7 audit-log enums (ChainIntegrity, ComplianceProfile, OCSFTranslationState) and the \u00a716.4 RetentionPreset \u2192 days mapping with the compliance-profile compatibility matrix. The audit-log row writer, the per-tenant Postgres advisory lock, the SIEM forwarder, the OCSF translator, and the audit_log_deferred_writes reconciliation flow are deferred to the K8s-integration phase that ships the gateway and lenny-ops."
+      "notes": "Phase 13 ships the \u00a711.7 audit-log enums (ChainIntegrity, ComplianceProfile, OCSFTranslationState) and the \u00a716.4 RetentionPreset \u2192 days mapping with the compliance-profile compatibility matrix. The K8s-integration phase ships the audit-log row writer (pkg/gateway/auditstore) with the per-tenant Postgres advisory lock, the OCSF translator and its retry / dead-letter state machine (pkg/audit/ocsf), the SIEM forwarder (pkg/audit/siem), and the startup chain-continuity check (pkg/audit/integrity). The audit_log_deferred_writes reconciliation flow remains deferred to lenny-ops."
     },
     "11.8": {
       "title": "Security Incident Response",
@@ -1356,11 +1366,18 @@
     "12.6": {
       "title": "Storage Interface Design",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
-      "packages": [
-        "pkg/store"
+      "tests": [
+        "pkg/gateway/eventbus/cloudevents_test.go",
+        "pkg/gateway/eventbus/eventbus_test.go",
+        "tests/tier2_component/stores/eventstore_test.go",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go"
       ],
-      "blocked_until_phase": "2"
+      "packages": [
+        "pkg/store",
+        "pkg/gateway/eventbus"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "The §12.6 EventBus interface (§12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format."
     },
     "12.7": {
       "title": "Extensibility",

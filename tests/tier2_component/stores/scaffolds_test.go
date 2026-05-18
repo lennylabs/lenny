@@ -62,14 +62,11 @@ func TestArtifactStoreContract(t *testing.T) {
 	t.Skip("not implemented: §12.2.1 ArtifactStore — requires pkg/artifactstore over MinIO with SSE-KMS, soft-delete tombstones, and Postgres-minimal-state fallback")
 }
 
-// TestEventStoreContract — Postgres event store. Coverage: audit hash
-// chain, sequence monotonicity, event schema versioning, OCSF
-// translation state machine, EventBus publish state,
-// retranscribe-worker sweep, terminal-failure escalation, T2 batching
-// loss alert, startup chain-continuity check, RLS, erasure.
-func TestEventStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EventStore — requires pkg/audit-backed Postgres event ledger + retranscribe worker + OCSF translation pipeline")
-}
+// TestEventStoreContract is implemented in eventstore_test.go, which
+// exercises the Postgres-backed §12.2.1 EventStore (pkg/gateway/auditstore)
+// against a real container: the §11.7 audit hash chain, the OCSF
+// translation state machine, the §12.3.7 EventBus publish-state
+// machine, the startup chain-continuity check, RLS, and erasure.
 
 // TestCredentialPoolStoreContract is implemented in
 // credentialpoolstore_test.go, which exercises the Postgres-backed
@@ -112,12 +109,10 @@ func TestStoreRouterContract(t *testing.T) {
 	t.Skip("not implemented: §12.2.1 StoreRouter — requires the pkg/storerouter implementation with R-03 routing rules and scatter-gather concurrency control")
 }
 
-// TestEventBusContract — Redis pub/sub event bus. Coverage:
-// CloudEvents envelope, tenant-prefixed channels, at-most-once
-// delivery, retranscribe semantics.
-func TestEventBusContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EventBus — requires Redis pub/sub event bus implementation + CloudEvents v1.0.2 envelope writer")
-}
+// TestEventBusContract is implemented in eventstore_test.go, which
+// exercises the §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a
+// real Redis container: the CloudEvents v1.0.2 envelope, the
+// tenant-prefixed channels, and at-most-once delivery isolation.
 
 // TestDeleteByUserAndTenantInterface — every tenant-scoped store MUST
 // expose DeleteByUser(ctx, tenantID, userID) error and

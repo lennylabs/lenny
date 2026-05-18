@@ -218,6 +218,27 @@ func TestLedgerImmutability(t *testing.T) {
 		}
 	})
 
+	t.Run("audit_log permits the migration-0041 bookkeeping update", func(t *testing.T) {
+		// Migration 0041 narrows lenny_audit_immutability so the §11.7
+		// OCSF and §12.3.7 EventBus state machines can advance the
+		// bookkeeping columns while the hash-input payload stays frozen.
+		if err := execTenant(ctx, pg, "acme",
+			`INSERT INTO audit_log (tenant_id, sequence_number, event_type, payload, payload_canonical_json)
+			 VALUES ('acme', 41, 'test.event', '{}', '{}')`); err != nil {
+			t.Fatalf("audit insert should succeed: %v", err)
+		}
+		if err := execTenant(ctx, pg, "acme",
+			`UPDATE audit_log SET retry_count = retry_count + 1
+			 WHERE tenant_id = 'acme' AND sequence_number = 41`); err != nil {
+			t.Errorf("a bookkeeping-only UPDATE must be permitted after migration 0041: %v", err)
+		}
+		if err := execTenant(ctx, pg, "acme",
+			`UPDATE audit_log SET payload = '{"x":1}'
+			 WHERE tenant_id = 'acme' AND sequence_number = 41`); err == nil {
+			t.Error("a payload UPDATE must still be rejected after migration 0041")
+		}
+	})
+
 	t.Run("billing_events rejects update and delete", func(t *testing.T) {
 		if err := execTenant(ctx, pg, "acme",
 			`INSERT INTO billing_events (tenant_id, sequence_number, event_type)

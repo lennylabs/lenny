@@ -49,10 +49,11 @@ func TestAdminBootstrap(t *testing.T) {
 	t.Skip("not implemented: §10.2 / §17.6 — the gateway's POST /v1/admin/bootstrap and /v1/admin/tenants endpoints exist, but this test exercises the lenny-ctl bootstrap subcommand and the lenny-bootstrap Helm Job that drive a from-empty platform bring-up, neither of which is gateway-resident")
 }
 
-// §13.28 — audit pipeline.
-func TestAuditPipeline(t *testing.T) {
-	t.Skip("not implemented: §11.7 audit_log table + per-tenant advisory lock + OCSF translator + SIEM forwarder — requires Postgres-backed EventStore")
-}
+// §13.28 — audit pipeline. TestAuditPipeline is converted in
+// audit_pipeline_test.go: the §11.7 audit pipeline is exercised end to
+// end — an audit event flows through the Postgres-backed hash chain,
+// the OCSF translator state machine, and the SIEM forwarder, against a
+// real Postgres container and the fake SIEM endpoint.
 
 // §13.19 — checkpoint/resume.
 func TestCheckpointResume(t *testing.T) {
