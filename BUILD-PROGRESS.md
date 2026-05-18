@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `655426b` — §25.2 canonical error response envelope, added to
+  `pkg/ops/conventions`: the `ErrorCategory` taxonomy (TRANSIENT, PERMANENT,
+  POLICY, AUTH), `NewError` (derives `retryable` from the category and the
+  documentation URL from the code), and `WriteError` (emits the envelope at
+  an HTTP status). Every operability endpoint returns this on failure.
 - `d3e5e4f` — §25.4 operability-endpoint conventions (`pkg/ops/conventions`).
   Pure package shared by every gateway and lenny-ops operability endpoint:
   `ParsePageParams` (the canonical `cursor`/`limit`/`since`/`until`/
