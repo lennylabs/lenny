@@ -3,6 +3,9 @@
 package conventions_test
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -99,5 +102,51 @@ func TestWantsConfirm(t *testing.T) {
 				t.Errorf("WantsConfirm(%q) = %v, want %v", c.body, got, c.want)
 			}
 		})
+	}
+}
+
+func TestNewErrorRetryability(t *testing.T) {
+	cases := []struct {
+		category      conventions.ErrorCategory
+		wantRetryable bool
+	}{
+		{conventions.CategoryTransient, true},
+		{conventions.CategoryPermanent, false},
+		{conventions.CategoryPolicy, true},
+		{conventions.CategoryAuth, true},
+	}
+	for _, c := range cases {
+		t.Run(string(c.category), func(t *testing.T) {
+			resp := conventions.NewError("SOME_CODE", c.category, "a message")
+			if resp.Error.Retryable != c.wantRetryable {
+				t.Errorf("retryable = %v, want %v", resp.Error.Retryable, c.wantRetryable)
+			}
+			if resp.Error.DocumentationURL != "https://docs.lenny.dev/errors/SOME_CODE" {
+				t.Errorf("documentationUrl = %q, want the docs URL for the code", resp.Error.DocumentationURL)
+			}
+		})
+	}
+}
+
+func TestWriteError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	conventions.WriteError(rec, http.StatusConflict, "REMEDIATION_LOCK_CONFLICT",
+		conventions.CategoryPolicy, "another agent holds the lock")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var resp conventions.ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp.Error.Code != "REMEDIATION_LOCK_CONFLICT" || resp.Error.Category != conventions.CategoryPolicy {
+		t.Errorf("error body = %+v, want the policy conflict", resp.Error)
+	}
+	if !resp.Error.Retryable {
+		t.Error("a POLICY error should be retryable")
 	}
 }

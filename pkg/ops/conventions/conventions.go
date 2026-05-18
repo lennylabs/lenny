@@ -9,6 +9,7 @@ package conventions
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"time"
@@ -124,4 +125,59 @@ type Pagination struct {
 	HasMore     bool   `json:"hasMore"`
 	Limit       int    `json:"limit"`
 	GapDetected bool   `json:"gapDetected,omitempty"`
+}
+
+// ErrorCategory is the §25.2 error category. It determines the
+// retry behavior an agent applies to a failed operability request.
+type ErrorCategory string
+
+const (
+	// CategoryTransient is a temporary failure that is safe to retry.
+	CategoryTransient ErrorCategory = "TRANSIENT"
+	// CategoryPermanent will not succeed as-is; the caller must change
+	// its input. It is the only non-retryable category.
+	CategoryPermanent ErrorCategory = "PERMANENT"
+	// CategoryPolicy is a platform-policy rejection; the caller retries
+	// after taking the indicated action.
+	CategoryPolicy ErrorCategory = "POLICY"
+	// CategoryAuth is an authentication or authorization failure.
+	CategoryAuth ErrorCategory = "AUTH"
+)
+
+// ErrorBody is the inner object of the §25.2 canonical error envelope.
+type ErrorBody struct {
+	Code                string         `json:"code"`
+	Category            ErrorCategory  `json:"category"`
+	Message             string         `json:"message"`
+	Retryable           bool           `json:"retryable"`
+	SuggestedRetryAfter string         `json:"suggestedRetryAfter,omitempty"`
+	Details             map[string]any `json:"details,omitempty"`
+	DocumentationURL    string         `json:"documentationUrl"`
+}
+
+// ErrorResponse is the §25.2 canonical error response envelope every
+// operability endpoint returns on failure.
+type ErrorResponse struct {
+	Error ErrorBody `json:"error"`
+}
+
+// NewError builds the §25.2 canonical error envelope. retryable is
+// derived from the category — every category except PERMANENT is
+// retryable — and the documentation URL is derived from the code.
+func NewError(code string, category ErrorCategory, message string) ErrorResponse {
+	return ErrorResponse{Error: ErrorBody{
+		Code:             code,
+		Category:         category,
+		Message:          message,
+		Retryable:        category != CategoryPermanent,
+		DocumentationURL: "https://docs.lenny.dev/errors/" + code,
+	}}
+}
+
+// WriteError writes the §25.2 canonical error envelope as a JSON
+// response with the given HTTP status code.
+func WriteError(w http.ResponseWriter, status int, code string, category ErrorCategory, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(NewError(code, category, message))
 }
