@@ -103,3 +103,145 @@ exceptions:
   - section: "27.10"
     reason: non-normative
     justification: Web playground roll-forward notes. Forward-compatibility guidance, no executable behavior.
+
+
+  # Wave 0 spec-map reconciliation: non-normative sections (design
+  # philosophy, overviews, summaries, examples, reference tables) and
+  # deferred sections whose feature is built by a later wave. A
+  # deferred entry is removed and replaced with test references by the
+  # wave that closes its phase.
+  - section: "8.1"
+    reason: non-normative
+    justification: Design-philosophy rationale for recursive delegation as a platform primitive; the testable invariants are normative in §8.2 and §8.3.
+  - section: "9"
+    reason: non-normative
+    justification: Chapter heading for MCP integration; the normative surface is §9.1 through §9.4.
+  - section: "11.8"
+    reason: non-normative
+    justification: Security incident response is deployer runbook guidance built from primitives normative in §11.4, §11.7, and §12.8.
+  - section: "12.1"
+    reason: non-normative
+    justification: One-paragraph storage design principle; the mandatory erasure primitives it states are verified under §12.8.
+  - section: "12.7"
+    reason: non-normative
+    justification: Design-guidance list for the pluggable-storage interface boundary; states no behavior of its own.
+  - section: "12.9"
+    reason: deferred
+    justification: The workspaceTier stricter-only ratchet and tier-driven controls are built in Wave 4 (Phase 13); see the BUILD-PLAN open spec item.
+  - section: "15.3"
+    reason: non-normative
+    justification: Pointer paragraph stating gateway-to-pod transport is gRPC over mTLS; the RPC surface is normative in §4.7 and §15.4.
+  - section: "15.5"
+    reason: non-normative
+    justification: API-versioning and stability policy; the schemaVersion mechanism it cites is verified under §14 and §11.2.1.
+  - section: "16.2"
+    reason: deferred
+    justification: Per-session latency-breakpoint instrumentation is added in Wave 7 (Phase 14.5).
+  - section: "16.7"
+    reason: deferred
+    justification: The §25 audit-event types are emitted in Wave 4 (Phase 13).
+  - section: "16.9"
+    reason: deferred
+    justification: The ServiceMonitor, PodMonitor, and PrometheusRule chart templates ship in Wave 5 (Phase 2.5).
+  - section: "16.10"
+    reason: deferred
+    justification: OpenSLO export is built in Wave 7 (Phase 14.5).
+  - section: "17.1"
+    reason: non-normative
+    justification: Kubernetes-resource inventory table; the chart templates are verified under §17.2 and the helm-unittest suites.
+  - section: "17.3"
+    reason: deferred
+    justification: Disaster-recovery tooling and the restore-test CronJob ship in Wave 4 (Phase 14).
+  - section: "17.4"
+    reason: deferred
+    justification: Local development mode (lenny-dev) is built in Wave 6 (Phase 2).
+  - section: "17.5"
+    reason: non-normative
+    justification: Cloud-portability design statement; no executable behavior of its own.
+  - section: "17.8"
+    reason: non-normative
+    justification: Introductory paragraph for the capacity-planning subsections; states no behavior of its own.
+  - section: "17.8.1"
+    reason: non-normative
+    justification: Quick-reference table of operational defaults that restates values bound elsewhere.
+  - section: "17.8.2"
+    reason: non-normative
+    justification: Per-tier sizing reference table of recommended starting values; advisory.
+  - section: "17.8.3"
+    reason: non-normative
+    justification: Procedural operator checklist for promoting between capacity tiers.
+  - section: "17.8.4"
+    reason: deferred
+    justification: Tier preset values files ship in Wave 6 (Phase 17a).
+  - section: "17.8.5"
+    reason: deferred
+    justification: The lenny-ops Deployment chart templates ship in Wave 5.
+  - section: "25"
+    reason: non-normative
+    justification: Top-level agent-operability intro; the normative surface is §25.4 onward.
+  - section: "25.1"
+    reason: non-normative
+    justification: Design philosophy and external-agent model; the concrete mechanisms are normative in §15.1 and §13.
+  - section: "25.2"
+    reason: non-normative
+    justification: Architecture overview of the gateway and lenny-ops split; states no behavior of its own.
+  - section: "25.5"
+    reason: deferred
+    justification: The operational event stream is built in Wave 4 (Phase 13).
+  - section: "25.8"
+    reason: deferred
+    justification: Platform lifecycle management is built in Wave 4 (Phase 13).
+  - section: "25.12"
+    reason: deferred
+    justification: The MCP management server is built in Wave 4 (Phase 13).
+  - section: "25.13"
+    reason: deferred
+    justification: Bundled alerting-rule chart wiring and tier-aware defaults ship in Wave 4 and Wave 5.
+  - section: "25.15"
+    reason: non-normative
+    justification: Failure-mode analysis table and a human total-outage recovery runbook.
+  - section: "25.16"
+    reason: non-normative
+    justification: Deployment-topology summary presenting illustrative layouts.
+  - section: "25.17"
+    reason: non-normative
+    justification: End-to-end worked operational example; illustrative narrative.
+  - section: "26"
+    reason: non-normative
+    justification: Reference-runtime catalog intro and conventions; per-runtime behavior is §26.3 through §26.11.
+  - section: "26.2"
+    reason: non-normative
+    justification: Shared-pattern description for the coding-agent runtimes; verified through the §26.3 to §26.6 entries.
+  - section: "26.3"
+    reason: deferred
+    justification: The claude-code reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.4"
+    reason: deferred
+    justification: The gemini-cli reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.5"
+    reason: deferred
+    justification: The codex reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.6"
+    reason: deferred
+    justification: The cursor-cli reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.7"
+    reason: deferred
+    justification: The chat reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.8"
+    reason: deferred
+    justification: The langgraph reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.9"
+    reason: deferred
+    justification: The mastra reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.10"
+    reason: deferred
+    justification: The openai-assistants reference runtime is built in Wave 6 (Phase 11).
+  - section: "26.11"
+    reason: deferred
+    justification: The crewai reference runtime is built in Wave 6 (Phase 11).
+  - section: "8.7"
+    reason: deferred
+    justification: The §8.7 file-export model (glob rebasing, destPrefix, symlink validation) is unimplemented; built in Wave 2 (Phase 9).
+  - section: "12.6"
+    reason: deferred
+    justification: The storage scaling-extension interfaces (PodRegistry, StoreRouter, ClusterRegistry, CredentialGenerator, EventBus) are not yet implemented.

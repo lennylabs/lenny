@@ -6,7 +6,13 @@
     "1": {
       "title": "Executive Summary",
       "spec_file": "spec/01_executive-summary.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/auditintegrity/integrity_test.go",
+        "tests/tier2_component/migrations/migrations_test.go",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go",
+        "tests/tier3_contract/rest_auth/auth_test.go",
+        "tests/tier3_contract/rest_sessions/sessions_test.go"
+      ],
       "packages": [],
       "schemas": [],
       "migrations": [],
@@ -18,7 +24,10 @@
     "2": {
       "title": "Goals and Non-Goals",
       "spec_file": "spec/02_goals-and-non-goals.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/adapter_jsonl/messages_test.go",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go"
+      ],
       "packages": [],
       "blocked_until_phase": "0",
       "notes": "Non-normative. No tests required."
@@ -26,7 +35,9 @@
     "3": {
       "title": "High-Level Architecture",
       "spec_file": "spec/03_high-level-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/workspaceplan/sources_test.go"
+      ],
       "packages": [],
       "blocked_until_phase": "0",
       "notes": "Non-normative. Architecture diagram only. No tests required."
@@ -101,7 +112,9 @@
     "4.1": {
       "title": "Edge Gateway Replicas",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/..."
+      ],
       "packages": [
         "pkg/gateway"
       ],
@@ -110,7 +123,14 @@
     "4.2": {
       "title": "Session Manager",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/session/...",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go",
+        "tests/tier3_contract/rest_idempotency/idempotency_test.go",
+        "tests/tier3_contract/rest_sessions/sessions_test.go",
+        "tests/tier4_integration/idempotency_test.go",
+        "tests/tier4_integration/session_lifecycle_test.go"
+      ],
       "packages": [
         "pkg/session",
         "pkg/store/session"
@@ -120,7 +140,12 @@
     "4.3": {
       "title": "Token Service",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/tokenexchange/...",
+        "pkg/credential/...",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go",
+        "tests/tier3_contract/oauth_token/oauth_token_record_test.go"
+      ],
       "packages": [
         "pkg/token",
         "pkg/store/token"
@@ -163,7 +188,10 @@
     "4.6": {
       "title": "Pod Lifecycle Controllers",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/controller/warmpool/...",
+        "pkg/controller/poolscaling/..."
+      ],
       "packages": [
         "pkg/controller/warmpool",
         "pkg/controller/poolscaling"
@@ -247,7 +275,9 @@
     "4.7": {
       "title": "Runtime Adapter",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/adapter/..."
+      ],
       "packages": [
         "pkg/adapter",
         "cmd/runtimes/echo"
@@ -261,7 +291,11 @@
     "4.8": {
       "title": "Gateway Policy Engine",
       "spec_file": "spec/04_system-components.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/interceptor/...",
+        "pkg/gateway/delegationpolicystore/...",
+        "pkg/gateway/mcptools/predelegation_test.go"
+      ],
       "packages": [
         "pkg/gateway/interceptors",
         "pkg/policy"
@@ -338,7 +372,12 @@
     "5.3": {
       "title": "Isolation Profiles",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
-      "tests": [],
+      "tests": [
+        "pkg/sandbox/isolation/...",
+        "pkg/gateway/poolstore/...",
+        "pkg/gateway/admin/pools_test.go",
+        "pkg/admission/webhook/direct_mode_isolation_test.go"
+      ],
       "packages": [
         "pkg/isolation"
       ],
@@ -366,7 +405,9 @@
     "6.1": {
       "title": "Pre-Warmed Pod Anatomy",
       "spec_file": "spec/06_warm-pod-model.md",
-      "tests": [],
+      "tests": [
+        "pkg/controller/warmpool/..."
+      ],
       "packages": [
         "pkg/controller/warmpool",
         "cmd/lenny-adapter"
@@ -401,7 +442,11 @@
     "6.4": {
       "title": "Pod Filesystem Layout",
       "spec_file": "spec/06_warm-pod-model.md",
-      "tests": [],
+      "tests": [
+        "pkg/controller/sandbox/podspec/...",
+        "pkg/adapter/workspace/materialize_test.go",
+        "pkg/adapter/staging_test.go"
+      ],
       "packages": [
         "pkg/workspace"
       ],
@@ -410,7 +455,12 @@
     "7": {
       "title": "Session Lifecycle",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/session/...",
+        "pkg/checkpoint/...",
+        "pkg/upload/...",
+        "tests/tier2_component/auditintegrity/integrity_test.go"
+      ],
       "packages": [
         "pkg/session",
         "pkg/session/interactive",
@@ -425,7 +475,9 @@
     "7.1": {
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/session/..."
+      ],
       "packages": [
         "pkg/session"
       ],
@@ -434,7 +486,11 @@
     "7.2": {
       "title": "Interactive Session Model",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/session/state/...",
+        "pkg/gateway/sessionserver/messages_test.go",
+        "pkg/gateway/sessionserver/interactions_test.go"
+      ],
       "packages": [
         "pkg/session/interactive"
       ],
@@ -443,7 +499,9 @@
     "7.3": {
       "title": "Retry and Resume",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/checkpoint/..."
+      ],
       "packages": [
         "pkg/session/resume",
         "pkg/checkpoint"
@@ -453,7 +511,9 @@
     "7.4": {
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/upload/..."
+      ],
       "packages": [
         "pkg/upload"
       ],
@@ -462,7 +522,10 @@
     "7.5": {
       "title": "Setup Commands",
       "spec_file": "spec/07_session-lifecycle.md",
-      "tests": [],
+      "tests": [
+        "pkg/adapter/workspace/setup_test.go",
+        "pkg/adapter/staging_test.go"
+      ],
       "packages": [
         "pkg/setup"
       ],
@@ -536,7 +599,9 @@
     "8.4": {
       "title": "Approval Modes",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/delegationpolicystore/..."
+      ],
       "packages": [
         "pkg/delegation/approval"
       ],
@@ -546,7 +611,10 @@
     "8.5": {
       "title": "Delegation Tools",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/mcptools/...",
+        "pkg/gateway/delegation/..."
+      ],
       "packages": [
         "pkg/delegation/tools"
       ],
@@ -556,7 +624,9 @@
     "8.6": {
       "title": "Lease Extension",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
+      "tests": [
+        "pkg/delegation/lease/..."
+      ],
       "packages": [
         "pkg/delegation/lease"
       ],
@@ -589,7 +659,10 @@
     "8.9": {
       "title": "Task Tree",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/mcptools/mcptools_test.go",
+        "pkg/delegation/recovery/..."
+      ],
       "packages": [
         "pkg/delegation/tree"
       ],
@@ -599,7 +672,9 @@
     "8.10": {
       "title": "Delegation Tree Recovery",
       "spec_file": "spec/08_recursive-delegation.md",
-      "tests": [],
+      "tests": [
+        "pkg/delegation/recovery/..."
+      ],
       "packages": [
         "pkg/delegation/tree",
         "pkg/delegation/recovery"
@@ -619,7 +694,11 @@
     "9.1": {
       "title": "Where MCP Is Used",
       "spec_file": "spec/09_mcp-integration.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/mcp/...",
+        "pkg/adapter/mcp/...",
+        "pkg/gateway/mcptools/discover_agents_filtering_test.go"
+      ],
       "packages": [
         "pkg/mcp"
       ],
@@ -663,7 +742,10 @@
     "9.4": {
       "title": "Memory Store",
       "spec_file": "spec/09_mcp-integration.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/memorystore/...",
+        "pkg/gateway/mcptools/memorytools_test.go"
+      ],
       "packages": [
         "pkg/store/memory"
       ],
@@ -821,7 +903,11 @@
     "10.4": {
       "title": "Gateway Reliability",
       "spec_file": "spec/10_gateway-internals.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/events/...",
+        "pkg/gateway/sessionserver/events_test.go",
+        "tests/tier2_component/coordination/sweep_test.go"
+      ],
       "packages": [
         "pkg/gateway/reliability"
       ],
@@ -1014,7 +1100,11 @@
     "11.3": {
       "title": "Timeouts and Cancellation",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/watchdog/...",
+        "pkg/gateway/inputwait/...",
+        "pkg/session/state/..."
+      ],
       "packages": [
         "pkg/policy/timeout"
       ],
@@ -1023,7 +1113,10 @@
     "11.4": {
       "title": "User Invalidation",
       "spec_file": "spec/11_policy-and-controls.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/admin/...",
+        "pkg/gateway/sessionserver/..."
+      ],
       "packages": [
         "pkg/auth/invalidate"
       ],
@@ -1205,7 +1298,10 @@
     "12.4": {
       "title": "Redis HA and Failure Modes",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/breakers/breakerstore_test.go",
+        "tests/tier2_component/quota/quotastore_test.go"
+      ],
       "packages": [
         "pkg/store/lease",
         "pkg/store/quota"
@@ -1215,7 +1311,9 @@
     "12.5": {
       "title": "Artifact Store",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/stores/miniostore_test.go"
+      ],
       "packages": [
         "pkg/store/artifact"
       ],
@@ -1241,7 +1339,12 @@
     "12.8": {
       "title": "Compliance Interfaces",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/admin/...",
+        "pkg/gateway/retentiongc/...",
+        "pkg/gateway/erasure/...",
+        "pkg/gateway/erasurejob/..."
+      ],
       "packages": [
         "pkg/store",
         "pkg/compliance"
@@ -1345,7 +1448,9 @@
     "13.2": {
       "title": "Network Isolation",
       "spec_file": "spec/13_security-model.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/migrations/migrations_test.go"
+      ],
       "packages": [
         "pkg/admission/labelimmutability"
       ],
@@ -1416,7 +1521,12 @@
     "13.5": {
       "title": "Delegation Chain Content Security",
       "spec_file": "spec/13_security-model.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/delegationpolicystore/...",
+        "pkg/gateway/mcptools/...",
+        "pkg/delegation/lease/...",
+        "pkg/gateway/interceptor/..."
+      ],
       "packages": [
         "pkg/delegation/security"
       ],
@@ -1580,7 +1690,10 @@
     "15.2": {
       "title": "MCP API",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/mcp/...",
+        "tests/tier4_integration/gateway_full_e2e_test.go"
+      ],
       "packages": [
         "pkg/gateway/mcp"
       ],
@@ -1589,7 +1702,9 @@
     "15.2.1": {
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/mcp/..."
+      ],
       "packages": [
         "pkg/gateway/rest",
         "pkg/gateway/mcp"
@@ -1820,7 +1935,9 @@
     "16.6": {
       "title": "Operational Events Catalog",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/opsevents/..."
+      ],
       "packages": [
         "pkg/observability/events"
       ],
@@ -1840,7 +1957,9 @@
     "16.8": {
       "title": "Section 25 Metrics",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/observability/metrics/..."
+      ],
       "packages": [
         "pkg/observability/metrics"
       ],
@@ -1870,7 +1989,9 @@
     "17": {
       "title": "Deployment Topology",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "charts/lenny",
         "cmd/lenny-dev",
@@ -1895,7 +2016,13 @@
     "17.2": {
       "title": "Namespace Layout",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "pkg/preflight/phasestamp_test.go",
+        "pkg/preflight/webhooks_test.go",
+        "pkg/preflight/run_test.go",
+        "pkg/preflight/hostsharing_test.go",
+        "tests/tier1_unit/helm/helm_test.go"
+      ],
       "packages": [
         "charts/lenny"
       ],
@@ -1934,7 +2061,9 @@
     "17.6": {
       "title": "Packaging and Installation",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "charts/lenny",
         "cmd/lenny-ctl"
@@ -1944,7 +2073,9 @@
     "17.7": {
       "title": "Operational Runbooks",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "tests/tier11_docs/runbooks_test.go"
+      ],
       "packages": [
         "docs/runbooks/"
       ],
@@ -2011,7 +2142,9 @@
     "17.8.6": {
       "title": "Image Registry and Air-Gap",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "pkg/common/registry/resolver_test.go"
+      ],
       "packages": [],
       "blocked_until_phase": "14",
       "notes": "Image-registry overrides and air-gap mirror support. Phase 14 lands the chart values and the bootstrap Job's pre-flight check."
@@ -2019,7 +2152,9 @@
     "17.9": {
       "title": "Deployment Answer Files",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2064,7 +2199,10 @@
     "24": {
       "title": "lenny-ctl Command Reference",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/...",
+        "tests/tier3_contract/oauth_token/oauth_token_test.go"
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2073,7 +2211,9 @@
     "24.0": {
       "title": "Packaging and Installation",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2083,7 +2223,9 @@
     "24.1": {
       "title": "Bootstrap",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2093,7 +2235,9 @@
     "24.2": {
       "title": "Preflight",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2103,7 +2247,9 @@
     "24.3": {
       "title": "Runtime Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2113,7 +2259,9 @@
     "24.4": {
       "title": "Pool Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2123,7 +2271,9 @@
     "24.5": {
       "title": "Credential Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2133,7 +2283,9 @@
     "24.6": {
       "title": "Quota Operations",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2143,7 +2295,9 @@
     "24.7": {
       "title": "Circuit Breakers",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2153,7 +2307,9 @@
     "24.8": {
       "title": "External Adapter Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2163,7 +2319,9 @@
     "24.9": {
       "title": "User and Token Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2173,7 +2331,9 @@
     "24.10": {
       "title": "Tenant Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2183,7 +2343,9 @@
     "24.11": {
       "title": "Session Investigation",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2193,7 +2355,9 @@
     "24.12": {
       "title": "Erasure Job Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2203,7 +2367,9 @@
     "24.13": {
       "title": "Migration Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2213,7 +2379,9 @@
     "24.14": {
       "title": "Policy Management",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2223,7 +2391,9 @@
     "24.15": {
       "title": "Agent-Operability Commands",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2233,7 +2403,9 @@
     "24.16": {
       "title": "Server Discovery and Routing",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2243,7 +2415,9 @@
     "24.17": {
       "title": "Session Operations",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2253,7 +2427,9 @@
     "24.18": {
       "title": "Runtime Scaffolding",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2263,7 +2439,9 @@
     "24.19": {
       "title": "Local Stack",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2273,7 +2451,9 @@
     "24.20": {
       "title": "Installation Wizard",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
@@ -2321,7 +2501,11 @@
     "25.4": {
       "title": "The lenny-ops Service",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/ops/opsserver/opsserver_test.go",
+        "pkg/ops/probe/probe_test.go",
+        "pkg/ops/conventions/conventions_test.go"
+      ],
       "packages": [
         "cmd/lenny-ops"
       ],
@@ -2340,7 +2524,13 @@
     "25.6": {
       "title": "Diagnostic Endpoints",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/ops/diagnostics/cause_test.go",
+        "pkg/ops/diagnostics/bottleneck_test.go",
+        "pkg/ops/diagnostics/chain_test.go",
+        "pkg/ops/opsserver/opsserver_test.go",
+        "pkg/ops/auditrate/auditrate_test.go"
+      ],
       "packages": [
         "pkg/operability/diag"
       ],
@@ -2350,7 +2540,11 @@
     "25.7": {
       "title": "Operational Runbooks",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/ops/runbooks/runbooks_test.go",
+        "pkg/ops/runbooks/steps_test.go",
+        "pkg/ops/opsserver/runbooks_test.go"
+      ],
       "packages": [
         "pkg/operability/runbooks"
       ],
@@ -2370,7 +2564,9 @@
     "25.9": {
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/admin/audit_query_test.go"
+      ],
       "packages": [
         "pkg/operability/audit"
       ],
@@ -2380,7 +2576,9 @@
     "25.10": {
       "title": "Configuration Drift Detection",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/drift/drift_test.go"
+      ],
       "packages": [
         "pkg/operability/drift"
       ],
@@ -2390,7 +2588,9 @@
     "25.11": {
       "title": "Backup and Restore API",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "pkg/ops/backup/backup_test.go"
+      ],
       "packages": [
         "pkg/operability/backup"
       ],
@@ -2418,7 +2618,9 @@
     "25.14": {
       "title": "lenny-ctl Extensions",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "cmd/lenny-ctl/..."
+      ],
       "packages": [
         "cmd/lenny-ctl"
       ],
