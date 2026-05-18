@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `b31cfc9` — §25.7 runbook step parser (`pkg/ops/runbooks`).
+  `ParseSteps` extracts the structured steps from a runbook body — `###`
+  headings, `<!-- access: ... -->` markers, and the fenced commands —
+  skipping prose headings. The logic behind
+  `GET /v1/admin/runbooks/{name}/steps`.
 - `29ff3d6` — §25.7 runbook front-matter parser and discovery filter
   (`pkg/ops/runbooks`). `Parse` decodes the YAML front matter (triggers,
   components, symptoms, tags, requires, related); `Matches` applies the
