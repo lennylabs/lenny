@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `29ff3d6` — §25.7 runbook front-matter parser and discovery filter
+  (`pkg/ops/runbooks`). `Parse` decodes the YAML front matter (triggers,
+  components, symptoms, tags, requires, related); `Matches` applies the
+  §25.7 Path A filter (alert / component / tag / symptom). The logic
+  behind the lenny-ops `GET /v1/admin/runbooks` index.
 - `9f528a9` — §25.3 suggestedAction remediation contract, added to
   `pkg/ops/conventions`: the `SuggestedAction` type, `UsesRankedActions`
   (which issues present ranked alternatives vs. a single canonical
