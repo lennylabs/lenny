@@ -50,6 +50,59 @@ func (r *Router) accessibleSet(ctx context.Context, kind tenantaccessstore.Resou
 	return set
 }
 
+// requireResourceManage gates a §10.2 manage-* admin route on the
+// supplied permission. Per the §10.2 RBAC matrix a `platform-admin`
+// holds every manage permission across all tenants, a `tenant-admin`
+// holds the tenant-scoped manage permissions for their own tenant, and
+// a tenant custom role holds whatever subset its definition grants.
+// The gate admits a caller when one of its roles — built-in or custom —
+// grants perm, so it widens `requireAdmin` to exactly the matrix-defined
+// `tenant-admin` entitlement (plus custom roles) without admitting any
+// role the matrix does not.
+//
+// scopeKind selects the §4 tenant-scoping applied to a non-platform-admin
+// caller on a per-resource (`{name}`) route: when it is KindRuntime or
+// KindPool the caller must additionally hold a `runtime_tenant_access` /
+// `pool_tenant_access` grant for the path resource, mirroring the §15.1
+// "tenant-admin restricted to access-table entries for own tenant" rule
+// and the read-path scoping in handleGetRuntime / handleGetPool. An
+// empty scopeKind disables per-resource scoping (used for routes whose
+// resource carries no access table, such as delegation policies).
+func (r *Router) requireResourceManage(perm auth.Permission, scopeKind tenantaccessstore.ResourceKind) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			p, ok := authmw.FromContext(req.Context())
+			if !ok {
+				writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"endpoint requires authentication", nil)
+				return
+			}
+			if !r.principalGrantsPermission(req.Context(), p, perm) {
+				writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"this endpoint requires the "+string(perm)+" permission", nil)
+				return
+			}
+			// §4 / §15.1 write scoping: a non-platform-admin caller may
+			// mutate a runtime/pool only when their tenant holds an
+			// access grant for it. A platform-admin is unscoped. A route
+			// without a {name} path value (a collection route) carries no
+			// resource to scope and falls through.
+			if scopeKind.IsValid() && !p.HasRole(auth.RolePlatformAdmin) {
+				resource := req.PathValue("name")
+				if resource != "" && !r.accessibleSet(req.Context(), scopeKind, p.TenantID)[resource] {
+					// A resource the caller's tenant cannot see is
+					// reported as absent, matching the read-path 404 so
+					// the gate does not disclose existence.
+					writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+						string(scopeKind)+" not found", nil)
+					return
+				}
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
 // tenantAccessGrantPayload is the §15.1 grant request body.
 type tenantAccessGrantPayload struct {
 	TenantID string `json:"tenantId"`

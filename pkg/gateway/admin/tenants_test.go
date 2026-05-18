@@ -69,6 +69,65 @@ func withTenantAdminPrincipal(req *http.Request) *http.Request {
 	return req.WithContext(ctx)
 }
 
+// withUserPrincipal authenticates as a plain §10.2 `user` of acme — a
+// role that holds no admin-surface permission.
+func withUserPrincipal(req *http.Request) *http.Request {
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject:  "plain@acme.com",
+		TenantID: "acme",
+		Roles:    []pkgauth.Role{pkgauth.RoleUser},
+	})
+	return req.WithContext(ctx)
+}
+
+// withBillingViewerPrincipal authenticates as a §10.2 `billing-viewer`
+// of acme — a role whose only permission is view_usage.
+func withBillingViewerPrincipal(req *http.Request) *http.Request {
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject:  "billing@acme.com",
+		TenantID: "acme",
+		Roles:    []pkgauth.Role{pkgauth.RoleBillingViewer},
+	})
+	return req.WithContext(ctx)
+}
+
+// withTenantViewerPrincipal authenticates as a §10.2 `tenant-viewer` of
+// acme — a read-only role that holds no manage permission.
+func withTenantViewerPrincipal(req *http.Request) *http.Request {
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject:  "viewer@acme.com",
+		TenantID: "acme",
+		Roles:    []pkgauth.Role{pkgauth.RoleTenantViewer},
+	})
+	return req.WithContext(ctx)
+}
+
+// withCustomRolePrincipal authenticates a caller of acme holding the
+// named tenant custom role and no built-in role, so the §10.2
+// custom-role resolution path is exercised.
+func withCustomRolePrincipal(name string) func(*http.Request) *http.Request {
+	return func(req *http.Request) *http.Request {
+		ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+			Subject:  "custom@acme.com",
+			TenantID: "acme",
+			Roles:    []pkgauth.Role{pkgauth.Role(name)},
+		})
+		return req.WithContext(ctx)
+	}
+}
+
+// withForeignTenantAdminPrincipal authenticates as a `tenant-admin` of
+// globex — a different tenant than acme — so cross-tenant rejection can
+// be asserted.
+func withForeignTenantAdminPrincipal(req *http.Request) *http.Request {
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject:  "admin@globex.com",
+		TenantID: "globex",
+		Roles:    []pkgauth.Role{pkgauth.RoleTenantAdmin},
+	})
+	return req.WithContext(ctx)
+}
+
 func TestCreateTenantRequiresPlatformAdmin(t *testing.T) {
 	router, _ := newAdminServer(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme", DisplayName: "Acme Corp"})

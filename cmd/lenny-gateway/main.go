@@ -618,6 +618,15 @@ func main() {
 		credentialPools = credentialpoolpg.New(pgPool)
 	}
 
+	// §10.2 tenant custom-role registry, shared by the admin custom-role
+	// CRUD and the §10.2 session-endpoint authorization gate (so a
+	// custom role granting manage_own_sessions / read_own_sessions is
+	// honored on the session endpoints as well as the admin surface).
+	var customRoles customrolestore.Store = customrolestore.NewMemory()
+	if pgPool != nil {
+		customRoles = customrolepg.New(pgPool)
+	}
+
 	var usage usagestore.Store = usagestore.NewMemory()
 	if pgPool != nil {
 		usage = usagepg.New(pgPool)
@@ -639,6 +648,7 @@ func main() {
 		OpsEmitter:                 opsEmitter,
 		RefResolver:                gitref.NewLsRemoteResolver(gitref.Options{}),
 		CredentialPools:            credentialPools,
+		CustomRoles:                customRoles,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		ExperimentRejections: experimentRejectionReporter{
 			audit:   auditSink,
@@ -809,10 +819,6 @@ func main() {
 	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
 	if pgPool != nil {
 		delegationPolicies = delegationpolicypg.New(pgPool)
-	}
-	var customRoles customrolestore.Store = customrolestore.NewMemory()
-	if pgPool != nil {
-		customRoles = customrolepg.New(pgPool)
 	}
 	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink, Metrics: gwMetrics}).
 		WithRuntimes(runtimes).

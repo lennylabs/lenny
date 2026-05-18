@@ -176,26 +176,38 @@ func TestDeletePoolSoftDeletes(t *testing.T) {
 	}
 }
 
-// TestPoolEndpointsRequirePlatformAdmin covers the pool mutation
-// endpoints. The GET endpoints are §4 tenant-scoped (a tenant-admin may
-// call them, filtered) and are covered by the tenant-scoping tests.
-func TestPoolEndpointsRequirePlatformAdmin(t *testing.T) {
+// TestPoolMutationAuthorization covers the pool mutation endpoints
+// against the §10.2 "Manage pools / scaling policies" matrix row. Pool
+// create and delete are platform-admin-only per §15.1 (they define or
+// remove a platform-global record): a tenant-admin receives 403. Pool
+// update is granted to tenant-admin for "own tenant", which §15.1
+// scopes to access-table entries — a tenant-admin with no
+// pool_tenant_access grant for the target pool receives 404 (the gate
+// reports the out-of-scope resource as absent, matching the read-path
+// scoping in handleGetPool). (Reconciliation note: the PUT previously
+// used requireAdmin, which denied the tenant-admin entitlement the
+// §10.2 matrix grants.)
+func TestPoolMutationAuthorization(t *testing.T) {
 	router, store, _, _ := newPoolAdmin(t)
 	_ = store.Create(context.Background(), poolstore.Pool{Name: "p", IsolationProfile: isolation.ProfileSandboxed})
 
 	for _, c := range []struct {
 		method, path string
 		body         []byte
+		want         int
 	}{
-		{http.MethodPost, "/v1/admin/pools", []byte(`{"name":"x"}`)},
-		{http.MethodPut, "/v1/admin/pools/p", []byte("{}")},
-		{http.MethodDelete, "/v1/admin/pools/p", nil},
+		// Create / delete: platform-admin only; tenant-admin is forbidden.
+		{http.MethodPost, "/v1/admin/pools", []byte(`{"name":"x"}`), http.StatusForbidden},
+		{http.MethodDelete, "/v1/admin/pools/p", nil, http.StatusForbidden},
+		// Update: granted to tenant-admin, scoped to the access table —
+		// an ungranted pool reads as absent (404), not forbidden.
+		{http.MethodPut, "/v1/admin/pools/p", []byte("{}"), http.StatusNotFound},
 	} {
 		req := withTenantAdminPrincipal(httptest.NewRequest(c.method, c.path, bytes.NewReader(c.body)))
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s %s: got %d, want 403", c.method, c.path, rr.Code)
+		if rr.Code != c.want {
+			t.Errorf("%s %s as tenant-admin: got %d, want %d", c.method, c.path, rr.Code, c.want)
 		}
 	}
 }

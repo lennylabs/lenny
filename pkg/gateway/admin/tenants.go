@@ -3,12 +3,22 @@
 // Package admin implements the §15.1 admin API surface
 // (`/v1/admin/*`). Each resource lives in its own handler so the
 // surface can be wired piecemeal; the package exports a Router that
-// composes the active handlers behind a single platform-admin
-// authorization check.
+// composes the active handlers behind the §10.2 RBAC authorization
+// gates.
 //
-// All admin endpoints require the `platform-admin` RBAC role on the
-// resolved Principal per §10.2. Non-admin callers receive 403
-// FORBIDDEN before the resource-specific handler runs.
+// Each admin route declares the §10.2 gate matching its permission-
+// matrix row. Genuinely platform-scoped routes (tenant CRUD, runtime /
+// pool creation and deletion, connectors, circuit breakers,
+// billing corrections, platform settings) use requireAdmin, which
+// admits the `platform-admin` role only. Routes the §10.2 matrix
+// grants to `tenant-admin` for their own tenant (runtime / pool /
+// credential-pool / delegation-policy / environment management, tenant
+// RBAC config, user management) use the permission-aware gates
+// (requirePermission, requireResourceManage, requireUserAdmin), which
+// admit `platform-admin`, `tenant-admin`, and any tenant custom role
+// whose permission set includes the required §10.2 permission. A caller
+// lacking the required role or permission receives 403 FORBIDDEN before
+// the resource-specific handler runs.
 package admin
 
 import (
@@ -211,6 +221,13 @@ func (r *Router) Handler() http.Handler {
 			rbacConfigAdmin(http.HandlerFunc(r.handlePutRBACConfig)))
 	}
 	if r.runtimes != nil {
+		// §10.2 / §15.1: runtime create and delete create or remove a
+		// platform-global record and are reserved to platform-admin. The
+		// §10.2 matrix grants `tenant-admin` "Manage runtimes (own
+		// tenant)", which §15.1 scopes to updating an already-granted
+		// record — so the PUT runs on the manage_runtimes permission gate
+		// with §4 access-table scoping; create/delete keep requireAdmin.
+		runtimeManage := r.requireResourceManage(auth.PermManageRuntimes, tenantaccessstore.KindRuntime)
 		mux.Handle("POST /v1/admin/runtimes", r.requireAdmin(http.HandlerFunc(r.handleCreateRuntime)))
 		mux.Handle("POST /v1/admin/runtimes/regenerate-cards",
 			r.requireAdmin(http.HandlerFunc(r.handleRegenerateCards)))
@@ -218,7 +235,7 @@ func (r *Router) Handler() http.Handler {
 		// runtimes granted to their tenant; the handlers filter.
 		mux.Handle("GET /v1/admin/runtimes", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListRuntimes)))
 		mux.Handle("GET /v1/admin/runtimes/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetRuntime)))
-		mux.Handle("PUT /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateRuntime)))
+		mux.Handle("PUT /v1/admin/runtimes/{name}", runtimeManage(http.HandlerFunc(r.handleUpdateRuntime)))
 		mux.Handle("DELETE /v1/admin/runtimes/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteRuntime)))
 	}
 	if r.recommendations != nil {
@@ -292,12 +309,19 @@ func (r *Router) Handler() http.Handler {
 			envAdmin(http.HandlerFunc(r.handleTenantAccessReport)))
 	}
 	if r.pools != nil {
+		// §10.2 / §15.1: pool create and delete are platform-admin-only
+		// (they define or remove a platform-global record). The §10.2
+		// matrix grants `tenant-admin` "Manage pools / scaling policies
+		// (own tenant)", which §15.1 scopes to updating an already-granted
+		// record — so the PUT runs on the manage_pools permission gate
+		// with §4 access-table scoping; create/delete keep requireAdmin.
+		poolManage := r.requireResourceManage(auth.PermManagePools, tenantaccessstore.KindPool)
 		mux.Handle("POST /v1/admin/pools", r.requireAdmin(http.HandlerFunc(r.handleCreatePool)))
 		// §4 / §15.1: pool reads are tenant-scoped — a tenant-admin sees
 		// the pools granted to their tenant; the handlers filter.
 		mux.Handle("GET /v1/admin/pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListPools)))
 		mux.Handle("GET /v1/admin/pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetPool)))
-		mux.Handle("PUT /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdatePool)))
+		mux.Handle("PUT /v1/admin/pools/{name}", poolManage(http.HandlerFunc(r.handleUpdatePool)))
 		mux.Handle("DELETE /v1/admin/pools/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeletePool)))
 	}
 	if r.connectors != nil {
@@ -324,11 +348,20 @@ func (r *Router) Handler() http.Handler {
 		}
 	}
 	if r.delegationPolicies != nil {
-		mux.Handle("POST /v1/admin/delegation-policies", r.requireAdmin(http.HandlerFunc(r.handleCreateDelegationPolicy)))
-		mux.Handle("GET /v1/admin/delegation-policies", r.requireAdmin(http.HandlerFunc(r.handleListDelegationPolicies)))
-		mux.Handle("GET /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetDelegationPolicy)))
-		mux.Handle("PUT /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
-		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
+		// §10.2: the matrix grants `tenant-admin` "Manage delegation
+		// policies (own tenant)", so the CRUD runs on the
+		// manage_delegation_policies permission gate (also honoring a
+		// custom role that holds it). A DelegationPolicy is a
+		// platform-global record with no tenant_id and no tenant-access
+		// join table — unlike runtimes and pools, §10.2 defines no
+		// per-resource scoping mechanism — so the gate applies no
+		// per-resource scoping (scopeKind is empty).
+		delegationManage := r.requireResourceManage(auth.PermManageDelegationPolicies, "")
+		mux.Handle("POST /v1/admin/delegation-policies", delegationManage(http.HandlerFunc(r.handleCreateDelegationPolicy)))
+		mux.Handle("GET /v1/admin/delegation-policies", delegationManage(http.HandlerFunc(r.handleListDelegationPolicies)))
+		mux.Handle("GET /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleGetDelegationPolicy)))
+		mux.Handle("PUT /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleUpdateDelegationPolicy)))
+		mux.Handle("DELETE /v1/admin/delegation-policies/{name}", delegationManage(http.HandlerFunc(r.handleDeleteDelegationPolicy)))
 	}
 	if r.customRoles != nil {
 		// §10.2: custom roles are stored in the tenant RBAC config, so
@@ -414,8 +447,13 @@ func (r *Router) requireAuditReader(next http.Handler) http.Handler {
 	})
 }
 
-// requireAdmin gates every admin endpoint on the §10.2 platform-admin
-// role.
+// requireAdmin gates a genuinely platform-scoped admin route on the
+// §10.2 platform-admin role. Routes the §10.2 matrix also grants to
+// `tenant-admin` (own tenant) use a permission-aware gate instead;
+// requireAdmin is reserved for operations the matrix restricts to
+// platform-admin (tenant CRUD, runtime / pool create and delete,
+// connectors, circuit breakers, billing corrections, platform-wide
+// settings).
 func (r *Router) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		principal, ok := authmw.FromContext(req.Context())

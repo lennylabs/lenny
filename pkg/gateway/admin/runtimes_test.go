@@ -1158,26 +1158,38 @@ func TestDeleteRuntimeSoftDeletes(t *testing.T) {
 	}
 }
 
-// TestRuntimeEndpointsRequirePlatformAdmin covers the runtime mutation
-// endpoints. The GET endpoints are §4 tenant-scoped (a tenant-admin may
-// call them, filtered) and are covered by the tenant-scoping tests.
-func TestRuntimeEndpointsRequirePlatformAdmin(t *testing.T) {
+// TestRuntimeMutationAuthorization covers the runtime mutation
+// endpoints against the §10.2 "Manage runtimes" matrix row. Runtime
+// create and delete are platform-admin-only per §15.1 (they define or
+// remove a platform-global record): a tenant-admin receives 403.
+// Runtime update is granted to tenant-admin for "own tenant", which
+// §15.1 scopes to access-table entries — a tenant-admin with no
+// runtime_tenant_access grant for the target runtime receives 404 (the
+// gate reports the out-of-scope resource as absent, matching the
+// read-path scoping in handleGetRuntime). (Reconciliation note: the PUT
+// previously used requireAdmin, which denied the tenant-admin
+// entitlement the §10.2 matrix grants.)
+func TestRuntimeMutationAuthorization(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	_ = store.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
 
 	for _, c := range []struct {
 		method, path string
 		body         []byte
+		want         int
 	}{
-		{http.MethodPost, "/v1/admin/runtimes", []byte(`{"name":"x"}`)},
-		{http.MethodPut, "/v1/admin/runtimes/echo", []byte("{}")},
-		{http.MethodDelete, "/v1/admin/runtimes/echo", nil},
+		// Create / delete: platform-admin only; tenant-admin is forbidden.
+		{http.MethodPost, "/v1/admin/runtimes", []byte(`{"name":"x"}`), http.StatusForbidden},
+		{http.MethodDelete, "/v1/admin/runtimes/echo", nil, http.StatusForbidden},
+		// Update: granted to tenant-admin, scoped to the access table —
+		// an ungranted runtime reads as absent (404), not forbidden.
+		{http.MethodPut, "/v1/admin/runtimes/echo", []byte("{}"), http.StatusNotFound},
 	} {
 		req := withTenantAdminPrincipal(httptest.NewRequest(c.method, c.path, bytes.NewReader(c.body)))
 		rr := httptest.NewRecorder()
 		router.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s %s: got %d, want 403", c.method, c.path, rr.Code)
+		if rr.Code != c.want {
+			t.Errorf("%s %s as tenant-admin: got %d, want %d", c.method, c.path, rr.Code, c.want)
 		}
 	}
 }

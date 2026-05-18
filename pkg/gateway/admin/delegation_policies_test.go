@@ -398,10 +398,16 @@ func TestUpdateDelegationPolicyNoScanEventWhenUnchanged(t *testing.T) {
 	}
 }
 
-func TestDelegationPolicyRequiresPlatformAdmin(t *testing.T) {
-	router, _ := newDelegationPolicyAdmin(t)
-	h := router.Handler()
-	for _, c := range []struct {
+// TestDelegationPolicyAuthorization covers the §10.2 "Manage delegation
+// policies" matrix row. The matrix grants the operation to
+// platform-admin and tenant-admin and denies it to tenant-viewer,
+// billing-viewer, and user. (Reconciliation note: the delegation-policy
+// CRUD previously used the platform-admin-only requireAdmin gate, which
+// over-restricted the tenant-admin entitlement the §10.2 matrix
+// defines; the routes now use the manage_delegation_policies permission
+// gate.)
+func TestDelegationPolicyAuthorization(t *testing.T) {
+	routes := []struct {
 		method, path string
 	}{
 		{http.MethodPost, "/v1/admin/delegation-policies"},
@@ -409,10 +415,45 @@ func TestDelegationPolicyRequiresPlatformAdmin(t *testing.T) {
 		{http.MethodGet, "/v1/admin/delegation-policies/p1"},
 		{http.MethodPut, "/v1/admin/delegation-policies/p1"},
 		{http.MethodDelete, "/v1/admin/delegation-policies/p1"},
+	}
+	// Roles the §10.2 matrix denies the operation.
+	for _, as := range []struct {
+		name string
+		fn   func(*http.Request) *http.Request
+	}{
+		{"user", withUserPrincipal},
+		{"billing-viewer", withBillingViewerPrincipal},
+		{"tenant-viewer", withTenantViewerPrincipal},
 	} {
-		rr := doAdminReq(t, h, c.method, c.path, validDelegationPolicy("p1"), withTenantAdminPrincipal)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s %s as tenant-admin: status %d, want 403", c.method, c.path, rr.Code)
+		router, _ := newDelegationPolicyAdmin(t)
+		h := router.Handler()
+		for _, c := range routes {
+			rr := doAdminReq(t, h, c.method, c.path, validDelegationPolicy("p1"), as.fn)
+			if rr.Code != http.StatusForbidden {
+				t.Errorf("%s %s as %s: status %d, want 403", c.method, c.path, as.name, rr.Code)
+			}
+		}
+	}
+	// Roles the §10.2 matrix grants the operation: every route is
+	// reachable (the handler runs, so the status is never 403).
+	for _, as := range []struct {
+		name string
+		fn   func(*http.Request) *http.Request
+	}{
+		{"platform-admin", withAdminPrincipal},
+		{"tenant-admin", withTenantAdminPrincipal},
+	} {
+		router, store := newDelegationPolicyAdmin(t)
+		if err := store.Create(context.Background(),
+			delegationpolicystore.DelegationPolicy{Name: "p1"}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		h := router.Handler()
+		for _, c := range routes {
+			rr := doAdminReq(t, h, c.method, c.path, validDelegationPolicy("p1"), as.fn)
+			if rr.Code == http.StatusForbidden {
+				t.Errorf("%s %s as %s: got 403, want the handler to run", c.method, c.path, as.name)
+			}
 		}
 	}
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
@@ -125,6 +126,7 @@ type Server struct {
 	refResolver        workspaceplan.RefResolver
 	credPools          credentialpoolstore.Store
 	defaultNoEnvPolicy string
+	customRoles        customrolestore.Store
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -326,6 +328,13 @@ type Options struct {
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied when a caller's tenant has set none.
 	DefaultNoEnvironmentPolicy string
+
+	// CustomRoles is the §10.2 tenant custom-role registry. When set,
+	// the §10.2 session-endpoint authorization gate resolves a caller's
+	// custom roles against it so a custom role that grants
+	// manage_own_sessions / read_own_sessions is honored. When nil only
+	// built-in roles are consulted.
+	CustomRoles customrolestore.Store
 }
 
 // New returns a Server bound to the supplied store.
@@ -365,6 +374,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		refResolver:        opts.RefResolver,
 		credPools:          opts.CredentialPools,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
+		customRoles:        opts.CustomRoles,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -395,38 +405,54 @@ func New(store sessionstore.Store, opts Options) *Server {
 
 // Handler returns the http.Handler that routes the §15.1 session
 // endpoints.
+//
+// Each session endpoint is wrapped in the §10.2 authorization gate for
+// its permission-matrix row: the state-mutating endpoints require
+// manage_own_sessions ("Create / cancel own sessions") and the read
+// endpoints require read_own_sessions ("Read own session history").
+// requireSessionPermission honors tenant custom roles and admits a
+// caller whose token carries no roles (the minimal gateway's no-OIDC
+// dev posture). See rbac_gate.go.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/sessions", s.handleCreate)
+	manage := func(next http.HandlerFunc) http.HandlerFunc {
+		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
+	}
+	read := func(next http.HandlerFunc) http.HandlerFunc {
+		return s.requireSessionPermission(auth.PermReadOwnSessions, next)
+	}
+	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
 	mux.HandleFunc("GET /v1/runtimes/{name}/meta/{key}", s.handleRuntimeMeta)
 	mux.HandleFunc("GET /internal/runtimes/{name}/meta/{key}", s.handleInternalRuntimeMeta)
 	mux.HandleFunc("GET /v1/models", s.handleListModels)
-	mux.HandleFunc("POST /v1/environments/{name}/sessions", s.handleEnvironmentSessions)
-	mux.HandleFunc("POST /v1/sessions/start", s.handleCreateAndStart)
-	mux.HandleFunc("GET /v1/sessions", s.handleList)
-	mux.HandleFunc("GET /v1/sessions/{id}", s.handleGet)
-	mux.HandleFunc("DELETE /v1/sessions/{id}", s.handleDelete)
-	mux.HandleFunc("POST /v1/sessions/{id}/finalize", s.handleFinalize)
-	mux.HandleFunc("POST /v1/sessions/{id}/start", s.handleStart)
-	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", s.handleTransition(session.EndpointInterrupt, transitionInterrupt))
-	mux.HandleFunc("POST /v1/sessions/{id}/terminate", s.handleTransition(session.EndpointTerminate, transitionTerminate))
-	mux.HandleFunc("POST /v1/sessions/{id}/resume", s.handleResume)
-	mux.HandleFunc("POST /v1/sessions/{id}/derive", s.handleDerive)
-	mux.HandleFunc("POST /v1/sessions/{id}/replay", s.handleReplay)
-	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", s.handleExtendRetention)
-	mux.HandleFunc("POST /v1/sessions/{id}/eval", s.handleEval)
-	mux.HandleFunc("POST /v1/sessions/{id}/upload", s.handleUpload)
-	mux.HandleFunc("POST /v1/sessions/{id}/messages", s.handleMessages)
-	mux.HandleFunc("GET /v1/sessions/{id}/transcript", s.handleTranscript)
-	mux.HandleFunc("GET /v1/sessions/{id}/tree", s.handleTree)
+	mux.HandleFunc("POST /v1/environments/{name}/sessions", manage(s.handleEnvironmentSessions))
+	mux.HandleFunc("POST /v1/sessions/start", manage(s.handleCreateAndStart))
+	mux.HandleFunc("GET /v1/sessions", read(s.handleList))
+	mux.HandleFunc("GET /v1/sessions/{id}", read(s.handleGet))
+	mux.HandleFunc("DELETE /v1/sessions/{id}", manage(s.handleDelete))
+	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manage(s.handleFinalize))
+	mux.HandleFunc("POST /v1/sessions/{id}/start", manage(s.handleStart))
+	mux.HandleFunc("POST /v1/sessions/{id}/interrupt",
+		manage(s.handleTransition(session.EndpointInterrupt, transitionInterrupt)))
+	mux.HandleFunc("POST /v1/sessions/{id}/terminate",
+		manage(s.handleTransition(session.EndpointTerminate, transitionTerminate)))
+	mux.HandleFunc("POST /v1/sessions/{id}/resume", manage(s.handleResume))
+	mux.HandleFunc("POST /v1/sessions/{id}/derive", manage(s.handleDerive))
+	mux.HandleFunc("POST /v1/sessions/{id}/replay", manage(s.handleReplay))
+	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manage(s.handleExtendRetention))
+	mux.HandleFunc("POST /v1/sessions/{id}/eval", manage(s.handleEval))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
+	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
+	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
+	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", s.handleEvents)
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", s.handleToolUseApprove)
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", s.handleToolUseDeny)
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", s.handleElicitationRespond)
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss", s.handleElicitationDismiss)
+	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve", manage(s.handleToolUseApprove))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny", manage(s.handleToolUseDeny))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/respond", manage(s.handleElicitationRespond))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss", manage(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	return mux
 }
