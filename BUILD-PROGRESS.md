@@ -11,6 +11,11 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8f00086` — §25.7 runbook index endpoint. `GET /v1/admin/runbooks` on
+  lenny-ops applies the Path A alert/component/tag/symptom filters and
+  returns matching runbooks sorted by name (a `RunbookSource` interface
+  is the docs/runbooks/ seam). `opsserver.New` now takes an `Options`
+  struct so the service gains dependencies without signature churn.
 - `b31cfc9` — §25.7 runbook step parser (`pkg/ops/runbooks`).
   `ParseSteps` extracts the structured steps from a runbook body — `###`
   headings, `<!-- access: ... -->` markers, and the fenced commands —
