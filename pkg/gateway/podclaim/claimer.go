@@ -74,25 +74,42 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (*lennyv1.Sandbox
 			return nil, fmt.Errorf("claim sandbox %s: %w", sb.Name, err)
 		}
 
-		claim := &lennyv1.SandboxClaim{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      claimName(req.SessionID),
-				Namespace: c.Namespace,
-			},
-			Spec: lennyv1.SandboxClaimSpec{
-				SandboxRef: sb.Name,
-				SessionID:  req.SessionID,
-				TenantID:   req.TenantID,
-			},
-		}
-		if err := c.Client.Create(ctx, claim); err != nil {
-			// The pod is claimed but unbound; the §4.6.1 orphan-claim
-			// garbage collection reclaims it.
-			return nil, fmt.Errorf("create sandbox claim for %s: %w", sb.Name, err)
+		claim, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, req)
+		if err != nil {
+			return nil, err
 		}
 		return claim, nil
 	}
 	return nil, ErrNoIdlePod
+}
+
+// CreateClaim creates the binding SandboxClaim CRD that links a session
+// to the named Sandbox. The §4.6.1 normal claim path and the
+// Postgres-backed fallback claim path share this helper so both create
+// an identical SandboxClaim: the CRD a fallback claim creates is a real
+// object, so the lenny-sandboxclaim-guard admission webhook's
+// CREATE-time single-claim check guards the fallback exactly as it
+// guards the normal path. The SandboxClaim name is deterministic per
+// session, so a repeated claim for the same session collides at CREATE
+// rather than duplicating the binding.
+func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName string, req ClaimRequest) (*lennyv1.SandboxClaim, error) {
+	claim := &lennyv1.SandboxClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claimName(req.SessionID),
+			Namespace: namespace,
+		},
+		Spec: lennyv1.SandboxClaimSpec{
+			SandboxRef: sandboxName,
+			SessionID:  req.SessionID,
+			TenantID:   req.TenantID,
+		},
+	}
+	if err := cl.Create(ctx, claim); err != nil {
+		// The pod is claimed but unbound; the §4.6.1 orphan-claim
+		// garbage collection reclaims it.
+		return nil, fmt.Errorf("create sandbox claim for %s: %w", sandboxName, err)
+	}
+	return claim, nil
 }
 
 // claimName is the deterministic SandboxClaim name for a session, so a

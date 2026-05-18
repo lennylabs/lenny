@@ -7,12 +7,14 @@
 // with the production migrations applied. Covers the bulk-UPSERT insert
 // path, the converging second Sync (changed rows updated, vanished rows
 // deleted), pool-scoped isolation of the prune DELETE, the empty-pool
-// no-op, and MirrorLagSeconds.
+// no-op, MirrorLagSeconds, and the ClaimIdle fallback claim including
+// the FOR UPDATE SKIP LOCKED single-claim guarantee under contention.
 package stores_test
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -251,6 +253,190 @@ func TestAgentPodStateStoreContract(t *testing.T) {
 		}
 		if fresh >= stale {
 			t.Errorf("lag did not drop after a re-sync: stale=%v fresh=%v", stale, fresh)
+		}
+	})
+}
+
+// spec: 4.6.1
+// diagnosis: the §4.6.1 Postgres-backed fallback claim ClaimIdle in
+// pkg/agentpodstate/pgstore did not behave as specified. ClaimIdle must
+// atomically claim the oldest idle agent_pod_state row for a pool,
+// marking it claimed and stamping the claiming session and tenant; it
+// must report (_, false, nil) when the pool has no idle row; and the
+// SELECT ... FOR UPDATE SKIP LOCKED must make two concurrent ClaimIdle
+// calls against a pool with a single idle pod yield exactly one
+// success, never a double-claim.
+func TestAgentPodStateClaimIdle(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := agentpodstatepg.New(pg.Pool)
+	ctx := context.Background()
+
+	t.Run("claims an idle row and marks it claimed", func(t *testing.T) {
+		pool := "pool-" + newUUID(t)[:8]
+		if err := store.Sync(ctx, pool, []agentpodstate.PodState{
+			{
+				PodID: pool + "-idle", PoolID: pool, State: "idle",
+				IsolationProfile: "sandboxed", ExecutionMode: "session",
+				ResourceVersion: 42, NodeName: "node-7",
+			},
+		}); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		if err != nil {
+			t.Fatalf("ClaimIdle: %v", err)
+		}
+		if !claimed {
+			t.Fatal("ClaimIdle reported no claim, want the idle pod claimed")
+		}
+		// The returned PodState reflects the post-claim row.
+		if got.PodID != pool+"-idle" || got.State != "claimed" ||
+			got.SessionID != "sess-1" || got.TenantID != "acme" {
+			t.Errorf("claimed PodState = %+v, want pod %s-idle claimed for sess-1/acme", got, pool)
+		}
+		if got.IsolationProfile != "sandboxed" || got.ExecutionMode != "session" ||
+			got.ResourceVersion != 42 || got.NodeName != "node-7" {
+			t.Errorf("claimed PodState lost mirror fields: %+v", got)
+		}
+		// The row is durably claimed and carries the session and tenant.
+		row, ok := getPodRow(t, ctx, pg, pool+"-idle")
+		if !ok {
+			t.Fatalf("row %s-idle missing after claim", pool)
+		}
+		if row.state != "claimed" {
+			t.Errorf("persisted state = %q, want claimed", row.state)
+		}
+		if row.sessionID == nil || *row.sessionID != "sess-1" ||
+			row.tenantID == nil || *row.tenantID != "acme" {
+			t.Errorf("persisted session/tenant = %v/%v, want sess-1/acme",
+				row.sessionID, row.tenantID)
+		}
+	})
+
+	t.Run("returns no claim when the pool has no idle row", func(t *testing.T) {
+		pool := "pool-" + newUUID(t)[:8]
+		// The pool exists but every pod is non-idle.
+		if err := store.Sync(ctx, pool, []agentpodstate.PodState{
+			{PodID: pool + "-w", PoolID: pool, State: "warming", IsolationProfile: "standard", ExecutionMode: "session", ResourceVersion: 1},
+			{PodID: pool + "-c", PoolID: pool, State: "claimed", IsolationProfile: "standard", ExecutionMode: "session", ResourceVersion: 1},
+		}); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		if err != nil {
+			t.Fatalf("ClaimIdle: %v", err)
+		}
+		if claimed {
+			t.Errorf("ClaimIdle claimed pod %q, want no claim for a pool with no idle row", got.PodID)
+		}
+		if got != (agentpodstate.PodState{}) {
+			t.Errorf("ClaimIdle returned %+v, want the zero PodState when nothing was claimed", got)
+		}
+	})
+
+	t.Run("returns no claim for an empty pool", func(t *testing.T) {
+		pool := "pool-" + newUUID(t)[:8]
+		_, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		if err != nil {
+			t.Fatalf("ClaimIdle: %v", err)
+		}
+		if claimed {
+			t.Error("ClaimIdle claimed a pod from a pool with no rows")
+		}
+	})
+
+	t.Run("empty pool id is rejected", func(t *testing.T) {
+		if _, _, err := store.ClaimIdle(ctx, "", "sess-1", "acme"); !errors.Is(err, agentpodstate.ErrEmptyPoolID) {
+			t.Errorf("ClaimIdle with empty poolID: got %v, want ErrEmptyPoolID", err)
+		}
+	})
+
+	t.Run("claims the longest-idle pod first", func(t *testing.T) {
+		pool := "pool-" + newUUID(t)[:8]
+		// Two idle pods. The mirror's updated_at orders them; the older
+		// one is claimed first.
+		if err := store.Sync(ctx, pool, []agentpodstate.PodState{
+			{PodID: pool + "-old", PoolID: pool, State: "idle", IsolationProfile: "standard", ExecutionMode: "session", ResourceVersion: 1},
+		}); err != nil {
+			t.Fatalf("Sync (old): %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+		if _, err := pg.Pool.Exec(ctx,
+			`INSERT INTO agent_pod_state
+			   (pod_id, pool_id, state, isolation_profile, execution_mode, resource_version, updated_at)
+			 VALUES ($1, $2, 'idle', 'standard', 'session', 1, now())`,
+			pool+"-new", pool); err != nil {
+			t.Fatalf("seed newer idle pod: %v", err)
+		}
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		if err != nil || !claimed {
+			t.Fatalf("ClaimIdle: claimed=%v err=%v", claimed, err)
+		}
+		if got.PodID != pool+"-old" {
+			t.Errorf("claimed %q, want the longer-idle pod %s-old", got.PodID, pool)
+		}
+	})
+
+	// FOR UPDATE SKIP LOCKED: two concurrent ClaimIdle calls against a
+	// pool with one idle pod must yield exactly one success. The loser
+	// skips the row the winner holds locked (or sees it already
+	// claimed) and reports no claim, never a double-claim.
+	t.Run("concurrent claims of one idle pod yield exactly one success", func(t *testing.T) {
+		pool := "pool-" + newUUID(t)[:8]
+		if err := store.Sync(ctx, pool, []agentpodstate.PodState{
+			{PodID: pool + "-only", PoolID: pool, State: "idle", IsolationProfile: "standard", ExecutionMode: "session", ResourceVersion: 1},
+		}); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+
+		const racers = 2
+		var (
+			start   sync.WaitGroup
+			done    sync.WaitGroup
+			mu      sync.Mutex
+			wins    int
+			winnerS string
+		)
+		start.Add(1)
+		done.Add(racers)
+		for i := 0; i < racers; i++ {
+			sessionID := "sess-" + newUUID(t)[:8]
+			go func(sid string) {
+				defer done.Done()
+				start.Wait() // release both goroutines together
+				pod, claimed, err := store.ClaimIdle(ctx, pool, sid, "acme")
+				if err != nil {
+					t.Errorf("ClaimIdle (%s): %v", sid, err)
+					return
+				}
+				if claimed {
+					mu.Lock()
+					wins++
+					winnerS = sid
+					if pod.SessionID != sid {
+						t.Errorf("claimed pod stamped session %q, want %q", pod.SessionID, sid)
+					}
+					mu.Unlock()
+				}
+			}(sessionID)
+		}
+		start.Done()
+		done.Wait()
+
+		if wins != 1 {
+			t.Fatalf("concurrent ClaimIdle produced %d successful claims, want exactly 1", wins)
+		}
+		// The single idle pod is durably bound to the one winner.
+		row, ok := getPodRow(t, ctx, pg, pool+"-only")
+		if !ok {
+			t.Fatalf("row %s-only missing after the race", pool)
+		}
+		if row.state != "claimed" {
+			t.Errorf("post-race state = %q, want claimed", row.state)
+		}
+		if row.sessionID == nil || *row.sessionID != winnerS {
+			t.Errorf("post-race session = %v, want the winning claim %q", row.sessionID, winnerS)
 		}
 	})
 }

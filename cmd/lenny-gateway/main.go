@@ -50,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
@@ -430,6 +431,15 @@ func main() {
 				return adapterclient.Dial(addr, dialOpt)
 			},
 			Blobs: blobs,
+		}
+		// §4.6.1 Postgres-backed fallback claim: when Postgres is
+		// configured the binder reads the agent_pod_state mirror to
+		// claim a pod after the Kubernetes-API claim finds none. Without
+		// Postgres the Fallback field stays nil and the no-idle-pod
+		// result surfaces directly.
+		if pgPool != nil {
+			podBinder.Fallback = agentpodstatepg.New(pgPool)
+			log.Printf("lenny-gateway: §4.6.1 Postgres-backed pod-claim fallback enabled")
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
 		checkpointSvc = &checkpointer.Checkpointer{

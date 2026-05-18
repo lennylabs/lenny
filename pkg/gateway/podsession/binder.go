@@ -10,14 +10,17 @@ package podsession
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
+	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
@@ -48,7 +51,26 @@ type Binder struct {
 	// blob store configured; a plan carrying upload sources then fails
 	// to bind.
 	Blobs blobstore.Store
+	// Fallback is the §4.6.1 Postgres-backed agent_pod_state mirror. When
+	// the Kubernetes-API claim returns podclaim.ErrNoIdlePod and Fallback
+	// is non-nil, connect attempts a fallback claim against the mirror
+	// before surfacing the no-idle-pod error. Nil when the deployment has
+	// no Postgres configured; connect then returns ErrNoIdlePod directly.
+	Fallback agentpodstate.Store
+	// FallbackMaxMirrorLagSeconds is the §4.6.1
+	// podClaimFallbackMaxMirrorLagSeconds freshness precondition: the
+	// fallback runs only when the target pool's mirror lag is at or below
+	// this many seconds. Above it the mirror may still show pods already
+	// claimed in etcd but not yet mirrored, so connect skips the fallback
+	// and returns ErrNoIdlePod. A zero value selects the default of
+	// DefaultFallbackMaxMirrorLagSeconds.
+	FallbackMaxMirrorLagSeconds float64
 }
+
+// DefaultFallbackMaxMirrorLagSeconds is the §4.6.1
+// podClaimFallbackMaxMirrorLagSeconds default: the fallback claim runs
+// only when the mirror is no more than this many seconds stale.
+const DefaultFallbackMaxMirrorLagSeconds = 10
 
 // BindRequest describes a session to place on a warm pod.
 type BindRequest struct {
@@ -253,15 +275,24 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (*BindResult, er
 // later failure. The shared claim-and-handshake path of Bind and Resume.
 func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sandboxName, podIP string, cl *adapterclient.Client, err error) {
 	claimer := &podclaim.Claimer{Client: b.Client, Namespace: b.Namespace}
-	claim, err := claimer.Claim(ctx, podclaim.ClaimRequest{
+	req := podclaim.ClaimRequest{
 		Pool:      pool,
 		SessionID: sessionID,
 		TenantID:  tenantID,
-	})
-	if err != nil {
-		return "", "", nil, err
 	}
-	sandboxName = claim.Spec.SandboxRef
+	claim, err := claimer.Claim(ctx, req)
+	if errors.Is(err, podclaim.ErrNoIdlePod) {
+		// The Kubernetes-API claim found no idle pod. Attempt the §4.6.1
+		// Postgres-backed fallback claim before surfacing the error.
+		sandboxName, err = b.fallbackClaim(ctx, req)
+		if err != nil {
+			return "", "", nil, err
+		}
+	} else if err != nil {
+		return "", "", nil, err
+	} else {
+		sandboxName = claim.Spec.SandboxRef
+	}
 
 	podIP, err = b.resolvePodIP(ctx, sandboxName)
 	if err != nil {
@@ -286,6 +317,76 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 		)
 	}
 	return sandboxName, podIP, cl, nil
+}
+
+// fallbackClaim runs the §4.6.1 Postgres-backed fallback claim after
+// the Kubernetes-API claim returned podclaim.ErrNoIdlePod. It returns
+// the claimed Sandbox name, or podclaim.ErrNoIdlePod when the fallback
+// is disabled, the mirror is too stale to trust, or the mirror also
+// has no idle pod (the warm pool is genuinely exhausted, which the
+// caller surfaces as WARM_POOL_EXHAUSTED).
+//
+// The fallback claims an agent_pod_state row, then reproduces the
+// authoritative side of a claim: it creates the binding SandboxClaim
+// CRD (so the lenny-sandboxclaim-guard webhook's CREATE-time check
+// still guards against a double-claim) and best-effort flips the
+// Sandbox CRD phase idle → claimed, tolerating a conflict the same way
+// podclaim.Claimer.Claim does.
+func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (string, error) {
+	if b.Fallback == nil {
+		// No Postgres mirror is configured; the no-idle-pod result stands.
+		return "", podclaim.ErrNoIdlePod
+	}
+
+	// Freshness precondition: above podClaimFallbackMaxMirrorLagSeconds
+	// the mirror may still show pods already claimed in etcd but not yet
+	// mirrored, so a fallback claim would race the Kubernetes-API claim.
+	maxLag := b.FallbackMaxMirrorLagSeconds
+	if maxLag == 0 {
+		maxLag = DefaultFallbackMaxMirrorLagSeconds
+	}
+	lag, err := b.Fallback.MirrorLagSeconds(ctx, req.Pool)
+	if err != nil {
+		return "", fmt.Errorf("podsession: read mirror lag for pool %s: %w", req.Pool, err)
+	}
+	if lag > maxLag {
+		// The mirror is too stale to trust; defer to the no-idle-pod
+		// result rather than risk claiming an already-claimed pod.
+		return "", podclaim.ErrNoIdlePod
+	}
+
+	pod, claimed, err := b.Fallback.ClaimIdle(ctx, req.Pool, req.SessionID, req.TenantID)
+	if err != nil {
+		return "", fmt.Errorf("podsession: fallback claim from pool %s: %w", req.Pool, err)
+	}
+	if !claimed {
+		// The mirror also has no idle pod: the warm pool is exhausted.
+		return "", podclaim.ErrNoIdlePod
+	}
+
+	// Reproduce the authoritative side of a claim. Create the binding
+	// SandboxClaim first: the lenny-sandboxclaim-guard webhook rejects
+	// the CREATE if the pod is already claimed, which backstops the
+	// §4.6.1 single-claim invariant for the fallback path.
+	if _, err := podclaim.CreateClaim(ctx, b.Client, b.Namespace, pod.PodID, req); err != nil {
+		return "", err
+	}
+
+	// Best-effort flip the Sandbox CRD phase idle → claimed, the
+	// authoritative state. A conflict means a competing writer already
+	// advanced the pod; the SandboxClaim above still binds this session,
+	// so the claim holds and the conflict is tolerated.
+	var sb lennyv1.Sandbox
+	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: pod.PodID}, &sb); err != nil {
+		return "", fmt.Errorf("podsession: get sandbox %s for fallback claim: %w", pod.PodID, err)
+	}
+	if sb.Status.Phase == string(state.Idle) {
+		sb.Status.Phase = string(state.Claimed)
+		if err := b.Client.Status().Update(ctx, &sb); err != nil && !apierrors.IsConflict(err) {
+			return "", fmt.Errorf("podsession: claim sandbox %s in fallback: %w", pod.PodID, err)
+		}
+	}
+	return pod.PodID, nil
 }
 
 // Release tears down a session that Bind placed on a pod: it shuts the

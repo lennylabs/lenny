@@ -70,9 +70,22 @@ type Store interface {
 	// for poolID, the staleness of the mirror for that pool. It returns
 	// 0 when the pool has no rows.
 	MirrorLagSeconds(ctx context.Context, poolID string) (float64, error)
+
+	// ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one
+	// transaction it selects the oldest idle row for poolID with
+	// SELECT ... FOR UPDATE SKIP LOCKED, then, if a row is found, marks
+	// it claimed for sessionID and tenantID and returns (podState, true,
+	// nil). When the pool has no idle row it returns (PodState{}, false,
+	// nil). SKIP LOCKED makes two concurrent ClaimIdle calls claim
+	// distinct pods: the second call skips the row the first holds
+	// locked. The mirror is a read-optimized copy, so a successful claim
+	// here is provisional until the caller flips the authoritative
+	// Sandbox CRD phase and creates the binding SandboxClaim.
+	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (PodState, bool, error)
 }
 
-// ErrEmptyPoolID is returned by Sync and MirrorLagSeconds when poolID
-// is empty. A pool-scoped operation with no pool key would either
-// delete unrelated rows or report meaningless lag.
+// ErrEmptyPoolID is returned by Sync, MirrorLagSeconds, and ClaimIdle
+// when poolID is empty. A pool-scoped operation with no pool key would
+// delete unrelated rows, report meaningless lag, or claim a pod from an
+// unintended pool.
 var ErrEmptyPoolID = errors.New("agentpodstate: poolID is required")

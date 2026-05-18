@@ -13,6 +13,7 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -122,6 +123,75 @@ func (s *Store) MirrorLagSeconds(ctx context.Context, poolID string) (float64, e
 		return 0, fmt.Errorf("agentpodstate: mirror lag: %w", err)
 	}
 	return lag, nil
+}
+
+// claimSelectSQL locks the oldest idle row for a pool. FOR UPDATE SKIP
+// LOCKED takes a row lock and skips any row a concurrent transaction
+// already holds, so two racing ClaimIdle calls select distinct pods
+// instead of contending for one. ORDER BY updated_at claims the
+// longest-idle pod first, spreading load across the pool.
+const claimSelectSQL = `SELECT pod_id, state, isolation_profile, execution_mode,
+	resource_version, node_name
+	FROM agent_pod_state
+	WHERE pool_id = $1 AND state = 'idle'
+	ORDER BY updated_at
+	LIMIT 1
+	FOR UPDATE SKIP LOCKED`
+
+// claimUpdateSQL marks the locked row claimed and stamps it with the
+// claiming session and tenant. updated_at advances to now() so the
+// mirror reflects the claim time.
+const claimUpdateSQL = `UPDATE agent_pod_state
+	SET state = 'claimed', session_id = $2, tenant_id = $3, updated_at = now()
+	WHERE pod_id = $1`
+
+// ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one
+// transaction it locks the pool's oldest idle row with FOR UPDATE SKIP
+// LOCKED, marks it claimed for the session and tenant, and returns the
+// claimed PodState. When the pool has no idle row it returns
+// (agentpodstate.PodState{}, false, nil). The SELECT and the UPDATE
+// share one transaction so the row stays locked from selection through
+// the state flip; SKIP LOCKED makes concurrent callers claim distinct
+// pods.
+func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (agentpodstate.PodState, bool, error) {
+	if poolID == "" {
+		return agentpodstate.PodState{}, false, agentpodstate.ErrEmptyPoolID
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	pod := agentpodstate.PodState{PoolID: poolID}
+	var nodeName *string
+	err = tx.QueryRow(ctx, claimSelectSQL, poolID).Scan(
+		&pod.PodID, &pod.State, &pod.IsolationProfile, &pod.ExecutionMode,
+		&pod.ResourceVersion, &nodeName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The pool has no claimable idle row: either it is genuinely
+		// exhausted or every idle row is locked by a concurrent claim.
+		return agentpodstate.PodState{}, false, nil
+	}
+	if err != nil {
+		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim select: %w", err)
+	}
+	if nodeName != nil {
+		pod.NodeName = *nodeName
+	}
+
+	if _, err := tx.Exec(ctx, claimUpdateSQL, pod.PodID, sessionID, tenantID); err != nil {
+		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim commit: %w", err)
+	}
+
+	pod.State = "claimed"
+	pod.SessionID = sessionID
+	pod.TenantID = tenantID
+	return pod, true, nil
 }
 
 // nullable maps an empty string to a SQL NULL so the nullable
