@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `fb25535` — §4.7 per-session Checkpoint/Interrupt operation lock
+  (`pkg/adapter` `opLock`). Serializes the two RPCs: one runs, one queues,
+  a third coalesces (checkpoint behind a queued checkpoint) or is rejected
+  `errOpBusy`; a queued waiter withdraws on context cancel. Unit-tested,
+  race-clean. The Interrupt and Checkpoint RPCs acquire it when wired to
+  the lifecycle channel (next).
 - `6b38927`, `17d183c` — fixed a lifecycle-frame conformance bug. The
   lifecycle channel built earlier this session (`cf1e351`), the compliance
   harness, and `cmd/runtimes/streaming-echo` used snake_case frame fields;
@@ -26,11 +32,9 @@ Newest first. Each entry is one increment toward the critical path below.
   handling" check drives the §4.7 `terminate` frame. Verified:
   `lenny-compliance --level full` passes all 12 checks against
   `streaming-echo`; adapter tests race-clean.
-  Remaining lifecycle work, for the next iteration — best done as one
-  coherent pass because the RPCs share state:
-  - §4.7 per-session operation lock: `Checkpoint` and `Interrupt` RPCs are
-    serialized (at most one runs; the other queues, depth 1). Build this
-    lock first; both RPC paths below use it.
+  Remaining lifecycle work, for the next iteration:
+  - The §4.7 operation lock is built (`fb25535`); the RPC paths below
+    acquire it.
   - `Interrupt` Full path: clean interrupt on a Full runtime sends
     `interrupt_request` and awaits `interrupt_acknowledged` (bounded by the
     request's `deadlineMs`); on timeout §4.7 wants an `INTERRUPT_TIMEOUT`
