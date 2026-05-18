@@ -11,6 +11,14 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `63b8d3e` — drove the `Checkpoint` RPC through the lifecycle channel. A
+  Full-level runtime now checkpoints cooperatively per §4.7: the adapter
+  sends `checkpoint_request`, waits for `checkpoint_ready`, snapshots and
+  stores the workspace, then resumes the runtime with `checkpoint_complete`.
+  Other runtimes keep the best-effort live-archive path. The RPC acquires
+  the §4.7 operation lock; the archive/store body is shared via
+  `archiveAndStore`. Verified: adapter tests race-clean,
+  `lenny-compliance --level full` 12/12.
 - `7a09197` — drove the `Interrupt` RPC through the lifecycle channel. A
   clean interrupt of a Full-level runtime now sends `interrupt_request` over
   the channel and awaits `interrupt_acknowledged`, bounded by the request
@@ -43,14 +51,17 @@ Newest first. Each entry is one increment toward the critical path below.
   `lenny-compliance --level full` passes all 12 checks against
   `streaming-echo`; adapter tests race-clean.
   Remaining lifecycle work, for the next iteration:
-  - The §4.7 operation lock (`fb25535`) and the `Interrupt` Full path
-    (`7a09197`) are done.
-  - `Checkpoint` Full path: acquire the operation lock, then
-    `RequestCheckpoint` → snapshot/store via `s.Checkpoints` →
-    `CompleteCheckpoint`. The credential RPCs → `RotateCredentials`.
-  - Basic-level RPC tests must still pass.
-  - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream;
-    resolve `ExtendLease` (proto-vs-§8.6 direction).
+  - The §4.7 operation lock (`fb25535`), `Interrupt` (`7a09197`), and
+    `Checkpoint` (`63b8d3e`) Full paths are done.
+  - Credential RPCs: `RotateCredentials` (and the rotation path of
+    `AssignCredentials`) should drive the lifecycle channel's
+    `RotateCredentials` for Full-level runtimes so the runtime rebinds and
+    replies `credentials_acknowledged`.
+  - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream so
+    the gateway observes lifecycle events; resolve `ExtendLease`
+    (proto-vs-§8.6 direction).
+  - Surface `InterruptResponse.Status` through `adapterclient.Interrupt`
+    and the gateway session path.
 - `3c26b2e` — wired the lifecycle channel into the adapter. The `Server`
   has a `Lifecycle *LifecycleChannel` field; when set, `writeSessionManifest`
   advertises the §15.4.6 `lifecycleChannel.socket` so a Full-level runtime
