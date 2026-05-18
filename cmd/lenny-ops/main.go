@@ -70,6 +70,8 @@ func main() {
 	memoryLimitBytes := flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
+	production := flag.Bool("production", envBool("LENNY_PRODUCTION", false),
+		"§25.11: when set, a full backup requires confirm:true. Override via LENNY_PRODUCTION.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -185,14 +187,21 @@ func main() {
 		opsservice.CheckMemoryPressure: opsservice.MemoryPressureCheck(*memoryLimitBytes),
 	}
 
+	// The §25.11 BackupService. lenny-ops orchestrates backup/restore
+	// Kubernetes Jobs through it. The Postgres-backed ops_backups store
+	// and the Kubernetes Job launcher are wired as those seams land; the
+	// in-memory store and launcher keep the §25.11 endpoints serving in
+	// a single-process degraded mode so an agent can exercise them.
+	backupSvc, backupJobs := buildBackupService(*production)
+
 	// The §25.4 service body: leader election plus the background loops.
-	// CronJobs and Reconcilers are wired as the backup, upgrade, and
-	// escalation subsystems are built; the loop machinery and the
-	// self-monitor run regardless.
+	// The §25.11 scheduled-backup cron jobs register here; the upgrade
+	// and escalation loops are wired as those subsystems are built.
 	svc, err := opsservice.New(opsservice.Config{
 		ReplicaID:          replicaID,
 		Elector:            elector,
 		Webhook:            webhook,
+		CronJobs:           backupJobs,
 		SelfHealthChecks:   selfChecks,
 		SelfHealthInterval: *selfHealthInterval,
 		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {
@@ -215,6 +224,8 @@ func main() {
 			Runbooks:   runbookSource,
 			SelfHealth: svc.Monitor(),
 			Leader:     svc,
+			Backups:    backupSvc,
+			Production: *production,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -263,6 +274,17 @@ func envInt64(name string, fallback int64) int64 {
 	if v := os.Getenv(name); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// envBool parses the named environment variable as a bool, falling back
+// when it is unset or malformed.
+func envBool(name string, fallback bool) bool {
+	if v := os.Getenv(name); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

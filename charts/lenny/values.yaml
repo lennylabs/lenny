@@ -209,3 +209,64 @@ preflight:
     limits:
       cpu: 200m
       memory: 128Mi
+
+# backups configures the §25.11 backup-and-restore subsystem. lenny-ops
+# orchestrates backup, verify, and restore Kubernetes Jobs that run the
+# lenny-backup image; the values here cover the shared image, the
+# retention policy, and the periodic test-restore CronJob.
+backups:
+  image:
+    repository: ghcr.io/lennylabs/lenny-backup
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # retention is the §25.11 retention policy. The base values are the
+  # Tier-2 defaults; values-tier1.yaml and values-tier3.yaml override
+  # them. The chart refuses to render retainMinFull or retainCount
+  # below 1 (no zero-retention configs).
+  retention:
+    retainDays: 30
+    retainCount: 10
+    retainMinFull: 3
+    # preRestoreRetainDays is the §25.11 shorter retention window for
+    # the pre-restore safety backups restore/execute creates.
+    preRestoreRetainDays: 7
+  # verification configures the §25.11 backup verification path.
+  verification:
+    # artifactSampleSize is the §25.11 backups.verification.-
+    # artifactSampleSize: the number of ArtifactStore object keys the
+    # test-restore Job samples with a HEAD against the replication
+    # target.
+    artifactSampleSize: 100
+  # restoreTest configures the §25.11 lenny-restore-test CronJob: the
+  # periodic Job that restores a backup into a scratch namespace, runs
+  # smoke tests against the temporary Postgres, samples the ArtifactStore
+  # replication target, and tears the namespace down. §25.11 recommends
+  # a monthly test restore for Tier 3.
+  restoreTest:
+    # enabled gates the CronJob. Tier 3 sets it true; the Tier-2 base
+    # leaves it false so a staging install does not run test restores
+    # without an explicit opt-in.
+    enabled: false
+    # schedule is the cron expression for the test restore. The default
+    # is the first day of each month at 04:00 UTC, matching the §25.11
+    # monthly-test-restore recommendation.
+    schedule: "0 4 1 * *"
+    # backupSelector picks which backup the test restores. "latest-full"
+    # restores the most recent successful full backup; a literal backup
+    # id pins a specific backup.
+    backupSelector: "latest-full"
+    # historyLimits bound how many finished test-restore Jobs the
+    # CronJob retains for post-mortem inspection.
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    # activeDeadlineSeconds is the hard deadline for one test-restore
+    # Job; a run exceeding it is killed.
+    activeDeadlineSeconds: 3600
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

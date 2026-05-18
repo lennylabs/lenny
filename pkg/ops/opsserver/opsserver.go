@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
 
@@ -54,6 +55,8 @@ type Server struct {
 	runbooks   RunbookSource
 	selfHealth SelfHealthReporter
 	leader     LeaderReporter
+	backups    backup.BackupService
+	production bool
 }
 
 // Options configures a lenny-ops Server.
@@ -72,6 +75,12 @@ type Options struct {
 	// Leader is the §25.4 leader-election state source. A nil source
 	// omits the leader-election fields from the readiness report.
 	Leader LeaderReporter
+	// Backups is the §25.11 BackupService. A nil service reports the
+	// backup-and-restore endpoints as unavailable.
+	Backups backup.BackupService
+	// Production reports whether this deployment is production, which
+	// gates the §25.11 confirm requirement for a full backup.
+	Production bool
 }
 
 // New returns a Server with the liveness probe, readiness probe, the
@@ -85,6 +94,8 @@ func New(opts Options) *Server {
 		runbooks:   opts.Runbooks,
 		selfHealth: opts.SelfHealth,
 		leader:     opts.Leader,
+		backups:    opts.Backups,
+		production: opts.Production,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -92,6 +103,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
+	s.registerBackupRoutes()
 	return s
 }
 
