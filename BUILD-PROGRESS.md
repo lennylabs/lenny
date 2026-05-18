@@ -11,6 +11,12 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `8cc3649` — §25.2 canonical progress envelope, added to
+  `pkg/ops/conventions`: the `Progress` struct long-running operations
+  include in status responses, plus the `EtaMethod` taxonomy and
+  `RateMetric`. Nullable fields are pointers so an absent value is JSON
+  null per §25.2. Completes the §25.2 envelope set (degradation,
+  pagination, error, progress); `pkg/progress` holds the computations.
 - `27533e7` — §25.6 diagnostics-audit rate limiting (`pkg/ops/auditrate`).
   `Limiter.Decide` coalesces repeated diagnostic calls for one resource
   within a 60s window into a single audit event and drops events beyond
