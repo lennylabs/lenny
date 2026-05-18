@@ -7,11 +7,14 @@
 // with the configured Signer, and returns the RFC 8693 response
 // envelope.
 //
-// This is the minimal Token Service: in-memory issued-tokens store,
-// no Postgres advisory lock, no KMS — the dev HMAC signer from
-// pkg/auth/jwt is plugged in via the Signer interface. Production
-// swaps in a KMS-backed signer and the Postgres write-before-issue
-// transaction behind the same handler shape.
+// The Server signs with any jwt.Signer. §4 requires the production
+// Token Service to sign with KMS-backed material: jwt.KMSSigner holds
+// signing material whose durable form is KMS-envelope-encrypted, so
+// no plaintext signing key is persisted. The dev HMAC signer
+// (jwt.HMACSigner) satisfies the same interface for the no-cloud
+// development path. The Server keeps an in-memory issued-tokens store
+// and no Postgres advisory lock; a durable IssuedTokenStore makes the
+// §13.3 write-before-issue record durable.
 package tokenservice
 
 import (
@@ -40,7 +43,7 @@ type IssuedTokenStore interface {
 
 // Server is the §13.3 Token Service http handler.
 type Server struct {
-	signer       *jwt.HMACSigner
+	signer       jwt.Signer
 	verifier     jwt.Verifier
 	issuer       string
 	perDialect   map[string]time.Duration
@@ -52,7 +55,12 @@ type Server struct {
 
 // Options configures the Server.
 type Options struct {
-	Signer   *jwt.HMACSigner
+	// Signer mints the issued JWTs. §4 wants the production Token
+	// Service to use jwt.KMSSigner (KMS-envelope-backed signing
+	// material); jwt.HMACSigner is the development signer. Both
+	// satisfy jwt.Signer.
+	Signer jwt.Signer
+
 	Verifier jwt.Verifier
 	Issuer   string
 
@@ -67,10 +75,15 @@ type Options struct {
 	IssuedTokens IssuedTokenStore
 }
 
-// NewServer returns a Server.
+// NewServer returns a Server. When Options.Verifier is nil and the
+// configured Signer also verifies (both jwt.HMACSigner and
+// jwt.KMSSigner do), the Server verifies caller, subject, and actor
+// tokens with the signer itself.
 func NewServer(opts Options) *Server {
 	if opts.Verifier == nil {
-		opts.Verifier = opts.Signer
+		if v, ok := opts.Signer.(jwt.Verifier); ok {
+			opts.Verifier = v
+		}
 	}
 	if opts.PerDialectCap == nil {
 		opts.PerDialectCap = map[string]time.Duration{}

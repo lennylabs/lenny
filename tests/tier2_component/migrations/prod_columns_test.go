@@ -47,6 +47,10 @@ var prodMigrationSchema = []struct {
 	{migration: "0023", table: "runtime_definitions", columns: []string{"base_runtime"}},
 	{migration: "0024", table: "tenants", columns: []string{"elicitation_content_integrity", "billing_erasure_policy", "no_environment_policy"}},
 	{migration: "0025", table: "tenants", columns: []string{"experiment_targeting"}},
+	// 0039 adds the §4 / §12.9 KMS-envelope key_version column to the
+	// credentials table; the secret column's type change to BYTEA is
+	// covered by TestCredentialSecretEnvelopeColumn below.
+	{migration: "0039", table: "credentials", columns: []string{"secret_key_version"}},
 }
 
 // spec: 12.2, 18.5
@@ -99,7 +103,42 @@ func TestProdMigrationsRollBackPerStep(t *testing.T) {
 	}
 }
 
+// spec: 4, 12.9
+// diagnosis: migration 0039 did not convert credentials.secret to the
+// BYTEA ciphertext type, or its .down.sql did not convert it back to
+// TEXT. §4 / §12.9 require the credential secret column to hold
+// envelope-encrypted ciphertext (binary), not plaintext text.
+func TestCredentialSecretEnvelopeColumn(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	// Forward: the secret column is BYTEA after 0039 applies.
+	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "bytea" {
+		t.Errorf("credentials.secret type after 0039: got %q, want bytea", got)
+	}
+	// Rolling 0039 back restores the pre-0039 TEXT type.
+	pg.MigrateTo(t, dir, 38)
+	if got := columnType(t, ctx, pg, "credentials", "secret"); got != "text" {
+		t.Errorf("credentials.secret type after 0039 rollback: got %q, want text", got)
+	}
+}
+
 // --- helpers -------------------------------------------------------------
+
+func columnType(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) string {
+	t.Helper()
+	var dataType string
+	err := pg.Pool.QueryRow(ctx, `
+		SELECT data_type FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+		table, col).Scan(&dataType)
+	if err != nil {
+		t.Fatalf("read type of %s.%s: %v", table, col, err)
+	}
+	return dataType
+}
 
 func mustHaveColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, table, col string) {
 	t.Helper()

@@ -7,10 +7,12 @@
 // against a real container with the production migrations applied.
 // Covers the register/get round-trip, re-registration replacing the
 // secret in place, the sentinel error, cross-tenant isolation, the
-// Rotate/Revoke/Delete lifecycle, and the user-scoped ref-ordered List.
+// Rotate/Revoke/Delete lifecycle, the user-scoped ref-ordered List,
+// and the §4 / §12.9 envelope encryption of the secret column at rest.
 package stores_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -18,7 +20,32 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/envelope"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	stubkms "github.com/lennylabs/lenny/tests/testinfra/stubs/kms"
 )
+
+// newCredentialStore builds the Postgres-backed credential store over a
+// fresh Postgres container and a local KMS KEK provider. Returns the
+// store, the KMS provider, and the raw Postgres handle so a test can
+// inspect the stored secret column directly.
+func newCredentialStore(t *testing.T) (*credentialpg.Store, kms.Provider, *containers.Postgres) {
+	t.Helper()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
+	})
+	provider, err := kms.NewLocalRandom()
+	if err != nil {
+		t.Fatalf("kms provider: %v", err)
+	}
+	store, err := credentialpg.New(pg.Pool, provider)
+	if err != nil {
+		t.Fatalf("credentialpg.New: %v", err)
+	}
+	return store, provider, pg
+}
 
 // spec: 4.9
 // diagnosis: the Postgres-backed end-user credential registry in
@@ -28,8 +55,7 @@ import (
 // re-register reuse, or cross-tenant ErrNotFound isolation.
 func TestCredentialStoreContract(t *testing.T) {
 	t.Parallel()
-	_, pg := startStore(t)
-	store := credentialpg.New(pg.Pool)
+	store, _, pg := newCredentialStore(t)
 	ctx := context.Background()
 
 	t.Run("register and get round-trip", func(t *testing.T) {
@@ -258,4 +284,191 @@ func TestCredentialStoreContract(t *testing.T) {
 			t.Errorf("List must not cross tenants: got %d rows", len(isolated))
 		}
 	})
+}
+
+// readSecretColumn reads the raw secret and secret_key_version columns
+// for a credential straight out of Postgres, bypassing the store's
+// decrypt path. The credentials table is tenant-scoped, so the read
+// runs inside a transaction that sets app.current_tenant for the RLS
+// policy.
+func readSecretColumn(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, ref string) ([]byte, int) {
+	t.Helper()
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	var blob []byte
+	var keyVersion int
+	if err := tx.QueryRow(ctx,
+		`SELECT secret, secret_key_version FROM credentials WHERE tenant_id = $1 AND ref = $2`,
+		tenant, ref).Scan(&blob, &keyVersion); err != nil {
+		t.Fatalf("read secret column: %v", err)
+	}
+	return blob, keyVersion
+}
+
+// spec: 4, 12.9
+// diagnosis: the §12.9 T4 credential secret is not envelope-encrypted
+// at rest. The credentials.secret column must hold AES-256-GCM
+// envelope ciphertext, not the plaintext API key — a database dump
+// must not expose the upstream credential. This mirrors the row-level
+// intent of tests/tier5_e2e_kind/etcd_encryption_test.go, which reads
+// the raw stored bytes and asserts they are ciphertext, here applied
+// to the Postgres secret column rather than an etcd value.
+func TestCredentialSecretCiphertextAtRest(t *testing.T) {
+	t.Parallel()
+	store, _, pg := newCredentialStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	const plaintext = "sk-ant-PLAINTEXT-upstream-api-key-DO-NOT-LEAK"
+	c, err := store.Register(ctx, tenant, "alice", credential.ProviderAnthropicDirect, plaintext)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	blob, keyVersion := readSecretColumn(t, ctx, pg, tenant, c.Ref)
+
+	// The stored bytes must not contain the plaintext secret anywhere.
+	if bytes.Contains(blob, []byte(plaintext)) {
+		t.Fatalf("credentials.secret column contains the plaintext API key: % x", blob)
+	}
+	// The stored bytes must not be the plaintext UTF-8 either.
+	if string(blob) == plaintext {
+		t.Fatal("credentials.secret column stores the plaintext API key verbatim")
+	}
+	// The §4.9.1 key_version column must be populated.
+	if keyVersion < 1 {
+		t.Errorf("secret_key_version: got %d, want >= 1", keyVersion)
+	}
+	// The stored bytes must decode as a well-formed envelope blob whose
+	// recorded KEK version matches the key_version column.
+	sealed, err := envelope.Decode(blob)
+	if err != nil {
+		t.Fatalf("stored secret is not a valid envelope blob: %v", err)
+	}
+	if sealed.KEKVersion != keyVersion {
+		t.Errorf("envelope blob KEK version %d does not match secret_key_version %d",
+			sealed.KEKVersion, keyVersion)
+	}
+	if len(sealed.WrappedDEK) == 0 {
+		t.Error("stored envelope blob has no wrapped DEK")
+	}
+
+	// The store still decrypts the secret on read.
+	got, err := store.Get(ctx, tenant, c.Ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Secret != plaintext {
+		t.Errorf("decrypted secret round-trip: got %q, want the plaintext", got.Secret)
+	}
+
+	// Rotate replaces the ciphertext; the new stored blob also hides
+	// the plaintext and differs from the first.
+	const rotated = "sk-ant-ROTATED-upstream-api-key"
+	if _, err := store.Rotate(ctx, tenant, c.Ref, rotated); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	rotatedBlob, _ := readSecretColumn(t, ctx, pg, tenant, c.Ref)
+	if bytes.Contains(rotatedBlob, []byte(rotated)) || bytes.Contains(rotatedBlob, []byte(plaintext)) {
+		t.Fatalf("rotated credentials.secret column contains plaintext: % x", rotatedBlob)
+	}
+	if bytes.Equal(rotatedBlob, blob) {
+		t.Error("Rotate did not change the stored ciphertext")
+	}
+	afterRotate, err := store.Get(ctx, tenant, c.Ref)
+	if err != nil {
+		t.Fatalf("Get after Rotate: %v", err)
+	}
+	if afterRotate.Secret != rotated {
+		t.Errorf("decrypted secret after Rotate: got %q, want the rotated plaintext", afterRotate.Secret)
+	}
+}
+
+// spec: 4, 12.9
+// diagnosis: per-tenant KEK isolation does not hold. Each tenant's
+// credential secrets are envelope-encrypted under a per-tenant KEK
+// alias ("tenant:{id}"); a credential decrypted under one tenant's
+// store context must not be readable as another tenant's.
+func TestCredentialSecretPerTenantKEK(t *testing.T) {
+	t.Parallel()
+	store, _, pg := newCredentialStore(t)
+	ctx := context.Background()
+	acme := freshTenant(t, ctx, pg)
+	globex := freshTenant(t, ctx, pg)
+
+	acmeCred, err := store.Register(ctx, acme, "alice", credential.ProviderGitHub, "acme-secret")
+	if err != nil {
+		t.Fatalf("Register acme: %v", err)
+	}
+	globexCred, err := store.Register(ctx, globex, "alice", credential.ProviderGitHub, "globex-secret")
+	if err != nil {
+		t.Fatalf("Register globex: %v", err)
+	}
+
+	// Each tenant's stored ciphertext differs even for the same user
+	// and provider; the per-tenant KEK and the per-record DEK both
+	// guarantee this.
+	acmeBlob, _ := readSecretColumn(t, ctx, pg, acme, acmeCred.Ref)
+	globexBlob, _ := readSecretColumn(t, ctx, pg, globex, globexCred.Ref)
+	if bytes.Equal(acmeBlob, globexBlob) {
+		t.Error("two tenants' credential ciphertexts are identical")
+	}
+
+	// Each tenant reads back only its own plaintext.
+	gotAcme, err := store.Get(ctx, acme, acmeCred.Ref)
+	if err != nil {
+		t.Fatalf("Get acme: %v", err)
+	}
+	if gotAcme.Secret != "acme-secret" {
+		t.Errorf("acme secret: got %q, want acme-secret", gotAcme.Secret)
+	}
+	gotGlobex, err := store.Get(ctx, globex, globexCred.Ref)
+	if err != nil {
+		t.Fatalf("Get globex: %v", err)
+	}
+	if gotGlobex.Secret != "globex-secret" {
+		t.Errorf("globex secret: got %q, want globex-secret", gotGlobex.Secret)
+	}
+}
+
+// spec: 4, 12.9
+// diagnosis: the credential store does not envelope-encrypt against
+// the shared KMS test stub. The pgstore must work with any
+// kms.Provider, including the fault-injecting tests/testinfra stub the
+// rest of the credential suite uses.
+func TestCredentialSecretWithStubKMS(t *testing.T) {
+	t.Parallel()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: schematest.RepoRoot(t) + "/migrations",
+	})
+	stub := stubkms.New(t)
+	store, err := credentialpg.New(pg.Pool, stub.AsProvider())
+	if err != nil {
+		t.Fatalf("credentialpg.New with stub KMS: %v", err)
+	}
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	const plaintext = "sk-stub-kms-secret"
+	c, err := store.Register(ctx, tenant, "alice", credential.ProviderGitHub, plaintext)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	blob, _ := readSecretColumn(t, ctx, pg, tenant, c.Ref)
+	if bytes.Contains(blob, []byte(plaintext)) {
+		t.Fatalf("stub-KMS-backed store left plaintext in the secret column: % x", blob)
+	}
+	got, err := store.Get(ctx, tenant, c.Ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Secret != plaintext {
+		t.Errorf("decrypted secret: got %q, want %q", got.Secret, plaintext)
+	}
 }

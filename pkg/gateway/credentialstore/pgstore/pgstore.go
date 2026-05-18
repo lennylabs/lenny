@@ -14,10 +14,20 @@
 // table convention) that every mutation advances with
 // pgtenant.MonotonicNext, but the value is not surfaced on the struct.
 //
-// The store never returns secret material on the wire; the secret
-// column is read back so the REST handlers can project a secret-free
-// payload, mirroring credentialstore.Memory. KMS-envelope encryption
-// of the secret column is a later phase.
+// Envelope encryption. §4.9 / §12.9 classify a user-supplied API key
+// as T4 Restricted, requiring AES-256-GCM envelope encryption with a
+// per-record data-encryption-key (DEK) wrapped by a KMS key-encryption-
+// key (KEK). The store envelope-encrypts the secret on write and
+// decrypts it on read: the secret column holds the
+// pkg/kms/envelope-encoded ciphertext blob (the wrapped DEK, the GCM
+// nonce, and the record ciphertext) and the secret_key_version column
+// records the §4.9.1 KEK version that wrapped the row's DEK. The KEK
+// alias is per-tenant ("tenant:{tenant_id}"), so each tenant's
+// credentials are wrapped under an independent KEK. The plaintext
+// secret never reaches Postgres. The store still never returns secret
+// material on the wire; it decrypts the secret on read so the REST
+// handlers can project a secret-free payload, mirroring
+// credentialstore.Memory.
 package pgstore
 
 import (
@@ -25,6 +35,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,24 +44,101 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/kms/envelope"
 )
 
 // Store is the Postgres-backed credential registry. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
+	kms  kms.Provider
 }
 
-// New returns a Store backed by pool. The pool must point at a
-// database that has the migrations/ schema applied.
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+// New returns a Store backed by pool, envelope-encrypting credential
+// secrets under KEKs from provider. The pool must point at a database
+// that has the migrations/ schema applied (migration 0039 or later for
+// the envelope columns). provider must not be nil: §12.9 requires T4
+// data to be stored under envelope encryption, so a Store with no KEK
+// provider cannot satisfy the contract.
+func New(pool *pgxpool.Pool, provider kms.Provider) (*Store, error) {
+	if pool == nil {
+		return nil, errors.New("credentialstore/pgstore: nil pool")
+	}
+	if provider == nil {
+		return nil, errors.New("credentialstore/pgstore: nil kms provider; T4 credential secrets require envelope encryption")
+	}
+	return &Store{pool: pool, kms: provider}, nil
+}
 
 var _ credentialstore.Store = (*Store)(nil)
 
+// kekAlias is the per-tenant KEK alias. Each tenant's credential
+// secrets are envelope-encrypted under an independent KEK, so the
+// §4.9.1 rotation procedure and the §12.8 cryptographic-erasure model
+// operate per tenant.
+func kekAlias(tenantID string) string { return "tenant:" + tenantID }
+
+// cipher returns the envelope Cipher for tenantID's KEK alias.
+func (s *Store) cipher(tenantID string) (*envelope.Cipher, error) {
+	return envelope.New(s.kms, kekAlias(tenantID))
+}
+
+// sealSecret envelope-encrypts a plaintext secret for tenantID,
+// returning the encoded ciphertext blob for the secret column and the
+// §4.9.1 KEK version for the secret_key_version column.
+func (s *Store) sealSecret(ctx context.Context, tenantID, plaintext string) ([]byte, int, error) {
+	c, err := s.cipher(tenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	sealed, err := c.Seal(ctx, []byte(plaintext))
+	if err != nil {
+		return nil, 0, fmt.Errorf("credentialstore/pgstore: seal secret: %w", err)
+	}
+	blob, err := envelope.Encode(sealed)
+	if err != nil {
+		return nil, 0, fmt.Errorf("credentialstore/pgstore: encode sealed secret: %w", err)
+	}
+	return blob, sealed.KEKVersion, nil
+}
+
+// openSecret reverses sealSecret: it decodes the secret column blob
+// and decrypts it under tenantID's KEK. An empty blob (the column
+// default for a row with no stored secret) decrypts to the empty
+// string.
+func (s *Store) openSecret(ctx context.Context, tenantID string, blob []byte, keyVersion int) (string, error) {
+	if len(blob) == 0 {
+		return "", nil
+	}
+	c, err := s.cipher(tenantID)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := envelope.Decode(blob)
+	if err != nil {
+		return "", fmt.Errorf("credentialstore/pgstore: decode sealed secret: %w", err)
+	}
+	if sealed.KEKVersion != keyVersion {
+		// The secret_key_version column and the version embedded in the
+		// blob disagree: the row was written inconsistently. Fail
+		// closed rather than decrypt under a guessed version.
+		return "", fmt.Errorf("credentialstore/pgstore: secret_key_version %d does not match sealed blob version %d",
+			keyVersion, sealed.KEKVersion)
+	}
+	plain, err := c.Open(ctx, sealed)
+	if err != nil {
+		return "", fmt.Errorf("credentialstore/pgstore: open secret: %w", err)
+	}
+	return string(plain), nil
+}
+
 // selectList is the column set scanCredential reads. updated_at is
 // last: scanCredential reads it into a local so the strictly-advancing
-// value is available without a Credential field for it.
-const selectList = `tenant_id, ref, user_id, provider, secret, status,
-	created_at, rotated_at, revoked_at, updated_at`
+// value is available without a Credential field for it. secret holds
+// the envelope ciphertext blob and secret_key_version the §4.9.1 KEK
+// version.
+const selectList = `tenant_id, ref, user_id, provider, secret, secret_key_version,
+	status, created_at, rotated_at, revoked_at, updated_at`
 
 // Register stores (or replaces) the credential for the
 // (tenant, user, provider) triple, returning the credential_ref.
@@ -61,8 +149,14 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 	if !provider.IsValid() {
 		return credentialstore.Credential{}, errors.New("credentialstore: unknown provider " + string(provider))
 	}
+	// Envelope-encrypt the secret before opening the transaction: the
+	// plaintext never reaches a SQL statement.
+	secretBlob, keyVersion, err := s.sealSecret(ctx, tenantID, secret)
+	if err != nil {
+		return credentialstore.Credential{}, err
+	}
 	var out credentialstore.Credential
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	txErr := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		now := time.Now().UTC().Truncate(time.Microsecond)
 
 		// Replace path: the (tenant, user, provider) triple already
@@ -72,7 +166,7 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 			`SELECT `+selectList+` FROM credentials
 			 WHERE tenant_id = $1 AND user_id = $2 AND provider = $3 FOR UPDATE`,
 			tenantID, userID, string(provider))
-		c, prevUpdated, err := scanCredential(existing)
+		c, _, _, prevUpdated, err := scanCredential(existing)
 		if err == nil {
 			c.Secret = secret
 			c.Status = credentialstore.StatusActive
@@ -80,10 +174,10 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 			c.RevokedAt = time.Time{}
 			updatedAt := pgtenant.MonotonicNext(prevUpdated, now)
 			if _, err := tx.Exec(ctx, `UPDATE credentials SET
-				secret = $3, status = $4, rotated_at = $5,
-				revoked_at = $6, updated_at = $7
+				secret = $3, secret_key_version = $4, status = $5, rotated_at = $6,
+				revoked_at = $7, updated_at = $8
 			WHERE tenant_id = $1 AND ref = $2`,
-				tenantID, c.Ref, c.Secret, string(c.Status), c.RotatedAt,
+				tenantID, c.Ref, secretBlob, keyVersion, string(c.Status), c.RotatedAt,
 				pgtenant.NullTime(c.RevokedAt), updatedAt); err != nil {
 				return err
 			}
@@ -105,10 +199,10 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 			CreatedAt: now,
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO credentials (
-			tenant_id, ref, user_id, provider, secret, status,
+			tenant_id, ref, user_id, provider, secret, secret_key_version, status,
 			created_at, rotated_at, revoked_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			c.TenantID, c.Ref, c.UserID, string(c.Provider), c.Secret, string(c.Status),
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			c.TenantID, c.Ref, c.UserID, string(c.Provider), secretBlob, keyVersion, string(c.Status),
 			c.CreatedAt, pgtenant.NullTime(c.RotatedAt),
 			pgtenant.NullTime(c.RevokedAt), now); err != nil {
 			return err
@@ -116,8 +210,8 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 		out = c
 		return nil
 	})
-	if err != nil {
-		return credentialstore.Credential{}, err
+	if txErr != nil {
+		return credentialstore.Credential{}, txErr
 	}
 	return out, nil
 }
@@ -130,13 +224,18 @@ func (s *Store) Get(ctx context.Context, tenantID, ref string) (credentialstore.
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM credentials WHERE tenant_id = $1 AND ref = $2`,
 			tenantID, ref)
-		c, _, err := scanCredential(row)
+		c, blob, keyVersion, _, err := scanCredential(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return credentialstore.ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
+		secret, err := s.openSecret(ctx, tenantID, blob, keyVersion)
+		if err != nil {
+			return err
+		}
+		c.Secret = secret
 		out = c
 		return nil
 	})
@@ -159,14 +258,34 @@ func (s *Store) List(ctx context.Context, tenantID, userID string) ([]credential
 			return err
 		}
 		defer rows.Close()
+		type pending struct {
+			cred       credentialstore.Credential
+			blob       []byte
+			keyVersion int
+		}
+		var rowsOut []pending
 		for rows.Next() {
-			c, _, err := scanCredential(rows)
+			c, blob, keyVersion, _, err := scanCredential(rows)
 			if err != nil {
 				return err
 			}
+			rowsOut = append(rowsOut, pending{cred: c, blob: blob, keyVersion: keyVersion})
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// Decrypt after the rows cursor is drained: openSecret must not
+		// run while a query is still streaming on the same transaction.
+		for _, p := range rowsOut {
+			secret, err := s.openSecret(ctx, tenantID, p.blob, p.keyVersion)
+			if err != nil {
+				return err
+			}
+			c := p.cred
+			c.Secret = secret
 			out = append(out, c)
 		}
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -179,13 +298,19 @@ func (s *Store) List(ctx context.Context, tenantID, userID string) ([]credential
 // revoked state. Returns ErrNotFound when the credential does not
 // exist.
 func (s *Store) Rotate(ctx context.Context, tenantID, ref, newSecret string) (credentialstore.Credential, error) {
+	// Envelope-encrypt the replacement secret before opening the
+	// transaction; the plaintext never reaches a SQL statement.
+	secretBlob, keyVersion, err := s.sealSecret(ctx, tenantID, newSecret)
+	if err != nil {
+		return credentialstore.Credential{}, err
+	}
 	var out credentialstore.Credential
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	txErr := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM credentials
 			 WHERE tenant_id = $1 AND ref = $2 FOR UPDATE`,
 			tenantID, ref)
-		c, prevUpdated, err := scanCredential(row)
+		c, _, _, prevUpdated, err := scanCredential(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return credentialstore.ErrNotFound
 		}
@@ -199,18 +324,18 @@ func (s *Store) Rotate(ctx context.Context, tenantID, ref, newSecret string) (cr
 		c.RevokedAt = time.Time{}
 		updatedAt := pgtenant.MonotonicNext(prevUpdated, now)
 		if _, err := tx.Exec(ctx, `UPDATE credentials SET
-			secret = $3, status = $4, rotated_at = $5,
-			revoked_at = $6, updated_at = $7
+			secret = $3, secret_key_version = $4, status = $5, rotated_at = $6,
+			revoked_at = $7, updated_at = $8
 		WHERE tenant_id = $1 AND ref = $2`,
-			tenantID, ref, c.Secret, string(c.Status), c.RotatedAt,
+			tenantID, ref, secretBlob, keyVersion, string(c.Status), c.RotatedAt,
 			pgtenant.NullTime(c.RevokedAt), updatedAt); err != nil {
 			return err
 		}
 		out = c
 		return nil
 	})
-	if err != nil {
-		return credentialstore.Credential{}, err
+	if txErr != nil {
+		return credentialstore.Credential{}, txErr
 	}
 	return out, nil
 }
@@ -224,13 +349,21 @@ func (s *Store) Revoke(ctx context.Context, tenantID, ref string) (credentialsto
 			`SELECT `+selectList+` FROM credentials
 			 WHERE tenant_id = $1 AND ref = $2 FOR UPDATE`,
 			tenantID, ref)
-		c, prevUpdated, err := scanCredential(row)
+		c, blob, keyVersion, prevUpdated, err := scanCredential(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return credentialstore.ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
+		// Revoke does not change the secret; decrypt the stored
+		// ciphertext so the returned Credential carries the secret like
+		// credentialstore.Memory.Revoke.
+		secret, err := s.openSecret(ctx, tenantID, blob, keyVersion)
+		if err != nil {
+			return err
+		}
+		c.Secret = secret
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		c.Status = credentialstore.StatusRevoked
 		c.RevokedAt = now
@@ -268,21 +401,27 @@ func (s *Store) Delete(ctx context.Context, tenantID, ref string) error {
 }
 
 // scanCredential reads one row in selectList order into a Credential.
-// The credentials table's updated_at column has no Credential field;
-// it is returned separately so mutations can advance it with
+// The secret column holds the envelope ciphertext blob; scanCredential
+// returns it and the secret_key_version unchanged rather than the
+// plaintext, so the caller decrypts it through openSecret outside any
+// streaming query. The Credential's Secret field is left empty by this
+// function. The updated_at column has no Credential field; it is
+// returned separately so mutations can advance it with
 // pgtenant.MonotonicNext.
-func scanCredential(row pgx.Row) (credentialstore.Credential, time.Time, error) {
+func scanCredential(row pgx.Row) (cred credentialstore.Credential, secretBlob []byte, keyVersion int, updatedAt time.Time, err error) {
 	var (
 		c                    credentialstore.Credential
 		provider, status     string
+		blob                 []byte
+		version              int
 		rotatedAt, revokedAt *time.Time
-		updatedAt            time.Time
+		updated              time.Time
 	)
 	if err := row.Scan(
-		&c.TenantID, &c.Ref, &c.UserID, &provider, &c.Secret, &status,
-		&c.CreatedAt, &rotatedAt, &revokedAt, &updatedAt,
+		&c.TenantID, &c.Ref, &c.UserID, &provider, &blob, &version, &status,
+		&c.CreatedAt, &rotatedAt, &revokedAt, &updated,
 	); err != nil {
-		return credentialstore.Credential{}, time.Time{}, err
+		return credentialstore.Credential{}, nil, 0, time.Time{}, err
 	}
 	c.Provider = credential.Provider(provider)
 	c.Status = credentialstore.Status(status)
@@ -292,7 +431,7 @@ func scanCredential(row pgx.Row) (credentialstore.Credential, time.Time, error) 
 	if revokedAt != nil {
 		c.RevokedAt = *revokedAt
 	}
-	return c, updatedAt, nil
+	return c, blob, version, updated, nil
 }
 
 // randomHex returns n random bytes hex-encoded. It mints the opaque

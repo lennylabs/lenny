@@ -156,6 +156,7 @@ import (
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	"github.com/lennylabs/lenny/pkg/kms"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -389,15 +390,26 @@ func main() {
 	uploadTracker := uploadtoken.NewMemoryTracker()
 	uploadVerifier := uploadtoken.NewVerifier(ring, uploadTracker, nil)
 
-	// ----- §13.3 Token Service -----
-	// Ephemeral JWT HMAC signer per process. Production wires the
-	// KMS-backed signer with the §12a envelope. The token-service
-	// handler mounted below serves POST /v1/oauth/token (RFC 8693).
-	var jwtSeed [32]byte
-	if _, err := rand.Read(jwtSeed[:]); err != nil {
-		log.Fatalf("lenny-gateway: rand: %v", err)
+	// ----- §4 KMS provider -----
+	// The §4 / §12.9 envelope-encryption KEK seam. The minimal gateway
+	// uses the in-process kms.Local provider seeded from crypto/rand;
+	// a cloud deployment swaps in an AWS/GCP/Azure KEM provider behind
+	// the same kms.Provider interface. The provider wraps the Token
+	// Service signing key and the per-tenant credential-secret DEKs.
+	kmsProvider, err := kms.NewLocalRandom()
+	if err != nil {
+		log.Fatalf("lenny-gateway: kms provider: %v", err)
 	}
-	jwtSigner := jwt.NewHMACSigner("boot", jwtSeed[:])
+
+	// ----- §13.3 Token Service -----
+	// §4 KMS-envelope-backed JWT signer: the HMAC-SHA256 signing key is
+	// sealed under a KMS KEK rather than being a plaintext per-process
+	// dev secret. The token-service handler mounted below serves POST
+	// /v1/oauth/token (RFC 8693).
+	jwtSigner, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "boot")
+	if err != nil {
+		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
+	}
 	// With Postgres the §13.3 write-before-issue record is durable in
 	// the issued_tokens table; otherwise the Token Service keeps only
 	// its in-memory jti set.
@@ -645,9 +657,15 @@ func main() {
 	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
 
 	// ----- §4.9 end-user credential registry -----
+	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret
+	// column under per-tenant KMS KEKs; the in-memory store keeps the
+	// secret process-local and never persists it.
 	var credentials credentialstore.Store = credentialstore.NewMemory(nil)
 	if pgPool != nil {
-		credentials = credentialpg.New(pgPool)
+		credentials, err = credentialpg.New(pgPool, kmsProvider)
+		if err != nil {
+			log.Fatalf("lenny-gateway: credential store: %v", err)
+		}
 	}
 	credServer := credentialserver.New(credentials)
 

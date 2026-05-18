@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-// Command lenny-token-service is the minimal §13.3 Token Service. It
-// serves POST /v1/oauth/token (RFC 8693) against an in-memory issued-
-// tokens store using the dev HMAC signer from pkg/auth/jwt. Provides
-// a concrete target for the tier-3 contract tests until the
-// Postgres-backed Token Service with KMS signing lands.
+// Command lenny-token-service is the §13.3 Token Service. It serves
+// POST /v1/oauth/token (RFC 8693) against an in-memory issued-tokens
+// store. It signs with the §4 KMS-envelope-backed signer: the HMAC-
+// SHA256 signing key is sealed under a KMS key-encryption-key rather
+// than being a plaintext per-process secret. The in-process kms.Local
+// provider is the no-cloud development KEK; a cloud deployment swaps
+// in an AWS/GCP/Azure provider behind the same kms.Provider interface.
 package main
 
 import (
 	"context"
-	"crypto/rand"
 	"flag"
 	"log"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
@@ -27,12 +29,17 @@ func main() {
 	issuer := flag.String("issuer", "https://lenny.dev.local/token", "iss claim stamped on issued tokens")
 	flag.Parse()
 
-	// Random dev-mode secret per process. Production wires KMS.
-	var secret [32]byte
-	if _, err := rand.Read(secret[:]); err != nil {
-		log.Fatalf("lenny-token-service: rand: %v", err)
+	// §4 KMS provider. The in-process kms.Local provider is the
+	// no-cloud development KEK; the signing key it wraps is sealed
+	// under a KMS KEK, so no plaintext signing key is persisted.
+	kmsProvider, err := kms.NewLocalRandom()
+	if err != nil {
+		log.Fatalf("lenny-token-service: kms provider: %v", err)
 	}
-	signer := jwt.NewHMACSigner("dev-1", secret[:])
+	signer, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
+	if err != nil {
+		log.Fatalf("lenny-token-service: kms-backed signer: %v", err)
+	}
 
 	srv := tokenservice.NewServer(tokenservice.Options{
 		Signer: signer,
