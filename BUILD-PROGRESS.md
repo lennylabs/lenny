@@ -11,6 +11,16 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `7a09197` — drove the `Interrupt` RPC through the lifecycle channel. A
+  clean interrupt of a Full-level runtime now sends `interrupt_request` over
+  the channel and awaits `interrupt_acknowledged`, bounded by the request
+  deadline; hard interrupts and non-Full runtimes keep the `s.Runtime`
+  signal path. The RPC acquires the §4.7 operation lock (`STATUS_BUSY` on
+  rejection) and reports `STATUS_INTERRUPT_TIMEOUT` when the deadline
+  elapses. `InterruptResponse` gained a `Status` enum for this. Verified:
+  adapter tests race-clean, `lenny-compliance --level full` still 12/12.
+  Follow-up: surface the `InterruptResponse.Status` through
+  `adapterclient.Interrupt` and the gateway session path.
 - `fb25535` — §4.7 per-session Checkpoint/Interrupt operation lock
   (`pkg/adapter` `opLock`). Serializes the two RPCs: one runs, one queues,
   a third coalesces (checkpoint behind a queued checkpoint) or is rejected
@@ -33,15 +43,10 @@ Newest first. Each entry is one increment toward the critical path below.
   `lenny-compliance --level full` passes all 12 checks against
   `streaming-echo`; adapter tests race-clean.
   Remaining lifecycle work, for the next iteration:
-  - The §4.7 operation lock is built (`fb25535`); the RPC paths below
-    acquire it.
-  - `Interrupt` Full path: clean interrupt on a Full runtime sends
-    `interrupt_request` and awaits `interrupt_acknowledged` (bounded by the
-    request's `deadlineMs`); on timeout §4.7 wants an `INTERRUPT_TIMEOUT`
-    status, which needs a field added to the `InterruptResponse` proto
-    (currently only `acknowledged bool`). Hard interrupt and non-Full
-    runtimes keep the `s.Runtime` signal path.
-  - `Checkpoint` Full path: `RequestCheckpoint` → snapshot/store →
+  - The §4.7 operation lock (`fb25535`) and the `Interrupt` Full path
+    (`7a09197`) are done.
+  - `Checkpoint` Full path: acquire the operation lock, then
+    `RequestCheckpoint` → snapshot/store via `s.Checkpoints` →
     `CompleteCheckpoint`. The credential RPCs → `RotateCredentials`.
   - Basic-level RPC tests must still pass.
   - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream;
