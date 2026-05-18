@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `e4734ff` — §25 parallel dependency-probe runner (`pkg/ops/probe`). `Run`
+  executes named dependency probes (Postgres, Redis, MinIO, K8s API,
+  gateway) concurrently with a per-probe timeout, recording a timeout
+  failure for any probe that neither completes nor honors cancellation, so
+  the runner always returns. `AllOK` reduces results to a verdict. The
+  per-dependency probe functions are injected; this is the kernel the
+  lenny-ops connectivity report and readiness signal use. Race-clean.
 - `655426b` — §25.2 canonical error response envelope, added to
   `pkg/ops/conventions`: the `ErrorCategory` taxonomy (TRANSIENT, PERMANENT,
   POLICY, AUTH), `NewError` (derives `retryable` from the category and the
