@@ -75,17 +75,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
+	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
+	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
+	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experimentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/health"
@@ -109,6 +113,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
+	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
@@ -130,6 +135,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/usagestore"
+	usagepg "github.com/lennylabs/lenny/pkg/gateway/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/watchdog"
@@ -285,7 +291,10 @@ func main() {
 		blobProbe = ms
 		log.Printf("lenny-gateway: §4.5 artifact store is MinIO at %s (bucket %q)", *minioEndpoint, *minioBucket)
 	}
-	pools := poolstore.NewMemory()
+	var pools poolstore.Store = poolstore.NewMemory()
+	if pgPool != nil {
+		pools = poolpg.New(pgPool)
+	}
 
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
@@ -444,7 +453,10 @@ func main() {
 	// resolvable through the REST surface.
 	interactions := interactionstore.NewMemory()
 	evals := evalstore.NewMemory(0, nil)
-	experiments := experimentstore.NewMemory()
+	var experiments experimentstore.Store = experimentstore.NewMemory()
+	if pgPool != nil {
+		experiments = experimentpg.New(pgPool)
+	}
 	memories := memorystore.NewInMemory(0, nil)
 
 	// ----- §16.1 Prometheus metrics -----
@@ -483,7 +495,10 @@ func main() {
 	// environments backs the §10.6 admin environment CRUD, the
 	// transparent filtering on lenny/discover_agents, and the §9.1
 	// GET /v1/runtimes discovery surface.
-	environments := environmentstore.NewMemory()
+	var environments environmentstore.Store = environmentstore.NewMemory()
+	if pgPool != nil {
+		environments = environmentpg.New(pgPool)
+	}
 	// §4 runtime tenant-access registry, shared by the admin
 	// tenant-access endpoints and the §5.1 internal meta-fetch endpoint.
 	tenantAccess := tenantaccessstore.NewMemory()
@@ -496,6 +511,10 @@ func main() {
 	// CRUD and the §14 gitClone auth host-to-pool binding check.
 	credentialPools := credentialpoolstore.NewMemory()
 
+	var usage usagestore.Store = usagestore.NewMemory()
+	if pgPool != nil {
+		usage = usagepg.New(pgPool)
+	}
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -519,7 +538,7 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		Usage:          usagestore.NewMemory(),
+		Usage:          usage,
 		Users:          users,
 		Billing:        billing,
 		Tenants:        tenants,
@@ -567,15 +586,23 @@ func main() {
 	revCache := revocation.NewCache()
 
 	// ----- Admin API -----
+	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
+	if pgPool != nil {
+		delegationPolicies = delegationpolicypg.New(pgPool)
+	}
+	var customRoles customrolestore.Store = customrolestore.NewMemory()
+	if pgPool != nil {
+		customRoles = customrolepg.New(pgPool)
+	}
 	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink, Metrics: gwMetrics}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
-		WithDelegationPolicies(delegationpolicystore.NewMemory()).
+		WithDelegationPolicies(delegationPolicies).
 		WithCredentialPools(credentialPools).
-		WithCustomRoles(customrolestore.NewMemory()).
+		WithCustomRoles(customRoles).
 		WithTenantAccess(tenantAccess).
 		WithSessions(sessions).
 		WithInteractions(interactions).

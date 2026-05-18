@@ -360,7 +360,8 @@
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsTenantInitialAssignmentByOtherSA",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsCrossTenantRewrite",
-        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation"
+        "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsManagedLabelMutation",
+        "tests/tier2_component/stores/poolstore_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -587,7 +588,8 @@
       "tests": [
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceWithinBudget",
         "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsTokenBudgetOverrun",
-        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun"
+        "pkg/delegation/lease/lease_test.go::TestValidateChildSliceRejectsParallelOverrun",
+        "tests/tier2_component/stores/delegationpolicystore_test.go"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -870,7 +872,8 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestNoCredentialsRejectedWhenAuthRequired",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
-        "tests/tier2_component/stores/userstore_test.go"
+        "tests/tier2_component/stores/userstore_test.go",
+        "tests/tier2_component/stores/customrolestore_test.go"
       ],
       "packages": [
         "pkg/auth"
@@ -948,7 +951,8 @@
         "pkg/environment/environment_test.go::TestSelectorExcludeOverridesMatchLabels",
         "pkg/environment/environment_test.go::TestSelectorIncludeOverridesSelector",
         "pkg/environment/environment_test.go::TestSelectorExcludeBeatsInclude",
-        "pkg/environment/environment_test.go::TestFilterReturnsAdmittedSubset"
+        "pkg/environment/environment_test.go::TestFilterReturnsAdmittedSubset",
+        "tests/tier2_component/stores/environmentstore_test.go"
       ],
       "packages": [
         "pkg/environment",
@@ -974,7 +978,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantIsDeterministic",
         "pkg/experiment/experiment_test.go::TestAssignVariantApproximatesWeightDistribution",
         "pkg/experiment/experiment_test.go::TestAssignVariantHonoursDefinitionOrder",
-        "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey"
+        "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
+        "tests/tier2_component/stores/experimentstore_test.go"
       ],
       "packages": [
         "pkg/experiment"
@@ -1675,7 +1680,8 @@
         "tests/tier4_integration/session_lifecycle_test.go::TestCrossTenantLookupRejectedAgainstRealGateway",
         "tests/tier2_component/stores/tenantstore_test.go",
         "tests/tier2_component/stores/transcriptstore_test.go",
-        "tests/tier4_integration/..."
+        "tests/tier4_integration/...",
+        "tests/tier2_component/stores/usagestore_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
