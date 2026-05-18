@@ -34,15 +34,10 @@ func interactionSeed(t *testing.T, ctx context.Context, s interactionstore.Store
 
 // spec: 9.2
 // diagnosis: the Postgres-backed pending-interaction registry in
-// pkg/gateway/interactionstore/pgstore did not behave as specified.
-// Put and Get must round-trip an interaction including its jsonb
-// detail and response, Get must return ErrNotFound for any §15.1
-// authorization-triple mismatch (wrong user, session, or tenant),
-// Resolve must reject double resolution with ErrAlreadyResolved and a
-// wrong user with ErrNotFound while stamping ResolvedAt,
-// CountElicitations must count elicitations across every phase, and
-// the §11.4 DismissByUser / §12.8 DeleteByUser adapters must scope
-// their sweep to the target user.
+// pkg/gateway/interactionstore/pgstore did not behave as specified —
+// the Put/Get/Resolve round-trip, the §15.1 authorization-triple
+// scoping, ErrAlreadyResolved on double resolution, CountElicitations,
+// or the §11.4 DismissByUser / §12.8 DeleteByUser adapters.
 func TestInteractionStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

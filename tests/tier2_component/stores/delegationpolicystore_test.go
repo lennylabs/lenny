@@ -63,15 +63,9 @@ func sampleDelegationPolicy(name string) delegationpolicystore.DelegationPolicy 
 // spec: 8.3
 // diagnosis: the Postgres-backed DelegationPolicy registry in
 // pkg/gateway/delegationpolicystore/pgstore did not behave as
-// specified. Create and Get must round-trip a policy including its
-// nested jsonb body (tag-matched Rules, the contentPolicy block, and
-// allowSelfRecursion), the §8.3 validation must reject invalid names,
-// negative content sizes, and scanExportedFiles without an
-// interceptorRef, duplicate names must yield ErrAlreadyExists and a
-// missing name ErrNotFound, Update must re-validate and strictly
-// advance updated_at, the soft-delete lifecycle must honor the
-// IncludeDeleted list filter, and the loaded policy's tag-matched
-// Evaluate must reproduce the in-memory allow/deny decision.
+// specified — the Create/Get/Update/SoftDelete lifecycle, the nested
+// jsonb body round-trip, §8.3 validation, the sentinel errors, or the
+// loaded policy's tag-matched allow/deny Evaluate.
 func TestDelegationPolicyStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

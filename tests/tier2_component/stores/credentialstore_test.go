@@ -22,15 +22,10 @@ import (
 
 // spec: 4.9
 // diagnosis: the Postgres-backed end-user credential registry in
-// pkg/gateway/credentialstore/pgstore did not behave as specified.
-// Register and Get must round-trip a credential including its secret,
-// an unknown provider must be rejected, re-registering the same
-// (tenant, user, provider) triple must reuse the ref and replace the
-// secret per §15.1, Get must return ErrNotFound for a missing or
-// cross-tenant ref, Rotate must replace the secret and refresh
-// RotatedAt, Revoke must mark the credential revoked, Delete must
-// remove the row and free the triple, and List must return the user's
-// credentials ref-ordered.
+// pkg/gateway/credentialstore/pgstore did not behave as specified —
+// the Register/Get/Rotate/Revoke/Delete/List lifecycle, the secret
+// round-trip, provider validation, the (tenant, user, provider)
+// re-register reuse, or cross-tenant ErrNotFound isolation.
 func TestCredentialStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

@@ -168,7 +168,8 @@ func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID strin
 	var nodeName *string
 	err = tx.QueryRow(ctx, claimSelectSQL, poolID).Scan(
 		&pod.PodID, &pod.State, &pod.IsolationProfile, &pod.ExecutionMode,
-		&pod.ResourceVersion, &nodeName)
+		&pod.ResourceVersion, &nodeName,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The pool has no claimable idle row: either it is genuinely
 		// exhausted or every idle row is locked by a concurrent claim.

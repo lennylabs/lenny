@@ -46,20 +46,13 @@ const (
 	etcEncConfigNodePath = "/etc/kubernetes/enc/encryption-config.yaml"
 )
 
-// spec: 4 (§4 encryption at rest — a Secret is written, etcdctl on
-//
-//	the raw key returns ciphertext; Phase 5.4)
-//
-// diagnosis: The control-plane apiserver was started with
-//
-//	--encryption-provider-config pointing at the chart's
-//	EncryptionConfiguration, a Secret was written, and its raw
-//	etcd value was read with etcdctl. A failure means either the
-//	apiserver did not load the config (raw value is plaintext
-//	JSON, not k8s:enc:aescbc), the chart did not render the
-//	EncryptionConfiguration, or the dedicated Kind cluster could
-//	not be brought up with the custom apiserver flag. Inspect the
-//	logged kind / kubectl / docker exec output.
+// spec: 4
+// diagnosis: §4 encryption at rest (Phase 5.4) is not effective. A
+// dedicated Kind cluster's apiserver runs with
+// --encryption-provider-config, a Secret is written, and its raw etcd
+// value is read; a failure means the value is plaintext JSON, the
+// chart did not render the EncryptionConfiguration, or the cluster
+// could not be brought up with the custom apiserver flag.
 func TestEtcdEncryption(t *testing.T) {
 	kind.PrerequisitesAvailable(t)
 
@@ -106,7 +99,8 @@ func TestEtcdEncryption(t *testing.T) {
 	// Delete any stale cluster of the same name from a prior aborted run.
 	_ = exec.Command("kind", "delete", "cluster", "--name", etcEncClusterName).Run()
 
-	create := exec.Command("kind", "create", "cluster",
+	create := exec.Command(
+		"kind", "create", "cluster",
 		"--name", etcEncClusterName,
 		"--image", etcEncNodeImage,
 		"--config", kindCfgPath,
@@ -134,7 +128,8 @@ func TestEtcdEncryption(t *testing.T) {
 		secretKey   = "probe"
 		secretValue = "lenny-etcd-encryption-plaintext-canary-2f9c"
 	)
-	createSecret := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+	createSecret := exec.Command(
+		"kubectl", "--kubeconfig", kubeconfig,
 		"create", "secret", "generic", secretName,
 		"-n", secretNS,
 		"--from-literal="+secretKey+"="+secretValue,
@@ -187,7 +182,8 @@ func renderEncryptionConfig(t *testing.T, root string) string {
 		t.Skipf("helm not on PATH: %v", err)
 	}
 	chart := filepath.Join(root, "charts", "lenny")
-	cmd := exec.Command(helm, "template", chart,
+	cmd := exec.Command(
+		helm, "template", chart,
 		"--show-only", "templates/etcd-encryption.yaml",
 	)
 	var stdout, stderr bytes.Buffer
@@ -245,7 +241,8 @@ func extractConfigMapData(t *testing.T, rendered string) string {
 // bind-mounted into the node at the directory holding the config file.
 func kindClusterConfig(hostEncDir string) string {
 	nodeEncDir := filepath.Dir(etcEncConfigNodePath)
-	return fmt.Sprintf(`# Dedicated Kind cluster for the Phase 5.4 etcd-encryption e2e test.
+	return fmt.Sprintf(
+		`# Dedicated Kind cluster for the Phase 5.4 etcd-encryption e2e test.
 # The single control-plane node runs its kube-apiserver with
 # --encryption-provider-config so Kubernetes Secrets are encrypted at
 # rest in etcd. extraMounts bind-mounts the host directory carrying the
@@ -308,7 +305,8 @@ func assertAPIServerEncryptionFlag(t *testing.T, kubeconfig string) {
 	var lastOut string
 	var lastErr error
 	for time.Now().Before(deadline) {
-		cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig,
+		cmd := exec.Command(
+			"kubectl", "--kubeconfig", kubeconfig,
 			"-n", "kube-system", "get", "pod",
 			"-l", "component=kube-apiserver",
 			"-o", "jsonpath={.items[*].spec.containers[*].command}",

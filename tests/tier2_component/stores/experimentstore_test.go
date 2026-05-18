@@ -41,15 +41,10 @@ func validExperiment(tenant, id string) experimentstore.Experiment {
 
 // spec: 10.7
 // diagnosis: the Postgres-backed experiment registry in
-// pkg/gateway/experimentstore/pgstore did not behave as specified.
-// Create and Get must round-trip an experiment including its nested
-// jsonb body (variants, targeting, propagation), Create must run the
-// §10.7 admission validation and reject duplicates with
-// ErrAlreadyExists, cross-tenant Get must return ErrNotFound, Update
-// must re-validate, advance UpdatedAt, and propagate a mutate error
-// verbatim so the §10.7 status-transition lifecycle holds, List must
-// return the tenant's experiments id-ascending, and Delete must
-// remove the row and report ErrNotFound when absent.
+// pkg/gateway/experimentstore/pgstore did not behave as specified —
+// the Create/Get/Update/List/Delete lifecycle, the nested jsonb body
+// round-trip, §10.7 admission validation, the sentinel errors, or the
+// status-transition lifecycle driven through the mutate closure.
 func TestExperimentStoreContract(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

@@ -29,11 +29,38 @@ func prodMigrations(t *testing.T) string {
 	return filepath.Join(schematest.RepoRoot(t), "migrations")
 }
 
-// prodTables is every table the production migrations create.
-var prodTables = []string{
-	"tenants", "runtime_definitions", "sessions", "session_messages",
-	"audit_log", "billing_events", "issued_tokens", "agent_pod_state",
-	"users", "connectors", "idempotency_keys",
+// prodTables is every table the production migrations create, paired
+// with the migration that creates it. TestProdSchemaMigrationRoundTrip
+// asserts each table appears after the forward apply and is gone after
+// rollback, so every migration listed here is covered by a test under
+// tests/tier2_component/migrations/ (the §12.0 lint-migrations rule).
+var prodTables = []struct{ migration, name string }{
+	{"0001", "tenants"},
+	{"0001", "runtime_definitions"},
+	{"0001", "sessions"},
+	{"0001", "session_messages"},
+	{"0001", "audit_log"},
+	{"0001", "billing_events"},
+	{"0001", "issued_tokens"},
+	{"0001", "agent_pod_state"},
+	{"0003", "users"},
+	{"0004", "connectors"},
+	{"0005", "idempotency_keys"},
+	// Wave 1 gateway-store tables.
+	{"0026", "custom_roles"},
+	{"0027", "delegation_policies"},
+	{"0028", "environments"},
+	{"0029", "eval_results"},
+	{"0030", "experiment_definitions"},
+	{"0031", "interactions"},
+	{"0032", "agent_memory"},
+	{"0033", "sandbox_warm_pools"},
+	{"0034", "usage_events"},
+	{"0035", "runtime_tenant_access"},
+	{"0035", "pool_tenant_access"},
+	{"0036", "credentials"},
+	{"0037", "credential_pools"},
+	{"0038", "credential_leases"},
 }
 
 // execTenant runs sql inside a transaction that has set
@@ -66,7 +93,7 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tbl := range prodTables {
-		mustHaveTable(t, ctx, pg, tbl)
+		mustHaveTable(t, ctx, pg, tbl.name)
 	}
 	// R-01: tenant-scoped ledgers lead their primary index with tenant_id.
 	mustHavePKLeadingColumn(t, ctx, pg, "audit_log", "tenant_id")
@@ -82,7 +109,7 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)
 	for _, tbl := range prodTables {
-		mustNotHaveTable(t, ctx, pg, tbl)
+		mustNotHaveTable(t, ctx, pg, tbl.name)
 	}
 	for _, role := range []string{"lenny_app", "lenny_erasure"} {
 		var exists bool
