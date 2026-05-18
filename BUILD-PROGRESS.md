@@ -11,6 +11,13 @@ progress log records work since.
 
 Newest first. Each entry is one increment toward the critical path below.
 
+- `48fa020` — §25.6 cause-chain builder (`pkg/ops/diagnostics`). Added the
+  `CauseChainEntry` type and `PodFailureChain`, which builds the
+  proximate-cause chain entry from pod signals (category + a
+  human-readable summary) or nil for a clean exit. This is the kernel the
+  §25.6 `GET /v1/admin/diagnostics/sessions/{id}` endpoint's
+  `causeChain` is built from; the endpoint still needs the Postgres
+  `sessions`/`agent_pod_state` and K8s data sources.
 - `96e6cd0` — §25.6 connectivity diagnostic endpoint. `GET /v1/admin/
   diagnostics/connectivity` on lenny-ops runs the dependency probes in
   parallel and returns the per-dependency report with an overall verdict —
