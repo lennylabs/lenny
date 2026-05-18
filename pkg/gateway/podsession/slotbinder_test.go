@@ -185,7 +185,8 @@ func TestBindSlotWorkspaceConcurrentStartsTheSlot(t *testing.T) {
 func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	a := newConcurrentAdapter()
 	// One idle pod and one spare; both sessions should fit on the first.
-	c := k8sClient(t,
+	c := k8sClient(
+		t,
 		concurrentIdleSandbox("sbx-1", "10.244.1.7"),
 		concurrentIdleSandbox("sbx-2", "10.244.1.8"),
 	)

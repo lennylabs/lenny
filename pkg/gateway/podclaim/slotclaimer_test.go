@@ -117,7 +117,8 @@ func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 // pod is the point of concurrent mode — before claiming a fresh pod.
 func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 	// One pod already hosts a slot for acme; one spare idle pod exists.
-	claimer, c := slotClaimerFor(t,
+	claimer, c := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-busy", "slot_active", 1, "acme"),
 		concurrentSandbox("sbx-spare", "idle", 0, ""),
 	)
@@ -154,7 +155,8 @@ func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 // request claims a fresh warm pod instead of overrunning the bound.
 func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 	// sbx-full is at the maxConcurrent=2 bound; sbx-fresh is idle.
-	claimer, c := slotClaimerFor(t,
+	claimer, c := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-full", "slot_active", 2, "acme"),
 		concurrentSandbox("sbx-fresh", "idle", 0, ""),
 	)
@@ -186,7 +188,8 @@ func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 // pod is at its bound and no idle pod remains. §5.2 maps this to
 // WARM_POOL_EXHAUSTED / "concurrent_slots_exhausted".
 func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
-	claimer, _ := slotClaimerFor(t,
+	claimer, _ := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-a", "slot_active", 4, "acme"),
 		concurrentSandbox("sbx-b", "slot_active", 4, "acme"),
 	)
@@ -205,7 +208,8 @@ func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
 // tenant-mismatch distinctly.
 func TestClaimSlotRejectsCrossTenantSlotSharing(t *testing.T) {
 	// The only pod with free capacity is pinned to globex; no idle pod.
-	claimer, c := slotClaimerFor(t,
+	claimer, c := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-globex", "slot_active", 1, "globex"),
 	)
 	_, err := claimer.ClaimSlot(context.Background(),
@@ -230,7 +234,8 @@ func TestClaimSlotRejectsCrossTenantSlotSharing(t *testing.T) {
 // new tenant claims a fresh idle pod rather than joining a foreign
 // tenant's pod.
 func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
-	claimer, _ := slotClaimerFor(t,
+	claimer, _ := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-globex", "slot_active", 1, "globex"),
 		concurrentSandbox("sbx-idle", "idle", 0, ""),
 	)
@@ -253,7 +258,8 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 // styles share the per-pod slot bound and the tenant-pinning rule; only
 // the workspace materialization differs (handled by the binder).
 func TestClaimSlotStatelessStyleHonorsTheBound(t *testing.T) {
-	claimer, _ := slotClaimerFor(t,
+	claimer, _ := slotClaimerFor(
+		t,
 		concurrentSandbox("sbx-1", "slot_active", 1, "acme"),
 	)
 	res, err := claimer.ClaimSlot(context.Background(),
@@ -302,7 +308,8 @@ func TestClaimSlotRetriesOnReservationConflict(t *testing.T) {
 					conflicted = true
 					return apierrors.NewConflict(
 						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxes"},
-						"sbx-a", errors.New("slot reserved by a competing replica"))
+						"sbx-a", errors.New("slot reserved by a competing replica"),
+					)
 				}
 				return cl.Status().Update(ctx, obj, opts...)
 			},

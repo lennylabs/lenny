@@ -348,7 +348,18 @@ func TestFakeMCPServerRejectsMissingNonce(t *testing.T) {
 	if err := json.NewDecoder(conn).Decode(&resp); err == nil {
 		t.Error("fake server answered an initialize carrying no nonce")
 	}
-	if !fa.platform.rejectedBad {
+	// The connection-handler goroutine records the rejection; poll for
+	// it through the mutex-guarded accessor so the assertion does not
+	// race that goroutine.
+	rejected := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if fa.platform.wasRejected() {
+			rejected = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !rejected {
 		t.Error("fake server did not record the missing-nonce rejection")
 	}
 }

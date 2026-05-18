@@ -340,6 +340,15 @@ func (s *fakeMCPServer) markRejected() {
 	s.rejectedBad = true
 }
 
+// wasRejected reports whether any connection failed the §15.4.3 nonce
+// handshake. It reads rejectedBad under the mutex, so a caller racing
+// the connection-handler goroutine observes a consistent value.
+func (s *fakeMCPServer) wasRejected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rejectedBad
+}
+
 func (s *fakeMCPServer) markInitialized() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -573,7 +582,7 @@ func checkMCPNonceHandshake(binary string, _ time.Duration, _ bool) (string, err
 	if fa.platform.callCount() == 0 {
 		return "", errors.New("platform MCP server dispatched no tool — the runtime did not complete the nonce handshake")
 	}
-	if fa.platform.rejectedBad {
+	if fa.platform.wasRejected() {
 		return "", errors.New("platform MCP server rejected the runtime's connection — invalid or missing _lennyNonce")
 	}
 
@@ -682,7 +691,7 @@ func checkConnectorMCPReachability(binary string, _ time.Duration, _ bool) (stri
 	// startup, so by the time it emits a response every handshake is
 	// settled.
 	for i, cs := range fa.connectors {
-		if cs.rejectedBad {
+		if cs.wasRejected() {
 			return "", fmt.Errorf("connector %d (%s) rejected the runtime's nonce", i, cs.name)
 		}
 		if cs.initializedCount() == 0 {
