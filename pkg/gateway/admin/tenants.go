@@ -96,6 +96,7 @@ type Router struct {
 	pools              poolstore.Store
 	breakers           breakerstore.Store
 	connectors         connectorstore.Store
+	connectorOAuth     *ConnectorOAuth
 	delegationPolicies delegationpolicystore.Store
 	credentialPools    credentialpoolstore.Store
 	customRoles        customrolestore.Store
@@ -305,6 +306,22 @@ func (r *Router) Handler() http.Handler {
 		mux.Handle("GET /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
 		mux.Handle("PUT /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
 		mux.Handle("DELETE /v1/admin/connectors/{id}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
+		if r.connectorOAuth != nil {
+			// §9.3 connector OAuth 2.1 authorization-code flow. The
+			// initiation endpoint requires an authenticated caller — the
+			// resulting credential is scoped to the caller's identity —
+			// so it is gated on authentication inside the handler rather
+			// than on platform-admin. The callback endpoint is a browser
+			// redirect from the OAuth provider carrying no Bearer token;
+			// it is intentionally not gated, and the signed `state`
+			// parameter is its anti-CSRF control. The literal
+			// `oauth/callback` segment takes precedence over the
+			// `{id}` wildcard in Go's ServeMux.
+			mux.Handle("GET /v1/admin/connectors/oauth/callback",
+				http.HandlerFunc(r.handleConnectorOAuthCallback))
+			mux.Handle("POST /v1/admin/connectors/{id}/oauth/authorize",
+				http.HandlerFunc(r.handleAuthorizeConnector))
+		}
 	}
 	if r.delegationPolicies != nil {
 		mux.Handle("POST /v1/admin/delegation-policies", r.requireAdmin(http.HandlerFunc(r.handleCreateDelegationPolicy)))

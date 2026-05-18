@@ -60,6 +60,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
@@ -69,6 +70,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
@@ -222,6 +224,8 @@ func main() {
 		"§4.4 periodic-checkpoint cadence. The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace.")
 	noEnvPolicy := flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
+	connectorOAuthCallbackURL := flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),
+		"§9.3 absolute URL the connector OAuth provider redirects back to (the gateway's GET /v1/admin/connectors/oauth/callback). Wiring the connector OAuth 2.1 flow requires it. Override via LENNY_CONNECTOR_OAUTH_CALLBACK_URL.")
 	flag.Parse()
 
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
@@ -669,6 +673,36 @@ func main() {
 	}
 	credServer := credentialserver.New(credentials)
 
+	// ----- §9.3 connector OAuth 2.1 authorization-code flow -----
+	// The connector-credential store holds the access/refresh tokens a
+	// completed connector OAuth flow produces, keyed by the
+	// (tenant, connector, user) triple. The in-memory store keeps the
+	// tokens process-local; a Postgres-backed store envelope-encrypts
+	// them under the same per-tenant KMS KEKs the credential store
+	// uses. The flow is wired only when --connector-oauth-callback-url
+	// is set: the OAuth provider needs an absolute redirect URI.
+	connectorCreds := connectorcredstore.NewMemory(nil)
+	var connectorOAuth *admin.ConnectorOAuth
+	if *connectorOAuthCallbackURL != "" {
+		var stateSeed [32]byte
+		if _, err := rand.Read(stateSeed[:]); err != nil {
+			log.Fatalf("lenny-gateway: connector OAuth state signing key: %v", err)
+		}
+		stateSigner, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
+			KeyID: "boot", Secret: stateSeed[:],
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
+		}
+		connectorOAuth = &admin.ConnectorOAuth{
+			StateSigner: stateSigner,
+			StateStore:  connectoroauth.NewMemoryStateStore(),
+			Credentials: connectorCreds,
+			CallbackURL: *connectorOAuthCallbackURL,
+		}
+		log.Printf("lenny-gateway: §9.3 connector OAuth 2.1 flow enabled, callback %s", *connectorOAuthCallbackURL)
+	}
+
 	// ----- MCP adapter -----
 	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments})
 	mcpSrv := mcp.NewServer()
@@ -785,6 +819,7 @@ func main() {
 		WithPools(pools).
 		WithBreakers(breakers).
 		WithConnectors(connectors).
+		WithConnectorOAuth(connectorOAuth).
 		WithDelegationPolicies(delegationPolicies).
 		WithCredentialPools(credentialPools).
 		WithCustomRoles(customRoles).
