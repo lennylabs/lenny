@@ -218,6 +218,32 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		fmt.Sprintf("%d exception(s); every entry has a reason and a justification", len(doc.Exceptions)))
 }
 
+// readExceptionSections returns the set of spec sections listed in
+// tests/spec-map-exceptions.yaml. A missing or unparseable file
+// yields an empty set; validateSpecMapExceptionsYAML reports the
+// parse error separately.
+func readExceptionSections(path string) map[string]bool {
+	out := map[string]bool{}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	var doc struct {
+		Exceptions []struct {
+			Section string `yaml:"section"`
+		} `yaml:"exceptions"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return out
+	}
+	for _, e := range doc.Exceptions {
+		if e.Section != "" {
+			out[e.Section] = true
+		}
+	}
+	return out
+}
+
 // validateFlakeBudgetYAML enforces TESTING.md §21.4 on
 // tests/flake-budget.yaml. Every quarantined entry must carry a
 // non-empty test name, an https issue link, and an eta in

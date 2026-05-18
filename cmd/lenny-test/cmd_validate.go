@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -46,6 +47,7 @@ func runValidateMaps(args []string) int {
 		validateChangeGraphPaths(changeGraphPath, root),
 		validateChangeGraphFileExistence(changeGraphPath, root),
 		validateTestFilesMapped(specMapPath, root),
+		validateSpecMapCoverage(specMapPath, exceptionsPath),
 		validateGroupsYAML(groupsPath),
 		validateGroupsSubsetsYAML(subsetsPath),
 		validateSpecMapExceptionsYAML(exceptionsPath),
@@ -403,6 +405,48 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 				len(orphans), strings.Join(preview, "; ")))
 	}
 	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
+}
+
+// validateSpecMapCoverage confirms every spec section in the map
+// carries at least one test reference, or is listed in
+// tests/spec-map-exceptions.yaml with a reason. A section with
+// neither is an unexplained spec-map gap: the spec map then no
+// longer accounts for every normative section, and `lenny-test
+// --spec <section>` would silently select nothing for it.
+func validateSpecMapCoverage(specMapPath, exceptionsPath string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map coverage", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map coverage", false, err.Error())
+	}
+	excepted := readExceptionSections(exceptionsPath)
+	gaps := []string{}
+	for section, entry := range doc.Sections {
+		if len(entry.Tests) > 0 || excepted[section] {
+			continue
+		}
+		gaps = append(gaps, section)
+	}
+	if len(gaps) > 0 {
+		sort.Strings(gaps)
+		preview := gaps
+		if len(preview) > 8 {
+			preview = append(append([]string{}, preview[:8]...),
+				fmt.Sprintf("... (%d more)", len(gaps)-8))
+		}
+		return newResult("spec-map coverage", false,
+			fmt.Sprintf("%d section(s) have no test reference and no exception: %s",
+				len(gaps), strings.Join(preview, ", ")))
+	}
+	return newResult("spec-map coverage", true,
+		fmt.Sprintf("%d section(s); every section has a test reference or an exception", len(doc.Sections)))
 }
 
 // readPendingPaths reads tests/change-graph-pending.txt — one path
