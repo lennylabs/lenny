@@ -26,12 +26,22 @@ Newest first. Each entry is one increment toward the critical path below.
   handling" check drives the §4.7 `terminate` frame. Verified:
   `lenny-compliance --level full` passes all 12 checks against
   `streaming-echo`; adapter tests race-clean.
-  Remaining lifecycle work, for the next iteration: drive the channel from
-  the adapter RPCs — `Interrupt` → `RequestInterrupt`, `Checkpoint` →
-  `RequestCheckpoint` + `CompleteCheckpoint`, the credential RPCs →
-  `RotateCredentials` — for Full-level runtimes (Basic-level RPC tests must
-  still pass); bridge socket events to the gRPC `Adapter.LifecycleChannel`
-  stream; resolve `ExtendLease` (proto-vs-§8.6 direction).
+  Remaining lifecycle work, for the next iteration — best done as one
+  coherent pass because the RPCs share state:
+  - §4.7 per-session operation lock: `Checkpoint` and `Interrupt` RPCs are
+    serialized (at most one runs; the other queues, depth 1). Build this
+    lock first; both RPC paths below use it.
+  - `Interrupt` Full path: clean interrupt on a Full runtime sends
+    `interrupt_request` and awaits `interrupt_acknowledged` (bounded by the
+    request's `deadlineMs`); on timeout §4.7 wants an `INTERRUPT_TIMEOUT`
+    status, which needs a field added to the `InterruptResponse` proto
+    (currently only `acknowledged bool`). Hard interrupt and non-Full
+    runtimes keep the `s.Runtime` signal path.
+  - `Checkpoint` Full path: `RequestCheckpoint` → snapshot/store →
+    `CompleteCheckpoint`. The credential RPCs → `RotateCredentials`.
+  - Basic-level RPC tests must still pass.
+  - Bridge socket events to the gRPC `Adapter.LifecycleChannel` stream;
+    resolve `ExtendLease` (proto-vs-§8.6 direction).
 - `3c26b2e` — wired the lifecycle channel into the adapter. The `Server`
   has a `Lifecycle *LifecycleChannel` field; when set, `writeSessionManifest`
   advertises the §15.4.6 `lifecycleChannel.socket` so a Full-level runtime
