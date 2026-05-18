@@ -496,16 +496,26 @@ func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
 // grace deadline. The §11.4 full_revoke fan-out uses it.
 
 // recordingAdapter is a minimal Adapter gRPC server that captures the
-// ShutdownRequest so a test can assert the reason and deadline reached
-// the wire. Every other RPC stays unimplemented.
+// ShutdownRequest and RotateCredentialsRequest so a test can assert
+// what reached the wire. Every other RPC stays unimplemented.
 type recordingAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 	gotShutdown *adapterv1.ShutdownRequest
+	gotRotate   *adapterv1.RotateCredentialsRequest
+	rotateErr   error
 }
 
 func (r *recordingAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	r.gotShutdown = req
 	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+}
+
+func (r *recordingAdapter) RotateCredentials(_ context.Context, req *adapterv1.RotateCredentialsRequest) (*adapterv1.RotateCredentialsResponse, error) {
+	if r.rotateErr != nil {
+		return nil, r.rotateErr
+	}
+	r.gotRotate = req
+	return &adapterv1.RotateCredentialsResponse{}, nil
 }
 
 // dialRecordingAdapter serves rec over an in-memory connection and
@@ -760,5 +770,121 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	}
 	if _, err := cl.ReportUsage(ctx, "sess-x"); err == nil {
 		t.Error("ReportUsage with no usage meter succeeded, want a failure")
+	}
+}
+
+// spec: §4.9 RotateCredentials RPC — the gateway-side driver for hot
+// credential rotation. The §4.9 Proactive Lease Renewal loop, the
+// Fallback Flow, and Emergency Credential Revocation all push a rotated
+// lease to a pod through it.
+
+func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	leases := map[string]*adapterv1.CredentialLease{
+		"anthropic_direct": {
+			LeaseId:  "cl-rotated",
+			Provider: "anthropic_direct",
+			Payload: []byte(`{"deliveryMode":"proxy",` +
+				`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-new"}}`),
+		},
+	}
+	if err := cl.RotateCredentials(context.Background(), "sess-rot", leases); err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+	if rec.gotRotate == nil {
+		t.Fatal("the adapter received no RotateCredentials request")
+	}
+	if got := rec.gotRotate.GetSessionId().GetValue(); got != "sess-rot" {
+		t.Errorf("RotateCredentials session id = %q, want sess-rot", got)
+	}
+	got, ok := rec.gotRotate.GetLeases()["anthropic_direct"]
+	if !ok {
+		t.Fatalf("RotateCredentials leases = %v, want an anthropic_direct entry", rec.gotRotate.GetLeases())
+	}
+	if got.GetLeaseId() != "cl-rotated" {
+		t.Errorf("rotated lease id = %q, want cl-rotated", got.GetLeaseId())
+	}
+}
+
+func TestRotateCredentialsEmptyMapIsAccepted(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	// A nil lease map rotates nothing; the call still round-trips.
+	if err := cl.RotateCredentials(context.Background(), "sess-rot", nil); err != nil {
+		t.Fatalf("RotateCredentials with no leases: %v", err)
+	}
+	if rec.gotRotate == nil || len(rec.gotRotate.GetLeases()) != 0 {
+		t.Errorf("RotateCredentials with a nil map sent %v leases, want none", rec.gotRotate.GetLeases())
+	}
+}
+
+func TestRotateCredentialsPropagatesAdapterError(t *testing.T) {
+	rec := &recordingAdapter{rotateErr: status.Error(codes.FailedPrecondition, "no session")}
+	cl := dialRecordingAdapter(t, rec)
+
+	err := cl.RotateCredentials(context.Background(), "sess-rot", nil)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("RotateCredentials error = %v, want the adapter's FailedPrecondition", err)
+	}
+}
+
+func TestRotateCredentialsRejectsEmptySessionID(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	srv.CredentialsDir = t.TempDir()
+	cl := dialAdapter(t, srv)
+
+	// The adapter's RotateCredentials requires a session id.
+	err := cl.RotateCredentials(context.Background(), "", nil)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("RotateCredentials with no session id = %v, want InvalidArgument", err)
+	}
+}
+
+func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
+	srv := adapter.New("adapter-test-build")
+	credDir := t.TempDir()
+	srv.CredentialsDir = credDir
+	cl := dialAdapter(t, srv)
+	ctx := context.Background()
+
+	// Assign an initial lease, then rotate it onto a fresh one.
+	if err := cl.AssignCredentials(ctx, "sess-rot",
+		map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": {
+				LeaseId:  "cl-initial",
+				Provider: "anthropic_direct",
+				Payload: []byte(`{"deliveryMode":"proxy",` +
+					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-1"}}`),
+			},
+		}); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+	if err := cl.RotateCredentials(ctx, "sess-rot",
+		map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": {
+				LeaseId:  "cl-rotated",
+				Provider: "anthropic_direct",
+				Payload: []byte(`{"deliveryMode":"proxy",` +
+					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-2"}}`),
+			},
+		}); err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(credDir, "credentials.json"))
+	if err != nil {
+		t.Fatalf("read credential file: %v", err)
+	}
+	var doc struct {
+		Providers []map[string]any `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode credential file: %v", err)
+	}
+	if len(doc.Providers) != 1 || doc.Providers[0]["leaseId"] != "cl-rotated" {
+		t.Errorf("credential file providers = %v, want one entry for the rotated lease cl-rotated", doc.Providers)
 	}
 }

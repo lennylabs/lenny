@@ -49,6 +49,21 @@ func (s *Service) AssignProto(poolName, sessionID, spiffeURI string) (*adapterv1
 	return ProtoLease(lease)
 }
 
+// ProtoLeaseByID resolves a recorded §4.9 credential lease by its lease
+// ID and returns the wire-form adapterv1.CredentialLease for it. It
+// backs the §4.9 Proactive Lease Renewal push: the renewal worker mints
+// a replacement lease through Assign (recording it in the lease store)
+// and then needs the wire form to push to the pod via RotateCredentials
+// (§4.7). ProtoLeaseByID returns an error when no lease is recorded
+// under the ID, or when the lease is not proxy-mode (see ProtoLease).
+func (s *Service) ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, error) {
+	lease, ok := s.leases.GetByID(leaseID)
+	if !ok {
+		return nil, fmt.Errorf("credassign: no recorded lease with id %s", leaseID)
+	}
+	return ProtoLease(lease)
+}
+
 // ProtoLease converts a minted §4.9 credential lease into the wire-form
 // adapterv1.CredentialLease the gateway pushes to a pod's adapter via
 // AssignCredentials (§4.7 item 4). The lease's typed fields map to the

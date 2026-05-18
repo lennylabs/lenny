@@ -81,13 +81,14 @@ import (
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	credleasepg "github.com/lennylabs/lenny/pkg/gateway/credleasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/credrenewal"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	customrolepg "github.com/lennylabs/lenny/pkg/gateway/customrolestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/denylist"
-	credentialdenylistprop "github.com/lennylabs/lenny/pkg/gateway/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environmentstore/pgstore"
@@ -697,15 +698,59 @@ func main() {
 
 	// §4.9 credential deny list: the per-replica set of revoked
 	// credential identities the LLM proxy checks before every upstream
-	// call. The propagator carries a revocation across replicas over
-	// Redis pub/sub. The §4.9 LLM proxy below reads the wrapped deny
-	// list directly on the hot path, and the admin router's §11.4
-	// full_revoke fan-out revokes a user's leases onto it; a revocation
-	// entered on any replica fans out to every replica's deny list.
+	// call. The §4.9 LLM proxy below reads it directly on the hot path;
+	// the credential-lease revocation propagator built next wraps it
+	// with cross-replica Redis pub/sub fan-out, so the admin router's
+	// §11.4 full_revoke fan-out and the emergency-revocation path revoke
+	// a credential onto every replica's deny list.
 	credDeny := denylist.New()
-	credDenyProp := credentialdenylistprop.New(credDeny, securityBus, credentialdenylistprop.WithErrorHandler(func(err error) {
-		log.Printf("lenny-gateway: credential deny-list pub/sub publish failed: %v", err)
+
+	// ----- §4.9 Proactive Lease Renewal worker -----
+	// The credrenewal.Worker tracks each active credential lease by its
+	// renewBefore deadline and issues a replacement before the original
+	// expires, so a long-lived session never sees its LLM credential
+	// lapse. credRenewal binds the worker to the credential-assignment
+	// service that mints the replacement and to the warm-pod registry it
+	// pushes the rotated credential to via the §4.7 RotateCredentials
+	// RPC. credRenewal is nil when no credential pools are wired; a nil
+	// receiver leaves every renewal hook a no-op.
+	credRenewal := newCredRenewalWiring(credAssign, podRegistry)
+	// credRenewalProp carries a §4.9 credential-lease revocation across
+	// replicas: a Revoke updates the local deny list, drops the renewal
+	// worker's tracked leases bound to the credential, and fans out over
+	// the same Redis pub/sub channel the §4.9 credential-deny-list
+	// propagator uses. The §11.4 full_revoke fan-out and the emergency-
+	// revocation path route through it so a revoked credential lease
+	// stops reaching the provider on every replica, and no replica
+	// proactively renews a credential that is no longer trustworthy.
+	var credRenewalWorker *credrenewal.Worker
+	credRenewalProp := credrenewalprop.New(credDeny, nil, securityBus, credrenewalprop.WithErrorHandler(func(err error) {
+		log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
 	}))
+	if credRenewal != nil {
+		credRenewalWorker = credrenewal.New(credRenewal, credrenewal.Options{
+			// §4.9: a proactive renewal that rotates a lease onto a fresh
+			// credential pushes it to the lease's pod via RotateCredentials.
+			OnRenewed: credRenewal.onRenewed,
+			// §4.9: a lease whose renewal cannot proceed falls through to
+			// fault rotation. The worker drops it; onExhausted clears its
+			// pool binding.
+			OnExhausted: credRenewal.onExhausted,
+		})
+		// Every §4.9 credential lease the assignment service mints — at
+		// session start and at fault rotation — is tracked by the renewal
+		// worker so its renewBefore deadline drives a proactive renewal.
+		credAssign.OnAssigned(func(a credassign.LeaseAssignment) {
+			credRenewal.track(credRenewalWorker, a.PoolName, string(a.Lease.Provider), a.Lease)
+		})
+		// Rebuild the propagator over the live worker so a peer replica's
+		// credential-lease revocation also drops this replica's tracked
+		// leases for the credential, not just its deny-list entry.
+		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, securityBus,
+			credrenewalprop.WithErrorHandler(func(err error) {
+				log.Printf("lenny-gateway: credential-lease revocation pub/sub publish failed: %v", err)
+			}))
+	}
 
 	// ----- Admin API -----
 	var delegationPolicies delegationpolicystore.Store = delegationpolicystore.NewMemory()
@@ -817,10 +862,13 @@ func main() {
 		}
 		// llmLeases is the §4.9 credential-lease store; both the in-memory
 		// and Postgres-backed implementations expose LeasesBySession, so
-		// the assertion succeeds for either backend. The deny-list
-		// propagator carries a revoked lease's credential across replicas.
+		// the assertion succeeds for either backend. The credential-lease
+		// revocation propagator carries a revoked lease's credential
+		// across replicas — onto every replica's deny list and renewal
+		// worker — so the §11.4 full_revoke fan-out stops the lease
+		// reaching the provider fleet-wide and no replica renews it.
 		if ls, ok := llmLeases.(userLeaseStore); ok {
-			userLeases = &userLeaseRevoker{leases: ls, denyList: credDenyProp}
+			userLeases = &userLeaseRevoker{leases: ls, denyList: credRenewalProp}
 		}
 		if pgPool != nil {
 			userTokens = &userTokenRevoker{store: issuedtokenstore.New(pgPool)}
@@ -981,10 +1029,12 @@ func main() {
 	// proxy-mode agent pods on a listener separate from the REST API. It
 	// resolves an inbound lease token against llmLeases — the same store
 	// the credassign service records minted leases in — and the upstream
-	// credential against credCache. The credential deny list credDeny
-	// and its propagator are built earlier so the admin router's §11.4
-	// full_revoke fan-out can revoke a user's leases onto the same list.
-	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDenyProp.Local())
+	// credential against credCache. The credential deny list credDeny is
+	// built earlier and wrapped by the credential-lease revocation
+	// propagator, so the admin router's §11.4 full_revoke fan-out and
+	// the emergency-revocation path revoke a user's leases onto the same
+	// list the proxy reads here.
+	llmProxySrv := newLLMProxyServer(*llmProxyAddr, *anthropicVersion, llmLeases, credCache, credDeny)
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control
@@ -1081,10 +1131,27 @@ func main() {
 	// local cache, so a §13.3 token revocation, a §10.3 mTLS
 	// certificate revocation, and a §4.9 credential revocation each
 	// converge fleet-wide. With no Redis the caches stay per-replica.
+	//
+	// The §4.9 credential-lease revocation runs the credrenewal
+	// propagator's subscriber rather than the bare credential-deny-list
+	// propagator's: both subscribe to the same channel and apply onto
+	// the same deny list, and the credrenewal propagator additionally
+	// drops the renewal worker's tracked leases for a revoked
+	// credential. Running both would double-deliver onto one deny list
+	// for no gain, so only the superset subscriber runs.
 	if securityBus != nil {
 		go revProp.Run(watchdogCtx)
 		go mtlsDenyProp.Run(watchdogCtx)
-		go credDenyProp.Run(watchdogCtx)
+		go credRenewalProp.Run(watchdogCtx)
+	}
+
+	// ----- §4.9 Proactive Lease Renewal sweep -----
+	// Active only with credential pools wired: the worker sweeps tracked
+	// leases on its interval, issues a replacement before each lease's
+	// renewBefore deadline, and pushes the rotated credential to the
+	// lease's pod via the §4.7 RotateCredentials RPC.
+	if credRenewalWorker != nil {
+		go credRenewalWorker.Run(watchdogCtx)
 	}
 
 	// ----- §4.4 periodic-checkpoint loop -----

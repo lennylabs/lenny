@@ -75,9 +75,23 @@ type Service struct {
 	leases credleasestore.LeaseStore
 	creds  *credcache.Cache
 
-	mu    sync.Mutex
-	pools map[string]*poolState
-	now   func() time.Time
+	mu       sync.Mutex
+	pools    map[string]*poolState
+	now      func() time.Time
+	observer func(LeaseAssignment)
+}
+
+// LeaseAssignment reports a §4.9 credential lease the service minted. It
+// is delivered to the observer registered with OnAssigned so a caller —
+// the §4.9 Proactive Lease Renewal worker — can track the lease for
+// renewal without depending on the lease internals. PoolName names the
+// §4.9 pool the lease was leased from, so the renewal worker can re-mint
+// a replacement from the same pool.
+type LeaseAssignment struct {
+	// PoolName is the §4.9 credential pool the lease was minted from.
+	PoolName string
+	// Lease is the minted credential lease.
+	Lease credential.Lease
 }
 
 // New returns a credential-assignment service that records leases in
@@ -92,6 +106,20 @@ func New(leases credleasestore.LeaseStore, creds *credcache.Cache) *Service {
 		pools:  make(map[string]*poolState),
 		now:    time.Now,
 	}
+}
+
+// OnAssigned registers an observer invoked with every §4.9 credential
+// lease the service mints, after the lease is recorded in the lease
+// store and its upstream credential cached. The §4.9 Proactive Lease
+// Renewal worker registers here so each assigned lease is tracked for
+// renewal. A nil observer clears any prior registration. OnAssigned is
+// goroutine-safe; it must be called before the service mints leases
+// concurrently. The observer runs on the Assign caller's goroutine, so
+// a slow observer should hand off its own work.
+func (s *Service) OnAssigned(fn func(LeaseAssignment)) {
+	s.mu.Lock()
+	s.observer = fn
+	s.mu.Unlock()
 }
 
 // RegisterPool adds or replaces a credential pool. Replacing a pool
@@ -113,12 +141,29 @@ func (s *Service) RegisterPool(p Pool) {
 // credential.ErrPoolExhausted when the pool has no assignable
 // credential.
 func (s *Service) Assign(poolName, sessionID, spiffeURI string) (credential.Lease, error) {
+	lease, observer, err := s.assignLocked(poolName, sessionID, spiffeURI)
+	if err != nil {
+		return credential.Lease{}, err
+	}
+	// The renewal observer runs outside s.mu: the §4.9 Proactive Lease
+	// Renewal worker tracks the lease here, and holding the lock across
+	// a caller-supplied callback would serialize unrelated Assign calls.
+	if observer != nil {
+		observer(LeaseAssignment{PoolName: poolName, Lease: lease})
+	}
+	return lease, nil
+}
+
+// assignLocked performs the §4.9 credential selection and lease mint
+// under s.mu and returns the minted lease together with the registered
+// renewal observer, which the caller invokes after releasing the lock.
+func (s *Service) assignLocked(poolName, sessionID, spiffeURI string) (credential.Lease, func(LeaseAssignment), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	ps, ok := s.pools[poolName]
 	if !ok {
-		return credential.Lease{}, ErrPoolNotFound
+		return credential.Lease{}, nil, ErrPoolNotFound
 	}
 
 	candidates := make([]credential.CredentialCandidate, len(ps.pool.Credentials))
@@ -132,7 +177,7 @@ func (s *Service) Assign(poolName, sessionID, spiffeURI string) (credential.Leas
 
 	selected, nextState, err := credential.SelectCredential(ps.pool.Strategy, candidates, ps.selection)
 	if err != nil {
-		return credential.Lease{}, err
+		return credential.Lease{}, nil, err
 	}
 
 	lease, err := credential.MintLease(credential.MintRequest{
@@ -151,17 +196,17 @@ func (s *Service) Assign(poolName, sessionID, spiffeURI string) (credential.Leas
 		ProxyDialect:       ps.pool.ProxyDialect,
 	})
 	if err != nil {
-		return credential.Lease{}, err
+		return credential.Lease{}, nil, err
 	}
 
 	if err := s.leases.Put(lease); err != nil {
-		return credential.Lease{}, err
+		return credential.Lease{}, nil, err
 	}
 	s.creds.Put(lease.CredentialKey(), credentialSecret(ps.pool, selected.CredentialID))
 
 	ps.selection = nextState
 	ps.active[selected.CredentialID]++
-	return lease, nil
+	return lease, s.observer, nil
 }
 
 // Release frees the credential session slot a lease held and removes

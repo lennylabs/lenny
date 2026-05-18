@@ -166,3 +166,70 @@ func TestAssignDirectModePoolCachesCredential(t *testing.T) {
 		t.Errorf("cached credential = %q ok=%v, want sk-direct", key, ok)
 	}
 }
+
+// spec: §4.9 Proactive Lease Renewal — the renewal worker tracks each
+// minted lease via the OnAssigned observer.
+
+func TestOnAssignedObservesEachMintedLease(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
+		healthyCred("key-1", "sk-ant-real")))
+
+	var observed []credassign.LeaseAssignment
+	svc.OnAssigned(func(a credassign.LeaseAssignment) {
+		observed = append(observed, a)
+	})
+
+	lease, err := svc.Assign("claude-prod", "s_1", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	if len(observed) != 1 {
+		t.Fatalf("OnAssigned observer fired %d times, want 1", len(observed))
+	}
+	if observed[0].PoolName != "claude-prod" {
+		t.Errorf("observed pool name = %q, want claude-prod", observed[0].PoolName)
+	}
+	if observed[0].Lease.LeaseID != lease.LeaseID {
+		t.Errorf("observed lease id = %q, want the minted lease %q", observed[0].Lease.LeaseID, lease.LeaseID)
+	}
+}
+
+func TestOnAssignedNotFiredOnFailedAssign(t *testing.T) {
+	svc, _, _ := newService(t)
+	fired := false
+	svc.OnAssigned(func(credassign.LeaseAssignment) { fired = true })
+
+	// An unknown pool fails before any lease is minted.
+	if _, err := svc.Assign("no-such-pool", "s_1", ""); err == nil {
+		t.Fatal("Assign of an unknown pool succeeded, want ErrPoolNotFound")
+	}
+	if fired {
+		t.Error("the OnAssigned observer fired for a failed Assign")
+	}
+}
+
+func TestProtoLeaseByIDResolvesARecordedLease(t *testing.T) {
+	svc, _, _ := newService(t)
+	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
+		healthyCred("key-1", "sk-ant-real")))
+
+	lease, err := svc.Assign("claude-prod", "s_1", "")
+	if err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	wire, err := svc.ProtoLeaseByID(lease.LeaseID)
+	if err != nil {
+		t.Fatalf("ProtoLeaseByID: %v", err)
+	}
+	if wire.GetLeaseId() != lease.LeaseID {
+		t.Errorf("wire lease id = %q, want %q", wire.GetLeaseId(), lease.LeaseID)
+	}
+}
+
+func TestProtoLeaseByIDUnknownLease(t *testing.T) {
+	svc, _, _ := newService(t)
+	if _, err := svc.ProtoLeaseByID("absent"); err == nil {
+		t.Error("ProtoLeaseByID for an unrecorded lease succeeded, want an error")
+	}
+}

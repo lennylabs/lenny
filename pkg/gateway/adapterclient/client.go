@@ -89,6 +89,33 @@ func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases
 	return err
 }
 
+// RotateCredentials replaces a session's previously assigned §4.9
+// credential leases with rotated leases and pushes them to the pod's
+// adapter (§4.7 `RotateCredentials` RPC). leases is keyed by provider;
+// the adapter rewrites only the named providers' entries in the pod's
+// credential file and retains the rest, then runs the §4.7
+// `credentials_rotated` / `credentials_acknowledged` lifecycle
+// handshake with the runtime so a Full-level runtime rebinds the
+// rotated credential in place without a restart.
+//
+// It is the gateway-side driver for every §4.9 rotation path: the
+// Fallback Flow steps 5–7, Emergency Credential Revocation step 5
+// (direct-delivery mode), and the Proactive Lease Renewal loop's
+// replacement-lease push. The §4.9 rotationTrigger that distinguishes
+// those causes is internal gateway rotation context; the adapter wire
+// contract carries only the session id and the rotated lease map.
+//
+// The request carries credential material; per §4.7 item 6 the call
+// site must keep it out of access logs and telemetry. A nil or empty
+// map rotates nothing.
+func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease) error {
+	_, err := c.rpc.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Leases:    leases,
+	})
+	return err
+}
+
 // prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
 const prepareWorkspaceChunkSize = 64 * 1024
 
