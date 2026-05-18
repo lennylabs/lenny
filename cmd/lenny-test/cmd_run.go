@@ -927,9 +927,36 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 		"basic": {level: "basic", runtime: "echo", pkg: "./cmd/runtimes/echo"},
 		"full":  {level: "full", runtime: "streaming-echo", pkg: "./cmd/runtimes/streaming-echo"},
 	}
+	// "bundled-runtimes" is the pr-group alias for every in-tree
+	// reference runtime. It expands to each available level whose
+	// runtime package is present on disk, so the conformance gate
+	// tracks the bundled runtimes as they land (delegation-echo
+	// joins at Standard level in Wave 3).
+	expandBundled := func() []string {
+		levels := []string{}
+		for _, lvl := range []string{"basic", "standard", "full"} {
+			rb, ok := available[lvl]
+			if !ok {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(root, rb.pkg)); err == nil {
+				levels = append(levels, lvl)
+			}
+		}
+		return levels
+	}
 	if len(subsets) == 0 {
 		subsets = []string{"basic", "full"}
 	}
+	expanded := []string{}
+	for _, sub := range subsets {
+		if sub == "bundled-runtimes" || sub == "bundled" {
+			expanded = append(expanded, expandBundled()...)
+			continue
+		}
+		expanded = append(expanded, sub)
+	}
+	subsets = expanded
 
 	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
 	cmd := exec.Command("go", "build", "-o", binCompliance, "./cmd/lenny-compliance")
