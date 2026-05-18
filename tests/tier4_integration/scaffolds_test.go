@@ -109,11 +109,10 @@ func TestExperimentRouting(t *testing.T) {
 // and the connector-credential exchange are built and exercised
 // against the live gateway with a fake provider token endpoint.
 
-// §13.26 — type:mcp runtime support.
-func TestMCPRuntimeLifecycle(t *testing.T) {
-	t.Skip("not implemented: §15.4 type:mcp runtime kind — requires the MCP-style runtime adapter and the corresponding pool execution mode")
-}
-
+// §13.26 — type:mcp runtime support. TestMCPRuntimeLifecycle is
+// converted in mcp_runtime_lifecycle_test.go: the type: mcp runtime-
+// side adapter path is built and exercised end to end against the
+// reference type: mcp runtime (cmd/runtimes/mcp-reference).
 func TestMCPRuntimeEndpoints(t *testing.T) {
-	t.Skip("not implemented: §15.2 MCP API endpoints + type:mcp runtime — requires the gateway's MCP server hosting the Tasks protocol over WebSockets")
+	t.Skip("not implemented: §15.2 / §15.1 gateway-side type:mcp endpoints — the type:mcp runtime-side adapter path and the reference runtime ship in Phase 12b (see mcp_runtime_lifecycle_test.go); the gateway-side dedicated MCP endpoints at /mcp/runtimes/{name} are a Phase 5 deliverable and are not yet built")
 }

@@ -23,6 +23,25 @@ import (
 // contract (§15.5).
 const ProtocolVersionV1 = "1.0.0"
 
+// RuntimeKind selects which §5.1 runtime type the adapter drives. It
+// picks the adapter→runtime path: a type: agent runtime is driven over
+// the §15.4.1 JSONL stdin/stdout protocol; a type: mcp runtime's agent
+// is itself an MCP server, driven by the adapter as an MCP client
+// (§9.1). The Server's Runtime field is the RuntimeProcess for the
+// selected kind in both cases — only the implementation differs.
+type RuntimeKind string
+
+const (
+	// RuntimeKindAgent is the §5.1 type: agent runtime: the adapter
+	// drives an agent binary over the JSONL stdin/stdout protocol. It is
+	// the default when RuntimeKind is unset.
+	RuntimeKindAgent RuntimeKind = "agent"
+	// RuntimeKindMCP is the §5.1 type: mcp runtime: the agent process is
+	// an MCP server and the adapter drives it as an MCP client. Wire the
+	// Runtime field with an *MCPRuntime when this kind is selected.
+	RuntimeKindMCP RuntimeKind = "mcp"
+)
+
 // Server implements adapterv1.AdapterServer. It embeds the generated
 // UnimplementedAdapterServer for forward compatibility.
 type Server struct {
@@ -65,6 +84,12 @@ type Server struct {
 	// SO_PEERCRED peer-credential check, rejecting any connection from
 	// a process running as a different UID. Zero disables the check.
 	RuntimeUID uint32
+	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
+	// zero value is RuntimeKindAgent: the adapter drives an agent binary
+	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
+	// selects the type: mcp path, where the agent is an MCP server the
+	// adapter drives as an MCP client; wire Runtime with an *MCPRuntime.
+	RuntimeKind RuntimeKind
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess

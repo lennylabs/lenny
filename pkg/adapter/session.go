@@ -81,10 +81,16 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
-	// §4.7: start the platform MCP server the runtime connects to.
-	if err := s.startPlatformMCP(nonce); err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+	// §4.7: start the platform MCP server the runtime connects to. A
+	// type: mcp runtime is "oblivious to Lenny" (§5.1) and never connects
+	// to the platform MCP server, so the adapter does not start one for
+	// it — the adapter drives the type: mcp agent's own MCP server as a
+	// client instead.
+	if s.RuntimeKind != RuntimeKindMCP {
+		if err := s.startPlatformMCP(nonce); err != nil {
+			s.releaseSession()
+			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+		}
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
