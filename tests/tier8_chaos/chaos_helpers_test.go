@@ -518,3 +518,25 @@ func waitHealthComponent(t *testing.T, c *kind.Cluster, pod, gatewayIP, componen
 	})
 	return reached, last
 }
+
+// reprogramKindnet restarts the kindnet DaemonSet and waits for the
+// rollout. A chaos test that mutates a NetworkPolicy and restores it
+// leaves the policy object correct, but kindnet's per-node datapath
+// can hold stale enforcement state after the rapid mutate-then-restore
+// cycle, intermittently breaking egress for unrelated pods on the
+// affected node. Restarting kindnet forces every node to reprogram its
+// NetworkPolicy rules from the restored object set, so a
+// NetworkPolicy-mutating test leaves the cluster's enforcement
+// genuinely consistent for the tiers that run after it.
+func reprogramKindnet(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	if out, err := c.Kubectl("-n", "kube-system", "rollout", "restart",
+		"daemonset/kindnet").CombinedOutput(); err != nil {
+		t.Logf("reprogramKindnet: rollout restart: %v\n%s", err, out)
+		return
+	}
+	if out, err := c.Kubectl("-n", "kube-system", "rollout", "status",
+		"daemonset/kindnet", "--timeout=150s").CombinedOutput(); err != nil {
+		t.Logf("reprogramKindnet: rollout status: %v\n%s", err, out)
+	}
+}

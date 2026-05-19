@@ -151,11 +151,13 @@ func TestNetworkPolicyConfigDrift(t *testing.T) {
 	t.Logf("precondition: the bootstrap probe reaches the gateway /healthz (200)")
 
 	// Register the restore before mutating: re-applying the captured
-	// manifest restores the rendered policy exactly.
+	// manifest restores the rendered policy exactly, then kindnet is
+	// reprogrammed so its per-node datapath matches the restored set.
 	t.Cleanup(func() {
 		if out, err := c.ApplyStdin(t, original); err != nil {
 			t.Errorf("failed to restore NetworkPolicy %s: %v\n%s", policyName, err, out)
 		}
+		reprogramKindnet(t, c)
 	})
 
 	// Inject the drift: replace the policy with a copy that admits only
@@ -228,11 +230,13 @@ func TestNetworkPolicyDrift(t *testing.T) {
 	}
 	t.Logf("precondition: %s is least-privilege (no match-everything ingress clause)", policyName)
 
-	// Register the restore before mutating.
+	// Register the restore before mutating. Reprogram kindnet after the
+	// restore so its per-node datapath matches the restored policy set.
 	t.Cleanup(func() {
 		if out, err := c.ApplyStdin(t, original); err != nil {
 			t.Errorf("failed to restore NetworkPolicy %s: %v\n%s", policyName, err, out)
 		}
+		reprogramKindnet(t, c)
 	})
 
 	// Inject the drift: replace the policy with one that adds an
