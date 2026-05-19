@@ -424,6 +424,61 @@ playground:
   # connect-src CSP directive. Leave empty to omit the directive host.
   gatewayHost: ""
 
+# referenceRuntimes is the §26 reference-runtime catalog. When enabled,
+# helm install registers each entry as a platform-global Runtime
+# record. Per §26.1 the records carry no default tenant access; an
+# operator grants access per tenant with
+# POST /v1/admin/runtimes/{name}/tenant-access after install. The
+# runtime images live in their own repositories and are pulled lazily
+# on first session start.
+referenceRuntimes:
+  enabled: true
+  # catalog is the §26 runtime set. Trim it to the runtimes a
+  # deployment uses; an operator may also register more runtimes
+  # through the admin API after install.
+  catalog:
+    - name: claude-code
+      image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
+      integrationLevel: full
+      allowedResourceClasses: [small, medium, large]
+      supportedProviders: [anthropic_direct, aws_bedrock, gcp_vertex_anthropic]
+    - name: gemini-cli
+      image: ghcr.io/lennylabs/runtime-gemini-cli:1.0.0
+      integrationLevel: full
+      allowedResourceClasses: [small, medium, large]
+      supportedProviders: [gcp_vertex_gemini, google_ai_studio]
+    - name: codex
+      image: ghcr.io/lennylabs/runtime-codex:1.0.0
+      integrationLevel: full
+      allowedResourceClasses: [small, medium, large]
+      supportedProviders: [openai_direct, azure_openai]
+    - name: cursor-cli
+      image: ghcr.io/lennylabs/runtime-cursor-cli:1.0.0
+      integrationLevel: full
+      allowedResourceClasses: [small, medium, large]
+      supportedProviders: [cursor_direct]
+    - name: chat
+      image: ghcr.io/lennylabs/runtime-chat:1.0.0
+      integrationLevel: full
+      allowedResourceClasses: [small]
+      supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
+    - name: langgraph
+      image: ghcr.io/lennylabs/runtime-langgraph:1.0.0
+      integrationLevel: full
+      supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini, azure_openai]
+    - name: mastra
+      image: ghcr.io/lennylabs/runtime-mastra:1.0.0
+      integrationLevel: full
+      supportedProviders: [anthropic_direct, openai_direct, gcp_vertex_gemini]
+    - name: openai-assistants
+      image: ghcr.io/lennylabs/runtime-openai-assistants:1.0.0
+      integrationLevel: full
+      supportedProviders: [openai_direct, azure_openai]
+    - name: crewai
+      image: ghcr.io/lennylabs/runtime-crewai:1.0.0
+      integrationLevel: full
+      supportedProviders: [anthropic_direct, openai_direct]
+
 # ops configures the §25.4 lenny-ops operability service. lenny-ops is
 # mandatory in every Lenny installation (§17.8.5); the chart provides no
 # flag to disable it. It runs as a Deployment with K8s Lease leader

@@ -1,0 +1,42 @@
+{{- /*
+The §26 reference-runtime catalog. When referenceRuntimes.enabled is
+true, helm install registers each catalog entry as a platform-global
+(cluster-scoped) Runtime record, so the reference runtimes are
+installable through lenny-ctl install.
+
+Per §26.1 the records carry no default tenant access; an operator
+grants access per tenant with
+POST /v1/admin/runtimes/{name}/tenant-access after install. The runtime
+images live in their own repositories (github.com/lennylabs/runtime-<name>)
+and are pulled lazily on first session start.
+
+The Runtime CRD carries the type, image, integration level, execution
+mode, isolation profile, allowed resource classes, and supported
+providers. The richer §26 fields (capabilities, limits, the runtime
+options schema, the agent interface) are documented in §26 and are
+configured on the runtime through the admin API.
+*/ -}}
+{{- if .Values.referenceRuntimes.enabled }}
+{{- range .Values.referenceRuntimes.catalog }}
+---
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/reference-runtime: "true"
+spec:
+  type: agent
+  image: {{ .image }}
+  integrationLevel: {{ .integrationLevel }}
+  executionMode: session
+  isolationProfile: sandboxed
+  {{- with .allowedResourceClasses }}
+  allowedResourceClasses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  supportedProviders:
+    {{- toYaml .supportedProviders | nindent 4 }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,56 @@
+suite: reference-runtime catalog
+templates:
+  - reference-runtimes.yaml
+tests:
+  - it: registers the §26 reference runtimes by default
+    asserts:
+      - hasDocuments:
+          count: 9
+
+  - it: renders each entry as a lenny.dev/v1 Runtime
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - isKind:
+          of: Runtime
+      - equal:
+          path: apiVersion
+          value: lenny.dev/v1
+      - equal:
+          path: metadata.labels["lenny.dev/reference-runtime"]
+          value: "true"
+
+  - it: registers claude-code as a Full-level agent with its providers
+    documentSelector:
+      path: metadata.name
+      value: claude-code
+    asserts:
+      - equal:
+          path: spec.type
+          value: agent
+      - equal:
+          path: spec.integrationLevel
+          value: full
+      - equal:
+          path: spec.isolationProfile
+          value: sandboxed
+      - contains:
+          path: spec.supportedProviders
+          content: anthropic_direct
+
+  - it: registers the chat runtime restricted to the small resource class
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - contains:
+          path: spec.allowedResourceClasses
+          content: small
+
+  - it: renders no runtimes when the catalog is disabled
+    set:
+      referenceRuntimes.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
