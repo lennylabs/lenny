@@ -3,6 +3,15 @@ Agent pod namespaces (§17.2). One Namespace per .Values.agentNamespaces
 entry. These namespaces form the isolation boundary between agent pods
 and the control plane; admission policies and NetworkPolicies target
 them via the lenny.dev/agent-namespace label.
+
+Pod Security Admission labels (§17.2). Each agent namespace carries the
+restricted-profile PSA labels at warn and audit. Enforcement stays off
+the namespace level because namespace-scoped PSS cannot distinguish
+RuntimeClasses — gVisor and Kata pods would be incorrectly rejected;
+the RuntimeClass-aware admission policies and the lenny-pod-security
+webhook perform the enforcing §13.1 checks. The warn and audit labels
+surface a non-compliant pod in API-server warnings and the audit log
+without blocking it.
 */ -}}
 {{- range $ns := .Values.agentNamespaces }}
 ---
@@ -13,4 +22,6 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
     lenny.dev/agent-namespace: "true"
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
 {{- end }}

@@ -1,0 +1,46 @@
+{{- /*
+lenny-pod-security ValidatingAdmissionWebhook (§13.1, §18.33). Wraps
+the pkg/podsecurity §13.1 pod-spec validator: rejects any agent pod
+whose spec breaches a §13.1 pod-security invariant — a host-sharing
+flag (shareProcessNamespace, hostPID, hostNetwork, hostIPC), a missing
+or wrong credential fsGroup, a root pod, a privileged or
+privilege-escalating container, a writable root filesystem, an
+undropped capability, or a seccomp profile other than RuntimeDefault.
+Scoped to Pod CREATE in agent namespaces; fail-closed so a pod the
+webhook cannot validate is not admitted with an unverified §13.1
+posture.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-pod-security") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-pod-security
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-pod-security
+webhooks:
+  - name: pod-security.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-pod-security
+        namespace: {{ .Release.Namespace }}
+        path: /pod-security
+        port: 443

@@ -136,6 +136,41 @@ features:
   drainReadiness: false
   compliance: false
 
+# imageVerification configures the §5.2 cosign image-signing admission
+# webhook (lenny-cosign-verify). When enabled the chart renders a
+# fail-closed ValidatingWebhookConfiguration that rejects agent pods
+# whose in-scope container images do not carry a valid cosign
+# signature; an unavailable webhook blocks pod admission (§5.2, §18.5,
+# CosignWebhookUnavailable alert in §16.5).
+imageVerification:
+  cosign:
+    # enabled gates the lenny-cosign-verify webhook. Image provenance
+    # verification is a prerequisite for production and staging
+    # deployments (§5.2); enable it once the signing program is in
+    # place. Default false so a stock dev install renders without the
+    # signing material configured.
+    enabled: false
+    # verifiedRegistries is the list of image-registry prefixes whose
+    # images must carry a valid cosign signature. An image whose
+    # reference matches none of these prefixes is admitted unchecked.
+    # The webhook refuses to start when enabled with an empty list.
+    verifiedRegistries:
+      - ghcr.io/lennylabs/
+    # publicKeySecret is the name of a Secret in the release namespace
+    # carrying the trusted cosign public key(s) under publicKeyKey.
+    # Several PEM blocks are permitted to support key rotation with an
+    # overlap window. The Secret is created by the deployer; the chart
+    # mounts it into the webhook pod.
+    publicKeySecret: lenny-cosign-public-key
+    publicKeyKey: cosign.pub
+    # policyConfigMap is the name of a ConfigMap in the release
+    # namespace carrying the image-signature policy file under
+    # policyKey. The release pipeline (§18.33) emits the policy file
+    # mapping each Lenny-built image to its signed digest and detached
+    # signature.
+    policyConfigMap: lenny-cosign-policy
+    policyKey: cosign-policy.json
+
 # tenancy configures the platform multi-tenancy posture (§4.9, §13).
 tenancy:
   # mode is "single" or "multi". In multi-tenant mode the

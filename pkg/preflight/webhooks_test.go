@@ -11,8 +11,20 @@ import (
 
 func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 	got := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
-	if len(got) != 4 {
-		t.Errorf("baseline expected %d webhooks, want 4: %v", len(got), got)
+	want := map[string]bool{
+		"lenny-label-immutability":             true,
+		"lenny-sandboxclaim-guard":             true,
+		"lenny-pool-config-validator":          true,
+		"lenny-ephemeral-container-cred-guard": true,
+		"lenny-pod-security":                   true,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("baseline expected %d webhooks, want %d: %v", len(got), len(want), got)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected webhook %q in the baseline set", name)
+		}
 	}
 }
 
@@ -21,16 +33,19 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 		LLMProxy:       true,
 		DrainReadiness: true,
 		Compliance:     true,
+		CosignVerify:   true,
 	})
 	want := map[string]bool{
 		"lenny-label-immutability":             true,
 		"lenny-sandboxclaim-guard":             true,
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
+		"lenny-pod-security":                   true,
 		"lenny-direct-mode-isolation":          true,
 		"lenny-drain-readiness":                true,
 		"lenny-data-residency-validator":       true,
 		"lenny-t4-node-isolation":              true,
+		"lenny-cosign-verify":                  true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("all-flags expected %d webhooks, want %d: %v", len(got), len(want), got)
@@ -39,6 +54,26 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 		if !want[name] {
 			t.Errorf("unexpected webhook %q in the all-flags set", name)
 		}
+	}
+}
+
+func TestExpectedValidatingWebhooksCosignFlag(t *testing.T) {
+	// The cosign webhook appears only when its flag is set.
+	without := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	for _, n := range without {
+		if n == "lenny-cosign-verify" {
+			t.Fatal("lenny-cosign-verify must not be in the baseline set")
+		}
+	}
+	with := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{CosignVerify: true})
+	found := false
+	for _, n := range with {
+		if n == "lenny-cosign-verify" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("lenny-cosign-verify must appear when CosignVerify is set")
 	}
 }
 

@@ -17,6 +17,14 @@ package podsecurity
 
 import "fmt"
 
+// SeccompRuntimeDefault is the only seccomp profile type the §13.1
+// pod-security baseline accepts on an agent pod. It matches the
+// Kubernetes SeccompProfileType value RuntimeDefault, which engages the
+// container runtime's default syscall filter. §17.2 records that the
+// seccompType: RuntimeDefault requirement is enforced at admission for
+// runc pods; the agent podspec sets it at the pod level.
+const SeccompRuntimeDefault = "RuntimeDefault"
+
 // PodSpec is the subset of a Kubernetes pod spec the §13.1 validator
 // consults. Fields not in §13.1 are intentionally omitted.
 type PodSpec struct {
@@ -29,6 +37,14 @@ type PodSpec struct {
 	// Pod-level SecurityContext fields enforced by §13.1.
 	RunAsNonRoot *bool
 	FSGroup      *int64
+
+	// SeccompProfileType is the pod-level
+	// securityContext.seccompProfile.type. A container that sets no
+	// seccomp profile of its own inherits this value. An empty string
+	// means no pod-level profile was set; §13.1 requires the effective
+	// per-container profile to be RuntimeDefault, so an empty pod-level
+	// profile combined with an empty container profile is a violation.
+	SeccompProfileType string
 
 	// SupplementalGroups present on the pod-level SecurityContext.
 	// §13.1 requires the lenny-cred-readers GID to be present so the
@@ -51,6 +67,13 @@ type ContainerSpec struct {
 	Privileged               *bool
 	ReadOnlyRootFilesystem   *bool
 	RunAsNonRoot             *bool
+
+	// SeccompProfileType is the container-level
+	// securityContext.seccompProfile.type. An empty string means the
+	// container set no profile of its own and inherits the pod-level
+	// PodSpec.SeccompProfileType. The validator checks the effective
+	// profile — container value when set, pod-level value otherwise.
+	SeccompProfileType string
 
 	// CapabilitiesDrop is the capabilities.drop list. §13.1 mandates
 	// "All dropped"; the validator requires this to contain "ALL"
@@ -116,12 +139,43 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		if len(c.CapabilitiesAdd) > 0 {
 			violations = append(violations, fmt.Sprintf("container %q: capabilities.add must be empty (§13.1 Capabilities row)", c.Name))
 		}
+		// §13.1 / §17.2 seccomp baseline: the effective seccomp profile
+		// must be RuntimeDefault. The effective profile is the
+		// container-level value when set, otherwise the pod-level value.
+		if effective := effectiveSeccompProfile(c.SeccompProfileType, spec.SeccompProfileType); effective != SeccompRuntimeDefault {
+			violations = append(violations, fmt.Sprintf(
+				"container %q: seccompProfile.type must be %s, got %s (§13.1 pod-security baseline)",
+				c.Name, SeccompRuntimeDefault, describeSeccomp(effective),
+			))
+		}
 	}
 
 	if len(violations) == 0 {
 		return nil
 	}
 	return &PodSecurityError{Violations: violations}
+}
+
+// effectiveSeccompProfile resolves the seccomp profile that applies to
+// a container: the container-level type when it set one, otherwise the
+// pod-level type the container inherits. This mirrors the kubelet's
+// resolution, where a container securityContext.seccompProfile
+// overrides the pod-level securityContext.seccompProfile.
+func effectiveSeccompProfile(containerType, podType string) string {
+	if containerType != "" {
+		return containerType
+	}
+	return podType
+}
+
+// describeSeccomp renders a seccomp profile type for a violation
+// message, naming the absent case so the operator sees that neither the
+// pod nor the container set a profile.
+func describeSeccomp(profileType string) string {
+	if profileType == "" {
+		return "no profile set"
+	}
+	return profileType
 }
 
 // dropsAllCapabilities reports whether the drop list contains "ALL".

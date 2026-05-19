@@ -28,6 +28,20 @@ tests:
           path: metadata.labels["app.kubernetes.io/managed-by"]
           value: Helm
 
+  - it: carries the restricted-profile Pod Security Admission labels at warn and audit
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    asserts:
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/warn"]
+          value: restricted
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/audit"]
+          value: restricted
+      - notExists:
+          path: metadata.labels["pod-security.kubernetes.io/enforce"]
+
   - it: renders nothing when no agent namespaces are configured
     set:
       agentNamespaces: []

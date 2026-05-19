@@ -9,11 +9,15 @@ import "fmt"
 // baseline entry, lenny-crd-conversion, is a CRD conversion endpoint
 // rather than a ValidatingWebhookConfiguration and is verified
 // separately.
+//
+// lenny-pod-security is a §13.1 pod-security baseline control: it
+// renders unconditionally and so belongs in the baseline set.
 var baselineValidatingWebhooks = []string{
 	"lenny-label-immutability",
 	"lenny-sandboxclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
+	"lenny-pod-security",
 }
 
 // WebhookFeatureFlags are the §17.2 chart feature flags that gate the
@@ -26,6 +30,9 @@ type WebhookFeatureFlags struct {
 	// Compliance gates lenny-data-residency-validator and
 	// lenny-t4-node-isolation.
 	Compliance bool
+	// CosignVerify gates lenny-cosign-verify, the §5.2 image-signing
+	// webhook, behind imageVerification.cosign.enabled.
+	CosignVerify bool
 }
 
 // ExpectedValidatingWebhooks returns the names of the
@@ -43,6 +50,9 @@ func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 	}
 	if flags.Compliance {
 		expected = append(expected, "lenny-data-residency-validator", "lenny-t4-node-isolation")
+	}
+	if flags.CosignVerify {
+		expected = append(expected, "lenny-cosign-verify")
 	}
 	return expected
 }

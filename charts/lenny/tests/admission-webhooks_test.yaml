@@ -85,6 +85,25 @@ tests:
           path: webhooks[0].clientConfig.service.path
           value: /sandboxclaim-guard
 
+  - it: configures the pod-security webhook fail-closed on pod CREATE
+    template: admission-policies/pod-security-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /pod-security
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: pods
+      - equal:
+          path: webhooks[0].rules[0].operations[0]
+          value: CREATE
+
   - it: renders a self-signed issuer for webhook certificates
     template: admission-policies/webhook-cert-issuer.yaml
     asserts:

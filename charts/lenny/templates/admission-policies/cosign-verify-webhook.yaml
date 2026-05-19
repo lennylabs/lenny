@@ -1,0 +1,189 @@
+{{- /*
+lenny-cosign-verify ValidatingAdmissionWebhook (§5.2, §13.1, §18.5).
+Verifies that every in-scope agent-pod container image carries a valid
+cosign/Sigstore signature before the pod is admitted. Configured
+fail-closed (failurePolicy: Fail): an unavailable webhook blocks pod
+admission so an unsigned image cannot be admitted during a webhook
+outage. §16.5 alerts on unavailability with CosignWebhookUnavailable.
+
+This webhook ships its own Deployment rather than reusing the shared
+admissionWebhookWorkload template because its container needs the
+cosign verification flags and two extra volume mounts (the trusted
+public key Secret and the image-signature policy ConfigMap), and §17.7
+operational runbooks select its pods by the app: lenny-cosign-webhook
+label.
+
+Rendered only when imageVerification.cosign.enabled is true. The
+verified-registry list, the public-key Secret, and the policy
+ConfigMap are supplied through the imageVerification.cosign values.
+*/ -}}
+{{- if .Values.imageVerification.cosign.enabled }}
+{{- $cosign := .Values.imageVerification.cosign }}
+{{- if not $cosign.verifiedRegistries }}
+{{- fail "imageVerification.cosign.enabled is true but imageVerification.cosign.verifiedRegistries is empty; an empty verified-registry list would place no image in scope and silently disable the cosign signature gate (§5.2)" }}
+{{- end }}
+{{- $webhookCfg := .Values.admissionWebhooks }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-cosign-verify
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: admission-webhook
+spec:
+  replicas: {{ $webhookCfg.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/webhook: lenny-cosign-verify
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: admission-webhook
+        lenny.dev/webhook: lenny-cosign-verify
+        app: lenny-cosign-webhook
+    spec:
+      serviceAccountName: lenny-webhook
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: "{{ $webhookCfg.image.repository }}:{{ $webhookCfg.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ $webhookCfg.image.pullPolicy }}
+          args:
+            - --addr=:8443
+            - --tls-cert-file=/etc/lenny/webhook-tls/tls.crt
+            - --tls-key-file=/etc/lenny/webhook-tls/tls.key
+            - --cosign-verify=true
+            - --cosign-public-key-file=/etc/lenny/cosign/{{ $cosign.publicKeyKey }}
+            - --cosign-policy-file=/etc/lenny/cosign-policy/{{ $cosign.policyKey }}
+            - --cosign-verified-registries={{ join "," $cosign.verifiedRegistries }}
+          ports:
+            - name: https
+              containerPort: 8443
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: webhook-tls
+              mountPath: /etc/lenny/webhook-tls
+              readOnly: true
+            - name: cosign-public-key
+              mountPath: /etc/lenny/cosign
+              readOnly: true
+            - name: cosign-policy
+              mountPath: /etc/lenny/cosign-policy
+              readOnly: true
+          resources:
+            {{- toYaml $webhookCfg.resources | nindent 12 }}
+      volumes:
+        - name: webhook-tls
+          secret:
+            secretName: lenny-cosign-verify-tls
+        - name: cosign-public-key
+          secret:
+            secretName: {{ $cosign.publicKeySecret }}
+        - name: cosign-policy
+          configMap:
+            name: {{ $cosign.policyConfigMap }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-cosign-verify
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/webhook: lenny-cosign-verify
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-cosign-verify
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      lenny.dev/webhook: lenny-cosign-verify
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-cosign-verify
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  secretName: lenny-cosign-verify-tls
+  dnsNames:
+    - lenny-cosign-verify.{{ .Release.Namespace }}.svc
+    - lenny-cosign-verify.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: lenny-webhook-selfsign
+    kind: Issuer
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-cosign-verify
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-cosign-verify
+webhooks:
+  - name: cosign-verify.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 10
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-cosign-verify
+        namespace: {{ .Release.Namespace }}
+        path: /cosign-verify
+        port: 443
+{{- end }}

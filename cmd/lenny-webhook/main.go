@@ -14,6 +14,8 @@
 //	/drain-readiness                — lenny-drain-readiness (§12.5)
 //	/data-residency-validator       — lenny-data-residency-validator (§12.8, §12.9)
 //	/t4-node-isolation              — lenny-t4-node-isolation (§6.4, §12.9)
+//	/cosign-verify                  — lenny-cosign-verify (§5.2, §13.1, §18.5)
+//	/pod-security                   — lenny-pod-security (§13.1)
 //	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
@@ -47,6 +49,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	cosignverify "github.com/lennylabs/lenny/pkg/admission/cosign_verify"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
@@ -67,8 +70,9 @@ func buildScheme() *runtime.Scheme {
 // §4.9 enforcement; drainReadinessURL is the gateway endpoint the
 // drain-readiness route probes; declaredRegions is the deployment's
 // storage.regions key set the §12.8 data-residency-validator route
-// validates against.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string) *http.ServeMux {
+// validates against; cosignDecider is the §5.2 cosign image-signature
+// Decider, nil when cosign verification is disabled in the chart.
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string, cosignDecider webhook.Decider) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
@@ -88,6 +92,19 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// §6.4 t4-node-isolation: enforces T4 dedicated-node placement on
 	// agent-namespace Pod resources.
 	mux.Handle("/t4-node-isolation", webhook.Handler(webhook.T4NodeIsolation()))
+	// §13.1 pod-security: validates the agent-pod securityContext
+	// posture — host-sharing flags, credential fsGroup, non-root,
+	// per-container hardening, and the RuntimeDefault seccomp profile.
+	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(podspec.CredReadersGID)))
+	// §5.2 cosign-verify: rejects agent pods whose in-scope container
+	// images carry no valid cosign signature. The route is registered
+	// only when the chart enables cosign verification and supplies a
+	// verifier; a nil Decider leaves the route absent so the webhook
+	// Service has no backend and the API server's failurePolicy: Fail
+	// makes that a hard, visible failure rather than a silent allow.
+	if cosignDecider != nil {
+		mux.Handle("/cosign-verify", webhook.Handler(cosignDecider))
+	}
 	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -125,6 +142,44 @@ func logForcedDrain(podNamespace, podName string) {
 		podNamespace, podName)
 }
 
+// buildCosignDecider constructs the §5.2 cosign image-signature
+// Decider. It returns nil when cosign verification is disabled, leaving
+// the /cosign-verify route unregistered. When enabled, it loads the
+// trusted public key(s) and the image-signature policy file, builds the
+// keyed PublicKeyVerifier, and returns the Decider. Any configuration
+// fault — a disabled-but-misconfigured flag set, an empty
+// verified-registry list, an unreadable key or policy file — is fatal:
+// the webhook must not start without a verifier that can enforce
+// signatures, because failurePolicy: Fail would then block all pod
+// admission with no diagnostic.
+func buildCosignDecider(enabled bool, publicKeyFile, policyFile, verifiedRegistries string) webhook.Decider {
+	if !enabled {
+		return nil
+	}
+	registries := parseRegions(verifiedRegistries)
+	if len(registries) == 0 {
+		log.Fatalf("lenny-webhook: --cosign-verify is set but --cosign-verified-registries is empty; " +
+			"an empty verified-registry list would place no image in scope and silently disable the gate")
+	}
+	if publicKeyFile == "" || policyFile == "" {
+		log.Fatalf("lenny-webhook: --cosign-verify requires both --cosign-public-key-file and --cosign-policy-file")
+	}
+
+	pemKeys, err := os.ReadFile(publicKeyFile)
+	if err != nil {
+		log.Fatalf("lenny-webhook: read cosign public key file: %v", err)
+	}
+	resolver, err := cosignverify.LoadStaticResolver(policyFile)
+	if err != nil {
+		log.Fatalf("lenny-webhook: load cosign policy file: %v", err)
+	}
+	verifier, err := cosignverify.NewPublicKeyVerifier(pemKeys, resolver)
+	if err != nil {
+		log.Fatalf("lenny-webhook: build cosign verifier: %v", err)
+	}
+	return webhook.CosignVerify(verifier, cosignverify.Config{VerifiedRegistries: registries})
+}
+
 func main() {
 	addr := flag.String("addr", ":8443", "HTTPS address to bind")
 	certFile := flag.String("tls-cert-file", "/etc/lenny/webhook-tls/tls.crt",
@@ -141,9 +196,22 @@ func main() {
 		"gateway GET /internal/drain-readiness endpoint the §12.5 drain-readiness webhook probes before admitting a node-drain pod eviction.")
 	storageRegions := flag.String("storage-regions", os.Getenv("LENNY_STORAGE_REGIONS"),
 		"comma-separated list of regions declared in the storage.regions Helm map. The §12.8 data-residency-validator webhook rejects, fail-closed, any resource whose resolved dataResidencyRegion is not in this set.")
+	cosignEnabled := flag.Bool("cosign-verify", os.Getenv("LENNY_COSIGN_VERIFY") == "true",
+		"enable the §5.2 cosign image-signing admission webhook. When true the binary serves /cosign-verify and requires --cosign-public-key-file, --cosign-policy-file, and --cosign-verified-registries.")
+	cosignPublicKeyFile := flag.String("cosign-public-key-file", os.Getenv("LENNY_COSIGN_PUBLIC_KEY_FILE"),
+		"path to the PEM file carrying the trusted cosign public key(s). Several PEM blocks are permitted to support key rotation with an overlap window.")
+	cosignPolicyFile := flag.String("cosign-policy-file", os.Getenv("LENNY_COSIGN_POLICY_FILE"),
+		"path to the JSON cosign image-signature policy file mapping each image reference to its signed digest and detached signature.")
+	cosignVerifiedRegistries := flag.String("cosign-verified-registries", os.Getenv("LENNY_COSIGN_VERIFIED_REGISTRIES"),
+		"comma-separated list of image-registry prefixes whose images must carry a valid cosign signature. An image outside every prefix is admitted unchecked.")
 	flag.Parse()
 
 	declaredRegions := parseRegions(*storageRegions)
+
+	// §5.2 cosign-verify: build the image-signature Decider when the
+	// chart enables it. A misconfiguration is a fatal startup error so
+	// the webhook never serves a route that cannot enforce signatures.
+	cosignDecider := buildCosignDecider(*cosignEnabled, *cosignPublicKeyFile, *cosignPolicyFile, *cosignVerifiedRegistries)
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -156,7 +224,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions, cosignDecider),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

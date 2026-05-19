@@ -11,8 +11,9 @@ const lennyCredReadersGID int64 = 65532
 
 func wellFormedSpec() PodSpec {
 	return PodSpec{
-		FSGroup:      Ptr[int64](lennyCredReadersGID),
-		RunAsNonRoot: Ptr(true),
+		FSGroup:            Ptr[int64](lennyCredReadersGID),
+		RunAsNonRoot:       Ptr(true),
+		SeccompProfileType: SeccompRuntimeDefault,
 		Containers: []ContainerSpec{
 			{
 				Name:                     "adapter",
@@ -168,6 +169,61 @@ func TestValidateRejectsAddedCapabilities(t *testing.T) {
 	}
 	if !pe.HasViolation("capabilities.add must be empty") {
 		t.Errorf("added cap should be rejected")
+	}
+}
+
+func TestValidateRejectsMissingSeccompProfile(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.SeccompProfileType = "" // no pod-level profile; containers set none either
+	err := ValidateAgentPod(spec, lennyCredReadersGID)
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *PodSecurityError, got %v", err)
+	}
+	if !pe.HasViolation("seccompProfile.type must be RuntimeDefault") {
+		t.Errorf("missing seccomp profile should be rejected; got %v", pe.Violations)
+	}
+}
+
+func TestValidateRejectsUnconfinedSeccompProfile(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.SeccompProfileType = "Unconfined"
+	err := ValidateAgentPod(spec, lennyCredReadersGID)
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected error")
+	}
+	if !pe.HasViolation("seccompProfile.type must be RuntimeDefault, got Unconfined") {
+		t.Errorf("Unconfined seccomp profile should be rejected; got %v", pe.Violations)
+	}
+}
+
+func TestValidateRejectsContainerOverridingSeccompProfile(t *testing.T) {
+	// The pod-level profile is RuntimeDefault, but one container
+	// overrides it with Unconfined. The container-level value wins, so
+	// the override must be rejected.
+	spec := wellFormedSpec()
+	spec.Containers[1].SeccompProfileType = "Unconfined"
+	err := ValidateAgentPod(spec, lennyCredReadersGID)
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected error")
+	}
+	if !pe.HasViolation(`container "agent": seccompProfile.type must be RuntimeDefault`) {
+		t.Errorf("container seccomp override should be rejected; got %v", pe.Violations)
+	}
+}
+
+func TestValidateAcceptsContainerSeccompInheritedFromPod(t *testing.T) {
+	// Containers set no seccomp profile of their own; they inherit the
+	// pod-level RuntimeDefault. This is the shape the agent podspec
+	// produces and must validate.
+	spec := wellFormedSpec()
+	for i := range spec.Containers {
+		spec.Containers[i].SeccompProfileType = ""
+	}
+	if err := ValidateAgentPod(spec, lennyCredReadersGID); err != nil {
+		t.Errorf("container inheriting pod-level RuntimeDefault should validate, got %v", err)
 	}
 }
 

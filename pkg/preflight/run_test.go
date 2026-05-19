@@ -55,7 +55,7 @@ func runClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(runScheme(t)).WithObjects(objs...).Build()
 }
 
-// allBaselineWebhooks returns the four baseline ValidatingWebhookConfigurations.
+// allBaselineWebhooks returns the baseline ValidatingWebhookConfigurations.
 func allBaselineWebhooks() []client.Object {
 	names := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
 	out := make([]client.Object, 0, len(names))
@@ -88,7 +88,7 @@ func TestRunPassesWhenWebhooksHealthyAndNoPhaseStamp(t *testing.T) {
 }
 
 func TestRunFailsOnMissingWebhook(t *testing.T) {
-	// Seed only three of the four baseline webhooks.
+	// Seed every baseline webhook but the last.
 	objs := allBaselineWebhooks()
 	c := runClient(t, objs[:len(objs)-1]...)
 
