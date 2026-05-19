@@ -66,8 +66,21 @@ webhookIngressCIDR: "0.0.0.0/0"
 # kubeApiServerCIDR is the destination CIDR the control-plane
 # components are allowed to reach the kube-apiserver on (§13.2).
 # Operators should tighten this to the cluster's apiserver endpoint;
-# the broad default is bounded by the per-port (443) egress rule.
+# the broad default is bounded by the kubeApiServerPorts egress rule.
 kubeApiServerCIDR: "0.0.0.0/0"
+
+# kubeApiServerPorts lists the destination ports the control-plane
+# components may reach the kube-apiserver on (§13.2). The in-cluster
+# `kubernetes` Service is published on 443. On kubeadm-, k3s-, and
+# kind-provisioned clusters that Service DNATs to the apiserver's real
+# endpoint on 6443. Several CNIs, kindnet among them, evaluate egress
+# NetworkPolicy after the DNAT rewrite, so the policy must admit the
+# post-DNAT port. Both ports are allowed by default. Managed control
+# planes (GKE, EKS, AKS) publish the endpoint on 443 and leave the
+# 6443 rule inert.
+kubeApiServerPorts:
+  - 443
+  - 6443
 
 # ingressControllerNamespace is the namespace the Ingress controller
 # runs in (§13.2). The allow-gateway-ingress NetworkPolicy admits

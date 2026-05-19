@@ -228,6 +228,15 @@ tests:
           content:
             port: 443
             protocol: TCP
+      # On kubeadm-, k3s-, and kind-provisioned clusters the kubernetes
+      # Service DNATs to the apiserver endpoint on 6443; kindnet
+      # evaluates egress policy after the DNAT, so the post-DNAT port
+      # must be admitted or leader election times out.
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 6443
+            protocol: TCP
 
   - it: allows ops egress to the gateway internal TLS and HTTP ports
     documentSelector:

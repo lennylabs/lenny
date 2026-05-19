@@ -55,14 +55,16 @@ spec:
     # one-claim-per-slot rule, and lenny-drain-readiness reads pod
     # state. Without kube-apiserver egress the webhook handler's API
     # call hangs and the fail-closed webhook times out on every
-    # request. The CIDR is operator-tunable, bounded by the per-port
-    # (443) rule, exactly as in allow-controller-egress.
+    # request. The CIDR is operator-tunable, bounded by the
+    # kubeApiServerPorts rule, exactly as in allow-controller-egress.
     - to:
         - ipBlock:
             cidr: {{ .Values.kubeApiServerCIDR | quote }}
       ports:
-        - port: 443
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:
@@ -100,8 +102,10 @@ spec:
         - ipBlock:
             cidr: {{ .Values.kubeApiServerCIDR | quote }}
       ports:
-        - port: 443
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
     - to:
         - podSelector:
             matchLabels:
@@ -465,8 +469,10 @@ spec:
         - ipBlock:
             cidr: {{ .Values.kubeApiServerCIDR | quote }}
       ports:
-        - port: 443
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:
@@ -637,13 +643,15 @@ spec:
     # Lease and reconciles platform state, so it needs kube-apiserver
     # egress. Without it the lenny-ops pods cannot acquire their Lease
     # and never report Ready. The CIDR is operator-tunable, bounded by
-    # the per-port (443) rule, as in allow-controller-egress.
+    # the kubeApiServerPorts rule, as in allow-controller-egress.
     - to:
         - ipBlock:
             cidr: {{ .Values.kubeApiServerCIDR | quote }}
       ports:
-        - port: 443
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
     - to:
         - podSelector:
             matchLabels:
