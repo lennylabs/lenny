@@ -192,6 +192,8 @@ func main() {
 	multiTenant := flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
 	devMode := flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
+	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
+		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -486,6 +488,28 @@ func main() {
 	jwtSigner, err := jwt.NewKMSSigner(context.Background(), kmsProvider, jwt.TokenServiceKEKAlias, "boot")
 	if err != nil {
 		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
+	}
+
+	// ----- §10.2 Bearer verifier -----
+	// The Token Service signer verifies tokens it minted itself. A
+	// production install runs with that single verifier. §17.4 Embedded
+	// Mode additionally trusts the embedded OIDC provider's HMAC key:
+	// when --bearer-trust-hmac-key-file points at a key file, the
+	// gateway loads it and accepts tokens signed with it alongside
+	// Token Service tokens through a jwt.MultiVerifier. The flag is
+	// unset in a production install, so the production posture is
+	// unchanged. The Token Service signer stays the primary verifier:
+	// its rejection reason is surfaced when neither verifier accepts a
+	// token.
+	var bearerVerifier jwt.Verifier = jwtSigner
+	if *bearerTrustHMACKeyFile != "" {
+		trusted, err := jwt.LoadHMACKeyFile(*bearerTrustHMACKeyFile)
+		if err != nil {
+			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file: %v", err)
+		}
+		bearerVerifier = jwt.NewMultiVerifier(jwtSigner, trusted)
+		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s)",
+			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
 	// With Postgres the §13.3 write-before-issue record is durable in
 	// the issued_tokens table; otherwise the Token Service keeps only
@@ -1251,15 +1275,17 @@ func main() {
 	// deployments leave it off so X-Lenny-Roles cannot self-grant
 	// platform-admin.
 	//
-	// The §10.2 Bearer path is verified with the same HMAC key the
-	// in-process Token Service signs with, so a token minted by
-	// POST /v1/oauth/token round-trips through the gateway. Production
-	// swaps in the OIDC JWKS verifier.
+	// The §10.2 Bearer path is verified with the bearer verifier built
+	// above: the in-process Token Service signer, so a token minted by
+	// POST /v1/oauth/token round-trips through the gateway, plus the
+	// embedded OIDC provider's key when --bearer-trust-hmac-key-file is
+	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
+	// verifier.
 	authOpts := authmw.Options{
 		MultiTenant:     *multiTenant,
 		AllowDevHeaders: true,
 		AllowDevRoles:   *devMode,
-		Verifier:        jwtSigner,
+		Verifier:        bearerVerifier,
 		Revocations:     revProp,
 	}
 	if !*multiTenant {

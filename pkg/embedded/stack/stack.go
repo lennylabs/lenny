@@ -225,6 +225,10 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The embedded OIDC provider persists its signing key in the
+	// key-file format the gateway's --bearer-trust-hmac-key-file flag
+	// reads. Pointing the gateway at it lets a `lenny token print`
+	// bearer verify on the §10.2 Authorization header.
 	gw, err := startGateway(gatewaySpec{
 		BinPath:     gwBin,
 		HTTPAddr:    httpAddr,
@@ -232,6 +236,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		RedisURL:    redisURL,
 		Kubeconfig:  kubeconfig,
 		LogPath:     paths.Logs + "/gateway.log",
+		OIDCKeyFile: paths.OIDCKeyFile(),
 	})
 	if err != nil {
 		return nil, err

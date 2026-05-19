@@ -17,14 +17,13 @@ import (
 // is signed by the embedded OIDC provider's persisted key, which the
 // running stack rotates on every lenny up.
 //
-// The embedded gateway's bearer verifier is its own in-process
-// KMS-backed signer; it does not yet trust the embedded OIDC
-// provider's key, so this token is not accepted on the gateway's
-// Authorization header. Driving the embedded gateway uses the dev-mode
-// dev-header auth path, which lenny's own commands use. Making the
-// printed token a gateway-accepted bearer requires the gateway to
-// accept the embedded provider's JWKS or to persist its signing key;
-// that change is gateway-side and out of scope here.
+// The embedded stack starts the gateway with
+// --bearer-trust-hmac-key-file pointed at the embedded OIDC provider's
+// persisted key, so the gateway trusts this provider's key as an
+// additional §10.2 Bearer verifier. The printed token verifies on the
+// gateway's Authorization header:
+//
+//	curl -H "Authorization: Bearer $(lenny token print)" https://localhost:8443/...
 func cmdToken(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "print" {
 		fmt.Fprintln(stderr, "lenny token: the only subcommand is 'print'")

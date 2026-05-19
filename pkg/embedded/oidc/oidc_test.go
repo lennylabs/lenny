@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
 func TestIssueAndVerifyRoundTrip(t *testing.T) {
@@ -169,5 +170,53 @@ func TestLoadMissingKeyRotates(t *testing.T) {
 	}
 	if !strings.HasPrefix(p.KeyID(), "embedded-") {
 		t.Errorf("key id %q lacks the embedded- prefix", p.KeyID())
+	}
+}
+
+// TestPersistedKeyFileLoadableByGatewayVerifier checks the §17.4
+// cross-package contract: the gateway's --bearer-trust-hmac-key-file
+// path reads the provider's persisted key file with
+// jwt.LoadHMACKeyFile, and the resulting verifier accepts a token from
+// Provider.Issue. The embedded stack passes the same key file to the
+// gateway so a `lenny token print` bearer verifies on the §10.2
+// Authorization header.
+func TestPersistedKeyFileLoadableByGatewayVerifier(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "signing.key")
+	p, err := NewWithPersistedKey(keyPath, true)
+	if err != nil {
+		t.Fatalf("NewWithPersistedKey: %v", err)
+	}
+	tok, err := p.Issue(time.Hour)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	// The gateway loads the same file the provider persisted.
+	verifier, err := jwt.LoadHMACKeyFile(keyPath)
+	if err != nil {
+		t.Fatalf("jwt.LoadHMACKeyFile: %v", err)
+	}
+	if verifier.KeyID() != p.KeyID() {
+		t.Errorf("loaded kid = %q, want %q", verifier.KeyID(), p.KeyID())
+	}
+	claims, err := verifier.Verify(tok)
+	if err != nil {
+		t.Fatalf("gateway verifier rejected the embedded token: %v", err)
+	}
+	if claims.Subject != BuiltInUser {
+		t.Errorf("subject = %q, want %q", claims.Subject, BuiltInUser)
+	}
+	if !claims.HasRole(auth.RolePlatformAdmin) {
+		t.Error("verified token lacks the platform-admin role")
+	}
+
+	// The gateway's MultiVerifier puts the Token Service signer first
+	// and this trusted key second. An embedded token must verify
+	// through that composite even though the primary key cannot
+	// validate it.
+	primary := jwt.NewHMACSigner("token-service", []byte("token-service-key"))
+	multi := jwt.NewMultiVerifier(primary, verifier)
+	if _, err := multi.Verify(tok); err != nil {
+		t.Fatalf("MultiVerifier rejected the embedded token: %v", err)
 	}
 }

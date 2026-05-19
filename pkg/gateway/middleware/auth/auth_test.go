@@ -177,6 +177,82 @@ func TestBearerPropagatesRoles(t *testing.T) {
 	}
 }
 
+// TestBearerAcceptsTokenFromSecondaryVerifier exercises the §17.4
+// Embedded Mode bearer path: the gateway runs with a jwt.MultiVerifier
+// whose primary member is the Token Service signer and whose secondary
+// member is the trusted embedded OIDC key. A token signed by the
+// secondary key, which the primary cannot validate, is still accepted.
+func TestBearerAcceptsTokenFromSecondaryVerifier(t *testing.T) {
+	tokenService := jwt.NewHMACSigner("token-service", []byte("token-service-secret"))
+	embedded := jwt.NewHMACSigner("embedded-oidc", []byte("embedded-oidc-secret"))
+
+	tok, err := embedded.Sign(jwt.Claims{
+		Subject:  "alice@dev.local",
+		TenantID: "default",
+		Audience: []string{"dev.local"},
+		Issuer:   "https://lenny.dev.local",
+		Expiry:   time.Now().Add(time.Hour).Unix(),
+		Typ:      pkgauth.TokenUserBearer,
+		Roles:    []pkgauth.Role{pkgauth.RolePlatformAdmin},
+	})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	inner, got := captureHandler()
+	h := Wrap(inner, Options{
+		Verifier:    jwt.NewMultiVerifier(tokenService, embedded),
+		MultiTenant: true,
+		Registry:    permissiveRegistry{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("embedded-OIDC bearer: status = %d, want 204; body = %s", rr.Code, rr.Body.String())
+	}
+	if got.Subject != "alice@dev.local" {
+		t.Errorf("subject = %q, want alice@dev.local", got.Subject)
+	}
+	if !got.HasRole(pkgauth.RolePlatformAdmin) {
+		t.Errorf("roles missing platform-admin: got %v", got.Roles)
+	}
+}
+
+// TestBearerRejectsTokenSignedByNoVerifier confirms the MultiVerifier
+// bearer path still rejects a token neither member can validate.
+func TestBearerRejectsTokenSignedByNoVerifier(t *testing.T) {
+	tokenService := jwt.NewHMACSigner("token-service", []byte("token-service-secret"))
+	embedded := jwt.NewHMACSigner("embedded-oidc", []byte("embedded-oidc-secret"))
+	forger := jwt.NewHMACSigner("forger", []byte("forger-secret"))
+
+	tok, err := forger.Sign(jwt.Claims{
+		Subject:  "mallory@evil.example",
+		TenantID: "default",
+		Expiry:   time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	inner, _ := captureHandler()
+	h := Wrap(inner, Options{
+		Verifier:    jwt.NewMultiVerifier(tokenService, embedded),
+		MultiTenant: true,
+		Registry:    permissiveRegistry{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("forged bearer: status = %d, want 401; body = %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestBearerPropagatesGroups(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
 	tok, err := signer.Sign(jwt.Claims{

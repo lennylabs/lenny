@@ -28,6 +28,12 @@ type gatewaySpec struct {
 	Kubeconfig string
 	// LogPath is the gateway log file.
 	LogPath string
+	// OIDCKeyFile is the embedded OIDC provider's persisted HMAC signing
+	// key. The gateway is told to trust it as an additional §10.2 Bearer
+	// verifier so a token from `lenny token print` is accepted on the
+	// Authorization header. Empty leaves the gateway on its Token
+	// Service signer alone.
+	OIDCKeyFile string
 }
 
 // startGateway launches the production gateway configured against the
@@ -37,16 +43,12 @@ type gatewaySpec struct {
 // configuration a cluster deployment uses, and dev mode is enabled so
 // the §17.4 dev-header auth path and the relaxed-TLS startup are
 // active.
+//
+// When spec.OIDCKeyFile is set, the gateway is also told to trust the
+// embedded OIDC provider's signing key as an additional §10.2 Bearer
+// verifier through --bearer-trust-hmac-key-file, so a bearer minted by
+// `lenny token print` verifies on the gateway's Authorization header.
 func startGateway(spec gatewaySpec) (*managedProcess, error) {
-	args := []string{
-		"-addr", spec.HTTPAddr,
-		"-dev-mode",
-		"-multi-tenant",
-		// §10.6: dev mode derives allow-all, but passing it explicitly
-		// keeps the gateway's startup assertion satisfied regardless of
-		// the dev-mode default.
-		"-no-environment-policy", "allow-all",
-	}
 	env := append(
 		os.Environ(),
 		// LENNY_DEV_MODE is the §17.4 unified security-relaxation gate.
@@ -64,10 +66,30 @@ func startGateway(spec gatewaySpec) (*managedProcess, error) {
 	return startProcess(processSpec{
 		Name:    "gateway",
 		BinPath: spec.BinPath,
-		Args:    args,
+		Args:    gatewayArgs(spec),
 		Env:     env,
 		LogPath: spec.LogPath,
 	})
+}
+
+// gatewayArgs builds the command-line arguments for the embedded
+// gateway child process from spec. It is separated from startGateway
+// so the argument construction is testable without launching a
+// process.
+func gatewayArgs(spec gatewaySpec) []string {
+	args := []string{
+		"-addr", spec.HTTPAddr,
+		"-dev-mode",
+		"-multi-tenant",
+		// §10.6: dev mode derives allow-all, but passing it explicitly
+		// keeps the gateway's startup assertion satisfied regardless of
+		// the dev-mode default.
+		"-no-environment-policy", "allow-all",
+	}
+	if spec.OIDCKeyFile != "" {
+		args = append(args, "-bearer-trust-hmac-key-file", spec.OIDCKeyFile)
+	}
+	return args
 }
 
 // resolveGatewayBin locates the production gateway binary. An explicit
