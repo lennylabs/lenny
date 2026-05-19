@@ -9,7 +9,7 @@ The per-increment record is the git history, with one deliverable per commit. Th
 is updated in place as phase status changes and as blockers are found and cleared; it is
 not an append-only log.
 
-**Current wave:** Wave 5 — Helm chart and the cluster test tiers.
+**Current wave:** Wave 6 — External product surface and documentation.
 
 This line is the authoritative execution pointer. The build proceeds wave by wave in
 the order defined in [`BUILD-PLAN.md`](BUILD-PLAN.md), and this line advances only when
