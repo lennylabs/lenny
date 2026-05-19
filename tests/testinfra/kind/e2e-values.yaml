@@ -89,3 +89,13 @@ minio:
   secretKey: "lennyminio123"
   bucket: "lenny-artifacts"
   useSSL: false
+
+# Enable the feature-gated admission webhooks so the tier-5
+# admission_featuregated tests can exercise their behavioural half:
+# lenny-direct-mode-isolation (llmProxy), lenny-drain-readiness
+# (drainReadiness), and lenny-data-residency-validator +
+# lenny-t4-node-isolation (compliance).
+features:
+  llmProxy: true
+  drainReadiness: true
+  compliance: true
