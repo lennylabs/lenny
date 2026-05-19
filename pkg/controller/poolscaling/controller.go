@@ -20,6 +20,7 @@ package poolscaling
 import (
 	"context"
 	"fmt"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -117,6 +118,31 @@ type PoolConfigSource interface {
 	ListPoolConfigs(ctx context.Context) ([]PoolConfig, error)
 }
 
+// DemotionSignal is the rolling 5-minute SDK-warm demotion signal for
+// one pool — the input the §6.1 circuit breaker consumes.
+type DemotionSignal struct {
+	// Rate is the rolling 5-minute demotion rate in [0,1]: SDK-warm
+	// demotions divided by claims over the window.
+	Rate float64
+	// HasSample is true once the rolling window holds a usable sample.
+	// A freshly-elected leader reports false until its in-memory window
+	// has refilled; the breaker holds a tripped pool open in that case
+	// rather than auto-closing on a cold-start zero rate.
+	HasSample bool
+}
+
+// DemotionRateSource yields the rolling SDK-warm demotion signal for a
+// pool (§6.1). The production implementation maintains the rolling
+// 5-minute window in PoolScalingController memory, fed by the
+// lenny_warmpool_sdk_demotions_total and lenny_warmpool_claims_total
+// metrics. A PoolScalingController constructed without a
+// DemotionRateSource never trips the SDK-warm circuit breaker; it
+// still honors a breaker already persisted on the pool status, holding
+// it open until its minOpenUntil grace window elapses.
+type DemotionRateSource interface {
+	PoolDemotionSignal(ctx context.Context, poolName string) (DemotionSignal, error)
+}
+
 // Reconciler is the §4.6.2 PoolScalingController. It syncs pool
 // definitions from the PoolConfigSource into their CRD pair, deriving
 // each pool's warm-pod floor from observed demand.
@@ -129,9 +155,26 @@ type Reconciler struct {
 	// scaling formula. When nil, every pool stays at its bootstrap
 	// minWarm.
 	Demand DemandSource
+	// Demotion supplies the rolling SDK-warm demotion signal that
+	// drives the §6.1 circuit breaker. When nil, the controller never
+	// trips the breaker but still honors a breaker already persisted on
+	// a pool's status until its grace window elapses.
+	Demotion DemotionRateSource
 	// Strategy computes the warm-pod floor. When nil, the default
 	// §4.6.2 formula is used.
 	Strategy strategy.PoolScalingStrategy
+	// Now returns the current time. It is a field so tests can pin the
+	// clock the §6.1 circuit breaker compares against minOpenUntil.
+	// When nil, time.Now is used.
+	Now func() time.Time
+}
+
+// now returns the reconcile timestamp, honoring an injected clock.
+func (r *Reconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // Sync performs one full reconciliation pass: every pool definition
@@ -169,27 +212,135 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig) error {
 	return err
 }
 
-// syncWarmPool upserts the pool's SandboxWarmPool, writing only the
-// spec fields §4.6.3 assigns to the PoolScalingController. minWarm is
-// the formula-derived floor; the status subresource, including the
-// WarmPoolController-owned counts, is not touched.
+// syncWarmPool upserts the pool's SandboxWarmPool, writing the spec
+// fields §4.6.3 assigns to the PoolScalingController and, separately,
+// the §4.6.3 status.sdkWarmCircuitBreaker carve-out. minWarm is the
+// formula-derived floor; the WarmPoolController-owned status counts
+// are not touched.
+//
+// spec.sdkWarmDisabled is the §6.1 SDK-warm circuit-breaker flag. The
+// breaker decision is taken against the rolling demotion signal and
+// the breaker state already persisted on the pool. The PoolConfig's
+// own SDKWarmDisabled stays authoritative when no DemotionRateSource
+// is wired and no breaker is currently persisted, so an operator
+// override via the admin API still takes effect.
 func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 	minWarm, err := r.targetMinWarm(ctx, cfg)
 	if err != nil {
 		return err
 	}
+
 	pool := &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
+
+	// The breaker decision is computed against the breaker state read
+	// back from the live object inside the mutate closure, so the
+	// decision always reflects what is persisted right now. A nil
+	// decision pointer means no breaker evaluation ran for this pool.
+	var decision *BreakerDecision
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, pool, func() error {
+		decision, err = r.evaluateBreaker(ctx, cfg, pool)
+		if err != nil {
+			return err
+		}
 		pool.Spec.TemplateRef = cfg.Name
 		pool.Spec.MinWarm = minWarm
 		pool.Spec.MaxWarm = cfg.MaxWarm
 		pool.Spec.ScalePolicy = cfg.ScalePolicy
-		pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
+		if decision != nil {
+			pool.Spec.SDKWarmDisabled = decision.SDKWarmDisabled
+		} else {
+			pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
+		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// The circuit-breaker state is a status subresource carve-out
+	// (§4.6.3), so it is written separately from the spec apply above.
+	if decision != nil {
+		if err := r.syncBreakerStatus(ctx, pool, decision.State); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// evaluateBreaker runs the §6.1 SDK-warm circuit-breaker decision for
+// one pool. It reads the rolling demotion signal from the
+// DemotionRateSource and the persisted breaker state from the live
+// pool, then returns the decision the caller writes to
+// spec.sdkWarmDisabled and status.sdkWarmCircuitBreaker.
+//
+// It returns a nil decision when no breaker evaluation applies: when
+// no DemotionRateSource is configured and the pool has no breaker
+// currently persisted. In that case the pool's PoolConfig value stays
+// authoritative, preserving the admin-API operator override path. When
+// a breaker IS persisted, the decision runs even without a
+// DemotionRateSource so the breaker is held open until its grace
+// window elapses (the §6.1 leader-failover guard).
+func (r *Reconciler) evaluateBreaker(ctx context.Context, cfg PoolConfig, pool *lennyv1.SandboxWarmPool) (*BreakerDecision, error) {
+	cur := breakerStateFromStatus(pool.Status.SDKWarmCircuitBreaker)
+	if r.Demotion == nil && !cur.Open {
+		return nil, nil
+	}
+
+	in := BreakerInputs{
+		Current:         cur,
+		MinOpenDuration: scalePolicyMinOpenDuration(cfg.ScalePolicy),
+		Now:             r.now(),
+	}
+	if r.Demotion != nil {
+		sig, err := r.Demotion.PoolDemotionSignal(ctx, cfg.Name)
+		if err != nil {
+			return nil, fmt.Errorf("read demotion signal: %w", err)
+		}
+		in.DemotionRate = sig.Rate
+		in.HasWindowSample = sig.HasSample
+	}
+
+	decision := EvaluateBreaker(in)
+	return &decision, nil
+}
+
+// syncBreakerStatus writes the §6.1 circuit-breaker state to the
+// SandboxWarmPool status.sdkWarmCircuitBreaker carve-out. The write is
+// skipped when the persisted state already matches the decision, so a
+// steady-state reconcile does not churn the status subresource.
+func (r *Reconciler) syncBreakerStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, state BreakerState) error {
+	want := breakerStatusFromState(state)
+	if breakerStatusEqual(pool.Status.SDKWarmCircuitBreaker, want) {
+		return nil
+	}
+	pool.Status.SDKWarmCircuitBreaker = want
+	if err := r.Client.Status().Update(ctx, pool); err != nil {
+		return fmt.Errorf("update circuit-breaker status: %w", err)
+	}
+	return nil
+}
+
+// breakerStatusEqual reports whether two persisted circuit-breaker
+// statuses carry the same open/closed decision and timestamps.
+func breakerStatusEqual(a, b *lennyv1.SDKWarmCircuitBreakerStatus) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.OpenedReason != b.OpenedReason {
+		return false
+	}
+	return timePtrEqual(a.OpenedAt, b.OpenedAt) && timePtrEqual(a.MinOpenUntil, b.MinOpenUntil)
+}
+
+// timePtrEqual reports whether two optional metav1.Time values are
+// equal, treating two nils as equal.
+func timePtrEqual(a, b *metav1.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Time.Equal(b.Time)
 }
 
 // targetMinWarm derives the warm-pod floor for one pool by running the
