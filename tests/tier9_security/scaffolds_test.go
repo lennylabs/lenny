@@ -4,11 +4,18 @@
 
 // Tier-9 security test scaffolds. Each test here corresponds to a
 // TESTING.md-named security check whose subject is infrastructure the
-// e2e Kind cluster does not provide: a running agent-pod workload, a
-// runtime sandbox (gVisor, Kata), a TLS-configured data store, a
-// packaged fuzzing driver, or an external pen-test partner. Each calls
-// t.Skip with a diagnosis naming the spec section and the exact
-// missing infrastructure.
+// e2e Kind cluster does not provide: a live gateway session driven onto
+// an agent pod, an egress-capture harness, a runtime sandbox (gVisor,
+// Kata), a TLS-configured data store, a packaged fuzzing driver, or an
+// external pen-test partner. Each calls t.Skip with a diagnosis naming
+// the spec section and the exact missing infrastructure.
+//
+// The e2e install runs a real agent-pod workload in the lenny-agents
+// namespace (the two §4.7 deployment-model warm pools install.sh
+// applies from agent-workload.yaml). The warm pods reach the idle phase
+// but no live session is driven onto them, so security checks whose
+// subject is an active session, an egress flow, or an elicitation
+// exchange remain scaffolded below.
 //
 // The security checks whose subject is a resource the e2e install
 // actually runs are implemented against the live cluster:
@@ -19,6 +26,15 @@
 //     CA-bundle injection.
 //   - admission_security_test.go — §13.1 pod-security single-vector
 //     bypass attempts.
+//   - admission_cred_test.go — §12.9.3 lenny-pod-security credential
+//     fsGroup-missing rejection.
+//   - admission_label_immutability_test.go — §12.9.3
+//     lenny-label-immutability UPDATE-guard rejection on a live agent
+//     pod.
+//   - admission_ephemeral_test.go — §12.9.3
+//     lenny-ephemeral-container-cred-guard rejection of a
+//     credential-reaching ephemeral-container attach on a live agent
+//     pod.
 //   - image_signing_test.go — §5.2 cosign webhook gating.
 //   - tenant_isolation_test.go — §12.9.1 cross-store tenant isolation
 //     (the §11.7 Postgres-backed audit chain partition and the
@@ -51,47 +67,33 @@ func TestTLSPlaintextRejection(t *testing.T) {
 		"TestMTLSCertificatesReady")
 }
 
-// §12.9.3 Admission policy — fsGroup-missing rejection. Covered in part
-// by admission_security_test.go (the host-sharing and capability
-// vectors); the fsGroup vector needs the agent-pod template path.
-func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 POD_SPEC_CRED_FSGROUP_MISSING — the lenny-pod-security webhook's " +
-		"fsGroup check fires on the agent-pod template the WarmPoolController generates; exercising it as " +
-		"an adversarial case needs a SandboxWarmPool reconcile producing a pod template, which the warm-pod " +
-		"runtime-container model (an open blocker) does not run on the e2e cluster. " +
-		"TestAdmissionSecurityBypassAttempts covers the host-sharing and capability §13.1 vectors")
-}
+// §12.9.3 Admission policy — fsGroup-missing rejection is implemented
+// in admission_cred_test.go against the live lenny-pod-security webhook;
+// the label-immutability UPDATE guard is implemented in
+// admission_label_immutability_test.go and the ephemeral-container
+// cred-guard in admission_ephemeral_test.go, both against live agent
+// pods. The remaining §12.9.3 scaffolds below name a control the live
+// cluster cannot exercise.
 
 // §12.9.3 Admission policy — cred-group overbroad rejection.
 func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD — requires an agent pod whose " +
-		"non-adapter, non-agent container declares the lenny-cred-readers GID; building that case needs " +
-		"the WarmPoolController agent-pod template path and a running agent-pod workload, which the " +
-		"warm-pod runtime-container model (an open blocker) does not run on the e2e cluster")
-}
-
-// §12.9.3 Admission policy — ephemeral-container cred-UID rejection.
-func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN — the " +
-		"lenny-ephemeral-container-cred-guard webhook intercepts UPDATE on pods/ephemeralcontainers; the " +
-		"rejection needs a live agent pod to attach an ephemeral container to, which the warm-pod " +
-		"runtime-container model (an open blocker) does not run on the e2e cluster")
-}
-
-// §12.9.3 Admission policy — label immutability on UPDATE.
-func TestAdmissionLabelImmutability(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 lenny-label-immutability UPDATE guard — the label-mutation rejection " +
-		"fires on UPDATE of an existing agent pod carrying lenny.dev/managed; the e2e cluster runs no " +
-		"agent-pod workload to mutate (the warm-pod runtime-container model is an open blocker). The " +
-		"webhook's configuration (failurePolicy, CREATE+UPDATE scope) is asserted by the tier-5 " +
-		"TestLabelImmutability")
+	t.Skip("not implemented: §12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD — the live lenny-pod-security webhook " +
+		"validates the pod-level fsGroup and the per-container §13.1 invariants, but it does not reject a " +
+		"pod whose non-adapter, non-agent container declares the lenny-cred-readers GID via runAsGroup or " +
+		"supplementalGroups: podsecurity.ValidateAgentPod has no per-container cred-group check, and a " +
+		"server dry-run of such a pod is admitted. Exercising this control as an adversarial case needs " +
+		"the cred-group check added to the pod-security validator first")
 }
 
 // §12.9.3 Admission policy — sandboxclaim concurrency guard.
 func TestAdmissionSandboxClaimGuard(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 lenny-sandboxclaim-guard — requires a concurrent SandboxClaim " +
-		"injector racing two claims for one warm pod slot, which needs a running warm pool with claimable " +
-		"slots; the warm-pod runtime-container model (an open blocker) does not run on the e2e cluster")
+	t.Skip("not implemented: §12.9.3 lenny-sandboxclaim-guard — the §4.6.1 concurrency rule rejects a " +
+		"second SandboxClaim CREATE for a Sandbox that already has a non-terminal claim, so exercising it " +
+		"needs a persisted first claim against a live Sandbox. The e2e cluster runs real Sandboxes, but " +
+		"the lenny-sandboxclaim-guard webhook backend is not reachable from the API server on this " +
+		"install: a CREATE against sandboxclaims fails with `failed calling webhook`/context-deadline " +
+		"rather than reaching the guard. Exercising the rule needs the webhook's API-server connectivity " +
+		"repaired and a claim-seeding harness")
 }
 
 // §12.9.4 NetworkPolicy adversarial — agent-namespace egress.
@@ -99,11 +101,12 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 // TestNetworkPolicyAdversarial; this scaffold is the agent-pod egress
 // half.
 func TestNetworkPolicyAgentEgress(t *testing.T) {
-	t.Skip("not implemented: §12.9.4 agent-pod egress probes — requires a running agent pod in " +
-		"lenny-agents to attempt forbidden egress (arbitrary internet, kube-system CoreDNS, the LLM proxy " +
-		"port from a non-proxy pool); the warm-pod runtime-container model (an open blocker) schedules no " +
-		"agent-pod workload on the e2e cluster. The lenny-system default-deny enforcement is covered by " +
-		"TestNetworkPolicyAdversarial")
+	t.Skip("not implemented: §12.9.4 agent-pod egress probes — exercising forbidden agent-pod egress " +
+		"(arbitrary internet, kube-system CoreDNS, the LLM proxy port from a non-proxy pool) needs a " +
+		"connectivity-probe step run from inside a lenny-agents pod. The e2e warm-pool pods run an echo " +
+		"runtime image with no shell or curl, and the agent-workload overlay deploys no egress-probe " +
+		"sidecar, so there is no in-namespace vantage point to issue the probes from. The lenny-system " +
+		"default-deny enforcement is covered by TestNetworkPolicyAdversarial")
 }
 
 // §12.9.6 Input fuzzing. OWASP ZAP runs against the REST and MCP
@@ -117,51 +120,56 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 
 // §12.9.8 Credential leakage — environment variables.
 func TestCredentialLeakageEnvironment(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / env vars — requires a running agent pod with " +
-		"the lenny-cred-readers group convention so /proc/<pid>/environ can be inspected for leaked " +
-		"upstream credentials; the warm-pod runtime-container model (an open blocker) runs no agent-pod " +
-		"workload on the e2e cluster")
+	t.Skip("not implemented: §12.9.8 credential leakage / env vars — inspecting an agent process's " +
+		"/proc/<pid>/environ for leaked upstream credentials needs a live gateway session bound onto an " +
+		"agent pod so the credential-delivery path has run. The e2e warm-pool pods reach the idle phase " +
+		"but no session is driven onto them, and the distroless runtime image has no shell to read " +
+		"/proc from. Exercising this needs the gateway session drive plus an in-pod inspection step")
 }
 
 // §12.9.8 Credential leakage — filesystem.
 func TestCredentialLeakageFilesystem(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / filesystem — requires a running agent pod with " +
-		"the documented 0440 group-owned /run/lenny/credentials.json so file modes and ownership can be " +
-		"inspected; the warm-pod runtime-container model (an open blocker) runs no agent-pod workload on " +
-		"the e2e cluster")
+	t.Skip("not implemented: §12.9.8 credential leakage / filesystem — asserting the documented 0440 " +
+		"group-owned /run/lenny/credentials.json needs a live gateway session bound onto an agent pod " +
+		"so the credential file has been materialized. The e2e warm-pool pods reach the idle phase with " +
+		"no session, so the credential tmpfs is not populated, and the distroless runtime image has no " +
+		"shell to stat the file. Exercising this needs the gateway session drive plus an in-pod " +
+		"file-mode inspection step")
 }
 
 // §12.9.8 Credential leakage — network egress.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / network egress — requires an egress-capture " +
-		"harness and a running agent pod issuing LLM calls so the captured traffic can be inspected for " +
-		"credential material; the warm-pod runtime-container model (an open blocker) runs no agent-pod " +
-		"workload on the e2e cluster")
+	t.Skip("not implemented: §12.9.8 credential leakage / network egress — inspecting agent LLM-call " +
+		"traffic for credential material needs an egress-capture harness on the agent-pod network path " +
+		"and a live session issuing LLM calls. The e2e overlay deploys no traffic-capture sidecar or " +
+		"proxy, and the warm-pool pods run no session. Exercising this needs the capture harness and a " +
+		"gateway session driven onto an agent pod")
 }
 
 // §12.9.9 Elicitation content integrity — enforce mode.
 func TestElicitationTamperEnforceMode(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation tamper / enforce mode — requires the §9.2 elicitation " +
-		"chain reachable with a seeded session and a tampering intermediate agent pod so a tampered " +
-		"payload can be replayed and the SHA-256 integrity check rejecting it with " +
-		"ELICITATION_CONTENT_TAMPERED can be observed; the warm-pod runtime-container model (an open " +
-		"blocker) runs no agent-pod workload on the e2e cluster")
+	t.Skip("not implemented: §12.9.9 elicitation tamper / enforce mode — observing the SHA-256 " +
+		"integrity check reject a tampered payload with ELICITATION_CONTENT_TAMPERED needs the §9.2 " +
+		"elicitation chain driven end to end: a seeded session and an intermediate agent that replays a " +
+		"tampered payload. The e2e cluster runs warm agent pods but drives no session and no elicitation " +
+		"exchange, so the elicitation chain is never entered")
 }
 
 // §12.9.9 Elicitation content integrity — detect-only mode.
 func TestElicitationTamperDetectOnlyMode(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation tamper / detect-only mode — requires the elicitation " +
-		"chain with an agent-pod tampering intermediary plus the alerting pipeline so the " +
-		"ElicitationContentIntegrityPermissiveTamper alert can be asserted on a tampered payload; the " +
-		"warm-pod runtime-container model (an open blocker) runs no agent-pod workload on the e2e cluster")
+	t.Skip("not implemented: §12.9.9 elicitation tamper / detect-only mode — asserting the " +
+		"ElicitationContentIntegrityPermissiveTamper alert on a tampered payload needs the elicitation " +
+		"chain driven with a tampering intermediary plus the alerting pipeline wired. The e2e cluster " +
+		"runs warm agent pods but drives no session and no elicitation exchange, and the e2e overlay " +
+		"deploys no alerting pipeline to assert the alert against")
 }
 
 // §12.9.9 Elicitation content integrity — platform floor.
 func TestElicitationPlatformFloor(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation platform floor — requires the " +
-		"max(platform_floor, tenant_stored_mode) resolver exercised end to end with an agent-pod " +
-		"elicitation flow per tenant and the clamp-event emission path; the warm-pod runtime-container " +
-		"model (an open blocker) runs no agent-pod workload on the e2e cluster")
+	t.Skip("not implemented: §12.9.9 elicitation platform floor — exercising the " +
+		"max(platform_floor, tenant_stored_mode) resolver and the clamp-event emission path needs a " +
+		"per-tenant elicitation flow driven end to end. The e2e cluster runs warm agent pods but drives " +
+		"no session and no elicitation exchange, so the resolver is never reached on a live request")
 }
 
 // §12.9.11 SBOM generation. Pre-release only.

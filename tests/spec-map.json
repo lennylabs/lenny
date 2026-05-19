@@ -1515,6 +1515,9 @@
         "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities",
         "tests/tier5_e2e_kind/admission_test.go",
+        "tests/tier9_security/admission_cred_test.go",
+        "tests/tier9_security/admission_ephemeral_test.go",
+        "tests/tier9_security/admission_label_immutability_test.go",
         "tests/tier9_security/admission_security_test.go",
         "tests/tier9_security/image_signing_test.go"
       ],
