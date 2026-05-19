@@ -30,8 +30,10 @@
 package tier9_security_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
@@ -71,8 +73,16 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	// cleanup. The reject cases never persist a connector (the validator
 	// fails before the row is written), but the cleanup deletes them
 	// unconditionally — DELETE on an absent connector is a no-op 404.
+	//
+	// The connectors table soft-deletes: a DELETEd row keeps its
+	// primary-key id reserved as a tombstone, so a create that reuses an
+	// id fails with 409 RESOURCE_CONFLICT. The positive control persists
+	// a connector row, so it takes a run-unique id no prior run's
+	// tombstone can collide with. The reject ids stay stable: they never
+	// persist.
+	httpsOKID := fmt.Sprintf("t9ssrf-https-ok-%d", time.Now().UnixNano())
 	createdIDs := []string{
-		"t9ssrf-http-mcp", "t9ssrf-ftp-scheme", "t9ssrf-http-oauth", "t9ssrf-https-ok",
+		"t9ssrf-http-mcp", "t9ssrf-ftp-scheme", "t9ssrf-http-oauth", httpsOKID,
 	}
 	t.Cleanup(func() {
 		for _, id := range createdIDs {
@@ -140,9 +150,9 @@ func TestSSRFCallbackValidation(t *testing.T) {
 	// could be a blanket connector-create failure rather than the §9.3
 	// HTTPS check firing.
 	t.Run("https-connector-accepted", func(t *testing.T) {
-		body := `{"id":"t9ssrf-https-ok","mcpServerUrl":"https://ok.example.com/mcp",` +
-			`"auth":{"type":"oauth2","authorizationEndpoint":"https://ok.example.com/authz",` +
-			`"tokenEndpoint":"https://ok.example.com/token","clientSecretRef":"lenny-system/conn-secret"}}`
+		body := fmt.Sprintf(`{"id":%q,"mcpServerUrl":"https://ok.example.com/mcp",`+
+			`"auth":{"type":"oauth2","authorizationEndpoint":"https://ok.example.com/authz",`+
+			`"tokenEndpoint":"https://ok.example.com/token","clientSecretRef":"lenny-system/conn-secret"}}`, httpsOKID)
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/connectors", admin, body)
 		if res.curlExit != 0 {
 			t.Fatalf("connector-create request did not complete (curl exit %d, body %q)",
