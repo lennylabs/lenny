@@ -1899,7 +1899,21 @@
         "pkg/alerting/rules/rules_test.go::TestRuleValidateRejectsBadPromQL",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateCriticalRequiresRunbook",
         "pkg/alerting/rules/rules_test.go::TestCatalogValidates",
-        "pkg/alerting/rules/rules_test.go::TestCatalogCoversCanonicalAlerts"
+        "pkg/alerting/rules/rules_test.go::TestCatalogCoversCanonicalAlerts",
+        "pkg/alerting/rules/rules_test.go::TestCatalogIsCompleteAgainstSpec165",
+        "pkg/alerting/rules/rules_test.go::TestCatalogHasNoUnspecifiedAlerts",
+        "pkg/alerting/rules/rules_test.go::TestBurnRateRulesAreDualWindow",
+        "pkg/alerting/rules/render_test.go::TestRenderPrometheusRuleRendersFullCatalog",
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
+        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166",
+        "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
+        "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed"
       ],
       "packages": [
         "pkg/observability/metrics",
@@ -1907,10 +1921,16 @@
         "pkg/observability/tracing",
         "tests/testinfra/mocks/otelcollector",
         "pkg/observability/logging",
-        "pkg/alerting/rules"
+        "pkg/alerting/rules",
+        "pkg/observability/audit",
+        "pkg/gateway/opsevents",
+        "cmd/gen-alerting-rules"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/prometheusrule.yaml"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "\u00a716 is the umbrella section for observability. Behavioral surface lives in its subsections (\u00a716.1, \u00a716.3, \u00a716.4, \u00a716.5); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a716 surfaces the same coverage as drilling into each subsection."
+      "notes": "\u00a716 is the umbrella section for observability. Behavioral surface lives in its subsections (\u00a716.1, \u00a716.3, \u00a716.4, \u00a716.5, \u00a716.6, \u00a716.7); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a716 surfaces the same coverage as drilling into each subsection."
     },
     "16.1": {
       "title": "Metrics",
@@ -1919,13 +1939,17 @@
         "pkg/observability/metrics/metrics_test.go::TestValidateAcceptsCanonicalNames",
         "pkg/observability/metrics/metrics_test.go::TestValidateRejectsForbiddenLabels",
         "pkg/observability/metrics/metrics_test.go::TestValidateAccumulatesMultipleViolations",
-        "pkg/observability/metrics/metrics_test.go::TestForbiddenLabelsCatalog"
+        "pkg/observability/metrics/metrics_test.go::TestForbiddenLabelsCatalog",
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogEntriesAreWellFormed",
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
+        "pkg/observability/metrics/catalog_test.go::TestLookupMetric"
       ],
       "packages": [
         "pkg/observability/metrics"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. The full metrics catalog (lenny_warmpool_idle_pods, lenny_session_startup_duration_seconds, etc.) lands incrementally with each feature that emits the metric."
+      "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table."
     },
     "16.2": {
       "title": "Key Latency Breakpoints",
@@ -1979,35 +2003,55 @@
         "pkg/alerting/rules/rules_test.go::TestRuleValidateRejectsBadPromQL",
         "pkg/alerting/rules/rules_test.go::TestRuleValidateCriticalRequiresRunbook",
         "pkg/alerting/rules/rules_test.go::TestCatalogValidates",
-        "pkg/alerting/rules/rules_test.go::TestCatalogCoversCanonicalAlerts"
+        "pkg/alerting/rules/rules_test.go::TestCatalogCoversCanonicalAlerts",
+        "pkg/alerting/rules/rules_test.go::TestCatalogIsCompleteAgainstSpec165",
+        "pkg/alerting/rules/rules_test.go::TestCatalogHasNoUnspecifiedAlerts",
+        "pkg/alerting/rules/rules_test.go::TestBurnRateRulesAreDualWindow",
+        "pkg/alerting/rules/render_test.go::TestRenderPrometheusRuleRendersFullCatalog",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed"
       ],
       "packages": [
-        "pkg/alerting/rules"
+        "pkg/alerting/rules",
+        "cmd/gen-alerting-rules"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/prometheusrule.yaml"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "Phase 2.5 ships the typed Rule, the PromQL validator, and a representative catalog (WarmPoolExhausted, PostgresReplicationLagHigh, CredentialPoolLow, WarmPoolLow, CertExpiryImminent). The full \u00a716.5 catalog lands incrementally with each feature that emits the underlying metric."
+      "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full \u00a716.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift."
     },
     "16.6": {
       "title": "Operational Events Catalog",
       "spec_file": "spec/16_observability.md",
       "tests": [
-        "pkg/gateway/opsevents/..."
+        "pkg/gateway/opsevents/...",
+        "pkg/gateway/opsevents/catalog_test.go::TestGatewayCatalogIsCompleteAgainstSpec166",
+        "pkg/gateway/opsevents/catalog_test.go::TestOpsCatalogIsCompleteAgainstSpec166"
       ],
       "packages": [
-        "pkg/observability/events"
+        "pkg/observability/events",
+        "pkg/gateway/opsevents"
       ],
       "blocked_until_phase": "14",
-      "notes": "Operational event catalog: every event type, its payload schema, when it fires. Phase 14 ships the emitter and the event-store consumer."
+      "notes": "Operational event catalog: every event type, its payload schema, when it fires. pkg/gateway/opsevents/catalog.go is the typed \u00a716.6 catalog (gateway-emitted and lenny-ops-emitted short names) cross-checked for completeness against the \u00a716.6 lists. Phase 14 ships the emitter and the event-store consumer."
     },
     "16.7": {
       "title": "Section 25 Audit Events",
       "spec_file": "spec/16_observability.md",
-      "tests": [],
+      "tests": [
+        "pkg/observability/audit/catalog_test.go::TestCatalogIsCompleteAgainstSpec167",
+        "pkg/observability/audit/catalog_test.go::TestCatalogHasNoUnspecifiedEvents",
+        "pkg/observability/audit/catalog_test.go::TestCatalogHasNoDuplicatesOrEmpties",
+        "pkg/observability/audit/catalog_test.go::TestIsKnownEventType"
+      ],
       "packages": [
         "pkg/observability/audit"
       ],
       "blocked_until_phase": "14",
-      "notes": "\u00a725-mandated audit events: agent action attribution, runbook execution, policy override. Phase 14 wires the emitter."
+      "notes": "\u00a725-mandated audit events: agent action attribution, runbook execution, policy override. pkg/observability/audit/catalog.go is the typed \u00a716.7 audit-event-type catalog cross-checked for completeness against the \u00a716.7 enumeration. Phase 14 wires the emitter."
     },
     "16.8": {
       "title": "Section 25 Metrics",

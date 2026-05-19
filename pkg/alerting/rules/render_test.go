@@ -104,10 +104,54 @@ func TestPrometheusDuration(t *testing.T) {
 		{30 * time.Second, "30s"},
 		{90 * time.Second, "90s"},
 		{0, "0s"},
+		{1 * time.Hour, "1h"},
+		{6 * time.Hour, "6h"},
+		{72 * time.Hour, "72h"},
+		{5 * time.Minute, "5m"},
 	}
 	for _, tc := range cases {
 		if got := prometheusDuration(tc.d); got != tc.want {
 			t.Errorf("prometheusDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+// TestRenderPrometheusRuleEmitsSLOAnnotation verifies the burn-rate
+// rules carry their §16.5 SLO as the "slo" annotation.
+func TestRenderPrometheusRuleEmitsSLOAnnotation(t *testing.T) {
+	doc := renderCatalog(t, "lenny-alerts")
+	var got *promAlertRule
+	for i := range doc.Spec.Groups[0].Rules {
+		if doc.Spec.Groups[0].Rules[i].Alert == "SessionCreationLatencyBurnRate" {
+			got = &doc.Spec.Groups[0].Rules[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("SessionCreationLatencyBurnRate was not rendered")
+	}
+	if got.Annotations["slo"] == "" {
+		t.Error("a burn-rate rule must carry an slo annotation")
+	}
+	if got.For != "1h" {
+		t.Errorf("burn-rate fast window for = %q, want 1h", got.For)
+	}
+}
+
+// TestRenderPrometheusRuleRendersFullCatalog verifies the rendered
+// manifest carries every §16.5 catalog rule with a parseable expr and
+// the required severity label.
+func TestRenderPrometheusRuleRendersFullCatalog(t *testing.T) {
+	doc := renderCatalog(t, "lenny-alerts")
+	rendered := doc.Spec.Groups[0].Rules
+	if len(rendered) != len(Catalog()) {
+		t.Fatalf("rendered %d rules, catalog has %d", len(rendered), len(Catalog()))
+	}
+	for _, r := range rendered {
+		if r.Expr == "" {
+			t.Errorf("rendered rule %q has an empty expr", r.Alert)
+		}
+		if r.Labels["severity"] == "" {
+			t.Errorf("rendered rule %q has no severity label", r.Alert)
 		}
 	}
 }

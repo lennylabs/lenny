@@ -1,0 +1,61 @@
+{{- /*
+The §16.5 bundled alerting rules (§16.9, §25.13). The full §16.5 alert
+catalog is authored once in the shared Go package pkg/alerting/rules and
+rendered into files/alerting-rules.yaml by `make generate` (the
+cmd/gen-alerting-rules build step). Both the gateway's in-process alert
+evaluator and these manifests derive from that single source, so the
+rendered rules cannot drift from what the gateway evaluates.
+
+Rendering is gated by monitoring.bundleRules and monitoring.format:
+
+  - monitoring.format: prometheusrule  — render a PrometheusRule CRD for
+    deployers running the Prometheus Operator (kube-prometheus-stack,
+    OpenShift Monitoring). The operator reloads Prometheus automatically.
+  - monitoring.format: configmap       — render a ConfigMap carrying the
+    same rules in standard Prometheus rule-file YAML, for deployers on
+    vanilla Prometheus that mount rule_files.
+  - monitoring.format: both            — render both.
+
+The PrometheusRule and the ConfigMap both splice the identical
+files/alerting-rules.yaml fragment, so the §16 catalog cross-check test
+can assert chart-vs-catalog parity against either rendering.
+*/ -}}
+{{- if .Values.monitoring.bundleRules }}
+{{- $format := .Values.monitoring.format }}
+{{- $ruleNS := .Values.monitoring.prometheusRule.namespace | default .Values.monitoring.namespace }}
+{{- $rules := .Files.Get "files/alerting-rules.yaml" }}
+{{- /* Strip the generated-file comment header so the spec.groups
+       fragment splices in cleanly under the CRD spec. */ -}}
+{{- $groups := regexReplaceAll "(?m)^#.*\n" $rules "" }}
+{{- if or (eq $format "prometheusrule") (eq $format "both") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lenny-alerting-rules
+  namespace: {{ $ruleNS }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: alerting-rules
+    {{- with .Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- $groups | nindent 2 }}
+{{- end }}
+{{- if or (eq $format "configmap") (eq $format "both") }}
+{{- if eq $format "both" }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.monitoring.configMap.name }}
+  namespace: {{ .Values.monitoring.configMap.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: alerting-rules
+data:
+  rules.yaml: |
+    {{- $rules | nindent 4 }}
+{{- end }}
+{{- end }}

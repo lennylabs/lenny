@@ -1,0 +1,116 @@
+suite: prometheusrule §16.5 bundled alerting rules
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - prometheusrule.yaml
+tests:
+  - it: renders a PrometheusRule by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: apiVersion
+          value: monitoring.coreos.com/v1
+      - equal:
+          path: metadata.name
+          value: lenny-alerting-rules
+
+  - it: renders the PrometheusRule into the monitoring namespace
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  - it: names the single rule group lenny.rules
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].name
+          value: lenny.rules
+
+  - it: bundles the WarmPoolExhausted critical alert from the §16.5 catalog
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].alert
+          value: WarmPoolExhausted
+      - equal:
+          path: spec.groups[0].rules[0].labels.severity
+          value: critical
+      - equal:
+          path: spec.groups[0].rules[0].for
+          value: 1m
+
+  - it: carries the runbook_url annotation on bundled critical alerts
+    documentIndex: 0
+    asserts:
+      - exists:
+          path: spec.groups[0].rules[0].annotations.runbook_url
+
+  - it: renders nothing when bundleRules is disabled
+    set:
+      monitoring:
+        bundleRules: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a ConfigMap when format is configmap
+    set:
+      monitoring:
+        format: configmap
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-alerting-rules
+      - exists:
+          path: data["rules.yaml"]
+
+  - it: renders both a PrometheusRule and a ConfigMap when format is both
+    set:
+      monitoring:
+        format: both
+    asserts:
+      - hasDocuments:
+          count: 2
+
+  - it: places the PrometheusRule in an explicit prometheusRule namespace
+    set:
+      monitoring:
+        prometheusRule:
+          namespace: observability
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: observability
+
+  - it: applies operator-discoverable additionalLabels for ruleSelector matching
+    set:
+      monitoring:
+        prometheusRule:
+          additionalLabels:
+            release: kube-prometheus-stack
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+
+  - it: places the ConfigMap in the release namespace by default
+    set:
+      monitoring:
+        format: configmap
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: lenny-system

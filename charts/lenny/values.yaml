@@ -92,9 +92,33 @@ kms:
   endpointCIDR: "0.0.0.0/0"
 
 # monitoring identifies the Prometheus monitoring namespace whose
-# scrape requests the §13.2 metrics-scrape NetworkPolicies admit.
+# scrape requests the §13.2 metrics-scrape NetworkPolicies admit, and
+# configures the §16.9 / §25.13 bundled §16.5 alerting rules.
 monitoring:
   namespace: "monitoring"
+  # bundleRules gates the §16.5 alert catalog manifests (§25.13). The
+  # full catalog is generated from pkg/alerting/rules into
+  # files/alerting-rules.yaml; the prometheusrule.yaml template renders
+  # it. Default true so an out-of-the-box install has working alerts.
+  bundleRules: true
+  # format selects how the §16.5 rules are rendered (§25.13 Helm
+  # Rendering): "prometheusrule" emits a PrometheusRule CRD for
+  # deployers running the Prometheus Operator; "configmap" emits a
+  # ConfigMap with rules.yaml for vanilla Prometheus; "both" emits both.
+  format: "prometheusrule"
+  # prometheusRule configures the rendered PrometheusRule CRD.
+  prometheusRule:
+    # namespace defaults to monitoring.namespace when empty.
+    namespace: ""
+    # additionalLabels are added to the PrometheusRule so the
+    # Prometheus Operator's ruleSelector can discover it.
+    additionalLabels: {}
+  # configMap configures the rendered ConfigMap rule file.
+  configMap:
+    # namespace defaults to the release namespace (lenny-system) when
+    # empty.
+    namespace: ""
+    name: "lenny-alerting-rules"
 
 # postgres configures the Postgres connection.
 postgres:

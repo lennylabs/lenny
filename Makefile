@@ -40,11 +40,13 @@ images: ## Build container images for the deployable platform binaries
 	done
 
 .PHONY: generate
-generate: ## Regenerate DeepCopy + CRD manifests via controller-gen
+generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules
 	@echo "  controller-gen object → pkg/apis DeepCopy"
 	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1/...
 	@echo "  controller-gen crd → charts/lenny/crds"
 	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1/... output:crd:dir=charts/lenny/crds
+	@echo "  gen-alerting-rules → charts/lenny/files/alerting-rules.yaml"
+	@go run ./cmd/gen-alerting-rules
 
 .PHONY: generate-proto
 generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
