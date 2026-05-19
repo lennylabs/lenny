@@ -50,6 +50,19 @@ spec:
         - port: 8443
           protocol: TCP
   egress:
+    # The §4.6.1 lenny-sandboxclaim-guard webhook reads sibling
+    # SandboxClaims from the kube-apiserver to enforce the ADR-007
+    # one-claim-per-slot rule, and lenny-drain-readiness reads pod
+    # state. Without kube-apiserver egress the webhook handler's API
+    # call hangs and the fail-closed webhook times out on every
+    # request. The CIDR is operator-tunable, bounded by the per-port
+    # (443) rule, exactly as in allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        - port: 443
+          protocol: TCP
     - to:
         - namespaceSelector:
             matchLabels:
