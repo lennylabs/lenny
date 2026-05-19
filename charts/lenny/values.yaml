@@ -65,14 +65,33 @@ webhookIngressCIDR: "0.0.0.0/0"
 # the broad default is bounded by the per-port (443) egress rule.
 kubeApiServerCIDR: "0.0.0.0/0"
 
-# tokenService configures the §4.3 Token Service.
+# tokenService configures the §4.3 Token Service. The lenny-token-
+# service Deployment runs the §13.3 Token Service binary; it is
+# stateless and runs with 2 replicas (§17.1).
 tokenService:
+  replicas: 2
   # grpcPort is the mTLS gRPC port the gateway reaches the Token
-  # Service on (§13.2).
+  # Service on (§13.2). The lenny-token-service Service exposes the
+  # Token Service listener on this port.
   grpcPort: 50052
   # metricsPort is the port the Token Service serves Prometheus
   # metrics on (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
+  # issuer is the iss claim stamped on tokens the Token Service mints
+  # (the binary's --issuer flag).
+  issuer: "https://lenny.dev.local/token"
+  image:
+    repository: ghcr.io/lennylabs/lenny-token-service
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # redis configures the Redis connection.
 redis:
@@ -280,22 +299,82 @@ adapter:
   # allow-gateway-ingress NetworkPolicy admits it.
   grpcPort: 50051
 
-# gateway configures the §4.1 edge gateway.
+# gateway configures the §4.1 edge gateway. The lenny-gateway
+# Deployment runs the gateway binary; it is stateless and horizontally
+# scaled (§17.1), so the chart sizes it with a replica count and an
+# HPA-compatible posture.
 gateway:
+  replicas: 2
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
+  # The gateway serves the §8.6 GatewayControl listener on this port.
   grpcPort: 50051
   # metricsPort is the port the gateway serves Prometheus metrics on
-  # (§13.2); the monitoring-scrape NetworkPolicy admits it.
+  # (§13.2); the monitoring-scrape NetworkPolicy admits it. The gateway
+  # binary serves /metrics on the same listener as the REST API
+  # (internalPort), so the lenny-gateway Service maps the metrics port
+  # to that listener.
   metricsPort: 9090
   # llmProxyPort is the gateway's LLM reverse-proxy port (§13.2). Only
   # proxy-mode agent pods are admitted to it, by the supplemental
   # allow-pod-egress-llm-proxy NetworkPolicy.
   llmProxyPort: 8443
-  # internalPort is the gateway's internal HTTP port (§13.2). The
-  # lenny-drain-readiness webhook reaches GET /internal/drain-readiness
-  # on this port for its §12.5 pre-drain MinIO health check.
+  # internalPort is the gateway's internal HTTP port (§13.2). It serves
+  # the REST API, /metrics, GET /healthz, and the §12.5
+  # GET /internal/drain-readiness endpoint the lenny-drain-readiness
+  # webhook probes.
   internalPort: 8080
+  # internalTLSPort is the gateway's admin-API-over-TLS port (§13.2
+  # NET-070). lenny-ops reaches the gateway admin API on this port.
+  internalTLSPort: 8443
+  # httpsPort is the gateway's external TLS listener (§13.2 NET-038).
+  # The Ingress controller forwards external HTTPS traffic to it.
+  httpsPort: 443
+  image:
+    repository: ghcr.io/lennylabs/lenny-gateway
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ops configures the §25.4 lenny-ops operability service. lenny-ops is
+# mandatory in every Lenny installation (§17.8.5); the chart provides no
+# flag to disable it. It runs as a Deployment with K8s Lease leader
+# election (lenny-ops-leader); the leader runs the §25.4 background
+# loops and every replica serves the §25 HTTP surface.
+ops:
+  replicas: 2
+  # httpPort is the port the lenny-ops HTTP surface binds (the binary's
+  # --addr flag). The lenny-ops Service exposes it; the Ingress and the
+  # §13.2 NET-051 ingress NetworkPolicy reference it.
+  httpPort: 8090
+  # metricsPort is the port lenny-ops serves Prometheus metrics on; the
+  # §13.2 NET-045 monitoring-scrape NetworkPolicy and podmonitor.yaml
+  # admit and scrape it. The binary serves /metrics on the same
+  # listener as the HTTP surface (httpPort), so the Service maps the
+  # metrics port to that listener.
+  metricsPort: 9090
+  # production gates the §25.11 confirm:true requirement on full
+  # backups. Set true on staging and production installs.
+  production: false
+  image:
+    repository: ghcr.io/lennylabs/lenny-ops
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # security carries platform-wide security posture settings.
 security:

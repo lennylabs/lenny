@@ -1,0 +1,143 @@
+suite: lenny-ops deployment
+templates:
+  - ops-deployment.yaml
+tests:
+  - it: renders the service account, leader-election role, binding, deployment, and service
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: renders a Deployment named lenny-ops
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+
+  - it: carries the app lenny-ops pod label per the §13.2 selector exception
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels.app
+          value: lenny-ops
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: lenny-ops
+
+  - it: runs two replicas by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: runs under the lenny-ops-sa service account
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: lenny-ops-sa
+
+  - it: defaults the image tag to the chart appVersion
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-ops:0.1.0
+
+  - it: configures leader election against the release namespace
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-election-namespace=NAMESPACE
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --addr=:8090
+
+  - it: grants Lease RBAC for §25.4 leader election
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops-leader-election
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - it: applies the restricted pod security posture
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+
+  - it: probes the §25.4 health and readiness endpoints
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: http
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+
+  - it: renders the lenny-ops Service keyed on the app label with HTTP and metrics ports
+    documentSelector:
+      path: kind
+      value: Service
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+      - equal:
+          path: spec.selector.app
+          value: lenny-ops
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8090
+            targetPort: http
+      - contains:
+          path: spec.ports
+          content:
+            name: metrics
+            port: 9090
+            targetPort: http

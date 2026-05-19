@@ -1,0 +1,95 @@
+{{- /*
+The lenny-token-service Deployment and its Service (§4.3, §13.3,
+§17.1). The Token Service serves the RFC 8693 token-exchange endpoint
+the gateway calls; it signs with a §4 KMS-envelope-backed signer. It is
+stateless and runs with 2+ replicas (§17.1) under the §13.1
+Restricted-PSS posture (non-root, all capabilities dropped, read-only
+root filesystem, RuntimeDefault seccomp) shared with the controller.
+
+The §13.2 Token Service NetworkPolicy admits the gateway on
+tokenService.grpcPort; the binary's listener is bound to that port so
+the Service port and the NetworkPolicy agree. The Token Service binary
+serves no HTTP health endpoint, so the probes are TCP socket checks
+against the listener.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  replicas: {{ .Values.tokenService.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: token-service
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: token-service
+    spec:
+      serviceAccountName: lenny-token-service
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: token-service
+          image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.tokenService.image.pullPolicy }}
+          args:
+            - --addr=:{{ .Values.tokenService.grpcPort }}
+            - --issuer={{ .Values.tokenService.issuer }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.tokenService.grpcPort }}
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.tokenService.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: token-service
+  ports:
+    - name: grpc
+      port: {{ .Values.tokenService.grpcPort }}
+      targetPort: grpc
+    - name: metrics
+      port: {{ .Values.tokenService.metricsPort }}
+      targetPort: grpc

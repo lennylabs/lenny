@@ -1,0 +1,198 @@
+{{- /*
+The lenny-gateway Deployment, its Services, and its RBAC (§4.1, §17.1).
+The gateway is the §4.1 edge: it serves the §15.1 REST surface, the
+§8.6 GatewayControl gRPC listener, and the §4.9 LLM reverse proxy. It
+is stateless and horizontally scaled, so the Deployment carries a
+replica count and the §13.1 Restricted-PSS posture (non-root, all
+capabilities dropped, read-only root filesystem, RuntimeDefault
+seccomp) shared with the controller.
+
+The gateway claims §5 warm pods: it lists Sandbox and SandboxWarmPool
+CRDs, creates the binding SandboxClaim CRD the §17.2
+lenny-sandboxclaim-guard webhook checks, and writes Sandbox status. The
+ClusterRole below grants exactly those verbs.
+
+Two Services are rendered. lenny-gateway is the ClusterIP Service the
+internal control plane reaches (the §17.2 lenny-drain-readiness webhook
+and lenny-ops both resolve it by this name); its metrics port maps to
+the gateway's HTTP listener because the binary serves /metrics on the
+same mux as the REST API (§16.1), and the §13.2 ServiceMonitor scrapes
+it. lenny-gateway-pods is the §17.1 headless Service that gives every
+gateway replica per-replica DNS so lenny-ops can fan out §25.3 health
+and event queries to each replica individually.
+
+Postgres, Redis, and MinIO stay bring-your-own external services
+(§17.9). The connection settings are wired from the corresponding
+values via environment variables the binary reads (LENNY_POSTGRES_DSN,
+LENNY_REDIS_URL, LENNY_MINIO_*); the chart leaves them unset by
+default so a stock render produces the in-memory development backends.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lenny-gateway
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  # The gateway lists warm pools and Sandboxes to claim a §5 warm pod,
+  # writes Sandbox status on a successful claim, and reads pods to
+  # resolve the claimed pod's IP for the adapter dial.
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxwarmpools", "sandboxtemplates", "runtimes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxes/status"]
+    verbs: ["get", "update", "patch"]
+  # SandboxClaim: the gateway creates the binding claim CRD that the
+  # §17.2 lenny-sandboxclaim-guard webhook validates on CREATE.
+  - apiGroups: ["lenny.dev"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lenny-gateway
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lenny-gateway
+subjects:
+  - kind: ServiceAccount
+    name: lenny-gateway
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: gateway
+    spec:
+      serviceAccountName: lenny-gateway
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          args:
+            - --addr=:{{ .Values.gateway.internalPort }}
+            - --grpc-addr=:{{ .Values.gateway.grpcPort }}
+            {{- if .Values.features.llmProxy }}
+            - --llm-proxy-addr=:{{ .Values.gateway.llmProxyPort }}
+            {{- end }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.internalPort }}
+            - name: grpc
+              containerPort: {{ .Values.gateway.grpcPort }}
+            {{- if .Values.features.llmProxy }}
+            - name: llm-proxy
+              containerPort: {{ .Values.gateway.llmProxyPort }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: gateway
+  ports:
+    - name: http
+      port: {{ .Values.gateway.internalPort }}
+      targetPort: http
+    - name: grpc
+      port: {{ .Values.gateway.grpcPort }}
+      targetPort: grpc
+    - name: metrics
+      port: {{ .Values.gateway.metricsPort }}
+      targetPort: http
+    {{- if .Values.features.llmProxy }}
+    - name: llm-proxy
+      port: {{ .Values.gateway.llmProxyPort }}
+      targetPort: llm-proxy
+    {{- end }}
+---
+# lenny-gateway-pods headless Service (§17.1). clusterIP: None gives
+# each gateway replica a per-replica DNS A record so lenny-ops can fan
+# out §25.3 health, recommendation, and event queries to every replica.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-gateway-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: gateway
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    lenny.dev/component: gateway
+  ports:
+    - name: http
+      port: {{ .Values.gateway.internalPort }}
+      targetPort: http

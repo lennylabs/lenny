@@ -1,0 +1,152 @@
+{{- /*
+The lenny-ops Deployment, its Service, and its RBAC (§25.4, §17.8.5).
+lenny-ops runs the §25 operability control plane: every replica serves
+the §25 HTTP surface, and the replica that holds the lenny-ops-leader
+Lease runs the §25.4 background loops (the cron evaluator, the webhook
+delivery worker, the scheduled-backup runner). lenny-ops is mandatory
+in every installation (§17.8.5); the chart provides no flag to disable
+it.
+
+Pod label exception (§13.2 line 201): lenny-ops pods carry app:
+lenny-ops rather than the lenny.dev/component selector the rest of the
+control plane uses, because lenny-ops is a separate operability plane.
+The §13.2 NET-051 NetworkPolicies and podmonitor.yaml select it by this
+label, so the Deployment, the selector, and the Service all key on it.
+
+lenny-ops runs the §13.1 Restricted-PSS posture (non-root, all
+capabilities dropped, read-only root filesystem, RuntimeDefault
+seccomp) shared with the controller. Postgres and Redis stay
+bring-your-own external services (§17.9); their connection settings are
+wired from values via the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
+environment variables the binary reads, left unset by default so a
+stock render runs lenny-ops in the §25.4 degraded single-process mode.
+*/ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lenny-ops-sa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lenny-ops-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+rules:
+  # §25.4 leader election: lenny-ops elects a leader through the
+  # lenny-ops-leader Lease in the release namespace.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lenny-ops-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lenny-ops-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: lenny-ops-sa
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-ops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    app: lenny-ops
+spec:
+  replicas: {{ .Values.ops.replicas }}
+  selector:
+    matchLabels:
+      app: lenny-ops
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        app: lenny-ops
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.ops.metricsPort | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: lenny-ops-sa
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ops
+          image: "{{ .Values.ops.image.repository }}:{{ .Values.ops.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.ops.image.pullPolicy }}
+          args:
+            - --addr=:{{ .Values.ops.httpPort }}
+            - --leader-election-namespace={{ .Release.Namespace }}
+            - --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}
+            - --production={{ .Values.ops.production }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: {{ .Values.ops.httpPort }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.ops.resources | nindent 12 }}
+---
+# lenny-ops Service. The metrics port maps to the HTTP listener because
+# the binary serves /metrics on the same mux as the §25 HTTP surface;
+# the §13.2 NET-045 monitoring-scrape NetworkPolicy and podmonitor.yaml
+# scrape it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-ops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    app: lenny-ops
+spec:
+  selector:
+    app: lenny-ops
+  ports:
+    - name: http
+      port: {{ .Values.ops.httpPort }}
+      targetPort: http
+    - name: metrics
+      port: {{ .Values.ops.metricsPort }}
+      targetPort: http
