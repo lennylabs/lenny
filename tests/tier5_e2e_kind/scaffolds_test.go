@@ -25,6 +25,10 @@
 //   - lifecycle_test.go            §13.7 lenny-ops deploy, bootstrap.
 //   - mtls_test.go                 §10.3 mTLS PKI.
 //   - etcd_encryption_test.go      §13.11 etcd encryption at rest.
+//   - ingress_test.go              §13.2 NET-038 gateway-ingress
+//                                  NetworkPolicy.
+//   - audit_test.go                §13.28 audit pipeline to Postgres.
+//   - backup_test.go               §13.28 / §25.11 backup subsystem.
 
 package tier5_e2e_kind_test
 
@@ -84,35 +88,10 @@ func TestConcurrentModes(t *testing.T) {
 		"sessions. The control-plane-only dev-mode install schedules no agent pods.")
 }
 
-// §13.28 Phase 13 — observability + audit + backup.
-
-// spec: 13.28
-// diagnosis: the §13.28 audit pipeline cannot be exercised end to end.
-// The audit pipeline writes audit events to Postgres and ships them to
-// the configured sink. The dev-mode install runs the gateway with
-// in-memory stores and wires no external Postgres, so there is no
-// durable audit table to assert against and no audit sink configured.
-// A tier-5 run needs the chart installed with an external Postgres and
-// an audit sink.
-func TestAuditPipeline(t *testing.T) {
-	kind.InstallLenny(t)
-	t.Skip("§13.28 audit pipeline needs an external Postgres for the durable audit table and a " +
-		"configured audit sink. The dev-mode install runs the gateway with in-memory stores.")
-}
-
-// spec: 13.28
-// diagnosis: the §13.28 backup/restore path cannot be exercised. A
-// backup test triggers a backup of the Postgres state and the MinIO
-// artifact store, then restores it into a fresh namespace. The
-// dev-mode install wires no external Postgres and no MinIO, so there
-// is no durable state to back up. A tier-5 run needs the chart
-// installed with external Postgres and MinIO and the backups feature
-// configured.
-func TestBackupRestore(t *testing.T) {
-	kind.InstallLenny(t)
-	t.Skip("§13.28 backup/restore needs an external Postgres and a MinIO artifact store to back " +
-		"up and restore. The dev-mode install wires neither; the gateway uses in-memory stores.")
-}
+// §13.28 Phase 13 — observability + audit + backup. The audit pipeline
+// (§13.28) and the backup subsystem (§13.28 / §25.11) are converted in
+// audit_test.go and backup_test.go against the live in-cluster Postgres
+// and MinIO.
 
 // §13.32 Phase 15 — cross-environment delegation.
 
@@ -128,22 +107,4 @@ func TestCrossEnvironmentDelegation(t *testing.T) {
 	kind.InstallLenny(t)
 	t.Skip("§13.32 cross-environment delegation needs a running parent agent-pod workload and at " +
 		"least two configured environments. The dev-mode install schedules no agent pods.")
-}
-
-// §13.2 — gateway-ingress NetworkPolicy (NET-038).
-
-// spec: 13.2
-// diagnosis: the NET-038 gateway-ingress NetworkPolicy cannot be
-// exercised. The test installs an ingress controller, sends external
-// HTTPS traffic at the gateway through it, and asserts the
-// allow-gateway-ingress NetworkPolicy admits the ingress-controller
-// pods and denies others. The dev-mode install adds no ingress
-// controller and leaves ingressControllerNamespace at its default. A
-// tier-5 run needs an ingress controller installed on the Kind cluster
-// and the chart's ingressControllerNamespace pointed at it.
-func TestGatewayIngressPolicy(t *testing.T) {
-	kind.InstallLenny(t)
-	t.Skip("not implemented: §12.5 gateway_ingress_policy — needs an ingress controller installed " +
-		"on the Kind cluster and the chart's ingressControllerNamespace pointed at it; the dev-mode " +
-		"install adds neither")
 }

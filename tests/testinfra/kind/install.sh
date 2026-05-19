@@ -20,10 +20,13 @@
 #   5. Install cert-manager and wait for it to become Available.
 #   6. Install the prometheus-operator CRDs the chart's monitoring
 #      templates depend on.
-#   7. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
+#   7. Install ingress-nginx and wait for its controller to become
+#      Available. The tier-5 gateway-ingress NetworkPolicy test needs
+#      a real Ingress controller namespace on the cluster.
+#   8. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
 #      wait for them to become Available, apply the schema-migration
 #      Job, and create the MinIO artifact bucket.
-#   8. Install the Lenny Helm chart with the e2e values overlay.
+#   9. Install the Lenny Helm chart with the e2e values overlay.
 #
 # Environment variables:
 #   LENNY_KIND_CLUSTER   Cluster name. Default: lenny-e2e.
@@ -37,6 +40,7 @@ CLUSTER="${LENNY_KIND_CLUSTER:-lenny-e2e}"
 TAG="${LENNY_IMAGE_TAG:-e2e}"
 CERT_MANAGER_VERSION="v1.16.2"
 PROM_OPERATOR_VERSION="v0.79.2"
+INGRESS_NGINX_VERSION="controller-v1.11.3"
 
 # Resolve the repository root from this script's location so the
 # script runs correctly regardless of the caller's working directory.
@@ -198,7 +202,30 @@ for crd in prometheusrules servicemonitors podmonitors; do
 done
 
 # ---------------------------------------------------------------------
-# Step 7: deploy the in-cluster data stores, migrate the schema, and
+# Step 7: install ingress-nginx.
+#
+# The tier-5 gateway-ingress NetworkPolicy test (NET-038) asserts the
+# chart's allow-gateway-ingress policy admits the Ingress controller
+# namespace. That assertion needs a real Ingress controller installed
+# on the cluster. The Kind-flavoured ingress-nginx manifest node-selects
+# ingress-ready=true; cluster.yaml labels the control-plane node with
+# it. This step is idempotent: it skips the apply when the controller
+# Deployment is already rolled out. The step does not depend on the
+# Helm chart and is independent of the data-store and chart steps below.
+# ---------------------------------------------------------------------
+if kc -n ingress-nginx get deploy ingress-nginx-controller >/dev/null 2>&1 &&
+  [ "$(kc -n ingress-nginx get deploy ingress-nginx-controller \
+    -o jsonpath='{.status.availableReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+  log "ingress-nginx controller already rolled out; skipping apply"
+else
+  log "installing ingress-nginx ${INGRESS_NGINX_VERSION}"
+  kc apply -f "https://raw.githubusercontent.com/kubernetes/ingress-nginx/${INGRESS_NGINX_VERSION}/deploy/static/provider/kind/deploy.yaml"
+fi
+log "waiting for the ingress-nginx controller to become Available"
+kc -n ingress-nginx wait --for=condition=Available deploy/ingress-nginx-controller --timeout=240s
+
+# ---------------------------------------------------------------------
+# Step 8: deploy the in-cluster data stores, migrate the schema, and
 # create the MinIO bucket.
 #
 # The production chart treats Postgres, Redis, and MinIO as
@@ -270,7 +297,7 @@ kc -n lenny-system run lenny-e2e-minio-mb \
 log "MinIO bucket ${MINIO_BUCKET} is present"
 
 # ---------------------------------------------------------------------
-# Step 8: install the Lenny Helm chart.
+# Step 9: install the Lenny Helm chart.
 # ---------------------------------------------------------------------
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
   log "Helm release lenny is already installed in lenny-system; upgrading"
