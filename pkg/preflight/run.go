@@ -39,6 +39,14 @@ type Config struct {
 	// AcceptDowngrade maps a feature flag to its
 	// acceptFeatureFlagDowngrade override.
 	AcceptDowngrade map[string]bool
+	// SPIFFETrustDomain is the global.spiffeTrustDomain value under
+	// installation, checked for §13.2 NET-064 uniqueness against the
+	// trust domains already in use cluster-wide.
+	SPIFFETrustDomain string
+	// SATokenAudience is the global.saTokenAudience value under
+	// installation, checked for §13.2 NET-064 uniqueness against the
+	// audiences already in use cluster-wide.
+	SATokenAudience string
 }
 
 // CheckResult pairs a §17.9 check name with its outcome.
@@ -63,7 +71,7 @@ func Failed(report []CheckResult) bool {
 // and runs them. A cluster read that fails is surfaced as a failed
 // check, consistent with the fail-closed posture of the preflight Job.
 func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
-	report := make([]CheckResult, 0, 2)
+	report := make([]CheckResult, 0, 10)
 
 	if deployed, err := gatherWebhooks(ctx, reader); err != nil {
 		report = append(report, CheckResult{
@@ -105,7 +113,82 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			Decision: CheckHostSharing(pods),
 		})
 	}
+
+	// §13.2 NetworkPolicy selector-consistency and parity audits. A
+	// failed List is surfaced as a failure on every audit it would
+	// feed, keeping the fail-closed posture.
+	npChecks := []string{
+		"networkpolicy-selector-consistency",
+		"networkpolicy-dns-podselector-parity",
+		"networkpolicy-ipblock-family-parity",
+		"networkpolicy-ssrf-private-range-parity",
+		"networkpolicy-cluster-cidr-symmetry",
+		"networkpolicy-ops-egress-selector-parity",
+	}
+	if policies, err := gatherNetworkPolicies(ctx, reader); err != nil {
+		for _, name := range npChecks {
+			report = append(report, CheckResult{
+				Name:     name,
+				Decision: Decision{Reason: "list Lenny-managed NetworkPolicies: " + err.Error()},
+			})
+		}
+	} else {
+		report = append(report,
+			CheckResult{Name: "networkpolicy-selector-consistency", Decision: CheckSelectorConsistency(policies)},
+			CheckResult{Name: "networkpolicy-dns-podselector-parity", Decision: CheckDNSPodSelectorParity(policies)},
+			CheckResult{Name: "networkpolicy-ipblock-family-parity", Decision: CheckIPBlockFamilyParity(policies)},
+			CheckResult{Name: "networkpolicy-ssrf-private-range-parity", Decision: CheckSSRFPrivateRangeParity(policies)},
+			CheckResult{Name: "networkpolicy-cluster-cidr-symmetry", Decision: CheckClusterCIDRSymmetry(policies)},
+			CheckResult{Name: "networkpolicy-ops-egress-selector-parity", Decision: CheckOpsEgressSelectorParity(policies)},
+		)
+	}
+
+	// §13.2 / §10.3 NET-064 deployment-identity uniqueness audits.
+	if gws, err := gatherGatewayIdentities(ctx, reader); err != nil {
+		for _, name := range []string{"spiffe-trust-domain-uniqueness", "sa-token-audience-uniqueness"} {
+			report = append(report, CheckResult{
+				Name:     name,
+				Decision: Decision{Reason: "list lenny-gateway Deployments: " + err.Error()},
+			})
+		}
+	} else {
+		report = append(report,
+			CheckResult{
+				Name:     "spiffe-trust-domain-uniqueness",
+				Decision: CheckSPIFFETrustDomainUniqueness(cfg.SPIFFETrustDomain, cfg.Namespace, gws),
+			},
+			CheckResult{
+				Name:     "sa-token-audience-uniqueness",
+				Decision: CheckSATokenAudienceUniqueness(cfg.SATokenAudience, cfg.Namespace, gws),
+			},
+		)
+	}
 	return report
+}
+
+// gatherGatewayIdentities lists every Lenny-managed lenny-gateway
+// Deployment across the cluster and projects each onto its §13.2
+// NET-064 deployment-identity annotations. The chart labels the
+// gateway Deployment lenny.dev/component: gateway, so the audit scans
+// only gateway Deployments and reads their trust-domain and
+// SA-token-audience annotations.
+func gatherGatewayIdentities(ctx context.Context, reader client.Reader) ([]GatewayIdentity, error) {
+	var deploys appsv1.DeploymentList
+	if err := reader.List(ctx, &deploys,
+		client.MatchingLabels{canonicalComponentLabel: "gateway"}); err != nil {
+		return nil, err
+	}
+	out := make([]GatewayIdentity, 0, len(deploys.Items))
+	for i := range deploys.Items {
+		d := &deploys.Items[i]
+		out = append(out, GatewayIdentity{
+			Namespace:         d.Namespace,
+			Name:              d.Name,
+			SPIFFETrustDomain: d.Annotations[spiffeTrustDomainAnnotation],
+			SATokenAudience:   d.Annotations[saTokenAudienceAnnotation],
+		})
+	}
+	return out, nil
 }
 
 // gatherWorkloadPodSpecs lists the Lenny-managed Deployments,

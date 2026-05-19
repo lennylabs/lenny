@@ -11,9 +11,19 @@
 //	    is present, fail-closed, and CA-injected (§17.9).
 //	phase-stamp-consistency     — no admission-plane feature flag recorded
 //	    enabled is being downgraded without acknowledgement (§17.2, §17.9).
+//	host-sharing-flags          — no Lenny-managed pod template enables a
+//	    host-sharing or process-sharing flag (§13.1).
+//	networkpolicy-*             — the §13.2 NetworkPolicy selector-consistency
+//	    and SSRF parity audits: canonical-selector consistency (NET-047,
+//	    NET-050, NET-068), DNS podSelector parity (NET-067), ipBlock
+//	    family parity (NET-062), SSRF private-range parity (NET-057),
+//	    cluster-CIDR/IMDS symmetry (NET-065), and operability-plane
+//	    two-selector enforcement (NET-061).
+//	spiffe-trust-domain-uniqueness / sa-token-audience-uniqueness —
+//	    the §13.2/§10.3 NET-064 deployment-identity collision checks.
 //
-// The feature-flag and acceptFeatureFlagDowngrade values are passed by
-// the Job from the chart values.
+// The feature-flag, acceptFeatureFlagDowngrade, and NET-064 identity
+// values are passed by the Job from the chart values.
 package main
 
 import (
@@ -53,6 +63,10 @@ func main() {
 	compliance := flag.Bool("feature-compliance", false, "value of the features.compliance chart flag")
 	acceptDowngrade := flag.String("accept-downgrade", "",
 		"comma-separated feature flags whose admission-plane downgrade is acknowledged")
+	spiffeTrustDomain := flag.String("spiffe-trust-domain", "",
+		"value of the global.spiffeTrustDomain chart value (NET-064 uniqueness check)")
+	saTokenAudience := flag.String("sa-token-audience", "",
+		"value of the global.saTokenAudience chart value (NET-064 uniqueness check)")
 	flag.Parse()
 
 	cfg, err := ctrl.GetConfig()
@@ -73,7 +87,9 @@ func main() {
 			DrainReadiness: *drainReadiness,
 			Compliance:     *compliance,
 		},
-		AcceptDowngrade: parseAcceptDowngrade(*acceptDowngrade),
+		AcceptDowngrade:   parseAcceptDowngrade(*acceptDowngrade),
+		SPIFFETrustDomain: *spiffeTrustDomain,
+		SATokenAudience:   *saTokenAudience,
 	})
 
 	for _, r := range report {
