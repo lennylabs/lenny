@@ -151,6 +151,43 @@ global:
   # development (§4.9). It must never be enabled on a real multi-tenant
   # cluster.
   devMode: false
+  # spiffeTrustDomain is the SPIFFE trust domain anchoring agent-pod
+  # and in-cluster-interceptor identities (§10.3). It is the host
+  # component of every spiffe:// URI Lenny issues. Defaults to the
+  # cluster DNS domain so a stock install has a stable anchor.
+  spiffeTrustDomain: cluster.local
+
+# mtls configures the §10.3 gateway-to-agent-pod mTLS PKI: a
+# cluster-internal certificate authority managed by cert-manager and
+# the per-component serving certificates for the internal control-plane
+# mTLS identities (gateway, controller, token service). Agent-pod
+# certificates are issued per pod at pod-creation time with a
+# pod-specific SPIFFE SAN and a 4h TTL; they are not static chart
+# resources and are therefore not rendered here. The per-component
+# certificates issued here all chain to the CA below, so the gateway,
+# controller, and token service validate each other against one trust
+# anchor (§10.3 mutual SAN validation).
+mtls:
+  # enabled gates the §10.3 internal mTLS PKI templates. Leave true for
+  # any cluster that runs gateway-to-pod mTLS through cert-manager. Set
+  # false when a service mesh (Istio, Linkerd) supplies mTLS instead,
+  # in which case the mesh issues the identities (§10.3).
+  enabled: true
+  # caDurationHours is the lifetime of the cluster-internal CA
+  # certificate. The CA outlives the leaf certificates by a wide margin
+  # so leaf renewal never races CA expiry.
+  caDurationHours: 8760
+  # caRenewBeforeHours is how long before CA expiry cert-manager
+  # renews the CA certificate.
+  caRenewBeforeHours: 720
+  # leafDurationHours is the lifetime of the per-component leaf
+  # certificates (gateway, controller, token service). §10.3 sets the
+  # control-plane component TTL at 24h.
+  leafDurationHours: 24
+  # leafRenewBeforeHours is how long before leaf expiry cert-manager
+  # renews a component certificate. §10.3 renews at 2/3 of lifetime, so
+  # the default 8h on a 24h certificate matches that ratio.
+  leafRenewBeforeHours: 8
 
 # adapter configures the §4.7 runtime adapter sidecar that runs in
 # every agent pod.

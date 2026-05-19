@@ -1,0 +1,103 @@
+{{- /*
+§10.3 mTLS PKI. The gateway-to-agent-pod mTLS control plane rests on a
+cluster-internal certificate authority managed by cert-manager. This
+template renders that CA and the per-component serving certificates for
+the internal control-plane identities.
+
+The CA is bootstrapped with the standard cert-manager two-issuer
+pattern: a self-signed Issuer mints a CA certificate, and a second
+Issuer (kind: CA) signs every leaf certificate from that CA. Every leaf
+therefore chains to one trust anchor, which is what lets the gateway,
+controller, and token service validate each other's certificates
+(§10.3 mutual SAN validation).
+
+Certificates rendered:
+
+  - lenny-mtls-ca         the cluster-internal CA certificate.
+  - lenny-gateway-tls     gateway replica serving certificate, DNS SAN
+                          lenny-gateway.<ns>.svc, 24h TTL.
+  - lenny-controller-tls  controller serving certificate, DNS SAN
+                          lenny-controller.<ns>.svc, 24h TTL.
+  - lenny-token-service-tls  Token Service serving certificate, DNS SAN
+                          lenny-token-service.<ns>.svc, 24h TTL.
+
+Agent-pod certificates (4h TTL, per-pod spiffe:// SAN) are issued per
+pod at pod-creation time and are not static chart resources; they are
+intentionally absent here. See the chart README and §10.3 for the
+agent-pod issuance path.
+
+The whole PKI is gated by mtls.enabled. Deployments that use a service
+mesh for mTLS set mtls.enabled: false and let the mesh issue identities.
+*/ -}}
+{{- if .Values.mtls.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $m := .Values.mtls }}
+---
+{{- /*
+Self-signed bootstrap Issuer. Its sole job is to sign the CA
+certificate below; no leaf certificate is ever issued from it.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lenny-mtls-selfsign
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  selfSigned: {}
+---
+{{- /*
+Cluster-internal CA certificate. isCA: true marks the resulting
+certificate as a signing CA; cert-manager stores the CA key pair in the
+lenny-mtls-ca secret, which the CA Issuer below consumes.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lenny-mtls-ca
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  isCA: true
+  commonName: lenny-mtls-ca
+  secretName: lenny-mtls-ca
+  duration: {{ printf "%dh" (int $m.caDurationHours) }}
+  renewBefore: {{ printf "%dh" (int $m.caRenewBeforeHours) }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: lenny-mtls-selfsign
+    kind: Issuer
+---
+{{- /*
+CA Issuer. Every leaf certificate below references this Issuer, so all
+internal control-plane certificates chain to lenny-mtls-ca.
+*/}}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: lenny-mtls-ca
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  ca:
+    secretName: lenny-mtls-ca
+{{- /*
+Per-component leaf certificates. lenny.mtlsLeafCertificate renders one
+Certificate with a DNS SAN of <service>.<ns>.svc (and the FQDN form),
+the §10.3 24h TTL, and the CA issuerRef.
+*/}}
+{{- $leaf := dict "root" $ "name" "lenny-gateway" "component" "gateway" }}
+{{ include "lenny.mtlsLeafCertificate" $leaf }}
+{{- $leaf = dict "root" $ "name" "lenny-controller" "component" "controller" }}
+{{ include "lenny.mtlsLeafCertificate" $leaf }}
+{{- $leaf = dict "root" $ "name" "lenny-token-service" "component" "token-service" }}
+{{ include "lenny.mtlsLeafCertificate" $leaf }}
+{{- end }}

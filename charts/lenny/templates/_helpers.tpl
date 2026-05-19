@@ -12,3 +12,51 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 {{- end -}}
+
+{{/*
+lenny.mtlsLeafCertificate renders one §10.3 internal-control-plane
+cert-manager Certificate. The certificate has a DNS SAN of
+<name>.<namespace>.svc (and the cluster-FQDN form), the §10.3 24h leaf
+TTL, and an issuerRef pointing at the lenny-mtls-ca CA Issuer so the
+leaf chains to the cluster-internal CA.
+
+Invoke with a dict carrying the root context, the component's Service
+name, and a short component label:
+
+    {{- include "lenny.mtlsLeafCertificate" (dict "root" $ "name" "lenny-gateway" "component" "gateway") }}
+
+The resulting Secret is named <name>-tls.
+*/}}
+{{- define "lenny.mtlsLeafCertificate" -}}
+{{- $ := .root -}}
+{{- $name := .name -}}
+{{- $component := .component -}}
+{{- $ns := $.Release.Namespace -}}
+{{- $m := $.Values.mtls -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $name }}-tls
+  namespace: {{ $ns }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: mtls-pki
+spec:
+  secretName: {{ $name }}-tls
+  duration: {{ printf "%dh" (int $m.leafDurationHours) }}
+  renewBefore: {{ printf "%dh" (int $m.leafRenewBeforeHours) }}
+  commonName: {{ $name }}.{{ $ns }}.svc
+  dnsNames:
+    - {{ $name }}.{{ $ns }}.svc
+    - {{ $name }}.{{ $ns }}.svc.cluster.local
+  usages:
+    - server auth
+    - client auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: lenny-mtls-ca
+    kind: Issuer
+{{- end -}}

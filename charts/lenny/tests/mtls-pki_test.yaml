@@ -1,0 +1,142 @@
+suite: mtls pki
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - mtls-pki.yaml
+tests:
+  - it: renders the CA issuers and per-component certificates by default
+    asserts:
+      - hasDocuments:
+          count: 6
+
+  - it: bootstraps a self-signed issuer for the CA
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Issuer
+      - equal:
+          path: metadata.name
+          value: lenny-mtls-selfsign
+      - exists:
+          path: spec.selfSigned
+
+  - it: issues a cluster-internal CA certificate from the self-signed issuer
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: metadata.name
+          value: lenny-mtls-ca
+      - equal:
+          path: spec.isCA
+          value: true
+      - equal:
+          path: spec.secretName
+          value: lenny-mtls-ca
+      - equal:
+          path: spec.issuerRef.name
+          value: lenny-mtls-selfsign
+
+  - it: defines a CA issuer backed by the CA secret
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: Issuer
+      - equal:
+          path: metadata.name
+          value: lenny-mtls-ca
+      - equal:
+          path: spec.ca.secretName
+          value: lenny-mtls-ca
+
+  - it: issues the gateway serving certificate chained to the CA
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: metadata.name
+          value: lenny-gateway-tls
+      - equal:
+          path: spec.secretName
+          value: lenny-gateway-tls
+      - equal:
+          path: spec.commonName
+          value: lenny-gateway.lenny-system.svc
+      - contains:
+          path: spec.dnsNames
+          content: lenny-gateway.lenny-system.svc
+      - contains:
+          path: spec.dnsNames
+          content: lenny-gateway.lenny-system.svc.cluster.local
+      - equal:
+          path: spec.issuerRef.name
+          value: lenny-mtls-ca
+      - equal:
+          path: spec.duration
+          value: 24h
+
+  - it: issues the controller serving certificate chained to the CA
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: metadata.name
+          value: lenny-controller-tls
+      - equal:
+          path: spec.commonName
+          value: lenny-controller.lenny-system.svc
+      - equal:
+          path: spec.issuerRef.name
+          value: lenny-mtls-ca
+
+  - it: issues the token-service serving certificate chained to the CA
+    documentIndex: 5
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: metadata.name
+          value: lenny-token-service-tls
+      - equal:
+          path: spec.commonName
+          value: lenny-token-service.lenny-system.svc
+      - equal:
+          path: spec.issuerRef.name
+          value: lenny-mtls-ca
+
+  - it: marks every PKI resource with the mtls-pki component label
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: metadata.labels["lenny.dev/component"]
+          value: mtls-pki
+
+  - it: gives leaf certificates both server and client auth usages
+    documentIndex: 3
+    asserts:
+      - contains:
+          path: spec.usages
+          content: server auth
+      - contains:
+          path: spec.usages
+          content: client auth
+
+  - it: renders nothing when mtls is disabled
+    set:
+      mtls.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: honors a custom leaf certificate duration
+    set:
+      mtls.leafDurationHours: 48
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: spec.duration
+          value: 48h
