@@ -18,11 +18,14 @@
 // transport disconnect, resuming from the last delivered sequence
 // via the Last-Event-ID header.
 //
-// The package is split into two parts. This package holds the REST
-// client, the event stream, the typed error, and the wire types.
-// Sub-package github.com/lennylabs/lenny/sdks/client/go/webhook
-// holds the §14 webhook signature verifier.
+// Client.MCP returns an MCPClient that drives the §15.2 gateway MCP
+// API over JSON-RPC 2.0: the initialize handshake, tools/list tool
+// discovery, and tools/call invocation of the platform tools
+// (lenny/create_session, lenny/send_message, and the others).
 //
-// The MCP-client surface named in §15.6 is not yet implemented in
-// this SDK.
+// The package is split into two parts. This package holds the REST
+// client, the event stream, the MCP client, the typed error, and the
+// wire types. Sub-package
+// github.com/lennylabs/lenny/sdks/client/go/webhook holds the §14
+// webhook signature verifier.
 package lenny

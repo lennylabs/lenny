@@ -21,9 +21,11 @@
 // up the gateway with an event bus, and drives the SDK's streaming
 // surface against it.
 //
-// The file-upload and MCP-client SDK surfaces named in §15.6 are not
-// yet implemented; those tests remain skipped with a skip reason
-// naming the missing SDK package.
+// The MCP-client contract test does not fit the JSON-line op model
+// either: it stands up the gateway's §15.2 MCP server in process and
+// drives the SDK's MCP client against it directly. The file-upload SDK
+// surface named in §15.6 is not yet implemented; that test remains
+// skipped with a skip reason naming the missing SDK package.
 
 package sdks_test
 
@@ -45,12 +47,38 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/events"
+	"github.com/lennylabs/lenny/pkg/gateway/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
 )
+
+// newMCPGateway brings up the §15.2 gateway MCP server in process. It
+// is the JSON-RPC 2.0 /mcp endpoint mcp.NewServer serves, with the
+// platform tool surface registered by mcptools.Register against a
+// fresh memstore and an echo executor. The returned test server is
+// closed by the caller's t.Cleanup.
+//
+// The tool surface binds the acme tenant: a session created over MCP
+// is stamped acme, and lenny/send_message resolves it on the same
+// tenant. The echo executor returns the §15.4.4 reference echo runtime
+// shape so the send-message reply is deterministic.
+func newMCPGateway(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:    memstore.New(),
+		Executor: executor.NewEchoExecutor(),
+		TenantID: "acme",
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
 
 // idempotencyWrapped wraps the gateway handler in the §11.5
 // idempotency middleware so a replayed Idempotency-Key returns the
@@ -622,11 +650,82 @@ func TestGoClientPaginationCursors(t *testing.T) {
 }
 
 // spec: 15.6 (tool discovery and the documented MCP tool surface)
-// diagnosis: The SDK has no MCP client yet, so the platform MCP tool
+// diagnosis: The SDK MCP client failed to drive the §15.2 MCP API.
 //
-//	surface cannot be driven through the helper.
+//	Inspect the JSON-RPC handshake, tools/list, and tools/call
+//	dispatch in sdks/client/go/lenny/mcp.go. A handshake failure
+//	points at the initialize params; a tool-call failure points at
+//	the tools/call argument encoding or the result decoder.
 func TestGoClientMCP(t *testing.T) {
-	t.Skip("not implemented: §15.6 Go client MCP — sdks/client/go has no mcp/ package; the MCP tool-discovery and lenny/* invocation surface is a follow-on")
+	// The §15.2 MCP surface is a JSON-RPC endpoint rather than a
+	// request/response REST op, so this contract test imports the SDK
+	// directly and drives its MCP client against the in-process
+	// gateway MCP server, the same pattern the streaming test uses.
+	ts := newMCPGateway(t)
+	client, err := lenny.New(ts.URL, lenny.WithTenant("acme"))
+	if err != nil {
+		t.Fatalf("construct SDK client: %v", err)
+	}
+	mcpClient := client.MCP()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// The initialize handshake negotiates the §15.2 protocol version
+	// and returns the gateway serverInfo.
+	init, err := mcpClient.Initialize(ctx)
+	if err != nil {
+		t.Fatalf("MCP initialize: %v", err)
+	}
+	if init.ProtocolVersion == "" {
+		t.Error("MCP initialize returned an empty negotiated protocol version")
+	}
+	if init.ServerInfo.Name == "" {
+		t.Error("MCP initialize returned empty serverInfo.name")
+	}
+
+	// tools/list returns the platform tool catalog; the session-driving
+	// tools must be present.
+	tools, err := mcpClient.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("MCP tools/list: %v", err)
+	}
+	byName := map[string]bool{}
+	for _, tool := range tools {
+		byName[tool.Name] = true
+	}
+	for _, want := range []string{"lenny/create_session", "lenny/send_message"} {
+		if !byName[want] {
+			t.Errorf("tools/list omitted %q; catalog=%v", want, byName)
+		}
+	}
+
+	// Drive a session over MCP: create it, send a message, read the
+	// reply. The echo executor echoes the message back.
+	created, err := mcpClient.CreateSession(ctx, "claude-code", "alice@acme.com")
+	if err != nil {
+		t.Fatalf("lenny/create_session over MCP: %v", err)
+	}
+	if created.SessionID == "" {
+		t.Fatal("lenny/create_session returned an empty session id")
+	}
+	reply, err := mcpClient.SendMessage(ctx, created.SessionID, "ping")
+	if err != nil {
+		t.Fatalf("lenny/send_message over MCP: %v", err)
+	}
+	if !strings.Contains(reply, "ping") {
+		t.Errorf("send_message reply %q does not echo the message", reply)
+	}
+
+	// An unknown tool is a JSON-RPC transport error carrying the
+	// method-not-found code.
+	if _, err := mcpClient.CallTool(ctx, "lenny/no_such_tool", map[string]any{}); err == nil {
+		t.Error("CallTool of an unknown tool returned no error")
+	} else if mcpErr, ok := lenny.AsMCPError(err); !ok {
+		t.Errorf("unknown-tool error is not an *MCPError: %v", err)
+	} else if mcpErr.Code != -32601 {
+		t.Errorf("unknown-tool error code: got %d, want -32601", mcpErr.Code)
+	}
 }
 
 // spec: 15.6 (context cancellation propagates through every SDK call)

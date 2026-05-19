@@ -96,6 +96,17 @@ func AsAPIError(err error) (*APIError, bool) {
 	return nil, false
 }
 
+// AsMCPError narrows err to an *MCPError, the typed form of a §15.2
+// JSON-RPC error object. It returns the error and true when err is or
+// wraps an *MCPError, and (nil, false) otherwise.
+func AsMCPError(err error) (*MCPError, bool) {
+	var mcpErr *MCPError
+	if errors.As(err, &mcpErr) {
+		return mcpErr, true
+	}
+	return nil, false
+}
+
 // retryableStatus reports whether an HTTP status warrants a retry
 // when the response carried no parseable error envelope. The §15.1
 // retryable categories map onto 429, 500, 502, 503, and 504.

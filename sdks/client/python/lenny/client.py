@@ -26,6 +26,7 @@ from typing import Any, AsyncIterator, Callable, Iterator, Optional, TypeVar
 
 from .auth import Authenticator
 from .errors import APIError, TransportError
+from .mcp import AsyncMCPClient, MCPClient, _MCPConfig
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from .stream import (
     AsyncEventStream,
@@ -227,6 +228,27 @@ class Client:
             auth=self._auth,
             tenant_id=self._tenant_id,
             rng=self._rng,
+        )
+
+    def mcp(self) -> MCPClient:
+        """Return an :class:`~lenny.mcp.MCPClient` for the section 15.2 API.
+
+        The MCP client drives the section 15.2 gateway MCP API over
+        JSON-RPC 2.0: the ``initialize`` handshake, ``tools/list`` tool
+        discovery, and ``tools/call`` invocation of the platform tools.
+        It targets the gateway's ``/mcp`` endpoint and reuses this
+        client's base URL, authentication credential, and development
+        tenant header.
+        """
+        return MCPClient(self._mcp_config())
+
+    def _mcp_config(self) -> _MCPConfig:
+        """Build the transport snapshot the MCP client reads."""
+        return _MCPConfig(
+            base_url=self._base_url,
+            timeout=self._timeout,
+            auth=self._auth,
+            tenant_id=self._tenant_id,
         )
 
     def delete_session(
@@ -493,6 +515,19 @@ class AsyncClient:
         stream.
         """
         return AsyncEventStream(self._sync._stream_config(), session_id, options)
+
+    async def mcp(self) -> AsyncMCPClient:
+        """Return an :class:`~lenny.mcp.AsyncMCPClient` for the section 15.2 API.
+
+        It is the ``async`` counterpart of :meth:`Client.mcp`. Each MCP
+        call runs the corresponding blocking method on a worker thread,
+        so an ``await``-ing caller does not block the event loop.
+
+        The method is a coroutine so its call site mirrors the other
+        :class:`AsyncClient` methods; ``await`` it to obtain the MCP
+        client.
+        """
+        return AsyncMCPClient(self._sync._mcp_config())
 
     async def delete_session(
         self, session_id: str, options: Optional[RequestOptions] = None

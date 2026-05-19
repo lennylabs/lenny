@@ -18,6 +18,11 @@ retryable errors with exponential backoff and jitter.
 iterator, reconnecting with the ``Last-Event-ID`` cursor on a
 disconnect.
 
+:meth:`Client.mcp` returns an :class:`~lenny.mcp.MCPClient` that drives
+the section 15.2 gateway MCP API over JSON-RPC 2.0: the ``initialize``
+handshake, ``tools/list`` tool discovery, and ``tools/call`` invocation
+of the platform tools.
+
 :class:`AsyncClient` exposes the same surface behind ``async``/``await``.
 The :mod:`lenny.webhook` module holds the section 14 webhook signature
 verifier.
@@ -45,6 +50,17 @@ from .errors import (
     LennyError,
     TransportError,
     is_retryable,
+)
+from .mcp import (
+    AsyncMCPClient,
+    InitializeResult,
+    MCPClient,
+    MCPContent,
+    MCPCreateSessionResult,
+    MCPError,
+    MCPServerInfo,
+    MCPTool,
+    MCPToolResult,
 )
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from .stream import (
@@ -102,6 +118,16 @@ __all__ = [
     "AsyncEventStream",
     "StreamEvent",
     "StreamOptions",
+    # mcp
+    "MCPClient",
+    "AsyncMCPClient",
+    "MCPError",
+    "MCPTool",
+    "MCPToolResult",
+    "MCPContent",
+    "MCPServerInfo",
+    "InitializeResult",
+    "MCPCreateSessionResult",
     # types
     "CreateSessionRequest",
     "CreateSessionResult",

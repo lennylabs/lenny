@@ -24,9 +24,10 @@
 // an event bus, and drives the SDK's streaming surface against it
 // through a streaming-conformance probe subprocess.
 //
-// The MCP-client SDK surface named in §15.6 is not yet implemented;
-// that test remains skipped with a skip reason naming the missing SDK
-// package.
+// The MCP-client contract test does not fit the JSON-line op model
+// either: it stands up the gateway's §15.2 MCP server in process and
+// drives the SDK's MCP client through an MCP-conformance probe
+// subprocess.
 
 package sdks_test
 
@@ -375,6 +376,76 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	}
 	if cc := d.connectionCount(); cc < 2 {
 		t.Fatalf("%s: expected the SDK to reconnect after the forced disconnect, saw %d connection(s)", name, cc)
+	}
+}
+
+// runSDKMCPProbe drives one client SDK's §15.2 MCP client against the
+// in-process gateway MCP server. It stands up the gateway's JSON-RPC
+// /mcp endpoint (mcp.NewServer with the platform tool surface from
+// mcptools.Register), spawns the language-native MCP probe (cmd), and
+// asserts the probe negotiated the handshake, listed the tool catalog,
+// drove a session over MCP, and saw an unknown tool fail as a
+// transport error.
+//
+// The probe is spawned with LENNY_GATEWAY_URL in its environment; it
+// prints one JSON line summarizing the outcome on success, or
+// {"error": "..."} on failure.
+func runSDKMCPProbe(t *testing.T, name string, cmd []string) {
+	t.Helper()
+
+	ts := newMCPGateway(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+	c.Env = append(
+		os.Environ(),
+		"LENNY_GATEWAY_URL="+ts.URL,
+		"LENNY_TENANT_ID=acme",
+	)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s MCP probe exited with error: %v\noutput: %s", name, err, out)
+	}
+
+	var result struct {
+		ProtocolVersion string   `json:"protocolVersion"`
+		ServerInfo      string   `json:"serverInfo"`
+		Tools           []string `json:"tools"`
+		SessionID       string   `json:"sessionId"`
+		Reply           string   `json:"reply"`
+		UnknownToolCode int      `json:"unknownToolCode"`
+		Error           string   `json:"error"`
+	}
+	if err := json.Unmarshal(trimToJSONLine(out), &result); err != nil {
+		t.Fatalf("%s MCP probe output is not a JSON line: %v\noutput: %s", name, err, out)
+	}
+	if result.Error != "" {
+		t.Fatalf("%s MCP probe reported an error: %s", name, result.Error)
+	}
+	if result.ProtocolVersion == "" {
+		t.Errorf("%s: MCP probe negotiated an empty protocol version", name)
+	}
+	if result.ServerInfo == "" {
+		t.Errorf("%s: MCP probe saw empty serverInfo.name", name)
+	}
+	toolSet := map[string]bool{}
+	for _, tool := range result.Tools {
+		toolSet[tool] = true
+	}
+	for _, want := range []string{"lenny/create_session", "lenny/send_message"} {
+		if !toolSet[want] {
+			t.Errorf("%s: tools/list omitted %q; catalog=%v", name, want, result.Tools)
+		}
+	}
+	if result.SessionID == "" {
+		t.Errorf("%s: create_session over MCP returned an empty session id", name)
+	}
+	if !strings.Contains(result.Reply, "ping") {
+		t.Errorf("%s: send_message reply %q does not echo the message", name, result.Reply)
+	}
+	if result.UnknownToolCode != -32601 {
+		t.Errorf("%s: unknown tool error code %d, want -32601", name, result.UnknownToolCode)
 	}
 }
 
@@ -750,9 +821,24 @@ func TestTypeScriptClientEquivalenceWithGo(t *testing.T) {
 }
 
 // spec: 15.6 (the SDK has an MCP tool-discovery and invocation surface)
-// diagnosis: The SDK has no MCP client yet, so the platform MCP tool
+// diagnosis: The TypeScript SDK MCP client failed to drive the §15.2
 //
-//	surface cannot be driven through the helper.
+//	MCP API. Inspect the JSON-RPC handshake, tools/list, and
+//	tools/call dispatch in sdks/client/typescript/src/mcp.ts. A
+//	handshake failure points at the initialize params; a tool-call
+//	failure points at the argument encoding or the result decoder.
 func TestTypeScriptClientMCP(t *testing.T) {
-	t.Skip("not implemented: §15.6 TypeScript client MCP — sdks/client/typescript has no mcp module; the MCP tool-discovery and lenny/* invocation surface is a follow-on")
+	requireNode(t)
+	// The §15.2 MCP surface is a JSON-RPC endpoint rather than a
+	// request/response REST op, so this contract test drives an
+	// MCP-conformance probe subprocess rather than the JSON-line
+	// helper. The probe drives the SDK MCP client; the Go test stands
+	// up the gateway's MCP server in process.
+	buildTypeScriptHelper(t)
+	root := repoRootFromCWD(t)
+	probe := filepath.Join(root, "sdks", "client", "typescript", "test", "mcp-probe.mjs")
+	if _, err := os.Stat(probe); err != nil {
+		t.Fatalf("typescript MCP probe not found at %s: %v", probe, err)
+	}
+	runSDKMCPProbe(t, "ts-client", []string{"node", probe})
 }

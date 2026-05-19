@@ -2,6 +2,7 @@
 
 import type { Authenticator } from './auth.js';
 import { decodeApiError } from './errors.js';
+import { MCPClient } from './mcp.js';
 import {
   defaultRetryPolicy,
   delayForAttempt,
@@ -249,6 +250,21 @@ export class Client {
       id,
       opt,
     );
+  }
+
+  /**
+   * mcp returns an {@link MCPClient} that drives the §15.2 gateway MCP
+   * API over JSON-RPC 2.0. The MCP client targets the gateway's /mcp
+   * endpoint and reuses this client's base URL, fetch implementation,
+   * authentication credential, and development tenant header.
+   */
+  mcp(): MCPClient {
+    return new MCPClient({
+      baseUrl: this.baseUrl,
+      fetchImpl: this.fetchImpl,
+      auth: this.auth,
+      tenantId: this.tenantId,
+    });
   }
 
   /**

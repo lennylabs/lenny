@@ -19,11 +19,13 @@
  * iterable, reconnecting with the Last-Event-ID cursor on a
  * disconnect.
  *
+ * {@link Client.mcp} returns an {@link MCPClient} that drives the §15.2
+ * gateway MCP API over JSON-RPC 2.0: the initialize handshake,
+ * tools/list tool discovery, and tools/call invocation of the platform
+ * tools (lenny/create_session, lenny/send_message, and the others).
+ *
  * The {@link Verifier} verifies §14 webhook delivery signatures with
  * the same HMAC-SHA256 scheme the gateway signs them.
- *
- * The MCP-client surface named in §15.6 is not yet implemented in this
- * SDK.
  *
  * @packageDocumentation
  */
@@ -56,6 +58,17 @@ export type { RetryPolicy } from './retry.js';
 
 export { streamSessionEvents } from './stream.js';
 export type { StreamEvent, StreamOptions, StreamTransport } from './stream.js';
+
+export { MCPClient, MCPError, asMCPError } from './mcp.js';
+export type {
+  InitializeResult,
+  MCPContent,
+  MCPCreateSessionResult,
+  MCPServerInfo,
+  MCPTool,
+  MCPToolResult,
+  MCPTransport,
+} from './mcp.js';
 
 export type {
   CreateSessionRequest,

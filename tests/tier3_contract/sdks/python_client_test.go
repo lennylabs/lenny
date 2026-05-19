@@ -15,12 +15,13 @@
 // protocol. The helper is a #!/usr/bin/env python3 script, so the
 // harness execs it directly with no build step.
 //
-// The streaming contract test does not fit the JSON-line op model: a
-// §15.1 SSE stream is a long-lived connection rather than a
-// request/response op. It stands up the gateway with an event bus and
-// drives the SDK's streaming surface through a streaming-conformance
-// probe subprocess. Every test skips cleanly when python3 is absent
-// from PATH.
+// The streaming and MCP contract tests do not fit the JSON-line op
+// model: a §15.1 SSE stream is a long-lived connection rather than a
+// request/response op, and the §15.2 MCP API is a JSON-RPC endpoint.
+// They stand up the gateway (with an event bus for streaming, with the
+// MCP server for MCP) and drive the SDK through a conformance probe
+// subprocess. Every test skips cleanly when python3 is absent from
+// PATH.
 
 package sdks_test
 
@@ -176,6 +177,28 @@ func TestPythonClientStreamingReconnect(t *testing.T) {
 		t.Fatalf("python stream probe not found at %s: %v", probe, err)
 	}
 	runSDKStreamingReconnect(t, "python-client", []string{"python3", probe})
+}
+
+// spec: 15.6 (the SDK has an MCP tool-discovery and invocation surface)
+// diagnosis: The Python SDK MCP client failed to drive the §15.2 MCP
+//
+//	API. Inspect the JSON-RPC handshake, tools/list, and tools/call
+//	dispatch in sdks/client/python/lenny/mcp.py. A handshake failure
+//	points at the initialize params; a tool-call failure points at
+//	the argument encoding or the result decoder.
+func TestPythonClientMCP(t *testing.T) {
+	requirePython3(t)
+	// The §15.2 MCP surface is a JSON-RPC endpoint rather than a
+	// request/response REST op, so this contract test drives an
+	// MCP-conformance probe subprocess rather than the JSON-line
+	// helper. The probe drives the SDK MCP client; the Go test stands
+	// up the gateway's MCP server in process.
+	root := repoRootFromCWD(t)
+	probe := filepath.Join(root, "sdks", "client", "python", "tests", "mcp_probe.py")
+	if _, err := os.Stat(probe); err != nil {
+		t.Fatalf("python MCP probe not found at %s: %v", probe, err)
+	}
+	runSDKMCPProbe(t, "python-client", []string{"python3", probe})
 }
 
 // spec: 15.6 (both async/await and synchronous variants supported)
