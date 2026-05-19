@@ -119,9 +119,18 @@ tier runs the gateway against a real local stack. Wave 1 gave every gateway stor
 Postgres backend (migrations 0026-0038), each verified against a real Postgres
 container in the component tier, and `cmd/lenny-migrate` applies the embedded
 migrations. Tiers 2 through 4 still carry `scaffolds_test.go` files whose tests skip
-with a spec-section reason until the matching feature lands. The full tiers 5 through
-9 (e2e Kind, e2e cloud, load, chaos, security) beyond their critical-path subsets
-remain skip-stubs that await cluster, cloud, and product deliverables.
+with a spec-section reason until the matching feature lands. Wave 5 brought tiers 5, 8, and 9 from skip-stubs to real cluster assertions against a
+live Kind cluster running the Lenny Helm chart with in-cluster Postgres, Redis, and
+MinIO. Tier 5 (e2e Kind): 15 tests pass, including the §13.7 admission-policy,
+§10.3 mTLS PKI, §13.2 gateway-ingress, §13.28 audit-pipeline, and §25.11
+backup-render assertions; 9 skip (4 need a running agent-pod workload, 5 are
+feature-gated webhooks). Tier 8 (chaos): 12 pass, including the ADR-007 leader-kill
+and the Postgres/Redis/MinIO/Token-Service outage scenarios; 33 skip. Tier 9
+(security): the §13.2 NetworkPolicy-adversarial, §13.1 pod-security, §12.9.1
+tenant-isolation, §12.9.10 audit-chain, and §12.9.7 RBAC checks pass. The remaining
+skips name their blockers: the warm-pod runtime-container model for the agent-pod
+scenarios, and HA topologies / a chaos-injection harness / an external pen-test or
+fuzzing driver for the rest. tier 6 (e2e cloud) and tier 7 (load) remain skip-stubs.
 
 Wave 3 closed the runtime half of Phase 9 and all of Phases 12b and 12c: the
 `delegation-echo` Standard reference runtime and the `lenny-compliance --level
