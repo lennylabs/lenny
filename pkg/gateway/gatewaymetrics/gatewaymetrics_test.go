@@ -37,9 +37,41 @@ func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {
 		"lenny_gateway_requests_total",
 		"lenny_gateway_request_duration_seconds",
 		"lenny_gateway_active_sessions",
+		// §10.1 / §4.1 horizontal-scaling leading indicators are
+		// registered with a child series at construction, so they
+		// appear on /metrics immediately.
+		"lenny_gateway_active_streams",
+		"lenny_gateway_request_queue_depth",
+		"lenny_gateway_rejection_rate",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q", want)
+		}
+	}
+}
+
+func TestHorizontalScalingGaugesExposeValues(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.SetActiveStreams(7)
+	m.SetRequestQueueDepth(12)
+	m.SetRejectionRate(3)
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"lenny_gateway_active_streams 7",
+		"lenny_gateway_request_queue_depth 12",
+		"lenny_gateway_rejection_rate 3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
 		}
 	}
 }

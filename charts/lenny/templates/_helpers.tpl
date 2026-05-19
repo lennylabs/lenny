@@ -14,6 +14,27 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 
 {{/*
+lenny.autoscaling.metric.* templates are the §4.1 SCL-026 canonical
+HPA metric-role mapping. The gateway HPA and KEDA ScaledObject
+(autoscaling-gateway.yaml) reference every scale metric by its named
+role through these templates, so a metric rename is a single-line edit
+here rather than a sweep across the chart.
+
+  primaryScaleOut — §4.1 primary HPA scale-out trigger (queue depth).
+  secondaryMetric — §4.1 secondary HPA metric (active streams).
+
+lenny_gateway_active_sessions is intentionally absent: §4.1 SCL-026
+classifies it as an alert-only capacity-ceiling signal, never an HPA
+trigger.
+*/}}
+{{- define "lenny.autoscaling.metric.primaryScaleOut" -}}
+lenny_gateway_request_queue_depth
+{{- end -}}
+{{- define "lenny.autoscaling.metric.secondaryMetric" -}}
+lenny_gateway_active_streams
+{{- end -}}
+
+{{/*
 lenny.mtlsLeafCertificate renders one §10.3 internal-control-plane
 cert-manager Certificate. The certificate has a DNS SAN of
 <name>.<namespace>.svc (and the cluster-FQDN form), the §10.3 24h leaf

@@ -26,6 +26,9 @@ type Metrics struct {
 	requestsTotal       *prometheus.CounterVec
 	requestDuration     *prometheus.HistogramVec
 	activeSessions      prometheus.Gauge
+	activeStreams       prometheus.Gauge
+	requestQueueDepth   prometheus.Gauge
+	rejectionRate       prometheus.Gauge
 	storageQuotaUsed    *prometheus.GaugeVec
 	storageQuotaLimit   *prometheus.GaugeVec
 	circuitBreakerOpen  *prometheus.GaugeVec
@@ -59,6 +62,33 @@ func New() (*Metrics, error) {
 	activeSessions, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_gateway_active_sessions",
 		Help: "Current count of non-terminal sessions tracked by the gateway.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	// §10.1 / §4.1 horizontal-scaling signals. activeStreams is the
+	// secondary HPA metric (SCL-026); requestQueueDepth is the primary
+	// HPA scale-out trigger (SCL-026) and rejectionRate is the second
+	// leading indicator that detects saturation before CPU rises. All
+	// three surface on /metrics so the §10.1 custom-metrics pipeline
+	// (Prometheus Adapter or KEDA) can scrape them.
+	activeStreams, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_active_streams",
+		Help: "Open streaming connections on this gateway replica.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	requestQueueDepth, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_request_queue_depth",
+		Help: "Requests queued on this gateway replica awaiting a handler goroutine.",
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	rejectionRate, err := metrics.NewGauge(prometheus.GaugeOpts{
+		Name: "lenny_gateway_rejection_rate",
+		Help: "Gateway requests rejected with 429/503 per second on this replica.",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -124,15 +154,22 @@ func New() (*Metrics, error) {
 		storageQuotaLimit, circuitBreakerOpen, elicitationDropped, experimentIsoRej,
 		noEnvPolicyAllowAll)
 	gauge := activeSessions.WithLabelValues()
+	streams := activeStreams.WithLabelValues()
+	queueDepth := requestQueueDepth.WithLabelValues()
+	rejections := rejectionRate.WithLabelValues()
 	cbStale := cbCacheStale.WithLabelValues()
 	cbInit := cbCacheInitialized.WithLabelValues()
-	reg.MustRegister(activeSessions, cbCacheStale, cbCacheInitialized)
+	reg.MustRegister(activeSessions, activeStreams, requestQueueDepth,
+		rejectionRate, cbCacheStale, cbCacheInitialized)
 
 	return &Metrics{
 		reg:                 reg,
 		requestsTotal:       requestsTotal,
 		requestDuration:     requestDuration,
 		activeSessions:      gauge,
+		activeStreams:       streams,
+		requestQueueDepth:   queueDepth,
+		rejectionRate:       rejections,
 		storageQuotaUsed:    storageQuotaUsed,
 		storageQuotaLimit:   storageQuotaLimit,
 		circuitBreakerOpen:  circuitBreakerOpen,
@@ -213,6 +250,27 @@ func (m *Metrics) Registerer() prometheus.Registerer {
 // calls this from the watchdog sweep or a dedicated poller.
 func (m *Metrics) SetActiveSessions(n int) {
 	m.activeSessions.Set(float64(n))
+}
+
+// SetActiveStreams updates the §4.1 lenny_gateway_active_streams gauge,
+// the secondary HPA metric (SCL-026): the count of in-flight streaming
+// connections on this replica.
+func (m *Metrics) SetActiveStreams(n int) {
+	m.activeStreams.Set(float64(n))
+}
+
+// SetRequestQueueDepth updates the §4.1 lenny_gateway_request_queue_depth
+// gauge, the primary HPA scale-out trigger (SCL-026): the number of
+// requests queued on this replica awaiting a handler goroutine.
+func (m *Metrics) SetRequestQueueDepth(n int) {
+	m.requestQueueDepth.Set(float64(n))
+}
+
+// SetRejectionRate updates the §10.1 lenny_gateway_rejection_rate gauge,
+// the second leading-indicator metric: requests rejected with 429/503
+// per second on this replica.
+func (m *Metrics) SetRejectionRate(perSecond float64) {
+	m.rejectionRate.Set(perSecond)
 }
 
 // Middleware returns an http.Handler that records the §16.1 request

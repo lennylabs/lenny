@@ -9,6 +9,8 @@
 # Base values.yaml keys this preset overrides:
 #   capacityPlanning.tier            — selects the Tier 2 ResourceQuota row
 #   gateway.replicas                 — gateway Deployment replica count
+#   gateway.maxSessionsPerReplica    — §4.1 per-replica session ceiling
+#   autoscaling.*                    — §10.1 gateway horizontal scaler
 #   controller.replicas              — warm-pool controller replica count
 #   tokenService.replicas            — token service replica count
 #   ops.replicas                     — lenny-ops replica count
@@ -25,9 +27,29 @@ capacityPlanning:
 
 # Gateway replica floor of 3 (§17.8.2 gateway table: min 3, max 10).
 # Three replicas keep the deployment above the Tier 2 minimum healthy
-# count of 3 during a single voluntary disruption.
+# count of 3 during a single voluntary disruption. maxSessionsPerReplica
+# is the §4.1 Tier 2 provisional value.
 gateway:
   replicas: 3
+  maxSessionsPerReplica: 200
+
+# Gateway autoscaling at Tier 2 (§10.1, §17.8.2 gateway table). Tier 2
+# uses the KEDA path so the §10.1 custom-metric pipeline lag stays near
+# 20s (pollingInterval 10s). SCL-036 minReplicas burst-absorption
+# (KEDA-path formula, §17.8.2): minReplicas >= ceil(burst_arrival_rate
+# * 20 / maxSessionsPerReplica) = ceil(30 * 20 / 200) = ceil(3) = 3.
+autoscaling:
+  enabled: true
+  provider: keda
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercent: 65
+  # §17.8.2 gateway table: Tier 2 queue-depth target averageValue 10.
+  queueDepthTarget: 10
+  keda:
+    pollingInterval: 10
+    cooldownPeriod: 300
+    prometheusServerAddress: http://prometheus.monitoring.svc:9090
 
 # Controllers run 2 replicas with leader election at every tier
 # (§17.8.2 controller tuning table).

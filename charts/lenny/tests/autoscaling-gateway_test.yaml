@@ -1,0 +1,328 @@
+suite: §10.1 gateway autoscaler (HPA / KEDA)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - autoscaling-gateway.yaml
+tests:
+  # Gating.
+  - it: renders nothing when autoscaling is disabled
+    set:
+      autoscaling:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # SCL-024 mutual exclusion — KEDA provider.
+  - it: keda provider renders exactly one ScaledObject
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ScaledObject
+
+  - it: keda provider renders no standalone HorizontalPodAutoscaler
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    asserts:
+      # The template renders exactly one document; asserting it is the
+      # ScaledObject (and not the HPA apiVersion) proves no standalone
+      # HorizontalPodAutoscaler is emitted (§10.1 SCL-024).
+      - hasDocuments:
+          count: 1
+      - documentIndex: 0
+        isAPIVersion:
+          of: keda.sh/v1alpha1
+      - documentIndex: 0
+        isKind:
+          of: ScaledObject
+
+  # SCL-024 mutual exclusion — HPA provider.
+  - it: hpa provider renders exactly one HorizontalPodAutoscaler
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: HorizontalPodAutoscaler
+
+  - it: hpa provider renders no KEDA ScaledObject
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    asserts:
+      # The template renders exactly one document; asserting it is the
+      # HorizontalPodAutoscaler (and not the KEDA apiVersion) proves no
+      # ScaledObject is emitted (§10.1 SCL-024).
+      - hasDocuments:
+          count: 1
+      - documentIndex: 0
+        isAPIVersion:
+          of: autoscaling/v2
+      - documentIndex: 0
+        isKind:
+          of: HorizontalPodAutoscaler
+
+  # SCL-024 — an unknown provider fails the render rather than emitting
+  # both resources.
+  - it: an unknown provider fails the render
+    set:
+      autoscaling:
+        enabled: true
+        provider: both
+    asserts:
+      - failedTemplate:
+          errorMessage: autoscaling.provider must be "hpa" or "keda", got "both" (§10.1 SCL-024)
+
+  # SCL-026 — named metric roles. The primary scale-out trigger is
+  # lenny_gateway_request_queue_depth on both providers.
+  - it: the HPA primary scale-out trigger is the request-queue-depth metric
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.metrics[0].type
+          value: Pods
+      - equal:
+          path: spec.metrics[0].pods.metric.name
+          value: lenny_gateway_request_queue_depth
+      - equal:
+          path: spec.metrics[0].pods.target.averageValue
+          value: "15"
+      - equal:
+          path: spec.metrics[1].type
+          value: Resource
+      - equal:
+          path: spec.metrics[1].resource.name
+          value: cpu
+
+  - it: the KEDA Prometheus trigger queries the request-queue-depth metric
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.triggers[0].type
+          value: prometheus
+      - equal:
+          path: spec.triggers[0].metadata.metricName
+          value: lenny_gateway_request_queue_depth
+      - equal:
+          path: spec.triggers[0].metadata.query
+          value: avg(lenny_gateway_request_queue_depth)
+
+  - it: the HPA secondary metric is the active-streams metric when its target is set
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+        activeStreamsTarget: 20
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.metrics[2].pods.metric.name
+          value: lenny_gateway_active_streams
+      - equal:
+          path: spec.metrics[2].pods.target.averageValue
+          value: "20"
+
+  - it: the HPA omits the secondary metric when its target is zero
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+        activeStreamsTarget: 0
+    documentIndex: 0
+    asserts:
+      - lengthEqual:
+          path: spec.metrics
+          count: 2
+
+  # §10.1 scale-up behavior — standalone HPA.
+  - it: the HPA scale-up behavior reacts immediately with Percent and Pods policies
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.behavior.scaleUp.stabilizationWindowSeconds
+          value: 0
+      - equal:
+          path: spec.behavior.scaleUp.selectPolicy
+          value: Max
+      - contains:
+          path: spec.behavior.scaleUp.policies
+          content:
+            type: Percent
+            value: 100
+            periodSeconds: 15
+      - contains:
+          path: spec.behavior.scaleUp.policies
+          content:
+            type: Pods
+            value: 4
+            periodSeconds: 15
+
+  # §10.1 scale-down protection — standalone HPA.
+  - it: the HPA scale-down behavior removes one pod per 60s behind a 300s window
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.behavior.scaleDown.stabilizationWindowSeconds
+          value: 300
+      - contains:
+          path: spec.behavior.scaleDown.policies
+          content:
+            type: Pods
+            value: 1
+            periodSeconds: 60
+
+  # §10.1 / SCL-024 — KEDA carries the same behavior in
+  # advanced.horizontalPodAutoscalerConfig, not a separate HPA manifest.
+  - it: the KEDA ScaledObject carries the scale-up behavior in advanced.horizontalPodAutoscalerConfig
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleUp.stabilizationWindowSeconds
+          value: 0
+      - equal:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleUp.selectPolicy
+          value: Max
+      - contains:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleUp.policies
+          content:
+            type: Pods
+            value: 4
+            periodSeconds: 15
+
+  - it: the KEDA ScaledObject carries the scale-down behavior in advanced.horizontalPodAutoscalerConfig
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds
+          value: 300
+      - contains:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.policies
+          content:
+            type: Pods
+            value: 1
+            periodSeconds: 60
+
+  - it: the KEDA ScaledObject sets the Prometheus polling interval
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.pollingInterval
+          value: 10
+
+  # The scaler targets the gateway Deployment.
+  - it: the HPA scaleTargetRef points at the lenny-gateway Deployment
+    set:
+      autoscaling:
+        enabled: true
+        provider: hpa
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: lenny-gateway
+
+  - it: the KEDA scaleTargetRef points at the lenny-gateway Deployment
+    set:
+      autoscaling:
+        enabled: true
+        provider: keda
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: lenny-gateway
+
+  # SCL-036 — the tier presets carry the burst-absorption minReplicas.
+  - it: tier1 preset applies the SCL-036 minReplicas of 2 on the HPA
+    values:
+      - ../presets/values-tier1.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: HorizontalPodAutoscaler
+      - equal:
+          path: spec.minReplicas
+          value: 2
+      - equal:
+          path: spec.maxReplicas
+          value: 4
+
+  - it: tier2 preset applies the SCL-036 minReplicas of 3 on the KEDA ScaledObject
+    values:
+      - ../presets/values-tier2.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ScaledObject
+      - equal:
+          path: spec.minReplicaCount
+          value: 3
+      - equal:
+          path: spec.maxReplicaCount
+          value: 10
+
+  - it: tier3 preset applies the SCL-036 minReplicas of 5 and the 8-pod scale-up policy
+    values:
+      - ../presets/values-tier3.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ScaledObject
+      - equal:
+          path: spec.minReplicaCount
+          value: 5
+      - equal:
+          path: spec.maxReplicaCount
+          value: 30
+      - contains:
+          path: spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleUp.policies
+          content:
+            type: Pods
+            value: 8
+            periodSeconds: 15

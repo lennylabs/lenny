@@ -400,6 +400,109 @@ gateway:
     limits:
       cpu: "1"
       memory: 512Mi
+  # maxSessionsPerReplica is the §4.1 per-replica session capacity
+  # ceiling. It is the divisor in the §17.8.2 SCL-036 minReplicas
+  # burst-absorption formula and the denominator of the
+  # GatewaySessionBudgetNearExhaustion capacity-ceiling alert. The §4.1
+  # provisional values are 50 (Tier 1), 200 (Tier 2), and 400 (Tier 3);
+  # the tier presets override this value.
+  maxSessionsPerReplica: 50
+
+# autoscaling configures the §10.1 gateway horizontal scaler. The chart
+# renders exactly one scaler resource, selected by autoscaling.provider:
+#
+#   provider: hpa  — render a standalone HorizontalPodAutoscaler that
+#     scales on the §4.1 SCL-026 metrics (request queue depth as the
+#     primary trigger, plus CPU) and render no KEDA ScaledObject.
+#   provider: keda — render a KEDA ScaledObject with a Prometheus scaler
+#     trigger on lenny_gateway_request_queue_depth and render no
+#     standalone HorizontalPodAutoscaler.
+#
+# KEDA and a standalone HPA targeting the same Deployment conflict:
+# both controllers write spec.replicas and oscillate (§10.1 SCL-024).
+# The chart enforces the mutual exclusion — autoscaling-gateway.yaml
+# renders one or the other, never both. KEDA is mandatory at Tier 3
+# (§10.1) because it cuts the custom-metric pipeline lag from ~60s to
+# ~20s; Tier 1/2 may use either path.
+autoscaling:
+  # enabled gates autoscaling-gateway.yaml. When false the gateway
+  # Deployment runs at the static gateway.replicas count with no
+  # autoscaler. The base default is false so a stock render needs no
+  # KEDA or Prometheus Adapter install; the tier presets enable it.
+  enabled: false
+  # provider selects the scaler. It MUST be "hpa" or "keda". Any other
+  # value fails the render with a descriptive error (§10.1 SCL-024).
+  provider: hpa
+  # minReplicas is the §17.8.2 SCL-036 burst-absorption floor: idle
+  # replicas must absorb the session burst that arrives during the HPA
+  # pipeline-lag window before scale-out completes. The formula is
+  # ceil(burst_arrival_rate * pipeline_lag_seconds / maxSessionsPerReplica),
+  # with pipeline_lag_seconds 20 for the KEDA path and 60 for the
+  # Prometheus Adapter path. The tier presets carry the computed value.
+  minReplicas: 2
+  # maxReplicas is the §17.8.2 gateway-table scale-out ceiling.
+  maxReplicas: 4
+  # targetCPUUtilizationPercent is the §17.8.2 HPA CPU target. It is the
+  # CPU-utilization metric on the standalone-HPA path; on the KEDA path
+  # CPU is left to the Deployment's own resource sizing and the queue-
+  # depth trigger drives scale-out.
+  targetCPUUtilizationPercent: 70
+  # queueDepthTarget is the §4.1 SCL-026 primary scale-out trigger
+  # target: the per-replica averageValue of lenny_gateway_request_queue_depth
+  # above which the scaler adds replicas. §17.8.2 gateway table: 15
+  # (Tier 1), 10 (Tier 2), 5 (Tier 3).
+  queueDepthTarget: 15
+  # activeStreamsTarget is the §4.1 SCL-026 secondary HPA metric target:
+  # the per-replica averageValue of lenny_gateway_active_streams. It is
+  # surfaced alongside the queue-depth trigger on the standalone-HPA
+  # path. Leave at 0 to omit the secondary metric.
+  activeStreamsTarget: 0
+  # scaleUp is the §10.1 aggressive scale-up behavior. Gateway load is
+  # bursty, so scale-up reacts immediately (zero stabilization window)
+  # and adds the larger of double the replicas or a fixed pod count per
+  # 15s period.
+  scaleUp:
+    # stabilizationWindowSeconds is 0 so scale-up reacts on the first
+    # observation (§10.1).
+    stabilizationWindowSeconds: 0
+    # percentValue / percentPeriodSeconds is the §10.1 percentage
+    # scale-up policy: add 100% of current replicas every 15s.
+    percentValue: 100
+    percentPeriodSeconds: 15
+    # podValue / podPeriodSeconds is the §10.1 fixed-count scale-up
+    # policy: add at least this many pods every 15s. §17.8.2 gateway
+    # table: 4 pods (Tier 1/2), 8 pods (Tier 3).
+    podValue: 4
+    podPeriodSeconds: 15
+  # scaleDown is the §10.1 scale-down protection. The §17.1 flat
+  # maxUnavailable:1 PDB is the binding constraint, so scale-down is
+  # pinned to one pod per 60s at every tier with a 300s stabilization
+  # window to prevent mass eviction during a traffic dip.
+  scaleDown:
+    # stabilizationWindowSeconds is 300 so a brief traffic trough does
+    # not trigger scale-down (§10.1).
+    stabilizationWindowSeconds: 300
+    # podValue / podPeriodSeconds is the §10.1 scale-down policy: remove
+    # one pod per 60s. Pinned at every tier (§17.8.2 "Scale-down rate is
+    # PDB-bound").
+    podValue: 1
+    podPeriodSeconds: 60
+  # keda configures the §10.1 KEDA ScaledObject rendered when provider
+  # is "keda". The behavior block above (scaleUp / scaleDown) is emitted
+  # into the ScaledObject's advanced.horizontalPodAutoscalerConfig field
+  # (§10.1 SCL-024) rather than a separate HPA manifest.
+  keda:
+    # pollingInterval is how often KEDA polls Prometheus, in seconds.
+    # §10.1 recommends 10s for Tier 2/3 to hold the pipeline lag near
+    # 20s; the KEDA default is 30s.
+    pollingInterval: 10
+    # cooldownPeriod is the §10.1 KEDA cooldown before scaling the
+    # Deployment back toward minReplicas after the trigger clears.
+    cooldownPeriod: 300
+    # prometheusServerAddress is the in-cluster Prometheus query URL the
+    # ScaledObject's Prometheus scaler trigger reads. Set this to the
+    # Prometheus Service reachable from the KEDA operator.
+    prometheusServerAddress: http://prometheus.monitoring.svc:9090
 
 # playground configures the §27 web playground the gateway serves at
 # /playground. The gateway reads these values as its --playground-*
