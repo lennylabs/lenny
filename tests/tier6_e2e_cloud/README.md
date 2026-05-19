@@ -54,9 +54,9 @@ this section unless you are preparing a pre-release run of `managed_ingress`.
 When you prepare that run, register one domain and delegate a subdomain to
 each provider so each provider owns an independent zone:
 
-- `gke.acme.com` to Google Cloud DNS.
-- `eks.acme.com` to AWS Route 53.
-- `aks.acme.com` to Azure DNS.
+- `gke.lennylabs.com` to Google Cloud DNS.
+- `eks.lennylabs.com` to AWS Route 53.
+- `aks.lennylabs.com` to Azure DNS.
 
 Register the domain through Cloud Domains, the Route 53 registrar, or any
 registrar. Zone delegation takes time to propagate, so complete this step
@@ -104,15 +104,15 @@ gcloud services enable \
   cloudkms.googleapis.com secretmanager.googleapis.com dns.googleapis.com \
   storage.googleapis.com cloudtrace.googleapis.com logging.googleapis.com \
   bigquery.googleapis.com artifactregistry.googleapis.com \
-  iamcredentials.googleapis.com sts.googleapis.com
+  iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
 ```
 
 These APIs back the §12.6 suites: `container` and `compute` for the cluster
 and the GKE Sandbox node pool, `sqladmin` for `multi_zone_dr`, `cloudkms` for
 `cloud_kms`, `secretmanager` for `cloud_secret_store`, `dns` for `managed_ingress`,
 `storage` for `cloud_csi`, `cloudtrace` and `logging` for `cloud_observability`,
-`bigquery` for `cloud_billing_export`, and `iamcredentials` and `sts` for CI
-federation.
+`bigquery` for `cloud_billing_export`, `iam` for the `cloud_oidc`
+service-account bindings, and `iamcredentials` and `sts` for CI federation.
 
 ### Choose a region and check quotas
 
@@ -150,7 +150,7 @@ gcloud iam workload-identity-pools providers create-oidc github-actions \
   --location=global --workload-identity-pool=github \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository=='acme/lenny'"
+  --attribute-condition="assertion.repository=='lennylabs/lenny'"
 
 gcloud iam service-accounts create lenny-tier6-ci --display-name="Lenny tier-6 CI"
 
@@ -164,7 +164,7 @@ done
 gcloud iam service-accounts add-iam-policy-binding \
   lenny-tier6-ci@lenny-tier6.iam.gserviceaccount.com \
   --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJ_NUM}/locations/global/workloadIdentityPools/github/attribute.repository/acme/lenny"
+  --member="principalSet://iam.googleapis.com/projects/${PROJ_NUM}/locations/global/workloadIdentityPools/github/attribute.repository/lennylabs/lenny"
 ```
 
 Scope the project roles down once the Terraform under
@@ -187,6 +187,28 @@ IAM Identity Center provides the `aws sso login` flow used for local runs.
 2. Create a user for yourself and a permission set. `AdministratorAccess` is
    acceptable for a dedicated test account. Scope it down later.
 3. Assign the user and the permission set to the account.
+
+### Services the suites use
+
+AWS has no per-service enablement step. Every service is available once the
+account exists, and access is granted through IAM. The tier-6 suites use:
+
+- **EKS** and **EC2** for the cluster and its node pools.
+- **Elastic Load Balancing** for the ALB that `managed_ingress` provisions
+  through the AWS Load Balancer Controller.
+- **RDS** for the multi-AZ Postgres of `multi_zone_dr`.
+- **S3** for the `ArtifactStore` of `cloud_csi`.
+- **AWS KMS** for the per-tenant keys of `cloud_kms`.
+- **IAM** for the IRSA roles and the OIDC provider of `cloud_oidc`.
+- **Secrets Manager** for the `cloud_secret_store` backend.
+- **Route 53** for the DNS records of `managed_ingress`.
+- **CloudWatch** and **X-Ray** for the OTLP delivery of `cloud_observability`.
+- **Athena** and **AWS Glue** for the billing-export sink of
+  `cloud_billing_export`.
+- **ECR** for the runtime images.
+
+The local SSO role and the CI role described below both need permissions for
+these services.
 
 ### Choose a region and check quotas
 
@@ -214,33 +236,59 @@ export AWS_REGION=us-west-2
 
 ### CI authentication with GitHub OIDC
 
-1. In the IAM console, add an OpenID Connect identity provider with URL
-   `https://token.actions.githubusercontent.com` and audience
-   `sts.amazonaws.com`. The console retrieves the provider thumbprint.
-2. Create an IAM role whose trust policy restricts assumption to the
-   repository:
+CI authenticates through OIDC federation rather than long-lived keys. The
+commands below register the identity provider, create the CI role with a
+repository-scoped trust policy, and attach its permissions.
 
-   ```json
-   {
-     "Effect": "Allow",
-     "Principal": {
-       "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com"
-     },
-     "Action": "sts:AssumeRoleWithWebIdentity",
-     "Condition": {
-       "StringEquals": {
-         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-       },
-       "StringLike": {
-         "token.actions.githubusercontent.com:sub": "repo:acme/lenny:*"
-       }
-     }
-   }
-   ```
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-3. Attach permissions for EKS, EC2, RDS, AWS KMS, Route 53, S3, and Secrets
-   Manager. Scope the policy down once the Terraform under
-   `deploy/terraform/cloud/eks/` defines the resources it manages.
+# Register the GitHub Actions OIDC identity provider.
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com
+
+# Create the CI role with a trust policy scoped to the repository. The
+# repo:lennylabs/lenny:* subject matches branch, tag, and pull-request runs.
+cat > /tmp/lenny-tier6-trust.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+      "StringLike": { "token.actions.githubusercontent.com:sub": "repo:lennylabs/lenny:*" }
+    }
+  }]
+}
+EOF
+
+aws iam create-role \
+  --role-name lenny-tier6-ci \
+  --assume-role-policy-document file:///tmp/lenny-tier6-trust.json
+
+# Attach permissions. PowerUserAccess covers every service in the
+# "Services the suites use" list except IAM; IAMFullAccess covers the
+# cloud_oidc IRSA setup.
+aws iam attach-role-policy --role-name lenny-tier6-ci \
+  --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
+aws iam attach-role-policy --role-name lenny-tier6-ci \
+  --policy-arn arn:aws:iam::aws:policy/IAMFullAccess
+```
+
+Recent `aws` CLI v2 versions accept `create-open-id-connect-provider` without
+`--thumbprint-list`, because AWS verifies this identity provider through a
+trusted certificate authority. If your CLI version still requires the
+parameter, append `--thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1`.
+The value is not used for token verification.
+
+Replace the two managed policies with a custom policy scoped to the actions
+for the "Services the suites use" list once the Terraform under
+`deploy/terraform/cloud/eks/` defines the resources it manages.
 
 ## Microsoft Azure (AKS)
 
@@ -261,18 +309,21 @@ az login
 az account set --subscription "<subscription-id>"
 az group create --name lenny-tier6 --location eastus2
 
-for NS in Microsoft.ContainerService Microsoft.KeyVault \
+for NS in Microsoft.ContainerService Microsoft.Compute Microsoft.KeyVault \
           Microsoft.DBforPostgreSQL Microsoft.Storage Microsoft.Network \
+          Microsoft.ManagedIdentity Microsoft.ContainerRegistry \
           Microsoft.OperationalInsights Microsoft.Insights; do
   az provider register --namespace "$NS"
 done
 ```
 
-These providers back the §12.6 suites: `ContainerService` for the cluster and
-the Kata or Confidential Containers node pool, `DBforPostgreSQL` for
-`multi_zone_dr`, `KeyVault` for `cloud_kms` and `cloud_secret_store`,
-`Network` for `managed_ingress`, `Storage` for `cloud_csi`,
-and `OperationalInsights` and `Insights` for `cloud_observability`.
+These providers back the §12.6 suites: `ContainerService` and `Compute` for
+the cluster and the Kata or Confidential Containers node pool, `DBforPostgreSQL`
+for `multi_zone_dr`, `KeyVault` for `cloud_kms` and `cloud_secret_store`,
+`Network` for `managed_ingress`, `Storage` for `cloud_csi` and the Data Lake
+sink of `cloud_billing_export`, `ManagedIdentity` for the `cloud_oidc` workload
+identity, `ContainerRegistry` for the runtime images, and `OperationalInsights`
+and `Insights` for `cloud_observability`.
 
 ### Choose a region and check quotas
 
@@ -308,7 +359,7 @@ az ad sp create --id "$APP_ID"
 az ad app federated-credential create --id "$APP_ID" --parameters '{
   "name": "github-lenny-main",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:acme/lenny:ref:refs/heads/main",
+  "subject": "repo:lennylabs/lenny:ref:refs/heads/main",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 
@@ -323,12 +374,12 @@ resources it manages.
 
 ## Environment variables
 
-| Variable | Consumed by | Value |
-|:--|:--|:--|
-| `LENNY_CLOUD_PROVIDER` | Tier-6 test code | `gke`, `eks`, or `aks` |
-| `AWS_PROFILE` | AWS SDK and CLI | The SSO profile name, for example `lenny-tier6` |
-| `AWS_REGION` | AWS SDK and CLI | The cluster region, for example `us-west-2` |
-| `AZURE_SUBSCRIPTION_ID` | Azure SDK and CLI | The subscription identifier |
+| Variable                | Consumed by       | Value                                           |
+| :---------------------- | :---------------- | :---------------------------------------------- |
+| `LENNY_CLOUD_PROVIDER`  | Tier-6 test code  | `gke`, `eks`, or `aks`                          |
+| `AWS_PROFILE`           | AWS SDK and CLI   | The SSO profile name, for example `lenny-tier6` |
+| `AWS_REGION`            | AWS SDK and CLI   | The cluster region, for example `us-west-2`     |
+| `AZURE_SUBSCRIPTION_ID` | Azure SDK and CLI | The subscription identifier                     |
 
 Google Cloud needs no environment variable for local runs. The project comes
 from `gcloud config` and the credentials come from Application Default
