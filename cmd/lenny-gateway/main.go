@@ -118,6 +118,7 @@ import (
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/gateway/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy"
@@ -196,6 +197,8 @@ func main() {
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	bearerTrustHMACKeyFile := flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
+	jwksPublish := flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", true),
+		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults on; clients caching the document verify tokens minted under the current key plus every retained previous key during the §10.3 24h overlap window. Set to false to suppress the endpoint (the endpoint returns 404). Override via LENNY_JWKS_PUBLISH.")
 	runtimeBin := flag.String("runtime-bin", "",
 		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor.")
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
@@ -496,6 +499,17 @@ func main() {
 		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
 	}
 
+	// ----- §10.3 RotatingVerifier -----
+	// Wrap the Token Service signer in a §10.3 RotatingVerifier so the
+	// JWKS publication endpoint, the rotation lifecycle audit event,
+	// and a future operator-driven Rotate call all converge on one
+	// canonical key holder. The rotating verifier starts with the
+	// boot-time KMS signer as its sole current key; until a Rotate
+	// lands, JWKSHandler advertises exactly that key and the bearer
+	// path verifies against it. The §13.3 24h overlap window is the
+	// jwt.DefaultOverlapWindow default.
+	rotatingVerifier := jwt.NewRotatingVerifier(jwtSigner, jwt.DefaultOverlapWindow)
+
 	// ----- §10.2 Bearer verifier -----
 	// The Token Service signer verifies tokens it minted itself. A
 	// production install runs with that single verifier. §17.4 Embedded
@@ -506,14 +520,16 @@ func main() {
 	// unset in a production install, so the production posture is
 	// unchanged. The Token Service signer stays the primary verifier:
 	// its rejection reason is surfaced when neither verifier accepts a
-	// token.
-	var bearerVerifier jwt.Verifier = jwtSigner
+	// token. The verifier is the §10.3 RotatingVerifier; once a
+	// rotation lands, a token signed by the now-previous key keeps
+	// verifying through the overlap window without a code change here.
+	var bearerVerifier jwt.Verifier = rotatingVerifier
 	if *bearerTrustHMACKeyFile != "" {
 		trusted, err := jwt.LoadHMACKeyFile(*bearerTrustHMACKeyFile)
 		if err != nil {
 			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file: %v", err)
 		}
-		bearerVerifier = jwt.NewMultiVerifier(jwtSigner, trusted)
+		bearerVerifier = jwt.NewMultiVerifier(rotatingVerifier, trusted)
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s)",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
@@ -691,6 +707,13 @@ func main() {
 		// In-memory chain — lost on restart, used by the minimal gateway.
 		auditAppender = policy.NewChainSetAppender(auditChains, nil)
 	}
+
+	// §10.3 JWT signing-key rotation audit. Each Rotate or
+	// RetireExpired call against the rotatingVerifier emits one
+	// `platform.jwt_signing_key_rotated` audit row through this
+	// observer; the observer shares the per-tenant chain backend
+	// chosen above and writes to the platform tenant.
+	rotatingVerifier.SetObserver(jwtaudit.NewObserver(auditAppender))
 
 	// §12.8: re-surface any tenant that combines billingErasurePolicy
 	// exempt with a regulated compliance profile so the retention
@@ -1168,6 +1191,20 @@ func main() {
 	mux.Handle("/openapi.yaml", openapi.Handler())
 	mux.Handle("/v1/openapi.json", openapi.Handler())
 	mux.Handle("/v1/oauth/", tokSvc.Handler())
+
+	// ----- §10.3 JWK Set publication -----
+	// The JWKS endpoint advertises the kid/alg of every key the
+	// §10.3 RotatingVerifier holds (the current key plus every
+	// retained previous key during the §10.3 24h overlap window).
+	// The endpoint is unauthenticated by design; the JWK Set carries
+	// only public metadata, never private key material. Suppress with
+	// --jwks-publish=false.
+	if *jwksPublish {
+		jwksHandler := jwt.NewJWKSHandler(rotatingVerifier)
+		mux.Handle("/.well-known/jwks.json", jwksHandler)
+		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
+			rotatingVerifier.CurrentKeyID())
+	}
 	mux.Handle("/v1/chat/completions", openaiHandler.Handler())
 	mux.Handle("/v1/responses", responsesHandler.Handler())
 	mux.Handle("/v1/responses/", responsesHandler.Handler())
@@ -1994,6 +2031,25 @@ func envFlag(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// envFlagDefault returns true / false from the env var name, or def
+// when the var is unset. Used for flags that default on (e.g., the
+// §10.3 --jwks-publish endpoint) where envFlag's always-false-default
+// semantics do not match the spec posture.
+func envFlagDefault(name string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
 	}
 }
 

@@ -390,6 +390,160 @@ func TestRotatingVerifierConcurrentVerify(t *testing.T) {
 	}
 }
 
+// recordingRotationObserver captures every RotationEvent it receives
+// so a test can assert on the audit-shaped record without reaching
+// into the verifier's private state.
+type recordingRotationObserver struct {
+	events []RotationEvent
+}
+
+func (r *recordingRotationObserver) OnRotation(ev RotationEvent) {
+	r.events = append(r.events, ev)
+}
+
+// spec: 10.3
+// diagnosis: a successful Rotate did not deliver a promote_current
+// event to the installed RotationObserver, or delivered an event
+// with the wrong from/to kid. The §10.3 audit pipeline depends on
+// exactly one event per Rotate call carrying the outgoing and
+// incoming kids.
+func TestRotatingVerifierRotateEmitsPromoteCurrentEvent(t *testing.T) {
+	t.Parallel()
+	oldKey := NewHMACSigner("kid-1", []byte("secret-1"))
+	newKey := NewHMACSigner("kid-2", []byte("secret-2"))
+	clock := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	v := withClock(NewRotatingVerifier(oldKey, time.Hour), func() time.Time { return clock })
+	obs := &recordingRotationObserver{}
+	v.SetObserver(obs)
+
+	if err := v.Rotate(newKey); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	if len(obs.events) != 1 {
+		t.Fatalf("observer received %d events, want 1", len(obs.events))
+	}
+	got := obs.events[0]
+	if got.Transition != TransitionPromoteCurrent {
+		t.Errorf("Transition = %q, want %q", got.Transition, TransitionPromoteCurrent)
+	}
+	if got.FromKeyID != "kid-1" {
+		t.Errorf("FromKeyID = %q, want kid-1", got.FromKeyID)
+	}
+	if got.ToKeyID != "kid-2" {
+		t.Errorf("ToKeyID = %q, want kid-2", got.ToKeyID)
+	}
+	if !got.At.Equal(clock) {
+		t.Errorf("At = %v, want %v", got.At, clock)
+	}
+}
+
+// spec: 10.3
+// diagnosis: a failed Rotate (nil next, empty kid, kid collision)
+// still emitted a rotation event. The observer must see events only
+// for transitions that committed to the key set.
+func TestRotatingVerifierRotateDoesNotEmitOnFailure(t *testing.T) {
+	t.Parallel()
+	cur := NewHMACSigner("kid-1", []byte("secret-1"))
+	v := NewRotatingVerifier(cur, DefaultOverlapWindow)
+	obs := &recordingRotationObserver{}
+	v.SetObserver(obs)
+
+	_ = v.Rotate(nil)
+	_ = v.Rotate(NewHMACSigner("", []byte("x")))
+	_ = v.Rotate(NewHMACSigner("kid-1", []byte("y")))
+
+	if len(obs.events) != 0 {
+		t.Errorf("observer received %d events on failed rotations, want 0", len(obs.events))
+	}
+}
+
+// spec: 10.3
+// diagnosis: RetireExpired pruned previous keys without emitting one
+// retire_previous event per pruned key, or emitted events for keys
+// whose overlap window had not yet closed. The audit pipeline must
+// see exactly one event per actual retirement.
+func TestRetireExpiredEmitsOnePerPrunedKey(t *testing.T) {
+	t.Parallel()
+	k1 := NewHMACSigner("kid-1", []byte("secret-1"))
+	k2 := NewHMACSigner("kid-2", []byte("secret-2"))
+	k3 := NewHMACSigner("kid-3", []byte("secret-3"))
+
+	clock := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
+	v := withClock(NewRotatingVerifier(k1, time.Hour), func() time.Time { return clock })
+	obs := &recordingRotationObserver{}
+	v.SetObserver(obs)
+
+	if err := v.Rotate(k2); err != nil { // kid-1 retired at T+0
+		t.Fatalf("Rotate k2: %v", err)
+	}
+	clock = clock.Add(30 * time.Minute)
+	if err := v.Rotate(k3); err != nil { // kid-2 retired at T+30m
+		t.Fatalf("Rotate k3: %v", err)
+	}
+
+	// Two promote events plus zero retire events so far.
+	if got := countByTransition(obs.events, TransitionPromoteCurrent); got != 2 {
+		t.Errorf("promote_current count = %d, want 2", got)
+	}
+	if got := countByTransition(obs.events, TransitionRetirePrevious); got != 0 {
+		t.Errorf("retire_previous count = %d, want 0", got)
+	}
+
+	// Step past kid-1's window but before kid-2's: only kid-1 retires.
+	clock = clock.Add(35 * time.Minute) // T+1h05m
+	if removed := v.RetireExpired(); removed != 1 {
+		t.Errorf("RetireExpired removed %d, want 1", removed)
+	}
+	// One retire event has appeared, naming kid-1.
+	retires := filterByTransition(obs.events, TransitionRetirePrevious)
+	if len(retires) != 1 {
+		t.Fatalf("retire_previous count after first sweep = %d, want 1", len(retires))
+	}
+	if retires[0].FromKeyID != "kid-1" {
+		t.Errorf("first retire FromKeyID = %q, want kid-1", retires[0].FromKeyID)
+	}
+
+	// Step past kid-2's window: it retires too.
+	clock = clock.Add(40 * time.Minute) // T+1h45m, past kid-2 close at T+1h30m
+	if removed := v.RetireExpired(); removed != 1 {
+		t.Errorf("RetireExpired second sweep removed %d, want 1", removed)
+	}
+	retires = filterByTransition(obs.events, TransitionRetirePrevious)
+	if len(retires) != 2 {
+		t.Fatalf("retire_previous total = %d, want 2", len(retires))
+	}
+	// The second retire names kid-2 and stamps the current clock.
+	if retires[1].FromKeyID != "kid-2" {
+		t.Errorf("second retire FromKeyID = %q, want kid-2", retires[1].FromKeyID)
+	}
+	if !retires[1].At.Equal(clock) {
+		t.Errorf("second retire At = %v, want %v", retires[1].At, clock)
+	}
+}
+
+// countByTransition counts events with the named transition.
+func countByTransition(events []RotationEvent, want string) int {
+	n := 0
+	for _, e := range events {
+		if e.Transition == want {
+			n++
+		}
+	}
+	return n
+}
+
+// filterByTransition returns events whose transition matches want,
+// preserving order.
+func filterByTransition(events []RotationEvent, want string) []RotationEvent {
+	out := make([]RotationEvent, 0, len(events))
+	for _, e := range events {
+		if e.Transition == want {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // assertPanics fails the test if fn does not panic.
 func assertPanics(t *testing.T, name string, fn func()) {
 	t.Helper()

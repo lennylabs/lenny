@@ -35,6 +35,66 @@ type keyVersion struct {
 	retiredAt time.Time
 }
 
+// RotationEvent describes a single §10.3 key-rotation lifecycle
+// transition. Rotate emits one promote_current event per call;
+// RetireExpired emits one retire_previous event per pruned previous
+// key. The struct is the wire format the gateway hands to the audit
+// pipeline so the `platform.jwt_signing_key_rotated` audit row
+// carries the same fields regardless of the observing call site.
+type RotationEvent struct {
+	// FromKeyID is the kid leaving the role named by Transition.
+	// For promote_current it is the outgoing current key (now in the
+	// previous set); for retire_previous it is the pruned previous
+	// key. Empty when the transition has no outgoing key (the
+	// initial NewRotatingVerifier call does not emit a transition).
+	FromKeyID string
+
+	// ToKeyID is the kid taking the role named by Transition. For
+	// promote_current it is the incoming current key. For
+	// retire_previous it is empty: the previous key is dropped, no
+	// successor takes its slot.
+	ToKeyID string
+
+	// Transition names the lifecycle step. The set is closed:
+	// "promote_current" (Rotate) or "retire_previous"
+	// (RetireExpired). Future transitions extend this enum.
+	Transition string
+
+	// At is the verifier-clock instant the transition committed.
+	At time.Time
+}
+
+// Transition enumerates the §10.3 key-rotation lifecycle steps a
+// RotationObserver receives. The two values are exported so call
+// sites can build a switch without redefining the literals; the
+// audit pipeline pins these names verbatim onto the
+// `platform.jwt_signing_key_rotated` row.
+const (
+	// TransitionPromoteCurrent fires from Rotate: the incoming key
+	// becomes current and the outgoing current key joins the
+	// previous set.
+	TransitionPromoteCurrent = "promote_current"
+
+	// TransitionRetirePrevious fires from RetireExpired: a previous
+	// key whose §10.3 overlap window has closed is dropped from the
+	// key set.
+	TransitionRetirePrevious = "retire_previous"
+)
+
+// RotationObserver receives one RotationEvent per §10.3 rotation
+// lifecycle transition. The gateway-side wiring writes a
+// `platform.jwt_signing_key_rotated` audit row per event; tests
+// substitute a recording observer. The callback runs synchronously
+// on the calling goroutine and MUST NOT block on external IO —
+// Rotate and RetireExpired hold the verifier's write lock across
+// the callback, so a slow observer stalls every concurrent Verify.
+// Returning an error is recorded by the observer (e.g., to log a
+// failed audit append); it does not roll back the rotation, which
+// has already committed to the key set.
+type RotationObserver interface {
+	OnRotation(ev RotationEvent)
+}
+
 // RotatingVerifier is the §10.3 multi-key JWT verifier. It holds one
 // current key version and zero or more previous key versions, each
 // identified by its JOSE `kid` header value. On Verify it reads the
@@ -65,6 +125,7 @@ type RotatingVerifier struct {
 	previous      map[string]keyVersion
 	overlapWindow time.Duration
 	now           func() time.Time
+	observer      RotationObserver
 }
 
 // NewRotatingVerifier returns a RotatingVerifier whose initial current
@@ -97,6 +158,17 @@ func NewRotatingVerifier(current keyedVerifier, overlapWindow time.Duration) *Ro
 	}
 }
 
+// SetObserver installs (or clears, with nil) the RotationObserver
+// that receives a RotationEvent per §10.3 lifecycle transition.
+// Setting it from a single goroutine before the verifier sees
+// concurrent traffic is the expected usage; a concurrent SetObserver
+// is safe but races with in-flight Rotate / RetireExpired callbacks.
+func (v *RotatingVerifier) SetObserver(o RotationObserver) {
+	v.mu.Lock()
+	v.observer = o
+	v.mu.Unlock()
+}
+
 // Rotate promotes the current key to "previous" status, stamping its
 // retiredAt with the current time, and installs next as the new
 // current key. Tokens signed under the just-retired key keep verifying
@@ -112,6 +184,10 @@ func NewRotatingVerifier(current keyedVerifier, overlapWindow time.Duration) *Ro
 // If next's kid collides with an existing previous key (a kid being
 // reused after it already rotated out once), the stale previous entry
 // is dropped: the incoming key is authoritative for that kid.
+//
+// On a successful rotation Rotate calls the installed RotationObserver
+// (if any) with a TransitionPromoteCurrent event. The observer runs
+// under the verifier's write lock and MUST NOT block on external IO.
 func (v *RotatingVerifier) Rotate(next keyedVerifier) error {
 	if next == nil {
 		return &VerifyError{Reason: "rotation_invalid", Detail: "next key is nil"}
@@ -131,14 +207,25 @@ func (v *RotatingVerifier) Rotate(next keyedVerifier) error {
 		}
 	}
 
+	now := v.now()
 	retired := v.current
-	retired.retiredAt = v.now()
-	v.previous[retired.verifier.KeyID()] = retired
+	retired.retiredAt = now
+	fromKID := retired.verifier.KeyID()
+	v.previous[fromKID] = retired
 
 	// A reused kid: the fresh current key supersedes any same-kid
 	// previous entry.
 	delete(v.previous, nextKID)
 	v.current = keyVersion{verifier: next}
+
+	if v.observer != nil {
+		v.observer.OnRotation(RotationEvent{
+			FromKeyID:  fromKID,
+			ToKeyID:    nextKID,
+			Transition: TransitionPromoteCurrent,
+			At:         now,
+		})
+	}
 	return nil
 }
 
@@ -147,6 +234,11 @@ func (v *RotatingVerifier) Rotate(next keyedVerifier) error {
 // removed. It is an optional housekeeping call: Verify already rejects
 // a token signed by a window-closed key, so an un-pruned key set never
 // admits a stale token. Pruning only bounds the previous-key map.
+//
+// For each pruned key the installed RotationObserver (if any) receives
+// one TransitionRetirePrevious event under the verifier's write lock.
+// The observer MUST NOT block on external IO; a slow observer stalls
+// every concurrent Verify.
 func (v *RotatingVerifier) RetireExpired() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -156,6 +248,13 @@ func (v *RotatingVerifier) RetireExpired() int {
 		if !now.Before(kv.retiredAt.Add(v.overlapWindow)) {
 			delete(v.previous, kid)
 			removed++
+			if v.observer != nil {
+				v.observer.OnRotation(RotationEvent{
+					FromKeyID:  kid,
+					Transition: TransitionRetirePrevious,
+					At:         now,
+				})
+			}
 		}
 	}
 	return removed
