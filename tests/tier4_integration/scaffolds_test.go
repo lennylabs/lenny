@@ -70,23 +70,17 @@ func TestLLMProxyAnthropic(t *testing.T) {
 	t.Skip("not implemented: §4.9 LLM Proxy + native translator — requires the §4.9 proxy-mode dialect translator and an outbound HTTP client against the Anthropic API")
 }
 
-// §13.18 — policy engine end-to-end.
-func TestPolicyGate(t *testing.T) {
-	t.Skip("not implemented: §11 policy interceptor chain — pkg/gateway/interceptor exists, but cmd/lenny-gateway wires an empty interceptor.NewChain() with no built-in AuthEvaluator/QuotaEvaluator interceptors and no admin endpoint or flag to register one, so the admission-path policy gate cannot be exercised through the live gateway subprocess")
-}
+// §13.18 — policy engine end-to-end. TestPolicyGate and TestPolicyAudit
+// are converted in policy_test.go: the §4.8 QuotaEvaluator is wired
+// onto the session-creation admission path and exercised against the
+// live gateway subprocess, and a chain REJECT emits the §16.7
+// `interceptor.rejected` row to the per-tenant audit hash chain.
 
-func TestPolicyAudit(t *testing.T) {
-	t.Skip("not implemented: §11.7 audit + §11 policy decisions — requires the policy interceptor chain to emit decision rows to the EventStore")
-}
-
-// §13.18 — quota enforcement.
-func TestQuotaEnforcement(t *testing.T) {
-	t.Skip("not implemented: §11.2 quota Redis Lua + per-tenant counters — requires Redis-backed quota store wired into the gateway admission path")
-}
-
-func TestQuotaRecovery(t *testing.T) {
-	t.Skip("not implemented: §11.2 quota recovery — requires the Redis MAX rule reconciliation and pod-side ReportUsage replay on coordinator handoff")
-}
+// §13.18 — quota enforcement. TestQuotaEnforcement and TestQuotaRecovery
+// are converted in quota_test.go: the §11.2 Redis-backed per-tenant
+// token counter is wired into the §4.8 admission path, and the §11.2
+// Redis MAX-rule reconciliation (quota.ReconcileMax) is exercised end
+// to end against the live gateway subprocess.
 
 // §13.2 — database migrations.
 func TestMigrationUpgrade(t *testing.T) {

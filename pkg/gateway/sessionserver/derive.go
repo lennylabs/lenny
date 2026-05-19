@@ -124,6 +124,9 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return
 	}
+	if !s.requirePolicyChain(w, r, tenantID) {
+		return
+	}
 	sourceID := r.PathValue("id")
 
 	source, err := s.store.Get(r.Context(), tenantID, sourceID)

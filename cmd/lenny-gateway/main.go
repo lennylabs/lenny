@@ -136,9 +136,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/pubsub"
+	"github.com/lennylabs/lenny/pkg/gateway/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/recommendations"
@@ -207,6 +209,10 @@ func main() {
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	rlPerUserPerMin := flag.Int("rate-limit-per-user-per-min", 0,
 		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
+	globalTokenQuota := flag.Int64("global-token-quota-per-window", 0,
+		"§11.2 platform-wide LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the global scope. Zero disables the global token cap. Only active when --redis-url is set.")
+	userTokenQuota := flag.Int64("user-token-quota-per-window", 0,
+		"§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.")
 	agentNamespace := flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	adapterTLSCert := flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),
@@ -667,17 +673,23 @@ func main() {
 	// restart. Both the admin router and the §10.7 ExperimentRouter
 	// rejection reporter commit events to it.
 	var (
-		auditSink admin.AuditSink
-		wireAudit func(*admin.Router) *admin.Router
+		auditSink     admin.AuditSink
+		wireAudit     func(*admin.Router) *admin.Router
+		auditAppender policy.AuditAppender
 	)
 	if pgPool != nil {
 		pgAudit := auditstore.New(pgPool)
 		auditSink = admin.NewAuditLogSink(pgAudit, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditLog(pgAudit) }
+		// The §11.7 `interceptor.rejected` policy-rejection rows share
+		// the durable Postgres-backed per-tenant hash chain.
+		auditAppender = pgAudit
 	} else {
 		auditChains := audit.NewChainSet()
 		auditSink = admin.NewChainAuditSink(auditChains, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
+		// In-memory chain — lost on restart, used by the minimal gateway.
+		auditAppender = policy.NewChainSetAppender(auditChains, nil)
 	}
 
 	// §12.8: re-surface any tenant that combines billingErasurePolicy
@@ -727,6 +739,29 @@ func main() {
 	if pgPool != nil {
 		usage = usagepg.New(pgPool)
 	}
+
+	// ----- §4.8 policy interceptor chain -----
+	// The PostAuth chain runs the built-in §4.8 QuotaEvaluator (priority
+	// 200) on the session-creation path. QuotaEvaluator enforces the
+	// §11.2 hierarchical token budget against the Redis token-usage
+	// counter, so it is registered only when --redis-url is set; without
+	// Redis there is no §11.2 token counter and the chain stays empty.
+	policyChain := interceptor.NewChain()
+	var policyAuditSink *policy.AuditSink
+	if redisClient != nil {
+		quotaCounter := quotastore.New(redisClient)
+		tenantLimits := policy.NewTenantStoreLimits(tenants, policy.TenantStoreLimitsOptions{
+			GlobalTokenQuotaPerWindow: *globalTokenQuota,
+			UserTokenQuotaPerWindow:   *userTokenQuota,
+		})
+		quotaEval := policy.NewQuotaEvaluator(tenantLimits, quotaCounter, nil)
+		if err := policyChain.Register(interceptor.PhasePostAuth, quotaEval); err != nil {
+			log.Fatalf("lenny-gateway: register QuotaEvaluator: %v", err)
+		}
+		policyAuditSink = policy.NewAuditSink(auditAppender, nil)
+		log.Printf("lenny-gateway: §4.8 QuotaEvaluator enforcing §11.2 token budgets on the PostAuth chain")
+	}
+
 	sessionSrv := sessionserver.New(sessions, sessionserver.Options{
 		UploadTokenIssuer:          uploadIssuer,
 		UploadTokenVerifier:        uploadVerifier,
@@ -751,16 +786,18 @@ func main() {
 			metrics: gwMetrics,
 			emitter: opsEmitter,
 		},
-		Usage:          usage,
-		Users:          users,
-		Billing:        billing,
-		Tenants:        tenants,
-		StorageQuota:   storageCounter,
-		PodBinder:      podBinder,
-		PodRegistry:    podRegistry,
-		AgentNamespace: *agentNamespace,
-		Sealer:         sessionSealer,
-		TreeArchive:    treeArchive,
+		Usage:           usage,
+		Users:           users,
+		Billing:         billing,
+		Tenants:         tenants,
+		StorageQuota:    storageCounter,
+		PodBinder:       podBinder,
+		PodRegistry:     podRegistry,
+		AgentNamespace:  *agentNamespace,
+		Sealer:          sessionSealer,
+		TreeArchive:     treeArchive,
+		Interceptors:    policyChain,
+		PolicyAuditSink: policyAuditSink,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -841,7 +878,7 @@ func main() {
 		Pools:                      pools,
 		Audit:                      mcpDelegationAuditor{sink: auditSink},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
-		Interceptors:               interceptor.NewChain(),
+		Interceptors:               policyChain,
 		Events:                     eventBus,
 		InputWaits:                 inputwait.NewRegistry(),
 		TreeArchive:                treeArchive,

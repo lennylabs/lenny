@@ -54,6 +54,14 @@ type Tenant struct {
 	// unlimited.
 	StorageQuotaBytes int64
 
+	// TokenQuotaPerWindow is the §11.2 per-tenant LLM-token budget for
+	// one reset-period window. The §4.8 QuotaEvaluator enforces it
+	// hierarchically (global → tenant → user) against the §11.2 Redis
+	// token-usage counter and rejects a session create with
+	// QUOTA_EXCEEDED once a window's recorded usage reaches the limit.
+	// Zero means the tenant has no token budget (unlimited).
+	TokenQuotaPerWindow int64
+
 	// ElicitationContentIntegrity is the §9.2 tenant-stored elicitation
 	// content-integrity mode (`off`, `detect-only`, or `enforce`). The
 	// gateway clamps it against the platform floor at use time. Empty

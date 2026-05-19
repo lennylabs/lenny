@@ -41,9 +41,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
@@ -127,6 +129,8 @@ type Server struct {
 	credPools          credentialpoolstore.Store
 	defaultNoEnvPolicy string
 	customRoles        customrolestore.Store
+	interceptors       *interceptor.Chain
+	policyAuditSink    *policy.AuditSink
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -335,6 +339,19 @@ type Options struct {
 	// manage_own_sessions / read_own_sessions is honored. When nil only
 	// built-in roles are consulted.
 	CustomRoles customrolestore.Store
+
+	// Interceptors is the §4.8 RequestInterceptor chain. When set, the
+	// session-creation path runs the chain at the PostAuth phase after
+	// the concurrent-session quota check, so the built-in QuotaEvaluator
+	// (and any registered external interceptor) admits or rejects the
+	// create. When nil the session-creation path runs no interceptors.
+	Interceptors *interceptor.Chain
+
+	// PolicyAuditSink, when set, receives the §16.7 `interceptor.rejected`
+	// audit row whenever the PostAuth interceptor chain REJECTs a
+	// session create. The append is synchronous per §11.7. Nil disables
+	// the emission; the rejection still fires.
+	PolicyAuditSink *policy.AuditSink
 }
 
 // New returns a Server bound to the supplied store.
@@ -375,6 +392,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		credPools:          opts.CredentialPools,
 		defaultNoEnvPolicy: opts.DefaultNoEnvironmentPolicy,
 		customRoles:        opts.CustomRoles,
+		interceptors:       opts.Interceptors,
+		policyAuditSink:    opts.PolicyAuditSink,
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
@@ -590,6 +609,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req Creat
 	}
 	tenantID := s.resolveTenant(r)
 	if !s.requireSessionQuota(w, r, tenantID) {
+		return
+	}
+	if !s.requirePolicyChain(w, r, tenantID) {
 		return
 	}
 	if req.RuntimeRef == "" {

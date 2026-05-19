@@ -1056,6 +1056,8 @@
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyDifferentBodyReusedThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyOversizeKeyThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary",
+        "tests/tier4_integration/policy_test.go",
+        "tests/tier4_integration/quota_test.go",
         "pkg/circuitbreaker/circuitbreaker_test.go::TestAllStatesIsExhaustive",
         "pkg/circuitbreaker/circuitbreaker_test.go::TestAllTiersIsExhaustive",
         "pkg/circuitbreaker/circuitbreaker_test.go::TestAllOperationTypesIsExhaustive",

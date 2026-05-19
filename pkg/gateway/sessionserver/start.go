@@ -51,6 +51,9 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return
 	}
+	if !s.requirePolicyChain(w, r, tenantID) {
+		return
+	}
 
 	var req CreateAndStartRequest
 	body := jsonReader(w, r)

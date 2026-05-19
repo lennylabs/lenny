@@ -526,6 +526,7 @@ type TenantPayload struct {
 	WorkspaceTier         string                      `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions int                         `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     int64                       `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow   int64                       `json:"tokenQuotaPerWindow,omitempty"`
 	MinIsolationProfile   string                      `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy  string                      `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
@@ -544,6 +545,7 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 		WorkspaceTier:         t.WorkspaceTier,
 		MaxConcurrentSessions: t.MaxConcurrentSessions,
 		StorageQuotaBytes:     t.StorageQuotaBytes,
+		TokenQuotaPerWindow:   t.TokenQuotaPerWindow,
 		MinIsolationProfile:   t.MinIsolationProfile,
 		BillingErasurePolicy:  t.BillingErasurePolicy,
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
@@ -713,6 +715,12 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "storageQuotaBytes"})
 		return
 	}
+	if body.TokenQuotaPerWindow < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"tokenQuotaPerWindow must not be negative",
+			map[string]any{"field": "tokenQuotaPerWindow"})
+		return
+	}
 	if body.MinIsolationProfile != "" && !isolation.IsValid(isolation.Profile(body.MinIsolationProfile)) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"minIsolationProfile must be standard, sandboxed, or microvm",
@@ -741,6 +749,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		WorkspaceTier:         body.WorkspaceTier,
 		MaxConcurrentSessions: body.MaxConcurrentSessions,
 		StorageQuotaBytes:     body.StorageQuotaBytes,
+		TokenQuotaPerWindow:   body.TokenQuotaPerWindow,
 		MinIsolationProfile:   body.MinIsolationProfile,
 		BillingErasurePolicy:  body.BillingErasurePolicy,
 		CreatedAt:             r.clock(),
@@ -825,6 +834,7 @@ type UpdateTenantRequest struct {
 	WorkspaceTier         *string                     `json:"workspaceTier,omitempty"`
 	MaxConcurrentSessions *int                        `json:"maxConcurrentSessions,omitempty"`
 	StorageQuotaBytes     *int64                      `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow   *int64                      `json:"tokenQuotaPerWindow,omitempty"`
 	MinIsolationProfile   *string                     `json:"minIsolationProfile,omitempty"`
 	BillingErasurePolicy  *string                     `json:"billingErasurePolicy,omitempty"`
 	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
@@ -848,6 +858,12 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"storageQuotaBytes must not be negative",
 			map[string]any{"field": "storageQuotaBytes"})
+		return
+	}
+	if body.TokenQuotaPerWindow != nil && *body.TokenQuotaPerWindow < 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"tokenQuotaPerWindow must not be negative",
+			map[string]any{"field": "tokenQuotaPerWindow"})
 		return
 	}
 	if body.MinIsolationProfile != nil && *body.MinIsolationProfile != "" &&
@@ -931,6 +947,9 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.StorageQuotaBytes != nil {
 			t.StorageQuotaBytes = *body.StorageQuotaBytes
+		}
+		if body.TokenQuotaPerWindow != nil {
+			t.TokenQuotaPerWindow = *body.TokenQuotaPerWindow
 		}
 		if body.MinIsolationProfile != nil {
 			t.MinIsolationProfile = *body.MinIsolationProfile
