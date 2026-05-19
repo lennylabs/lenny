@@ -75,10 +75,29 @@ type WebhookConfig struct {
 // webhook, a non-Fail failurePolicy, or an absent caBundle aborts the
 // install fail-closed, preventing a chart-author omission from
 // shipping silently as a fail-open admission gap.
+//
+// The Job runs the check as both a pre-install and a pre-upgrade hook.
+// On a fresh install the chart's webhooks are not applied until after
+// the pre-install hooks complete, so none of the expected webhooks are
+// deployed yet. When none of the expected webhooks is present the
+// check treats the run as a fresh install and passes: there is no
+// prior admission posture to have regressed. The inventory comparison
+// is meaningful on a pre-upgrade run, where the prior release's
+// webhooks are already deployed, and it still fails when some but not
+// all expected webhooks are present (a partial omission or downgrade).
 func CheckAdmissionWebhooks(expected []string, deployed []WebhookConfig) Decision {
 	byName := make(map[string]WebhookConfig, len(deployed))
 	for _, w := range deployed {
 		byName[w.Name] = w
+	}
+	present := 0
+	for _, name := range expected {
+		if _, ok := byName[name]; ok {
+			present++
+		}
+	}
+	if present == 0 {
+		return Decision{Passed: true}
 	}
 	for _, name := range expected {
 		w, ok := byName[name]

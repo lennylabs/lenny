@@ -97,6 +97,20 @@ func TestCheckAdmissionWebhooksPassesWhenAllPresent(t *testing.T) {
 	}
 }
 
+func TestCheckAdmissionWebhooksPassesOnFreshInstall(t *testing.T) {
+	expected := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	// A fresh install: the chart's webhooks are applied only after the
+	// pre-install hooks finish, so none are deployed when preflight
+	// runs. The cluster may still carry unrelated webhooks (cert-manager).
+	deployed := []preflight.WebhookConfig{
+		{Name: "cert-manager-webhook", FailurePolicy: "Fail", HasCABundle: true},
+	}
+	d := preflight.CheckAdmissionWebhooks(expected, deployed)
+	if !d.Passed {
+		t.Errorf("check failed on a fresh install with no Lenny webhooks present: %s", d.Reason)
+	}
+}
+
 func TestCheckAdmissionWebhooksFailsOnMissingWebhook(t *testing.T) {
 	expected := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
 	// Deploy all but the last expected webhook.
