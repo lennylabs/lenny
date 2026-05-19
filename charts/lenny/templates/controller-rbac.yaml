@@ -4,10 +4,13 @@ WarmPoolController watches SandboxWarmPool and SandboxTemplate
 resources across agent namespaces and creates Sandbox pods, so the
 cluster role grants cross-namespace read plus Sandbox create and the
 status-subresource writes the §4.6.3 ownership table assigns to the
-controller. Leader election uses a Lease in the release namespace,
-covered by the namespaced role. The ServiceAccount name is fixed:
-§5.2 authorizes it by the literal identity
-system:serviceaccount:lenny-system:lenny-controller.
+controller. The §13.2 NET-022 cluster-CIDR drift detector additionally
+reads Nodes (for spec.podCIDR aggregation) and NetworkPolicies (for the
+installed except blocks); both are read-only — §13.2 deliberately keeps
+NetworkPolicy write RBAC off the controller. Leader election uses a
+Lease in the release namespace, covered by the namespaced role. The
+ServiceAccount name is fixed: §5.2 authorizes it by the literal
+identity system:serviceaccount:lenny-system:lenny-controller.
 */ -}}
 apiVersion: v1
 kind: ServiceAccount
@@ -36,6 +39,18 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # Nodes: read-only, for the §13.2 NET-022 cluster-CIDR drift detector
+  # aggregating spec.podCIDR, and for the §4.6.1 host-node
+  # schedulability Node informer.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # NetworkPolicies: read-only, for the §13.2 NET-022 drift detector
+  # reading installed except blocks. The controller never writes
+  # NetworkPolicies — remediation is an operator-run helm upgrade.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

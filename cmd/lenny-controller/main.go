@@ -28,6 +28,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,6 +42,7 @@ import (
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
+	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
@@ -53,6 +55,19 @@ func buildScheme() *runtime.Scheme {
 	utilruntime.Must(clientgoscheme.AddToScheme(s))
 	utilruntime.Must(lennyv1.AddToScheme(s))
 	return s
+}
+
+// splitNamespaces parses a comma-separated namespace list, trimming
+// whitespace and dropping empty entries. An empty or whitespace-only
+// input yields a nil slice.
+func splitNamespaces(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		if ns := strings.TrimSpace(part); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	return out
 }
 
 // §4.6.1 leader-election lease parameters. The worst-case crash
@@ -71,6 +86,7 @@ func main() {
 		leaderElectNS string
 		adapterImage  string
 		postgresDSN   string
+		agentNSList   string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"address the metrics endpoint binds to")
@@ -84,6 +100,8 @@ func main() {
 		"the lenny-adapter sidecar image stamped into agent pods")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
+	flag.StringVar(&agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
+		"comma-separated agent namespaces. When set, the §13.2 NET-022 cluster-CIDR drift detector audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes. When empty, drift detection is disabled.")
 	zapOpts := zap.Options{Development: false}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -142,6 +160,20 @@ func main() {
 		AdapterImage: adapterImage,
 	}).SetupWithManager(mgr); err != nil {
 		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
+	}
+
+	// The §13.2 NET-022 cluster-CIDR drift detector is a leader-elected
+	// Runnable: every 5 minutes it compares the cluster's actual pod
+	// CIDRs against the broad-internet egress NetworkPolicies in the
+	// agent namespaces and increments lenny_network_policy_cidr_drift_total
+	// on drift. It runs only when --agent-namespaces is set.
+	if agentNamespaces := splitNamespaces(agentNSList); len(agentNamespaces) > 0 {
+		if err := mgr.Add(&cidrdrift.Detector{
+			Client:          mgr.GetClient(),
+			AgentNamespaces: agentNamespaces,
+		}); err != nil {
+			log.Fatalf("lenny-controller: set up cluster-CIDR drift detector: %v", err)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

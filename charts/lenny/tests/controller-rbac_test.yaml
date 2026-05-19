@@ -24,6 +24,22 @@ tests:
       - isNotEmpty:
           path: rules
 
+  - it: grants read-only Node and NetworkPolicy access for CIDR drift detection
+    documentIndex: 1
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["nodes"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+            verbs: ["get", "list", "watch"]
+
   - it: binds the cluster role to the controller service account
     documentIndex: 2
     asserts:
