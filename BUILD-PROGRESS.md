@@ -95,19 +95,25 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   the gateway persists to in-cluster Postgres, Redis, and MinIO; tiers 5/8/9 each have a
   real-assertion subset committed (26 passing e2e tests).
 
-- **Warm-pod runtime-container model** (Wave 5, needs a decision). Getting a real agent
-  pod fully Ready on the Kind cluster is blocked on a model question. `podspec.go` runs
-  the runtime image's entrypoint directly as a sidecar container with
-  `RestartPolicy: Never`. The reference `echo` runtime is a §15.4.3 Basic-level
-  stdin/stdout exec-target ("stdin EOF -> exit 0"), so as a standalone sidecar container
-  with no stdin it exits immediately and never restarts; the pod sits `1/2 NotReady`. A
-  Basic stdin/stdout runtime cannot survive as a separate sidecar container — that model
-  fits a long-running server runtime or the embedded-adapter single-container mode.
-  Resolution options: use a long-running runtime for the e2e pool, give the runtime
-  container a keep-alive entrypoint in `podspec.go` with the adapter exec'ing the runtime
-  per session, or treat it as a genuine warm-pod-model gap. Route-around: the ~25
-  agent-pod-dependent tier-5/8/9 tests are deferred pending this decision; the data-store-
-  dependent and control-plane tier-8/9 tests proceed without it.
+- **Warm-pod runtime-container model** (Wave 5, needs an architectural decision). A real
+  agent pod cannot reach Ready on the Kind cluster. `pkg/controller/sandbox/podspec/podspec.go`
+  builds the §4.7 default sidecar pod as two containers — `adapter` and `runtime` — and
+  runs the runtime image's entrypoint directly with `RestartPolicy: Never`. Every
+  reference runtime (`cmd/runtimes/echo`, `streaming-echo`, `delegation-echo`,
+  `mcp-reference`) is a stdin/stdout (or stdin/stdout JSON-RPC) exec-target that exits
+  cleanly on stdin EOF. Run as a standalone sidecar container with no stdin attached, the
+  runtime container exits 0 immediately and, with `RestartPolicy: Never`, never restarts;
+  the pod sits `1/2 NotReady` and the warm pool never has a usable pod. This is not a
+  runtime-choice problem — no reference runtime is a long-running server. The adapter
+  feeds the runtime over stdin/stdout, which only works when the adapter is the runtime's
+  parent process — the §4 embedded-adapter single-container mode — not across two
+  separate containers. The fix is an architectural decision: either `podspec.go` adopts
+  the embedded-adapter model for these integration levels (one container; the adapter
+  spawns the runtime), or the runtime container is given a keep-alive entrypoint with the
+  adapter starting the runtime per session, or a long-running server runtime is added.
+  This is core platform-design work, not a test-harness fix. Route-around taken: every
+  tier-5/8/9 test that does not need a running agent-pod workload is implemented and
+  passes; the ~25 that do need one remain honest skips, each naming this blocker.
 
 ## Test status
 
