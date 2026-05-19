@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
+"""Language-native helper for the tier-3 SDK contract harness.
+
+The harness (tests/tier3_contract/sdks/harness) spawns this script for
+the Python client SDK. It reads one Command JSON object per line on
+stdin, executes each op through the SDK against the gateway, and writes
+one Response JSON object per line on stdout.
+
+The gateway base URL is read from the LENNY_GATEWAY_URL environment
+variable, set by the harness when it spawns the helper. An ``init`` op
+may also carry the URL in its args for harnesses that pass the URL after
+spawn rather than via the environment.
+
+The protocol matches harness.Command / harness.Response: a request is
+``{"op": "...", "args": {...}}`` and a reply is
+``{"ok": true, "result": {...}}`` or
+``{"ok": false, "error": "...", "code": "..."}``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any, Callable, Optional
+
+# The helper imports the SDK from the sibling ``lenny`` package. The
+# script is committed at sdks/client/python/test-helper, so the package
+# is the ``lenny`` directory next to it.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import lenny  # noqa: E402
+from lenny import webhook  # noqa: E402
+
+
+def env_or_default(key: str, default: str) -> str:
+    """Return the environment variable named by ``key``, or ``default``."""
+    value = os.environ.get(key)
+    return value if value else default
+
+
+def string_arg(args: Optional[dict[str, Any]], key: str) -> str:
+    """Return ``args[key]`` as a string, or "" when absent or non-string."""
+    if not args:
+        return ""
+    value = args.get(key)
+    return value if isinstance(value, str) else ""
+
+
+class Helper:
+    """Holds the SDK client and the harness session state."""
+
+    def __init__(self) -> None:
+        self.gateway_url: str = os.environ.get("LENNY_GATEWAY_URL", "")
+        self.tenant_id: str = env_or_default("LENNY_TENANT_ID", "acme")
+        self.client: Optional[lenny.Client] = None
+
+    def connect(self) -> None:
+        """Build the SDK client against the configured gateway URL."""
+        if not self.gateway_url:
+            raise RuntimeError("LENNY_GATEWAY_URL is not set")
+        self.client = lenny.Client(
+            self.gateway_url, tenant_id=self.tenant_id
+        )
+
+    def dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Route one command to its op handler."""
+        op = cmd.get("op", "")
+        args = cmd.get("args") or {}
+
+        if op == "init":
+            return self.op_init(args)
+        if op == "verify_webhook":
+            return self.op_verify_webhook(args)
+
+        # Every remaining op needs a live client.
+        if self.client is None:
+            try:
+                self.connect()
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "error": str(exc)}
+
+        handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+            "create_session": self.op_create_session,
+            "get_session": self.op_get_session,
+            "list_sessions": self.op_list_sessions,
+            "delete_session": self.op_delete_session,
+            "finalize": lambda a: self.op_transition("finalize", a),
+            "start": lambda a: self.op_transition("start", a),
+            "interrupt": lambda a: self.op_transition("interrupt", a),
+            "terminate": lambda a: self.op_transition("terminate", a),
+        }
+        handler = handlers.get(op)
+        if handler is None:
+            return {"ok": False, "error": "unknown op: " + op}
+        return handler(args)
+
+    def op_init(self, args: dict[str, Any]) -> dict[str, Any]:
+        """(Re)point the client at a gateway URL supplied in the args."""
+        url = string_arg(args, "gateway_url")
+        if url:
+            self.gateway_url = url
+        tenant = string_arg(args, "tenant_id")
+        if tenant:
+            self.tenant_id = tenant
+        try:
+            self.connect()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "result": {"gateway_url": self.gateway_url}}
+
+    def op_create_session(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the create_session op.
+
+        It honors an optional ``idempotency_key`` arg.
+        """
+        assert self.client is not None
+        req = lenny.CreateSessionRequest(
+            runtime_ref=string_arg(args, "runtime"),
+            user_id=string_arg(args, "user_id"),
+        )
+        options = None
+        key = string_arg(args, "idempotency_key")
+        if key:
+            options = lenny.RequestOptions(idempotency_key=key)
+        try:
+            result = self.client.create_session(req, options)
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        return {
+            "ok": True,
+            "result": session_result(
+                result.session, {"upload_token": result.upload_token}
+            ),
+        }
+
+    def op_get_session(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the get_session op."""
+        assert self.client is not None
+        try:
+            session = self.client.get_session(string_arg(args, "id"))
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        return {"ok": True, "result": session_result(session, None)}
+
+    def op_list_sessions(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the list_sessions op.
+
+        It honors an optional ``state`` filter.
+        """
+        assert self.client is not None
+        opt = lenny.ListOptions(state=string_arg(args, "state"))
+        try:
+            page = self.client.list_sessions(opt)
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        ids = [s.id for s in page.sessions]
+        return {
+            "ok": True,
+            "result": {
+                "count": len(page.sessions),
+                "ids": ids,
+                "has_more": page.has_more,
+            },
+        }
+
+    def op_delete_session(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the delete_session op."""
+        assert self.client is not None
+        try:
+            session = self.client.delete_session(string_arg(args, "id"))
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        return {"ok": True, "result": session_result(session, None)}
+
+    def op_transition(
+        self, action: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute a no-body lifecycle op (finalize, start, interrupt, terminate)."""
+        assert self.client is not None
+        method = getattr(self.client, action)
+        try:
+            session = method(string_arg(args, "id"))
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        return {"ok": True, "result": session_result(session, None)}
+
+    def op_verify_webhook(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the verify_webhook op.
+
+        It does not need a gateway: it exercises the SDK's webhook
+        signature verifier directly against the supplied signature,
+        body, and secret.
+        """
+        secret = string_arg(args, "secret")
+        signature = string_arg(args, "signature")
+        body = string_arg(args, "body")
+        try:
+            verifier = webhook.Verifier.with_secret(secret)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        try:
+            verifier.verify(body, signature)
+        except webhook.WebhookError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "code": "SIGNATURE_INVALID",
+            }
+        return {"ok": True, "result": {"verified": True}}
+
+
+def session_result(
+    session: lenny.Session, extra: Optional[dict[str, Any]]
+) -> dict[str, Any]:
+    """Flatten a session envelope into the harness result map.
+
+    It merges any extra fields. The field set matches the Go helper so
+    the harness equivalence comparator sees identical results.
+    """
+    out: dict[str, Any] = {
+        "id": session.id,
+        "state": session.state,
+        "runtime": session.runtime_ref,
+    }
+    if session.tenant_id:
+        out["tenant_id"] = session.tenant_id
+    if session.user_id:
+        out["user_id"] = session.user_id
+    if extra:
+        out.update(extra)
+    return out
+
+
+def err_response(err: BaseException) -> dict[str, Any]:
+    """Convert an SDK error into a failure response.
+
+    A typed :class:`~lenny.APIError` contributes its section 15.1 code;
+    any other error is reported with an empty code.
+    """
+    if isinstance(err, lenny.APIError):
+        return {"ok": False, "error": err.message, "code": err.code}
+    return {"ok": False, "error": str(err)}
+
+
+def write_response(resp: dict[str, Any]) -> None:
+    """Marshal ``resp`` and write it as one stdout line."""
+    try:
+        body = json.dumps(resp)
+    except (TypeError, ValueError) as exc:
+        body = json.dumps(
+            {"ok": False, "error": "marshal response: " + str(exc)}
+        )
+    sys.stdout.write(body + "\n")
+    sys.stdout.flush()
+
+
+def main() -> None:
+    """Read commands from stdin and write responses to stdout."""
+    helper = Helper()
+    if not helper.gateway_url:
+        # A missing gateway URL is reported on the first op rather than
+        # aborting at startup, so the harness can still issue a shutdown
+        # cleanly.
+        sys.stderr.write(
+            "test-helper: LENNY_GATEWAY_URL is not set; "
+            "deferring client init\n"
+        )
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cmd = json.loads(line)
+        except ValueError as exc:
+            write_response(
+                {"ok": False, "error": "malformed command: " + str(exc)}
+            )
+            continue
+        if not isinstance(cmd, dict):
+            write_response(
+                {"ok": False, "error": "malformed command: not an object"}
+            )
+            continue
+        if cmd.get("op") == "shutdown":
+            write_response({"ok": True})
+            return
+        write_response(helper.dispatch(cmd))
+
+
+if __name__ == "__main__":
+    main()
