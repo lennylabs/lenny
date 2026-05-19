@@ -173,7 +173,7 @@ func TestBuildRejectsInvalidInputs(t *testing.T) {
 		in := inputs()
 		in.AdapterImage = ""
 		if _, err := podspec.Build(in); err == nil {
-			t.Error("Build should reject a missing adapter image")
+			t.Error("Build should reject a missing adapter image for the sidecar model")
 		}
 	})
 	t.Run("unknown isolation profile", func(t *testing.T) {
@@ -183,4 +183,117 @@ func TestBuildRejectsInvalidInputs(t *testing.T) {
 			t.Error("Build should reject an unknown isolation profile")
 		}
 	})
+	t.Run("unknown deployment model", func(t *testing.T) {
+		in := inputs()
+		in.DeploymentModel = "serverless"
+		if _, err := podspec.Build(in); err == nil {
+			t.Error("Build should reject an unknown deployment model")
+		}
+	})
+}
+
+func TestBuildDefaultsToTheSidecarModel(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = ""
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(pod.Spec.Containers) != 2 {
+		t.Fatalf("the sidecar model produces %d containers, want 2", len(pod.Spec.Containers))
+	}
+	if pod.Spec.Containers[0].Name != "adapter" {
+		t.Errorf("first container = %q, want adapter", pod.Spec.Containers[0].Name)
+	}
+}
+
+// TestBuildSidecarPassesTheRuntimeSocket asserts the §4.7 sidecar
+// transport wiring: the adapter binds the abstract runtime socket and
+// the runtime container learns its name from LENNY_ADAPTER_SOCKET.
+func TestBuildSidecarPassesTheRuntimeSocket(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "sidecar"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	adapterArgs := container(t, pod, "adapter").Args
+	var sawSocketArg bool
+	for _, a := range adapterArgs {
+		if a == "--runtime-socket="+podspec.RuntimeSocketName {
+			sawSocketArg = true
+		}
+	}
+	if !sawSocketArg {
+		t.Errorf("adapter args %v must bind the runtime socket %q", adapterArgs, podspec.RuntimeSocketName)
+	}
+
+	var socketEnv string
+	for _, e := range container(t, pod, "runtime").Env {
+		if e.Name == podspec.RuntimeSocketEnvVar {
+			socketEnv = e.Value
+		}
+	}
+	if socketEnv != podspec.RuntimeSocketName {
+		t.Errorf("runtime %s = %q, want %q", podspec.RuntimeSocketEnvVar, socketEnv, podspec.RuntimeSocketName)
+	}
+
+	// §13.1: the sidecar model keeps the process-isolation boundary.
+	if pod.Spec.ShareProcessNamespace != nil && *pod.Spec.ShareProcessNamespace {
+		t.Error("the sidecar model must leave shareProcessNamespace unset (§4.7, §13.1)")
+	}
+}
+
+// TestBuildEmbeddedProducesOneContainer asserts the §4.7 embedded
+// model: a single runtime container serving the gRPC contract, with no
+// separate adapter container.
+func TestBuildEmbeddedProducesOneContainer(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "embedded"
+	pod, err := podspec.Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(pod.Spec.Containers) != 1 {
+		t.Fatalf("the embedded model produces %d containers, want 1", len(pod.Spec.Containers))
+	}
+	c := container(t, pod, "runtime")
+	if c.Image != in.RuntimeImage {
+		t.Errorf("embedded runtime image = %q, want %q", c.Image, in.RuntimeImage)
+	}
+	// The embedded runtime serves the adapter gRPC port itself.
+	var sawGRPCPort bool
+	for _, p := range c.Ports {
+		if p.Name == "grpc" {
+			sawGRPCPort = true
+		}
+	}
+	if !sawGRPCPort {
+		t.Error("the embedded runtime container must expose the adapter gRPC port")
+	}
+	// One process is the adapter, so it writes the credential volume:
+	// the embedded model has no read-only-to-runtime split.
+	for _, m := range c.VolumeMounts {
+		if m.Name == "credentials" && m.ReadOnly {
+			t.Error("the embedded runtime writes the credential volume; it must not be read-only")
+		}
+	}
+	// §13.1 posture still applies.
+	sc := c.SecurityContext
+	if sc == nil || sc.RunAsUser == nil || *sc.RunAsUser == 0 {
+		t.Error("the embedded runtime container must run as a non-root UID")
+	}
+}
+
+// TestBuildEmbeddedDoesNotRequireAnAdapterImage confirms the embedded
+// model builds without an adapter image, since it has no adapter
+// container.
+func TestBuildEmbeddedDoesNotRequireAnAdapterImage(t *testing.T) {
+	in := inputs()
+	in.DeploymentModel = "embedded"
+	in.AdapterImage = ""
+	if _, err := podspec.Build(in); err != nil {
+		t.Errorf("the embedded model must not require an adapter image: %v", err)
+	}
 }

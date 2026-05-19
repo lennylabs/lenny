@@ -10,9 +10,22 @@
 // certificate the adapter serves plaintext, intended only for local
 // development.
 //
+// The adapter drives the runtime over one of two §4.7 sidecar-model
+// transports, both carrying the identical §15.4.1 JSONL framing:
+//
+//   - --runtime-socket: the adapter binds an abstract Unix socket and
+//     the runtime container dials it. This is the §4.7 deployment model:
+//     the adapter and the runtime are separate pod containers, and the
+//     runtime has no stdin attached. The controller passes the socket
+//     name to the runtime container in LENNY_ADAPTER_SOCKET.
+//   - --runtime-bin: the adapter execs the runtime binary as a child
+//     and drives it over stdin/stdout. This is the single-host developer
+//     loop, where one process exercises a runtime without a pod.
+//
 // Usage:
 //
 //	lenny-adapter --addr :50051 \
+//	  --runtime-socket @lenny-runtime \
 //	  --tls-cert-file /etc/lenny/adapter-tls/tls.crt \
 //	  --tls-key-file  /etc/lenny/adapter-tls/tls.key \
 //	  --tls-client-ca-file /etc/lenny/adapter-tls/ca.crt
@@ -48,10 +61,17 @@ func main() {
 	credentialsDir := flag.String("credentials-dir", "/run/lenny",
 		"directory the §4.7 credential file is materialized into")
 	runtimeBin := flag.String("runtime-bin", "",
-		"path to the runtime binary the adapter starts at session start")
+		"path to the runtime binary the adapter execs and drives over stdin/stdout (developer loop)")
+	runtimeSocket := flag.String("runtime-socket", "",
+		"abstract Unix socket the adapter binds for the §4.7 sidecar runtime transport; "+
+			"the runtime container dials it")
 	lifecycleSocket := flag.String("lifecycle-socket", "",
 		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
 	flag.Parse()
+
+	if *runtimeBin != "" && *runtimeSocket != "" {
+		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
+	}
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
 	if err != nil {
@@ -68,7 +88,20 @@ func main() {
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
 	adapterSrv.ManifestDir = *credentialsDir
-	if *runtimeBin != "" {
+	switch {
+	case *runtimeSocket != "":
+		// §4.7 sidecar model: bind the abstract socket the runtime
+		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
+		// the runtime container to this same name.
+		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		adapterSrv.Runtime = sp
+		log.Printf("lenny-adapter: §4.7 sidecar runtime transport on socket %s", sp.SocketPath())
+	case *runtimeBin != "":
+		// Developer loop: exec the runtime as a child and drive it over
+		// stdin/stdout.
 		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
 			BinPath: *runtimeBin,
 		})

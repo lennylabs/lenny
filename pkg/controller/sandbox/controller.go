@@ -126,6 +126,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		RuntimeImage:     rt.Spec.Image,
 		AdapterImage:     r.AdapterImage,
 		IsolationProfile: profile,
+		DeploymentModel:  rt.Spec.DeploymentModel,
 	})
 	if err != nil {
 		return fmt.Errorf("build pod spec: %w", err)

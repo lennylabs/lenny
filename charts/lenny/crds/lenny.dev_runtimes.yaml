@@ -64,6 +64,18 @@ spec:
                 items:
                   type: string
                 type: array
+              deploymentModel:
+                description: |-
+                  DeploymentModel is the §4.7 agent-pod deployment model. `sidecar`
+                  (the default) runs the lenny-adapter as a separate sidecar
+                  container that bridges the runtime over an abstract Unix socket;
+                  `embedded` runs a first-party runtime image that links the adapter
+                  as a library and serves the gRPC contract from a single container.
+                  Empty defaults to `sidecar` at registration time.
+                enum:
+                - sidecar
+                - embedded
+                type: string
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode. Empty defaults to

@@ -44,6 +44,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 const (
@@ -55,7 +57,18 @@ const (
 )
 
 func main() {
-	if err := run(os.Stdin, os.Stdout, os.Stderr); err != nil {
+	// §4.7: resolve the §15.4.1 transport. LENNY_ADAPTER_SOCKET selects
+	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
+	// The Full-level lifecycle channel is a separate Unix socket
+	// resolved from the adapter manifest, unaffected by this choice.
+	transport, err := runtimekit.Open(context.Background())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitRuntimeError)
+	}
+	defer transport.Close()
+
+	if err := run(transport.Reader, transport.Writer, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var pe protocolError
 		if errors.As(err, &pe) {

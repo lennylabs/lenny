@@ -39,6 +39,16 @@ images: ## Build container images for the deployable platform binaries
 		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
 	done
 
+.PHONY: runtime-images
+runtime-images: ## Build container images for the §4.7 reference runtimes
+	@# §4.7 sidecar-model runtimes: a runtime image paired with the
+	@# lenny-adapter sidecar image. §4.7 embedded-model runtimes
+	@# (echo-embedded) link the adapter and ship as a single image.
+	@for r in echo streaming-echo delegation-echo mcp-reference echo-embedded; do \
+		echo "  image runtime-$$r"; \
+		docker build --build-arg BINARY=runtimes/$$r -t ghcr.io/lennylabs/runtime-$$r:dev . || exit 1; \
+	done
+
 .PHONY: generate
 generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules
 	@echo "  controller-gen object → pkg/apis DeepCopy"

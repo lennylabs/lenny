@@ -774,7 +774,9 @@
       "tests": [
         "pkg/gateway/memorystore/...",
         "pkg/gateway/mcptools/memorytools_test.go",
-        "tests/tier2_component/stores/memorystore_test.go"
+        "tests/tier2_component/stores/memorystore_test.go",
+        "tests/tier2_component/stores/memorysemanticsearch_test.go",
+        "tests/tier2_component/stores/semanticcache_test.go"
       ],
       "packages": [
         "pkg/store/memory"

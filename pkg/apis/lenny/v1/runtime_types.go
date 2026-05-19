@@ -37,6 +37,16 @@ type RuntimeSpec struct {
 	// +optional
 	IsolationProfile string `json:"isolationProfile,omitempty"`
 
+	// DeploymentModel is the §4.7 agent-pod deployment model. `sidecar`
+	// (the default) runs the lenny-adapter as a separate sidecar
+	// container that bridges the runtime over an abstract Unix socket;
+	// `embedded` runs a first-party runtime image that links the adapter
+	// as a library and serves the gRPC contract from a single container.
+	// Empty defaults to `sidecar` at registration time.
+	// +kubebuilder:validation:Enum=sidecar;embedded
+	// +optional
+	DeploymentModel string `json:"deploymentModel,omitempty"`
+
 	// AllowedResourceClasses lists the §5 resource classes a session
 	// of this runtime may request.
 	// +optional

@@ -121,6 +121,29 @@ func TestReconcileCreatesPodForNewSandbox(t *testing.T) {
 	}
 }
 
+// TestReconcileCreatesEmbeddedPodForEmbeddedRuntime confirms the §4.7
+// deploymentModel field threads from the Runtime CRD through the
+// reconciler to podspec: an embedded runtime yields a single-container
+// pod.
+func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
+	s := newScheme(t)
+	rt := runtimeCR()
+	rt.Spec.DeploymentModel = "embedded"
+	c := newClient(s, sandboxCR(""), rt)
+
+	if err := reconcile(t, c, s); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var pod corev1.Pod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+		t.Fatalf("expected a backing pod to be created: %v", err)
+	}
+	if len(pod.Spec.Containers) != 1 {
+		t.Errorf("embedded runtime pod has %d containers, want 1", len(pod.Spec.Containers))
+	}
+}
+
 func TestReconcileAdvancesWarmingToIdleWhenPodReady(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(s, sandboxCR("warming"), runtimeCR(), podCR(corev1.PodRunning, true))
