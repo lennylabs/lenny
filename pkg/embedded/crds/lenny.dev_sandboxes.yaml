@@ -1,0 +1,223 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: sandboxes.lenny.dev
+spec:
+  group: lenny.dev
+  names:
+    kind: Sandbox
+    listKind: SandboxList
+    plural: sandboxes
+    shortNames:
+    - sbx
+    singular: sandbox
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.poolRef
+      name: Pool
+      type: string
+    - jsonPath: .status.podName
+      name: Pod
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Sandbox is the lenny.dev/v1 record of one managed agent pod (§4.6).
+          The status subresource carries the §6.2 authoritative pod state
+          machine; the gateway claims pods by referencing them from a
+          SandboxClaim.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SandboxSpec is the desired state of a Sandbox — one managed agent
+              pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
+              created from the pool's SandboxTemplate, and these fields pin the
+              per-pod identity the controller and gateway resolve against.
+            properties:
+              deliveryMode:
+                description: DeliveryMode is the §4.9 credential delivery mode.
+                enum:
+                - proxy
+                - direct
+                type: string
+              isolationProfile:
+                description: |-
+                  IsolationProfile is the §5.3 sandbox isolation profile the pod
+                  was warmed under.
+                enum:
+                - standard
+                - sandboxed
+                - microvm
+                type: string
+              poolRef:
+                description: PoolRef names the SandboxWarmPool this pod is a member
+                  of.
+                type: string
+              runtimeRef:
+                description: RuntimeRef names the lenny.dev/v1 Runtime this pod runs.
+                type: string
+            required:
+            - poolRef
+            - runtimeRef
+            type: object
+          status:
+            description: |-
+              SandboxStatus is the observed state of a Sandbox. status.phase is
+              the §6.2 authoritative pod lifecycle state machine; it is the
+              single source of truth that the §4.6 claim path and the
+              lenny-sandboxclaim-guard webhook read.
+            properties:
+              activeSlots:
+                description: |-
+                  ActiveSlots is the count of concurrent-mode (§5.2) slots currently
+                  assigned to this pod. It is 0 for session-mode and task-mode pods,
+                  and for an idle concurrent-mode pod. It never exceeds the pool's
+                  maxConcurrent. The gateway slot-claim path is the sole writer.
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions is the standard Kubernetes condition list.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              nodeName:
+                description: |-
+                  NodeName is the host node the pod is scheduled on. Empty until
+                  the scheduler binds the pod.
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the .metadata.generation the controller
+                  last reconciled.
+                format: int64
+                type: integer
+              phase:
+                description: |-
+                  Phase is the §6.2 pod lifecycle state. `slot_active` is the
+                  concurrent-mode (§5.2) pod-level phase: the pod hosts one or more
+                  simultaneous slots.
+                enum:
+                - warming
+                - sdk_connecting
+                - idle
+                - claimed
+                - slot_active
+                - receiving_uploads
+                - finalizing_workspace
+                - running_setup
+                - attached
+                - task_cleanup
+                - resuming
+                - suspended
+                - resume_pending
+                - awaiting_client_action
+                - completed
+                - failed
+                - cancelled
+                - expired
+                - draining
+                - terminated
+                type: string
+              podIP:
+                description: |-
+                  PodIP is the cluster IP of the backing Pod. The gateway dials the
+                  pod's §4.7 adapter at this address. Empty until the pod is running.
+                type: string
+              podName:
+                description: |-
+                  PodName is the underlying Pod backing this Sandbox. Empty until
+                  the pod is created.
+                type: string
+              tenantId:
+                description: |-
+                  TenantID records the tenant a concurrent-mode or task-mode pod is
+                  pinned to (§5.2 tenant pinning). It is set on the pod's first slot
+                  or task assignment and is never reassigned to a different tenant
+                  for the pod's lifetime. Empty for an unassigned pod.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

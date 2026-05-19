@@ -1,0 +1,275 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: sandboxwarmpools.lenny.dev
+spec:
+  group: lenny.dev
+  names:
+    kind: SandboxWarmPool
+    listKind: SandboxWarmPoolList
+    plural: sandboxwarmpools
+    shortNames:
+    - sbxwp
+    singular: sandboxwarmpool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.templateRef
+      name: Template
+      type: string
+    - jsonPath: .spec.minWarm
+      name: MinWarm
+      type: integer
+    - jsonPath: .spec.maxWarm
+      name: MaxWarm
+      type: integer
+    - jsonPath: .status.warmCount
+      name: Warm
+      type: integer
+    - jsonPath: .status.readyCount
+      name: Ready
+      type: integer
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SandboxWarmPool is the lenny.dev/v1 record of warm-count management
+          for one pool (§5.2). The PoolScalingController owns the scaling
+          parameters; the WarmPoolController reconciles warm pods toward them.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              SandboxWarmPoolSpec is the desired state of a SandboxWarmPool — the
+              §5.2 warm-count management for one pool. Per §4.6.3 the
+              PoolScalingController owns spec.*, deriving the scaling parameters
+              from the Postgres pool definitions.
+            properties:
+              maxWarm:
+                description: |-
+                  MaxWarm is the ceiling on idle pods the pool warms ahead of
+                  demand.
+                format: int32
+                minimum: 0
+                type: integer
+              minWarm:
+                description: |-
+                  MinWarm is the floor on idle ready pods the WarmPoolController
+                  maintains. A value of 0 lets the pool scale to zero with a
+                  documented cold-start penalty.
+                format: int32
+                minimum: 0
+                type: integer
+              scalePolicy:
+                description: |-
+                  ScalePolicy carries the scaling-formula tuning inputs and the
+                  time-of-day schedule overrides.
+                properties:
+                  bootstrapMinWarm:
+                    description: |-
+                      BootstrapMinWarm is the static warm-count target the pool uses
+                      while in bootstrap mode, before the scaling formula has enough
+                      observed demand to converge.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  podWarmupSecondsBaseline:
+                    description: |-
+                      PodWarmupSecondsBaseline is the pod creation-to-ready time the
+                      §4.6.2 scaling formula uses. It is roughly 30 seconds for
+                      SDK-warm pools and roughly 10 seconds for pod-warm pools.
+                    format: int64
+                    type: integer
+                  schedules:
+                    description: |-
+                      Schedules are time-of-day windows that override the
+                      demand-derived warm count.
+                    items:
+                      description: |-
+                        ScheduleWindow is a time-of-day override of the pool's warm count
+                        (§4.6.1). Within the window the pool targets MinWarm idle pods
+                        instead of the demand-derived target.
+                      properties:
+                        end:
+                          description: End is the window close time as a 24-hour `HH:MM`
+                            clock value.
+                          pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                          type: string
+                        minWarm:
+                          description: MinWarm is the warm-count target enforced inside
+                            the window.
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        start:
+                          description: Start is the window open time as a 24-hour
+                            `HH:MM` clock value.
+                          pattern: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+                          type: string
+                      required:
+                      - end
+                      - minWarm
+                      - start
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  sdkWarmCircuitBreakerMinOpenSeconds:
+                    description: |-
+                      SDKWarmCircuitBreakerMinOpenSeconds is how long the SDK-warm
+                      circuit breaker stays open once tripped before the
+                      PoolScalingController re-evaluates the demotion rate. It defaults
+                      to 1800 seconds when unset; 0 disables the grace window.
+                    format: int64
+                    type: integer
+                type: object
+              sdkWarmDisabled:
+                description: |-
+                  SDKWarmDisabled is the SDK-warm circuit-breaker flag. The
+                  PoolScalingController sets it true to stop warming pods to
+                  SDK-warm state when the demotion rate stays too high.
+                type: boolean
+              templateRef:
+                description: |-
+                  TemplateRef names the SandboxTemplate whose pods this warm pool
+                  manages.
+                type: string
+            required:
+            - maxWarm
+            - minWarm
+            - templateRef
+            type: object
+          status:
+            description: |-
+              SandboxWarmPoolStatus is the observed state of a SandboxWarmPool.
+              Per §4.6.3 the WarmPoolController owns status.* except the
+              SDKWarmCircuitBreaker carve-out, which the PoolScalingController
+              owns.
+            properties:
+              conditions:
+                description: Conditions is the standard Kubernetes condition list.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the .metadata.generation the controller
+                  last reconciled.
+                format: int64
+                type: integer
+              readyCount:
+                description: |-
+                  ReadyCount is the number of idle pods that have reached a
+                  claimable ready state.
+                format: int32
+                type: integer
+              sdkWarmCircuitBreaker:
+                description: |-
+                  SDKWarmCircuitBreaker persists the SDK-warm circuit-breaker
+                  state. Per §4.6.3 it is owned by the PoolScalingController, not
+                  the WarmPoolController.
+                properties:
+                  minOpenUntil:
+                    description: |-
+                      MinOpenUntil is the earliest time the breaker may auto-close. It
+                      is OpenedAt plus the configured minimum open duration; the
+                      breaker is held open until this time even across a
+                      PoolScalingController failover.
+                    format: date-time
+                    type: string
+                  openedAt:
+                    description: |-
+                      OpenedAt is when the PoolScalingController tripped the breaker.
+                      It is cleared when the breaker closes.
+                    format: date-time
+                    type: string
+                  openedReason:
+                    description: |-
+                      OpenedReason is a machine-readable trip code, for example
+                      `demotion_rate_exceeded` or `operator_manual`.
+                    type: string
+                type: object
+              warmCount:
+                description: WarmCount is the current number of idle pods held in
+                  the pool.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
