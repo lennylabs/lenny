@@ -134,6 +134,32 @@ func TestPatchRejectsWhenSandboxNotClaimed(t *testing.T) {
 	}
 }
 
+func TestPatchAdmitsClaimUnderDeletion(t *testing.T) {
+	// A SandboxClaim being deleted is exempt from the staleness rule
+	// even when its referenced Sandbox is gone or past the claimed
+	// phase, so a finalizer-removal write can release the deletion.
+	for _, op := range []Operation{OpPatch, OpPut} {
+		t.Run(string(op), func(t *testing.T) {
+			d, err := Decide(Request{
+				Operation:     op,
+				ClaimName:     "claim-1",
+				SandboxRef:    "sandbox-gone",
+				SandboxPhase:  "",
+				UnderDeletion: true,
+			})
+			if err != nil {
+				t.Fatalf("Decide: %v", err)
+			}
+			if !d.Allowed {
+				t.Errorf("%s on a claim under deletion should be allowed, got %v", op, d)
+			}
+			if d.Code != 200 {
+				t.Errorf("Code: want 200, got %d", d.Code)
+			}
+		})
+	}
+}
+
 func TestDecideRejectsMissingSandboxRef(t *testing.T) {
 	_, err := Decide(Request{Operation: OpCreate, ClaimName: "claim-1"})
 	if !errors.Is(err, ErrMissingSandboxRef) {

@@ -44,11 +44,18 @@ func SandboxClaimGuard(reader client.Reader) Decider {
 			guardReq.ExistingClaims = existing
 		case admissionv1.Update:
 			guardReq.Operation = guard.OpPut
-			phase, err := referencedSandboxPhase(ctx, reader, req.Namespace, claim.Spec.SandboxRef)
-			if err != nil {
-				return Deny(http.StatusInternalServerError, "read referenced Sandbox: "+err.Error())
+			guardReq.UnderDeletion = !claim.DeletionTimestamp.IsZero()
+			// A claim under deletion is exempt from the staleness rule,
+			// so the referenced Sandbox's phase is not read: the lookup
+			// is irrelevant and would otherwise fail the teardown write
+			// when the Sandbox is already gone.
+			if !guardReq.UnderDeletion {
+				phase, err := referencedSandboxPhase(ctx, reader, req.Namespace, claim.Spec.SandboxRef)
+				if err != nil {
+					return Deny(http.StatusInternalServerError, "read referenced Sandbox: "+err.Error())
+				}
+				guardReq.SandboxPhase = phase
 			}
-			guardReq.SandboxPhase = phase
 		default:
 			return Deny(http.StatusBadRequest, fmt.Sprintf("sandboxclaim-guard does not handle operation %q", req.Operation))
 		}

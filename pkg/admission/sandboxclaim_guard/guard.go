@@ -24,6 +24,13 @@
 //     SandboxClaim whose underlying pod has already moved past the
 //     claimed phase.
 //
+// A SandboxClaim that is itself being deleted (a non-zero
+// metadata.deletionTimestamp) is exempt from rule 2. Removing a
+// finalizer to release a stuck deletion is a teardown write, not a
+// claim mutation, and cannot produce a duplicate claim. Without the
+// exemption a claim whose Sandbox has already terminated could never
+// be collected.
+//
 // Both rejections return the spec-mandated 403 Forbidden with the
 // exact message strings the §4.6.1 webhook spec calls out.
 package sandboxclaim_guard
@@ -105,8 +112,15 @@ type Request struct {
 
 	// SandboxPhase is the current `.status.phase` of the referenced
 	// Sandbox. Read from the API server by the webhook before calling
-	// Decide. Required on PATCH and PUT; ignored on CREATE.
+	// Decide. Required on PATCH and PUT; ignored on CREATE and when
+	// UnderDeletion is set.
 	SandboxPhase SandboxPhase
+
+	// UnderDeletion is true when the SandboxClaim being modified carries
+	// a non-zero metadata.deletionTimestamp. A claim under deletion is
+	// exempt from the PATCH/PUT staleness rule so its finalizers can be
+	// cleared. Ignored on CREATE.
+	UnderDeletion bool
 
 	// ExistingClaims is the set of SandboxClaims whose `.spec.sandboxRef`
 	// equals the inbound write's SandboxRef. Used only on CREATE to
@@ -153,6 +167,12 @@ func Decide(r Request) (Decision, error) {
 		}
 		return Decision{Allowed: true, Code: 200}, nil
 	case OpPatch, OpPut:
+		// A SandboxClaim under deletion is exempt: a finalizer-removal
+		// or other teardown write must complete so a claim whose
+		// Sandbox has already terminated can be collected.
+		if r.UnderDeletion {
+			return Decision{Allowed: true, Code: 200}, nil
+		}
 		if r.SandboxPhase != PhaseClaimed {
 			return Decision{
 				Allowed: false,
