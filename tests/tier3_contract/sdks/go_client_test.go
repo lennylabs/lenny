@@ -9,34 +9,46 @@
 // envelope, pagination cursors, MCP client, language-native
 // ergonomics, compatibility matrix.
 //
-// Each implemented test brings up an in-process gateway
+// Each REST contract test brings up an in-process gateway
 // (sessionserver backed by memstore, the same wiring as
 // tests/tier3_contract/rest_sessions), compiles the SDK helper at
 // sdks/client/go/test-helper into a throwaway binary, and drives the
 // SDK through that helper over the shared harness JSON-line protocol.
 //
-// The streaming, file-upload, and MCP-client SDK surfaces named in
-// §15.6 are not yet implemented; those tests remain skipped with a
-// skip reason naming the missing SDK package.
+// The streaming contract test does not fit the JSON-line op model: a
+// §15.1 SSE stream is a long-lived connection rather than a
+// request/response op. It imports the SDK package directly, stands
+// up the gateway with an event bus, and drives the SDK's streaming
+// surface against it.
+//
+// The file-upload and MCP-client SDK surfaces named in §15.6 are not
+// yet implemented; those tests remain skipped with a skip reason
+// naming the missing SDK package.
 
 package sdks_test
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+	"github.com/lennylabs/lenny/sdks/client/go/lenny"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
 )
 
@@ -180,12 +192,202 @@ func TestGoClientWireFormatRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: 15.6 (SSE for REST streams; MCP Streamable HTTP; reconnect with Last-Event-ID)
-// diagnosis: The SDK has no streaming surface yet, so a reconnect
+// spec: 15.6 (SSE for REST streams; reconnect with Last-Event-ID)
+// diagnosis: The SDK streaming surface dropped, duplicated, or
 //
-//	test cannot be driven through the helper.
+//	reordered a §15.1 SSE event across a reconnect. Inspect the SSE
+//	frame parser and the reconnect/dedup loop in
+//	sdks/client/go/lenny/stream.go. A duplicate points at the
+//	Last-Event-ID cursor or the at-or-below-cursor drop; a gap
+//	points at the cursor the reconnect request sent.
 func TestGoClientStreamingReconnect(t *testing.T) {
-	t.Skip("not implemented: §15.6 Go client streaming — the SDK has no streaming/ package; sdks/client/go ships only the REST session surface, no SSE log/message stream consumer and no Last-Event-ID reconnect")
+	// The §15.1 SSE stream is a long-lived connection, so this
+	// contract test imports the SDK directly rather than driving the
+	// JSON-line helper. The gateway is the in-process sessionserver
+	// wired with an event bus; events published to that bus are the
+	// stream the SDK consumes.
+	bus := events.NewBus(64)
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+
+	// disconnector wraps the gateway handler. The first time the SDK
+	// opens the events stream it serves the gateway handler with a
+	// request whose context the wrapper can cancel; cancelling it
+	// makes the gateway return, which closes that HTTP/1.1 connection
+	// and forces the SDK to reconnect. Every later connection is
+	// served straight through. This forces a mid-stream disconnect
+	// without modifying the gateway.
+	d := &disconnector{inner: srv.Handler()}
+	ts := httptest.NewServer(d)
+	t.Cleanup(ts.Close)
+
+	client, err := lenny.New(ts.URL, lenny.WithTenant("acme"))
+	if err != nil {
+		t.Fatalf("construct SDK client: %v", err)
+	}
+
+	// Create the session through the SDK so the gateway stamps it on
+	// the acme tenant; the events endpoint rejects an unknown session
+	// with 404 RESOURCE_NOT_FOUND.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{RuntimeRef: "claude-code"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	sessionID := created.ID
+
+	// The full event log the gateway will deliver. Six events span
+	// the disconnect: the first batch arrives on the initial
+	// connection, the rest after the forced reconnect.
+	const total = 6
+	publish := func(seq int) {
+		bus.Publish(sessionID, "response",
+			`{"n":`+strconv.Itoa(seq)+`}`, time.Now())
+	}
+
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
+	stream := client.StreamEvents(streamCtx, sessionID, lenny.StreamOptions{})
+
+	// Publish the first three events and read them back through the
+	// SDK stream.
+	for seq := 1; seq <= 3; seq++ {
+		publish(seq)
+	}
+	got := make([]uint64, 0, total)
+	for len(got) < 3 {
+		ev, ok := <-stream.Events()
+		if !ok {
+			t.Fatalf("stream closed early after %d events: %v", len(got), stream.Err())
+		}
+		got = append(got, ev.Seq)
+		assertEventPayload(t, ev)
+	}
+
+	// Force the disconnect now that the first batch has been
+	// delivered. The gateway's retained backlog survives the dropped
+	// connection, so the SDK reconnect resumes from its Last-Event-ID
+	// cursor.
+	d.dropFirstConnection()
+
+	// Publish the remaining events. They land in the bus history and
+	// are replayed to the reconnecting SDK from the cursor it sends.
+	for seq := 4; seq <= total; seq++ {
+		publish(seq)
+	}
+	for len(got) < total {
+		ev, ok := <-stream.Events()
+		if !ok {
+			t.Fatalf("stream closed before reconnect completed; got %d of %d events: %v",
+				len(got), total, stream.Err())
+		}
+		got = append(got, ev.Seq)
+		assertEventPayload(t, ev)
+	}
+
+	// Stop the stream and confirm the §15.1 reconnect contract held:
+	// every event arrived exactly once, in sequence order, with no
+	// gap and no duplicate.
+	streamCancel()
+	for range stream.Events() {
+		// Drain any event the SDK delivered before the cancel landed.
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream ended with an error: %v", err)
+	}
+	if len(got) != total {
+		t.Fatalf("received %d events, want %d: %v", len(got), total, got)
+	}
+	for i, seq := range got {
+		if seq != uint64(i+1) {
+			t.Fatalf("event at position %d has seq %d, want %d (full sequence %v)",
+				i, seq, i+1, got)
+		}
+	}
+	if c := d.connectionCount(); c < 2 {
+		t.Fatalf("expected the SDK to reconnect after the forced disconnect, saw %d connection(s)", c)
+	}
+}
+
+// disconnector wraps an http.Handler so a test can sever the SDK's
+// first SSE connection mid-stream. The gateway's events handler runs
+// its live-delivery loop until the request context is done; the
+// wrapper serves the first events request with a cancelable child
+// context and cancels it on demand, which makes the gateway return
+// and closes that connection. Every later request is served
+// straight through.
+type disconnector struct {
+	inner http.Handler
+
+	mu       sync.Mutex
+	conns    int
+	dropConn context.CancelFunc
+}
+
+// ServeHTTP serves a request, intercepting the first events stream so
+// the test can drop it later.
+func (d *disconnector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	isEvents := r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events")
+	if !isEvents {
+		d.inner.ServeHTTP(w, r)
+		return
+	}
+
+	d.mu.Lock()
+	d.conns++
+	first := d.conns == 1
+	var ctx context.Context
+	if first {
+		var cancelChild context.CancelFunc
+		ctx, cancelChild = context.WithCancel(r.Context())
+		d.dropConn = cancelChild
+	}
+	d.mu.Unlock()
+
+	if first {
+		d.inner.ServeHTTP(w, r.WithContext(ctx))
+		return
+	}
+	d.inner.ServeHTTP(w, r)
+}
+
+// dropFirstConnection cancels the first events connection's context,
+// which makes the gateway return and closes the connection.
+func (d *disconnector) dropFirstConnection() {
+	d.mu.Lock()
+	cancel := d.dropConn
+	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// connectionCount returns the number of events connections served.
+func (d *disconnector) connectionCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.conns
+}
+
+// assertEventPayload checks that a streamed event carries the §15.1
+// frame fields the gateway published: a response type and a JSON
+// object payload whose `n` matches the event sequence.
+func assertEventPayload(t *testing.T, ev lenny.StreamEvent) {
+	t.Helper()
+	if ev.Type != "response" {
+		t.Errorf("event %d: type %q, want \"response\"", ev.Seq, ev.Type)
+	}
+	var payload struct {
+		N uint64 `json:"n"`
+	}
+	if err := json.Unmarshal(ev.Data, &payload); err != nil {
+		t.Errorf("event %d: payload %q is not a JSON object: %v", ev.Seq, ev.Data, err)
+		return
+	}
+	if payload.N != ev.Seq {
+		t.Errorf("event %d: payload n=%d, want %d", ev.Seq, payload.N, ev.Seq)
+	}
 }
 
 // spec: 15.6 (multipart upload, archive upload, gitClone source materialization)
