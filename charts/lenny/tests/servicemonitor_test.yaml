@@ -1,0 +1,136 @@
+suite: §16.9 ServiceMonitor and PodMonitor scrape targets
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: renders no ServiceMonitor by default
+    template: servicemonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders no PodMonitor by default
+    template: podmonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the ServiceMonitor when the gate is enabled
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: apiVersion
+          value: monitoring.coreos.com/v1
+      - equal:
+          path: metadata.name
+          value: lenny-control-plane
+
+  - it: places the ServiceMonitor in the monitoring namespace
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  - it: selects the gateway, controller, and token-service components
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: lenny
+      - equal:
+          path: spec.selector.matchExpressions[0].key
+          value: lenny.dev/component
+      - contains:
+          path: spec.selector.matchExpressions[0].values
+          content: gateway
+      - contains:
+          path: spec.selector.matchExpressions[0].values
+          content: controller
+      - contains:
+          path: spec.selector.matchExpressions[0].values
+          content: token-service
+
+  - it: scrapes the metrics endpoint with the configured interval and timeout
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.interval: 15s
+      monitoring.serviceMonitor.scrapeTimeout: 5s
+    asserts:
+      - equal:
+          path: spec.endpoints[0].port
+          value: metrics
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 15s
+      - equal:
+          path: spec.endpoints[0].scrapeTimeout
+          value: 5s
+
+  - it: applies operator-discoverable labels from prometheusRule.additionalLabels
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.prometheusRule.additionalLabels:
+        release: kube-prometheus-stack
+    asserts:
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack
+
+  - it: places the ServiceMonitor in an explicit serviceMonitor namespace
+    template: servicemonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.serviceMonitor.namespace: observability
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: observability
+
+  - it: renders the PodMonitor for lenny-ops when the gate is enabled
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - equal:
+          path: metadata.name
+          value: lenny-ops
+
+  - it: selects lenny-ops pods by the app label
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels.app
+          value: lenny-ops
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: metrics
+
+  - it: applies operator-discoverable labels to the PodMonitor
+    template: podmonitor.yaml
+    set:
+      monitoring.serviceMonitor.enabled: true
+      monitoring.prometheusRule.additionalLabels:
+        release: kube-prometheus-stack
+    asserts:
+      - equal:
+          path: metadata.labels.release
+          value: kube-prometheus-stack

@@ -1,0 +1,41 @@
+{{- /*
+Per-agent-namespace LimitRange (§17.2 resource governance). One
+LimitRange is rendered into every namespace declared in agentNamespaces.
+It sets default container resource requests and limits so a container
+that omits its own resource requirements is not scheduled as BestEffort
+QoS. Controller-generated agent pods already carry explicit requests
+(§17.8); the LimitRange is the safety net for a manually created or
+misconfigured pod.
+
+The default values are the §17.2 container defaults and are not
+tier-scaled. A per-namespace override at agentNamespaces[].limitRange
+replaces them for that one namespace.
+
+Gated by resourceGovernance.limitRange.enabled (default true). §17.2
+requires the LimitRange in every agent namespace, and the
+lenny-preflight Job fails the install when it is missing.
+*/ -}}
+{{- if .Values.resourceGovernance.limitRange.enabled }}
+{{- $base := .Values.resourceGovernance.limitRange }}
+{{- range $ns := .Values.agentNamespaces }}
+{{- $lr := mergeOverwrite (deepCopy $base) (default dict $ns.limitRange) }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: lenny-agent-limits
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: resource-governance
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: {{ $lr.defaultRequest.cpu | quote }}
+        memory: {{ $lr.defaultRequest.memory | quote }}
+      default:
+        cpu: {{ $lr.default.cpu | quote }}
+        memory: {{ $lr.default.memory | quote }}
+{{- end }}
+{{- end }}

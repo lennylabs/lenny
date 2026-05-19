@@ -1,0 +1,55 @@
+{{- /*
+ServiceMonitor for the §16.9 / §16.1 Lenny metrics scrape targets. The
+Prometheus Operator turns this CRD into a scrape config that discovers
+the gateway, controller, and Token Service metrics endpoints by their
+Services and scrapes the metrics port on each. lenny-ops is scraped by
+the companion podmonitor.yaml because §16.9 routes it through Pod-level
+label selection.
+
+Gated by monitoring.serviceMonitor.enabled. The default is false: this
+is a monitoring.coreos.com CRD, and a cluster without the Prometheus
+Operator has no ServiceMonitor CRD, so an unconditional render would
+fail kubectl apply there. The §13.2 NET-045 metrics-scrape
+NetworkPolicies (rendered by system-network-policies.yaml) admit the
+scrape traffic this ServiceMonitor configures.
+
+Operator discovery: the labels under monitoring.prometheusRule.-
+additionalLabels are applied so the Prometheus Operator's
+serviceMonitorSelector can match this object (§16.9).
+*/ -}}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- $sm := .Values.monitoring.serviceMonitor }}
+{{- $smNS := $sm.namespace | default .Values.monitoring.namespace }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: lenny-control-plane
+  namespace: {{ $smNS }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: metrics
+    {{- with .Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # Scrape Services in the release namespace that the chart labels for
+  # the gateway, controller, and Token Service components.
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+    matchExpressions:
+      - key: lenny.dev/component
+        operator: In
+        values:
+          - gateway
+          - controller
+          - token-service
+  endpoints:
+    - port: metrics
+      interval: {{ $sm.interval | quote }}
+      scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
+      path: /metrics
+{{- end }}

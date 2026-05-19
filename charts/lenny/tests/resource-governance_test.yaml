@@ -1,0 +1,183 @@
+suite: §17.2 / §17.8.2 agent-namespace resource governance
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: renders one ResourceQuota per agent namespace by default
+    template: resourcequota.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+        - name: lenny-agents-kata
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: ResourceQuota
+
+  - it: applies the Tier 1 ResourceQuota defaults by default
+    template: resourcequota.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-agent-quota
+      - equal:
+          path: metadata.namespace
+          value: lenny-agents
+      - equal:
+          path: spec.hard.pods
+          value: "200"
+      - equal:
+          path: spec.hard["requests.cpu"]
+          value: "400"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "800Gi"
+      - equal:
+          path: spec.hard["requests.ephemeral-storage"]
+          value: "2Ti"
+
+  - it: applies the Tier 3 ResourceQuota defaults when tier3 is selected
+    template: resourcequota.yaml
+    set:
+      capacityPlanning.tier: tier3
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "15000"
+      - equal:
+          path: spec.hard["requests.cpu"]
+          value: "30000"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "60Ti"
+      - equal:
+          path: spec.hard["requests.ephemeral-storage"]
+          value: "150Ti"
+
+  - it: applies the Tier 2 ResourceQuota defaults when tier2 is selected
+    template: resourcequota.yaml
+    set:
+      capacityPlanning.tier: tier2
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "2500"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "10Ti"
+
+  - it: lets a per-namespace resourceQuota override the tier defaults
+    template: resourcequota.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+          resourceQuota:
+            pods: 500
+            requestsCPU: "1000"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "500"
+      - equal:
+          path: spec.hard["requests.cpu"]
+          value: "1000"
+      # Unset override keys still fall back to the Tier 1 defaults.
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "800Gi"
+
+  - it: renders no ResourceQuota when the gate is disabled
+    template: resourcequota.yaml
+    set:
+      resourceGovernance.resourceQuota.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: fails to render when capacityPlanning.tier names no known tier
+    template: resourcequota.yaml
+    set:
+      capacityPlanning.tier: tier9
+    asserts:
+      - failedTemplate:
+          errorMessage: capacityPlanning.tier is "tier9" but resourceGovernance.resourceQuota.tiers has no matching entry; set tier to one of tier1, tier2, or tier3 (§17.8.2)
+
+  - it: renders one LimitRange per agent namespace by default
+    template: limitrange.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+        - name: lenny-agents-kata
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: LimitRange
+
+  - it: applies the §17.2 default container requests and limits
+    template: limitrange.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-agent-limits
+      - equal:
+          path: spec.limits[0].type
+          value: Container
+      - equal:
+          path: spec.limits[0].defaultRequest.cpu
+          value: "250m"
+      - equal:
+          path: spec.limits[0].defaultRequest.memory
+          value: "256Mi"
+      - equal:
+          path: spec.limits[0].default.cpu
+          value: "2"
+      - equal:
+          path: spec.limits[0].default.memory
+          value: "2Gi"
+
+  - it: lets a per-namespace limitRange override the container defaults
+    template: limitrange.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+          limitRange:
+            default:
+              cpu: "4"
+              memory: "8Gi"
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.limits[0].default.cpu
+          value: "4"
+      - equal:
+          path: spec.limits[0].default.memory
+          value: "8Gi"
+      # Unset override keys still fall back to the §17.2 defaults.
+      - equal:
+          path: spec.limits[0].defaultRequest.cpu
+          value: "250m"
+
+  - it: renders no LimitRange when the gate is disabled
+    template: limitrange.yaml
+    set:
+      resourceGovernance.limitRange.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

@@ -119,6 +119,54 @@ monitoring:
     # empty.
     namespace: ""
     name: "lenny-alerting-rules"
+  # serviceMonitor gates the §16.9 Prometheus Operator scrape-target
+  # CRDs. servicemonitor.yaml renders a ServiceMonitor for the gateway,
+  # controller, and Token Service; podmonitor.yaml renders a PodMonitor
+  # for lenny-ops, which requires Pod-level label selection. Both are
+  # monitoring.coreos.com CRDs, so the chart leaves them off by default:
+  # a cluster without the Prometheus Operator has no ServiceMonitor or
+  # PodMonitor CRD and rendering them would fail kubectl apply. The
+  # operator-discoverable labels are taken from prometheusRule.-
+  # additionalLabels (§16.9), so one label set covers all three CRDs.
+  serviceMonitor:
+    # enabled gates servicemonitor.yaml and podmonitor.yaml. Set true on
+    # a cluster running the Prometheus Operator (kube-prometheus-stack,
+    # OpenShift Monitoring).
+    enabled: false
+    # namespace is where the ServiceMonitor and PodMonitor are created.
+    # Defaults to monitoring.namespace when empty.
+    namespace: ""
+    # interval is the §16.9 scrape interval applied to every endpoint.
+    interval: "30s"
+    # scrapeTimeout bounds a single scrape; it must not exceed interval.
+    scrapeTimeout: "10s"
+
+# observability configures the §16 OpenTelemetry trace export. Agent
+# runtimes that emit OTLP spans need egress to the OTLP collector; the
+# agent-namespace allow-pod-egress-otlp NetworkPolicy (§13.2 NET-046)
+# re-admits that egress and is rendered only when otlpEndpoint is set.
+observability:
+  # otlpEndpoint is the OTLP collector endpoint the runtime OTel SDK
+  # exports to. Leaving it empty disables trace export and suppresses
+  # the allow-pod-egress-otlp NetworkPolicy. Set it to the collector's
+  # https:// URL to turn trace export on.
+  otlpEndpoint: ""
+  # otlpNamespace is the namespace the in-cluster OTLP collector runs
+  # in. The allow-pod-egress-otlp policy admits egress to a collector
+  # pod in this namespace (§13.2 NET-046).
+  otlpNamespace: "lenny-system"
+  # otlpPodLabel / otlpPodLabelValue select the OTLP collector pod the
+  # allow-pod-egress-otlp policy admits egress to.
+  otlpPodLabel: "app"
+  otlpPodLabelValue: "otel-collector"
+  # otlpPort is the collector port agent pods reach (§13.2 NET-046).
+  # The default 4317 is gRPC OTLP; deployers on OTLP/HTTP set 4318.
+  otlpPort: 4317
+  # otlpCIDR optionally targets an OTLP collector that runs outside the
+  # cluster (a cloud-managed tracing backend). When set, the
+  # allow-pod-egress-otlp policy uses an ipBlock CIDR egress rule
+  # instead of the in-cluster namespace/pod selector (§13.2 NET-046).
+  otlpCIDR: ""
 
 # postgres configures the Postgres connection.
 postgres:
@@ -262,6 +310,70 @@ security:
 # feature-flag downgrade (§17.2). Set acceptFeatureFlagDowngrade.<flag>
 # to true to allow rendering a previously-enabled flag as false.
 acceptFeatureFlagDowngrade: {}
+
+# capacityPlanning selects the §17.8.2 capacity tier. The chart renders
+# the tier-matched ResourceQuota defaults (resourcequota.yaml) for every
+# agent namespace from this value; §17.8.2 requires operators selecting
+# a capacity tier to set tier to the matching value.
+capacityPlanning:
+  # tier is "tier1", "tier2", or "tier3" (§17.8.2 capacity-tier
+  # reference). The default tier1 matches the smallest published
+  # envelope; a deployment sized for a larger tier MUST set this so the
+  # rendered ResourceQuota accommodates the tier's warm-pool and
+  # active-session pod demand.
+  tier: tier1
+
+# resourceGovernance configures the per-agent-namespace ResourceQuota
+# and LimitRange the chart deploys (§17.2). The ResourceQuota caps total
+# pods and aggregate CPU, memory, and ephemeral-storage requests so a
+# controller bug or a misconfigured minWarm cannot exhaust the cluster.
+# The LimitRange sets default container requests and limits so no agent
+# pod is scheduled as BestEffort QoS. Both are rendered into every
+# namespace listed in agentNamespaces; the lenny-preflight Job fails the
+# install when either is missing.
+#
+# resourceQuota.tiers carries the §17.8.2 ResourceQuota tier defaults.
+# The chart selects the row matching capacityPlanning.tier. A per-
+# namespace override at agentNamespaces[].resourceQuota replaces the
+# tier-selected values for that namespace.
+resourceGovernance:
+  resourceQuota:
+    # enabled gates resourcequota.yaml. §17.2 requires the ResourceQuota
+    # in every agent namespace, so the default is true; set false only
+    # when the cluster governs agent-namespace capacity by another
+    # mechanism.
+    enabled: true
+    tiers:
+      tier1:
+        pods: 200
+        requestsCPU: "400"
+        requestsMemory: "800Gi"
+        requestsEphemeralStorage: "2Ti"
+      tier2:
+        pods: 2500
+        requestsCPU: "5000"
+        requestsMemory: "10Ti"
+        requestsEphemeralStorage: "25Ti"
+      tier3:
+        pods: 15000
+        requestsCPU: "30000"
+        requestsMemory: "60Ti"
+        requestsEphemeralStorage: "150Ti"
+  # limitRange carries the §17.2 default container requests and limits.
+  # These values are not tier-scaled; they apply to any container that
+  # omits its own resource requirements. A per-namespace override at
+  # agentNamespaces[].limitRange replaces them for that namespace.
+  limitRange:
+    # enabled gates limitrange.yaml. §17.2 requires the LimitRange in
+    # every agent namespace to keep agent pods off the BestEffort QoS
+    # class, so the default is true.
+    enabled: true
+    defaultRequest:
+      cpu: "250m"
+      memory: "256Mi"
+    default:
+      cpu: "2"
+      memory: "2Gi"
 
 # etcdEncryption controls the §13.1 etcd encryption-at-rest posture.
 # When enabled (the default), the chart renders the lenny-etcd-encryption

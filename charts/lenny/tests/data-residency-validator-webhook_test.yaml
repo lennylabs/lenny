@@ -1,0 +1,97 @@
+suite: data-residency-validator compliance webhook
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - admission-policies/data-residency-validator-webhook.yaml
+tests:
+  - it: renders nothing when features.compliance is disabled
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the workload and webhook config when features.compliance is enabled
+    set:
+      features.compliance: true
+    asserts:
+      # Deployment, Service, PodDisruptionBudget, Certificate,
+      # ValidatingWebhookConfiguration.
+      - hasDocuments:
+          count: 5
+
+  - it: runs the webhook with two replicas and the admission-webhook label
+    set:
+      features.compliance: true
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.metadata.labels["lenny.dev/component"]
+          value: admission-webhook
+
+  - it: protects the webhook with a PodDisruptionBudget
+    set:
+      features.compliance: true
+    documentIndex: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 1
+
+  - it: issues a serving certificate for the webhook
+    set:
+      features.compliance: true
+    documentIndex: 3
+    asserts:
+      - isKind:
+          of: Certificate
+      - equal:
+          path: spec.secretName
+          value: lenny-data-residency-validator-tls
+
+  - it: configures the webhook fail-closed with a 5s timeout and CA injection
+    set:
+      features.compliance: true
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].timeoutSeconds
+          value: 5
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /data-residency-validator
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: lenny-system/lenny-data-residency-validator
+
+  - it: scopes the webhook to sandboxclaim CREATE and UPDATE in agent namespaces
+    set:
+      features.compliance: true
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: webhooks[0].rules[0].apiGroups[0]
+          value: lenny.dev
+      - equal:
+          path: webhooks[0].rules[0].resources[0]
+          value: sandboxclaims
+      - contains:
+          path: webhooks[0].rules[0].operations
+          content: CREATE
+      - contains:
+          path: webhooks[0].rules[0].operations
+          content: UPDATE
+      - equal:
+          path: webhooks[0].namespaceSelector.matchExpressions[0].key
+          value: lenny.dev/agent-namespace

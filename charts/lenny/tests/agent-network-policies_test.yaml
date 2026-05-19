@@ -1,0 +1,131 @@
+suite: agent-namespace NetworkPolicies
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - agent-network-policies.yaml
+tests:
+  - it: renders the baseline policy set per agent namespace without OTLP
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    asserts:
+      # default-deny-all, allow-gateway-ingress, allow-pod-egress-base,
+      # allow-pod-egress-llm-proxy — no allow-pod-egress-otlp by default.
+      - hasDocuments:
+          count: 4
+
+  - it: does not render allow-pod-egress-otlp when otlpEndpoint is unset
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    documentIndex: 3
+    asserts:
+      # The baseline set ends at allow-pod-egress-llm-proxy (index 3);
+      # no allow-pod-egress-otlp document follows it.
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-llm-proxy
+      - lengthEqual:
+          path: spec.policyTypes
+          count: 1
+
+  - it: renders allow-pod-egress-otlp when otlpEndpoint is configured
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      observability:
+        otlpEndpoint: https://otel-collector.lenny-system.svc:4317
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: scopes the OTLP egress policy to managed agent pods
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      observability:
+        otlpEndpoint: https://otel-collector.lenny-system.svc:4317
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.name
+          value: allow-pod-egress-otlp
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/managed"]
+          value: "true"
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: targets the in-cluster OTLP collector by namespace and pod label
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      observability:
+        otlpEndpoint: https://otel-collector.lenny-system.svc:4317
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: lenny-system
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels.app
+          value: otel-collector
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 4317
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+
+  - it: targets an external OTLP collector by ipBlock CIDR when otlpCIDR is set
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      observability:
+        otlpEndpoint: https://otel.acme.com:4317
+        otlpCIDR: 10.20.0.0/16
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: 10.20.0.0/16
+      - notExists:
+          path: spec.egress[0].to[0].namespaceSelector
+
+  - it: honors a custom OTLP namespace, pod label, and port
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+      observability:
+        otlpEndpoint: https://otel.acme.com:4318
+        otlpNamespace: observability
+        otlpPodLabel: app.kubernetes.io/name
+        otlpPodLabelValue: opentelemetry-collector
+        otlpPort: 4318
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: observability
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: opentelemetry-collector
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 4318
+
+  - it: renders the OTLP policy into every agent namespace
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+        - name: lenny-agents-kata
+      observability:
+        otlpEndpoint: https://otel.acme.com:4317
+    asserts:
+      # 5 policies (baseline 4 + OTLP) per namespace, 2 namespaces.
+      - hasDocuments:
+          count: 10

@@ -1,0 +1,52 @@
+{{- /*
+lenny-t4-node-isolation ValidatingAdmissionWebhook (§6.4 STR-003,
+§12.8, §12.9). Enforces the §6.4 T4 dedicated-node requirement: a T4
+pod (carrying the lenny.dev/workspace-tier: t4 label the pool
+controller injects) must pin a T4 node via nodeSelector or nodeAffinity
+and tolerate the T4 NoSchedule taint, and a non-T4 pod must carry
+neither. It intercepts CREATE and UPDATE on Pod resources in agent
+namespaces. Configured fail-closed (failurePolicy: Fail) per §6.4: a
+webhook outage rejects the pod so a T4 pod whose node isolation could
+not be verified is never admitted. §16.5 alerts on unavailability with
+T4NodeIsolationWebhookUnavailable.
+
+Rendered only when features.compliance is enabled (§17.2 feature-gated
+chart inventory: features.compliance adds lenny-data-residency-validator
+and lenny-t4-node-isolation).
+*/ -}}
+{{- if .Values.features.compliance }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-t4-node-isolation") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-t4-node-isolation
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-t4-node-isolation
+webhooks:
+  - name: t4-node-isolation.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-t4-node-isolation
+        namespace: {{ .Release.Namespace }}
+        path: /t4-node-isolation
+        port: 443
+{{- end }}

@@ -10,6 +10,10 @@ into every agent namespace declared in .Values.agentNamespaces:
 
 The supplemental allow-pod-egress-llm-proxy policy applies only to
 proxy-mode pools and is rendered with the LLM proxy.
+
+The supplemental allow-pod-egress-otlp policy re-admits egress to the
+OTLP trace collector and is rendered only when observability.otlpEndpoint
+is set (§13.2 NET-046).
 */ -}}
 {{- range $ns := .Values.agentNamespaces }}
 ---
@@ -111,4 +115,40 @@ spec:
         - port: {{ $.Values.gateway.llmProxyPort }}
           protocol: TCP
   policyTypes: [Egress]
+{{- if $.Values.observability.otlpEndpoint }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pod-egress-otlp
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+spec:
+  # Re-admits the §13.2 NET-046 agent-pod egress to the OTLP trace
+  # collector. Rendered only when observability.otlpEndpoint is set.
+  # When observability.otlpCIDR is set the collector runs outside the
+  # cluster and the egress rule is an ipBlock CIDR; otherwise it
+  # selects an in-cluster collector pod by namespace and pod label.
+  podSelector:
+    matchLabels:
+      lenny.dev/managed: "true"
+  egress:
+    - to:
+        {{- if $.Values.observability.otlpCIDR }}
+        - ipBlock:
+            cidr: {{ $.Values.observability.otlpCIDR | quote }}
+        {{- else }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $.Values.observability.otlpNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{ $.Values.observability.otlpPodLabel }}: {{ $.Values.observability.otlpPodLabelValue | quote }}
+        {{- end }}
+      ports:
+        - port: {{ $.Values.observability.otlpPort }}
+          protocol: TCP
+  policyTypes: [Egress]
+{{- end }}
 {{- end }}

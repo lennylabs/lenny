@@ -1,0 +1,55 @@
+{{- /*
+lenny-data-residency-validator ValidatingAdmissionWebhook (§12.8, §12.9).
+Enforces data-residency region integrity at the Kubernetes resource
+layer: it intercepts CREATE and UPDATE on the tenant-scoped CRD
+resources that carry a dataResidencyRegion field and rejects any
+resource whose resolved region is not declared in the deployment's
+storage.regions map. Among the Lenny CRDs, SandboxClaim is the
+resource that carries dataResidencyRegion, so the webhook rules scope
+to sandboxclaims; the §12.8 inheritance check additionally applies to
+any Tenant or Environment configuration resource the gateway path
+validates. Configured fail-closed (failurePolicy: Fail) with a 5s
+timeout per §12.8: a webhook outage denies admission so a resource
+with an unvalidated region constraint cannot be silently admitted.
+§16.5 alerts on unavailability with DataResidencyWebhookUnavailable.
+
+Rendered only when features.compliance is enabled (§17.2 feature-gated
+chart inventory: features.compliance adds lenny-data-residency-validator
+and lenny-t4-node-isolation).
+*/ -}}
+{{- if .Values.features.compliance }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-data-residency-validator") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-data-residency-validator
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-data-residency-validator
+webhooks:
+  - name: data-residency-validator.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: ["lenny.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxclaims"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-data-residency-validator
+        namespace: {{ .Release.Namespace }}
+        path: /data-residency-validator
+        port: 443
+{{- end }}

@@ -1,0 +1,47 @@
+{{- /*
+PodMonitor for the §16.9 lenny-ops metrics scrape target. §16.9 routes
+lenny-ops through Pod-level label selection rather than a ServiceMonitor
+because the §13.2 NET-051 NetworkPolicy and the runbooks select
+lenny-ops pods by the app: lenny-ops label. The Prometheus Operator
+turns this CRD into a scrape config that discovers lenny-ops pods and
+scrapes their metrics port (TCP 9090, the prometheus.io/port the
+lenny-ops Deployment declares — §13.2 NET-045).
+
+Gated by monitoring.serviceMonitor.enabled, the same flag as
+servicemonitor.yaml: both are monitoring.coreos.com CRDs and a cluster
+without the Prometheus Operator has neither CRD installed. The §13.2
+NET-045 metrics-scrape NetworkPolicy admits the scrape traffic.
+
+Operator discovery: the labels under monitoring.prometheusRule.-
+additionalLabels are applied so the Prometheus Operator's
+podMonitorSelector can match this object (§16.9).
+*/ -}}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- $sm := .Values.monitoring.serviceMonitor }}
+{{- $smNS := $sm.namespace | default .Values.monitoring.namespace }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: lenny-ops
+  namespace: {{ $smNS }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: metrics
+    {{- with .Values.monitoring.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # Select lenny-ops pods in the release namespace by the app label the
+  # §13.2 NET-051 NetworkPolicy and the §17.7 runbooks key on.
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app: lenny-ops
+  podMetricsEndpoints:
+    - port: metrics
+      interval: {{ $sm.interval | quote }}
+      scrapeTimeout: {{ $sm.scrapeTimeout | quote }}
+      path: /metrics
+{{- end }}
