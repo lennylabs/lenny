@@ -1,0 +1,73 @@
+# krew plugin manifest for kubectl-lenny (§24.0, §17.6).
+#
+# kubectl discovers a plugin by searching $PATH for a binary named
+# kubectl-<plugin>, so the krew-published artifact is a binary named
+# kubectl-lenny. It is built from the cmd/lenny-ctl package: every
+# subcommand, flag, and environment variable is identical to lenny-ctl,
+# so `kubectl lenny <subcommand>` and `lenny-ctl <subcommand>` behave
+# the same. Build it with:
+#
+#     go build -o kubectl-lenny ./cmd/lenny-ctl
+#
+# This file is the template the release automation consumes. On every
+# tagged release the automation substitutes spec.version with the tag,
+# fills each platform's uri with the release archive URL, fills each
+# sha256 with the archive checksum, and opens a krew-index pull
+# request. The version, uri, and sha256 values below are placeholders.
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: lenny
+spec:
+  version: v0.0.0
+  homepage: https://github.com/lennylabs/lenny
+  shortDescription: Manage Lenny agent-session platform deployments.
+  description: |
+    kubectl-lenny is the Lenny command-line interface published as a
+    kubectl plugin. It installs and bootstraps a Lenny control plane,
+    administers tenants, runtimes, and circuit breakers, and drives the
+    operability surface (runbooks, diagnostics, drift, backups). It is
+    the same binary as the standalone lenny-ctl release.
+
+    kubectl-lenny does not derive the Lenny API URL from the active
+    kubeconfig context. Set LENNY_API_URL or pass --api-url: the
+    kubectl context identifies the Kubernetes cluster, and a Lenny
+    deployment may live in any namespace or behind any Ingress host.
+  caveats: |
+    Set LENNY_API_URL or pass --api-url to locate the Lenny gateway.
+  platforms:
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: amd64
+      uri: https://github.com/lennylabs/lenny/releases/download/v0.0.0/kubectl-lenny_v0.0.0_darwin_amd64.tar.gz
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      bin: kubectl-lenny
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: arm64
+      uri: https://github.com/lennylabs/lenny/releases/download/v0.0.0/kubectl-lenny_v0.0.0_darwin_arm64.tar.gz
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      bin: kubectl-lenny
+    - selector:
+        matchLabels:
+          os: linux
+          arch: amd64
+      uri: https://github.com/lennylabs/lenny/releases/download/v0.0.0/kubectl-lenny_v0.0.0_linux_amd64.tar.gz
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      bin: kubectl-lenny
+    - selector:
+        matchLabels:
+          os: linux
+          arch: arm64
+      uri: https://github.com/lennylabs/lenny/releases/download/v0.0.0/kubectl-lenny_v0.0.0_linux_arm64.tar.gz
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      bin: kubectl-lenny
+    - selector:
+        matchLabels:
+          os: windows
+          arch: amd64
+      uri: https://github.com/lennylabs/lenny/releases/download/v0.0.0/kubectl-lenny_v0.0.0_windows_amd64.zip
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+      bin: kubectl-lenny.exe
