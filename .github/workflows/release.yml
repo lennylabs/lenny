@@ -1,0 +1,407 @@
+# SPDX-License-Identifier: MIT
+#
+# Release-time supply chain (spec §18.33 Phase 14, §17.6 packaging).
+# Triggered on a pushed semver tag (v*). The pipeline:
+#
+#   1. builds every Lenny platform image and every reference runtime
+#      image multi-arch (linux/amd64 + linux/arm64) and pushes them to
+#      GHCR by release tag and digest;
+#   2. cosign-signs every pushed image keyless (Sigstore, GitHub Actions
+#      OIDC identity — no long-lived key material);
+#   3. emits a CycloneDX SBOM per image and attaches it as a Sigstore
+#      attestation (cosign attest, CycloneDX predicate);
+#   4. packages and PGP-signs the Helm chart (.tgz + .prov) with a
+#      custodied key and publishes the public key as a release asset;
+#   5. attaches release artifacts (chart, public key, krew manifest,
+#      SBOMs, checksums) to the GitHub release;
+#   6. opens a krew-index pull request for the kubectl-lenny plugin.
+#
+# Runtime-author SDK publishing (runtime-sdk-go, lenny-runtime,
+# @lennylabs/runtime-sdk) runs in the companion sdk-publish.yml.
+#
+# Operator-configured secrets — see each `secrets.*` reference below:
+#   HELM_GPG_PRIVATE_KEY    ASCII-armored PGP private key for chart signing.
+#   HELM_GPG_PASSPHRASE     Passphrase for HELM_GPG_PRIVATE_KEY.
+#   HELM_GPG_KEY_NAME       UID/key name passed to `helm package --key`.
+#   KREW_INDEX_TOKEN        PAT with push access to the krew-index fork
+#                           and pull-request scope on krew-index.
+# Image signing uses keyless cosign and the workflow's id-token; it
+# needs no operator secret. GHCR push uses the built-in GITHUB_TOKEN.
+#
+# Reference: TESTING.md §20, spec §18.33.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # Owner is lower-cased below before it reaches a registry reference.
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+
+jobs:
+
+  # Resolve the release version once so every downstream job shares a
+  # single source of truth for the tag and the lower-cased GHCR owner.
+  prepare:
+    name: resolve release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      owner: ${{ steps.meta.outputs.owner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Derive version and owner
+        id: meta
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '${version}' is not a semver release tag (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${version} into ${REGISTRY}/${owner}"
+
+  # Build, push, sign, and SBOM-attest every image. The matrix lists
+  # each platform binary (cmd/<name>) and each reference runtime
+  # (cmd/runtimes/<name>); the Dockerfile selects the package via the
+  # BINARY build-arg. linux/amd64 + linux/arm64 in one buildx run.
+  images:
+    name: image ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [prepare]
+    permissions:
+      contents: read
+      packages: write       # push images to GHCR
+      id-token: write       # keyless cosign signing via Sigstore OIDC
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Platform images — cmd/<name>.
+          - { image: lenny-controller,    binary: lenny-controller }
+          - { image: lenny-gateway,       binary: lenny-gateway }
+          - { image: lenny-webhook,       binary: lenny-webhook }
+          - { image: lenny-token-service, binary: lenny-token-service }
+          - { image: lenny-ops,           binary: lenny-ops }
+          - { image: lenny-migrate,       binary: lenny-migrate }
+          - { image: lenny-adapter,       binary: lenny-adapter }
+          - { image: lenny-preflight,     binary: lenny-preflight }
+          - { image: lenny-backup,        binary: lenny-backup }
+          - { image: lenny-ctl,           binary: lenny-ctl }
+          # Reference runtime images — cmd/runtimes/<name>.
+          - { image: runtime-echo,            binary: runtimes/echo }
+          - { image: runtime-echo-embedded,   binary: runtimes/echo-embedded }
+          - { image: runtime-streaming-echo,  binary: runtimes/streaming-echo }
+          - { image: runtime-delegation-echo, binary: runtimes/delegation-echo }
+          - { image: runtime-mcp-reference,   binary: runtimes/mcp-reference }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf  # v3.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db  # v3.6.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382  # v3.6.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567  # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85  # v6.7.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BINARY=${{ matrix.binary }}
+          push: true
+          # Both the immutable release tag and a moving `latest`.
+          tags: |
+            ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}:${{ needs.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}:latest
+          # Emit a digest provenance attestation alongside the image.
+          provenance: true
+
+      - name: cosign sign (keyless)
+        env:
+          # Keyless signing: cosign mints an ephemeral cert from the
+          # workflow OIDC token; nothing is persisted between runs.
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}"
+          cosign sign --recursive "${ref}@${{ steps.build.outputs.digest }}"
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@61119d458adab75f756bc0b9e4bde25725f86a7a  # v0.17.2
+        with:
+          image: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.image }}.cdx.json
+          artifact-name: sbom-${{ matrix.image }}.cdx.json
+
+      - name: Attach SBOM as a Sigstore attestation
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}"
+          # Keyless attest: binds the CycloneDX SBOM to the image digest
+          # as a cyclonedx-predicate in-toto attestation in the Sigstore
+          # transparency log.
+          cosign attest --recursive \
+            --predicate "sbom-${{ matrix.image }}.cdx.json" \
+            --type cyclonedx \
+            "${ref}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload SBOM for the release job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: sbom-${{ matrix.image }}
+          path: sbom-${{ matrix.image }}.cdx.json
+          retention-days: 90
+
+  # Package the Helm chart and sign it with the custodied PGP key
+  # (§17.6 chart provenance). Produces lenny-<version>.tgz, its
+  # detached .prov provenance file, and the exported public key.
+  helm-chart:
+    name: package and sign Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112  # v4.3.0
+        with:
+          version: v3.16.1
+
+      - name: Import the chart-signing PGP key
+        env:
+          # HELM_GPG_PRIVATE_KEY: ASCII-armored PGP private key, custodied
+          # by the release operator. HELM_GPG_PASSPHRASE unlocks it.
+          HELM_GPG_PRIVATE_KEY: ${{ secrets.HELM_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HELM_GPG_PRIVATE_KEY}" ]]; then
+            echo "::error::secret HELM_GPG_PRIVATE_KEY is not configured"
+            exit 1
+          fi
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -m 700 -p "${GNUPGHOME}"
+          echo "GNUPGHOME=${GNUPGHOME}" >> "$GITHUB_ENV"
+          printf '%s' "${HELM_GPG_PRIVATE_KEY}" | gpg --batch --import
+          # helm reads the legacy secring.gpg format; export it.
+          gpg --batch --export-secret-keys > "${GNUPGHOME}/secring.gpg"
+
+      - name: Lint the chart
+        run: helm lint charts/lenny
+
+      - name: Package and sign the chart
+        env:
+          # HELM_GPG_KEY_NAME: UID of the signing key (e.g. the operator
+          # release address). HELM_GPG_PASSPHRASE: the key passphrase.
+          HELM_GPG_KEY_NAME: ${{ secrets.HELM_GPG_KEY_NAME }}
+          HELM_GPG_PASSPHRASE: ${{ secrets.HELM_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/chart
+          # `helm package --sign` writes both the .tgz and a detached
+          # .prov provenance file signed with the PGP key.
+          printf '%s' "${HELM_GPG_PASSPHRASE}" | helm package charts/lenny \
+            --sign \
+            --key "${HELM_GPG_KEY_NAME}" \
+            --keyring "${GNUPGHOME}/secring.gpg" \
+            --passphrase-file - \
+            --destination dist/chart
+          # Publish the public half of the signing key so consumers can
+          # run `helm verify` against the released chart.
+          gpg --batch --armor --export "${HELM_GPG_KEY_NAME}" > dist/chart/lenny-helm-signing-key.asc
+          ls -l dist/chart
+
+      - name: Verify the chart signature
+        run: |
+          set -euo pipefail
+          tgz=$(ls dist/chart/lenny-*.tgz)
+          helm verify --keyring "${GNUPGHOME}/secring.gpg" "${tgz}"
+          echo "Chart provenance verified: ${tgz}"
+
+      - name: Upload signed chart artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: helm-chart
+          path: dist/chart/
+          retention-days: 90
+
+  # Collect every signed artifact and attach it to the GitHub release.
+  github-release:
+    name: publish GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare, images, helm-chart]
+    permissions:
+      contents: write       # create/edit the GitHub release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: release-staging/sbom
+          pattern: sbom-*
+          merge-multiple: true
+
+      - name: Download signed Helm chart
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: helm-chart
+          path: release-staging/chart
+
+      - name: Assemble release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-staging/out
+          cp release-staging/chart/* release-staging/out/
+          cp release-staging/sbom/*.cdx.json release-staging/out/
+          # Ship the krew manifest template so consumers can inspect the
+          # plugin definition the krew-index PR carries.
+          cp packaging/krew/lenny.yaml release-staging/out/kubectl-lenny.krew.yaml
+          # A single SHA-256 manifest over every attached artifact.
+          ( cd release-staging/out && sha256sum ./* > SHA256SUMS )
+          ls -l release-staging/out
+
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<EOF
+          Lenny ${VERSION}.
+
+          Container images are published to ${REGISTRY}/${{ needs.prepare.outputs.owner }}
+          and signed keyless with cosign. Each image carries a CycloneDX
+          SBOM attached as a Sigstore attestation; verify with:
+
+              cosign verify <image>@<digest> \\
+                --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com
+              cosign verify-attestation --type cyclonedx <image>@<digest> \\
+                --certificate-identity-regexp 'https://github.com/${{ github.repository }}/' \\
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+          The Helm chart .tgz is PGP-signed; verify it with helm-verify
+          against the published lenny-helm-signing-key.asc.
+          EOF
+          )
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release edit "${VERSION}" --notes "${notes}"
+          else
+            gh release create "${VERSION}" \
+              --title "Lenny ${VERSION}" \
+              --notes "${notes}" \
+              --verify-tag
+          fi
+          gh release upload "${VERSION}" release-staging/out/* --clobber
+
+  # Open a krew-index pull request that points the kubectl-lenny plugin
+  # at the freshly published release archives (§17.6 krew contract).
+  krew-index-pr:
+    name: open krew-index PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Render and submit the krew manifest update
+        env:
+          # KREW_INDEX_TOKEN: PAT (or fine-grained token) with push
+          # access to the operator's krew-index fork and pull-request
+          # scope against kubernetes-sigs/krew-index. The built-in
+          # GITHUB_TOKEN cannot push to another repository.
+          GH_TOKEN: ${{ secrets.KREW_INDEX_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::secret KREW_INDEX_TOKEN is not configured"
+            exit 1
+          fi
+          # Build the updated plugin.yaml from the in-repo template,
+          # substituting the release tag and per-platform url + sha256.
+          # The standalone lenny-ctl release archives carry the
+          # kubectl-lenny binary the krew plugin `lenny` resolves to.
+          python3 - "${VERSION}" <<'PY'
+          import hashlib, os, re, subprocess, sys
+          version = sys.argv[1]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          src = open("packaging/krew/lenny.yaml").read().replace("v0.0.0", version)
+          platforms = [
+              ("darwin", "amd64", "tar.gz"),
+              ("darwin", "arm64", "tar.gz"),
+              ("linux", "amd64", "tar.gz"),
+              ("linux", "arm64", "tar.gz"),
+              ("windows", "amd64", "zip"),
+          ]
+          for os_, arch, ext in platforms:
+              url = (f"https://github.com/{repo}/releases/download/{version}"
+                     f"/kubectl-lenny_{version}_{os_}_{arch}.{ext}")
+              data = subprocess.run(
+                  ["curl", "-fsSL", url], check=True, capture_output=True).stdout
+              digest = hashlib.sha256(data).hexdigest()
+              # Replace the placeholder sha256 for this archive's URI.
+              pat = re.compile(r'(uri: ' + re.escape(url) + r'\n\s*sha256: )"0{64}"')
+              src, n = pat.subn(r'\g<1>"' + digest + '"', src)
+              if n != 1:
+                  sys.exit(f"failed to patch sha256 for {os_}/{arch}")
+          open("/tmp/lenny.yaml", "w").write(src)
+          PY
+          echo "Rendered krew manifest:"
+          cat /tmp/lenny.yaml
+
+          # Fork (idempotent), branch, commit the manifest, open the PR.
+          gh repo fork kubernetes-sigs/krew-index --clone --remote --default-branch-only
+          cd krew-index
+          branch="lenny-${VERSION}"
+          git checkout -b "${branch}"
+          mkdir -p plugins
+          cp /tmp/lenny.yaml plugins/lenny.yaml
+          git config user.name "lenny-release-bot"
+          git config user.email "release-bot@lennylabs.dev"
+          git add plugins/lenny.yaml
+          git commit -s -m "Update lenny to ${VERSION}"
+          git push -u origin "${branch}"
+          gh pr create \
+            --repo kubernetes-sigs/krew-index \
+            --title "Update lenny to ${VERSION}" \
+            --body "Automated krew manifest update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"

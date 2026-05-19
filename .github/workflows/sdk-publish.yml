@@ -1,0 +1,255 @@
+# SPDX-License-Identifier: MIT
+#
+# Runtime-author SDK publish pipeline (spec §18.33 Phase 14, §15.7).
+# Publishes the three first-party Runtime Author SDKs on a pushed
+# semver tag. The SDKs version in lockstep with the Runtime Adapter
+# Specification, so a release tag drives all three at once:
+#
+#   runtime-sdk-go         Go module proxy (tag-based) + checksum and a
+#                          keyless cosign attestation over the module zip.
+#   lenny-runtime          PyPI, via Trusted Publishing — Sigstore/PyPI
+#                          attestation with no stored API token.
+#   @lennylabs/runtime-sdk npm, published with --provenance (Sigstore).
+#
+# This workflow is separate from release.yml because the SDKs live in
+# their own upstream repositories (github.com/lennylabs/runtime-sdk-go,
+# /runtime-sdk-python, /runtime-sdk-ts) and publish to language package
+# indexes rather than to GHCR. Both workflows trigger on the same tag.
+#
+# Operator-configured secrets and trust:
+#   GO_PROXY_PUSH_TOKEN  PAT with push access to the runtime-sdk-go
+#                        mirror repository; the Go module proxy serves
+#                        whatever that repository tags. Only required if
+#                        the Go SDK is mirrored from this monorepo.
+#   PyPI                 No secret. PyPI Trusted Publishing must be
+#                        configured for the `lenny-runtime` project
+#                        with this repository + workflow as the trusted
+#                        publisher (pypi.org project settings).
+#   npm                  NPM_TOKEN — an automation token for the
+#                        @lennylabs org with publish rights. npm
+#                        provenance additionally consumes the workflow
+#                        id-token; no extra secret is needed for that.
+#
+# Reference: TESTING.md §20, spec §15.7.
+
+name: sdk-publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: sdk-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  prepare:
+    name: resolve SDK release version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      semver: ${{ steps.meta.outputs.semver }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Derive version
+        id: meta
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '${version}' is not a semver release tag (vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          # Package-index versions (PyPI, npm) carry no leading v.
+          echo "semver=${version#v}" >> "$GITHUB_OUTPUT"
+
+  # Go module proxy publication is tag-based: proxy.golang.org serves a
+  # module version once its repository carries the matching tag. This
+  # job mirrors sdks/runtime/go to the runtime-sdk-go repository, tags
+  # it, then records a checksum and a keyless cosign attestation over
+  # the module zip the proxy will serve.
+  publish-go:
+    name: publish runtime-sdk-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare]
+    permissions:
+      contents: read
+      id-token: write       # keyless cosign attestation over the zip
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b  # v5.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@4959ce089c160fddf62f7b42464195ba1a56d382  # v3.6.0
+
+      - name: Build the module zip and checksum
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Vet and test the SDK subtree, then pack a release zip and
+          # record its sha256. The zip and checksum are the artifacts
+          # consumers corroborate against the proxy-served module.
+          mkdir -p dist/go
+          ( cd sdks/runtime/go && go vet ./... && go test ./... )
+          ( cd sdks/runtime/go && \
+            git archive --format=zip --prefix="runtime-sdk-go@${VERSION}/" HEAD \
+            > "${GITHUB_WORKSPACE}/dist/go/runtime-sdk-go_${VERSION}.zip" )
+          ( cd dist/go && sha256sum ./*.zip > SHA256SUMS )
+          cat dist/go/SHA256SUMS
+
+      - name: Mirror and tag the runtime-sdk-go repository
+        env:
+          # GO_PROXY_PUSH_TOKEN: PAT with push access to the
+          # lennylabs/runtime-sdk-go mirror. The Go module proxy has no
+          # publish API — it serves whatever tags the source repo
+          # carries — so "publishing" is a tag push to that repo.
+          GO_PROXY_PUSH_TOKEN: ${{ secrets.GO_PROXY_PUSH_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GO_PROXY_PUSH_TOKEN}" ]]; then
+            echo "::warning::GO_PROXY_PUSH_TOKEN unset — skipping the mirror push."
+            echo "::warning::Tag github.com/lennylabs/runtime-sdk-go ${VERSION} manually to publish."
+            exit 0
+          fi
+          tmp="${RUNNER_TEMP}/runtime-sdk-go"
+          git clone "https://x-access-token:${GO_PROXY_PUSH_TOKEN}@github.com/lennylabs/runtime-sdk-go.git" "${tmp}"
+          # Replace the mirror contents with the current SDK subtree.
+          rsync -a --delete --exclude '.git' sdks/runtime/go/ "${tmp}/"
+          cd "${tmp}"
+          git config user.name "lenny-release-bot"
+          git config user.email "release-bot@lennylabs.dev"
+          git add -A
+          git commit -s -m "Sync runtime-sdk-go for ${VERSION}" || echo "no content change"
+          git tag -a "${VERSION}" -m "runtime-sdk-go ${VERSION}"
+          git push origin HEAD
+          git push origin "${VERSION}"
+
+      - name: cosign attest the module zip
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          # Keyless blob attestation: a Sigstore-logged signature over
+          # the module zip so consumers can corroborate the proxy
+          # artifact against this build. Pairs with `go mod verify` and
+          # the Go checksum database for the published module.
+          zip=$(ls dist/go/runtime-sdk-go_*.zip)
+          cosign sign-blob --yes \
+            --bundle "dist/go/$(basename "${zip}").cosign.bundle" \
+            "${zip}"
+          ls -l dist/go
+
+      - name: Upload Go module artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: sdk-runtime-sdk-go
+          path: dist/go/
+          retention-days: 90
+
+  # PyPI publication via Trusted Publishing: pypa/gh-action-pypi-publish
+  # exchanges the workflow OIDC token for a short-lived PyPI credential
+  # and uploads PEP 740 attestations, so no API token is stored.
+  publish-python:
+    name: publish lenny-runtime (PyPI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare]
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write       # OIDC exchange for PyPI Trusted Publishing
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.12'
+
+      - name: Verify the package version matches the tag
+        env:
+          SEMVER: ${{ needs.prepare.outputs.semver }}
+        working-directory: sdks/runtime/python
+        run: |
+          set -euo pipefail
+          pkg=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "${pkg}" != "${SEMVER}" ]]; then
+            echo "::error::pyproject.toml version ${pkg} != tag ${SEMVER}"
+            exit 1
+          fi
+
+      - name: Build the sdist and wheel
+        working-directory: sdks/runtime/python
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade build
+          python3 -m build --outdir "${GITHUB_WORKSPACE}/dist/python"
+
+      - name: Publish to PyPI with Sigstore provenance
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/python
+          # PEP 740 attestations are generated and uploaded by default;
+          # spelled out here so the provenance intent is explicit.
+          attestations: true
+
+  # npm publication with --provenance: npm records a Sigstore-backed
+  # provenance statement linking the published tarball to this workflow
+  # run and source commit.
+  publish-npm:
+    name: publish @lennylabs/runtime-sdk (npm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare]
+    permissions:
+      contents: read
+      id-token: write       # Sigstore provenance for `npm publish`
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify the package version matches the tag
+        env:
+          SEMVER: ${{ needs.prepare.outputs.semver }}
+        working-directory: sdks/runtime/typescript
+        run: |
+          set -euo pipefail
+          pkg=$(node -p "require('./package.json').version")
+          if [[ "${pkg}" != "${SEMVER}" ]]; then
+            echo "::error::package.json version ${pkg} != tag ${SEMVER}"
+            exit 1
+          fi
+
+      - name: Install, typecheck, and build
+        working-directory: sdks/runtime/typescript
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Publish to npm with provenance
+        working-directory: sdks/runtime/typescript
+        env:
+          # NPM_TOKEN: automation token for the @lennylabs npm org with
+          # publish rights. `--provenance` additionally uses the
+          # workflow id-token; that part needs no operator secret.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
