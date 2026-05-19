@@ -1,0 +1,454 @@
+// SPDX-License-Identifier: MIT
+
+import type { Authenticator } from './auth.js';
+import { decodeApiError } from './errors.js';
+import {
+  defaultRetryPolicy,
+  delayForAttempt,
+  normalizeRetryPolicy,
+  type RetryPolicy,
+} from './retry.js';
+import type {
+  CreateSessionRequest,
+  CreateSessionResult,
+  ListOptions,
+  Session,
+  SessionPage,
+} from './types.js';
+
+/** The SDK identity sent in the User-Agent request header. */
+const userAgent = 'lenny-client-sdk-ts';
+
+/** The default per-request timeout, in milliseconds. */
+const defaultTimeoutMs = 30_000;
+
+/**
+ * Options for constructing a {@link Client}.
+ */
+export interface ClientOptions {
+  /**
+   * The authentication credential the client attaches to every
+   * request. See {@link bearerToken} and {@link apiKey}.
+   */
+  auth?: Authenticator;
+
+  /**
+   * The development X-Lenny-Tenant-ID header. The minimal gateway
+   * honors this header to scope requests to a tenant when no OIDC
+   * principal is present. Production deployments derive the tenant
+   * from the authenticated principal and ignore the header.
+   */
+  tenantId?: string;
+
+  /**
+   * Overrides {@link defaultRetryPolicy}. Unset fields of the supplied
+   * policy are filled from {@link defaultRetryPolicy}.
+   */
+  retryPolicy?: Partial<RetryPolicy>;
+
+  /**
+   * The per-request timeout, in milliseconds. A request that exceeds
+   * it is aborted. Defaults to 30000.
+   */
+  timeoutMs?: number;
+
+  /**
+   * The fetch implementation. Defaults to the global `fetch`. Tests
+   * inject a stub; production leaves this unset on a runtime that
+   * provides a global fetch.
+   */
+  fetch?: typeof fetch;
+
+  /**
+   * The jitter randomness source, a function returning a value in
+   * [0, 1). Defaults to Math.random. Tests inject a deterministic
+   * source.
+   */
+  rng?: () => number;
+}
+
+/**
+ * Per-call options threaded through a single request.
+ */
+export interface RequestOptions {
+  /**
+   * Attaches an Idempotency-Key header to the request. The §11.5
+   * gateway middleware replays the cached response when the same key
+   * is presented again with the same body within the key's TTL. Use it
+   * on createSession so a retried create does not produce a second
+   * session.
+   */
+  idempotencyKey?: string;
+
+  /**
+   * An AbortSignal that aborts the request. The SDK aborts the request
+   * when this signal fires or when the per-request timeout elapses,
+   * whichever is first.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Client is the §15.1 REST gateway client. Construct it with
+ * {@link newClient}.
+ */
+export class Client {
+  private readonly baseUrl: string;
+  private readonly auth?: Authenticator;
+  private readonly tenantId?: string;
+  private readonly retry: RetryPolicy;
+  private readonly timeoutMs: number;
+  private readonly fetchImpl: typeof fetch;
+  private readonly rng: () => number;
+
+  constructor(baseUrl: string, opts: ClientOptions = {}) {
+    if (!baseUrl) {
+      throw new Error('lenny: base URL is required');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(baseUrl);
+    } catch {
+      throw new Error(`lenny: base URL ${JSON.stringify(baseUrl)} is invalid`);
+    }
+    if (!parsed.protocol || !parsed.host) {
+      throw new Error(`lenny: base URL ${JSON.stringify(baseUrl)} must be absolute`);
+    }
+    const fetchImpl = opts.fetch ?? globalThis.fetch;
+    if (typeof fetchImpl !== 'function') {
+      throw new Error('lenny: no fetch implementation; pass ClientOptions.fetch');
+    }
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.auth = opts.auth;
+    this.tenantId = opts.tenantId;
+    this.retry = opts.retryPolicy
+      ? normalizeRetryPolicy(opts.retryPolicy)
+      : { ...defaultRetryPolicy };
+    this.timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : defaultTimeoutMs;
+    this.fetchImpl = fetchImpl;
+    this.rng = opts.rng ?? Math.random;
+  }
+
+  /**
+   * createSession calls POST /v1/sessions. The request is retried on a
+   * retryable error per the client's retry policy. Pass an
+   * idempotencyKey so a retry is collapsed by the gateway's
+   * idempotency middleware rather than producing a duplicate session.
+   */
+  async createSession(
+    req: CreateSessionRequest,
+    opts: RequestOptions = {},
+  ): Promise<CreateSessionResult> {
+    return this.do<CreateSessionResult>('POST', '/v1/sessions', req, opts);
+  }
+
+  /** getSession calls GET /v1/sessions/{id}. */
+  async getSession(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.do<Session>('GET', `/v1/sessions/${encodeURIComponent(id)}`, undefined, opts);
+  }
+
+  /**
+   * listSessions calls GET /v1/sessions, applying the filters in opt.
+   * It returns one page; iterate with the returned nextCursor or use
+   * {@link iterateSessions} for an all-pages helper.
+   */
+  async listSessions(opt: ListOptions = {}, opts: RequestOptions = {}): Promise<SessionPage> {
+    const q = new URLSearchParams();
+    if (opt.state) {
+      q.set('state', opt.state);
+    }
+    if (opt.runtime) {
+      q.set('runtime', opt.runtime);
+    }
+    if (opt.cursor) {
+      q.set('cursor', opt.cursor);
+    }
+    if (opt.limit !== undefined && opt.limit > 0) {
+      q.set('limit', String(opt.limit));
+    }
+    const encoded = q.toString();
+    const path = encoded ? `/v1/sessions?${encoded}` : '/v1/sessions';
+    const raw = await this.do<{
+      sessions?: Session[];
+      nextCursor?: string;
+      hasMore?: boolean;
+      pagination?: { cursor?: string; hasMore?: boolean };
+    }>('GET', path, undefined, opts);
+    const page: SessionPage = {
+      sessions: raw.sessions ?? [],
+      nextCursor: raw.nextCursor ?? '',
+      hasMore: raw.hasMore ?? false,
+    };
+    // The §25.2 pagination envelope is the canonical source when the
+    // gateway supplies it; the top-level fields are the fallback.
+    if (raw.pagination) {
+      page.nextCursor = raw.pagination.cursor ?? '';
+      page.hasMore = raw.pagination.hasMore ?? false;
+    }
+    return page;
+  }
+
+  /**
+   * iterateSessions walks every page of a GET /v1/sessions listing,
+   * yielding one session at a time. It is the cursor-iteration helper
+   * for the §15.6 pagination-cursors contract. Iteration stops when
+   * the listing is exhausted; a page error rejects the iterator.
+   */
+  async *iterateSessions(
+    opt: ListOptions = {},
+    opts: RequestOptions = {},
+  ): AsyncGenerator<Session, void, void> {
+    let cursor = opt.cursor;
+    for (;;) {
+      const page = await this.listSessions({ ...opt, cursor }, opts);
+      for (const s of page.sessions) {
+        yield s;
+      }
+      if (!page.hasMore || !page.nextCursor) {
+        return;
+      }
+      cursor = page.nextCursor;
+    }
+  }
+
+  /**
+   * deleteSession calls DELETE /v1/sessions/{id}. The §15.1 contract
+   * moves a non-terminal session to the cancelled state and returns
+   * the updated envelope.
+   */
+  async deleteSession(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('DELETE', id, '', opts);
+  }
+
+  /**
+   * finalize calls POST /v1/sessions/{id}/finalize, transitioning a
+   * created session to ready.
+   */
+  async finalize(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('POST', id, 'finalize', opts);
+  }
+
+  /**
+   * start calls POST /v1/sessions/{id}/start, transitioning a ready
+   * session to running.
+   */
+  async start(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('POST', id, 'start', opts);
+  }
+
+  /**
+   * interrupt calls POST /v1/sessions/{id}/interrupt, transitioning a
+   * running session to suspended.
+   */
+  async interrupt(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('POST', id, 'interrupt', opts);
+  }
+
+  /**
+   * terminate calls POST /v1/sessions/{id}/terminate, transitioning a
+   * non-terminal session to completed.
+   */
+  async terminate(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('POST', id, 'terminate', opts);
+  }
+
+  /**
+   * resume calls POST /v1/sessions/{id}/resume, transitioning a
+   * session awaiting client action back to running.
+   */
+  async resume(id: string, opts: RequestOptions = {}): Promise<Session> {
+    return this.transition('POST', id, 'resume', opts);
+  }
+
+  /**
+   * transition issues a no-body state-mutating call. action is the
+   * trailing path segment (finalize, start, ...); an empty action
+   * targets the bare /v1/sessions/{id} path for DELETE.
+   */
+  private async transition(
+    method: string,
+    id: string,
+    action: string,
+    opts: RequestOptions,
+  ): Promise<Session> {
+    let path = `/v1/sessions/${encodeURIComponent(id)}`;
+    if (action) {
+      path += `/${action}`;
+    }
+    return this.do<Session>(method, path, undefined, opts);
+  }
+
+  /**
+   * do executes one REST call with retry. It serializes body to JSON
+   * (when defined), sends the request, retries retryable failures per
+   * the client's retry policy, and parses a 2xx response. A non-2xx
+   * response is parsed into and thrown as an {@link ApiError}.
+   */
+  private async do<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    opts: RequestOptions,
+  ): Promise<T> {
+    const bodyText = body !== undefined ? JSON.stringify(body) : undefined;
+    const policy = this.retry;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= policy.maxAttempts; attempt++) {
+      if (attempt > 1) {
+        await this.sleep(delayForAttempt(policy, attempt - 1, this.rng), opts.signal);
+      }
+      let status: number;
+      let respBody: string;
+      try {
+        ({ status, body: respBody } = await this.roundTrip(method, path, bodyText, opts));
+      } catch (err) {
+        // An abort is a caller-driven cancellation; surface it rather
+        // than retrying. Any other transport-level failure (connection
+        // refused, DNS) is retried like a TRANSIENT error.
+        if (isAbortError(err)) {
+          throw err;
+        }
+        lastErr = err;
+        continue;
+      }
+      if (status >= 200 && status < 300) {
+        if (!respBody) {
+          return undefined as T;
+        }
+        return JSON.parse(respBody) as T;
+      }
+      const apiErr = decodeApiError(status, respBody);
+      lastErr = apiErr;
+      if (apiErr.retryable && attempt < policy.maxAttempts) {
+        continue;
+      }
+      throw apiErr;
+    }
+    throw lastErr;
+  }
+
+  /**
+   * roundTrip performs a single HTTP request and returns the status
+   * code and response body text. It does not interpret the body.
+   */
+  private async roundTrip(
+    method: string,
+    path: string,
+    bodyText: string | undefined,
+    opts: RequestOptions,
+  ): Promise<{ status: number; body: string }> {
+    const headers = new Headers();
+    headers.set('Accept', 'application/json');
+    headers.set('User-Agent', userAgent);
+    if (bodyText !== undefined) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (opts.idempotencyKey) {
+      headers.set('Idempotency-Key', opts.idempotencyKey);
+    }
+    if (this.tenantId) {
+      headers.set('X-Lenny-Tenant-ID', this.tenantId);
+    }
+    if (this.auth) {
+      await this.auth.apply(headers);
+    }
+
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), this.timeoutMs);
+    const signal = mergeSignals(opts.signal, timeout.signal);
+    try {
+      const resp = await this.fetchImpl(this.baseUrl + path, {
+        method,
+        headers,
+        body: bodyText,
+        signal,
+      });
+      const text = await resp.text();
+      return { status: resp.status, body: text };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * sleep waits ms milliseconds or until signal aborts, whichever is
+   * first. It rejects with the abort reason when the signal fires.
+   */
+  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    if (ms <= 0) {
+      if (signal?.aborted) {
+        return Promise.reject(abortReason(signal));
+      }
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(abortReason(signal));
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        reject(abortReason(signal!));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
+
+/**
+ * newClient returns a {@link Client} bound to baseUrl. baseUrl is the
+ * gateway origin (for example https://gateway.acme.com); the /v1 path
+ * prefix is appended by the SDK. It throws when baseUrl is empty or
+ * does not parse as an absolute URL.
+ */
+export function newClient(baseUrl: string, opts: ClientOptions = {}): Client {
+  return new Client(baseUrl, opts);
+}
+
+/** isAbortError reports whether err is an AbortError. */
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+  );
+}
+
+/** abortReason returns the signal's abort reason, or a generic error. */
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/**
+ * mergeSignals returns a single AbortSignal that fires when either
+ * input fires. When the runtime provides AbortSignal.any it is used;
+ * otherwise a manual relay is wired up.
+ */
+function mergeSignals(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
+  if (!a) {
+    return b;
+  }
+  const anyFn = (AbortSignal as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') {
+    return anyFn([a, b]);
+  }
+  const merged = new AbortController();
+  const relay = (src: AbortSignal): void => {
+    if (!merged.signal.aborted) {
+      merged.abort(src.reason);
+    }
+  };
+  if (a.aborted) {
+    relay(a);
+  } else {
+    a.addEventListener('abort', () => relay(a), { once: true });
+  }
+  if (b.aborted) {
+    relay(b);
+  } else {
+    b.addEventListener('abort', () => relay(b), { once: true });
+  }
+  return merged.signal;
+}

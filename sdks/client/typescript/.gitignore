@@ -1,0 +1,8 @@
+# Installed dependencies. Restored by `npm install`.
+node_modules/
+
+# Build output. Produced by `npm run build` (the dual ESM/CJS targets).
+dist/
+
+# npm debug logs.
+npm-debug.log*
