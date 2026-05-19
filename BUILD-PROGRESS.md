@@ -151,6 +151,19 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   registered records carry a placeholder digest and a real session start needs a
   published image or `lenny image import`.
 
+- **Tier-7 load: two gateway defects block two scenarios** (found in Wave 7). The §12.7
+  load tier is implemented: six k6 smoke scenarios (session_throughput, delegation_fanout,
+  credential_rotation_under_load, pod_claim_latency, postgres_write_burst, audit_lock) run
+  against the e2e gateway and capture baselines. Two scenarios are skipped against real
+  gateway defects, each tracked here. (1) `checkpoint_duration`: `POST /v1/sessions/{id}/
+  upload` errors on every request (100% error rate) — the §4.4 workspace-bytes upload path
+  does not serve the load scenario's octet-stream upload. (2) `streaming_reconnect`:
+  `GET /v1/sessions/{id}/events` returns `500 INTERNAL_ERROR "response writer does not
+  support streaming"` — the `gatewaymetrics` status-recorder middleware wraps the
+  `http.ResponseWriter` without forwarding the `http.Flusher` interface, so the SSE
+  handler's flusher assertion fails. Both are gateway-side fixes; until they land the two
+  scenarios carry a `blocked:` skip.
+
 ## Test status
 
 `lenny-test --group pr` reports PASS. Tiers 0 through 4 (static, unit, component,
