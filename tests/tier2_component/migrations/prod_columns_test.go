@@ -67,6 +67,9 @@ var prodMigrationSchema = []struct {
 		"corrects_sequence", "correction_reason_code", "correction_detail",
 		"pod_minutes", "stream_entry_id",
 	}},
+	// 0044 adds the §9.4 pgvector embedding column to agent_memory,
+	// completing the "Postgres + pgvector" default memory backend.
+	{migration: "0044", table: "agent_memory", columns: []string{"embedding"}},
 }
 
 // spec: 12.2, 18.5

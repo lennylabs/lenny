@@ -27,9 +27,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// defaultImage is the Postgres image used by tests. Pinned by major; tests
-// that need a different minor inject a PostgresOptions{Image: …}.
-const defaultImage = "postgres:16-alpine"
+// defaultImage is the Postgres image used by tests. It is the official
+// pgvector image (a postgres:16 base with the pgvector `vector`
+// extension preinstalled) so the §9.4 agent_memory.embedding column and
+// its ivfflat index, added by migration 0044, apply against the same
+// container every other store test uses. Pinned by major; tests that
+// need a different image inject a PostgresOptions{Image: …}.
+const defaultImage = "pgvector/pgvector:pg16"
 
 // PostgresOptions configures StartPostgres. Zero value is sensible.
 type PostgresOptions struct {

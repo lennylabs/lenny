@@ -87,12 +87,11 @@ func TestEvictionStateStoreContract(t *testing.T) {
 // which exercises the Postgres-backed pkg/gateway/evalstore/pgstore
 // against a real container, including the sessions FK cascade.
 
-// TestSemanticCacheContract — Redis semantic cache with pluggable
-// backends. Coverage: scope isolation (u:/s:/t:), per-tenant prefix,
-// miss-on-outage, erasure.
-func TestSemanticCacheContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 SemanticCache — Phase 17b feature; requires Redis-backed semantic cache with scope-aware key prefixes")
-}
+// TestSemanticCacheContract is implemented in semanticcache_test.go,
+// which exercises the Redis-backed pkg/gateway/semanticcache/redisstore
+// against a real Redis container: the §12.4 t:{tenant}:scache:{scope}
+// key scheme, per-tenant and per-user isolation, the §4.9 similarity
+// lookup and TTL, and the §12.2 DeleteByUser / DeleteByTenant erasure.
 
 // TestPodRegistryContract — Kubernetes API CRDPodRegistry. Coverage:
 // all ops listed in spec §12.6, optimistic locking via

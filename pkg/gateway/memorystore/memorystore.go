@@ -10,6 +10,15 @@
 // §9.4 per-user capacity limit (maxMemoriesPerUser) by evicting the
 // oldest memories on write, and exposes the §12.8 mandatory erasure
 // primitives DeleteByUser and DeleteByTenant.
+//
+// §9.4 names Postgres + pgvector as the default backend. Write embeds
+// each memory's content with the configured Embedder and stores the
+// vector; Query embeds the query text and ranks the records that match
+// the query string by vector distance, falling back to recency order
+// when an embedding is unavailable. The Embedder seam keeps the
+// gateway free of a hard dependency on an external embedding API: the
+// HashingEmbedder default is deterministic and dependency-free, and a
+// deployer can substitute a provider-backed Embedder.
 package memorystore
 
 import (
@@ -45,6 +54,11 @@ type Memory struct {
 	Metadata map[string]any
 	// CreatedAt is the server-stamped write time; the eviction order.
 	CreatedAt time.Time
+	// Embedding is the §9.4 pgvector semantic-search vector for Content,
+	// computed by the store's Embedder on Write. It is nil when no
+	// Embedder is configured or the Embedder declined the text; Query
+	// then ranks the record by recency rather than vector distance.
+	Embedding []float32
 }
 
 // MemoryScope identifies the tenant and user (and optional agent type
@@ -101,18 +115,35 @@ type InMemory struct {
 	memories   map[string]Memory // keyed by Memory.ID
 	maxPerUser int
 	clock      func() time.Time
+	embedder   Embedder
 }
 
 // NewInMemory returns an empty store. A non-positive maxPerUser
 // selects DefaultMaxMemoriesPerUser; a nil clock defaults to time.Now.
+// The store embeds memory content with HashingEmbedder; use
+// NewInMemoryWithEmbedder to supply a different Embedder.
 func NewInMemory(maxPerUser int, clock func() time.Time) *InMemory {
+	return NewInMemoryWithEmbedder(maxPerUser, clock, NewHashingEmbedder())
+}
+
+// NewInMemoryWithEmbedder returns an empty store that embeds memory
+// content with embedder. A non-positive maxPerUser selects
+// DefaultMaxMemoriesPerUser; a nil clock defaults to time.Now; a nil
+// embedder disables semantic ranking, so Query orders matches by
+// recency only.
+func NewInMemoryWithEmbedder(maxPerUser int, clock func() time.Time, embedder Embedder) *InMemory {
 	if maxPerUser <= 0 {
 		maxPerUser = DefaultMaxMemoriesPerUser
 	}
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &InMemory{memories: map[string]Memory{}, maxPerUser: maxPerUser, clock: clock}
+	return &InMemory{
+		memories:   map[string]Memory{},
+		maxPerUser: maxPerUser,
+		clock:      clock,
+		embedder:   embedder,
+	}
 }
 
 // Write implements Store.
@@ -135,6 +166,14 @@ func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory
 		}
 		if mem.CreatedAt.IsZero() {
 			mem.CreatedAt = m.clock()
+		}
+		// Compute the §9.4 semantic-search embedding from the content
+		// unless the caller already supplied one. A nil-returning or
+		// absent Embedder leaves the field nil.
+		if mem.Embedding == nil && m.embedder != nil {
+			if vec, err := m.embedder.Embed(mem.Content); err == nil {
+				mem.Embedding = vec
+			}
 		}
 		m.memories[mem.ID] = cloneMemory(mem)
 	}
@@ -160,7 +199,14 @@ func (m *InMemory) evictOldest(tenantID, userID string) {
 	}
 }
 
-// Query implements Store.
+// Query implements Store. It filters the scope's memories to those
+// whose content contains the query string (case-insensitive), then
+// orders the matches by §9.4 semantic similarity: when the Embedder
+// produces a query vector and a candidate carries an embedding, the
+// candidate is ranked by ascending cosine distance to the query;
+// candidates without an embedding, and every match when no Embedder is
+// configured, fall back to newest-first. The result is capped at
+// limit (0 means no cap).
 func (m *InMemory) Query(_ context.Context, scope MemoryScope, query string, limit int) ([]Memory, error) {
 	if scope.TenantID == "" {
 		return nil, ErrEmptyTenant
@@ -181,8 +227,44 @@ func (m *InMemory) Query(_ context.Context, scope MemoryScope, query string, lim
 		}
 		out = append(out, cloneMemory(mem))
 	}
-	sortNewestFirst(out)
+	m.rankByEmbedding(out, query)
 	return capSlice(out, limit), nil
+}
+
+// rankByEmbedding orders matches by §9.4 vector similarity to the
+// query in place. It embeds query with the store's Embedder; when that
+// yields a vector, matches that carry an embedding sort by ascending
+// cosine distance and matches without one sort after them by recency.
+// When no Embedder is configured or the query embeds to nil, every
+// match falls back to newest-first.
+func (m *InMemory) rankByEmbedding(matches []Memory, query string) {
+	var qv []float32
+	if m.embedder != nil && strings.TrimSpace(query) != "" {
+		if v, err := m.embedder.Embed(query); err == nil {
+			qv = v
+		}
+	}
+	if qv == nil {
+		sortNewestFirst(matches)
+		return
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		hi, hj := matches[i].Embedding != nil, matches[j].Embedding != nil
+		if hi != hj {
+			// An embedded candidate always ranks ahead of a non-embedded
+			// one, which can only fall back to recency.
+			return hi
+		}
+		if !hi {
+			return matches[i].CreatedAt.After(matches[j].CreatedAt)
+		}
+		di := CosineDistance(qv, matches[i].Embedding)
+		dj := CosineDistance(qv, matches[j].Embedding)
+		if di != dj {
+			return di < dj
+		}
+		return matches[i].CreatedAt.After(matches[j].CreatedAt)
+	})
 }
 
 // Delete implements Store.
