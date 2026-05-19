@@ -298,3 +298,30 @@ tests:
               secretKeyRef:
                 name: lenny-datastore-conn
                 key: minio-secret-key
+
+  - it: omits the playground flags when the playground is disabled
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-enabled
+
+  - it: renders the playground flags when the playground is enabled
+    set:
+      playground.enabled: true
+      playground.authMode: dev
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-enabled
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-auth-mode=dev
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-bearer-ttl-seconds=900

@@ -388,6 +388,42 @@ gateway:
       cpu: "1"
       memory: 512Mi
 
+# playground configures the §27 web playground the gateway serves at
+# /playground. The gateway reads these values as its --playground-*
+# flags. When enabled is false the gateway mounts no /playground routes
+# and /playground/* returns 404.
+playground:
+  # enabled turns the §27 playground on. It is off by default: the
+  # playground is an evaluation and development surface.
+  enabled: false
+  # authMode is the §27.3 playground authentication mode. It is one of
+  # oidc, apiKey, or dev. dev mode mints session-capability tokens with
+  # no admission material and is only safe on a trusted local install.
+  authMode: oidc
+  # devTenantId is the tenant bound to every dev-mode playground token.
+  # It applies only when authMode is dev.
+  devTenantId: default
+  # allowedRuntimes is a comma-separated glob list of runtime IDs the
+  # playground runtime picker offers. The default "*" offers every
+  # runtime visible to the caller.
+  allowedRuntimes: "*"
+  # maxSessionMinutes is the §27.6 hard cap on the duration of a
+  # playground-initiated session.
+  maxSessionMinutes: 30
+  # maxIdleTimeSeconds is the §27.6 hard idle-timeout override for a
+  # playground-initiated session.
+  maxIdleTimeSeconds: 300
+  # oidcSessionTtlSeconds is the lifetime of the §27.3.1 server-side
+  # playground session record and its cookie.
+  oidcSessionTtlSeconds: 3600
+  # bearerTtlSeconds is the TTL of an MCP bearer token minted by
+  # POST /v1/playground/token. The gateway bounds it to 60..3600.
+  bearerTtlSeconds: 900
+  # gatewayHost is the public gateway host the playground UI connects
+  # to over the MCP WebSocket. It is interpolated into the §27.7
+  # connect-src CSP directive. Leave empty to omit the directive host.
+  gatewayHost: ""
+
 # ops configures the §25.4 lenny-ops operability service. lenny-ops is
 # mandatory in every Lenny installation (§17.8.5); the chart provides no
 # flag to disable it. It runs as a Deployment with K8s Lease leader

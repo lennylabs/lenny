@@ -130,6 +130,19 @@ spec:
             {{- if .Values.features.llmProxy }}
             - --llm-proxy-addr=:{{ .Values.gateway.llmProxyPort }}
             {{- end }}
+            {{- if .Values.playground.enabled }}
+            - --playground-enabled
+            - --playground-auth-mode={{ .Values.playground.authMode }}
+            - --playground-dev-tenant-id={{ .Values.playground.devTenantId }}
+            - --playground-allowed-runtimes={{ .Values.playground.allowedRuntimes }}
+            - --playground-max-session-minutes={{ .Values.playground.maxSessionMinutes }}
+            - --playground-max-idle-time-seconds={{ .Values.playground.maxIdleTimeSeconds }}
+            - --playground-oidc-session-ttl-seconds={{ .Values.playground.oidcSessionTtlSeconds }}
+            - --playground-bearer-ttl-seconds={{ .Values.playground.bearerTtlSeconds }}
+            {{- with .Values.playground.gatewayHost }}
+            - --playground-gateway-host={{ . }}
+            {{- end }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:
