@@ -29,6 +29,8 @@ var backupErrorMap = map[string]struct {
 	backup.ErrCodeRestoreNotFound:         {http.StatusNotFound, conventions.CategoryPermanent},
 	backup.ErrCodeStorageUnreachable:      {http.StatusServiceUnavailable, conventions.CategoryTransient},
 	backup.ErrCodeRemediationLockConflict: {http.StatusConflict, conventions.CategoryPolicy},
+	backup.ErrCodeRestoreNotFailed:        {http.StatusConflict, conventions.CategoryPolicy},
+	backup.ErrCodeJustificationRequired:   {http.StatusBadRequest, conventions.CategoryPolicy},
 }
 
 // writeBackupError maps a §25.11 BackupService error to the §25.2
@@ -62,6 +64,7 @@ func (s *Server) registerBackupRoutes() {
 	s.mux.HandleFunc("POST /v1/admin/restore/execute", s.handleRestoreExecute)
 	s.mux.HandleFunc("GET /v1/admin/restore/{id}/status", s.handleRestoreStatus)
 	s.mux.HandleFunc("POST /v1/admin/restore/resume", s.handleRestoreResume)
+	s.mux.HandleFunc("POST /v1/admin/restore/{id}/confirm-legal-hold-ledger", s.handleConfirmLegalHoldLedger)
 }
 
 // backupUnavailable reports the §25.11 surface as unconfigured. It is
@@ -366,4 +369,38 @@ func (s *Server) handleRestoreResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, result)
+}
+
+// confirmLegalHoldLedgerRequest is the §25.11
+// POST /v1/admin/restore/{id}/confirm-legal-hold-ledger body. The
+// operator's identity is read from the X-Lenny-Caller header.
+type confirmLegalHoldLedgerRequest struct {
+	Justification string `json:"justification"`
+}
+
+// handleConfirmLegalHoldLedger serves
+// POST /v1/admin/restore/{id}/confirm-legal-hold-ledger. The endpoint
+// records the §12.8 platform-admin confirmation that the legal-hold
+// ledger is current after a gdpr.backup_reconcile_blocked stall. The
+// synthetic watermark is persisted on the restore row so the
+// post-restore reconciler accepts it as the authoritative
+// ledgerLatestWriteAt on the next ResumeRestore.
+func (s *Server) handleConfirmLegalHoldLedger(w http.ResponseWriter, r *http.Request) {
+	if s.backups == nil {
+		s.backupUnavailable(w)
+		return
+	}
+	var body confirmLegalHoldLedgerRequest
+	if err := readJSONBody(r, &body); err != nil {
+		conventions.WriteError(w, http.StatusBadRequest, "BAD_REQUEST",
+			conventions.CategoryPermanent, "decode body: "+err.Error())
+		return
+	}
+	state, err := s.backups.ConfirmLegalHoldLedger(r.Context(),
+		r.PathValue("id"), body.Justification, callerIdentity(r))
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, state)
 }

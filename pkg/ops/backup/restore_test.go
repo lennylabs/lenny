@@ -189,6 +189,102 @@ func TestRestoreStatusNotFound(t *testing.T) {
 	}
 }
 
+// spec: §12.8, §25.11
+// diagnosis: confirm-legal-hold-ledger records the platform-admin watermark
+// on a failed restore; the reconciler retry consumes it.
+func TestConfirmLegalHoldLedgerRecordsWatermark(t *testing.T) {
+	svc, store, _, _ := newTestService(t)
+	b := completedBackup(t, svc, store, "full", fixedNow.Add(-time.Hour))
+	ctx := context.Background()
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true, StartedBy: "alice",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	// Drive the restore into the §12.8 reconciler-blocked terminal state
+	// that confirm-legal-hold-ledger is intended to recover from.
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	state.Status = backup.RestoreStatusFailed
+	state.Error = "gdpr.backup_reconcile_blocked: legal_hold_ledger_stale"
+	if err := store.UpdateRestore(ctx, state); err != nil {
+		t.Fatalf("UpdateRestore: %v", err)
+	}
+
+	confirmed, err := svc.ConfirmLegalHoldLedger(ctx, result.RestoreID,
+		"out-of-band ledger reapplied from external legal-hold registry", "bob")
+	if err != nil {
+		t.Fatalf("ConfirmLegalHoldLedger: %v", err)
+	}
+	if confirmed.LedgerConfirmedAt == nil || !confirmed.LedgerConfirmedAt.Equal(fixedNow) {
+		t.Errorf("LedgerConfirmedAt = %v, want %v", confirmed.LedgerConfirmedAt, fixedNow)
+	}
+	if confirmed.LedgerConfirmedBy != "bob" {
+		t.Errorf("LedgerConfirmedBy = %q, want bob", confirmed.LedgerConfirmedBy)
+	}
+	if confirmed.LedgerConfirmedJustification == "" {
+		t.Error("LedgerConfirmedJustification must be persisted")
+	}
+}
+
+// spec: §12.8, §25.11
+// diagnosis: confirm-legal-hold-ledger requires a justification string.
+func TestConfirmLegalHoldLedgerRequiresJustification(t *testing.T) {
+	svc, store, _, _ := newTestService(t)
+	b := completedBackup(t, svc, store, "full", fixedNow.Add(-time.Hour))
+	ctx := context.Background()
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true, StartedBy: "alice",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	state.Status = backup.RestoreStatusFailed
+	if err := store.UpdateRestore(ctx, state); err != nil {
+		t.Fatalf("UpdateRestore: %v", err)
+	}
+	_, err = svc.ConfirmLegalHoldLedger(ctx, result.RestoreID, "", "bob")
+	if backup.CodeOf(err) != backup.ErrCodeJustificationRequired {
+		t.Errorf("error code = %q, want JUSTIFICATION_REQUIRED", backup.CodeOf(err))
+	}
+}
+
+// spec: §12.8, §25.11
+// diagnosis: confirm-legal-hold-ledger refuses a still-running restore.
+func TestConfirmLegalHoldLedgerRejectsRunningRestore(t *testing.T) {
+	svc, store, _, _ := newTestService(t)
+	b := completedBackup(t, svc, store, "full", fixedNow.Add(-time.Hour))
+	ctx := context.Background()
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true, StartedBy: "alice",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	_, err = svc.ConfirmLegalHoldLedger(ctx, result.RestoreID, "justification", "bob")
+	if backup.CodeOf(err) != backup.ErrCodeRestoreNotFailed {
+		t.Errorf("error code = %q, want RESTORE_NOT_FAILED", backup.CodeOf(err))
+	}
+}
+
+// spec: §12.8, §25.11
+// diagnosis: confirm-legal-hold-ledger refuses an unknown restore id.
+func TestConfirmLegalHoldLedgerUnknownRestore(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	_, err := svc.ConfirmLegalHoldLedger(context.Background(), "rst-missing",
+		"justification", "bob")
+	if backup.CodeOf(err) != backup.ErrCodeRestoreNotFound {
+		t.Errorf("error code = %q, want RESTORE_NOT_FOUND", backup.CodeOf(err))
+	}
+}
+
 func TestPreviewRestoreReportsCompatibility(t *testing.T) {
 	svc, store, _, _ := newTestService(t)
 	b := completedBackup(t, svc, store, "full", fixedNow.Add(-time.Hour))

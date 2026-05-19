@@ -529,6 +529,48 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*Restore
 	}, nil
 }
 
+// ConfirmLegalHoldLedger records the §12.8 / §25.11 platform-admin
+// confirmation that the legal-hold ledger is current after a
+// gdpr.backup_reconcile_blocked stall. The synthetic watermark is
+// persisted on the ops_restore_state row so the post-restore reconciler
+// accepts it as ledgerLatestWriteAt on the next ResumeRestore. The
+// caller's identity and justification are recorded on the row. The
+// emission of the §11.7 legal_hold.ledger_confirmed_current_at audit
+// event is the caller's responsibility — opsserver wraps this method
+// with the audit hook so the service layer remains free of an audit
+// dependency.
+//
+// Preconditions: the restore row must exist and be in status "failed"
+// (the only state in which a reconciler block could have surfaced); a
+// non-failed restore returns RESTORE_NOT_FAILED. An empty justification
+// returns JUSTIFICATION_REQUIRED.
+func (s *Service) ConfirmLegalHoldLedger(ctx context.Context, restoreID, justification, caller string) (*RestoreState, error) {
+	if justification == "" {
+		return nil, codedError(ErrCodeJustificationRequired,
+			"§25.11 confirm-legal-hold-ledger requires a justification")
+	}
+	r, err := s.store.GetRestore(ctx, restoreID)
+	if err == ErrNotFound {
+		return nil, codedError(ErrCodeRestoreNotFound, "no restore %q", restoreID)
+	}
+	if err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "read restore: %v", err)
+	}
+	if r.Status != RestoreStatusFailed {
+		return nil, codedError(ErrCodeRestoreNotFailed,
+			"restore %q is in status %q; confirm-legal-hold-ledger applies only to a failed restore",
+			restoreID, r.Status)
+	}
+	now := s.now()
+	r.LedgerConfirmedAt = &now
+	r.LedgerConfirmedBy = caller
+	r.LedgerConfirmedJustification = justification
+	if err := s.store.UpdateRestore(ctx, r); err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "record ledger confirmation: %v", err)
+	}
+	return &r, nil
+}
+
 // EnforceRetention evaluates the §25.11 retention policy against every
 // backup in the store and deletes the expired ones from the store. It
 // is invoked after each successful backup and on the daily 03:30 UTC

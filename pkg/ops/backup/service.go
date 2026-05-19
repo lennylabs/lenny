@@ -44,6 +44,17 @@ const (
 	ErrCodeRestoreNotFound         = "RESTORE_NOT_FOUND"
 	ErrCodeStorageUnreachable      = "BACKUP_STORAGE_UNREACHABLE"
 	ErrCodeRemediationLockConflict = "REMEDIATION_LOCK_CONFLICT"
+	// ErrCodeRestoreNotFailed is returned when an operator invokes a
+	// recovery action (ConfirmLegalHoldLedger) against a restore that
+	// is not in the failed state. The endpoint is meant to recover from
+	// a §12.8 backup_reconcile_blocked block; a running or completed
+	// restore has nothing to confirm.
+	ErrCodeRestoreNotFailed = "RESTORE_NOT_FAILED"
+	// ErrCodeJustificationRequired is returned when an operator-driven
+	// confirmation endpoint is called without a justification string.
+	// §25.11 requires the operator's justification on every audited
+	// override.
+	ErrCodeJustificationRequired = "JUSTIFICATION_REQUIRED"
 )
 
 // scheduler is the §25.11 backup started_by value for a backup the
@@ -294,6 +305,21 @@ type RestoreState struct {
 	PreRestoreBackupID string                `json:"preRestoreBackupId"`
 	FailedShard        string                `json:"failedShard,omitempty"`
 	Error              string                `json:"error,omitempty"`
+
+	// LedgerConfirmedAt is the §12.8 post-restore reconciler ledger
+	// freshness watermark recorded by ConfirmLegalHoldLedger. When set,
+	// the reconciler treats this timestamp as the authoritative
+	// ledgerLatestWriteAt on retry. The freshness gate previously fired
+	// because ledgerLatestWriteAt <= backupTakenAt; the operator
+	// confirmation injects a synthetic watermark that the reconciler
+	// accepts in lieu of the auto-derived one.
+	LedgerConfirmedAt *time.Time `json:"ledgerConfirmedAt,omitempty"`
+	// LedgerConfirmedBy is the platform-admin operator who confirmed
+	// the ledger is current. Recorded for audit linkage.
+	LedgerConfirmedBy string `json:"ledgerConfirmedBy,omitempty"`
+	// LedgerConfirmedJustification carries the operator's justification
+	// for the confirmation, kept on the row alongside the audit event.
+	LedgerConfirmedJustification string `json:"ledgerConfirmedJustification,omitempty"`
 }
 
 // ShardState is one shard's restore status within a RestoreState.
@@ -322,4 +348,13 @@ type BackupService interface {
 	ExecuteRestore(ctx context.Context, req RestoreRequest) (*RestoreResult, error)
 	GetRestoreStatus(ctx context.Context, restoreID string) (*RestoreState, error)
 	ResumeRestore(ctx context.Context, restoreID string) (*RestoreResult, error)
+	// ConfirmLegalHoldLedger records the §12.8 / §25.11 platform-admin
+	// confirmation that the legal-hold ledger is current after a
+	// gdpr.backup_reconcile_blocked stall (ledger restored in lockstep,
+	// ledgerLatestWriteAt <= backupTakenAt). The synthetic watermark is
+	// persisted on the restore row so the reconciler accepts it as the
+	// authoritative ledgerLatestWriteAt on the next ResumeRestore. The
+	// caller's identity and justification are recorded; a separate audit
+	// emission records legal_hold.ledger_confirmed_current_at.
+	ConfirmLegalHoldLedger(ctx context.Context, restoreID, justification, caller string) (*RestoreState, error)
 }

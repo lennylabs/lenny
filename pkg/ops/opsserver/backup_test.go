@@ -250,6 +250,96 @@ func TestBackupEndpointUnavailableWithoutService(t *testing.T) {
 	}
 }
 
+// spec: §12.8, §25.11
+// diagnosis: POST /v1/admin/restore/{id}/confirm-legal-hold-ledger
+// records the platform-admin watermark on a failed restore.
+func TestConfirmLegalHoldLedgerEndpointAcceptsConfirmation(t *testing.T) {
+	srv, svc, store := newBackupServer(t, false)
+	ctx := context.Background()
+	b, err := svc.CreateBackup(ctx, backup.BackupRequest{Type: "full"})
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	completed := time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC)
+	b.Status = backup.StatusCompleted
+	b.CompletedAt = &completed
+	if err := store.UpdateBackup(ctx, *b); err != nil {
+		t.Fatalf("UpdateBackup: %v", err)
+	}
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true, StartedBy: "alice",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	state.Status = backup.RestoreStatusFailed
+	state.Error = "legal_hold_ledger_stale"
+	if err := store.UpdateRestore(ctx, state); err != nil {
+		t.Fatalf("UpdateRestore: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/restore/"+result.RestoreID+"/confirm-legal-hold-ledger",
+		strings.NewReader(`{"justification":"out-of-band ledger reapplied"}`))
+	req.Header.Set("X-Lenny-Caller", "bob")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202\nbody: %s", rec.Code, rec.Body.String())
+	}
+	var confirmed backup.RestoreState
+	if err := json.Unmarshal(rec.Body.Bytes(), &confirmed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if confirmed.LedgerConfirmedBy != "bob" {
+		t.Errorf("LedgerConfirmedBy = %q, want bob", confirmed.LedgerConfirmedBy)
+	}
+	if confirmed.LedgerConfirmedJustification == "" {
+		t.Error("LedgerConfirmedJustification must be persisted")
+	}
+}
+
+// spec: §12.8, §25.11
+// diagnosis: confirm-legal-hold-ledger rejects a missing justification.
+func TestConfirmLegalHoldLedgerEndpointRequiresJustification(t *testing.T) {
+	srv, svc, store := newBackupServer(t, false)
+	ctx := context.Background()
+	b, err := svc.CreateBackup(ctx, backup.BackupRequest{Type: "full"})
+	if err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	completed := time.Date(2026, 5, 18, 11, 0, 0, 0, time.UTC)
+	b.Status = backup.StatusCompleted
+	b.CompletedAt = &completed
+	if err := store.UpdateBackup(ctx, *b); err != nil {
+		t.Fatalf("UpdateBackup: %v", err)
+	}
+	result, err := svc.ExecuteRestore(ctx, backup.RestoreRequest{
+		BackupID: b.ID, Confirm: true, AcknowledgeDataLoss: true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRestore: %v", err)
+	}
+	state, err := store.GetRestore(ctx, result.RestoreID)
+	if err != nil {
+		t.Fatalf("GetRestore: %v", err)
+	}
+	state.Status = backup.RestoreStatusFailed
+	if err := store.UpdateRestore(ctx, state); err != nil {
+		t.Fatalf("UpdateRestore: %v", err)
+	}
+	rec := do(srv, http.MethodPost,
+		"/v1/admin/restore/"+result.RestoreID+"/confirm-legal-hold-ledger",
+		`{"justification":""}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for missing justification\nbody: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRestoreStatusEndpoint(t *testing.T) {
 	srv, svc, store := newBackupServer(t, false)
 	ctx := context.Background()
