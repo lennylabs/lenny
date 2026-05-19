@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,6 +181,17 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 		case "--bearer":
 			if i+1 < len(args) {
 				f.bearer = args[i+1]
+				i += 2
+				continue
+			}
+		case "--bearer-file":
+			// Read the bearer token from a file. The lenny-bootstrap Job
+			// mounts the operator-token Secret and passes its path here:
+			// the distroless image has no shell to read the file inline.
+			if i+1 < len(args) {
+				if tok, err := os.ReadFile(args[i+1]); err == nil {
+					f.bearer = strings.TrimSpace(string(tok))
+				}
 				i += 2
 				continue
 			}
@@ -406,15 +418,44 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 
 func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	var fromValues string
+	var waitSeconds int
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--from-values" && i+1 < len(args) {
+		switch {
+		case args[i] == "--from-values" && i+1 < len(args):
 			fromValues = args[i+1]
+			i++
+		case args[i] == "--wait" && i+1 < len(args):
+			if n, err := strconv.Atoi(args[i+1]); err == nil {
+				waitSeconds = n
+			}
 			i++
 		}
 	}
 	if fromValues == "" {
 		fmt.Fprintln(stderr, "lenny-ctl: bootstrap requires --from-values <file>")
 		return 2
+	}
+	// --wait polls the gateway's health endpoint until it is ready or
+	// the deadline elapses. The lenny-bootstrap Job needs this because
+	// it runs from a distroless image with no shell to poll from, and
+	// it is a post-install hook that races the gateway Deployment.
+	if waitSeconds > 0 {
+		deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
+		fmt.Fprintf(stderr, "lenny-ctl: waiting up to %ds for the gateway\n", waitSeconds)
+		for {
+			// /healthz is the unauthenticated liveness endpoint; a 2xx
+			// means the gateway is serving. The richer /v1/admin/health
+			// report is admin-auth-gated and not needed for a readiness
+			// poll.
+			if err := c.Do(ctx, "GET", "/healthz", nil, nil); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				fmt.Fprintf(stderr, "lenny-ctl: gateway not ready after %ds\n", waitSeconds)
+				return 1
+			}
+			time.Sleep(3 * time.Second)
+		}
 	}
 	raw, err := os.ReadFile(fromValues)
 	if err != nil {

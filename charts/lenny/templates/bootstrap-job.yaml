@@ -55,30 +55,27 @@ spec:
         - name: bootstrap
           image: "{{ $b.image.repository }}:{{ $b.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ $b.image.pullPolicy }}
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -eu
-              deadline=$(( $(date +%s) + {{ int $b.waitTimeoutSeconds }} ))
-              echo "lenny-bootstrap: waiting for {{ $gateway }}/healthz"
-              until lenny-ctl --api-url "{{ $gateway }}" health >/dev/null 2>&1; do
-                if [ "$(date +%s)" -ge "$deadline" ]; then
-                  echo "lenny-bootstrap: gateway not ready after {{ int $b.waitTimeoutSeconds }}s" >&2
-                  exit 1
-                fi
-                sleep 3
-              done
-              echo "lenny-bootstrap: gateway ready, applying seed"
-              exec lenny-ctl \
-                --api-url "{{ $gateway }}" \
-              {{- if $useBearer }}
-                --bearer "$(cat /var/run/lenny/operator-token/{{ $tokenSecret.key }})" \
-              {{- else }}
-                --dev-tenant "{{ $b.auth.devTenant }}" \
-                --dev-roles "{{ $b.auth.devRoles }}" \
-              {{- end }}
-                bootstrap --from-values /etc/lenny/bootstrap-values.yaml
+          # The lenny-ctl image is distroless and has no shell, so the
+          # container runs the binary directly. lenny-ctl bootstrap
+          # --wait polls the gateway health endpoint before applying the
+          # seed, which replaces the former shell wait loop.
+          args:
+            - --api-url
+            - "{{ $gateway }}"
+            {{- if $useBearer }}
+            - --bearer-file
+            - /var/run/lenny/operator-token/{{ $tokenSecret.key }}
+            {{- else }}
+            - --dev-tenant
+            - "{{ $b.auth.devTenant }}"
+            - --dev-roles
+            - "{{ $b.auth.devRoles }}"
+            {{- end }}
+            - bootstrap
+            - --wait
+            - "{{ int $b.waitTimeoutSeconds }}"
+            - --from-values
+            - /etc/lenny/bootstrap-values.yaml
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

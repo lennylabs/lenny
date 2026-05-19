@@ -103,16 +103,25 @@ tests:
   - it: runs lenny-ctl bootstrap with the spec-mandated from-values path
     template: bootstrap-job.yaml
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml|bootstrap --from-values /etc/lenny/bootstrap-values.yaml"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: bootstrap
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --from-values
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: /etc/lenny/bootstrap-values.yaml
 
   - it: polls the gateway internal Service for readiness before seeding
     template: bootstrap-job.yaml
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "http://lenny-gateway.lenny-system.svc:8080"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: http://lenny-gateway.lenny-system.svc:8080
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --wait
 
   - it: mounts the bootstrap-values ConfigMap at /etc/lenny
     template: bootstrap-job.yaml
@@ -152,12 +161,12 @@ tests:
   - it: uses the dev-header auth path when no operator token is configured
     template: bootstrap-job.yaml
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "--dev-tenant"
-      - notMatchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "--bearer"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --dev-tenant
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-file
 
   - it: mounts the operator-token Secret and passes --bearer when configured
     template: bootstrap-job.yaml
@@ -168,9 +177,9 @@ tests:
             name: lenny-operator-token
             key: token
     asserts:
-      - matchRegex:
-          path: spec.template.spec.containers[0].command[2]
-          pattern: "--bearer"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --bearer-file
       - equal:
           path: spec.template.spec.volumes[1].name
           value: operator-token
