@@ -32,6 +32,8 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 		       a.event_schema_version, a.created_at, a.payload,
 		       a.prev_hash, a.retry_count, t.genesis_nonce
 		FROM audit_log a
+		-- platform-admin-cross-tenant-allowed
+		-- platform-admin-cross-tenant-justification: the EventBus retranscribe worker is a platform-internal background worker that drains the failed-publish queue for every tenant; the join pairs each audit row with its own tenant row (t.id = a.tenant_id) to read that tenant's genesis nonce.
 		LEFT JOIN tenants t ON t.id = a.tenant_id
 		WHERE a.eventbus_publish_state IN ('failed', 'retry_pending')
 		  AND a.retry_count < $1

@@ -41,6 +41,8 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 		       a.prev_hash, a.ocsf_translation_state, a.retry_count,
 		       t.genesis_nonce
 		FROM audit_log a
+		-- platform-admin-cross-tenant-allowed
+		-- platform-admin-cross-tenant-justification: the OCSF translation worker is a platform-internal background worker that drains the pending-translation queue for every tenant; the join pairs each audit row with its own tenant row (t.id = a.tenant_id) to read that tenant's genesis nonce.
 		LEFT JOIN tenants t ON t.id = a.tenant_id
 		WHERE a.ocsf_translation_state IN ('pending', 'retry_pending')
 		ORDER BY a.created_at ASC, a.tenant_id, a.sequence_number
