@@ -272,6 +272,43 @@ func TestCatalogHasNoUnspecifiedAlerts(t *testing.T) {
 	}
 }
 
+// TestPostgresWriteBurstIopsCalibration asserts the §16.5
+// PostgresWriteBurstIops alert encodes the "> 3 in 10 minutes" trigger
+// the spec stipulates. A single burst is not actionable; the alert
+// must require repetition across a 10-minute window before paging
+// operators. The expression is a count_over_time over a 1-minute
+// resolution subquery of the burst-exceedance indicator; the test
+// asserts the expression carries the count-over-time tally, the 10m
+// window, the 1m resolution, and the > 3 repetition threshold.
+func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
+	var got Rule
+	for _, r := range Catalog() {
+		if r.Name == "PostgresWriteBurstIops" {
+			got = r
+			break
+		}
+	}
+	if got.Name == "" {
+		t.Fatal("PostgresWriteBurstIops missing from Catalog")
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	wantFragments := []string{
+		"count_over_time",
+		"lenny_postgres_write_burst_iops",
+		"lenny_postgres_write_burst_ceiling_iops",
+		"[10m:1m]",
+		"> 3",
+	}
+	for _, frag := range wantFragments {
+		if !strings.Contains(got.Expr, frag) {
+			t.Errorf("expression %q is missing required fragment %q "+
+				"(§16.5 burst-exceedance count_over_time calibration)", got.Expr, frag)
+		}
+	}
+}
+
 // TestBurnRateRulesAreDualWindow asserts each burn-rate SLO is rendered
 // as a fast-window critical rule and a slow-window warning rule, per
 // the §16.5 multi-window burn-rate requirement.

@@ -1081,11 +1081,22 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "PostgresWriteBurstIops",
-			Expr:        `lenny_postgres_write_burst_iops > scalar(lenny_postgres_write_burst_ceiling_iops)`,
+			Name: "PostgresWriteBurstIops",
+			// §16.5 names the trigger "repeated triggers (> 3 in 10
+			// minutes)". The single-event indicator is
+			// (lenny_postgres_write_burst_iops > burst_ceiling); a single
+			// crossing is not actionable, so the alert fires only when
+			// the indicator has been true for more than 3 of the past 10
+			// 1-minute samples. The 30-second measurement window the
+			// spec stipulates is captured upstream in the
+			// lenny_postgres_write_burst_iops gauge itself (the gateway
+			// emits a wal_bytes/s → IOPS conversion over the rolling
+			// 30s window); the alert's count_over_time tallies how many
+			// scrape intervals the conversion exceeded the ceiling.
+			Expr:        `count_over_time((lenny_postgres_write_burst_iops > scalar(lenny_postgres_write_burst_ceiling_iops))[10m:1m]) > 3`,
 			Severity:    SeverityWarning,
-			Summary:     "Postgres write burst IOPS above the instance ceiling",
-			Description: "Instantaneous Postgres write IOPS exceed the burst ceiling for the configured instance class. Repeated triggers indicate quota flush storms or session-creation spikes regularly saturating burst headroom.",
+			Summary:     "Postgres write burst IOPS exceeded the burst ceiling more than 3 times in 10 minutes",
+			Description: "Instantaneous Postgres write IOPS exceeded the configured burst ceiling more than 3 times in the past 10 minutes. A single burst is not actionable; sustained repetition indicates quota-flush storms or session-creation spikes regularly saturating burst headroom. Review postgres.writeCeilingIops against the Phase 13.5 Lenny-specific write-pattern benchmark.",
 			SpecRef:     "§16.5",
 		},
 		{
