@@ -8,6 +8,11 @@ import {
   normalizeRetryPolicy,
   type RetryPolicy,
 } from './retry.js';
+import {
+  streamSessionEvents,
+  type StreamEvent,
+  type StreamOptions,
+} from './stream.js';
 import type {
   CreateSessionRequest,
   CreateSessionResult,
@@ -209,6 +214,41 @@ export class Client {
       }
       cursor = page.nextCursor;
     }
+  }
+
+  /**
+   * streamEvents opens the §15.1 GET /v1/sessions/{id}/events
+   * Server-Sent Events stream for a session and returns an async
+   * iterable of decoded events. Consume it with `for await`.
+   *
+   * On a transport disconnect the iterable reconnects automatically,
+   * sending the last delivered sequence as the Last-Event-ID header so
+   * the gateway replays the retained backlog from that cursor. A
+   * replayed event at or below the last delivered cursor is dropped,
+   * so the §15.1 reconnect contract holds with no gap and no
+   * duplicate. Reconnect attempts are spaced by the client's retry
+   * policy backoff.
+   *
+   * The iterable ends when the AbortSignal in opt is aborted (a clean
+   * caller-requested stop), when the gateway returns a non-retryable
+   * HTTP status (the iterator throws the typed {@link ApiError}), or
+   * when consecutive zero-progress reconnects exhaust the retry
+   * budget. A retryable HTTP status (429, 5xx) is retried like a
+   * transport disconnect.
+   */
+  streamEvents(id: string, opt: StreamOptions = {}): AsyncGenerator<StreamEvent, void, void> {
+    return streamSessionEvents(
+      {
+        baseUrl: this.baseUrl,
+        fetchImpl: this.fetchImpl,
+        retry: this.retry,
+        rng: this.rng,
+        auth: this.auth,
+        tenantId: this.tenantId,
+      },
+      id,
+      opt,
+    );
   }
 
   /**

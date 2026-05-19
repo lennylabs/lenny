@@ -18,21 +18,34 @@
 // Node toolchain is absent the contract tests skip with a precondition
 // reason rather than fail.
 //
-// The streaming and MCP-client SDK surfaces named in §15.6 are not yet
-// implemented; those tests remain skipped with a skip reason naming
-// the missing SDK package.
+// The streaming contract test does not fit the JSON-line op model: a
+// §15.1 SSE stream is a long-lived connection rather than a
+// request/response op. It builds the SDK, stands up the gateway with
+// an event bus, and drives the SDK's streaming surface against it
+// through a streaming-conformance probe subprocess.
+//
+// The MCP-client SDK surface named in §15.6 is not yet implemented;
+// that test remains skipped with a skip reason naming the missing SDK
+// package.
 
 package sdks_test
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
@@ -216,12 +229,199 @@ func TestTypeScriptClientWireFormat(t *testing.T) {
 	}
 }
 
-// spec: 15.6 (SSE for REST streams; MCP Streamable HTTP; reconnect with Last-Event-ID)
-// diagnosis: The SDK has no streaming surface yet, so a reconnect
+// spec: 15.6 (SSE for REST streams; reconnect with Last-Event-ID)
+// diagnosis: The TypeScript SDK streaming surface dropped, duplicated,
 //
-//	test cannot be driven through the helper.
+//	or reordered a §15.1 SSE event across a reconnect. Inspect the
+//	SSE frame parser and the reconnect/dedup loop in
+//	sdks/client/typescript/src/stream.ts. A duplicate points at the
+//	Last-Event-ID cursor or the at-or-below-cursor drop; a gap
+//	points at the cursor the reconnect request sent.
 func TestTypeScriptClientStreamingReconnect(t *testing.T) {
-	t.Skip("not implemented: §15.6 TypeScript client streaming — the SDK has no streaming module; sdks/client/typescript ships only the REST session surface, no SSE log/message stream consumer and no Last-Event-ID reconnect")
+	requireNode(t)
+	// The §15.1 SSE stream is a long-lived connection, so this contract
+	// test drives a streaming-conformance probe subprocess rather than
+	// the JSON-line helper. The probe consumes the SDK stream; the Go
+	// test publishes events and forces a mid-stream disconnect.
+	buildTypeScriptHelper(t)
+	root := repoRootFromCWD(t)
+	probe := filepath.Join(root, "sdks", "client", "typescript", "test", "stream-probe.mjs")
+	if _, err := os.Stat(probe); err != nil {
+		t.Fatalf("typescript stream probe not found at %s: %v", probe, err)
+	}
+	runSDKStreamingReconnect(t, "ts-client", []string{"node", probe})
+}
+
+// runSDKStreamingReconnect drives one client SDK's §15.1 SSE streaming
+// surface through a forced reconnect. It stands up an in-process
+// gateway wired with an event bus, creates a session, spawns the
+// language-native streaming probe (cmd), publishes a six-event log
+// that spans a forced mid-stream disconnect, and asserts the probe
+// observed every event exactly once, in sequence order, with no gap
+// and no duplicate.
+//
+// The probe is spawned with LENNY_GATEWAY_URL, LENNY_TENANT_ID,
+// LENNY_SESSION_ID, and LENNY_EVENT_COUNT in its environment; it
+// prints one JSON line {"seqs":[...],"types":[...]} on success.
+func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
+	t.Helper()
+
+	// The gateway is the in-process sessionserver wired with an event
+	// bus; events published to that bus are the stream the SDK
+	// consumes.
+	bus := events.NewBus(64)
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{Events: bus})
+
+	// disconnector severs the SDK's first SSE connection mid-stream so
+	// the reconnect path is exercised. It is defined in
+	// go_client_test.go and shared across the contract suite.
+	d := &disconnector{inner: srv.Handler()}
+	ts := httptest.NewServer(d)
+	t.Cleanup(ts.Close)
+
+	// Create the session through the gateway on the acme tenant; the
+	// events endpoint rejects an unknown session with 404.
+	sessionID := createSessionForStreaming(t, ts.URL, "acme")
+
+	const total = 6
+	publish := func(seq int) {
+		bus.Publish(sessionID, "response", `{"n":`+strconv.Itoa(seq)+`}`, time.Now())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+	c.Env = append(
+		os.Environ(),
+		"LENNY_GATEWAY_URL="+ts.URL,
+		"LENNY_TENANT_ID=acme",
+		"LENNY_SESSION_ID="+sessionID,
+		"LENNY_EVENT_COUNT="+strconv.Itoa(total),
+	)
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		t.Fatalf("%s probe stdout pipe: %v", name, err)
+	}
+	stderr, err := c.StderrPipe()
+	if err != nil {
+		t.Fatalf("%s probe stderr pipe: %v", name, err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start %s streaming probe: %v", name, err)
+	}
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := stderr.Read(buf)
+			if n > 0 {
+				t.Logf("[%s probe stderr] %s", name, buf[:n])
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+
+	// Publish the first batch, give the probe time to open its
+	// connection and receive them, then force the disconnect. The
+	// gateway's retained backlog survives the dropped connection, so
+	// the SDK reconnect resumes from its Last-Event-ID cursor.
+	for seq := 1; seq <= 3; seq++ {
+		publish(seq)
+	}
+	time.Sleep(750 * time.Millisecond)
+	d.dropFirstConnection()
+	// Publish the remaining events. They land in the bus history and
+	// are replayed to the reconnecting SDK from the cursor it sends.
+	for seq := 4; seq <= total; seq++ {
+		publish(seq)
+	}
+
+	out, err := io.ReadAll(stdout)
+	if err != nil {
+		t.Fatalf("%s probe stdout read: %v", name, err)
+	}
+	if err := c.Wait(); err != nil {
+		t.Fatalf("%s streaming probe exited with error: %v\noutput: %s", name, err, out)
+	}
+
+	var result struct {
+		Seqs  []uint64 `json:"seqs"`
+		Types []string `json:"types"`
+		Error string   `json:"error"`
+	}
+	if err := json.Unmarshal(trimToJSONLine(out), &result); err != nil {
+		t.Fatalf("%s probe output is not a JSON line: %v\noutput: %s", name, err, out)
+	}
+	if result.Error != "" {
+		t.Fatalf("%s streaming probe reported an error: %s", name, result.Error)
+	}
+
+	// The §15.1 reconnect contract held: every event arrived exactly
+	// once, in sequence order, with no gap and no duplicate.
+	if len(result.Seqs) != total {
+		t.Fatalf("%s probe received %d events, want %d: %v", name, len(result.Seqs), total, result.Seqs)
+	}
+	for i, seq := range result.Seqs {
+		if seq != uint64(i+1) {
+			t.Errorf("%s: event at position %d has seq %d, want %d (full sequence %v)",
+				name, i, seq, i+1, result.Seqs)
+		}
+	}
+	for i, typ := range result.Types {
+		if typ != "response" {
+			t.Errorf("%s: event %d has type %q, want \"response\"", name, i+1, typ)
+		}
+	}
+	if cc := d.connectionCount(); cc < 2 {
+		t.Fatalf("%s: expected the SDK to reconnect after the forced disconnect, saw %d connection(s)", name, cc)
+	}
+}
+
+// createSessionForStreaming creates a session through the gateway REST
+// API on the given tenant and returns its id. The streaming probe
+// consumes that session's event stream.
+func createSessionForStreaming(t *testing.T, gatewayURL, tenant string) string {
+	t.Helper()
+	body := `{"runtimeRef":"claude-code"}`
+	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/sessions", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build create-session request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create session for streaming: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("create session for streaming: HTTP %d: %s", resp.StatusCode, raw)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatalf("decode create-session response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatalf("create-session response carried no id: %s", raw)
+	}
+	return created.ID
+}
+
+// trimToJSONLine returns the last non-empty line of out. A probe may
+// emit diagnostics before its result line; the result is the final
+// JSON object on stdout.
+func trimToJSONLine(out []byte) []byte {
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return []byte(line)
+		}
+	}
+	return out
 }
 
 // spec: 15.6 (the SDK ships both an ESM and a CommonJS build)

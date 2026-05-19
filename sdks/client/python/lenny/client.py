@@ -27,6 +27,12 @@ from typing import Any, AsyncIterator, Callable, Iterator, Optional, TypeVar
 from .auth import Authenticator
 from .errors import APIError, TransportError
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
+from .stream import (
+    AsyncEventStream,
+    EventStream,
+    StreamOptions,
+    _StreamConfig,
+)
 from .types import (
     CreateSessionRequest,
     CreateSessionResult,
@@ -188,6 +194,40 @@ class Client:
             if not page.has_more or not page.next_cursor:
                 return
             cursor = page.next_cursor
+
+    def stream_events(
+        self,
+        session_id: str,
+        options: Optional[StreamOptions] = None,
+    ) -> EventStream:
+        """Open the section 15.1 ``GET /v1/sessions/{id}/events`` stream.
+
+        It returns an :class:`~lenny.stream.EventStream`, a synchronous
+        iterator of decoded :class:`~lenny.stream.StreamEvent` values.
+        Iterate it with a ``for`` loop, or use it as a context manager
+        so the connection is closed on block exit.
+
+        The iterator reconnects on a transport disconnect, resuming from
+        the ``Last-Event-ID`` cursor of the last delivered event, and
+        drops any replayed event at or below that cursor so the section
+        15.1 reconnect contract holds with no gap and no duplicate.
+        Reconnect attempts are spaced by the client's retry policy
+        backoff. A non-retryable HTTP status ends the stream by raising
+        the typed :class:`~lenny.errors.APIError`; a retryable status
+        (429, 5xx) is retried like a disconnect.
+        """
+        return EventStream(self._stream_config(), session_id, options)
+
+    def _stream_config(self) -> _StreamConfig:
+        """Build the transport snapshot the event stream reads."""
+        return _StreamConfig(
+            base_url=self._base_url,
+            timeout=self._timeout,
+            retry=self._retry,
+            auth=self._auth,
+            tenant_id=self._tenant_id,
+            rng=self._rng,
+        )
 
     def delete_session(
         self, session_id: str, options: Optional[RequestOptions] = None
@@ -432,6 +472,27 @@ class AsyncClient:
             if not page.has_more or not page.next_cursor:
                 return
             cursor = page.next_cursor
+
+    async def stream_events(
+        self,
+        session_id: str,
+        options: Optional[StreamOptions] = None,
+    ) -> AsyncEventStream:
+        """Open the section 15.1 ``GET /v1/sessions/{id}/events`` stream.
+
+        It returns an :class:`~lenny.stream.AsyncEventStream`, the
+        ``async`` counterpart of the iterator
+        :meth:`Client.stream_events` returns. Iterate it with
+        ``async for``, or use it as an async context manager so the
+        connection is closed on block exit. Each blocking connection
+        and frame read runs on a worker thread, so an iterating caller
+        does not block the event loop.
+
+        The method is a coroutine so its call site mirrors the other
+        :class:`AsyncClient` methods; ``await`` it to obtain the
+        stream.
+        """
+        return AsyncEventStream(self._sync._stream_config(), session_id, options)
 
     async def delete_session(
         self, session_id: str, options: Optional[RequestOptions] = None

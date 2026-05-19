@@ -13,6 +13,11 @@ resume), decode the section 15.1 error envelope into the typed
 :class:`APIError`, support per-request idempotency keys, and retry
 retryable errors with exponential backoff and jitter.
 
+:meth:`Client.stream_events` consumes the section 15.1
+``GET /v1/sessions/{id}/events`` Server-Sent Events stream as an
+iterator, reconnecting with the ``Last-Event-ID`` cursor on a
+disconnect.
+
 :class:`AsyncClient` exposes the same surface behind ``async``/``await``.
 The :mod:`lenny.webhook` module holds the section 14 webhook signature
 verifier.
@@ -42,6 +47,12 @@ from .errors import (
     is_retryable,
 )
 from .retry import DEFAULT_RETRY_POLICY, RetryPolicy
+from .stream import (
+    AsyncEventStream,
+    EventStream,
+    StreamEvent,
+    StreamOptions,
+)
 from .types import (
     STATE_CANCELLED,
     STATE_COMPLETED,
@@ -86,6 +97,11 @@ __all__ = [
     # retry
     "RetryPolicy",
     "DEFAULT_RETRY_POLICY",
+    # streaming
+    "EventStream",
+    "AsyncEventStream",
+    "StreamEvent",
+    "StreamOptions",
     # types
     "CreateSessionRequest",
     "CreateSessionResult",

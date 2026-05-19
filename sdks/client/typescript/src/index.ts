@@ -14,11 +14,16 @@
  * idempotency keys, and retry retryable errors with exponential
  * backoff and jitter.
  *
+ * {@link Client.streamEvents} consumes the §15.1
+ * GET /v1/sessions/{id}/events Server-Sent Events stream as an async
+ * iterable, reconnecting with the Last-Event-ID cursor on a
+ * disconnect.
+ *
  * The {@link Verifier} verifies §14 webhook delivery signatures with
  * the same HMAC-SHA256 scheme the gateway signs them.
  *
- * The streaming and MCP-client surfaces named in §15.6 are not yet
- * implemented in this SDK.
+ * The MCP-client surface named in §15.6 is not yet implemented in this
+ * SDK.
  *
  * @packageDocumentation
  */
@@ -48,6 +53,9 @@ export {
   normalizeRetryPolicy,
 } from './retry.js';
 export type { RetryPolicy } from './retry.js';
+
+export { streamSessionEvents } from './stream.js';
+export type { StreamEvent, StreamOptions, StreamTransport } from './stream.js';
 
 export type {
   CreateSessionRequest,

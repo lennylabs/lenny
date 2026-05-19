@@ -15,9 +15,11 @@
 // protocol. The helper is a #!/usr/bin/env python3 script, so the
 // harness execs it directly with no build step.
 //
-// The streaming SDK surface named in §15.6 is not implemented in the
-// Python SDK; that test remains skipped with a skip reason naming the
-// missing package. Every test skips cleanly when python3 is absent
+// The streaming contract test does not fit the JSON-line op model: a
+// §15.1 SSE stream is a long-lived connection rather than a
+// request/response op. It stands up the gateway with an event bus and
+// drives the SDK's streaming surface through a streaming-conformance
+// probe subprocess. Every test skips cleanly when python3 is absent
 // from PATH.
 
 package sdks_test
@@ -154,12 +156,26 @@ func TestPythonClientWireFormat(t *testing.T) {
 	}
 }
 
-// spec: 15.6 (SSE for REST streams; MCP Streamable HTTP; reconnect with Last-Event-ID)
-// diagnosis: The SDK has no streaming surface yet, so a reconnect
+// spec: 15.6 (SSE for REST streams; reconnect with Last-Event-ID)
+// diagnosis: The Python SDK streaming surface dropped, duplicated, or
 //
-//	test cannot be driven through the helper.
+//	reordered a §15.1 SSE event across a reconnect. Inspect the SSE
+//	frame parser and the reconnect/dedup loop in
+//	sdks/client/python/lenny/stream.py. A duplicate points at the
+//	Last-Event-ID cursor or the at-or-below-cursor drop; a gap
+//	points at the cursor the reconnect request sent.
 func TestPythonClientStreamingReconnect(t *testing.T) {
-	t.Skip("not implemented: §15.6 Python client streaming — sdks/client/python has no streaming module; the SDK ships only the REST session surface, no SSE log/message stream consumer and no Last-Event-ID reconnect")
+	requirePython3(t)
+	// The §15.1 SSE stream is a long-lived connection, so this contract
+	// test drives a streaming-conformance probe subprocess rather than
+	// the JSON-line helper. The probe consumes the SDK stream; the Go
+	// test publishes events and forces a mid-stream disconnect.
+	root := repoRootFromCWD(t)
+	probe := filepath.Join(root, "sdks", "client", "python", "tests", "stream_probe.py")
+	if _, err := os.Stat(probe); err != nil {
+		t.Fatalf("python stream probe not found at %s: %v", probe, err)
+	}
+	runSDKStreamingReconnect(t, "python-client", []string{"python3", probe})
 }
 
 // spec: 15.6 (both async/await and synchronous variants supported)

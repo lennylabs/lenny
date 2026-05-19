@@ -36,7 +36,8 @@
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:pkgjson": "node scripts/write-dist-pkgjson.mjs",
     "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run build:pkgjson",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"test/*.test.mjs\""
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
