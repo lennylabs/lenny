@@ -109,16 +109,12 @@ func TestDoubleClaimVerification(t *testing.T) {
 // spec: 4.6.1
 // diagnosis: §4.6.1 / ADR-007 SandboxClaim concurrency fencing did not
 // hold under load. ADR-007 fences a claim with a resourceVersion-guarded
-// compare-and-swap that flips Sandbox.status.phase idle → claimed: the
-// API server admits the first writer and returns HTTP 409 Conflict to
-// every racing writer carrying a stale resourceVersion (pkg/gateway/
-// podclaim claims a pod with exactly this Status().Update CAS). The test
-// fires 100 goroutines that each replace the same Sandbox's status
-// subresource carrying the same observed resourceVersion; exactly one
-// must win and the other 99 must be rejected with a 409 Conflict. More
-// than one winner is a genuine fencing weakness. The lenny-sandboxclaim-
-// guard webhook's CREATE rule is defense in depth and is covered by
-// TestDoubleClaimVerification; this test exercises the primary fence.
+// compare-and-swap on Sandbox.status.phase idle -> claimed: the API
+// server admits the first writer and returns HTTP 409 to every racer
+// carrying a stale resourceVersion. The test fires 100 goroutines that
+// each replace the same Sandbox status with the same observed version;
+// exactly one must win and the other 99 must be fenced with a 409.
+// More than one winner is a genuine fencing weakness.
 func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 	c := kind.InstallLenny(t)
 
