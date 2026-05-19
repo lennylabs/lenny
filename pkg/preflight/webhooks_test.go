@@ -111,15 +111,16 @@ func TestCheckAdmissionWebhooksPassesOnFreshInstall(t *testing.T) {
 	}
 }
 
-func TestCheckAdmissionWebhooksFailsOnMissingWebhook(t *testing.T) {
+func TestCheckAdmissionWebhooksPassesOnPartiallyDeployedWebhooks(t *testing.T) {
 	expected := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
-	// Deploy all but the last expected webhook.
+	// An upgrade that newly enables a feature-gated webhook: the prior
+	// release's webhooks are deployed, the newly-enabled one is not yet
+	// (it lands in the chart's main phase, after this pre-upgrade hook).
+	// A not-yet-deployed webhook is not a fail-open gap, so the check
+	// passes as long as every deployed webhook is fail-closed.
 	d := preflight.CheckAdmissionWebhooks(expected, healthyDeployment(expected[:len(expected)-1]))
-	if d.Passed {
-		t.Fatal("check passed with a missing webhook")
-	}
-	if !strings.Contains(d.Reason, "not found") {
-		t.Errorf("reason %q does not report the missing webhook", d.Reason)
+	if !d.Passed {
+		t.Errorf("check failed though every deployed webhook is fail-closed: %s", d.Reason)
 	}
 }
 

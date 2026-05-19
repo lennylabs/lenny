@@ -70,41 +70,34 @@ type WebhookConfig struct {
 	HasCABundle bool
 }
 
-// CheckAdmissionWebhooks verifies that every expected admission webhook
-// is deployed fail-closed with an injected CA bundle (§17.9). A missing
-// webhook, a non-Fail failurePolicy, or an absent caBundle aborts the
-// install fail-closed, preventing a chart-author omission from
-// shipping silently as a fail-open admission gap.
+// CheckAdmissionWebhooks verifies the §17.9 admission posture: every
+// expected admission webhook that is already deployed must be
+// fail-closed (failurePolicy "Fail") with an injected CA bundle. A
+// deployed-but-fail-open webhook aborts the install fail-closed.
 //
-// The Job runs the check as both a pre-install and a pre-upgrade hook.
-// On a fresh install the chart's webhooks are not applied until after
-// the pre-install hooks complete, so none of the expected webhooks are
-// deployed yet. When none of the expected webhooks is present the
-// check treats the run as a fresh install and passes: there is no
-// prior admission posture to have regressed. The inventory comparison
-// is meaningful on a pre-upgrade run, where the prior release's
-// webhooks are already deployed, and it still fails when some but not
-// all expected webhooks are present (a partial omission or downgrade).
+// The Job runs the check as both a pre-install and a pre-upgrade hook,
+// so it executes BEFORE the chart's main phase applies any webhook. An
+// expected webhook that is not yet deployed is therefore not a
+// failure: on a fresh install none are deployed, and on an upgrade
+// that newly enables a feature-gated webhook the new webhook is
+// applied only in the main phase. The check validates the fail-closed
+// posture of what is present; it cannot, by construction, detect a
+// webhook the same operation is about to create. A chart-author
+// omission is caught instead by the chart's helm-unittest render
+// assertions. The check still fails a deployed webhook whose
+// failurePolicy is not "Fail" or whose caBundle is empty — a genuine
+// fail-open gap that no later phase corrects.
 func CheckAdmissionWebhooks(expected []string, deployed []WebhookConfig) Decision {
 	byName := make(map[string]WebhookConfig, len(deployed))
 	for _, w := range deployed {
 		byName[w.Name] = w
 	}
-	present := 0
-	for _, name := range expected {
-		if _, ok := byName[name]; ok {
-			present++
-		}
-	}
-	if present == 0 {
-		return Decision{Passed: true}
-	}
 	for _, name := range expected {
 		w, ok := byName[name]
 		if !ok {
-			return Decision{Passed: false, Reason: fmt.Sprintf(
-				"expected ValidatingWebhookConfiguration %q not found; the chart-rendered webhook is missing", name,
-			)}
+			// Not yet deployed — applied in the chart's main phase,
+			// after this pre-hook. Not a fail-open gap.
+			continue
 		}
 		if w.FailurePolicy != "Fail" {
 			return Decision{Passed: false, Reason: fmt.Sprintf(

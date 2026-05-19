@@ -87,17 +87,38 @@ func TestRunPassesWhenWebhooksHealthyAndNoPhaseStamp(t *testing.T) {
 	}
 }
 
-func TestRunFailsOnMissingWebhook(t *testing.T) {
-	// Seed every baseline webhook but the last.
+func TestRunFailsOnFailOpenWebhook(t *testing.T) {
+	// preflight runs before the chart's main phase, so a not-yet-deployed
+	// webhook is not a gap. The genuine fail-open gap the inventory check
+	// catches is a DEPLOYED webhook whose failurePolicy is not Fail.
+	objs := allBaselineWebhooks()
+	names := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{})
+	ignore := admissionregistrationv1.Ignore
+	failOpen := validatingWebhook(names[len(names)-1])
+	failOpen.Webhooks[0].FailurePolicy = &ignore
+	objs[len(objs)-1] = failOpen
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if !preflight.Failed(report) {
+		t.Fatal("Run passed despite a fail-open (failurePolicy: Ignore) webhook")
+	}
+	if resultByName(report, "admission-webhook-inventory").Passed {
+		t.Error("the admission-webhook-inventory check passed despite a fail-open webhook")
+	}
+}
+
+func TestRunPassesWhenAFeatureGatedWebhookIsNotYetDeployed(t *testing.T) {
+	// An upgrade that newly enables a feature-gated webhook: the prior
+	// webhooks are deployed fail-closed, the new one lands only in the
+	// chart's main phase. preflight must not abort the upgrade for it.
 	objs := allBaselineWebhooks()
 	c := runClient(t, objs[:len(objs)-1]...)
 
 	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
-	if !preflight.Failed(report) {
-		t.Fatal("Run passed despite a missing baseline webhook")
-	}
-	if resultByName(report, "admission-webhook-inventory").Passed {
-		t.Error("the admission-webhook-inventory check passed despite a missing webhook")
+	if resultByName(report, "admission-webhook-inventory").Passed != true {
+		t.Errorf("admission-webhook-inventory failed though every deployed webhook is fail-closed: %s",
+			resultByName(report, "admission-webhook-inventory").Reason)
 	}
 }
 
