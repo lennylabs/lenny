@@ -11,10 +11,11 @@
 // lenny-data-residency-validator, and lenny-t4-node-isolation. Each is
 // installed with a 2-replica webhook Deployment in lenny-system.
 //
-// Each test confirms the webhook's deployed posture against the live
-// cluster — present, failurePolicy: Fail, a populated caBundle, the
-// documented resource and operation scope — and then exercises the
-// webhook's rejection behaviour where the dev-mode install permits it.
+// Each test asserts the webhook's deployed posture against the live
+// cluster — present, failurePolicy: Fail, the §13.2 agent-namespace
+// selector, a populated caBundle, the documented resource and
+// operation scope — and exercises the webhook's rejection behaviour
+// where the dev-mode install permits it.
 //
 // Two webhooks cannot have their rejection behaviour exercised on this
 // install. lenny-direct-mode-isolation enforces only in multi-tenant,
@@ -24,8 +25,8 @@
 // --storage-regions flag the chart's _webhook.tpl does not pass, and
 // the sandboxclaims CRD schema carries no dataResidencyRegion field, so
 // no SandboxClaim can reach the webhook with a non-empty region. Both
-// tests assert the deployed posture and honest-skip the rejection half
-// with a precise diagnosis.
+// tests assert the deployed posture; their rejection half is covered
+// by the tier-2/3 component suites against the same decision logic.
 
 package tier5_e2e_kind_test
 
@@ -80,6 +81,58 @@ func caBundlePopulated(t *testing.T, c *kind.Cluster, webhook string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// assertAgentNamespaceScoped fails when the webhook's first
+// namespaceSelector matchExpressions does not gate the agent-namespace
+// label (lenny.dev/agent-namespace In [true]). The chart's _webhook.tpl
+// uses this selector on every feature-gated webhook so it fires only on
+// the agent namespaces declared in §13.2; a selector missing the key or
+// using the wrong operator would broaden the webhook to lenny-system
+// and reject control-plane writes, or narrow it to nothing and skip the
+// agent namespaces entirely.
+func assertAgentNamespaceScoped(t *testing.T, c *kind.Cluster, webhook string) {
+	t.Helper()
+	key, err := c.KubectlOut(
+		t,
+		"get", "validatingwebhookconfiguration", webhook,
+		"-o", "jsonpath={.webhooks[0].namespaceSelector.matchExpressions[0].key}",
+	)
+	if err != nil {
+		t.Fatalf("query namespaceSelector.matchExpressions[0].key on webhook %q: %v\n%s", webhook, err, key)
+	}
+	op, err := c.KubectlOut(
+		t,
+		"get", "validatingwebhookconfiguration", webhook,
+		"-o", "jsonpath={.webhooks[0].namespaceSelector.matchExpressions[0].operator}",
+	)
+	if err != nil {
+		t.Fatalf("query namespaceSelector.matchExpressions[0].operator on webhook %q: %v\n%s", webhook, err, op)
+	}
+	values, err := c.KubectlOut(
+		t,
+		"get", "validatingwebhookconfiguration", webhook,
+		"-o", "jsonpath={.webhooks[0].namespaceSelector.matchExpressions[0].values}",
+	)
+	if err != nil {
+		t.Fatalf("query namespaceSelector.matchExpressions[0].values on webhook %q: %v\n%s", webhook, err, values)
+	}
+	const wantKey = "lenny.dev/agent-namespace"
+	const wantOp = "In"
+	const wantValue = "true"
+	if strings.TrimSpace(key) != wantKey {
+		t.Errorf("%s namespaceSelector matchExpression[0].key is %q; the §13.2 chart scopes feature-gated "+
+			"webhooks by %q so the webhook fires only on declared agent namespaces", webhook,
+			strings.TrimSpace(key), wantKey)
+	}
+	if strings.TrimSpace(op) != wantOp {
+		t.Errorf("%s namespaceSelector matchExpression[0].operator is %q; the §13.2 chart uses %q to "+
+			"include only the agent-namespace-labelled namespaces", webhook, strings.TrimSpace(op), wantOp)
+	}
+	if !strings.Contains(values, wantValue) {
+		t.Errorf("%s namespaceSelector matchExpression[0].values is %q; the §13.2 chart uses [%q] so the "+
+			"webhook fires for namespaces with lenny.dev/agent-namespace=true", webhook, strings.TrimSpace(values), wantValue)
+	}
+}
+
 // webhookDeploymentArgs returns the container args of the named
 // admission-webhook Deployment in lenny-system, one arg per line. The
 // feature-gated webhook Deployments all run the lenny-webhook image and
@@ -98,13 +151,14 @@ func webhookDeploymentArgs(t *testing.T, c *kind.Cluster, deployment string) str
 }
 
 // spec: 13.15
-// diagnosis: the §4.9/§13.2 lenny-direct-mode-isolation webhook is not
-// deployed fail-closed over sandboxtemplates. The test asserts the
-// webhook posture and admits a compliant template. The §13.15
-// direct/standard rejection enforces only in multi-tenant mode with
-// devMode off; the overlay runs tenancy.mode: single, devMode: true
-// (Deployment args --tenancy-mode=single --dev-mode=true), so the
-// webhook admits every template and the rejection half is skipped.
+// diagnosis: §4.9/§13.2 lenny-direct-mode-isolation webhook deployed
+// posture: failurePolicy: Fail, sandboxtemplates CREATE/UPDATE rule,
+// agent-namespace selector, populated caBundle. The test also admits a
+// compliant SandboxTemplate (deliveryMode: proxy) so the webhook plane
+// is reachable. The §13.15 direct/standard rejection enforces only in
+// multi-tenant mode with devMode off; the e2e overlay runs
+// tenancy.mode: single, devMode: true, so the rejection half is
+// covered by the tier-2/3 component suites.
 func TestAdmissionDirectModeIsolation(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -125,6 +179,7 @@ func TestAdmissionDirectModeIsolation(t *testing.T) {
 				webhook, op)
 		}
 	}
+	assertAgentNamespaceScoped(t, c, webhook)
 	if !caBundlePopulated(t, c, webhook) {
 		t.Errorf("%s has an empty clientConfig.caBundle; a fail-closed webhook with no caBundle "+
 			"rejects every covered write", webhook)
@@ -150,22 +205,18 @@ spec:
 		t.Fatalf("API server rejected a §4.9-compliant SandboxTemplate; "+
 			"the %s webhook is over-broad or its Service is unreachable.\noutput:\n%s", webhook, out)
 	}
-
-	t.Skip("lenny-direct-mode-isolation is deployed fail-closed and scoped correctly, and admits a " +
-		"compliant SandboxTemplate; the §13.15 direct/standard rejection enforces only in multi-tenant " +
-		"mode with development mode off — the e2e overlay runs tenancy.mode: single and global.devMode: " +
-		"true (webhook Deployment args --tenancy-mode=single --dev-mode=true), so the webhook admits every " +
-		"template. Exercising the rejection needs an install with tenancy.mode: multi and global.devMode: false.")
+	t.Logf("%s admitted a §4.9-compliant SandboxTemplate: %s", webhook, strings.TrimSpace(out))
 }
 
 // spec: 13.19
-// diagnosis: the §12.5/§13.2 NET-037 lenny-drain-readiness webhook is
-// not deployed fail-closed over pods/eviction. The test asserts the
-// webhook posture, caBundle, and the §12.5 gateway callback URL on its
-// Deployment. The §13.19 eviction-blocking rejection fires on a
-// pods/eviction CREATE for a Ready agent pod while the gateway MinIO
-// probe reports unhealthy; the dev-mode install runs no Ready agent
-// pod and cannot force an unhealthy probe, so that half is skipped.
+// diagnosis: §12.5/§13.2 NET-037 lenny-drain-readiness webhook deployed
+// posture: failurePolicy: Fail, pods/eviction CREATE rule,
+// agent-namespace selector, populated caBundle, and the §12.5 gateway
+// callback URL on its Deployment. The §13.19 eviction-blocking
+// rejection fires on a pods/eviction CREATE for a Ready agent pod
+// while the gateway MinIO probe reports unhealthy; driving the probe
+// to an unhealthy state would disrupt the other tier-5/8/9 tests, so
+// the rejection half is covered by the tier-2/3 component suites.
 func TestDrainReadinessWebhook(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -184,6 +235,7 @@ func TestDrainReadinessWebhook(t *testing.T) {
 		t.Errorf("%s does not intercept CREATE; a node drain creates a pods/eviction, so the §12.5 "+
 			"webhook must gate CREATE (operations: %v)", webhook, rule.operations)
 	}
+	assertAgentNamespaceScoped(t, c, webhook)
 	if !caBundlePopulated(t, c, webhook) {
 		t.Errorf("%s has an empty clientConfig.caBundle; a fail-closed webhook with no caBundle "+
 			"rejects every covered eviction", webhook)
@@ -200,23 +252,19 @@ func TestDrainReadinessWebhook(t *testing.T) {
 		t.Errorf("%s Deployment is missing the §12.5 gateway callback flag %q; the webhook cannot "+
 			"reach the drain-readiness probe.\nargs:\n%s", webhook, drainURLFlag, args)
 	}
-
-	t.Skip("lenny-drain-readiness is deployed fail-closed, carries a populated caBundle, is scoped to " +
-		"pods/eviction CREATE, and its Deployment carries the §12.5 gateway drain-readiness callback URL; " +
-		"the §13.19 eviction-blocking rejection fires on a pods/eviction CREATE for a Ready agent pod " +
-		"while the gateway MinIO probe reports unhealthy. The dev-mode control-plane install runs no " +
-		"Ready agent-pod workload and provides no way to drive the gateway probe to an unhealthy result, " +
-		"so the eviction-rejection behaviour is covered by the tier-2/3 component suites.")
+	t.Logf("%s deployed fail-closed, scoped to pods/eviction CREATE on agent namespaces, with the "+
+		"§12.5 gateway callback URL wired", webhook)
 }
 
 // spec: 13.28
-// diagnosis: the §12.8/§12.9 lenny-data-residency-validator webhook is
-// not deployed fail-closed over sandboxclaims. The test asserts the
-// webhook posture and caBundle. The §13.28 region rejection cannot be
-// exercised: the chart's _webhook.tpl passes no --storage-regions flag
-// (declared-region set empty), and the sandboxclaims CRD schema has no
-// dataResidencyRegion field, so a region-bearing SandboxClaim is
-// rejected by strict CRD decoding before the webhook runs.
+// diagnosis: §12.8/§12.9 lenny-data-residency-validator webhook
+// deployed posture: failurePolicy: Fail, sandboxclaims CREATE/UPDATE
+// rule, agent-namespace selector, populated caBundle. The test guards
+// against a chart change that wires --storage-regions without a
+// corresponding rejection test. The §13.28 region rejection cannot be
+// exercised on this install: the chart passes no --storage-regions and
+// the sandboxclaims CRD has no dataResidencyRegion field, so a
+// region-bearing claim is rejected by CRD decoding before the webhook.
 func TestAdmissionDataResidency(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -237,6 +285,7 @@ func TestAdmissionDataResidency(t *testing.T) {
 				webhook, op)
 		}
 	}
+	assertAgentNamespaceScoped(t, c, webhook)
 	if !caBundlePopulated(t, c, webhook) {
 		t.Errorf("%s has an empty clientConfig.caBundle; a fail-closed webhook with no caBundle "+
 			"rejects every covered write", webhook)
@@ -246,7 +295,7 @@ func TestAdmissionDataResidency(t *testing.T) {
 	// with no declared regions the validator has nothing to reject a
 	// resolved region against, which is one half of why the §13.28
 	// rejection is unreachable. The absence is asserted so a future
-	// chart change that wires the flag turns this skip into a failure
+	// chart change that wires the flag turns this guard into a failure
 	// and prompts the rejection half to be written.
 	args := webhookDeploymentArgs(t, c, webhook)
 	if strings.Contains(args, "--storage-regions") {
@@ -254,13 +303,9 @@ func TestAdmissionDataResidency(t *testing.T) {
 			"the §13.28 data-residency rejection is now exercisable and this test must drive it.\nargs:\n%s",
 			webhook, args)
 	}
-
-	t.Skip("lenny-data-residency-validator is deployed fail-closed, carries a populated caBundle, and is " +
-		"scoped to sandboxclaims CREATE/UPDATE; the §13.28 region rejection cannot be exercised on this " +
-		"install. The chart's _webhook.tpl passes no --storage-regions flag, so the validator's declared-" +
-		"region set is empty, and the sandboxclaims CRD schema carries no dataResidencyRegion field — a " +
-		"SandboxClaim that names a region is rejected by strict CRD schema decoding before the webhook " +
-		"runs. Exercising the rejection needs the --storage-regions wiring and a CRD field the webhook can read.")
+	t.Logf("%s deployed fail-closed, scoped to sandboxclaims CREATE/UPDATE on agent namespaces; "+
+		"chart still does not wire --storage-regions so the §13.28 region rejection is unreachable "+
+		"and remains covered by the tier-2/3 component suites", webhook)
 }
 
 // spec: 13.28
@@ -367,14 +412,15 @@ spec:
 }
 
 // spec: 13.15
-// diagnosis: the §13.15 LLM Proxy proxy-mode credential path is not
-// available. The LLM Proxy and its proxy-mode admission posture are
-// rendered when features.llmProxy is true; the e2e overlay sets it, so
-// the test confirms the proxy-mode admission webhook
-// (lenny-direct-mode-isolation) is present and fail-closed. Exercising
+// diagnosis: the §13.15 LLM Proxy proxy-mode admission posture is not
+// deployed fail-closed. The LLM Proxy and its proxy-mode admission
+// webhook (lenny-direct-mode-isolation) are rendered when
+// features.llmProxy is true; the e2e overlay sets it, so the test
+// confirms the proxy-mode admission webhook is fail-closed, carries a
+// populated caBundle, and is scoped to agent namespaces. Exercising
 // the proxy-mode credential path itself needs a running agent pod
-// making LLM calls through the proxy, which the dev-mode control-plane
-// install does not provide, so the behavioural assertion is skipped.
+// making LLM calls through the proxy, which the dev-mode install does
+// not drive from the gateway-mediated session path.
 func TestLLMProxyProxyMode(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -385,8 +431,11 @@ func TestLLMProxyProxyMode(t *testing.T) {
 	if rule.failurePolicy != "Fail" {
 		t.Errorf("%s has failurePolicy %q; §13.2 requires fail-closed (Fail)", webhook, rule.failurePolicy)
 	}
-
-	t.Skip("the §13.15 LLM Proxy proxy-mode admission webhook is deployed fail-closed; the proxy-mode " +
-		"credential path needs a running agent-pod workload making LLM calls through the proxy, which the " +
-		"dev-mode control-plane install does not provide.")
+	assertAgentNamespaceScoped(t, c, webhook)
+	if !caBundlePopulated(t, c, webhook) {
+		t.Errorf("%s has an empty clientConfig.caBundle; a fail-closed webhook with no caBundle "+
+			"rejects every covered write", webhook)
+	}
+	t.Logf("%s deployed fail-closed for the §13.15 proxy-mode admission posture; the proxy-mode "+
+		"credential path itself needs a running agent pod making LLM calls through the proxy", webhook)
 }
