@@ -30,7 +30,7 @@ func TestBuildSchemeRegistersWebhookTypes(t *testing.T) {
 }
 
 func TestMuxHealthEndpoints(t *testing.T) {
-	mux := newMux(nil, "multi", false, "", nil, nil)
+	mux := newMux(nil, "multi", false, "", nil, nil, false)
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -64,7 +64,7 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/label-immutability", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /label-immutability = %d, want 200", rr.Code)
 	}
@@ -111,7 +111,7 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/direct-mode-isolation", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /direct-mode-isolation = %d, want 200", rr.Code)
@@ -149,7 +149,7 @@ func TestMuxServesDrainReadiness(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/drain-readiness", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /drain-readiness = %d, want 200", rr.Code)
@@ -169,7 +169,7 @@ func TestMuxServesDrainReadiness(t *testing.T) {
 
 func TestMuxRejectsUnknownRoute(t *testing.T) {
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/no-such-webhook", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("POST /no-such-webhook = %d, want 404", rr.Code)
 	}
@@ -203,7 +203,7 @@ func TestMuxServesDataResidencyValidator(t *testing.T) {
 	rr := httptest.NewRecorder()
 	// storage.regions declares only eu-west-1, so ap-south-1 is
 	// unresolvable and rejected.
-	newMux(nil, "multi", false, "", []string{"eu-west-1"}, nil).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", []string{"eu-west-1"}, nil, false).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/data-residency-validator", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /data-residency-validator = %d, want 200", rr.Code)
@@ -249,7 +249,7 @@ func TestMuxServesT4NodeIsolation(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	newMux(nil, "multi", false, "", nil, nil).ServeHTTP(rr,
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
 		httptest.NewRequest(http.MethodPost, "/t4-node-isolation", bytes.NewReader(body)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST /t4-node-isolation = %d, want 200", rr.Code)
@@ -263,6 +263,87 @@ func TestMuxServesT4NodeIsolation(t *testing.T) {
 	}
 	if out.Response.UID != "review-t4" {
 		t.Errorf("response UID = %q, want review-t4", out.Response.UID)
+	}
+}
+
+// TestMuxServesRegistryDigest posts an AdmissionReview for an agent
+// pod with a tag-only image to the §13.1 registry-digest route with
+// the requireDigest flag enabled and confirms the mux dispatches it
+// and the webhook rejects.
+func TestMuxServesRegistryDigest(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-tag", Namespace: "lenny-agents"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "runtime", Image: "ghcr.io/lennylabs/echo:latest"},
+			},
+		},
+	}
+	podRaw, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("marshal pod: %v", err)
+	}
+	review := admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "review-rd",
+			Operation: admissionv1.Create,
+			Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+			Object:    runtime.RawExtension{Raw: podRaw},
+		},
+	}
+	body, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal review: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	// requireDigest=true enables the §13.1 check.
+	newMux(nil, "multi", false, "", nil, nil, true).ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/registry-digest", bytes.NewReader(body)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /registry-digest = %d, want 200", rr.Code)
+	}
+	var out admissionv1.AdmissionReview
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Response == nil || out.Response.Allowed {
+		t.Errorf("response = %+v, want a rejection for a tag-only image", out.Response)
+	}
+	if out.Response.UID != "review-rd" {
+		t.Errorf("response UID = %q, want review-rd", out.Response.UID)
+	}
+}
+
+// TestMuxRegistryDigestPassThroughWhenDisabled posts the same pod with
+// requireDigest=false and confirms the route admits, matching the
+// §13.1 default-off posture.
+func TestMuxRegistryDigestPassThroughWhenDisabled(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-tag", Namespace: "lenny-agents"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "runtime", Image: "ghcr.io/lennylabs/echo:latest"},
+			},
+		},
+	}
+	podRaw, _ := json.Marshal(pod)
+	body, _ := json.Marshal(admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID:       "review-rd-disabled",
+			Operation: admissionv1.Create,
+			Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+			Object:    runtime.RawExtension{Raw: podRaw},
+		},
+	})
+	rr := httptest.NewRecorder()
+	newMux(nil, "multi", false, "", nil, nil, false).ServeHTTP(rr,
+		httptest.NewRequest(http.MethodPost, "/registry-digest", bytes.NewReader(body)))
+	var out admissionv1.AdmissionReview
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Response == nil || !out.Response.Allowed {
+		t.Errorf("response = %+v, want admit when requireDigest is false", out.Response)
 	}
 }
 

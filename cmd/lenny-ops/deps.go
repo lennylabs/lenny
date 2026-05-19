@@ -4,13 +4,21 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
 	"log"
+	"os"
 
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
+	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
 // noopElector is the §25.4 Elector used when lenny-ops has no
@@ -195,4 +203,137 @@ func (unconfiguredDiagnosticSource) CredentialPool(context.Context, string) (dia
 
 func (unconfiguredDiagnosticSource) Connectivity(context.Context) ([]diagnostics.ConnectivityDependency, error) {
 	return nil, nil
+}
+
+// buildReleaseChannelPublisher constructs the §25.8 release-channel
+// manifest publisher from the operator-supplied flag set: the active
+// signing key (PEM-encoded PKCS8 Ed25519 private key) plus its
+// operator-assigned identifier, an optional previous public key
+// (PEM-encoded PKIX) for the rotation overlap window, and the manifest
+// JSON the publisher serves on the canonical channel.
+//
+// When the signing-key path is empty the publisher is not built and
+// the function returns nil; the lenny-ops opsserver then leaves GET
+// /v1/latest unmapped (404). §25.8 keeps the publisher an explicit
+// operator activation rather than a default-on path — an air-gap
+// mirror that does not yet have an operator-held Ed25519 key should
+// not silently serve unsigned responses.
+//
+// Configuration errors (an unreadable key file, a malformed PEM block,
+// a missing key ID) are fatal: a publisher that cannot sign would
+// otherwise fail every request with a 503, which is a worse failure
+// mode than refusing to start.
+func buildReleaseChannelPublisher(
+	currentKeyPath, currentKeyID,
+	previousKeyPath, previousKeyID,
+	manifestPath string,
+) *releasechannel.Publisher {
+	if currentKeyPath == "" {
+		// Not enabled. The opsserver leaves the route unmapped.
+		return nil
+	}
+	if currentKeyID == "" {
+		log.Fatalf("lenny-ops: --release-channel-key-file is set but --release-channel-key-id is empty; " +
+			"the §25.8 signature envelope requires a stable key identifier")
+	}
+	if manifestPath == "" {
+		log.Fatalf("lenny-ops: --release-channel-key-file is set but --release-channel-manifest-file is empty; " +
+			"the §25.8 publisher needs a manifest body to sign and serve")
+	}
+
+	current, err := loadEd25519PrivateKey(currentKeyPath, currentKeyID)
+	if err != nil {
+		log.Fatalf("lenny-ops: load release-channel signing key: %v", err)
+	}
+
+	var previous *releasechannel.Key
+	if previousKeyPath != "" {
+		if previousKeyID == "" {
+			log.Fatalf("lenny-ops: --release-channel-previous-key-file is set but --release-channel-previous-key-id is empty")
+		}
+		prev, err := loadEd25519PublicKey(previousKeyPath, previousKeyID)
+		if err != nil {
+			log.Fatalf("lenny-ops: load release-channel previous key: %v", err)
+		}
+		previous = &prev
+	}
+
+	signer, err := releasechannel.NewSigner(current, previous)
+	if err != nil {
+		log.Fatalf("lenny-ops: build release-channel signer: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		log.Fatalf("lenny-ops: read release-channel manifest %s: %v", manifestPath, err)
+	}
+	var stable releasechannel.Manifest
+	if err := json.Unmarshal(manifestBytes, &stable); err != nil {
+		log.Fatalf("lenny-ops: decode release-channel manifest %s: %v", manifestPath, err)
+	}
+
+	source := releasechannel.NewStaticSource(map[releasechannel.Channel]releasechannel.Manifest{
+		releasechannel.ChannelStable: stable,
+	})
+	publisher, err := releasechannel.NewPublisher(releasechannel.PublisherOptions{
+		Source: source,
+		Signer: signer,
+	})
+	if err != nil {
+		log.Fatalf("lenny-ops: build release-channel publisher: %v", err)
+	}
+	log.Printf("lenny-ops: §25.8 release-channel publisher active (keyId=%s, previous=%q, manifest=%s)",
+		signer.CurrentKeyID(), signer.PreviousKeyID(), manifestPath)
+	return publisher
+}
+
+// loadEd25519PrivateKey reads a PEM-encoded Ed25519 private key from
+// path and returns it as a releasechannel.Key tagged with keyID. The
+// PEM block must carry a PKCS8 envelope; PKCS1 and SEC 1 forms are not
+// used for Ed25519 in v1.
+func loadEd25519PrivateKey(path, keyID string) (releasechannel.Key, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return releasechannel.Key{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return releasechannel.Key{}, fmt.Errorf("no PEM block in %s", path)
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return releasechannel.Key{}, fmt.Errorf("parse PKCS8 in %s: %w", path, err)
+	}
+	priv, ok := parsed.(ed25519.PrivateKey)
+	if !ok {
+		return releasechannel.Key{}, errors.New("release-channel signing key is not an Ed25519 private key")
+	}
+	return releasechannel.Key{
+		ID:      keyID,
+		Private: priv,
+		Public:  priv.Public().(ed25519.PublicKey),
+	}, nil
+}
+
+// loadEd25519PublicKey reads a PEM-encoded Ed25519 public key from
+// path and returns it as a releasechannel.Key tagged with keyID. The
+// PEM block must carry a PKIX envelope.
+func loadEd25519PublicKey(path, keyID string) (releasechannel.Key, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return releasechannel.Key{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil {
+		return releasechannel.Key{}, fmt.Errorf("no PEM block in %s", path)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return releasechannel.Key{}, fmt.Errorf("parse PKIX in %s: %w", path, err)
+	}
+	pub, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		return releasechannel.Key{}, errors.New("release-channel previous key is not an Ed25519 public key")
+	}
+	return releasechannel.Key{ID: keyID, Public: pub}, nil
 }

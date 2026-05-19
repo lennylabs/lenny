@@ -17,6 +17,7 @@
 //	/t4-node-isolation              — lenny-t4-node-isolation (§6.4, §12.9)
 //	/cosign-verify                  — lenny-cosign-verify (§5.2, §13.1, §18.5)
 //	/pod-security                   — lenny-pod-security (§13.1)
+//	/registry-digest                — lenny-registry-digest (§13.1, §18.33)
 //	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
@@ -72,8 +73,10 @@ func buildScheme() *runtime.Scheme {
 // drain-readiness route probes; declaredRegions is the deployment's
 // storage.regions key set the §12.8 data-residency-validator route
 // validates against; cosignDecider is the §5.2 cosign image-signature
-// Decider, nil when cosign verification is disabled in the chart.
-func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string, cosignDecider webhook.Decider) *http.ServeMux {
+// Decider, nil when cosign verification is disabled in the chart;
+// requireDigest is the §13.1 platform.registry.requireDigest flag the
+// registry-digest route enforces.
+func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
@@ -111,6 +114,12 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	if cosignDecider != nil {
 		mux.Handle("/cosign-verify", webhook.Handler(cosignDecider))
 	}
+	// §13.1 registry-digest: enforces platform.registry.requireDigest
+	// at admission. When the chart sets the flag false the Decider is
+	// a pass-through (every pod admitted unchecked), so the route is
+	// safe to register unconditionally — the chart-side template gates
+	// whether the ValidatingWebhookConfiguration is rendered.
+	mux.Handle("/registry-digest", webhook.Handler(webhook.RegistryDigest(requireDigest)))
 	mux.Handle("/crd-conversion", webhook.CRDConversion())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -210,6 +219,8 @@ func main() {
 		"path to the JSON cosign image-signature policy file mapping each image reference to its signed digest and detached signature.")
 	cosignVerifiedRegistries := flag.String("cosign-verified-registries", os.Getenv("LENNY_COSIGN_VERIFIED_REGISTRIES"),
 		"comma-separated list of image-registry prefixes whose images must carry a valid cosign signature. An image outside every prefix is admitted unchecked.")
+	requireDigest := flag.Bool("registry-require-digest", os.Getenv("LENNY_REGISTRY_REQUIRE_DIGEST") == "true",
+		"enable the §13.1 platform.registry.requireDigest admission gate. When true the registry-digest webhook rejects any agent pod whose container image references are not @sha256: digest-pinned. Air-gap installs are required to set this true (§25.8).")
 	flag.Parse()
 
 	declaredRegions := parseRegions(*storageRegions)
@@ -230,7 +241,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions, cosignDecider),
+		Handler:           newMux(cl, *tenancyMode, *devMode, *drainReadinessURL, declaredRegions, cosignDecider, *requireDigest),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

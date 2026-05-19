@@ -292,6 +292,80 @@ imageVerification:
     policyConfigMap: lenny-cosign-policy
     policyKey: cosign-policy.json
 
+# platform carries the §25.8 platform-lifecycle settings: image
+# registry configuration, release-channel manifest publisher, and the
+# upgrade orchestrator. Operators wire the registry, the channel
+# endpoint, and the Ed25519 signing keys here; defaults serve a
+# canonical install pointing at the public release channel.
+platform:
+  registry:
+    # url is the base image registry plus optional path
+    # (§25.8 ImageResolver). All Lenny component image references are
+    # resolved relative to this.
+    url: ghcr.io/lennylabs
+    # overrides maps a component short name to a complete image
+    # reference. Use this when a single component is mirrored to a
+    # different registry path than the rest of the install (§25.8).
+    overrides: {}
+    # pullSecretName names a Kubernetes Secret of type
+    # kubernetes.io/dockerconfigjson (§25.8). Empty for public
+    # registries.
+    pullSecretName: ""
+    # requireDigest is the §13.1 admission-time enforcement: when true
+    # the lenny-registry-digest ValidatingAdmissionWebhook rejects any
+    # agent pod whose container image references are not @sha256:
+    # digest-pinned. Air-gap installs are required to set this true
+    # (§25.8 air-gap guidance). Production deployments should set it
+    # true; the chart defaults to false so a stock dev install renders
+    # tag-pinned references without the webhook blocking admission.
+    requireDigest: false
+  releaseChannel:
+    # url is the §25.8 release-channel endpoint lenny-ops queries via
+    # GET /v1/admin/platform/upgrade-check. Empty disables the check.
+    url: https://releases.lenny.dev/v1/latest
+    # publicKeyPath is the file path inside the lenny-ops container of
+    # the operator-held Ed25519 public key that signs release-channel
+    # responses (§25.8 "operators running a mirror that re-signs with
+    # their own key can override via platform.releaseChannel.public-
+    # KeyPath"). Empty means the canonical Lenny release-channel public
+    # key compiled into lenny-ops is used; set to mount an internal
+    # mirror's verifying key into the pod.
+    publicKeyPath: ""
+    # publisher configures the §25.8 release-channel manifest publisher
+    # this lenny-ops install runs. Most installs are channel consumers
+    # rather than publishers; set publisher.enabled to true to make
+    # this lenny-ops serve GET /v1/latest with an Ed25519-signed
+    # manifest.
+    publisher:
+      enabled: false
+      # signingKeySecret is the Secret holding the active Ed25519
+      # signing key (PEM-encoded PKCS8 private key under
+      # signingKeyKey). The lenny-ops binary loads it at startup and
+      # signs every response with it.
+      signingKeySecret: lenny-release-channel-signing-key
+      signingKeyKey: signing-key.pem
+      # signingKeyID is the operator-assigned identifier embedded in
+      # the X-Lenny-Release-Signature envelope so a verifier can look
+      # the trusted public key up during a rotation overlap.
+      signingKeyID: ""
+      # previousKeySecret is the optional Secret holding the rotated-
+      # out public key (PEM-encoded PKIX, under previousKeyKey).
+      # Set during a §25.8 key-rotation overlap window so signatures
+      # emitted by the previous key remain verifiable until consumers
+      # have refreshed their trust bundle. Leave empty outside a
+      # rotation. The default is intentionally permissive: a publisher
+      # can run with only the active key in normal operation.
+      previousKeySecret: ""
+      previousKeyKey: previous-key.pem
+      previousKeyID: ""
+      # manifestConfigMap is the ConfigMap holding the JSON manifest
+      # body the publisher serves (under manifestKey). Operators
+      # update this when cutting a new release; lenny-ops reads it on
+      # startup and serves the same bytes on every request until the
+      # binary restarts.
+      manifestConfigMap: lenny-release-channel-manifest
+      manifestKey: latest.json
+
 # tenancy configures the platform multi-tenancy posture (§4.9, §13).
 tenancy:
   # mode is "single" or "multi". In multi-tenant mode the

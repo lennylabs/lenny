@@ -1,0 +1,50 @@
+{{- /*
+lenny-registry-digest ValidatingAdmissionWebhook (§13.1, §18.33). Wraps
+the pkg/admission/registry_digest decision package: rejects any agent
+pod whose container image references are not @sha256: digest-pinned
+when platform.registry.requireDigest is true. The webhook is rendered
+only when the flag is true; in development installs the chart leaves
+both the value and this webhook absent so tag-based references remain
+usable. Air-gap installs are required to set requireDigest: true per
+§25.8, which makes this admission gate active.
+
+Scoped to Pod CREATE in agent namespaces; fail-closed so a pod the
+webhook cannot validate is not admitted with an unverified §13.1
+image-pinning posture.
+*/ -}}
+{{- if .Values.platform.registry.requireDigest }}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-registry-digest") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-registry-digest
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-registry-digest
+webhooks:
+  - name: registry-digest.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-registry-digest
+        namespace: {{ .Release.Namespace }}
+        path: /registry-digest
+        port: 443
+{{- end }}

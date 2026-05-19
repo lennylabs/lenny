@@ -99,6 +99,16 @@ spec:
             - --leader-election-namespace={{ .Release.Namespace }}
             - --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}
             - --production={{ .Values.ops.production }}
+            {{- if .Values.platform.releaseChannel.publisher.enabled }}
+            # §25.8 release-channel manifest publisher.
+            - --release-channel-key-file=/etc/lenny/release-channel/{{ .Values.platform.releaseChannel.publisher.signingKeyKey }}
+            - --release-channel-key-id={{ required "platform.releaseChannel.publisher.signingKeyID is required when the publisher is enabled (§25.8)" .Values.platform.releaseChannel.publisher.signingKeyID }}
+            - --release-channel-manifest-file=/etc/lenny/release-channel-manifest/{{ .Values.platform.releaseChannel.publisher.manifestKey }}
+            {{- if .Values.platform.releaseChannel.publisher.previousKeySecret }}
+            - --release-channel-previous-key-file=/etc/lenny/release-channel-previous/{{ .Values.platform.releaseChannel.publisher.previousKeyKey }}
+            - --release-channel-previous-key-id={{ required "platform.releaseChannel.publisher.previousKeyID is required when previousKeySecret is set (§25.8)" .Values.platform.releaseChannel.publisher.previousKeyID }}
+            {{- end }}
+            {{- end }}
           env:
             - name: POD_NAME
               valueFrom:
@@ -125,8 +135,36 @@ spec:
             capabilities:
               drop:
                 - ALL
+          {{- if .Values.platform.releaseChannel.publisher.enabled }}
+          volumeMounts:
+            - name: release-channel-signing-key
+              mountPath: /etc/lenny/release-channel
+              readOnly: true
+            - name: release-channel-manifest
+              mountPath: /etc/lenny/release-channel-manifest
+              readOnly: true
+            {{- if .Values.platform.releaseChannel.publisher.previousKeySecret }}
+            - name: release-channel-previous-key
+              mountPath: /etc/lenny/release-channel-previous
+              readOnly: true
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.ops.resources | nindent 12 }}
+      {{- if .Values.platform.releaseChannel.publisher.enabled }}
+      volumes:
+        - name: release-channel-signing-key
+          secret:
+            secretName: {{ .Values.platform.releaseChannel.publisher.signingKeySecret }}
+        - name: release-channel-manifest
+          configMap:
+            name: {{ .Values.platform.releaseChannel.publisher.manifestConfigMap }}
+        {{- if .Values.platform.releaseChannel.publisher.previousKeySecret }}
+        - name: release-channel-previous-key
+          secret:
+            secretName: {{ .Values.platform.releaseChannel.publisher.previousKeySecret }}
+        {{- end }}
+      {{- end }}
 ---
 # lenny-ops Service. The metrics port maps to the HTTP listener because
 # the binary serves /metrics on the same mux as the §25 HTTP surface;

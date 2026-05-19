@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
 // probeTimeout bounds each §25 dependency probe (§25.6: 2s timeouts).
@@ -55,18 +56,19 @@ type LeaderReporter interface {
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux         *http.ServeMux
-	probes      map[string]probe.Func
-	runbooks    RunbookSource
-	selfHealth  SelfHealthReporter
-	leader      LeaderReporter
-	backups     backup.BackupService
-	diagnostics diagnostics.DiagnosticService
-	drift       *driftservice.Service
-	locks       coordination.RemediationLockService
-	escalations *escalation.Service
-	mcp         *mcpmgmt.Server
-	production  bool
+	mux            *http.ServeMux
+	probes         map[string]probe.Func
+	runbooks       RunbookSource
+	selfHealth     SelfHealthReporter
+	leader         LeaderReporter
+	backups        backup.BackupService
+	diagnostics    diagnostics.DiagnosticService
+	drift          *driftservice.Service
+	locks          coordination.RemediationLockService
+	escalations    *escalation.Service
+	mcp            *mcpmgmt.Server
+	releaseChannel *releasechannel.Publisher
+	production     bool
 }
 
 // Options configures a lenny-ops Server.
@@ -101,6 +103,15 @@ type Options struct {
 	// Escalations is the §25.4 escalation service. A nil service reports
 	// the escalation endpoints as unavailable.
 	Escalations *escalation.Service
+	// ReleaseChannel is the §25.8 release-channel manifest publisher.
+	// When non-nil the Server registers GET /v1/latest backed by the
+	// publisher; when nil the path is unmapped (404). A nil publisher
+	// is the cold-start signal that the operator has not yet
+	// configured the §25.8 Ed25519 signing key, which §25.8 keeps an
+	// explicit operator action (the lenny-ops binary refuses to start
+	// the publisher when no key is configured rather than serving
+	// unsigned responses).
+	ReleaseChannel *releasechannel.Publisher
 	// Production reports whether this deployment is production, which
 	// gates the §25.11 confirm requirement for a full backup.
 	Production bool
@@ -113,17 +124,18 @@ type Options struct {
 // and restore endpoints, and the §25.12 MCP management server.
 func New(opts Options) *Server {
 	s := &Server{
-		mux:         http.NewServeMux(),
-		probes:      opts.Probes,
-		runbooks:    opts.Runbooks,
-		selfHealth:  opts.SelfHealth,
-		leader:      opts.Leader,
-		backups:     opts.Backups,
-		diagnostics: opts.Diagnostics,
-		drift:       opts.Drift,
-		locks:       opts.Locks,
-		escalations: opts.Escalations,
-		production:  opts.Production,
+		mux:            http.NewServeMux(),
+		probes:         opts.Probes,
+		runbooks:       opts.Runbooks,
+		selfHealth:     opts.SelfHealth,
+		leader:         opts.Leader,
+		backups:        opts.Backups,
+		diagnostics:    opts.Diagnostics,
+		drift:          opts.Drift,
+		locks:          opts.Locks,
+		escalations:    opts.Escalations,
+		releaseChannel: opts.ReleaseChannel,
+		production:     opts.Production,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -136,6 +148,7 @@ func New(opts Options) *Server {
 	s.registerDriftRoutes()
 	s.registerLockRoutes()
 	s.registerEscalationRoutes()
+	s.registerReleaseChannelRoutes()
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.

@@ -73,6 +73,28 @@ func main() {
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
 	production := flag.Bool("production", envBool("LENNY_PRODUCTION", false),
 		"§25.11: when set, a full backup requires confirm:true. Override via LENNY_PRODUCTION.")
+	releaseChannelKeyPath := flag.String("release-channel-key-file",
+		os.Getenv("LENNY_RELEASE_CHANNEL_KEY_FILE"),
+		"path to the PEM file carrying the §25.8 release-channel Ed25519 signing key (PKCS8). "+
+			"When empty the release-channel publisher is not registered and GET /v1/latest returns 404. "+
+			"Override via LENNY_RELEASE_CHANNEL_KEY_FILE.")
+	releaseChannelKeyID := flag.String("release-channel-key-id",
+		envOr("LENNY_RELEASE_CHANNEL_KEY_ID", ""),
+		"identifier of the §25.8 release-channel signing key (appears in the "+
+			"X-Lenny-Release-Signature envelope). Required when --release-channel-key-file is set.")
+	releaseChannelPrevKeyPath := flag.String("release-channel-previous-key-file",
+		os.Getenv("LENNY_RELEASE_CHANNEL_PREVIOUS_KEY_FILE"),
+		"path to the PEM file carrying the §25.8 release-channel previous public key. "+
+			"When set, signatures emitted under the previous key remain valid during the "+
+			"rotation overlap window. Override via LENNY_RELEASE_CHANNEL_PREVIOUS_KEY_FILE.")
+	releaseChannelPrevKeyID := flag.String("release-channel-previous-key-id",
+		envOr("LENNY_RELEASE_CHANNEL_PREVIOUS_KEY_ID", ""),
+		"identifier of the §25.8 previous release-channel key during the rotation overlap window.")
+	releaseChannelManifestPath := flag.String("release-channel-manifest-file",
+		os.Getenv("LENNY_RELEASE_CHANNEL_MANIFEST_FILE"),
+		"path to the §25.8 release-channel manifest JSON the publisher serves. When set "+
+			"the publisher loads this file at startup and serves it on GET /v1/latest. "+
+			"Override via LENNY_RELEASE_CHANNEL_MANIFEST_FILE.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -211,6 +233,17 @@ func main() {
 	driftSvc := buildDriftService()
 	diagnosticSvc := buildDiagnosticService()
 
+	// The §25.8 release-channel manifest publisher. Loaded from the
+	// operator-supplied key + manifest paths. When no key is configured
+	// the publisher is nil and GET /v1/latest is unmapped; lenny-ops
+	// will not silently serve unsigned responses on the canonical
+	// release-channel path.
+	releaseChannelPub := buildReleaseChannelPublisher(
+		*releaseChannelKeyPath, *releaseChannelKeyID,
+		*releaseChannelPrevKeyPath, *releaseChannelPrevKeyID,
+		*releaseChannelManifestPath,
+	)
+
 	// The §25.4 service body: leader election plus the background loops.
 	// The §25.11 scheduled-backup cron jobs register here; the upgrade
 	// and escalation loops are wired as those subsystems are built.
@@ -241,16 +274,17 @@ func main() {
 	srv := &http.Server{
 		Addr: *addr,
 		Handler: opsserver.New(opsserver.Options{
-			Probes:      probes,
-			Runbooks:    runbookSource,
-			SelfHealth:  svc.Monitor(),
-			Leader:      svc,
-			Backups:     backupSvc,
-			Diagnostics: diagnosticSvc,
-			Drift:       driftSvc,
-			Locks:       lockStore,
-			Escalations: escalationSvc,
-			Production:  *production,
+			Probes:         probes,
+			Runbooks:       runbookSource,
+			SelfHealth:     svc.Monitor(),
+			Leader:         svc,
+			Backups:        backupSvc,
+			Diagnostics:    diagnosticSvc,
+			Drift:          driftSvc,
+			Locks:          lockStore,
+			Escalations:    escalationSvc,
+			ReleaseChannel: releaseChannelPub,
+			Production:     *production,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
