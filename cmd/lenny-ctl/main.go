@@ -45,8 +45,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/ctl"
 	"sigs.k8s.io/yaml"
+
+	"github.com/lennylabs/lenny/pkg/ctl"
 )
 
 func main() {

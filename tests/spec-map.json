@@ -216,7 +216,9 @@
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestCreateRejectsWhenNonTerminalClaimExists",
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed",
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed",
-        "tests/tier2_component/stores/agentpodstatestore_test.go"
+        "tests/tier2_component/stores/agentpodstatestore_test.go",
+        "tests/tier8_chaos/concurrency_test.go",
+        "tests/tier8_chaos/leader_election_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -920,7 +922,9 @@
         "pkg/mtls/denylist/denylist_test.go::TestAddAndContains",
         "pkg/mtls/denylist/denylist_test.go::TestContainsExpiresEntries",
         "pkg/mtls/denylist/denylist_test.go::TestSweepEvictsAllExpired",
-        "pkg/mtls/denylist/denylist_test.go::TestConcurrentAddContainsSafe"
+        "pkg/mtls/denylist/denylist_test.go::TestConcurrentAddContainsSafe",
+        "tests/tier5_e2e_kind/mtls_test.go",
+        "tests/tier9_security/tls_test.go"
       ],
       "packages": [
         "pkg/mtls/spiffe",
@@ -1241,7 +1245,8 @@
         "tests/tier2_component/auditstore/...",
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
-        "tests/tier4_integration/audit_pipeline_test.go"
+        "tests/tier4_integration/audit_pipeline_test.go",
+        "tests/tier8_chaos/audit_chain_test.go"
       ],
       "packages": [
         "pkg/audit",
@@ -1394,7 +1399,11 @@
         "pkg/gateway/admin/...",
         "pkg/gateway/retentiongc/...",
         "pkg/gateway/erasure/...",
-        "pkg/gateway/erasurejob/..."
+        "pkg/gateway/erasurejob/...",
+        "tests/tier8_chaos/chaos_helpers_test.go",
+        "tests/tier8_chaos/component_failure_test.go",
+        "tests/tier8_chaos/config_drift_test.go",
+        "tests/tier8_chaos/store_failure_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1405,7 +1414,13 @@
     "12.9": {
       "title": "Data Classification",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [],
+      "tests": [
+        "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier9_security/rbac_test.go",
+        "tests/tier9_security/ssrf_test.go",
+        "tests/tier9_security/store_helpers_test.go",
+        "tests/tier9_security/tenant_isolation_test.go"
+      ],
       "packages": [
         "pkg/compliance/dataclassification"
       ],
@@ -1461,7 +1476,14 @@
         "pkg/upload/upload_test.go::TestValidateEntrySymlinkRejectsEscape",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsOversizedAggregate",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsTooManyEntries",
-        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio"
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio",
+        "tests/tier5_e2e_kind/admission_featuregated_test.go",
+        "tests/tier5_e2e_kind/audit_test.go",
+        "tests/tier5_e2e_kind/backup_test.go",
+        "tests/tier5_e2e_kind/crd_test.go",
+        "tests/tier5_e2e_kind/gateway_probe_test.go",
+        "tests/tier5_e2e_kind/lifecycle_test.go",
+        "tests/tier9_security/gateway_probe_test.go"
       ],
       "packages": [
         "pkg/podsecurity",
@@ -1488,7 +1510,10 @@
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsPrivilegedContainer",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMutableRootFS",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRequiresDropAll",
-        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities"
+        "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsAddedCapabilities",
+        "tests/tier5_e2e_kind/admission_test.go",
+        "tests/tier9_security/admission_security_test.go",
+        "tests/tier9_security/image_signing_test.go"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -1500,7 +1525,9 @@
       "title": "Network Isolation",
       "spec_file": "spec/13_security-model.md",
       "tests": [
-        "tests/tier2_component/migrations/migrations_test.go"
+        "tests/tier2_component/migrations/migrations_test.go",
+        "tests/tier5_e2e_kind/ingress_test.go",
+        "tests/tier9_security/network_policy_test.go"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -2120,7 +2147,8 @@
         "pkg/preflight/webhooks_test.go",
         "pkg/preflight/run_test.go",
         "pkg/preflight/hostsharing_test.go",
-        "tests/tier1_unit/helm/helm_test.go"
+        "tests/tier1_unit/helm/helm_test.go",
+        "tests/tier8_chaos/pod_disruption_test.go"
       ],
       "packages": [
         "charts/lenny"

@@ -949,15 +949,43 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	if len(subsets) == 0 {
 		subsets = []string{"basic", "full"}
 	}
+	// "reference-catalog" is the nightly/weekly/pre-release subset for
+	// the §26 first-party reference runtimes (claude-code, gemini-cli,
+	// codex, and the rest). Those runtimes are a Phase 17a deliverable;
+	// until cmd/runtimes/<name> exists for them the subset has nothing
+	// to exercise. It expands, like bundled-runtimes, only over the
+	// reference-catalog runtimes whose package is present on disk.
+	referenceCatalog := []string{
+		"claude-code", "gemini-cli", "codex", "cursor-cli", "chat",
+		"langgraph", "mastra", "openai-assistants", "crewai",
+	}
+	expandReferenceCatalog := func() []string {
+		built := []string{}
+		for _, name := range referenceCatalog {
+			if _, err := os.Stat(filepath.Join(root, "cmd", "runtimes", name)); err == nil {
+				built = append(built, name)
+			}
+		}
+		return built
+	}
 	expanded := []string{}
 	for _, sub := range subsets {
-		if sub == "bundled-runtimes" || sub == "bundled" {
+		switch sub {
+		case "bundled-runtimes", "bundled":
 			expanded = append(expanded, expandBundled()...)
-			continue
+		case "reference-catalog":
+			expanded = append(expanded, expandReferenceCatalog()...)
+		default:
+			expanded = append(expanded, sub)
 		}
-		expanded = append(expanded, sub)
 	}
 	subsets = expanded
+	if len(subsets) == 0 {
+		// Every requested subset resolved to a runtime set that is not
+		// yet built — the §26 reference catalog is a Phase 17a item.
+		return "skip", "no conformance runtimes built for the requested subsets " +
+			"(the §26 reference-catalog runtimes are a Phase 17a deliverable)", nil
+	}
 
 	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
 	cmd := exec.Command("go", "build", "-o", binCompliance, "./cmd/lenny-compliance")
