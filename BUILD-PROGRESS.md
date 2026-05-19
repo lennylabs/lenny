@@ -164,6 +164,40 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   handler's flusher assertion fails. Both are gateway-side fixes; until they land the two
   scenarios carry a `blocked:` skip.
 
+- **Tier-2 component scaffold dispositions** (found in Wave 7). The tier-2 component
+  scaffolds across `rls/`, `translators/`, `stores/`, `controllers/`, and
+  `gateway_subsystems/` were swept against the live production tree. One scaffold pair
+  was converted to a real test: `TestLLMProxyTranslatorAnthropicRequestPassthrough` and
+  `TestLLMProxyTranslatorAnthropicResponseUsage` in
+  `tests/tier2_component/translators/anthropic_translator_test.go` drive the canonical
+  fixtures under `tests/testdata/anthropic/` through the production
+  `AnthropicDirectTranslator` in `pkg/gateway/llmproxy` and assert byte-equivalent
+  request passthrough and authoritative usage extraction. The remaining 17 scaffolds
+  stay skipped with `blocked:` reasons naming the precise missing production piece.
+  The recurring blockers are: (a) §12.2.1 `TokenStore` (Postgres encrypted token table,
+  KMS-envelope writer), `ArtifactStore` (SSE-KMS, soft-delete tombstones, legal-hold
+  suspension, T4 KMS probe, MinIO-outage fallback), `EvictionStateStore`, `PodRegistry`
+  (CRDPodRegistry over the K8s API, watch-event latency), and `StoreRouter` (R-03
+  routing, scatter-gather) — none of these stores exist. (b) §12.2.1 `QuotaStore`
+  rolling sliding window, per-replica fail-open accounting, cumulative fail-open timer,
+  and Postgres-checkpoint MAX-rule reconciliation — only the fixed-window counter and
+  the pure §11.2 arithmetic ship today. (c) §12.2.2 RLS `__all__` tenant-context bypass
+  and a compose-profile pgbouncer for the connection-pooler leak guard. (d) §12.2.4
+  PoolScalingController admission-denied retry-with-backoff (the formula evaluator and
+  the §6.1 breaker exist, the retry loop does not), and the §12.2.4 Token Service
+  controller (the §13.3 HTTP token-exchange handler ships; the
+  AssignCredentials/RevokeCredentials/RotateCredentials gRPC server, the
+  leader-election loop, and the KMS-envelope writer for managed credentials do not).
+  (e) §12.2.5 `openai_direct` and `openai_responses` LLM Proxy translators (only
+  AnthropicDirect, AzureOpenAI, AWSBedrock, and VertexAI translators ship). (f) §14.10
+  mandatory-erasure interface — only a subset of tenant-scoped stores expose
+  DeleteByUser and DeleteByTenant today. (g) §12.2.3 Session Orchestrator, File Fabric,
+  MCP Fabric, Admin Plane, and LLM Proxy component-tier wirings — each has either a
+  tier-4 end-to-end equivalent that already covers the integration or pkg-level unit
+  suites that already cover the dispatch logic, and the missing pieces (upload-archive
+  HTTP handler, gitClone executor in the gateway, OIDC IdP stub harness, mock LLM
+  provider recorder in tests/testinfra) are named in each skip message.
+
 ## Test status
 
 `lenny-test --group pr` reports PASS. Tiers 0 through 4 (static, unit, component,
