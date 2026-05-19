@@ -2,16 +2,23 @@
 
 //go:build chaos
 
-// Tier-8 chaos test scaffolds. Each test corresponds to a TESTING.md-
-// named chaos scenario that requires the production stack plus a
-// chaos-injection harness (Chaos Mesh, kube-monkey, toxiproxy, or
-// equivalent). Today each calls t.Skip with a diagnosis pointing at
-// the spec section and the missing infrastructure.
+// Tier-8 chaos test scaffolds. Each test in this file corresponds to a
+// TESTING.md-named chaos scenario that requires the production stack
+// plus a chaos-injection harness (Chaos Mesh, kube-monkey, toxiproxy,
+// or equivalent) or a running agent-pod workload, neither of which the
+// dev-mode control-plane install provides. Each calls t.Skip with a
+// diagnosis naming the spec section and the missing infrastructure.
+//
+// The chaos scenarios whose subject is a control-plane Deployment,
+// Lease, or Service that the dev-mode install actually runs are
+// implemented against the live cluster: see leader_election_test.go and
+// pod_disruption_test.go.
 //
 // Naming follows TESTING.md §12.8 and the runbook map. Every chaos
-// test follows the same shape: bring system to known-good state,
-// inject failure, assert documented behavior, resolve failure, assert
-// recovery, assert no data loss (or the documented bounded loss).
+// test follows the same form: bring the system to a known-good state,
+// inject a failure, assert the documented behavior, resolve the
+// failure, assert recovery, and assert no data loss (or the documented
+// bounded loss).
 
 package tier8_chaos_test
 
@@ -60,18 +67,11 @@ func TestPgBouncerSaturation(t *testing.T) {
 }
 
 // --- Component failures ---
-
-func TestGatewayReplicaFailure(t *testing.T) {
-	t.Skip("not implemented: §12.8 component failure / gateway replica — requires multi-replica gateway deployment + the documented load-balancer behavior")
-}
-
-func TestControllerLeaderElectionDisruption(t *testing.T) {
-	t.Skip("not implemented: §12.8 component failure / controller leader election — requires the WarmPoolController + PoolScalingController + leader-election disruption injector")
-}
-
-func TestAdmissionWebhookOutage(t *testing.T) {
-	t.Skip("not implemented: §12.8 component failure / admission webhook outage — requires the documented failurePolicy=Fail behavior under webhook unavailability")
-}
+//
+// TestGatewayReplicaFailure and TestAdmissionWebhookOutage are
+// implemented against the live control plane in pod_disruption_test.go.
+// TestControllerLeaderElectionDisruption is implemented in
+// leader_election_test.go.
 
 func TestCertManagerOutage(t *testing.T) {
 	t.Skip("not implemented: §12.8 component failure / cert-manager outage — requires the mTLS PKI + the cert-renewal failure injector")
