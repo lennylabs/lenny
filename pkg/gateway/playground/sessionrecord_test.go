@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: MIT
+
+package playground
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMemorySessionStorePerTenantIsolation(t *testing.T) {
+	store := NewMemorySessionStore()
+	ctx := context.Background()
+	rec := SessionRecord{UserID: "alice", TenantID: "acme", Origin: PlaygroundOrigin}
+	if err := store.PutSession(ctx, "acme", "sess1", rec, time.Hour); err != nil {
+		t.Fatalf("PutSession: %v", err)
+	}
+	// A read scoped to a different tenant must not see the record.
+	if _, err := store.GetSession(ctx, "globex", "sess1"); err == nil {
+		t.Fatal("tenant globex read a tenant acme session record")
+	}
+	got, err := store.GetSession(ctx, "acme", "sess1")
+	if err != nil {
+		t.Fatalf("GetSession(acme): %v", err)
+	}
+	if got.UserID != "alice" {
+		t.Fatalf("record UserID = %q, want alice", got.UserID)
+	}
+}
+
+func TestMemorySessionStoreRevocationKeyIsolation(t *testing.T) {
+	store := NewMemorySessionStore()
+	ctx := context.Background()
+	// A revocation marker for tenant acme's jti must not cause a tenant
+	// globex request reusing the same jti value to be rejected.
+	if err := store.MarkBearerRevoked(ctx, "acme", "jti-shared", time.Hour); err != nil {
+		t.Fatalf("MarkBearerRevoked: %v", err)
+	}
+	revoked, err := store.IsBearerRevoked(ctx, "acme", "jti-shared")
+	if err != nil || !revoked {
+		t.Fatalf("acme jti-shared revoked = %v, %v; want true, nil", revoked, err)
+	}
+	revoked, err = store.IsBearerRevoked(ctx, "globex", "jti-shared")
+	if err != nil || revoked {
+		t.Fatalf("globex jti-shared revoked = %v, %v; want false, nil", revoked, err)
+	}
+}
+
+func TestRevokeSessionDeletesRecordAndMarksBearers(t *testing.T) {
+	store := NewMemorySessionStore()
+	ctx := context.Background()
+	rec := SessionRecord{
+		UserID:     "carol",
+		TenantID:   "acme",
+		Origin:     PlaygroundOrigin,
+		BearerJTIs: []string{"jti-a", "jti-b"},
+	}
+	if err := store.PutSession(ctx, "acme", "sess9", rec, time.Hour); err != nil {
+		t.Fatalf("PutSession: %v", err)
+	}
+	if err := store.RevokeSession(ctx, "acme", "sess9", rec.BearerJTIs, time.Hour); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+	if _, err := store.GetSession(ctx, "acme", "sess9"); err == nil {
+		t.Fatal("RevokeSession did not delete the session record")
+	}
+	for _, jti := range rec.BearerJTIs {
+		revoked, err := store.IsBearerRevoked(ctx, "acme", jti)
+		if err != nil || !revoked {
+			t.Fatalf("after RevokeSession, %s revoked = %v, %v; want true, nil", jti, revoked, err)
+		}
+	}
+}
+
+func TestLogoutRevokesSessionBearer(t *testing.T) {
+	signer := devSigner()
+	store := NewMemorySessionStore()
+	audit := NewMemoryAuditEmitter()
+	oidc := &fakeOIDC{subject: OIDCSubject{
+		UserID:   "dave",
+		TenantID: "acme",
+		Scope:    "sessions:create",
+	}}
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
+		Signer:   signer,
+		Sessions: store,
+		OIDC:     oidc,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Metrics:  nil,
+	}).WithAuditEmitter(audit)
+
+	// Drive the full login → mint → logout flow.
+	pgSrv := httptest.NewServer(h.PlaygroundRoutes())
+	defer pgSrv.Close()
+	tokenSrv := httptest.NewServer(h.TokenRoutes())
+	defer tokenSrv.Close()
+
+	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+
+	// Mint a bearer carrying the session cookie.
+	bearerJTI := mintWithCookie(t, tokenSrv, cookie)
+
+	// The minted bearer is not revoked before logout.
+	id, tenant, _ := splitCookie(cookie)
+	revoked, _ := store.IsBearerRevoked(context.Background(), tenant, bearerJTI)
+	if revoked {
+		t.Fatal("bearer revoked before logout")
+	}
+
+	// Logout.
+	logoutReq, _ := http.NewRequest(http.MethodPost, pgSrv.URL+"/playground/auth/logout", nil)
+	logoutReq.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	logoutResp, err := http.DefaultClient.Do(logoutReq)
+	if err != nil {
+		t.Fatalf("POST logout: %v", err)
+	}
+	defer logoutResp.Body.Close()
+	if logoutResp.StatusCode != http.StatusOK {
+		t.Fatalf("logout status = %d, want 200", logoutResp.StatusCode)
+	}
+
+	// After logout the session record is gone and the bearer is
+	// revoked — §27.3.1 guarantees the revocation write committed
+	// before the 200 response.
+	if _, err := store.GetSession(context.Background(), tenant, id); err == nil {
+		t.Fatal("session record survived logout")
+	}
+	revoked, err = store.IsBearerRevoked(context.Background(), tenant, bearerJTI)
+	if err != nil || !revoked {
+		t.Fatalf("after logout, bearer revoked = %v, %v; want true, nil", revoked, err)
+	}
+
+	// The §27.3.1 step-6 audit events were emitted.
+	var sawMint, sawRevoke bool
+	for _, ev := range audit.Events() {
+		if ev.Type == "playground.bearer_minted" {
+			sawMint = true
+		}
+		if ev.Type == "playground.bearer_revoked" {
+			sawRevoke = true
+		}
+	}
+	if !sawMint || !sawRevoke {
+		t.Fatalf("audit events: mint=%v revoke=%v, want both true", sawMint, sawRevoke)
+	}
+}
+
+func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
+	// A logout against one Handler instance revokes a bearer that a
+	// second Handler instance — sharing the same SessionStore, the
+	// way two gateway replicas share Redis — must observe as revoked.
+	signer := devSigner()
+	store := NewMemorySessionStore()
+	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "sessions:create"}}
+
+	opts := Options{
+		Signer:   signer,
+		Sessions: store,
+		OIDC:     oidc,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+	}
+	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}
+	replicaA := New(cfg, opts)
+	replicaB := New(cfg, opts)
+
+	aPg := httptest.NewServer(replicaA.PlaygroundRoutes())
+	defer aPg.Close()
+	aTok := httptest.NewServer(replicaA.TokenRoutes())
+	defer aTok.Close()
+
+	cookie := completeOIDCLogin(t, replicaA, aPg, oidc)
+	bearerJTI := mintWithCookie(t, aTok, cookie)
+	id, tenant, _ := splitCookie(cookie)
+
+	// Logout on replica A.
+	logoutReq, _ := http.NewRequest(http.MethodPost, aPg.URL+"/playground/auth/logout", nil)
+	logoutReq.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	logoutResp, err := http.DefaultClient.Do(logoutReq)
+	if err != nil {
+		t.Fatalf("logout on replica A: %v", err)
+	}
+	_ = logoutResp.Body.Close()
+
+	// Replica B's per-request revocation check observes the revocation.
+	revoked, err := replicaB.IsBearerRevoked(context.Background(), tenant, bearerJTI)
+	if err != nil || !revoked {
+		t.Fatalf("replica B revocation check = %v, %v; want true, nil", revoked, err)
+	}
+	// Replica B's mint endpoint rejects the now-deleted session.
+	if _, err := store.GetSession(context.Background(), tenant, id); err == nil {
+		t.Fatal("session record visible to replica B after logout")
+	}
+}
+
+// completeOIDCLogin drives GET /playground/auth/login then
+// /playground/auth/callback and returns the lenny_playground_session
+// cookie value the gateway set.
+func completeOIDCLogin(t *testing.T, h *Handler, srv *httptest.Server, oidc *fakeOIDC) string {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	loginResp, err := client.Get(srv.URL + "/playground/auth/login")
+	if err != nil {
+		t.Fatalf("GET login: %v", err)
+	}
+	_ = loginResp.Body.Close()
+	var stateCookie *http.Cookie
+	for _, c := range loginResp.Cookies() {
+		if c.Name == oidcStateCookie {
+			stateCookie = c
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("login set no state cookie")
+	}
+	// Recover the state value the gateway minted from the signed cookie.
+	cv, err := h.openState(stateCookie.Value)
+	if err != nil {
+		t.Fatalf("openState: %v", err)
+	}
+	cbReq, _ := http.NewRequest(http.MethodGet,
+		srv.URL+"/playground/auth/callback?code=auth-code&state="+cv.State, nil)
+	cbReq.AddCookie(stateCookie)
+	cbResp, err := client.Do(cbReq)
+	if err != nil {
+		t.Fatalf("GET callback: %v", err)
+	}
+	defer cbResp.Body.Close()
+	if cbResp.StatusCode != http.StatusFound {
+		t.Fatalf("callback status = %d, want 302", cbResp.StatusCode)
+	}
+	for _, c := range cbResp.Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			return c.Value
+		}
+	}
+	t.Fatal("callback set no session cookie")
+	return ""
+}
+
+// mintWithCookie posts to /v1/playground/token with the session
+// cookie and returns the minted bearer's jti.
+func mintWithCookie(t *testing.T, tokenSrv *httptest.Server, cookie string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, tokenSrv.URL+"/v1/playground/token", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint status = %d, want 200", resp.StatusCode)
+	}
+	var body tokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode mint: %v", err)
+	}
+	claims := decodeJWTPayload(t, body.BearerToken)
+	jti, _ := claims["jti"].(string)
+	if jti == "" {
+		t.Fatal("minted JWT carried no jti")
+	}
+	return jti
+}
+
+func splitCookie(value string) (id, tenant string, ok bool) {
+	i := strings.IndexByte(value, '.')
+	if i < 0 {
+		return "", "", false
+	}
+	return value[:i], value[i+1:], true
+}

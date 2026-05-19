@@ -33,6 +33,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -133,6 +134,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/poolstore"
 	poolpg "github.com/lennylabs/lenny/pkg/gateway/poolstore/pgstore"
@@ -239,6 +241,27 @@ func main() {
 		"§25.14 public URL of the lenny-ops service (the ops.ingress.host Helm value). Advertised in GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops endpoint. Override via LENNY_OPS_SERVICE_URL.")
 	billingDualControlThreshold := flag.Float64("billing-dual-control-threshold", envFloat("LENNY_BILLING_DUAL_CONTROL_THRESHOLD", 0),
 		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
+	// §27.2 web-playground flags. These mirror the playground.* Helm
+	// values; the gateway reads them from its own configuration so the
+	// playground is gated without a separate deployment target.
+	playgroundEnabled := flag.Bool("playground-enabled", envFlag("LENNY_PLAYGROUND_ENABLED"),
+		"§27.2 playground.enabled: serve the web playground at /playground. When false, /playground/* returns 404. Override via LENNY_PLAYGROUND_ENABLED.")
+	playgroundAuthMode := flag.String("playground-auth-mode", envOr("LENNY_PLAYGROUND_AUTH_MODE", "oidc"),
+		"§27.2 playground.authMode: one of oidc, apiKey, or dev. Override via LENNY_PLAYGROUND_AUTH_MODE.")
+	playgroundDevTenantID := flag.String("playground-dev-tenant-id", envOr("LENNY_PLAYGROUND_DEV_TENANT_ID", "default"),
+		"§27.2 playground.devTenantId: the tenant bound to the dev HMAC JWT when playground.authMode=dev. Override via LENNY_PLAYGROUND_DEV_TENANT_ID.")
+	playgroundAllowedRuntimes := flag.String("playground-allowed-runtimes", envOr("LENNY_PLAYGROUND_ALLOWED_RUNTIMES", "*"),
+		"§27.2 playground.allowedRuntimes: a comma-separated glob list of runtime IDs visible in the playground runtime picker. Override via LENNY_PLAYGROUND_ALLOWED_RUNTIMES.")
+	playgroundMaxSessionMinutes := flag.Int("playground-max-session-minutes", envInt("LENNY_PLAYGROUND_MAX_SESSION_MINUTES", 30),
+		"§27.2 playground.maxSessionMinutes: the hard cap on playground-initiated session duration. Override via LENNY_PLAYGROUND_MAX_SESSION_MINUTES.")
+	playgroundMaxIdleTimeSeconds := flag.Int("playground-max-idle-time-seconds", envInt("LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS", 300),
+		"§27.2 playground.maxIdleTimeSeconds: the hard idle-timeout override for playground-initiated sessions. Override via LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS.")
+	playgroundOIDCSessionTTL := flag.Int("playground-oidc-session-ttl-seconds", envInt("LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS", 3600),
+		"§27.2 playground.oidcSessionTtlSeconds: the lifetime of the server-side playground session record and cookie. Override via LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS.")
+	playgroundBearerTTL := flag.Int("playground-bearer-ttl-seconds", envInt("LENNY_PLAYGROUND_BEARER_TTL_SECONDS", 900),
+		"§27.2 playground.bearerTtlSeconds: the TTL of MCP bearer tokens minted by POST /v1/playground/token (bounded 60..3600). Override via LENNY_PLAYGROUND_BEARER_TTL_SECONDS.")
+	playgroundGatewayHost := flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
+		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	flag.Parse()
 
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
@@ -1091,6 +1114,75 @@ func main() {
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
+	// ----- §27 web playground -----
+	// The playground is feature-flag gated (§27.2). When
+	// --playground-enabled is set the gateway serves the embedded SPA
+	// bundle at /playground and the §27.3.1 auth gatekeepers; when
+	// unset the /playground/* and /v1/playground/token routes are not
+	// mounted at all and return 404. The playground is a client of the
+	// public MCP and REST surface for session, chat, and discovery
+	// traffic (§27.5); only the auth-gatekeeper endpoints are
+	// playground-specific.
+	if *playgroundEnabled {
+		pgCfg := playground.Config{
+			Enabled:            true,
+			AuthMode:           playground.AuthMode(*playgroundAuthMode),
+			DevTenantID:        *playgroundDevTenantID,
+			AllowedRuntimes:    splitCSV(*playgroundAllowedRuntimes),
+			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
+			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
+			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
+			BearerTTL:          time.Duration(*playgroundBearerTTL) * time.Second,
+			MultiTenant:        *multiTenant,
+			GatewayHost:        *playgroundGatewayHost,
+		}
+		// §27.3 dev mode is permitted only under global devMode; the
+		// chart rejects authMode=dev otherwise, and this is the
+		// backstop for a deployment that bypassed Helm-validate.
+		if pgCfg.AuthMode == playground.AuthModeDev && !*devMode {
+			log.Fatalf("lenny-gateway: LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN: playground.authMode=dev requires global.devMode=true (§27.3)")
+		}
+		// §27.2 layer-3 startup gate: a malformed playground config is
+		// fatal (the schema and preflight layers are the primary
+		// defenses; this is defense-in-depth).
+		if err := pgCfg.Validate(); err != nil {
+			log.Fatalf("lenny-gateway: %v", err)
+		}
+		// §27.3.1 session record + revocation backing store: Redis when
+		// --redis-url is set so a logout on one replica revokes the
+		// bearer fleet-wide, in-process otherwise (single-replica).
+		var pgSessions playground.SessionStore
+		if redisClient != nil {
+			redisSessions := playground.NewRedisSessionStore(redisClient)
+			pgSessions = redisSessions
+			// §27.3.1 pub/sub: each replica subscribes to the
+			// per-tenant revocation channel so the auth hot path can
+			// short-circuit the Redis GET on a cache hit.
+			for _, t := range playgroundSubscribeTenants(pgCfg) {
+				go redisSessions.SubscribeRevocations(context.Background(), t)
+			}
+		} else {
+			pgSessions = playground.NewMemorySessionStore()
+		}
+		// §27.8 playground metrics register against the same private
+		// registry the gateway's /metrics scrape target serves.
+		pgMetrics, err := playground.NewMetrics(gwMetrics.Registerer())
+		if err != nil {
+			log.Fatalf("lenny-gateway: §27.8 playground metrics: %v", err)
+		}
+		pg := playground.New(pgCfg, playground.Options{
+			Signer:   jwtSigner,
+			Verifier: jwtSigner,
+			Tenants:  playgroundTenantRegistry{store: tenants},
+			Sessions: pgSessions,
+			Metrics:  pgMetrics,
+		}).WithAuditEmitter(playgroundAuditEmitter{})
+		mux.Handle("/playground", pg.PlaygroundRoutes())
+		mux.Handle("/playground/", pg.PlaygroundRoutes())
+		mux.Handle("/v1/playground/token", pg.TokenRoutes())
+		log.Printf("lenny-gateway: §27 web playground served at /playground (authMode=%s)", pgCfg.AuthMode)
+	}
+
 	// ----- §16.1 Prometheus metrics -----
 	mux.Handle("GET /metrics", gwMetrics.Handler())
 
@@ -1658,6 +1750,66 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// playgroundTenantRegistry adapts a tenantstore.Store into the
+// playground.TenantRegistry the §27.2 layer-4 Ready-gate consults. It
+// reports a tenant as registered when the store returns a row that is
+// not soft-deleted; the built-in "default" tenant is always
+// registered so a dev-mode playground against the Embedded-Mode
+// default tenant resolves without a Postgres row.
+type playgroundTenantRegistry struct {
+	store tenantstore.Store
+}
+
+func (r playgroundTenantRegistry) IsRegistered(tenantID string) (bool, error) {
+	if tenantID == "default" {
+		return true, nil
+	}
+	row, err := r.store.Get(context.Background(), tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return row.IsActive(), nil
+}
+
+// playgroundSubscribeTenants returns the tenant set whose §27.3.1
+// playground revocation channel each gateway replica subscribes to.
+// In dev mode that is the configured devTenantId; otherwise the
+// built-in "default" tenant. A multi-tenant production deployment
+// subscribes per-tenant as sessions are established; the initial set
+// covers the common single-tenant case.
+func playgroundSubscribeTenants(cfg playground.Config) []string {
+	if cfg.AuthMode == playground.AuthModeDev {
+		return []string{cfg.DevTenantID}
+	}
+	return []string{"default"}
+}
+
+// playgroundAuditEmitter bridges the playground's §27.3.1 audit
+// events to the gateway log. A durable §11.7 audit sink is wired by
+// the admin router; the playground emitter keeps a lightweight log
+// record so a bearer mint and revoke are observable without coupling
+// the playground package to the admin audit taxonomy.
+type playgroundAuditEmitter struct{}
+
+func (playgroundAuditEmitter) EmitPlaygroundEvent(_ context.Context, ev playground.AuditEvent) {
+	log.Printf("lenny-gateway: §27 audit %s tenant=%s user=%s jti=%s", ev.Type, ev.TenantID, ev.UserID, ev.BearerJTI)
+}
+
+// splitCSV splits a comma-separated flag value into a trimmed,
+// non-empty slice. An empty input yields a nil slice.
+func splitCSV(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // sweepIdempotencyKeys runs one §11.5 TTL garbage-collection pass,
 // deleting idempotency_keys rows older than the 24-hour retention
 // window. The sweep is per-tenant because the lenny_tenant_guard
@@ -1795,4 +1947,28 @@ func envFloat(name string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+// envOr returns the env var name, or def when the var is unset or
+// empty. Used to default the §27.2 playground string flags.
+func envOr(name, def string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return def
+}
+
+// envInt returns the env var name parsed as an int, or def when the
+// var is unset or does not parse. Used to default the §27.2
+// playground integer flags.
+func envInt(name string, def int) int {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }

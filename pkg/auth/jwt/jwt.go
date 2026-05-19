@@ -71,6 +71,15 @@ type Claims struct {
 	// matches a caller whose token carries that group. Like the role
 	// claim, the group claim is admission-time only.
 	Groups []string `json:"groups,omitempty"`
+
+	// Origin carries the §27.3 token-origin claim. It is set to
+	// "playground" on every session-capability JWT minted for a
+	// /playground/* request, in all three playground auth modes. The
+	// claim — not the auth mode — is the authoritative signal that
+	// drives the §27.6 idle-timeout override and duration cap, the
+	// §27.8 origin=playground dashboard slice, and any §11 policy rule
+	// matching on it. It is empty on every non-playground token.
+	Origin string `json:"origin,omitempty"`
 }
 
 // HasRole reports whether c carries r in its Roles slice. Useful for

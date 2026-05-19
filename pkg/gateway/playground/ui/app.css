@@ -1,0 +1,123 @@
+/* Lenny Playground stylesheet. The §27.7 CSP allows style-src
+   'unsafe-inline' for the SPA framework; this file keeps the bulk of
+   the styling out of inline attributes regardless. */
+
+:root {
+  --bg: #fffaf0;
+  --card: #ffffff;
+  --ink: #1f2933;
+  --sub: #54616e;
+  --line: #d3c8b0;
+  --mustard: #ffe9c7;
+  --sage: #d6e9d2;
+  --coral: #fde2d6;
+  --coral-line: #c84a1d;
+  --orange: #b56b1f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 2px solid var(--line);
+  background: var(--card);
+}
+
+.brand { font-weight: bold; font-size: 18px; }
+.auth-status { font-size: 13px; color: var(--sub); }
+
+.banner {
+  padding: 10px 24px;
+  font-weight: bold;
+  text-align: center;
+}
+.banner.danger { background: var(--coral); color: var(--coral-line); }
+.banner.warning { background: var(--mustard); color: var(--orange); }
+
+#app { max-width: 880px; margin: 0 auto; padding: 24px; }
+
+.loading { color: var(--sub); }
+
+h1 { font-size: 22px; margin: 0 0 16px; }
+h2 { font-size: 17px; margin: 20px 0 8px; }
+
+.runtime-card,
+.config-card,
+.chat-card {
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+
+.runtime-card .meta { color: var(--sub); font-size: 13px; }
+.runtime-id { font-weight: bold; font-size: 16px; }
+
+button {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 8px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--mustard);
+  cursor: pointer;
+}
+button.secondary { background: var(--card); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+label { display: block; font-size: 13px; margin: 10px 0 4px; }
+input, textarea, select {
+  width: 100%;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 7px;
+  border: 1.6px solid var(--line);
+  border-radius: 6px;
+}
+textarea { min-height: 70px; }
+
+.chat-log {
+  border: 1.6px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  height: 320px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.msg { margin: 6px 0; padding: 6px 8px; border-radius: 6px; }
+.msg.user { background: var(--sage); }
+.msg.agent { background: var(--mustard); }
+.msg.event { background: var(--card); border: 1px solid var(--line); font-size: 13px; }
+.msg.error { background: var(--coral); color: var(--coral-line); }
+.msg .who { font-weight: bold; font-size: 12px; display: block; }
+
+.frame-inspector {
+  margin-top: 10px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.frame-inspector pre {
+  background: #1f2933;
+  color: #fffaf0;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  max-height: 200px;
+}
+
+.row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.row input { flex: 1; }
+
+.notice { color: var(--sub); font-size: 13px; }
+.err { color: var(--coral-line); font-size: 13px; }

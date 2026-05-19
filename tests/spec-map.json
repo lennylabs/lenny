@@ -2913,9 +2913,13 @@
     "27": {
       "title": "Web Playground",
       "spec_file": "spec/27_web-playground.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/playground/playground_test.go",
+        "pkg/gateway/playground/sessionrecord_test.go",
+        "tests/tier3_contract/playground/playground_test.go"
+      ],
       "packages": [
-        "pkg/playground"
+        "pkg/gateway/playground"
       ],
       "blocked_until_phase": "5"
     }

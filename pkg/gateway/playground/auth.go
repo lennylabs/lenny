@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: MIT
+
+package playground
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// §27.3.1 tenant-claim rejection codes. These are the redirect query
+// parameters the OIDC callback handler translates a §10.2
+// tenant-claim rejection into; the playground error page surfaces
+// them to the user. The namespace is reserved for this table.
+const (
+	errTenantClaimMissing       = "tenant_claim_missing"
+	errTenantNotFound           = "tenant_not_found"
+	errTenantClaimInvalidFormat = "tenant_claim_invalid_format"
+)
+
+// Cookie names from §27.3.
+const (
+	// sessionCookie is the §27.3 opaque playground session cookie. Its
+	// Path is exactly /playground/ (trailing slash load-bearing) so it
+	// excludes sibling paths such as /playground-admin.
+	sessionCookie = "lenny_playground_session"
+
+	// oidcStateCookie is the §27.3.1 short-lived signed cookie that
+	// carries the per-login state and PKCE verifier. Its Path is
+	// /playground/auth/ so it is scoped to the OIDC handlers only.
+	oidcStateCookie = "lenny_playground_oidc_state"
+
+	// sessionCookiePath and statePath are the exact cookie paths.
+	sessionCookiePath = "/playground/"
+	statePath         = "/playground/auth/"
+
+	// stateCookieTTL is the §27.3.1 lifetime of the OIDC state cookie.
+	stateCookieTTL = 10 * time.Minute
+)
+
+// stateCookieValue carries the per-login OIDC flow context. It is
+// serialized into the signed, HttpOnly state cookie so the callback
+// can recover the PKCE verifier without a server-side store. The
+// gateway signs the cookie value; an unsigned or tampered cookie is
+// rejected at the callback.
+type stateCookieValue struct {
+	State    string `json:"state"`
+	Verifier string `json:"verifier"`
+	IssuedAt int64  `json:"issued_at"`
+}
+
+// handleLogin serves GET /playground/auth/login: it starts the OIDC
+// authorization-code flow (§27.3.1 step 1). It is reachable only in
+// oidc mode; the other modes have no login endpoint.
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.AuthMode != AuthModeOIDC {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"the playground login endpoint exists only in authMode=oidc", nil)
+		return
+	}
+	if h.oidc == nil {
+		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
+			"the playground OIDC provider is not configured", nil)
+		return
+	}
+	state, err := newOpaqueID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	verifier, err := generateCodeVerifier()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	challenge := codeChallengeS256(verifier)
+	cv := stateCookieValue{State: state, Verifier: verifier, IssuedAt: h.now().Unix()}
+	signed, err := h.sealState(cv)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcStateCookie,
+		Value:    signed,
+		Path:     statePath,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(stateCookieTTL.Seconds()),
+	})
+	http.Redirect(w, r, h.oidc.AuthorizationURL(state, challenge, h.callbackURL(r)), http.StatusFound)
+}
+
+// handleCallback serves GET /playground/auth/callback: the OIDC
+// provider redirects here (§27.3.1 step 1). It verifies state,
+// performs the PKCE-protected token exchange, establishes the
+// server-side playground session record, and sets the session
+// cookie. Every failure clears the state cookie and redirects to the
+// playground error page.
+func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.AuthMode != AuthModeOIDC {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"the playground callback endpoint exists only in authMode=oidc", nil)
+		return
+	}
+	clearCookie(w, oidcStateCookie, statePath)
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		h.redirectAuthError(w, r, "oidc_callback_invalid")
+		return
+	}
+	stateCookie, err := r.Cookie(oidcStateCookie)
+	if err != nil {
+		h.redirectAuthError(w, r, "oidc_state_missing")
+		return
+	}
+	cv, err := h.openState(stateCookie.Value)
+	if err != nil {
+		h.redirectAuthError(w, r, "oidc_state_invalid")
+		return
+	}
+	if cv.State != state {
+		h.redirectAuthError(w, r, "oidc_state_mismatch")
+		return
+	}
+	if h.now().Unix()-cv.IssuedAt > int64(stateCookieTTL.Seconds()) {
+		h.redirectAuthError(w, r, "oidc_state_expired")
+		return
+	}
+	if h.oidc == nil || h.sessions == nil {
+		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
+			"the playground OIDC provider or session store is not configured", nil)
+		return
+	}
+	subject, err := h.oidc.Exchange(r.Context(), code, cv.Verifier, h.callbackURL(r))
+	if err != nil {
+		// A §27.3.1 tenant-claim rejection redirects with the canonical
+		// code; any other exchange failure uses the generic code.
+		if oe, ok := errIsTenantClaim(err); ok {
+			h.redirectAuthError(w, r, oe.Code)
+			return
+		}
+		if oe, ok := asOIDCError(err); ok {
+			h.redirectAuthError(w, r, oe.Code)
+			return
+		}
+		h.redirectAuthError(w, r, "oidc_exchange_failed")
+		return
+	}
+	// §27.3.1: the extracted tenant must name a provisioned Tenant CR.
+	// TENANT_NOT_FOUND is surfaced as a tenant-claim error redirect.
+	if h.tenants != nil {
+		ok, regErr := h.tenants.IsRegistered(subject.TenantID)
+		if regErr != nil {
+			h.redirectAuthError(w, r, "oidc_tenant_lookup_failed")
+			return
+		}
+		if !ok {
+			h.redirectAuthError(w, r, errTenantNotFound)
+			return
+		}
+	}
+	if err := h.establishSession(r.Context(), w, subject); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	http.Redirect(w, r, sessionCookiePath, http.StatusFound)
+}
+
+// establishSession creates the §27.3.1 server-side playground session
+// record, pins its TTL to the cookie lifetime, and sets the
+// lenny_playground_session cookie.
+func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, subject OIDCSubject) error {
+	sessionID, err := newOpaqueID()
+	if err != nil {
+		return err
+	}
+	csrf, err := newOpaqueID()
+	if err != nil {
+		return err
+	}
+	rec := SessionRecord{
+		UserID:     subject.UserID,
+		TenantID:   subject.TenantID,
+		CallerType: subject.CallerType,
+		Scope:      subject.Scope,
+		Origin:     PlaygroundOrigin,
+		IssuedAt:   h.now(),
+		CSRFToken:  csrf,
+	}
+	if err := h.sessions.PutSession(ctx, subject.TenantID, sessionID, rec, h.cfg.OIDCSessionTTL); err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    sessionID + "." + subject.TenantID,
+		Path:     sessionCookiePath,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(h.cfg.OIDCSessionTTL.Seconds()),
+	})
+	return nil
+}
+
+// handleLogout serves POST /playground/auth/logout (§27.3.1 step 1).
+// It deletes the session record server-side and revokes every bearer
+// the session minted, fanning the change out to peer replicas, then
+// clears the cookie. It does not return 200 until the revocation
+// writes have committed (§27.6).
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.AuthMode != AuthModeOIDC {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"the playground logout endpoint exists only in authMode=oidc", nil)
+		return
+	}
+	clearCookie(w, sessionCookie, sessionCookiePath)
+	id, tenant, ok := parseSessionCookie(r)
+	if !ok || h.sessions == nil {
+		// No cookie or no store: logout is idempotent, the cleared
+		// cookie above is the only effect.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	rec, err := h.sessions.GetSession(r.Context(), tenant, id)
+	if err != nil {
+		// Record already gone: nothing to revoke.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := h.revokeSessionRecord(r.Context(), tenant, id, rec, RevokeUserLogout); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",
+			"the playground revocation write did not commit: "+err.Error(), nil)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// revokeSessionRecord is the §27.6 single revocation primitive:
+// logout, user.invalidated, idle timeout, and admin revocation all
+// converge here. It revokes every bearer the record minted, records
+// the §27.8 reason and propagation latency, and emits the §27.3.1
+// step-6 audit event.
+func (h *Handler) revokeSessionRecord(ctx context.Context, tenant, id string, rec SessionRecord, reason RevocationReason) error {
+	start := h.now()
+	revokedTTL := h.revokedMarkerTTL(rec)
+	if err := h.sessions.RevokeSession(ctx, tenant, id, rec.BearerJTIs, revokedTTL); err != nil {
+		return err
+	}
+	h.metrics.revocation(string(reason))
+	h.metrics.revocationPropagation("redis_authoritative", h.now().Sub(start).Seconds())
+	h.emitBearerRevokedAudit(ctx, tenant, rec.UserID, id, rec.BearerJTIs)
+	return nil
+}
+
+// RevokeSession is the §27.6 admin/idle-timeout entry point into the
+// revocation primitive. The gateway calls it from the §11.4 user
+// invalidation fan-out and the idle-timeout sweep so a playground
+// session is revoked through the same path as a user logout. id and
+// tenant identify the playground session record; reason attributes
+// the §27.8 metric.
+func (h *Handler) RevokeSession(ctx context.Context, tenant, id string, reason RevocationReason) error {
+	if h.sessions == nil {
+		return nil
+	}
+	rec, err := h.sessions.GetSession(ctx, tenant, id)
+	if err != nil {
+		// Record already gone: revocation is idempotent.
+		return nil
+	}
+	return h.revokeSessionRecord(ctx, tenant, id, rec, reason)
+}
+
+// IsBearerRevoked is the §27.3.1 per-request revocation check. The
+// gateway auth chain calls it for every playground-origin bearer
+// (identified by the origin claim) before the bearer is honored. A
+// non-nil error means the backing store is unreachable; the caller
+// fails closed (503 REDIS_UNAVAILABLE) per §27.3.1 rather than
+// honoring the bearer.
+func (h *Handler) IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error) {
+	if h.sessions == nil {
+		return false, nil
+	}
+	return h.sessions.IsBearerRevoked(ctx, tenant, jti)
+}
+
+// revokedMarkerTTL returns the §27.3.1 revocation-marker TTL: the
+// remaining bearer lifetime plus a 5 s skew budget. When the record
+// carries no current expiry the marker is held for the full bearer
+// TTL.
+func (h *Handler) revokedMarkerTTL(rec SessionRecord) time.Duration {
+	if rec.CurrentExp == 0 {
+		return h.cfg.BearerTTL + 5*time.Second
+	}
+	remaining := time.Unix(rec.CurrentExp, 0).Sub(h.now())
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining + 5*time.Second
+}
+
+// handleAuthError serves GET /playground/auth/error: it renders the
+// embedded error page so the SPA can surface an OIDC failure code to
+// the user. The page itself is part of the SPA bundle.
+func (h *Handler) handleAuthError(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(errorPageHTML(r.URL.Query().Get("error")))
+}
+
+// redirectAuthError clears the OIDC state cookie and redirects the
+// browser to the playground error page with the supplied code.
+func (h *Handler) redirectAuthError(w http.ResponseWriter, r *http.Request, code string) {
+	clearCookie(w, oidcStateCookie, statePath)
+	http.Redirect(w, r, "/playground/auth/error?error="+code, http.StatusFound)
+}
+
+// callbackURL returns the absolute OIDC redirect_uri for this
+// gateway. It honors the forwarded-proto header so a TLS-terminating
+// ingress is reflected.
+func (h *Handler) callbackURL(r *http.Request) string {
+	scheme := "https"
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	} else if r.TLS == nil {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host + "/playground/auth/callback"
+}
+
+// parseSessionCookie reads and splits the lenny_playground_session
+// cookie into its opaque session id and tenant. The cookie value is
+// "<session-id>.<tenant-id>" so the per-request revocation check can
+// resolve the per-tenant Redis key without a separate lookup.
+func parseSessionCookie(r *http.Request) (id, tenant string, ok bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return "", "", false
+	}
+	idPart, tenantPart, found := strings.Cut(c.Value, ".")
+	if !found || idPart == "" || tenantPart == "" {
+		return "", "", false
+	}
+	return idPart, tenantPart, true
+}
+
+// clearCookie writes a Max-Age=0 Set-Cookie for name at path.
+func clearCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:   name,
+		Value:  "",
+		Path:   path,
+		MaxAge: -1,
+	})
+}
+
+// asOIDCError reports whether err is an *OIDCError.
+func asOIDCError(err error) (*OIDCError, bool) {
+	oe, ok := err.(*OIDCError)
+	return oe, ok
+}

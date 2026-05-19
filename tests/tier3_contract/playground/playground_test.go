@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: MIT
+
+//go:build contract
+
+// Tier-3 contract tests for the §27 web playground. These tests
+// drive the playground gateway-side endpoints (the §27.3.1 auth
+// gatekeepers and the mode-polymorphic POST /v1/playground/token
+// mint) via httptest, and exercise the §27.5 protocol path: a
+// playground-minted session-capability JWT must be honored by the
+// public REST surface exactly as any other session JWT, because the
+// playground is a client of that surface and mints standard tokens.
+//
+// The harness composes the real pkg/gateway/playground handler with
+// the real pkg/gateway/sessionserver handler behind the §10.2 auth
+// middleware, the same wiring cmd/lenny-gateway uses. No browser is
+// involved; the tests assert the HTTP and JWT contract.
+
+package playground_test
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
+)
+
+// fakeTenants is the in-test playground.TenantRegistry and the
+// auth-middleware tenant registry.
+type fakeTenants struct {
+	registered map[string]bool
+}
+
+func (f fakeTenants) IsRegistered(id string) (bool, error) {
+	return f.registered[id], nil
+}
+
+func devSigner() *jwt.HMACSigner {
+	return jwt.NewHMACSigner("pg-contract", []byte("playground-contract-secret"))
+}
+
+// newPlayground builds a playground Handler in the requested auth
+// mode with an in-memory session store.
+func newPlayground(t *testing.T, mode playground.AuthMode) *playground.Handler {
+	t.Helper()
+	cfg := playground.Config{
+		Enabled:        true,
+		AuthMode:       mode,
+		DevTenantID:    "acme",
+		BearerTTL:      900 * time.Second,
+		OIDCSessionTTL: time.Hour,
+	}
+	return playground.New(cfg, playground.Options{
+		Signer:   devSigner(),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Sessions: playground.NewMemorySessionStore(),
+	})
+}
+
+// decodeClaims decodes a compact JWT payload into a claim map.
+func decodeClaims(t *testing.T, token string) map[string]any {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("token has %d segments, want 3", len(parts))
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	return m
+}
+
+func postJSON(t *testing.T, url, body string, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", url, err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return resp, raw
+}
+
+// spec: 27.3.1 (dev mode: POST /v1/playground/token mints with no admission material)
+// diagnosis: A dev-mode mint with an empty body did not return 200
+//
+//	with a Bearer token. The mode-polymorphic mint endpoint's dev
+//	branch is broken; inspect mintDev in pkg/gateway/playground.
+func TestDevModeMintReturnsBearer(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeDev)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, raw := postJSON(t, srv.URL+"/v1/playground/token", "{}", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dev mint status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	var body struct {
+		BearerToken      string `json:"bearerToken"`
+		TokenType        string `json:"tokenType"`
+		ExpiresInSeconds int64  `json:"expiresInSeconds"`
+		Reusable         bool   `json:"reusable"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode mint body: %v", err)
+	}
+	if body.TokenType != "Bearer" || body.BearerToken == "" || !body.Reusable {
+		t.Fatalf("unexpected mint body: %+v", body)
+	}
+	if body.ExpiresInSeconds != 900 {
+		t.Fatalf("expiresInSeconds = %d, want 900", body.ExpiresInSeconds)
+	}
+}
+
+// spec: 27.3 (mode-agnostic origin:"playground" claim on the minted JWT)
+// diagnosis: The minted session-capability JWT did not carry the
+//
+//	origin:"playground" claim. The §27.6 idle-timeout override and
+//	the §27.8 dashboard slice key on this claim; inspect
+//	completeMint in pkg/gateway/playground.
+func TestMintedJWTCarriesPlaygroundOrigin(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeDev)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, raw := postJSON(t, srv.URL+"/v1/playground/token", "{}", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	claims := decodeClaims(t, body.BearerToken)
+	if claims["origin"] != "playground" {
+		t.Fatalf("minted JWT origin = %v, want playground", claims["origin"])
+	}
+	if claims["typ"] != string(auth.TokenSessionCapability) {
+		t.Fatalf("minted JWT typ = %v, want session_capability", claims["typ"])
+	}
+}
+
+// spec: 27.5 (playground-minted JWT is honored by the public REST surface)
+// diagnosis: A session-capability JWT minted by POST /v1/playground/token
+//
+//	was rejected by the public POST /v1/sessions surface. The
+//	playground mints a standard token (§27.5); if the public
+//	surface rejects it the mint claims or signer are wrong.
+func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
+	signer := devSigner()
+	// The playground and the public surface share a signer, the way
+	// the gateway shares one JWTSigner across both.
+	cfg := playground.Config{
+		Enabled: true, AuthMode: playground.AuthModeDev, DevTenantID: "acme",
+		BearerTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
+	}
+	h := playground.New(cfg, playground.Options{
+		Signer:   signer,
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Sessions: playground.NewMemorySessionStore(),
+	})
+	pgSrv := httptest.NewServer(h.TokenRoutes())
+	defer pgSrv.Close()
+
+	// Mint a playground bearer.
+	resp, raw := postJSON(t, pgSrv.URL+"/v1/playground/token", "{}", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint status = %d, want 200", resp.StatusCode)
+	}
+	var minted struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	_ = json.Unmarshal(raw, &minted)
+
+	// The public REST surface: the §15.1 sessionserver behind the
+	// §10.2 auth middleware, verifying with the same signer.
+	store := memstore.New()
+	publicAPI := authmw.Wrap(
+		sessionserver.New(store, sessionserver.Options{}).Handler(),
+		authmw.Options{
+			Verifier:    signer,
+			MultiTenant: true,
+			Registry:    fakeTenants{registered: map[string]bool{"acme": true}},
+			RequireAuth: true,
+		},
+	)
+	apiSrv := httptest.NewServer(publicAPI)
+	defer apiSrv.Close()
+
+	createResp, createRaw := postJSON(t, apiSrv.URL+"/v1/sessions",
+		`{"runtimeRef":"claude-code"}`,
+		map[string]string{"Authorization": "Bearer " + minted.BearerToken})
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/sessions with playground JWT status = %d, want 201; body=%s",
+			createResp.StatusCode, createRaw)
+	}
+}
+
+// spec: 27.3.1 (apiKey mode rejects a non-user_bearer subject token)
+// diagnosis: A session_capability JWT pasted into the API-key form
+//
+//	was not rejected with LENNY_PLAYGROUND_BEARER_TYPE_REJECTED.
+//	The §10.2 playground mint invariant (subject typ ==
+//	user_bearer) is not enforced; inspect mintAPIKey.
+func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
+	signer := devSigner()
+	capToken, err := signer.Sign(jwt.Claims{
+		Subject: "alice", TenantID: "acme",
+		Typ:    auth.TokenSessionCapability,
+		Expiry: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign capability token: %v", err)
+	}
+	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, BearerTTL: 900 * time.Second}
+	h := playground.New(cfg, playground.Options{Signer: signer, Verifier: signer})
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, raw := postJSON(t, srv.URL+"/v1/playground/token", "{}",
+		map[string]string{"Authorization": "Bearer " + capToken})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
+		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
+	}
+}
+
+// spec: 27.3.1 (oidc mode rejects an Authorization: Bearer on the mint endpoint)
+// diagnosis: An Authorization: Bearer header presented to
+//
+//	POST /v1/playground/token in oidc mode was not rejected with
+//	LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL. The route-stamped mode
+//	enforcement is broken; inspect mintOIDC.
+func TestOIDCModeRejectsBearerMaterial(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeOIDC)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, raw := postJSON(t, srv.URL+"/v1/playground/token", "{}",
+		map[string]string{"Authorization": "Bearer pasted-token"})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Error.Code != "LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL" {
+		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL", env.Error.Code)
+	}
+	if env.Error.Details["configuredAuthMode"] != "oidc" {
+		t.Fatalf("details.configuredAuthMode = %v, want oidc", env.Error.Details["configuredAuthMode"])
+	}
+}
+
+// spec: 27.7 (the playground CSP and security headers are applied to /playground/*)
+// diagnosis: A /playground/* response lacked the §27.7
+//
+//	Content-Security-Policy, X-Content-Type-Options, or
+//	Referrer-Policy header. The securityHeaders wrap is missing
+//	or mis-scoped; inspect PlaygroundRoutes.
+func TestPlaygroundResponsesCarryCSP(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeDev)
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/")
+	if err != nil {
+		t.Fatalf("GET /playground/: %v", err)
+	}
+	defer resp.Body.Close()
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "object-src 'none'") {
+		t.Fatalf("CSP missing required directives: %q", csp)
+	}
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", resp.Header.Get("X-Content-Type-Options"))
+	}
+	if resp.Header.Get("Referrer-Policy") != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q, want same-origin", resp.Header.Get("Referrer-Policy"))
+	}
+}
+
+// spec: 27.5 (the gatekeeper endpoints exist only in their applicable mode)
+// diagnosis: GET /playground/auth/login was reachable in a non-oidc
+//
+//	mode, or absent in oidc mode. The §27.3.1 login/callback/logout
+//	endpoints are oidc-mode-specific; inspect the mode guard at the
+//	top of handleLogin.
+func TestLoginEndpointIsOIDCModeOnly(t *testing.T) {
+	// dev mode: the login endpoint returns 404.
+	devH := newPlayground(t, playground.AuthModeDev)
+	devSrv := httptest.NewServer(devH.PlaygroundRoutes())
+	defer devSrv.Close()
+	devResp, err := http.Get(devSrv.URL + "/playground/auth/login")
+	if err != nil {
+		t.Fatalf("GET login (dev): %v", err)
+	}
+	_ = devResp.Body.Close()
+	if devResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("dev-mode login status = %d, want 404", devResp.StatusCode)
+	}
+}

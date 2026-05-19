@@ -201,6 +201,14 @@ func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
 }
 
+// Registerer exposes the gateway's private metric registry so a
+// gateway subsystem (for example the §27 playground) can register its
+// own metric vectors against the same registry and have them surface
+// on the shared `/metrics` scrape target.
+func (m *Metrics) Registerer() prometheus.Registerer {
+	return m.reg
+}
+
 // SetActiveSessions updates the active-session gauge. The gateway
 // calls this from the watchdog sweep or a dedicated poller.
 func (m *Metrics) SetActiveSessions(n int) {
