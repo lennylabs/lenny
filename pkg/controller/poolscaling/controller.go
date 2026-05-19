@@ -71,6 +71,21 @@ type PoolConfig struct {
 	// SDKWarmDisabled is the SDK-warm circuit-breaker flag (§4.6.3
 	// PoolScalingController-owned).
 	SDKWarmDisabled bool
+	// PoolType selects which §4.6.2 formula sizes the pool: a standard
+	// (non-experiment) pool or an A/B experiment variant pool (§10.7).
+	// An empty value is treated as strategy.PoolStandard. A
+	// PoolConfigSource resolves it from the experiment store via
+	// ResolveVariantRoles.
+	PoolType strategy.PoolType
+	// VariantWeight is the traffic fraction routed to this variant pool,
+	// in (0,1). It is meaningful only when PoolType is
+	// strategy.PoolVariant and feeds the §4.6.2 variant-pool formula.
+	VariantWeight float64
+	// SumActiveVariantWeights is Σ variant_weights across every active
+	// variant of every active experiment diverting traffic from this
+	// standard base pool. It is 0 when no variants are active and feeds
+	// the §4.6.2 base-pool adjustment (1 - Σ variant_weights).
+	SumActiveVariantWeights float64
 }
 
 // Demand is the observed claim-rate signal for one pool — the input
@@ -182,12 +197,19 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig) error {
 // demand has not yet converged, stays at its bootstrap minWarm.
 func (r *Reconciler) targetMinWarm(ctx context.Context, cfg PoolConfig) (int32, error) {
 	in := strategy.ScalingInputs{
-		PoolType:         strategy.PoolStandard,
-		Mode:             strategy.ExecutionMode(cfg.Template.ExecutionMode),
-		SafetyFactor:     cfg.SafetyFactor,
-		FailoverSeconds:  failoverSeconds,
-		PodWarmupSeconds: podWarmupSeconds(cfg),
-		BootstrapMinWarm: int(cfg.MinWarm),
+		PoolType:                cfg.PoolType,
+		Mode:                    strategy.ExecutionMode(cfg.Template.ExecutionMode),
+		SafetyFactor:            cfg.SafetyFactor,
+		FailoverSeconds:         failoverSeconds,
+		PodWarmupSeconds:        podWarmupSeconds(cfg),
+		VariantWeight:           cfg.VariantWeight,
+		SumActiveVariantWeights: cfg.SumActiveVariantWeights,
+		BootstrapMinWarm:        int(cfg.MinWarm),
+	}
+	// An unset PoolType defaults to a standard non-experiment pool; the
+	// strategy rejects an empty PoolType, so the default is resolved here.
+	if in.PoolType == "" {
+		in.PoolType = strategy.PoolStandard
 	}
 	if in.SafetyFactor <= 0 {
 		in.SafetyFactor = defaultSafetyFactor

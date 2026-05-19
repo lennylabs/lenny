@@ -13,6 +13,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
+	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
 )
 
 const (
@@ -267,5 +268,122 @@ func TestSyncPropagatesDemandSourceError(t *testing.T) {
 	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
 	if err := r.Sync(context.Background()); err == nil {
 		t.Fatal("Sync should return an error when the demand source fails")
+	}
+}
+
+// spec: 4.6.2
+// diagnosis: targetMinWarm hardcoded strategy.PoolStandard and never
+// read PoolConfig.VariantWeight, so an experiment variant pool was
+// sized with the full base-demand formula instead of the
+// variant-weight-scaled §4.6.2 variant-pool formula.
+//
+// Session mode, safetyFactor 1.5, failover 25s, podWarmup 10s, demand
+// p95 0.4 / p99 0.5, variant_weight 0.25. The variant-pool formula
+// yields ceil(0.4·0.25·1.5·35 + 0.5·0.25·10) = ceil(5.25 + 1.25) = 7.
+func TestSyncSizesVariantPoolByVariantWeight(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.PoolType = strategy.PoolVariant
+	cfg.VariantWeight = 0.25
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.4,
+		BurstP99Claims: 0.5,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+		t.Errorf("variant pool minWarm = %d, want 7 (variant-weight-scaled)", got)
+	}
+}
+
+// spec: 4.6.2
+// diagnosis: targetMinWarm never read PoolConfig.SumActiveVariantWeights,
+// so a standard base pool with active experiment variants kept its full
+// minWarm instead of the §4.6.2 base-pool adjustment that scales demand
+// by (1 - Σ variant_weights), over-provisioning warm pods.
+//
+// Session mode, safetyFactor 1.5, failover 25s, podWarmup 10s, demand
+// p95 0.4 / p99 0.5, Σ variant_weights 0.3. The adjusted base-pool
+// formula yields ceil(0.4·0.7·1.5·35 + 0.5·0.7·10) = ceil(14.7 + 3.5) = 19.
+func TestSyncAdjustsBasePoolBySumVariantWeights(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.PoolType = strategy.PoolStandard
+	cfg.SumActiveVariantWeights = 0.3
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.4,
+		BurstP99Claims: 0.5,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 19 {
+		t.Errorf("base pool minWarm = %d, want 19 (adjusted by 1-Σ)", got)
+	}
+}
+
+// spec: 4.6.2
+// diagnosis: an unset PoolConfig.PoolType must default to a standard
+// pool. The strategy rejects an empty PoolType, so targetMinWarm must
+// resolve the default before calling Compute; without the default the
+// Sync pass would fail on every pool a PoolConfigSource leaves
+// un-annotated.
+//
+// config() leaves PoolType empty. With observed demand p95 0.1 / p99
+// 0.2 the standard formula yields ceil(5.25 + 2.0) = 8, identical to
+// an explicit standard pool.
+func TestSyncTreatsEmptyPoolTypeAsStandard(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.1,
+		BurstP99Claims: 0.2,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync with empty PoolType: %v", err)
+	}
+	if got := getWarmPool(t, c).Spec.MinWarm; got != 8 {
+		t.Errorf("minWarm = %d, want 8 (empty PoolType sized as standard)", got)
+	}
+}
+
+// spec: 4.6.2
+// diagnosis: a standard base pool whose Σ variant_weights reaches 1
+// leaves no traffic for the base pool. The strategy returns
+// ErrVariantWeightsExceedOne; targetMinWarm must surface that as a Sync
+// failure so the bad experiment configuration is not silently sized.
+func TestSyncRejectsBasePoolWithSumVariantWeightsAtOne(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	cfg := config()
+	cfg.PoolType = strategy.PoolStandard
+	cfg.SumActiveVariantWeights = 1.0
+	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
+	demand := &fakeDemand{demand: poolscaling.Demand{
+		BaseDemandP95:  0.4,
+		BurstP99Claims: 0.5,
+		Observed:       true,
+	}}
+
+	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: demand}
+	if err := r.Sync(context.Background()); err == nil {
+		t.Fatal("Sync should fail when Σ variant_weights ≥ 1")
 	}
 }
