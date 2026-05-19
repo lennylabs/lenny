@@ -30,8 +30,16 @@ func TestEveryGoFileHasSPDXHeader(t *testing.T) {
 			continue
 		}
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
+			if err != nil {
 				return err
+			}
+			if d.IsDir() {
+				// Third-party dependencies and built output carry no
+				// SPDX header; skip those directory subtrees.
+				if d.Name() == "node_modules" || d.Name() == "dist" {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if filepath.Ext(path) != ".go" {
 				return nil
@@ -100,8 +108,16 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 			continue
 		}
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
+			if err != nil {
 				return err
+			}
+			if d.IsDir() {
+				// Third-party dependencies and built output carry no
+				// SPDX header; skip those directory subtrees.
+				if d.Name() == "node_modules" || d.Name() == "dist" {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			ext := filepath.Ext(path)
 			marker, ok := exts[ext]
