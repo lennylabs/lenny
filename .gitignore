@@ -9,6 +9,7 @@ tmp/
 /lenny-adapter
 /lenny-compliance
 /lenny-controller
+/lenny-ctl
 /lenny-gateway
 /lenny-migrate
 /lenny-token-service
