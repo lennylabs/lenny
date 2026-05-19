@@ -91,7 +91,23 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   in chart values (the `postgres`/`redis`/`minio` sections currently carry only NetworkPolicy
   CIDR/port config, not connection strings), in-cluster data-store manifests for the Kind
   tier, the migration Job, and then the conversion of the tier-5/8/9 `scaffolds_test.go`
-  stubs into real cluster assertions.
+  stubs into real cluster assertions. Update: the data-store stack is now built and live —
+  the gateway persists to in-cluster Postgres, Redis, and MinIO; tiers 5/8/9 each have a
+  real-assertion subset committed (26 passing e2e tests).
+
+- **Warm-pod runtime-container model** (Wave 5, needs a decision). Getting a real agent
+  pod fully Ready on the Kind cluster is blocked on a model question. `podspec.go` runs
+  the runtime image's entrypoint directly as a sidecar container with
+  `RestartPolicy: Never`. The reference `echo` runtime is a §15.4.3 Basic-level
+  stdin/stdout exec-target ("stdin EOF -> exit 0"), so as a standalone sidecar container
+  with no stdin it exits immediately and never restarts; the pod sits `1/2 NotReady`. A
+  Basic stdin/stdout runtime cannot survive as a separate sidecar container — that model
+  fits a long-running server runtime or the embedded-adapter single-container mode.
+  Resolution options: use a long-running runtime for the e2e pool, give the runtime
+  container a keep-alive entrypoint in `podspec.go` with the adapter exec'ing the runtime
+  per session, or treat it as a genuine warm-pod-model gap. Route-around: the ~25
+  agent-pod-dependent tier-5/8/9 tests are deferred pending this decision; the data-store-
+  dependent and control-plane tier-8/9 tests proceed without it.
 
 ## Test status
 
