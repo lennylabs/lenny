@@ -1027,7 +1027,8 @@ func main() {
 	// and hold pending dual-control requests in the in-memory
 	// correction registry.
 	adminRouter = adminRouter.WithBillingCorrections(
-		billing, correctionstore.NewMemory(), *billingDualControlThreshold)
+		billing, correctionstore.NewMemory(), *billingDualControlThreshold,
+	)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()

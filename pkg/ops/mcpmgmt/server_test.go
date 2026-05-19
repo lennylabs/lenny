@@ -142,8 +142,10 @@ func TestToolsCallScopeForbidden(t *testing.T) {
 	_, resp := rpc(t, srv, map[string]string{"X-Lenny-Scope": "tools:health:read"},
 		map[string]any{
 			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-			"params": map[string]any{"name": "lenny_lock_acquire",
-				"arguments": map[string]any{"scope": "pool:p"}},
+			"params": map[string]any{
+				"name":      "lenny_lock_acquire",
+				"arguments": map[string]any{"scope": "pool:p"},
+			},
 		})
 	rpcErr, _ := resp["error"].(map[string]any)
 	if rpcErr == nil || rpcErr["code"].(float64) != -32001 {
@@ -166,8 +168,10 @@ func TestToolsCallAllowedWhenScopeMatches(t *testing.T) {
 	_, resp := rpc(t, srv, map[string]string{"X-Lenny-Scope": "tools:locks:write tools:health:read"},
 		map[string]any{
 			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-			"params": map[string]any{"name": "lenny_lock_acquire",
-				"arguments": map[string]any{"scope": "pool:p"}},
+			"params": map[string]any{
+				"name":      "lenny_lock_acquire",
+				"arguments": map[string]any{"scope": "pool:p"},
+			},
 		})
 	if _, hasErr := resp["error"]; hasErr {
 		t.Errorf("scoped call returned an error: %v", resp["error"])
@@ -187,8 +191,10 @@ func TestToolsCallDryRunMapsToMetaFlag(t *testing.T) {
 	srv := mcpmgmt.NewServer(inv)
 	_, resp := rpc(t, srv, nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "lenny_drift_snapshot_refresh",
-			"arguments": map[string]any{"desired": map[string]any{}}},
+		"params": map[string]any{
+			"name":      "lenny_drift_snapshot_refresh",
+			"arguments": map[string]any{"desired": map[string]any{}},
+		},
 	})
 	result, _ := resp["result"].(map[string]any)
 	// §25.12 dry-run mapping: a preview is isError:false with the

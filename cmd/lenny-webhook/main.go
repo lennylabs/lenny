@@ -83,7 +83,8 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// inheritance to the gateway path; the webhook then validates each
 	// resource on its own declared region against storage.regions.
 	mux.Handle("/data-residency-validator", webhook.Handler(
-		webhook.DataResidencyValidator(declaredRegions, nil)))
+		webhook.DataResidencyValidator(declaredRegions, nil),
+	))
 	// §6.4 t4-node-isolation: enforces T4 dedicated-node placement on
 	// agent-namespace Pod resources.
 	mux.Handle("/t4-node-isolation", webhook.Handler(webhook.T4NodeIsolation()))

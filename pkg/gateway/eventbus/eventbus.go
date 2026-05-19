@@ -176,7 +176,8 @@ func (b *RedisEventBus) Publish(ctx context.Context, tenantID string, topic Even
 // Subscribe returns once the consume loop is attached. Close the
 // returned Subscription to detach.
 func (b *RedisEventBus) Subscribe(ctx context.Context, tenantID string, topic EventTopic,
-	handler func(context.Context, Event) error) (*Subscription, error) {
+	handler func(context.Context, Event) error,
+) (*Subscription, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("eventbus: Subscribe requires a tenantID")
 	}

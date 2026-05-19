@@ -668,7 +668,8 @@ func (s *Service) versionCompatible(b Backup) (bool, string) {
 	if compareVersions(b.PlatformVersion, s.platVer) > 0 {
 		return false, fmt.Sprintf(
 			"backup platform version %s is newer than the current version %s; restore is forward-only",
-			b.PlatformVersion, s.platVer)
+			b.PlatformVersion, s.platVer,
+		)
 	}
 	return true, ""
 }

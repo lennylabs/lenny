@@ -159,13 +159,15 @@ func Decide(r Request) Decision {
 		return reject(fmt.Sprintf(
 			"non-T4 pod %s/%s carries the T4 node selector %s=%s; only T4 pods may "+
 				"schedule onto T4-dedicated nodes (STR-003)",
-			r.Namespace, r.PodName, NodeLabelKey, NodeLabelValue))
+			r.Namespace, r.PodName, NodeLabelKey, NodeLabelValue,
+		))
 	}
 	if hasToleration {
 		return reject(fmt.Sprintf(
 			"non-T4 pod %s/%s tolerates the T4 node taint %s=%s:NoSchedule; only T4 pods "+
 				"may schedule onto T4-dedicated nodes (STR-003)",
-			r.Namespace, r.PodName, NodeTaintKey, NodeTaintValue))
+			r.Namespace, r.PodName, NodeTaintKey, NodeTaintValue,
+		))
 	}
 	return Decision{Allowed: true, Code: 200}
 }

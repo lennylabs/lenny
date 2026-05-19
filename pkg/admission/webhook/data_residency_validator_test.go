@@ -99,7 +99,8 @@ func TestDataResidencyValidatorInheritsTenantRegion(t *testing.T) {
 	// An environment-scoped resource (SandboxClaim) with no region of
 	// its own inherits the tenant region resolved by the resolver.
 	dec := webhook.DataResidencyValidator(
-		[]string{"eu-west-1"}, stubResolver{region: "eu-west-1"})
+		[]string{"eu-west-1"}, stubResolver{region: "eu-west-1"},
+	)
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d4",
 		Operation: admissionv1.Create,
@@ -115,7 +116,8 @@ func TestDataResidencyValidatorRejectsEnvironmentRegionDivergence(t *testing.T) 
 	// A SandboxClaim that declares a region differing from its tenant's
 	// region is rejected per §12.8 inheritance.
 	dec := webhook.DataResidencyValidator(
-		[]string{"eu-west-1", "us-east-1"}, stubResolver{region: "eu-west-1"})
+		[]string{"eu-west-1", "us-east-1"}, stubResolver{region: "eu-west-1"},
+	)
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d5",
 		Operation: admissionv1.Create,
@@ -135,7 +137,8 @@ func TestDataResidencyValidatorFailsClosedOnResolverError(t *testing.T) {
 	// evaluate the constraint, so the resource is rejected, not
 	// admitted.
 	dec := webhook.DataResidencyValidator(
-		[]string{"eu-west-1"}, stubResolver{err: errors.New("tenant store unavailable")})
+		[]string{"eu-west-1"}, stubResolver{err: errors.New("tenant store unavailable")},
+	)
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d6",
 		Operation: admissionv1.Create,

@@ -95,7 +95,8 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 // audit-write path. Neither column is part of the §11.7
 // payload_canonical_json hash input, so the chain is never re-hashed.
 func (s *Store) SetTranslationState(ctx context.Context, tenantID string, seq uint64,
-	state audit.OCSFTranslationState, retryCount int) error {
+	state audit.OCSFTranslationState, retryCount int,
+) error {
 	if !state.IsValid() {
 		return fmt.Errorf("auditstore: %q is not a §11.7 OCSF translation state", state)
 	}
@@ -124,7 +125,8 @@ func (s *Store) SetTranslationState(ctx context.Context, tenantID string, seq ui
 // eventbus_publish_state and sets retry_count under the per-tenant
 // audit advisory lock. Neither column is in the §11.7 hash input.
 func (s *Store) SetPublishState(ctx context.Context, tenantID string, seq uint64,
-	state eventbus.PublishState, retryCount int) error {
+	state eventbus.PublishState, retryCount int,
+) error {
 	if !state.IsValid() {
 		return fmt.Errorf("auditstore: %q is not a §12.3.7 publish state", state)
 	}

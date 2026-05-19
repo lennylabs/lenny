@@ -165,7 +165,8 @@ func TestApproveCorrectionAppendsReversalWithoutMutatingOriginal(t *testing.T) {
 
 	// A second, distinct platform-admin approves.
 	approveReq := withSecondAdminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil))
+		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil,
+	))
 	approveRR := httptest.NewRecorder()
 	h.ServeHTTP(approveRR, approveReq)
 	if approveRR.Code != http.StatusOK {
@@ -217,7 +218,8 @@ func TestSelfApprovalRejected(t *testing.T) {
 
 	// The same admin who submitted attempts to approve.
 	selfReq := withAdminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil))
+		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil,
+	))
 	selfRR := httptest.NewRecorder()
 	h.ServeHTTP(selfRR, selfReq)
 	if selfRR.Code != http.StatusForbidden {
@@ -245,7 +247,8 @@ func TestRejectCorrectionDoesNotReachLedger(t *testing.T) {
 	id, _ := decodeCorrection(t, rr)["id"].(string)
 
 	rejectReq := withSecondAdminPrincipal(httptest.NewRequest(
-		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/reject", nil))
+		http.MethodPost, "/v1/admin/billing-corrections/"+id+"/reject", nil,
+	))
 	rejectRR := httptest.NewRecorder()
 	h.ServeHTTP(rejectRR, rejectReq)
 	if rejectRR.Code != http.StatusOK {
@@ -355,11 +358,14 @@ func TestCreateCorrectionValidatesBody(t *testing.T) {
 		body admin.BillingCorrectionRequest
 	}{
 		{"missing tenantId", admin.BillingCorrectionRequest{
-			CorrectsSequence: 1, CorrectionReasonCode: "OPERATOR_MANUAL_ADJUSTMENT"}},
+			CorrectsSequence: 1, CorrectionReasonCode: "OPERATOR_MANUAL_ADJUSTMENT",
+		}},
 		{"missing correctsSequence", admin.BillingCorrectionRequest{
-			TenantID: "acme", CorrectionReasonCode: "OPERATOR_MANUAL_ADJUSTMENT"}},
+			TenantID: "acme", CorrectionReasonCode: "OPERATOR_MANUAL_ADJUSTMENT",
+		}},
 		{"missing reason code", admin.BillingCorrectionRequest{
-			TenantID: "acme", CorrectsSequence: 1}},
+			TenantID: "acme", CorrectsSequence: 1,
+		}},
 	}
 	for _, tc := range cases {
 		rr := postCorrection(t, h, tc.body, withAdminPrincipal)
@@ -383,7 +389,8 @@ func TestApproveAlreadyDecidedCorrectionConflicts(t *testing.T) {
 
 	approve := func() *httptest.ResponseRecorder {
 		req := withSecondAdminPrincipal(httptest.NewRequest(
-			http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil))
+			http.MethodPost, "/v1/admin/billing-corrections/"+id+"/approve", nil,
+		))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		return w

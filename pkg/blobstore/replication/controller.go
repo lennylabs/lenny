@@ -201,14 +201,16 @@ func (c *Controller) Preflight(ctx context.Context, region string) error {
 	}
 	if !present {
 		return c.fail(ctx, rc, now, fmt.Sprintf(
-			"destination bucket %s has no %s tag", rc.Target.Bucket, jurisdictionTagKey))
+			"destination bucket %s has no %s tag", rc.Target.Bucket, jurisdictionTagKey,
+		))
 	}
 	// §25.11: when the source region carries a residency constraint, the
 	// destination's jurisdiction tag MUST equal it.
 	if rc.DataResidencyRegion != "" && tag != rc.DataResidencyRegion {
 		return c.fail(ctx, rc, now, fmt.Sprintf(
 			"destination jurisdiction tag %q does not match source residency region %q",
-			tag, rc.DataResidencyRegion))
+			tag, rc.DataResidencyRegion,
+		))
 	}
 	// §25.11 second-layer DNS-rebinding guard: when allowedDestinationCidrs
 	// is set, the destination endpoint MUST resolve into one of them.
@@ -219,7 +221,8 @@ func (c *Controller) Preflight(ctx context.Context, region string) error {
 		}
 		if !ipsWithinCIDRs(ips, rc.AllowedDestinationCIDRs) {
 			return c.fail(ctx, rc, now, fmt.Sprintf(
-				"destination endpoint %s resolves outside allowedDestinationCidrs", rc.Target.Endpoint))
+				"destination endpoint %s resolves outside allowedDestinationCidrs", rc.Target.Endpoint,
+			))
 		}
 	}
 

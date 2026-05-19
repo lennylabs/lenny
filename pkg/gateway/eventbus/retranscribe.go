@@ -105,7 +105,8 @@ type Retranscriber struct {
 // NewRetranscriber returns a Retranscriber. cfg's zero fields are
 // filled from DefaultRetranscribeConfig; metrics may be nil.
 func NewRetranscriber(store RetranscribeStore, publisher RetranscribePublisher,
-	cfg RetranscribeConfig, metrics RetranscribeMetrics) *Retranscriber {
+	cfg RetranscribeConfig, metrics RetranscribeMetrics,
+) *Retranscriber {
 	def := DefaultRetranscribeConfig()
 	if cfg.RetryInterval <= 0 {
 		cfg.RetryInterval = def.RetryInterval

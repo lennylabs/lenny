@@ -33,7 +33,7 @@
 -- four non-terminal values are the ones the processing-restriction
 -- trigger treats as "an erasure job is in progress".
 CREATE TABLE erasure_jobs (
-    id           TEXT        PRIMARY KEY,
+    id           TEXT        NOT NULL,
     tenant_id    TEXT        NOT NULL REFERENCES tenants(id),
     user_id      TEXT        NOT NULL,
     -- status mirrors the §12.8 erasure-job phase enum. initiated,
@@ -46,6 +46,10 @@ CREATE TABLE erasure_jobs (
     failure      TEXT        NOT NULL DEFAULT '',
     started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
+    -- tenant_id leads the primary key so the table satisfies R-01
+    -- tenant-scoped key ordering; id is generated globally unique, so
+    -- the composite key stays a single-row lookup for the erasure path.
+    PRIMARY KEY (tenant_id, id),
     CONSTRAINT erasure_jobs_status_check
         CHECK (status IN ('initiated', 'store_deleting', 'pseudonymizing',
                           'verifying', 'completed', 'failed'))
