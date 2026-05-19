@@ -150,7 +150,9 @@
         "pkg/tokenexchange/...",
         "pkg/credential/...",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
-        "tests/tier3_contract/oauth_token/oauth_token_record_test.go"
+        "tests/tier3_contract/oauth_token/oauth_token_record_test.go",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore"
       ],
       "packages": [
         "pkg/token",
@@ -184,7 +186,8 @@
       "title": "Artifact Store",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "tests/tier2_component/stores/miniostore_test.go"
+        "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -218,7 +221,8 @@
         "pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed",
         "tests/tier2_component/stores/agentpodstatestore_test.go",
         "tests/tier8_chaos/concurrency_test.go",
-        "tests/tier8_chaos/leader_election_test.go"
+        "tests/tier8_chaos/leader_election_test.go",
+        "tests/tier8_chaos/live_session_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -328,6 +332,7 @@
         "tests/tier2_component/stores/credentialstore_test.go",
         "tests/tier2_component/stores/credentialpoolstore_test.go",
         "tests/tier2_component/stores/credleasestore_test.go",
+        "tests/tier2_component/translators/anthropic_translator_test.go",
         "tests/tier4_integration/credential_test.go"
       ],
       "packages": [
@@ -431,7 +436,9 @@
       "title": "Pre-Warmed Pod Anatomy",
       "spec_file": "spec/06_warm-pod-model.md",
       "tests": [
-        "pkg/controller/warmpool/..."
+        "pkg/controller/warmpool/...",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestGvisorIsolation",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestKataIsolation"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -476,6 +483,19 @@
         "pkg/workspace"
       ],
       "blocked_until_phase": "6"
+    },
+    "6.5": {
+      "title": "Phase 6.5 — Incremental load test (streaming)",
+      "spec_file": "spec/06_warm-pod-model.md",
+      "tests": [
+        "tests/tier7_load/streaming_test.go::TestStreamingThroughput",
+        "tests/tier7_load/scenarios/streaming_throughput"
+      ],
+      "packages": [
+        "pkg/gateway/sessionserver"
+      ],
+      "blocked_until_phase": "6.5",
+      "notes": "Phase 6.5 is the §13.17 incremental load test for the streaming surface. The smoke form drives the §15.1 message round-trip (POST /v1/sessions/{id}/messages) under a rate-bounded executor and asserts the run completed within the smoke health gate; the cloud tier runs the strict §13.29 regression comparison. The companion §12.7 streaming_reconnect SSE consumption path stays a t.Skip blocker in scaffolds_test.go until the gatewaymetrics middleware response-writer wrapper forwards http.Flusher."
     },
     "7": {
       "title": "Session Lifecycle",
@@ -783,6 +803,20 @@
       ],
       "blocked_until_phase": "17b"
     },
+    "9.5": {
+      "title": "Phase 9.5 — Incremental load test (delegation)",
+      "spec_file": "spec/09_mcp-integration.md",
+      "tests": [
+        "tests/tier7_load/delegation_test.go::TestDelegationFanout",
+        "tests/tier7_load/scenarios/delegation_fanout_mcp"
+      ],
+      "packages": [
+        "pkg/gateway/mcptools",
+        "pkg/delegation"
+      ],
+      "blocked_until_phase": "9.5",
+      "notes": "Phase 9.5 is the §13.21 incremental load test for the delegation surface. The smoke form drives the §8.2 lenny/delegate_task MCP tool through POST /mcp under a rate-bounded executor and asserts the fan-out completed within the smoke health gate; the cloud tier runs the strict §13.29 regression comparison. The companion §12.7 delegation_fanout scenario drives POST /v1/sessions/start directly so the two §8.2 spawn surfaces (MCP and REST) are both baselined."
+    },
     "10": {
       "title": "Gateway Internals",
       "spec_file": "spec/10_gateway-internals.md",
@@ -925,16 +959,49 @@
         "pkg/mtls/denylist/denylist_test.go::TestContainsExpiresEntries",
         "pkg/mtls/denylist/denylist_test.go::TestSweepEvictsAllExpired",
         "pkg/mtls/denylist/denylist_test.go::TestConcurrentAddContainsSafe",
+        "pkg/mtls/rotation_test.go::TestNewCARotationRejectsEmptyCurrent",
+        "pkg/mtls/rotation_test.go::TestCARotationIdleSnapshot",
+        "pkg/mtls/rotation_test.go::TestCARotationBeginAddsNewCAToTrustBundle",
+        "pkg/mtls/rotation_test.go::TestCARotationBeginRejectsBadNewCA",
+        "pkg/mtls/rotation_test.go::TestCARotationRejectsOutOfOrderTransitions",
+        "pkg/mtls/rotation_test.go::TestCARotationPromoteFlipsIssuerKeepsTrust",
+        "pkg/mtls/rotation_test.go::TestCARotationRetireGuardsOverlapWindow",
+        "pkg/mtls/rotation_test.go::TestCARotationObserverReceivesEachTransition",
+        "pkg/mtls/rotation_test.go::TestNewCARotationDefaultsOverlapWindow",
+        "pkg/mtls/rotation_test.go::TestCARotationStageEnumIsClosed",
+        "pkg/auth/jwt/jwks_test.go::TestHMACSignerPublicJWKHasNoSecret",
+        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerIncludesCurrentAndPreviousDuringOverlap",
+        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerDropsPreviousKeyAfterRetireExpired",
+        "pkg/auth/jwt/jwks_test.go::TestJWKSHandlerServeHTTPContractsAndMethods",
+        "pkg/auth/jwt/jwks_test.go::TestNewJWKSHandlerRejectsNilSource",
+        "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateEmitsPromoteCurrentEvent",
+        "pkg/auth/jwt/rotating_test.go::TestRotatingVerifierRotateDoesNotEmitOnFailure",
+        "pkg/auth/jwt/rotating_test.go::TestRetireExpiredEmitsOnePerPrunedKey",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverEmitsPromoteCurrentRow",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverEmitsRetirePreviousRow",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverWiresIntoRotatingVerifier",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestObserverCountsAppendFailures",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestNewObserverRejectsNilAppender",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestCAObserverEmitsRotatedRow",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestCAObserverWiresIntoCARotation",
+        "pkg/gateway/jwtaudit/jwtaudit_test.go::TestNewCAObserverRejectsNilAppender",
+        "tests/tier4_integration/jwks_test.go::TestJWKSEndpointPublishedByLiveGateway",
+        "tests/tier4_integration/jwks_test.go::TestJWKSEndpointReflectsRotationOverlapWindow",
+        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsPromoteCurrentAuditRow",
+        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsRetirePreviousAuditRow",
+        "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationAuditChainStaysVerified",
         "tests/tier5_e2e_kind/mtls_test.go",
         "tests/tier9_security/tls_test.go"
       ],
       "packages": [
+        "pkg/mtls",
         "pkg/mtls/spiffe",
         "pkg/mtls/denylist",
-        "pkg/mtls/denylist/propagator"
+        "pkg/mtls/denylist/propagator",
+        "pkg/gateway/jwtaudit"
       ],
       "blocked_until_phase": "3",
-      "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The cert-manager integration, the Helm-rendered Certificate resources, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
+      "notes": "Phase 3 ships the SPIFFE-URI parser and the in-memory certificate deny list. The Phase 4 wave that wires the JWT signing-key rotation lifecycle adds the JWKS publication endpoint (pkg/auth/jwt/jwks.go), the `platform.jwt_signing_key_rotated` audit observer (pkg/gateway/jwtaudit), and the in-process CARotation state machine (pkg/mtls/rotation.go); the cert-manager Issuer / Certificate resources, the Helm-rendered trust bundle, the Redis pub/sub fan-out of deny-list entries, and the e2e mTLS enforcement test on Kind are deferred to the K8s-integration phase."
     },
     "10.4": {
       "title": "Gateway Reliability",
@@ -1130,14 +1197,15 @@
         "pkg/quota/quota_test.go::TestReconcileMaxImplementsMaxRule",
         "tests/tier2_component/quota/...",
         "tests/tier2_component/storagequota/...",
-        "tests/tier2_component/stores/billingstore_test.go"
+        "tests/tier2_component/stores/billingstore_test.go",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport"
       ],
       "packages": [
         "pkg/quota",
         "pkg/store/quota"
       ],
       "blocked_until_phase": "5.75",
-      "notes": "Phase 5.75 ships the \u00a711.2 quota arithmetic primitives: ResetPeriod enum, 80%/100% threshold checks, global\u2192tenant\u2192user hierarchical check, the \u00a711.2 Maximum Overshoot Formula's fail-open ceiling, and the MAX-rule reconciliation function for Redis recovery. The Redis Lua scripts (storage_quota_reserve.lua, the per-replica fail-open accounting, the cumulative fail-open timer) and the gateway's quota Redis client are deferred to the K8s-integration phase."
+      "notes": "Phase 5.75 ships the \u00a711.2 quota arithmetic primitives: ResetPeriod enum, 80%/100% threshold checks, global\u2192tenant\u2192user hierarchical check, the \u00a711.2 Maximum Overshoot Formula's fail-open ceiling, and the MAX-rule reconciliation function for Redis recovery. The Redis Lua scripts (storage_quota_reserve.lua, the per-replica fail-open accounting, the cumulative fail-open timer) and the gateway's quota Redis client are deferred to the K8s-integration phase. Per-tenant billing event flow to a cloud-managed billing-export sink is covered by the tier-6 e2e cloud scaffold."
     },
     "11.3": {
       "title": "Timeouts and Cancellation",
@@ -1188,14 +1256,16 @@
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyDifferentBodyReusedThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyOversizeKeyThroughBinary",
         "tests/tier4_integration/idempotency_test.go::TestIdempotencyTenantScopedThroughBinary",
-        "tests/tier2_component/stores/idempotencystore_test.go"
+        "tests/tier2_component/stores/idempotencystore_test.go",
+        "tests/tier7_load/credential_lifecycle_test.go::TestCredentialLifecycle",
+        "tests/tier7_load/scenarios/credential_lifecycle"
       ],
       "packages": [
         "pkg/idempotency",
         "pkg/gateway/middleware/idempotency"
       ],
       "blocked_until_phase": "7",
-      "notes": "Phase 7 ships the \u00a711.5 idempotency primitives and the HTTP middleware that wraps the gateway handler. pkg/gateway/middleware/idempotency consults a tenant-scoped Store on every POST with an Idempotency-Key header; matching keys replay the cached response, mismatching bodies emit the 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys store and the GC job are deferred to the K8s-integration phase; the in-memory MemoryStore satisfies the same interface for the minimal gateway and the tier-3 contract tests."
+      "notes": "Phase 7 ships the \u00a711.5 idempotency primitives and the HTTP middleware that wraps the gateway handler. pkg/gateway/middleware/idempotency consults a tenant-scoped Store on every POST with an Idempotency-Key header; matching keys replay the cached response, mismatching bodies emit the 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys store and the GC job are deferred to the K8s-integration phase; the in-memory MemoryStore satisfies the same interface for the minimal gateway and the tier-3 contract tests. Phase 11.5 is the \u00a713.24 incremental load test (credential lifecycle); the smoke form drives the \u00a74.9 / \u00a715.1 end-user credential lifecycle through /v1/credentials under a rate-bounded executor and asserts the run completed within the smoke health gate. The credential lifecycle is the Phase 11.5 phase-gate surface even though the \u00a711.5 spec heading reads Idempotency."
     },
     "11.6": {
       "title": "Circuit Breakers",
@@ -1334,7 +1404,8 @@
       "tests": [
         "tests/tier2_component/migrations/migrations_test.go::TestApplyAllMigrationsCreatesExpectedSchema",
         "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
-        "tests/tier2_component/rls/..."
+        "tests/tier2_component/rls/...",
+        "tests/tier7_load/postgres_test.go::TestPostgresWriteBaseline"
       ],
       "packages": [
         "pkg/store",
@@ -1365,7 +1436,8 @@
       "title": "Artifact Store",
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
-        "tests/tier2_component/stores/miniostore_test.go"
+        "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -1407,6 +1479,7 @@
         "tests/tier8_chaos/chaos_helpers_test.go",
         "tests/tier8_chaos/component_failure_test.go",
         "tests/tier8_chaos/config_drift_test.go",
+        "tests/tier8_chaos/live_session_test.go",
         "tests/tier8_chaos/store_failure_test.go"
       ],
       "packages": [
@@ -1420,6 +1493,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier9_security/live_session_test.go",
         "tests/tier9_security/pentest/...",
         "tests/tier9_security/rbac_test.go",
         "tests/tier9_security/ssrf_test.go",
@@ -1489,7 +1563,8 @@
         "tests/tier5_e2e_kind/gateway_probe_test.go",
         "tests/tier5_e2e_kind/lifecycle_test.go",
         "tests/tier5_e2e_kind/pod_lifecycle_test.go",
-        "tests/tier9_security/gateway_probe_test.go"
+        "tests/tier9_security/gateway_probe_test.go",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudOIDC"
       ],
       "packages": [
         "pkg/podsecurity",
@@ -1501,7 +1576,7 @@
         "pkg/delegation/security"
       ],
       "blocked_until_phase": "10",
-      "notes": "\u00a713 is the umbrella section for security model. Behavioral surface lives in its subsections (\u00a713.1, \u00a713.2, \u00a713.3, \u00a713.4, \u00a713.5); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a713 surfaces the same coverage as drilling into each subsection."
+      "notes": "\u00a713 is the umbrella section for security model. Behavioral surface lives in its subsections (\u00a713.1, \u00a713.2, \u00a713.3, \u00a713.4, \u00a713.5); the tests and packages listed here mirror those subsection entries so a dashboard query for \u00a713 surfaces the same coverage as drilling into each subsection. Cloud-managed workload identity (IRSA on EKS, Workload Identity Federation on GKE, Azure Workload Identity on AKS) is covered by the tier-6 e2e cloud scaffold."
     },
     "13.1": {
       "title": "Pod Security",
@@ -1649,7 +1724,8 @@
       "spec_file": "spec/14_workspace-plan-schema.md",
       "tests": [
         "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
-        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsUnsupportedSchemaVersion"
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsUnsupportedSchemaVersion",
+        "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsZeroSchemaVersion"
       ],
       "packages": [
         "pkg/workspaceplan"
@@ -1658,6 +1734,19 @@
         "schemas/workspaceplan-v1.json"
       ],
       "blocked_until_phase": "1"
+    },
+    "14.5": {
+      "title": "Phase 14.5 — Post-hardening SLO re-validation",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier7_load/post_hardening_test.go::TestPostHardeningSLO",
+        "tests/tier7_load/scenarios/post_hardening_slo"
+      ],
+      "packages": [
+        "pkg/gateway/sessionserver"
+      ],
+      "blocked_until_phase": "14.5",
+      "notes": "Phase 14.5 is the §13.31 post-hardening SLO re-validation. The cloud tier re-runs the §13.29 pre-hardening pod_claim_latency baseline with the §14 security hardening enabled — cosign image-signature verification at admission, the §13.1 pod-security admission webhook, NetworkPolicy refinement, and gateway mTLS — and compares against the §13.5 baseline JSON. The PR-cadence Kind smoke is phase-gated because the e2e install does not apply the §14 hardening; the post_hardening_slo scenario is the §13.31 substrate the cloud tier runs."
     },
     "15": {
       "title": "External API Surface",
@@ -1979,13 +2068,14 @@
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogEntriesAreWellFormed",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
         "pkg/observability/metrics/catalog_test.go::TestMetricCatalogHasNoUnspecifiedMetrics",
-        "pkg/observability/metrics/catalog_test.go::TestLookupMetric"
+        "pkg/observability/metrics/catalog_test.go::TestLookupMetric",
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability"
       ],
       "packages": [
         "pkg/observability/metrics"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table."
+      "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
     },
     "16.2": {
       "title": "Key Latency Breakpoints",
@@ -2047,7 +2137,9 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleMatchesAlertCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestPrometheusRuleFieldsMatchCatalog",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestBundledAlertingRulesFragmentIsCurrent",
-        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed"
+        "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRenderedRuleGroupIsWellFormed",
+        "tests/tier7_load/experiment_test.go::TestExperimentLoad",
+        "tests/tier7_load/scenarios/experiment_load"
       ],
       "packages": [
         "pkg/alerting/rules",
@@ -2057,7 +2149,7 @@
         "charts/lenny/templates/prometheusrule.yaml"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full \u00a716.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift."
+      "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full \u00a716.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift. Phase 16.5 is the \u00a713.34 experiment load re-baseline; the cloud tier re-runs the \u00a712.7 pod_claim_latency scenario with an active \u00a710.7 experiment seeded so the ExperimentRouter bucketing path is on every claim. The PR-cadence Kind smoke is phase-gated because the e2e install starts with empty runtime, pool, and experiment stores; the experiment_load scenario is the \u00a713.34 substrate the cloud tier runs."
     },
     "16.6": {
       "title": "Operational Events Catalog",
@@ -2170,12 +2262,14 @@
     "17.3": {
       "title": "Disaster Recovery",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiZoneDR"
+      ],
       "packages": [
         "pkg/dr"
       ],
       "blocked_until_phase": "14",
-      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness."
+      "notes": "Postgres point-in-time recovery, Redis snapshot strategy, Kubernetes cluster failover. Phase 14 lands the runbooks and the chaos drill harness. Cloud-verify multi-AZ Postgres failover is covered by the tier-6 e2e cloud scaffold; the suite runs against the provider's native HA Postgres offering when LENNY_CLOUD_PROVIDER is set."
     },
     "17.4": {
       "title": "Local Development Mode (lenny-dev)",
@@ -2191,10 +2285,12 @@
     "17.5": {
       "title": "Cloud Portability",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "tests/tier6_e2e_cloud/scaffolds_test.go::TestManagedIngress"
+      ],
       "packages": [],
       "blocked_until_phase": "6",
-      "notes": "Non-normative portability statement. The cloud-provider abstractions live in pkg/cloud and ship in Phase 6."
+      "notes": "Non-normative portability statement. The cloud-provider abstractions live in pkg/cloud and ship in Phase 6. The tier-6 e2e cloud managed_ingress suite is the pre-release environment check that an operator-supplied Ingress and provider-native external load balancer route HTTPS traffic to the gateway on managed Kubernetes."
     },
     "17.6": {
       "title": "Packaging and Installation",
@@ -2929,6 +3025,113 @@
         "pkg/gateway/playground"
       ],
       "blocked_until_phase": "5"
+    },
+    "27.2": {
+      "title": "Web Playground — Placement and Gating",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
+        "pkg/gateway/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
+        "pkg/gateway/playground/playground_test.go::TestConfigValidateDevTenantRules"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
+    },
+    "27.3": {
+      "title": "Web Playground — Authentication",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
+        "pkg/gateway/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
+        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
+        "pkg/gateway/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
+        "pkg/gateway/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
+        "pkg/gateway/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
+        "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
+        "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
+        "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
+        "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints."
+    },
+    "27.5": {
+      "title": "Web Playground — Protocol",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundJWTAcceptedByPublicSessionsAPI",
+        "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Playground-minted JWTs are honored by the public REST surface. Gatekeeper endpoints exist only in their applicable auth mode."
+    },
+    "27.6": {
+      "title": "Web Playground — Session Lifecycle and Cleanup",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/playground/playground_test.go::TestEffectiveIdleAndDurationCaps",
+        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
+        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
+        "pkg/gateway/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
+        "pkg/gateway/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation."
+    },
+    "27.7": {
+      "title": "Web Playground — Asset Serving and CSP",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/playground/playground_test.go::TestStaticAssetCacheHeaders",
+        "pkg/gateway/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint."
+    },
+    "27.8": {
+      "title": "Web Playground — Metrics",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161"
+      ],
+      "packages": [
+        "pkg/gateway/playground",
+        "pkg/observability/metrics"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Playground-specific metric names are part of the typed catalog and are covered by the catalog completeness check."
+    },
+    "27.9": {
+      "title": "Web Playground — Security Considerations",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
+        "pkg/gateway/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
+      ],
+      "packages": [
+        "pkg/gateway/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface."
     }
   }
 }

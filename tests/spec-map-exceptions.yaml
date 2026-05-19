@@ -8,18 +8,6 @@ version: 1
 
 exceptions:
 
-  - section: "1"
-    reason: non-normative
-    justification: Executive summary. Restates content normatively covered elsewhere.
-
-  - section: "2"
-    reason: non-normative
-    justification: Goals and non-goals. Aspirations and exclusions; no behavior to verify.
-
-  - section: "3"
-    reason: non-normative
-    justification: High-level architecture diagram. Visual only; the behavioral contracts it sketches are covered in §4 onward.
-
   - section: "18"
     reason: non-normative
     justification: Build sequence is directional guidance for implementing agents. Mapped to TESTING.md §13 phase-gate groups.
@@ -60,45 +48,13 @@ exceptions:
     reason: non-normative
     justification: Procedural guidance for adding new reference runtimes. The conformance harness in §15.4 validates whatever runtime is added.
 
-  - section: "27"
-    reason: post-v1
-    justification: Web playground is feature-flag-gated and disabled by default. Reaches v1 only when playground.enabled rolls out alongside an admin UI.
-
   - section: "27.1"
     reason: non-normative
     justification: Web playground purpose and non-goals. Aspirational framing for the feature.
 
-  - section: "27.2"
-    reason: post-v1
-    justification: Web playground placement and gating. Behavior covered when §27 ships.
-
-  - section: "27.3"
-    reason: post-v1
-    justification: Web playground authentication. Behavior covered when §27 ships.
-
   - section: "27.4"
-    reason: post-v1
-    justification: Web playground UI surface. Behavior covered when §27 ships.
-
-  - section: "27.5"
-    reason: post-v1
-    justification: Web playground protocol. Behavior covered when §27 ships.
-
-  - section: "27.6"
-    reason: post-v1
-    justification: Web playground session lifecycle and cleanup. Behavior covered when §27 ships.
-
-  - section: "27.7"
-    reason: post-v1
-    justification: Web playground asset serving and CSP. Behavior covered when §27 ships.
-
-  - section: "27.8"
-    reason: post-v1
-    justification: Web playground metrics. Behavior covered when §27 ships.
-
-  - section: "27.9"
-    reason: post-v1
-    justification: Web playground security considerations. Behavior covered when §27 ships.
+    reason: non-normative
+    justification: Web playground UI surface. Visual layout description without executable behavior; the bundled SPA assets are covered by the §27.7 asset-serving tests.
 
   - section: "27.10"
     reason: non-normative
@@ -125,9 +81,6 @@ exceptions:
   - section: "12.7"
     reason: non-normative
     justification: Design-guidance list for the pluggable-storage interface boundary; states no behavior of its own.
-  - section: "12.9"
-    reason: deferred
-    justification: The workspaceTier stricter-only ratchet and tier-driven controls are built in Wave 4 (Phase 13); see the BUILD-PLAN open spec item.
   - section: "15.3"
     reason: non-normative
     justification: Pointer paragraph stating gateway-to-pod transport is gRPC over mTLS; the RPC surface is normative in §4.7 and §15.4.
@@ -137,9 +90,6 @@ exceptions:
   - section: "16.2"
     reason: deferred
     justification: Per-session latency-breakpoint instrumentation is added in Wave 7 (Phase 14.5).
-  - section: "16.7"
-    reason: deferred
-    justification: The §25 audit-event types are emitted in Wave 4 (Phase 13).
   - section: "16.9"
     reason: deferred
     justification: The ServiceMonitor, PodMonitor, and PrometheusRule chart templates ship in Wave 5 (Phase 2.5).
@@ -149,15 +99,6 @@ exceptions:
   - section: "17.1"
     reason: non-normative
     justification: Kubernetes-resource inventory table; the chart templates are verified under §17.2 and the helm-unittest suites.
-  - section: "17.3"
-    reason: deferred
-    justification: Disaster-recovery tooling and the restore-test CronJob ship in Wave 4 (Phase 14).
-  - section: "17.4"
-    reason: deferred
-    justification: Local development mode (lenny-dev) is built in Wave 6 (Phase 2).
-  - section: "17.5"
-    reason: non-normative
-    justification: Cloud-portability design statement; no executable behavior of its own.
   - section: "17.8"
     reason: non-normative
     justification: Introductory paragraph for the capacity-planning subsections; states no behavior of its own.
@@ -176,9 +117,6 @@ exceptions:
   - section: "17.8.5"
     reason: deferred
     justification: The lenny-ops Deployment chart templates ship in Wave 5.
-  - section: "25"
-    reason: non-normative
-    justification: Top-level agent-operability intro; the normative surface is §25.4 onward.
   - section: "25.1"
     reason: non-normative
     justification: Design philosophy and external-agent model; the concrete mechanisms are normative in §15.1 and §13.
@@ -242,6 +180,3 @@ exceptions:
   - section: "8.7"
     reason: deferred
     justification: The §8.7 file-export model (glob rebasing, destPrefix, symlink validation) is unimplemented; built in Wave 2 (Phase 9).
-  - section: "12.6"
-    reason: deferred
-    justification: The storage scaling-extension interfaces (PodRegistry, StoreRouter, ClusterRegistry, CredentialGenerator, EventBus) are not yet implemented.
