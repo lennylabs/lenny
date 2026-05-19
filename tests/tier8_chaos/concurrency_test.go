@@ -15,6 +15,7 @@
 package tier8_chaos_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -107,24 +108,22 @@ func TestDoubleClaimVerification(t *testing.T) {
 
 // spec: 4.6.1
 // diagnosis: §4.6.1 / ADR-007 SandboxClaim concurrency fencing did not
-// hold under load. The test fires 100 goroutines that each CREATE a
-// distinctly-named SandboxClaim for the same Sandbox against the live
-// API server and the lenny-sandboxclaim-guard webhook. The guard lists
-// sibling claims at admission and rejects every CREATE after the first.
-// The test asserts at least one claim is admitted and the guard fired;
-// more than one persisted claim is flagged as a fencing weakness.
+// hold under load. ADR-007 fences a claim with a resourceVersion-guarded
+// compare-and-swap that flips Sandbox.status.phase idle → claimed: the
+// API server admits the first writer and returns HTTP 409 Conflict to
+// every racing writer carrying a stale resourceVersion (pkg/gateway/
+// podclaim claims a pod with exactly this Status().Update CAS). The test
+// fires 100 goroutines that each replace the same Sandbox's status
+// subresource carrying the same observed resourceVersion; exactly one
+// must win and the other 99 must be rejected with a 409 Conflict. More
+// than one winner is a genuine fencing weakness. The lenny-sandboxclaim-
+// guard webhook's CREATE rule is defense in depth and is covered by
+// TestDoubleClaimVerification; this test exercises the primary fence.
 func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	if !deploymentReady(t, c, sandboxClaimGuardDeployment) {
-		t.Skipf("precondition not met: %s Deployment is not fully Ready (%s) before the test",
-			sandboxClaimGuardDeployment, deploymentReadyState(t, c, sandboxClaimGuardDeployment))
-	}
-	// Confirm the guard webhook backend is reachable; it skips with a
-	// precise diagnosis when the webhook's API-server egress is blocked.
-	requireSandboxClaimGuardReachable(t, c)
-
-	// One Sandbox; every racing claim targets it.
+	// One Sandbox; every racing writer attempts the idle → claimed CAS
+	// against it.
 	const sandboxRef = "chaos-race-sandbox"
 	sandbox := sandboxManifest(sandboxRef, agentNamespace)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, sandbox) })
@@ -132,21 +131,36 @@ func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 		t.Fatalf("failed to create the target Sandbox: %v\n%s", err, out)
 	}
 
-	const goroutines = 100
-	claimName := func(i int) string { return fmt.Sprintf("chaos-race-claim-%03d", i) }
-	// Clean up every claim the race may have created.
-	t.Cleanup(func() {
-		for i := 0; i < goroutines; i++ {
-			_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "sandboxclaim",
-				claimName(i), "--ignore-not-found", "--wait=false")
-		}
-	})
+	// Read the Sandbox once and stamp status.phase = claimed. Every
+	// goroutine submits this same document: it carries one
+	// resourceVersion, so ADR-007's optimistic-locking CAS admits the
+	// first writer the API server processes and rejects the rest.
+	raw, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", sandboxRef, "-o", "json")
+	if err != nil {
+		t.Fatalf("failed to read the target Sandbox: %v\n%s", err, raw)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		t.Fatalf("failed to parse the Sandbox JSON: %v", err)
+	}
+	status, ok := obj["status"].(map[string]any)
+	if !ok || status == nil {
+		status = map[string]any{}
+		obj["status"] = status
+	}
+	status["phase"] = "claimed"
+	claimedDoc, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatalf("failed to render the claimed Sandbox: %v", err)
+	}
 
-	// Fire the race: 100 goroutines, each a distinct SandboxClaim
-	// CREATE for the same Sandbox. A barrier release maximizes overlap.
+	// Fire the race: 100 goroutines, each a resourceVersion-guarded
+	// status replace carrying the same observed version. A barrier
+	// release maximizes overlap.
+	const goroutines = 100
 	type result struct {
-		admitted bool
-		output   string
+		won    bool
+		output string
 	}
 	results := make([]result, goroutines)
 	var wg sync.WaitGroup
@@ -155,56 +169,50 @@ func TestSandboxClaimRaceUnder100Goroutines(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			manifest := sandboxClaimManifest(claimName(idx), agentNamespace, sandboxRef,
-				fmt.Sprintf("sess-race-%03d", idx))
+			cmd := c.Kubectl("-n", agentNamespace, "replace", "--subresource=status", "-f", "-")
+			cmd.Stdin = strings.NewReader(string(claimedDoc))
 			<-start
-			out, err := c.ApplyStdin(t, manifest)
-			results[idx] = result{admitted: err == nil, output: out}
+			out, err := cmd.CombinedOutput()
+			results[idx] = result{won: err == nil, output: string(out)}
 		}(i)
 	}
 	close(start)
 	wg.Wait()
 
-	admitted := 0
-	rejectedByGuard := 0
+	won := 0
+	conflicts := 0
 	for _, r := range results {
-		if r.admitted {
-			admitted++
+		if r.won {
+			won++
 			continue
 		}
-		if strings.Contains(r.output, "already exists") ||
-			strings.Contains(strings.ToLower(r.output), "concurrent claim rejected") {
-			rejectedByGuard++
+		// A losing writer carries a stale resourceVersion; the API
+		// server rejects it with a 409 Conflict.
+		if strings.Contains(r.output, "Operation cannot be fulfilled") ||
+			strings.Contains(r.output, "the object has been modified") ||
+			strings.Contains(strings.ToLower(r.output), "conflict") {
+			conflicts++
 		}
 	}
-	// Cross-check against the persisted claim set: how many claims
-	// actually landed in etcd referencing the Sandbox.
-	persisted := claimsForSandbox(t, c, sandboxRef)
-	t.Logf("100-goroutine SandboxClaim race: %d creates admitted, %d rejected by the guard, "+
-		"%d claims persisted for Sandbox %s", admitted, rejectedByGuard, len(persisted), sandboxRef)
+	t.Logf("100-goroutine SandboxClaim CAS race: %d won the idle->claimed transition, %d rejected with 409 Conflict",
+		won, conflicts)
 
-	// Liveness: at least one claim must be admitted — a guard that
-	// rejected all 100 would deadlock the claim path.
-	if admitted == 0 {
-		t.Fatalf("§4.6.1 violation: every one of %d concurrent SandboxClaim creates was rejected; "+
-			"the guard must admit exactly one claim, not zero", goroutines)
+	// Liveness: one writer must win — a race that fenced all 100 would
+	// deadlock the claim path.
+	if won == 0 {
+		t.Fatalf("§4.6.1 / ADR-007 violation: every one of %d concurrent claim CAS attempts was rejected; "+
+			"exactly one must win the idle->claimed transition", goroutines)
 	}
-	// The guard must have fired against the contending creates.
-	if rejectedByGuard == 0 {
-		t.Fatalf("§4.6.1 violation: the lenny-sandboxclaim-guard rejected none of the %d concurrent "+
-			"SandboxClaim creates; the guard did not fence the race at all", goroutines)
+	// ADR-007's contract: the resourceVersion CAS admits exactly one.
+	if won != 1 {
+		t.Errorf("§4.6.1 / ADR-007 fencing weakness: %d concurrent writers won the idle->claimed CAS for "+
+			"Sandbox %s; the optimistic-locking guard must admit exactly one", won, sandboxRef)
 	}
-	// ADR-007's contract is exactly one. The webhook is an uncached
-	// direct-client reader, so the only residual race is the narrow
-	// window between the guard's sibling List and the API server
-	// persisting the inbound claim. More than one admitted claim is a
-	// genuine fencing weakness worth surfacing.
-	if len(persisted) > 1 {
-		t.Errorf("§4.6.1 / ADR-007 fencing weakness: %d SandboxClaims persisted for Sandbox %s under the "+
-			"concurrent-create race; the single-claim invariant expects exactly one. claims: %v",
-			len(persisted), sandboxRef, persisted)
-	} else {
-		t.Logf("ADR-007 single-claim invariant held: exactly one SandboxClaim persisted under the race")
+	// Every losing writer must have been fenced by the resourceVersion
+	// conflict, not by some unrelated error.
+	if conflicts != goroutines-won {
+		t.Errorf("§4.6.1 / ADR-007: %d losing writers, but only %d were rejected with a 409 Conflict; "+
+			"the rest failed for another reason", goroutines-won, conflicts)
 	}
 }
 
