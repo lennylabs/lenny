@@ -129,3 +129,21 @@ func TestCrossEnvironmentDelegation(t *testing.T) {
 	t.Skip("§13.32 cross-environment delegation needs a running parent agent-pod workload and at " +
 		"least two configured environments. The dev-mode install schedules no agent pods.")
 }
+
+// §13.2 — gateway-ingress NetworkPolicy (NET-038).
+
+// spec: 13.2
+// diagnosis: the NET-038 gateway-ingress NetworkPolicy cannot be
+// exercised. The test installs an ingress controller, sends external
+// HTTPS traffic at the gateway through it, and asserts the
+// allow-gateway-ingress NetworkPolicy admits the ingress-controller
+// pods and denies others. The dev-mode install adds no ingress
+// controller and leaves ingressControllerNamespace at its default. A
+// tier-5 run needs an ingress controller installed on the Kind cluster
+// and the chart's ingressControllerNamespace pointed at it.
+func TestGatewayIngressPolicy(t *testing.T) {
+	kind.InstallLenny(t)
+	t.Skip("not implemented: §12.5 gateway_ingress_policy — needs an ingress controller installed " +
+		"on the Kind cluster and the chart's ingressControllerNamespace pointed at it; the dev-mode " +
+		"install adds neither")
+}

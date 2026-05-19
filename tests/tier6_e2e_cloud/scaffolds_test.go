@@ -55,13 +55,6 @@ func TestManagedIngress(t *testing.T) {
 	t.Skip("not implemented: §12.6 managed_ingress — requires the provider-native ingress controller (GCP HTTPS LB / AWS ALB / Azure App Gateway) + cert issuer")
 }
 
-// TestExternalDNS — External-DNS-driven CNAME entries for the gateway
-// and playground against Cloud DNS, Route 53, or Azure DNS.
-func TestExternalDNS(t *testing.T) {
-	requireCloudProvider(t)
-	t.Skip("not implemented: §12.6 external_dns — requires the external-dns deployment + a per-provider DNS zone reachable from the test runner")
-}
-
 // TestCloudCSI — ArtifactStore against the provider's native object
 // storage: GCS / S3 / Azure Blob.
 func TestCloudCSI(t *testing.T) {

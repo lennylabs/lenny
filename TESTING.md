@@ -643,7 +643,7 @@ Tests need real backing services. Lenny defines four profiles for service provis
 - Three providers, two cluster shapes each: `cloud-small-<provider>` (3-node, runc only, no sandbox) and `cloud-sandbox-<provider>` (3-node with the provider's sandbox node pool: gVisor on GKE, gVisor-via-Bottlerocket or Firecracker-via-Fargate on EKS, gVisor-via-containerd-handler or Confidential Containers on AKS).
 - Cluster bring-up is automated via `scripts/cloud/<provider>/up.sh` and torn down via `scripts/cloud/<provider>/down.sh`. The full matrix detail lives in §12.6.
 - Cluster lifecycle is managed by CI for nightly and pre-release. Developers do not bring up cloud clusters from their laptops in routine work.
-- The cloud profile is the only one that validates managed-K8s-specific behavior: external LB ingress, cloud-provider CSI, real DNS via external-dns, real cert-manager with Let's Encrypt staging, provider-native KMS, provider-native workload identity.
+- The cloud profile validates managed-K8s-specific behavior that no lower profile reproduces: external LB ingress, cloud-provider CSI, cert-manager with Let's Encrypt staging, provider-native KMS, and provider-native workload identity.
 
 ### Service stubs and mocks
 
@@ -964,6 +964,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | admission_policy | Controller-generated pod specs pass PSS admission for each RuntimeClass. Violations are rejected with the documented error codes |
 | admission_inventory | Phase-aware: chart-rendered webhook set matches the preflight expected set; `lenny-preflight` Job passes |
 | network_policy | Pod → gateway: allowed. Pod → Postgres/Redis/internet: denied. Pod → DNS: only `lenny-system` CoreDNS |
+| gateway_ingress_policy | Installs an ingress controller, sends external HTTPS traffic at the gateway through it, and asserts the `allow-gateway-ingress` NetworkPolicy (NET-038) admits the ingress-controller pods and denies others. A misconfigured `ingressControllerNamespace` or `ingress.controllerPodLabel` makes the gateway unreachable from outside the cluster |
 | mtls_enforcement | Gateway ↔ pod gRPC over mTLS; plain text rejected; cert auto-renewal at 2/3 lifetime |
 | label_immutability | `lenny-label-immutability` webhook prevents post-creation label mutation; non-WarmPoolController creator setting `lenny.dev/managed: "true"` is rejected |
 | sandbox_finalizer | Delete sandbox with active session blocked by finalizer; checkpoint completes; finalizer removed; pod deleted |
@@ -1004,8 +1005,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 | gvisor_isolation | Default isolation profile (sandboxed) creates pods on the gVisor (or provider-equivalent) node pool. Process namespace, syscall filtering, and capability dropping behave per documented sandbox semantics |
 | kata_isolation | Kata or microVM RuntimeClass pods boot, accept claims, and tear down within the documented latency budget. GKE and AKS variants validated; EKS validates Firecracker-via-Fargate as the equivalent shape |
 | multi_zone_dr | Postgres failover across zones with RPO=0 and RTO under 30 seconds. Session in-flight survives. Runs per provider against the provider's native multi-AZ Postgres offering (Cloud SQL HA, RDS Multi-AZ, Azure Database for PostgreSQL Flexible Server with HA) |
-| managed_ingress | Provider-native external LB (GCP HTTPS LB, AWS ALB via the AWS Load Balancer Controller, Azure Application Gateway); TLS termination at the edge; real cert-manager with Let's Encrypt staging or provider-native managed certs |
-| external_dns | External-DNS-driven CNAME entries for the gateway and playground against Cloud DNS, Route 53, or Azure DNS |
+| managed_ingress | Pre-release environment check; see Cadence below. An operator-supplied Ingress and provider-native external load balancer (GCP HTTPS LB, AWS ALB via the AWS Load Balancer Controller, or Azure Application Gateway) route external HTTPS traffic to the gateway Service, with TLS termination at the edge. Confirms Lenny deploys cleanly and the gateway is reachable over HTTPS on managed Kubernetes. Exercises no Lenny-specific code: the Helm chart renders no Ingress, and the `allow-gateway-ingress` NetworkPolicy (NET-038) is validated on Kind in tier 5 (`gateway_ingress_policy`) |
 | cloud_csi | `ArtifactStore` against the provider's native object storage: GCS on GKE, S3 on EKS, Azure Blob Storage on AKS. The same interface tests pass against every backend |
 | cloud_kms | T4 per-tenant keys against the provider's native KMS: Cloud KMS on GKE, AWS KMS on EKS, Azure Key Vault on AKS. KMS probe, key rotation, key-unavailable fail-closed validated for each |
 | cloud_oidc | Workload identity / IRSA / Workload Identity Federation: pods receive provider-issued tokens that map to cloud IAM roles per the documented configuration |
@@ -1020,6 +1020,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 - Nightly: critical-path subset (`gvisor_isolation`, `cloud_csi`, `cloud_kms` per provider) rotated across providers so each provider runs at least every 48 hours.
 - Weekly: full suite on the canonical provider (GKE).
 - Pre-release: full suite on **all three providers (GKE, EKS, AKS)** including both cluster shapes per provider.
+- `managed_ingress` runs in the pre-release run only. It is an environment check rather than a regression suite, so the nightly and weekly runs exclude it.
 
 ### 12.7 Tier 7 — Load and SLO
 

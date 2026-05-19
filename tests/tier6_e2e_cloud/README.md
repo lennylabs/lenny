@@ -29,23 +29,30 @@ takes the configuration name as its first argument:
 Google Cloud is the canonical provider. Nightly and weekly runs target GKE,
 and the pre-release run covers GKE, EKS, and AKS.
 
-## DNS domain (required for `external_dns` and `managed_ingress` only)
+## DNS domain (required for `managed_ingress` only)
 
-A registered DNS domain is required for two suites and no others:
+A registered DNS domain is required for one suite, `managed_ingress`, and no
+others.
 
-- `external_dns` creates CNAME entries for the gateway and playground in a
-  hosted zone, then asserts they resolve. The test needs a zone the
-  external-dns controller can write to.
-- `managed_ingress` issues TLS certificates through cert-manager with Let's
-  Encrypt staging or provider-managed certificates. Certificate issuance
-  validates domain ownership, which requires a domain you control.
+`managed_ingress` is a pre-release environment check. It stands up an
+operator-supplied Ingress and a provider load balancer in front of the
+gateway, terminates TLS at the edge, and confirms the gateway is reachable
+over HTTPS on managed Kubernetes. It exercises no Lenny-specific certificate
+or ingress code, because the Helm chart renders no Ingress. The Lenny-specific
+part of this path, the `allow-gateway-ingress` NetworkPolicy (NET-038), is
+validated on Kind in tier 5 and needs no cloud and no domain.
+
+A certificate from a public authority requires proof of domain ownership, so
+the pre-release run of `managed_ingress` needs a domain. Load balancer
+provisioning and routing can be checked without a domain by addressing the
+load balancer IP directly with a `Host` header.
 
 The remaining suites, including the nightly critical-path subset
 (`gvisor_isolation`, `cloud_csi`, and `cloud_kms`), do not touch DNS. Skip
-this section until you enable `external_dns` or `managed_ingress`.
+this section unless you are preparing a pre-release run of `managed_ingress`.
 
-When you do enable them, register one domain and delegate a subdomain to each
-provider so each provider owns an independent zone:
+When you prepare that run, register one domain and delegate a subdomain to
+each provider so each provider owns an independent zone:
 
 - `gke.acme.com` to Google Cloud DNS.
 - `eks.acme.com` to AWS Route 53.
@@ -53,7 +60,7 @@ provider so each provider owns an independent zone:
 
 Register the domain through Cloud Domains, the Route 53 registrar, or any
 registrar. Zone delegation takes time to propagate, so complete this step
-before the first cluster bring-up for those suites.
+before the pre-release `managed_ingress` run.
 
 ## Local tooling
 
@@ -102,7 +109,7 @@ gcloud services enable \
 
 These APIs back the §12.6 suites: `container` and `compute` for the cluster
 and the GKE Sandbox node pool, `sqladmin` for `multi_zone_dr`, `cloudkms` for
-`cloud_kms`, `secretmanager` for `cloud_secret_store`, `dns` for `external_dns`,
+`cloud_kms`, `secretmanager` for `cloud_secret_store`, `dns` for `managed_ingress`,
 `storage` for `cloud_csi`, `cloudtrace` and `logging` for `cloud_observability`,
 `bigquery` for `cloud_billing_export`, and `iamcredentials` and `sts` for CI
 federation.
@@ -264,7 +271,7 @@ done
 These providers back the §12.6 suites: `ContainerService` for the cluster and
 the Kata or Confidential Containers node pool, `DBforPostgreSQL` for
 `multi_zone_dr`, `KeyVault` for `cloud_kms` and `cloud_secret_store`,
-`Network` for `external_dns` and `managed_ingress`, `Storage` for `cloud_csi`,
+`Network` for `managed_ingress`, `Storage` for `cloud_csi`,
 and `OperationalInsights` and `Insights` for `cloud_observability`.
 
 ### Choose a region and check quotas

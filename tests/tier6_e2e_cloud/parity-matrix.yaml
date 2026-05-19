@@ -67,13 +67,6 @@ capabilities:
       eks: planned
       aks: planned
 
-  - name: external_dns
-    spec_section: "12.6"
-    status:
-      gke: planned
-      eks: planned
-      aks: planned
-
   - name: cloud_csi
     spec_section: "12.5"
     status:
