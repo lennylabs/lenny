@@ -63,3 +63,7 @@ At the Standard level and above, `runtime.ToolsFrom(ctx)` returns a `Tools` hand
 ## Examples and conformance
 
 `sdks/runtime/go/example/` carries an `echo`, a `delegate`, and a `lifecycle` runtime built on the SDK; they pass `lenny-compliance` at the Basic, Standard, and Full levels. Run the conformance battery against a runtime with `lenny-compliance --level basic|standard|full`. See [testing.md](testing.md) for the conformance workflow.
+
+## TypeScript and Python runtime SDKs
+
+The runtime-author SDK is also published for TypeScript and Python with the same surface. `sdks/runtime/typescript/` is the npm package `@lennylabs/runtime-sdk`; `sdks/runtime/python/` is the PyPI package `lenny-runtime`. Both wrap the §15.4 adapter binary protocol the same way the Go SDK does: a handler the author implements, a `run` entry point that drives the JSON Lines frame loop and the §15.4.2 state machine, the Standard-level MCP client with the §8.5 platform tools, and the Full-level lifecycle channel. Each ships `echo`, `delegate`, and `lifecycle` example runtimes that pass `lenny-compliance` at all three levels. A runtime author picks the language with `lenny runtime init --language {go|typescript|python}`.
