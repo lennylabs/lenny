@@ -38,15 +38,32 @@ import "testing"
 // surface — the rolling sliding window, the fail-open per-replica
 // accounting, the cumulative fail-open timer, and the MAX-rule
 // Postgres reconciliation — is not yet built.
+//
+// spec: 12.2.1
+// diagnosis: pkg/gateway/quotastore exposes only the fixed-window
+// counter, and pkg/quota has the §11.2 arithmetic (Check,
+// HierarchicalCheck, FailOpenCeiling, ReconcileMax). The sliding-
+// window counter, the per-replica fail-open accounting layered over
+// it, the cumulative fail-open timer, and the Postgres-checkpoint
+// reconciliation pipeline that drives the §11.2 MAX rule on Redis
+// recovery have no callable code path.
 func TestQuotaStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 QuotaStore — the fixed-window counter and §11.2 arithmetic exist; the rolling window, fail-open accounting, and MAX-rule reconciliation pipeline remain")
+	t.Skip("blocked: §12.2.1 QuotaStore — pkg/gateway/quotastore has only the fixed-window Add/Usage methods; the rolling sliding window, the per-replica fail-open accounting, the cumulative fail-open timer, and the Postgres-checkpoint MAX-rule reconciliation pipeline are not built")
 }
 
 // TestTokenStoreContract — Postgres encrypted token store. Coverage:
 // KMS-envelope encryption, hash storage, revocation lookup, rotation,
 // RLS.
+//
+// spec: 12.2.1
+// diagnosis: no Postgres-backed encrypted TokenStore exists. The
+// migrations table issued_tokens stores only the SHA-256 hash of the
+// raw token, never the token bytes; the §13.3 TokenStore role for
+// encrypted downstream tokens is unimplemented, with no KMS-envelope
+// writer wired through pkg/kms/envelope for token secrets and no
+// revocation lookup index for the encrypted-token shape.
 func TestTokenStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 TokenStore — requires Postgres token table + KMS-envelope writer + revocation index migration")
+	t.Skip("blocked: §12.2.1 TokenStore — the Postgres encrypted-token table, the KMS-envelope writer for token secrets, and the matching revocation-lookup migration are not built")
 }
 
 // TestTokenIssuanceStoreContract is implemented in
@@ -58,8 +75,16 @@ func TestTokenStoreContract(t *testing.T) {
 // tombstone hard-prune, partial-manifest cleanup, eviction-context
 // cleanup, GC exception handling, T4 KMS probe, MinIO-outage fallback
 // to minimal state.
+//
+// spec: 12.2.1
+// diagnosis: pkg/blobstore/miniostore is a thin MinIO client with
+// tenant-prefix validation; the §12.5 ArtifactStore surface has no
+// SSE-KMS configuration code path, no soft-delete tombstone column or
+// hard-prune worker, no legal-hold suspension handling, no
+// partial-manifest cleanup, no T4 per-tenant KMS probe, and no
+// MinIO-outage fallback to Postgres minimal state.
 func TestArtifactStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 ArtifactStore — requires pkg/artifactstore over MinIO with SSE-KMS, soft-delete tombstones, and Postgres-minimal-state fallback")
+	t.Skip("blocked: §12.2.1 ArtifactStore — SSE-KMS configuration, soft-delete tombstones, hard-prune worker, legal-hold suspension, partial-manifest cleanup, T4 per-tenant KMS probe, and the MinIO-outage Postgres-minimal-state fallback are not built on top of pkg/blobstore/miniostore")
 }
 
 // TestEventStoreContract is implemented in eventstore_test.go, which
@@ -75,8 +100,14 @@ func TestArtifactStoreContract(t *testing.T) {
 // TestEvictionStateStoreContract — Postgres eviction state. Coverage:
 // eviction-state CRUD, MinIO context-key storage, terminal-state
 // cleanup, RLS.
+//
+// spec: 12.2.1
+// diagnosis: no EvictionStateStore implementation exists. The
+// migrations carry no eviction-state table, pkg/checkpoint has no
+// eviction-tracking surface, and the MinIO context-key index for the
+// §12.2 eviction-state role is not built.
 func TestEvictionStateStoreContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 EvictionStateStore — requires pkg/checkpoint-backed eviction tracking table and MinIO context-key index")
+	t.Skip("blocked: §12.2.1 EvictionStateStore — the eviction-state migration, the Postgres-backed store, and the MinIO context-key index are not built")
 }
 
 // TestMemoryStoreContract is implemented in memorystore_test.go, which
@@ -96,16 +127,31 @@ func TestEvictionStateStoreContract(t *testing.T) {
 // TestPodRegistryContract — Kubernetes API CRDPodRegistry. Coverage:
 // all ops listed in spec §12.6, optimistic locking via
 // resource_version, WatchPods events within 500 ms P99.
+//
+// spec: 12.2.1
+// diagnosis: no CRDPodRegistry implementation backed by the
+// Kubernetes API exists. pkg/podsession.Registry is the in-process
+// per-session pod-binding map used by sessionserver; the §12.6
+// PodRegistry surface (optimistic locking via resource_version,
+// WatchPods with bounded event latency, the documented CRUD ops) is
+// not built.
 func TestPodRegistryContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 PodRegistry — requires CRDPodRegistry over a real Kubernetes API (envtest) + WatchPods event-latency assertions")
+	t.Skip("blocked: §12.2.1 PodRegistry — no CRDPodRegistry over the Kubernetes API exists; pkg/podsession.Registry is an in-process map and there is no WatchPods event-latency surface to assert against")
 }
 
 // TestStoreRouterContract — Postgres + Redis store router. Coverage:
 // session-shard extraction, tenant-shard routing, billing/audit-shard
 // routing (R-03), scatter-gather concurrency and timeout,
 // partial-result semantics.
+//
+// spec: 12.2.1
+// diagnosis: no StoreRouter implementation exists. There is no
+// pkg/storerouter package and no equivalent surface elsewhere; the
+// §12.3 R-03 billing/audit shard routing and the scatter-gather
+// concurrency control the test would exercise have no callable code
+// path.
 func TestStoreRouterContract(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 StoreRouter — requires the pkg/storerouter implementation with R-03 routing rules and scatter-gather concurrency control")
+	t.Skip("blocked: §12.2.1 StoreRouter — pkg/storerouter does not exist and no equivalent surface provides session-shard extraction, R-03 billing/audit routing, or scatter-gather concurrency control")
 }
 
 // TestEventBusContract is implemented in eventstore_test.go, which
@@ -115,9 +161,16 @@ func TestStoreRouterContract(t *testing.T) {
 
 // TestDeleteByUserAndTenantInterface — every tenant-scoped store MUST
 // expose DeleteByUser(ctx, tenantID, userID) error and
-// DeleteByTenant(ctx, tenantID) error. The interface is
-// compile-time-enforced; this test confirms the implementation
-// actually deletes.
+// DeleteByTenant(ctx, tenantID) error. Today only sessionstore,
+// memorystore, interactionstore, and semanticcache expose both;
+// billing, eval, experiment, environment, runtime, connector, user,
+// custom-role, transcript, agent-pod-state, etc. carry no erasure
+// adapter, so a compile-time interface assertion fails today.
+//
+// spec: 12.2.1
+// diagnosis: only a subset of tenant-scoped stores implement both
+// DeleteByUser and DeleteByTenant; the remaining stores need
+// erasure adapters before a single compile-time check is meaningful.
 func TestDeleteByUserAndTenantInterface(t *testing.T) {
-	t.Skip("not implemented: §12.2.1 / §14.10 — requires every Store implementation to satisfy the mandatory erasure interface; lands as each store does")
+	t.Skip("blocked: §12.2.1 / §14.10 mandatory-erasure interface — only a subset of tenant-scoped stores expose DeleteByUser and DeleteByTenant today; the remaining stores need erasure adapters before a single compile-time interface check is meaningful")
 }

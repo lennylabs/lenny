@@ -820,12 +820,12 @@ groups:
             description: P99 of lenny_store_router_scatter_gather_duration_seconds for any query_type exceeds 30s sustained for more than 5 min. A multi-shard scatter-gather path is degraded. Trivially suppressed in v1 (single shard).
             summary: Scatter-gather query P99 above 30 seconds
         - alert: PostgresWriteBurstIops
-          expr: lenny_postgres_write_burst_iops > scalar(lenny_postgres_write_burst_ceiling_iops)
+          expr: count_over_time((lenny_postgres_write_burst_iops > scalar(lenny_postgres_write_burst_ceiling_iops))[10m:1m]) > 3
           labels:
             severity: warning
           annotations:
-            description: Instantaneous Postgres write IOPS exceed the burst ceiling for the configured instance class. Repeated triggers indicate quota flush storms or session-creation spikes regularly saturating burst headroom.
-            summary: Postgres write burst IOPS above the instance ceiling
+            description: Instantaneous Postgres write IOPS exceeded the configured burst ceiling more than 3 times in the past 10 minutes. A single burst is not actionable; sustained repetition indicates quota-flush storms or session-creation spikes regularly saturating burst headroom. Review postgres.writeCeilingIops against the Phase 13.5 Lenny-specific write-pattern benchmark.
+            summary: Postgres write burst IOPS exceeded the burst ceiling more than 3 times in 10 minutes
         - alert: PgBouncerPoolSaturated
           expr: lenny_pgbouncer_client_waiting_seconds > 1
           for: 1m
