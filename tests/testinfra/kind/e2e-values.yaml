@@ -14,6 +14,9 @@ controller:
     repository: lenny-controller
     tag: e2e
     pullPolicy: Never
+  # The Sandbox reconciler stamps this adapter image into every agent
+  # pod. install.sh builds and kind-loads lenny-adapter:e2e.
+  adapterImage: lenny-adapter:e2e
 
 admissionWebhooks:
   image:

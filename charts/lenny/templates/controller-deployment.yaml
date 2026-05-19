@@ -47,6 +47,9 @@ spec:
             - --leader-election-namespace={{ .Release.Namespace }}
             - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8081
+            {{- if .Values.controller.adapterImage }}
+            - --adapter-image={{ .Values.controller.adapterImage }}
+            {{- end }}
           {{- if $hasPg }}
           env:
             - name: LENNY_POSTGRES_DSN

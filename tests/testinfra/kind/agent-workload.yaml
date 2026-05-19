@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT
+#
+# A minimal agent-pod workload for the tier-5/8/9 e2e suite. install.sh
+# applies this after the Lenny chart is installed so the
+# WarmPoolController has a pool to reconcile and the Sandbox reconciler
+# produces real agent pods in the lenny-agents namespace.
+#
+# The Runtime is platform-global (cluster-scoped); the SandboxTemplate
+# and SandboxWarmPool are namespaced into lenny-agents. The runtime
+# image is the §26 reference echo runtime, built and kind-loaded as
+# lenny-runtime-echo:e2e by install.sh.
+# The Sandbox reconciler stamps runtimeClassName onto every agent pod
+# from the §5.3 isolation profile (standard -> runc). Kind nodes run
+# containerd whose default handler is runc, but no RuntimeClass object
+# named runc exists by default, so the API server rejects the pod. This
+# RuntimeClass maps the standard profile onto the node's stock runc
+# handler. gVisor and Kata profiles would need their own runtimes
+# installed; the e2e echo pool uses the standard profile only.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: runc
+handler: runc
+---
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: echo-runtime
+spec:
+  type: agent
+  image: lenny-runtime-echo:e2e
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: echo-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: echo-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: echo-pool
+  namespace: lenny-agents
+spec:
+  templateRef: echo-template
+  minWarm: 1
+  maxWarm: 2

@@ -20,6 +20,10 @@ controller:
   # metricsPort is the port the controller serves Prometheus metrics
   # on (§13.2); the monitoring-scrape NetworkPolicy admits it.
   metricsPort: 9090
+  # adapterImage is the lenny-adapter sidecar image the §4.7 Sandbox
+  # reconciler stamps into every agent pod. Empty by default; operators
+  # set it to the adapter image matching the release.
+  adapterImage: ""
   image:
     repository: ghcr.io/lennylabs/lenny-controller
     # tag defaults to the chart appVersion when left empty.
