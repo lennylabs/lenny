@@ -191,3 +191,110 @@ tests:
       - equal:
           path: spec.clusterIP
           value: None
+
+  - it: renders only POD_NAME env with stock values (no data-store env)
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].env
+          count: 1
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: POD_NAME
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_ENDPOINT
+          any: true
+
+  - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+          any: true
+
+  - it: wires LENNY_REDIS_URL from the datastore Secret when redis.url is set
+    set:
+      redis.url: "redis://redis.svc:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+
+  - it: wires the MinIO env from values and Secret when minio.endpoint is set
+    set:
+      minio.endpoint: "minio.svc:9000"
+      minio.accessKey: "ak"
+      minio.secretKey: "sk"
+      minio.bucket: "lenny-artifacts"
+      minio.useSSL: false
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_ENDPOINT
+            value: "minio.svc:9000"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_BUCKET
+            value: "lenny-artifacts"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_USE_SSL
+            value: "false"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-access-key
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_MINIO_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: minio-secret-key

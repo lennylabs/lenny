@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT
+#
+# Schema-migration Job for the tier-5/8/9 e2e Kind cluster.
+#
+# install.sh applies this Job after the in-cluster Postgres Deployment
+# (datastores.yaml) is Available and before the Helm install, so the
+# migrations/ schema is in place when the gateway and controller start
+# with LENNY_POSTGRES_DSN pointed at the in-cluster Postgres.
+#
+# The Job runs the lenny-migrate:e2e image (built and kind-loaded by
+# install.sh alongside the other platform binaries) with the `up`
+# subcommand against the in-cluster Postgres Service. `lenny-migrate up`
+# applies every pending migration and is idempotent: a re-run against
+# an already-migrated database is a no-op (golang-migrate ErrNoChange
+# is treated as success). install.sh deletes a prior Job before
+# re-applying so the manifest can be applied repeatedly.
+#
+# The DSN here must match the postgres.dsn wired in e2e-values.yaml so
+# the gateway and controller migrate and read the same database.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-e2e-migrate
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-migrate
+spec:
+  backoffLimit: 5
+  # The Job pod can outlive a successful run; keep it briefly for log
+  # inspection, then let the TTL controller reap it.
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: lenny-migrate:e2e
+          imagePullPolicy: Never
+          args:
+            - --postgres-dsn
+            - postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable
+            - up
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

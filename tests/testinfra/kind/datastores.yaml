@@ -1,0 +1,383 @@
+# SPDX-License-Identifier: MIT
+#
+# In-cluster data-store stack for the tier-5/8/9 e2e Kind cluster.
+#
+# The production Lenny chart treats Postgres, Redis, and MinIO as
+# bring-your-own external services (§17.9) and deploys none of them.
+# The e2e suite needs real stores in-cluster to exercise the audit,
+# backup, store-failure, and tenant-isolation tests, so this manifest
+# stands up single-replica Postgres, Redis, and MinIO Deployments with
+# ClusterIP Services in the lenny-system namespace.
+#
+# These are test fixtures, not the product. Storage is emptyDir (the
+# e2e cluster is ephemeral and torn down per run), resource requests
+# are small, and the credentials below are fixed and well-known. The
+# security context is hardened where a stock image allows it
+# (non-root, no privilege escalation, all capabilities dropped), but
+# these manifests are not a deployment reference.
+#
+# Fixed connection facts the e2e Helm overlay and the test code use:
+#
+#   Postgres  Service lenny-postgres.lenny-system.svc:5432
+#             user "lenny", password "lenny", database "lenny"
+#             DSN  postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable
+#   Redis     Service lenny-redis.lenny-system.svc:6379
+#             URL  redis://lenny-redis.lenny-system.svc:6379
+#   MinIO     Service lenny-minio.lenny-system.svc:9000 (API), :9090 (console)
+#             access key "lennyminio", secret key "lennyminio123"
+#             bucket "lenny-artifacts"
+#
+# install.sh applies this file, waits for the three Deployments to be
+# Available, then runs the lenny-migrate Job before the Helm install.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-postgres
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  replicas: 1
+  # Recreate avoids two Postgres pods sharing the (ephemeral) data dir
+  # during a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: postgres
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The postgres:16 image's "postgres" account is uid/gid 999.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16.4
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: lenny
+            - name: POSTGRES_PASSWORD
+              value: lenny
+            - name: POSTGRES_DB
+              value: lenny
+            # PGDATA points at a subdirectory of the emptyDir mount so
+            # Postgres does not trip over the mountpoint's lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "lenny", "-d", "lenny"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "lenny", "-d", "lenny"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-postgres
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-redis
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The redis:7 image's "redis" account is uid/gid 999.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7.4
+          imagePullPolicy: IfNotPresent
+          args:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: minio
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The minio/minio image runs as uid/gid 1000.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9090"
+          env:
+            - name: MINIO_ROOT_USER
+              value: lennyminio
+            - name: MINIO_ROOT_PASSWORD
+              value: lennyminio123
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio
+spec:
+  type: ClusterIP
+  selector:
+    lenny.dev/e2e-datastore: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9090
+      targetPort: console
+---
+# NetworkPolicies for the e2e data stores. The lenny-system namespace
+# carries the chart's default-deny-all policy, which would otherwise
+# block every connection to and from these test-fixture pods. These two
+# policies re-admit exactly the data-store traffic: ingress to the
+# store pods from anything in the namespace, and egress to the store
+# pods from anything in the namespace. They are additive, so they do
+# not weaken the default-deny for any other destination — in
+# particular the tier-9 NetworkPolicy adversarial test still observes
+# the gateway as unreachable from an unlabelled pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-e2e-datastores-ingress
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: e2e-datastore
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-e2e-datastores
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: e2e-datastore
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+        - port: 9090
+          protocol: TCP

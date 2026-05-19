@@ -42,3 +42,21 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/lennylabs/lenny-controller:0.1.0
+
+  - it: renders no data-store env with stock values
+    asserts:
+      - isNull:
+          path: spec.template.spec.containers[0].env
+
+  - it: wires LENNY_POSTGRES_DSN from the datastore Secret when postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn

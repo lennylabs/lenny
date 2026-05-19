@@ -20,7 +20,10 @@
 #   5. Install cert-manager and wait for it to become Available.
 #   6. Install the prometheus-operator CRDs the chart's monitoring
 #      templates depend on.
-#   7. Install the Lenny Helm chart with the e2e values overlay.
+#   7. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
+#      wait for them to become Available, apply the schema-migration
+#      Job, and create the MinIO artifact bucket.
+#   8. Install the Lenny Helm chart with the e2e values overlay.
 #
 # Environment variables:
 #   LENNY_KIND_CLUSTER   Cluster name. Default: lenny-e2e.
@@ -42,7 +45,16 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 KIND_CONFIG="${REPO_ROOT}/tests/testinfra/kind/cluster.yaml"
 E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
+DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
+MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"
+
+# Fixed in-cluster data-store facts. These mirror datastores.yaml and
+# the postgres/redis/minio keys in e2e-values.yaml; the test code reads
+# the stores at the same Service DNS names.
+MINIO_BUCKET="lenny-artifacts"
+MINIO_ACCESS_KEY="lennyminio"
+MINIO_SECRET_KEY="lennyminio123"
 
 # The ten platform binaries. Each maps to a cmd/<binary> package and is
 # built into a <binary>:<tag> image.
@@ -186,10 +198,87 @@ for crd in prometheusrules servicemonitors podmonitors; do
 done
 
 # ---------------------------------------------------------------------
-# Step 7: install the Lenny Helm chart.
+# Step 7: deploy the in-cluster data stores, migrate the schema, and
+# create the MinIO bucket.
+#
+# The production chart treats Postgres, Redis, and MinIO as
+# bring-your-own external services and deploys none of them.
+# datastores.yaml is an e2e-only fixture: it stands up single-replica
+# Postgres, Redis, and MinIO so the audit, backup, store-failure, and
+# tenant-isolation tests have real stores. The gateway and controller
+# are pointed at these Services by the postgres/redis/minio keys in
+# e2e-values.yaml.
+#
+# Every sub-step is idempotent: `kubectl apply` reconciles the
+# manifests, the migration Job is deleted before re-apply and
+# `lenny-migrate up` is a no-op on an already-migrated database, and
+# the MinIO bucket creation ignores an existing bucket.
+# ---------------------------------------------------------------------
+log "applying the in-cluster data-store manifests"
+kc apply -f "${DATASTORES_MANIFEST}"
+
+log "waiting for the data-store deployments to become Available"
+for deploy in lenny-postgres lenny-redis lenny-minio; do
+  kc -n lenny-system wait --for=condition=Available "deploy/${deploy}" --timeout=240s
+done
+
+# Run the schema-migration Job. lenny-migrate up applies the embedded
+# migrations against the in-cluster Postgres. The Job is deleted first
+# so a re-run of this script re-applies it cleanly; the migration
+# itself is idempotent regardless.
+log "running the lenny-migrate schema-migration Job"
+kc -n lenny-system delete job lenny-e2e-migrate --ignore-not-found --wait=true
+kc apply -f "${MIGRATE_JOB_MANIFEST}"
+if ! kc -n lenny-system wait --for=condition=Complete job/lenny-e2e-migrate --timeout=180s; then
+  log "the lenny-migrate Job did not complete; dumping its logs"
+  kc -n lenny-system logs job/lenny-e2e-migrate || true
+  echo "error: schema migration failed" >&2
+  exit 1
+fi
+log "schema migration completed"
+
+# Create the MinIO artifact bucket. The gateway's MinIO-backed artifact
+# store and its drain-readiness probe expect the bucket to exist; the
+# minio server does not create it. `mc mb --ignore-existing` is a no-op
+# when the bucket is already present, so this step is idempotent. The
+# mc client runs as a one-shot pod inside the cluster. It connects to
+# the MinIO pod IP rather than the lenny-minio Service DNS name: the
+# lenny-system default-deny NetworkPolicy denies a throwaway pod's
+# egress to CoreDNS, so DNS resolution would time out. The
+# allow-egress-to-e2e-datastores policy admits egress straight to the
+# data-store pod IPs.
+log "creating the MinIO artifact bucket ${MINIO_BUCKET}"
+MINIO_POD_IP="$(kc -n lenny-system get pod -l lenny.dev/e2e-datastore=minio \
+  -o jsonpath='{.items[0].status.podIP}')"
+if [ -z "${MINIO_POD_IP}" ]; then
+  echo "install.sh: could not resolve the lenny-minio pod IP" >&2
+  exit 1
+fi
+kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
+kc -n lenny-system run lenny-e2e-minio-mb \
+  --image=minio/mc:RELEASE.2024-09-16T17-43-14Z \
+  --image-pull-policy=IfNotPresent \
+  --restart=Never \
+  --attach \
+  --rm \
+  --quiet \
+  --command -- /bin/sh -c "
+    set -e
+    mc alias set e2e http://${MINIO_POD_IP}:9000 '${MINIO_ACCESS_KEY}' '${MINIO_SECRET_KEY}'
+    mc mb --ignore-existing e2e/${MINIO_BUCKET}
+  "
+log "MinIO bucket ${MINIO_BUCKET} is present"
+
+# ---------------------------------------------------------------------
+# Step 8: install the Lenny Helm chart.
 # ---------------------------------------------------------------------
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
-  log "Helm release lenny is already installed in lenny-system; skipping install"
+  log "Helm release lenny is already installed in lenny-system; upgrading"
+  helm upgrade lenny "${CHART_DIR}" \
+    -n lenny-system \
+    --kube-context "${KCTX}" \
+    -f "${E2E_VALUES}" \
+    --timeout 420s
 else
   log "installing the Lenny Helm chart"
   helm install lenny "${CHART_DIR}" \

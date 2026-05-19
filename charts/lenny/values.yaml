@@ -103,11 +103,31 @@ tokenService:
 redis:
   # tlsPort is the TLS port for Redis (§13.2).
   tlsPort: 6380
+  # url is the Redis connection URL (redis://host:port/db). Redis is a
+  # bring-your-own external service: the chart leaves url empty by
+  # default, and a stock render wires no LENNY_REDIS_URL so the gateway
+  # uses its in-memory breaker store. Set url to point the gateway at
+  # an external Redis. When set, the chart renders the value into the
+  # lenny-datastore-conn Secret and the gateway env reads it from there.
+  url: ""
 
 # minio configures the MinIO object store (self-managed profile).
 minio:
   # tlsPort is the TLS port the gateway reaches MinIO on (§13.2).
   tlsPort: 9443
+  # endpoint is the MinIO API endpoint (host:port). MinIO is a
+  # bring-your-own external service: the chart leaves endpoint empty by
+  # default, and a stock render wires no LENNY_MINIO_* env so the
+  # gateway uses its in-memory blob store. Set endpoint together with
+  # accessKey, secretKey, and bucket to point the §4.5 artifact store at
+  # an external MinIO. accessKey and secretKey are rendered into the
+  # lenny-datastore-conn Secret; endpoint, bucket, and useSSL are wired
+  # as plain env. useSSL selects HTTPS to the MinIO endpoint.
+  endpoint: ""
+  accessKey: ""
+  secretKey: ""
+  bucket: ""
+  useSSL: false
 
 # kms configures the external KMS endpoint the Token Service calls.
 kms:
@@ -200,6 +220,17 @@ postgres:
   # database endpoint; the broad default is bounded by the per-port
   # (5432) egress rule.
   cidr: "0.0.0.0/0"
+  # dsn is the Postgres connection string the gateway and controller
+  # use to persist session, transcript, tenant, runtime, and §4.6.1
+  # agent_pod_state records. Postgres is a bring-your-own external
+  # service: the chart leaves dsn empty by default, and a stock render
+  # wires no LENNY_POSTGRES_DSN so the gateway falls back to in-memory
+  # stores (with global.devMode the gateway also starts without a DSN).
+  # Set dsn to point both components at an external Postgres; the
+  # migrations/ schema must already be applied. When set, the chart
+  # renders the value into the lenny-datastore-conn Secret and both
+  # Deployments read LENNY_POSTGRES_DSN from that Secret.
+  dsn: ""
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render

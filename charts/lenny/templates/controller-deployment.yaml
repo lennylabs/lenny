@@ -4,7 +4,15 @@ controller binary with leader election so a multi-replica Deployment
 keeps exactly one active reconciler. The pod follows the §13.1
 Restricted-PSS posture: non-root, all capabilities dropped, read-only
 root filesystem, RuntimeDefault seccomp.
+
+The controller mirrors §4.6.1 agent_pod_state into Postgres when a DSN
+is configured. Postgres stays a bring-your-own external service
+(§17.9): the chart wires LENNY_POSTGRES_DSN from the
+lenny-datastore-conn Secret only when postgres.dsn is set, and a stock
+render leaves it unset so the controller keeps the mirror in memory.
 */ -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,6 +47,14 @@ spec:
             - --leader-election-namespace={{ .Release.Namespace }}
             - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8081
+          {{- if $hasPg }}
+          env:
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+          {{- end }}
           ports:
             - name: metrics
               containerPort: 8080

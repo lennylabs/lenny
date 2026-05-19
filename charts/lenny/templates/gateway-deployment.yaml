@@ -26,7 +26,20 @@ Postgres, Redis, and MinIO stay bring-your-own external services
 values via environment variables the binary reads (LENNY_POSTGRES_DSN,
 LENNY_REDIS_URL, LENNY_MINIO_*); the chart leaves them unset by
 default so a stock render produces the in-memory development backends.
+When postgres.dsn, redis.url, or minio.endpoint is set, the env var
+for that store is rendered: the credential-bearing values
+(LENNY_POSTGRES_DSN, LENNY_MINIO_ACCESS_KEY, LENNY_MINIO_SECRET_KEY)
+are read from the lenny-datastore-conn Secret with secretKeyRef, and
+the non-secret values (endpoint, bucket, useSSL) are plain env. Each
+env var is gated on its own value, so a partial configuration renders
+only the env vars it can satisfy.
 */ -}}
+{{- $pg := .Values.postgres -}}
+{{- $redis := .Values.redis -}}
+{{- $minio := .Values.minio -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- $hasRedis := and $redis $redis.url (ne $redis.url "") -}}
+{{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -122,6 +135,38 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- if $hasPg }}
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+            {{- end }}
+            {{- if $hasRedis }}
+            - name: LENNY_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-url
+            {{- end }}
+            {{- if $hasMinio }}
+            - name: LENNY_MINIO_ENDPOINT
+              value: {{ $minio.endpoint | quote }}
+            - name: LENNY_MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-access-key
+            - name: LENNY_MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: minio-secret-key
+            - name: LENNY_MINIO_BUCKET
+              value: {{ $minio.bucket | quote }}
+            - name: LENNY_MINIO_USE_SSL
+              value: {{ $minio.useSSL | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.gateway.internalPort }}

@@ -57,8 +57,32 @@ bootstrap:
     tag: e2e
     pullPolicy: Never
 
-# Dev mode: the gateway falls back to in-memory stores when no
-# Postgres/Redis/MinIO connection is configured, which is the e2e
-# default for the control-plane-only smoke install.
+# Dev mode stays on for e2e so the gateway keeps its dev-header auth
+# shortcuts. The data stores below are real in-cluster services, so
+# the gateway and controller persist to them rather than falling back
+# to in-memory backends.
 global:
   devMode: true
+
+# In-cluster data stores. install.sh deploys Postgres, Redis, and MinIO
+# from datastores.yaml into lenny-system and runs the lenny-migrate Job
+# before the chart install. These keys point the gateway and controller
+# at those Services by their cluster DNS names. The chart renders the
+# data-store env vars and the lenny-datastore-conn Secret only because
+# these values are set; a production install leaves them empty.
+#
+# sslmode=disable is the simplest working setting for the in-cluster
+# e2e Postgres, which has no TLS configured. Plaintext is acceptable
+# inside the test cluster; this does not change any production default.
+postgres:
+  dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+
+redis:
+  url: "redis://lenny-redis.lenny-system.svc:6379"
+
+minio:
+  endpoint: "lenny-minio.lenny-system.svc:9000"
+  accessKey: "lennyminio"
+  secretKey: "lennyminio123"
+  bucket: "lenny-artifacts"
+  useSSL: false
