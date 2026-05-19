@@ -79,41 +79,37 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   Token Service, and lenny-ops workloads`). Postgres, Redis, and MinIO stay bring-your-own
   external services in the production chart.
 
-- **Tier-5/8/9 e2e suite bring-up** (Wave 5, in progress). The exit gate runs
-  `lenny-test --group nightly` against a real Kind cluster. Infrastructure progress: the
-  `lenny-e2e` Kind cluster is up, cert-manager is installed, and all seven Lenny images
-  (`lenny-{controller,gateway,webhook,token-service,ops,migrate,adapter}:e2e`) are built and
-  loaded onto the cluster nodes. Environment note: this host's Docker Desktop builds images
-  that `kind load docker-image` rejects unless each image is built as a standalone
-  `DOCKER_BUILDKIT=0 docker build` invocation — buildx output and `for`-loop builds did not
-  land in the daemon store reliably. Remaining: a working `helm install` needs the
-  gateway/controller binaries' Postgres/Redis/MinIO/KMS/JWT connection configuration modeled
-  in chart values (the `postgres`/`redis`/`minio` sections currently carry only NetworkPolicy
-  CIDR/port config, not connection strings), in-cluster data-store manifests for the Kind
-  tier, the migration Job, and then the conversion of the tier-5/8/9 `scaffolds_test.go`
-  stubs into real cluster assertions. Update: the data-store stack is now built and live —
-  the gateway persists to in-cluster Postgres, Redis, and MinIO; tiers 5/8/9 each have a
-  real-assertion subset committed (26 passing e2e tests).
+- **Tier-5/8/9 e2e suite bring-up** (Wave 5) — RESOLVED. The exit gate runs
+  `lenny-test --group nightly` against the `lenny-e2e` Kind cluster and reports PASS.
+  `install.sh` builds the platform images and the two reference runtime images, creates
+  the cluster, installs cert-manager, the prometheus-operator CRDs, and ingress-nginx,
+  deploys the in-cluster Postgres, Redis, and MinIO data stores, applies the lenny.dev
+  CRDs and the Lenny Helm chart, and applies the two-pool agent-pod workload. The gateway
+  persists to the in-cluster stores. Environment note: this host's Docker Desktop builds
+  images that `kind load docker-image` rejects unless each image is built as a standalone
+  `DOCKER_BUILDKIT=0 docker build` invocation; buildx output and `for`-loop builds did not
+  land in the daemon store reliably, so `build_image` retries each build under
+  `DOCKER_BUILDKIT=0`. The tier-5/8/9 `scaffolds_test.go` stubs that have a real-assertion
+  path are converted; those still skipping name infrastructure the e2e overlay does not
+  provide.
 
-- **Warm-pod runtime-container model** (Wave 5, needs an architectural decision). A real
-  agent pod cannot reach Ready on the Kind cluster. `pkg/controller/sandbox/podspec/podspec.go`
-  builds the §4.7 default sidecar pod as two containers — `adapter` and `runtime` — and
-  runs the runtime image's entrypoint directly with `RestartPolicy: Never`. Every
-  reference runtime (`cmd/runtimes/echo`, `streaming-echo`, `delegation-echo`,
-  `mcp-reference`) is a stdin/stdout (or stdin/stdout JSON-RPC) exec-target that exits
-  cleanly on stdin EOF. Run as a standalone sidecar container with no stdin attached, the
-  runtime container exits 0 immediately and, with `RestartPolicy: Never`, never restarts;
-  the pod sits `1/2 NotReady` and the warm pool never has a usable pod. This is not a
-  runtime-choice problem — no reference runtime is a long-running server. The adapter
-  feeds the runtime over stdin/stdout, which only works when the adapter is the runtime's
-  parent process — the §4 embedded-adapter single-container mode — not across two
-  separate containers. The fix is an architectural decision: either `podspec.go` adopts
-  the embedded-adapter model for these integration levels (one container; the adapter
-  spawns the runtime), or the runtime container is given a keep-alive entrypoint with the
-  adapter starting the runtime per session, or a long-running server runtime is added.
-  This is core platform-design work, not a test-harness fix. Route-around taken: every
-  tier-5/8/9 test that does not need a running agent-pod workload is implemented and
-  passes; the ~25 that do need one remain honest skips, each naming this blocker.
+- **Warm-pod runtime-container model** (Wave 5) — RESOLVED. The §4.7 deployment model is
+  now an explicit field on the Runtime resource (`deploymentModel`, `sidecar` or
+  `embedded`). The earlier failure was a stdin/stdout exec-target runtime run as a
+  standalone sidecar container: with no stdin attached it exited immediately and the pod
+  never reached Ready. `pkg/controller/sandbox/podspec/podspec.go` now builds the sidecar
+  model as two containers bridged over an abstract Unix socket (`pkg/adapter/socketruntime.go`
+  feeds the runtime, `pkg/runtimekit` resolves the transport), and the embedded model as
+  one container whose runtime image embeds the adapter and serves the gRPC contract
+  directly (`pkg/adapter/embedded.go`, `cmd/runtimes/echo-embedded`).
+  `tests/testinfra/kind/agent-workload.yaml` declares one warm pool per model, and
+  `install.sh` builds the two runtime images, loads them onto the cluster, and applies the
+  workload, so the e2e Kind cluster runs both deployment models. The tier-5
+  `TestPodLifecycle` verifies a Ready pod with the correct container topology for each
+  model (sidecar: an `adapter` and a `runtime` container; embedded: one `runtime`
+  container). Tier-5/8/9 tests that needed only a running agent pod are converted to real
+  assertions; those still skipping name a different gap (a live gateway session driven
+  onto the pod, a partition or clock-injection harness, or an HA store topology).
 
 ## Test status
 

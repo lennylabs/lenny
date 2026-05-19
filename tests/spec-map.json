@@ -1485,6 +1485,7 @@
         "tests/tier5_e2e_kind/crd_test.go",
         "tests/tier5_e2e_kind/gateway_probe_test.go",
         "tests/tier5_e2e_kind/lifecycle_test.go",
+        "tests/tier5_e2e_kind/pod_lifecycle_test.go",
         "tests/tier9_security/gateway_probe_test.go"
       ],
       "packages": [

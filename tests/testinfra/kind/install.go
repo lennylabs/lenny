@@ -23,6 +23,19 @@ const lennySystemNamespace = "lenny-system"
 // so the operator (or CI step) can act on the skip.
 const installHint = "Lenny is not installed on the Kind cluster; run tests/testinfra/kind/install.sh first."
 
+// agentNamespace is the namespace the agent-pod workload runs in. The
+// chart's agent-namespaces template creates it and install.sh applies
+// tests/testinfra/kind/agent-workload.yaml into it after the chart
+// install.
+const agentNamespace = "lenny-agents"
+
+// agentWorkloadHint is the message the agent-pod helper skips with when
+// no Ready managed agent pod is present. It names the script and the
+// manifest that stand up the workload.
+const agentWorkloadHint = "no Ready agent-pod workload in namespace " + agentNamespace +
+	"; run tests/testinfra/kind/install.sh — its final step applies " +
+	"tests/testinfra/kind/agent-workload.yaml, the two §4.7 deployment-model warm pools."
+
 // InstallLenny ensures a Kind cluster is up and verifies that the
 // Lenny control plane is installed on it, returning the cluster handle.
 //
@@ -46,6 +59,77 @@ func InstallLenny(t testing.TB) *Cluster {
 		t.Skip(installHint + " (Helm release present but control-plane pods are not Ready)")
 	}
 	return c
+}
+
+// AgentPod identifies one managed agent pod and the warm pool that
+// owns it. Model is the §4.7 deployment model the pool declares:
+// "sidecar" (the runtime in a separate container bridged to the
+// adapter) or "embedded" (one container whose image embeds the
+// adapter), derived from the pool name suffix the agent workload sets.
+type AgentPod struct {
+	Name  string
+	Pool  string
+	Model string
+}
+
+// RequireAgentWorkload returns the managed agent pods running in the
+// lenny-agents namespace, skipping the calling test when the workload
+// is absent or not Ready. It is the agent-pod analogue of InstallLenny:
+// a tier-5/8/9 test that needs a live agent pod calls it to obtain the
+// workload and to skip cleanly on a host where install.sh has not
+// applied tests/testinfra/kind/agent-workload.yaml.
+//
+// The agent pods carry the lenny.dev/managed=true label the Sandbox
+// reconciler stamps and a lenny.dev/pool label naming their warm pool.
+func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
+	t.Helper()
+	out, err := c.Kubectl(
+		"-n", agentNamespace, "get", "pods",
+		"-l", "lenny.dev/managed=true",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}"+
+			"{.metadata.labels.lenny\\.dev/pool}{\"\\n\"}{end}",
+	).Output()
+	if err != nil {
+		t.Skip(agentWorkloadHint)
+	}
+	var pods []AgentPod
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 || fields[0] == "" {
+			continue
+		}
+		pods = append(pods, AgentPod{
+			Name:  fields[0],
+			Pool:  fields[1],
+			Model: deploymentModel(fields[1]),
+		})
+	}
+	if len(pods) == 0 {
+		t.Skip(agentWorkloadHint)
+	}
+	// install.sh waits for the workload to become Ready; a test run
+	// against an install that is still settling waits here too.
+	if err := c.Kubectl(
+		"-n", agentNamespace, "wait", "--for=condition=Ready",
+		"pod", "-l", "lenny.dev/managed=true", "--timeout=120s",
+	).Run(); err != nil {
+		t.Skip(agentWorkloadHint + " (pods present but not Ready)")
+	}
+	return pods
+}
+
+// deploymentModel maps an agent workload pool name to its §4.7
+// deployment model. agent-workload.yaml names the pools with a
+// -sidecar or -embedded suffix; any other name reports "unknown".
+func deploymentModel(pool string) string {
+	switch {
+	case strings.HasSuffix(pool, "-sidecar"):
+		return "sidecar"
+	case strings.HasSuffix(pool, "-embedded"):
+		return "embedded"
+	default:
+		return "unknown"
+	}
 }
 
 // releaseDeployed reports whether the `lenny` Helm release in

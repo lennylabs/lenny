@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: MIT
 #
-# A minimal agent-pod workload for the tier-5/8/9 e2e suite. install.sh
-# applies this after the Lenny chart is installed so the
-# WarmPoolController has a pool to reconcile and the Sandbox reconciler
-# produces real agent pods in the lenny-agents namespace.
+# Agent-pod workloads for the tier-5/8/9 e2e suite. install.sh applies
+# this after the Lenny chart so the WarmPoolController has pools to
+# reconcile and the Sandbox reconciler produces real agent pods in the
+# lenny-agents namespace.
 #
-# The Runtime is platform-global (cluster-scoped); the SandboxTemplate
-# and SandboxWarmPool are namespaced into lenny-agents. The runtime
-# image is the §26 reference echo runtime, built and kind-loaded as
-# lenny-runtime-echo:e2e by install.sh.
+# Two pools exercise the two §4.7 deployment models: echo-pool-sidecar
+# runs the runtime in a separate container that bridges the §15.4.1
+# JSONL framing to the adapter over an abstract Unix socket;
+# echo-pool-embedded runs a single container whose runtime image embeds
+# the adapter and serves the gRPC contract directly.
+#
 # The Sandbox reconciler stamps runtimeClassName onto every agent pod
 # from the §5.3 isolation profile (standard -> runc). Kind nodes run
 # containerd whose default handler is runc, but no RuntimeClass object
-# named runc exists by default, so the API server rejects the pod. This
-# RuntimeClass maps the standard profile onto the node's stock runc
-# handler. gVisor and Kata profiles would need their own runtimes
-# installed; the e2e echo pool uses the standard profile only.
+# named runc exists by default, so this RuntimeClass maps the standard
+# profile onto the node's stock runc handler.
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
@@ -25,30 +25,63 @@ handler: runc
 apiVersion: lenny.dev/v1
 kind: Runtime
 metadata:
-  name: echo-runtime
+  name: echo-runtime-sidecar
 spec:
   type: agent
   image: lenny-runtime-echo:e2e
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: echo-runtime-embedded
+spec:
+  type: agent
+  image: lenny-runtime-echo-embedded:e2e
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: embedded
 ---
 apiVersion: lenny.dev/v1
 kind: SandboxTemplate
 metadata:
-  name: echo-template
+  name: echo-template-sidecar
   namespace: lenny-agents
 spec:
-  runtimeRef: echo-runtime
+  runtimeRef: echo-runtime-sidecar
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: echo-template-embedded
+  namespace: lenny-agents
+spec:
+  runtimeRef: echo-runtime-embedded
   isolationProfile: standard
   executionMode: session
 ---
 apiVersion: lenny.dev/v1
 kind: SandboxWarmPool
 metadata:
-  name: echo-pool
+  name: echo-pool-sidecar
   namespace: lenny-agents
 spec:
-  templateRef: echo-template
+  templateRef: echo-template-sidecar
+  minWarm: 1
+  maxWarm: 2
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: echo-pool-embedded
+  namespace: lenny-agents
+spec:
+  templateRef: echo-template-embedded
   minWarm: 1
   maxWarm: 2

@@ -12,8 +12,8 @@
 # install is a no-op beyond the verification reads.
 #
 # Steps:
-#   1. Build the ten platform binary images, each as a separate
-#      `docker build` process.
+#   1. Build the platform binary images and the two reference echo
+#      runtime images, each as a separate `docker build` process.
 #   2. Load the images onto the Kind cluster nodes.
 #   3. Create the Kind cluster from tests/testinfra/kind/cluster.yaml.
 #   4. Create the lenny-system and monitoring namespaces.
@@ -26,7 +26,10 @@
 #   8. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
 #      wait for them to become Available, apply the schema-migration
 #      Job, and create the MinIO artifact bucket.
-#   9. Install the Lenny Helm chart with the e2e values overlay.
+#   9. Apply the lenny.dev CRDs and install the Lenny Helm chart with
+#      the e2e values overlay.
+#  10. Apply the agent-pod workload and wait for its pods to become
+#      Ready.
 #
 # Environment variables:
 #   LENNY_KIND_CLUSTER   Cluster name. Default: lenny-e2e.
@@ -51,6 +54,7 @@ KIND_CONFIG="${REPO_ROOT}/tests/testinfra/kind/cluster.yaml"
 E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
 DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"
+AGENT_WORKLOAD_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/agent-workload.yaml"
 CHART_DIR="${REPO_ROOT}/charts/lenny"
 
 # Fixed in-cluster data-store facts. These mirror datastores.yaml and
@@ -60,7 +64,7 @@ MINIO_BUCKET="lenny-artifacts"
 MINIO_ACCESS_KEY="lennyminio"
 MINIO_SECRET_KEY="lennyminio123"
 
-# The ten platform binaries. Each maps to a cmd/<binary> package and is
+# The platform binaries. Each maps to a cmd/<binary> package and is
 # built into a <binary>:<tag> image.
 BINARIES=(
   lenny-controller
@@ -73,6 +77,19 @@ BINARIES=(
   lenny-preflight
   lenny-backup
   lenny-ctl
+)
+
+# The reference echo runtime images exercise the two §4.7 deployment
+# models. lenny-runtime-echo runs the sidecar model: cmd/runtimes/echo
+# is a stdin/stdout JSONL exec target and the lenny-adapter sidecar
+# bridges it over an abstract Unix socket. lenny-runtime-echo-embedded
+# runs the embedded model: cmd/runtimes/echo-embedded links the adapter
+# into one container that serves the gRPC contract directly. Each entry
+# is <image-base>=<cmd-path>; the cmd path differs from the image name,
+# so these cannot reuse the BINARIES convention.
+RUNTIME_IMAGES=(
+  "lenny-runtime-echo=runtimes/echo"
+  "lenny-runtime-echo-embedded=runtimes/echo-embedded"
 )
 
 log() { printf '==> %s\n' "$*"; }
@@ -104,9 +121,13 @@ fi
 # does not appear in `docker images` after a build, the build falls
 # back to DOCKER_BUILDKIT=0, which writes to the legacy image store.
 # ---------------------------------------------------------------------
+# build_image <image-base> [cmd-path]. cmd-path defaults to image-base
+# for the platform binaries whose image name matches their cmd/<name>
+# package; the runtime images pass an explicit cmd-path.
 build_image() {
-  local binary="$1"
-  local image="${binary}:${TAG}"
+  local image_base="$1"
+  local cmd_path="${2:-$1}"
+  local image="${image_base}:${TAG}"
 
   if docker image inspect "${image}" >/dev/null 2>&1; then
     log "image ${image} already built; skipping"
@@ -114,11 +135,11 @@ build_image() {
   fi
 
   log "building ${image}"
-  docker build --build-arg "BINARY=${binary}" -t "${image}" "${REPO_ROOT}"
+  docker build --build-arg "BINARY=${cmd_path}" -t "${image}" "${REPO_ROOT}"
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
     log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build --build-arg "BINARY=${binary}" -t "${image}" "${REPO_ROOT}"
+    DOCKER_BUILDKIT=0 docker build --build-arg "BINARY=${cmd_path}" -t "${image}" "${REPO_ROOT}"
   fi
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
@@ -132,6 +153,9 @@ if [[ "${LENNY_SKIP_BUILD:-}" == "1" ]]; then
 else
   for binary in "${BINARIES[@]}"; do
     build_image "${binary}"
+  done
+  for entry in "${RUNTIME_IMAGES[@]}"; do
+    build_image "${entry%%=*}" "${entry#*=}"
   done
 fi
 
@@ -158,6 +182,9 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   images=()
   for binary in "${BINARIES[@]}"; do
     images+=("${binary}:${TAG}")
+  done
+  for entry in "${RUNTIME_IMAGES[@]}"; do
+    images+=("${entry%%=*}:${TAG}")
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
   kind load docker-image --name "${CLUSTER}" "${images[@]}"
@@ -297,8 +324,17 @@ kc -n lenny-system run lenny-e2e-minio-mb \
 log "MinIO bucket ${MINIO_BUCKET} is present"
 
 # ---------------------------------------------------------------------
-# Step 9: install the Lenny Helm chart.
+# Step 9: apply the lenny.dev CRDs and install the Lenny Helm chart.
+#
+# Helm installs the chart's crds/ directory on `helm install` but never
+# updates it on `helm upgrade`. Applying the CRDs here keeps a re-run
+# against an existing release current with the in-tree CRD schemas, for
+# example the Runtime deploymentModel field the agent workload in
+# Step 10 depends on.
 # ---------------------------------------------------------------------
+log "applying the lenny.dev CRDs"
+kc apply -f "${CHART_DIR}/crds/"
+
 if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; then
   log "Helm release lenny is already installed in lenny-system; upgrading"
   helm upgrade lenny "${CHART_DIR}" \
@@ -319,6 +355,37 @@ log "waiting for the lenny-system control-plane pods to become Ready"
 kc -n lenny-system wait --for=condition=Ready pod \
   -l app.kubernetes.io/name=lenny \
   --timeout=300s
+
+# ---------------------------------------------------------------------
+# Step 10: apply the agent-pod workload.
+#
+# agent-workload.yaml defines two SandboxWarmPools that exercise the
+# two §4.7 deployment models: echo-pool-sidecar runs the runtime in a
+# separate container bridged to the adapter over an abstract Unix
+# socket, and echo-pool-embedded runs one container whose image embeds
+# the adapter. The WarmPoolController reconciles each pool and the
+# Sandbox reconciler produces real agent pods in lenny-agents, so the
+# tier-5/8/9 tests that need a live agent pod run against a real
+# workload rather than skipping. The chart's agent-namespaces template
+# creates the lenny-agents namespace this workload lands in.
+# ---------------------------------------------------------------------
+log "applying the agent-pod workload"
+kc apply -f "${AGENT_WORKLOAD_MANIFEST}"
+
+log "waiting for the agent pods to become Ready"
+for _ in $(seq 1 60); do
+  running="$(kc -n lenny-agents get pods -l lenny.dev/managed=true \
+    --no-headers 2>/dev/null | grep -c '.' || true)"
+  [ "${running:-0}" -ge 2 ] && break
+  sleep 5
+done
+if ! kc -n lenny-agents wait --for=condition=Ready pod \
+  -l lenny.dev/managed=true --timeout=180s; then
+  log "the agent pods did not become Ready; dumping their state"
+  kc -n lenny-agents get pods -o wide || true
+  echo "error: the agent-pod workload did not become Ready" >&2
+  exit 1
+fi
 
 log "Lenny is installed on the ${CLUSTER} Kind cluster."
 log "Run the tier-5 e2e suite with:"
