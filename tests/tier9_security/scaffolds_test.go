@@ -50,7 +50,21 @@
 
 package tier9_security_test
 
-import "testing"
+import (
+	"os"
+	"testing"
+
+	"github.com/lennylabs/lenny/tests/tier9_security/pentest"
+)
+
+// pentestBundleEnv is the environment variable the §18.33 pen-test
+// replay reads. It points at the JSON findings bundle a third-party
+// pen-test partner delivers at release time (the format is documented
+// on pentest.Bundle). When the variable is unset, TestPentestReplay
+// skips with an external-dependency reason: a partner bundle is a
+// genuine external artifact, not infrastructure this repository can
+// stand up.
+const pentestBundleEnv = "LENNY_PENTEST_BUNDLE"
 
 // §12.9.2 TLS enforcement (plaintext rejection on the data-store
 // links). The mTLS-PKI half of §12.9.2 is covered by tls_test.go; this
@@ -174,13 +188,52 @@ func TestSBOMGeneration(t *testing.T) {
 		"against")
 }
 
-// External pen-test driver. Pre-release ships an artifact bundle to the
-// external pen-test partner. The pen-test driver under
-// tests/tier9_security/pentest/ is the harness for replaying the
-// partner's findings against future builds.
+// External pen-test driver. Pre-release ships a security artifact
+// bundle to a third-party pen-test partner; the partner's report comes
+// back as a JSON findings bundle. The driver under
+// tests/tier9_security/pentest/ loads that bundle and asserts every
+// finding is remediated. This test runs the driver against the bundle
+// LENNY_PENTEST_BUNDLE points at, and skips with an external-dependency
+// reason when the variable is unset.
+//
+// spec: 18.33
+// diagnosis: §18.33 pen-test replay failed — the partner findings
+// bundle at LENNY_PENTEST_BUNDLE carries a finding that is not marked
+// remediated. The driver loads the bundle, validates its structure,
+// and runs AssertAllRemediated; any open or risk-accepted finding fails
+// this test and the Phase 14 gate. A bundle parse error means the
+// partner report does not match the documented schema. The driver's
+// own logic is unit-tested in tests/tier9_security/pentest against
+// committed fixtures; this test is the live replay against a real
+// engagement bundle.
 func TestPentestReplay(t *testing.T) {
-	t.Skip("not implemented: §12.9 external pen-test driver — this is not a live-cluster behaviour test. " +
-		"It requires a third-party pen-test partner's findings bundle and the external pen-test runner " +
-		"that replays those findings against a production-shaped deployment; there is no partner bundle " +
-		"and no replay runner to drive from a Go test on the Kind cluster")
+	bundlePath := os.Getenv(pentestBundleEnv)
+	if bundlePath == "" {
+		// A third-party pen-test partner's findings bundle is a genuine
+		// external dependency: the platform cannot produce it, and there
+		// is no engagement artifact checked into this repository. The
+		// driver's parsing and assertion logic is covered by the unit
+		// tests in tests/tier9_security/pentest against committed
+		// fixtures; this skip is for the live-engagement replay only.
+		t.Skipf("not-yet-applicable: phase-14: external pen-test bundle absent — set %s to the "+
+			"path of the partner's JSON findings bundle to run the replay. The driver itself is "+
+			"unit-tested in tests/tier9_security/pentest; a real engagement bundle is a third-party "+
+			"deliverable this repository does not vendor.", pentestBundleEnv)
+	}
+
+	bundle, err := pentest.LoadBundle(bundlePath)
+	if err != nil {
+		t.Fatalf("§18.33 pen-test bundle at %s=%s did not load: %v", pentestBundleEnv, bundlePath, err)
+	}
+	t.Logf("§18.33 pen-test bundle: partner=%q engagement=%q findings=%d",
+		bundle.Partner, bundle.Engagement, len(bundle.Findings))
+	for sev, n := range bundle.CountBySeverity() {
+		t.Logf("§18.33 pen-test bundle: severity %s — %d finding(s)", sev, n)
+	}
+
+	res := bundle.AssertAllRemediated(pentest.AssertOptions{})
+	if !res.OK {
+		t.Fatalf("§18.33 pen-test replay failed: %s", res.Summary)
+	}
+	t.Logf("§18.33 pen-test replay: %s", res.Summary)
 }
