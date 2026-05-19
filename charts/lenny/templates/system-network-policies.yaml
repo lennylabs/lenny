@@ -467,3 +467,181 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Egress]
+---
+{{- /*
+allow-gateway-ingress re-admits the gateway's in-cluster and external
+ingress the §13.2 default-deny otherwise blocks (§13.2 Gateway row,
+counterparty ingress column): external HTTPS from the Ingress
+controller namespace; agent-namespace pods on the gateway gRPC port
+and the LLM-proxy port; admission-webhook pods on the gateway internal
+HTTP port for the lenny-drain-readiness GET /internal/drain-readiness
+callbacks (NET-037); lenny-ops pods on the gateway internal TLS and
+HTTP ports for the §25.3 admin-API (NET-051, NET-070); and the
+lenny-bootstrap Job on the internal HTTP port, which POSTs the §17.6
+Day-1 seed to the admin API. The lenny-ops peer is rendered with an
+explicit namespaceSelector plus podSelector matchLabels app: lenny-ops
+per the §13.2 line 201 selector exception (lenny-ops uses app:
+lenny-ops, not lenny.dev/component). The Prometheus metrics-scrape
+ingress is rendered separately by allow-gateway-metrics-scrape and is
+not duplicated here.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ingressControllerNamespace }}
+      ports:
+        - port: {{ .Values.gateway.httpsPort }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+      ports:
+        - port: {{ .Values.gateway.grpcPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.llmProxyPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: admission-webhook
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app: lenny-ops
+      ports:
+        - port: {{ .Values.gateway.internalTLSPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: bootstrap
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+  policyTypes: [Ingress]
+---
+{{- /*
+allow-bootstrap-egress re-admits the §17.6 lenny-bootstrap Job egress
+the §13.2 default-deny otherwise blocks. The Job is a transient
+post-install/post-upgrade hook that runs lenny-ctl bootstrap against
+the gateway admin API: it needs egress to the gateway on the internal
+HTTP port and to CoreDNS for name resolution. Both the kube-system
+CoreDNS and the dedicated CoreDNS Deployment are listed because the
+Job's DNS path depends on the cluster's resolver configuration.
+Without this policy the post-install helm hook hangs and the install
+fails.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bootstrap-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: bootstrap
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Egress]
+---
+{{- /*
+allow-ops re-admits the §25.4 lenny-ops Deployment's egress and
+ingress the §13.2 default-deny otherwise blocks. lenny-ops pods carry
+app: lenny-ops (the §13.2 line 201 selector exception), so this policy
+keys on that label. Egress: the gateway admin-API on the internal TLS
+and HTTP ports (NET-051, NET-070), and CoreDNS for name resolution.
+Ingress: per the §13.2 lenny-ops ingress note and §25.4, lenny-ops is
+external-only — no in-cluster workload reaches it — so the sole
+in-cluster ingress is the Prometheus metrics scrape from the
+monitoring namespace (§25.4 Pattern 1, NET-045). The external Ingress
+traffic is admitted by the §25.4 lenny-ops chart-scope policies.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ops
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: lenny-ops
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - port: {{ .Values.ops.metricsPort }}
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: gateway
+      ports:
+        - port: {{ .Values.gateway.internalTLSPort }}
+          protocol: TCP
+        - port: {{ .Values.gateway.internalPort }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: coredns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+  policyTypes: [Ingress, Egress]

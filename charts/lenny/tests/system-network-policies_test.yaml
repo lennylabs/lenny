@@ -1,0 +1,280 @@
+suite: lenny-system NetworkPolicies
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - system-network-policies.yaml
+tests:
+  - it: renders the full lenny-system policy set including the new policies
+    asserts:
+      # default-deny-all plus the per-component allow-lists, including
+      # allow-gateway-ingress, allow-bootstrap-egress, and allow-ops.
+      - hasDocuments:
+          count: 14
+
+  - it: renders a NetworkPolicy named allow-gateway-ingress
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+
+  - it: renders a NetworkPolicy named allow-bootstrap-egress
+    documentSelector:
+      path: metadata.name
+      value: allow-bootstrap-egress
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+
+  - it: renders a NetworkPolicy named allow-ops
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+
+  - it: scopes allow-gateway-ingress to the gateway component, ingress-only
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.policyTypes
+          value: [Ingress]
+
+  - it: admits external HTTPS from the Ingress controller namespace
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      # §13.2: TCP 443 from the ingressControllerNamespace.
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress-nginx
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 443
+      - equal:
+          path: spec.ingress[0].ports[0].protocol
+          value: TCP
+
+  - it: admits agent namespaces on the gateway gRPC and LLM-proxy ports
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      # §13.2: agent namespaces on TCP 50051 (gateway gRPC) and TCP 8443
+      # (LLM proxy), selected by the lenny.dev/agent-namespace label.
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["lenny.dev/agent-namespace"]
+          value: "true"
+      - contains:
+          path: spec.ingress[1].ports
+          content:
+            port: 50051
+            protocol: TCP
+      - contains:
+          path: spec.ingress[1].ports
+          content:
+            port: 8443
+            protocol: TCP
+
+  - it: admits admission-webhook pods on the gateway internal HTTP port
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      # §13.2 NET-037: lenny-drain-readiness callbacks on internalPort 8080.
+      - equal:
+          path: spec.ingress[2].from[0].podSelector.matchLabels["lenny.dev/component"]
+          value: admission-webhook
+      - equal:
+          path: spec.ingress[2].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.ingress[2].ports[0].protocol
+          value: TCP
+
+  - it: admits lenny-ops pods on the gateway internal TLS and HTTP ports
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      # §13.2 NET-051/NET-070: lenny-ops matched by namespaceSelector +
+      # podSelector app: lenny-ops (the §13.2 line 201 selector exception).
+      - equal:
+          path: spec.ingress[3].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: lenny-system
+      - equal:
+          path: spec.ingress[3].from[0].podSelector.matchLabels.app
+          value: lenny-ops
+      - contains:
+          path: spec.ingress[3].ports
+          content:
+            port: 8443
+            protocol: TCP
+      - contains:
+          path: spec.ingress[3].ports
+          content:
+            port: 8080
+            protocol: TCP
+
+  - it: admits the lenny-bootstrap Job on the gateway internal HTTP port
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      # §17.6: the bootstrap Job POSTs the Day-1 seed to the admin API.
+      - equal:
+          path: spec.ingress[4].from[0].podSelector.matchLabels["lenny.dev/component"]
+          value: bootstrap
+      - equal:
+          path: spec.ingress[4].ports[0].port
+          value: 8080
+
+  - it: scopes allow-bootstrap-egress to the bootstrap component, egress-only
+    documentSelector:
+      path: metadata.name
+      value: allow-bootstrap-egress
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["lenny.dev/component"]
+          value: bootstrap
+      - equal:
+          path: spec.policyTypes
+          value: [Egress]
+
+  - it: allows bootstrap egress to the gateway internal HTTP port
+    documentSelector:
+      path: metadata.name
+      value: allow-bootstrap-egress
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - equal:
+          path: spec.egress[0].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.egress[0].ports[0].protocol
+          value: TCP
+
+  - it: allows bootstrap egress to kube-system and dedicated CoreDNS on 53
+    documentSelector:
+      path: metadata.name
+      value: allow-bootstrap-egress
+    asserts:
+      # §13.2: DNS to the kube-system kube-dns pods and the dedicated
+      # CoreDNS Deployment, both UDP and TCP on 53.
+      - equal:
+          path: spec.egress[1].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns
+      - equal:
+          path: spec.egress[1].to[1].podSelector.matchLabels["lenny.dev/component"]
+          value: coredns
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 53
+            protocol: UDP
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 53
+            protocol: TCP
+
+  - it: scopes allow-ops to the lenny-ops pods with ingress and egress
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      # §13.2 line 201: lenny-ops uses app: lenny-ops, not the component label.
+      - equal:
+          path: spec.podSelector.matchLabels.app
+          value: lenny-ops
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: allows ops egress to the gateway internal TLS and HTTP ports
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      # §13.2 NET-051/NET-070: lenny-ops reaches the gateway admin API.
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 8443
+            protocol: TCP
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 8080
+            protocol: TCP
+
+  - it: allows ops egress to CoreDNS for name resolution
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[1].to[1].podSelector.matchLabels["lenny.dev/component"]
+          value: coredns
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 53
+            protocol: UDP
+
+  - it: admits only the monitoring-namespace metrics scrape to lenny-ops
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      # §25.4: lenny-ops is external-only; the sole in-cluster ingress is
+      # the Prometheus metrics scrape from the monitoring namespace.
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 9090
+
+  - it: honors a custom ingressControllerNamespace on the gateway-ingress policy
+    set:
+      ingressControllerNamespace: traefik-system
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-ingress
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: traefik-system

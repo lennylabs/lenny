@@ -65,6 +65,12 @@ webhookIngressCIDR: "0.0.0.0/0"
 # the broad default is bounded by the per-port (443) egress rule.
 kubeApiServerCIDR: "0.0.0.0/0"
 
+# ingressControllerNamespace is the namespace the Ingress controller
+# runs in (§13.2). The allow-gateway-ingress NetworkPolicy admits
+# external HTTPS to the gateway from pods in this namespace, matched
+# by the immutable kubernetes.io/metadata.name namespace label.
+ingressControllerNamespace: "ingress-nginx"
+
 # tokenService configures the §4.3 Token Service. The lenny-token-
 # service Deployment runs the §13.3 Token Service binary; it is
 # stateless and runs with 2 replicas (§17.1).
