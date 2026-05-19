@@ -2518,9 +2518,26 @@
     "25": {
       "title": "Agent Operability",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier3_contract/ops_endpoints/conventions_test.go",
+        "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
+        "tests/tier3_contract/ops_endpoints/locks_test.go",
+        "tests/tier3_contract/ops_endpoints/escalations_test.go",
+        "tests/tier3_contract/ops_endpoints/drift_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go",
+        "tests/tier3_contract/ops_endpoints/helpers_test.go"
+      ],
       "packages": [
-        "cmd/lenny-ops"
+        "cmd/lenny-ops",
+        "pkg/ops/opsserver",
+        "pkg/ops/diagnostics",
+        "pkg/ops/coordination",
+        "pkg/ops/escalation",
+        "pkg/ops/driftservice",
+        "pkg/ops/mcpmgmt",
+        "pkg/ops/runbooks",
+        "pkg/drift",
+        "pkg/remediationlock"
       ],
       "blocked_until_phase": "3.5"
     },

@@ -1,0 +1,282 @@
+// SPDX-License-Identifier: MIT
+
+//go:build contract
+
+// Tier-3 contract tests for the §25.12 MCP Management Server served by
+// lenny-ops at /mcp/management, and the §25.7 runbook index endpoints.
+package ops_endpoints_test
+
+import (
+	"net/http"
+	"testing"
+)
+
+// TestMCPInitializeContract confirms the §25.12 MCP management server
+// answers the initialize handshake with the protocol version and
+// serverInfo.
+//
+// spec: 25.12 (MCP management server — initialize handshake)
+// diagnosis: The management server's initialize response is missing the
+// protocolVersion or serverInfo. An MCP client cannot negotiate a
+// session without the handshake fields.
+func TestMCPInitializeContract(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	result, ok := body["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("initialize response has no result: %v", body)
+	}
+	if result["protocolVersion"] == nil {
+		t.Error("initialize result is missing protocolVersion")
+	}
+	if _, ok := result["serverInfo"].(map[string]any); !ok {
+		t.Error("initialize result is missing serverInfo")
+	}
+}
+
+// TestMCPToolsListContract confirms the §25.12 tools/list method returns
+// the operability tool inventory with the x-lenny-* extension metadata.
+//
+// spec: 25.12 (MCP tool inventory — tools/list)
+// diagnosis: tools/list returned an empty inventory, or a tool
+// descriptor missing the x-lenny-* extensions an agent uses for
+// capability filtering and the dry-run contract.
+func TestMCPToolsListContract(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	result, _ := body["result"].(map[string]any)
+	tools, ok := result["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatalf("tools/list returned an empty inventory: %v", result)
+	}
+	// The §25.12 operability tools are present.
+	names := map[string]bool{}
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		if n, _ := tool["name"].(string); n != "" {
+			names[n] = true
+		}
+	}
+	for _, want := range []string{
+		"lenny_health_get", "lenny_diagnostics_pool", "lenny_drift_report",
+		"lenny_lock_acquire", "lenny_escalation_create",
+	} {
+		if !names[want] {
+			t.Errorf("tools/list is missing the §25.12 tool %s", want)
+		}
+	}
+	// Each tool descriptor carries the x-lenny-* extensions.
+	first, _ := tools[0].(map[string]any)
+	for _, ext := range []string{"x-lenny-category", "x-lenny-required-role", "x-lenny-scope", "x-lenny-dry-run-support"} {
+		if _, ok := first[ext]; !ok {
+			t.Errorf("a tool descriptor is missing the %s extension", ext)
+		}
+	}
+	// Each tool carries a JSON Schema inputSchema.
+	if _, ok := first["inputSchema"].(map[string]any); !ok {
+		t.Error("a tool descriptor is missing its inputSchema")
+	}
+}
+
+// TestMCPToolsCallRoutesToOpsEndpoint confirms a §25.12 tools/call is
+// routed through the MCP adapter into the underlying ops endpoint.
+//
+// spec: 25.12 (MCP tools/call — routing to underlying endpoint)
+// diagnosis: A tools/call did not invoke the underlying endpoint, or
+// did not return the MCP content envelope. §25.12 routes ops-owned
+// tools transparently to the local handler.
+func TestMCPToolsCallRoutesToOpsEndpoint(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "lenny_diagnostics_pool",
+			"arguments": map[string]any{"name": "default-gvisor"},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	result, ok := body["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call response has no result: %v", body)
+	}
+	if result["isError"] != false {
+		t.Errorf("isError = %v, want false on a successful pool diagnosis", result["isError"])
+	}
+	if _, ok := result["content"].([]any); !ok {
+		t.Error("the tools/call result is missing the content array")
+	}
+}
+
+// TestMCPToolsCallDryRunMapping confirms the §25.12 dry-run mapping: a
+// tools/call whose underlying endpoint returns a §25.2 dry-run preview
+// is isError:false with the canonical _meta.lenny.dryRun flag.
+//
+// spec: 25.12 (MCP dry-run result mapping)
+// diagnosis: A dry-run tools/call was reported as isError:true, or the
+// _meta.lenny.dryRun flag is absent. §25.12 makes a dry-run a
+// successful preview; an MCP client checks the flag to know it must
+// retry with confirm:true.
+func TestMCPToolsCallDryRunMapping(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name": "lenny_drift_snapshot_refresh",
+			// No confirm:true — the endpoint returns a §25.2 preview.
+			"arguments": map[string]any{"desired": map[string]any{"pools": map[string]any{}}},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	result, _ := body["result"].(map[string]any)
+	if result["isError"] != false {
+		t.Errorf("isError = %v, want false for a dry-run preview", result["isError"])
+	}
+	meta, ok := result["_meta"].(map[string]any)
+	if !ok || meta["lenny.dryRun"] != true {
+		t.Errorf("_meta = %v, want lenny.dryRun:true", result["_meta"])
+	}
+}
+
+// TestMCPToolsCallScopeForbidden confirms the §25.12 scope-enforcement
+// layer: a tools/call for a tool outside the caller's scope claim is
+// rejected with -32001 SCOPE_FORBIDDEN.
+//
+// spec: 25.12 (MCP security model — scope enforcement)
+// diagnosis: A tools/call outside the caller's scope claim was not
+// rejected with -32001. Scope enforcement is a security layer — §25.12
+// checks the JWT scope claim against the tool's x-lenny-scope before
+// any REST call.
+func TestMCPToolsCallScopeForbidden(t *testing.T) {
+	srv := opsServer(t)
+	// The caller's scope claim covers health reads only — a lock-acquire
+	// is outside it.
+	rec, body := request(t, srv, http.MethodPost, "/mcp/management",
+		map[string]string{"X-Lenny-Scope": "tools:health:read"},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{
+				"name":      "lenny_lock_acquire",
+				"arguments": map[string]any{"scope": "pool:p"},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC carries the error in the body)", rec.Code)
+	}
+	rpcErr, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a JSON-RPC error, got: %v", body)
+	}
+	if code, _ := rpcErr["code"].(float64); code != -32001 {
+		t.Errorf("error code = %v, want -32001 SCOPE_FORBIDDEN", rpcErr["code"])
+	}
+	data, _ := rpcErr["data"].(map[string]any)
+	if data["code"] != "SCOPE_FORBIDDEN" {
+		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
+	}
+	if data["requiredScope"] != "tools:locks:write" {
+		t.Errorf("data.requiredScope = %v, want tools:locks:write", data["requiredScope"])
+	}
+}
+
+// TestRunbookIndexContract confirms GET /v1/admin/runbooks returns the
+// §25.7 runbook index with the parsed front matter.
+//
+// spec: 25.7 (GET /v1/admin/runbooks — runbook index)
+// diagnosis: The runbook index returned an empty list or a summary
+// missing the front-matter fields. An agent matches an alert to a
+// runbook through the triggers in the front matter.
+func TestRunbookIndexContract(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	books, ok := body["runbooks"].([]any)
+	if !ok || len(books) == 0 {
+		t.Fatalf("runbooks = %v, want a non-empty index", body["runbooks"])
+	}
+	entry, _ := books[0].(map[string]any)
+	if entry["name"] != "warm-pool-exhaustion" {
+		t.Errorf("runbook name = %v, want warm-pool-exhaustion", entry["name"])
+	}
+	if _, ok := entry["triggers"].([]any); !ok {
+		t.Error("the runbook summary is missing the triggers front matter")
+	}
+}
+
+// TestRunbookIndexFilterContract confirms GET /v1/admin/runbooks honors
+// the §25.7 Path A discovery filters (alert, component, tag).
+//
+// spec: 25.7 (runbook index — Path A filtering)
+// diagnosis: The runbook index ignored a discovery filter. An agent
+// responding to an alert filters by ?alert= to find the relevant
+// runbook.
+func TestRunbookIndexFilterContract(t *testing.T) {
+	srv := opsServer(t)
+	// A matching alert filter returns the runbook.
+	_, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks?alert=WarmPoolExhausted", nil, nil)
+	if books, _ := body["runbooks"].([]any); len(books) != 1 {
+		t.Errorf("?alert=WarmPoolExhausted returned %d runbooks, want 1", len(books))
+	}
+	// A non-matching alert filter returns nothing.
+	_, body = request(t, srv, http.MethodGet, "/v1/admin/runbooks?alert=NoSuchAlert", nil, nil)
+	if books, _ := body["runbooks"].([]any); len(books) != 0 {
+		t.Errorf("?alert=NoSuchAlert returned %d runbooks, want 0", len(books))
+	}
+}
+
+// TestRunbookStepsContract confirms GET /v1/admin/runbooks/{name}/steps
+// returns the §25.7 structured access-pathed steps.
+//
+// spec: 25.7 (GET /v1/admin/runbooks/{name}/steps — structured steps)
+// diagnosis: The runbook steps endpoint returned no steps or a step
+// missing its access paths. An agent picks the access path matching its
+// capability without parsing the runbook markdown.
+func TestRunbookStepsContract(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks/warm-pool-exhaustion/steps", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	steps, ok := body["steps"].([]any)
+	if !ok || len(steps) == 0 {
+		t.Fatalf("steps = %v, want a non-empty step list", body["steps"])
+	}
+	step, _ := steps[0].(map[string]any)
+	paths, ok := step["paths"].([]any)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("step paths = %v, want the access-path variants", step["paths"])
+	}
+}
+
+// TestRunbookStepsNotFoundContract confirms an unknown runbook name
+// returns the §25.7 RUNBOOK_NOT_FOUND error.
+//
+// spec: 25.7 (RUNBOOK_NOT_FOUND — 404 PERMANENT)
+// diagnosis: The runbook steps endpoint returned a non-404 for an
+// unknown runbook. An agent distinguishes a missing runbook from a
+// transient failure by the error code.
+func TestRunbookStepsNotFoundContract(t *testing.T) {
+	srv := opsServer(t)
+	rec, body := request(t, srv, http.MethodGet, "/v1/admin/runbooks/no-such-runbook/steps", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if errorEnvelope(t, body)["code"] != "RUNBOOK_NOT_FOUND" {
+		t.Errorf("error code = %v, want RUNBOOK_NOT_FOUND", errorEnvelope(t, body)["code"])
+	}
+}

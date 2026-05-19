@@ -45,6 +45,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/client/config"
 
+	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -194,6 +195,22 @@ func main() {
 	// a single-process degraded mode so an agent can exercise them.
 	backupSvc, backupJobs := buildBackupService(*production)
 
+	// The §25.4 remediation-lock service. v1 runs the in-memory Tier 3
+	// store; the Postgres and Redis tiers and the outage-epoch
+	// reconciliation are wired as those seams land. The HTTP layer
+	// applies the §25.4 scope-based authorization control before the
+	// store.
+	lockStore := coordination.NewMemStore()
+
+	// The §25.4 escalation service, the §25.10 configuration-drift
+	// service, and the §25.6 DiagnosticService. Each runs against an
+	// in-memory or unconfigured backing store in this single-process
+	// degraded mode so the §25 endpoints serve and an agent can exercise
+	// them; the durable backing stores are documented seams.
+	escalationSvc := buildEscalationService()
+	driftSvc := buildDriftService()
+	diagnosticSvc := buildDiagnosticService()
+
 	// The §25.4 service body: leader election plus the background loops.
 	// The §25.11 scheduled-backup cron jobs register here; the upgrade
 	// and escalation loops are wired as those subsystems are built.
@@ -216,16 +233,24 @@ func main() {
 		log.Fatalf("lenny-ops: build service: %v", err)
 	}
 
-	// The §25.4 HTTP surface. Every replica serves it, leader or not.
+	// The §25.4 HTTP surface. Every replica serves it, leader or not. It
+	// hosts the §25.6 diagnostics, the §25.7 runbook index, the §25.4
+	// self-health, remediation-lock, and escalation endpoints, the
+	// §25.10 drift endpoints, the §25.11 backup endpoints, and the
+	// §25.12 MCP management server.
 	srv := &http.Server{
 		Addr: *addr,
 		Handler: opsserver.New(opsserver.Options{
-			Probes:     probes,
-			Runbooks:   runbookSource,
-			SelfHealth: svc.Monitor(),
-			Leader:     svc,
-			Backups:    backupSvc,
-			Production: *production,
+			Probes:      probes,
+			Runbooks:    runbookSource,
+			SelfHealth:  svc.Monitor(),
+			Leader:      svc,
+			Backups:     backupSvc,
+			Diagnostics: diagnosticSvc,
+			Drift:       driftSvc,
+			Locks:       lockStore,
+			Escalations: escalationSvc,
+			Production:  *production,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

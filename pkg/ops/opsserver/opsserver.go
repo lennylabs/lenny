@@ -18,6 +18,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ops/backup"
+	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
+	"github.com/lennylabs/lenny/pkg/ops/driftservice"
+	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
 
@@ -50,13 +55,18 @@ type LeaderReporter interface {
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux        *http.ServeMux
-	probes     map[string]probe.Func
-	runbooks   RunbookSource
-	selfHealth SelfHealthReporter
-	leader     LeaderReporter
-	backups    backup.BackupService
-	production bool
+	mux         *http.ServeMux
+	probes      map[string]probe.Func
+	runbooks    RunbookSource
+	selfHealth  SelfHealthReporter
+	leader      LeaderReporter
+	backups     backup.BackupService
+	diagnostics diagnostics.DiagnosticService
+	drift       *driftservice.Service
+	locks       coordination.RemediationLockService
+	escalations *escalation.Service
+	mcp         *mcpmgmt.Server
+	production  bool
 }
 
 // Options configures a lenny-ops Server.
@@ -78,24 +88,42 @@ type Options struct {
 	// Backups is the §25.11 BackupService. A nil service reports the
 	// backup-and-restore endpoints as unavailable.
 	Backups backup.BackupService
+	// Diagnostics is the §25.6 DiagnosticService for the session, pool,
+	// and credential-pool diagnostic endpoints. A nil service reports
+	// those endpoints as unavailable.
+	Diagnostics diagnostics.DiagnosticService
+	// Drift is the §25.10 configuration-drift service. A nil service
+	// reports the drift endpoints as unavailable.
+	Drift *driftservice.Service
+	// Locks is the §25.4 remediation-lock service. A nil service reports
+	// the remediation-lock endpoints as unavailable.
+	Locks coordination.RemediationLockService
+	// Escalations is the §25.4 escalation service. A nil service reports
+	// the escalation endpoints as unavailable.
+	Escalations *escalation.Service
 	// Production reports whether this deployment is production, which
 	// gates the §25.11 confirm requirement for a full backup.
 	Production bool
 }
 
-// New returns a Server with the liveness probe, readiness probe, the
-// §25.6 connectivity diagnostic, the §25.7 runbook index, and the
-// §25.4 self-health endpoint registered. Operability endpoints are
-// added as they are built.
+// New returns a Server with the liveness probe, readiness probe, and
+// the §25 operability endpoints registered: the §25.6 diagnostics, the
+// §25.7 runbook index, the §25.4 self-health, remediation-lock, and
+// escalation endpoints, the §25.10 drift endpoints, the §25.11 backup
+// and restore endpoints, and the §25.12 MCP management server.
 func New(opts Options) *Server {
 	s := &Server{
-		mux:        http.NewServeMux(),
-		probes:     opts.Probes,
-		runbooks:   opts.Runbooks,
-		selfHealth: opts.SelfHealth,
-		leader:     opts.Leader,
-		backups:    opts.Backups,
-		production: opts.Production,
+		mux:         http.NewServeMux(),
+		probes:      opts.Probes,
+		runbooks:    opts.Runbooks,
+		selfHealth:  opts.SelfHealth,
+		leader:      opts.Leader,
+		backups:     opts.Backups,
+		diagnostics: opts.Diagnostics,
+		drift:       opts.Drift,
+		locks:       opts.Locks,
+		escalations: opts.Escalations,
+		production:  opts.Production,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -104,6 +132,16 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
 	s.registerBackupRoutes()
+	s.registerDiagnosticsRoutes()
+	s.registerDriftRoutes()
+	s.registerLockRoutes()
+	s.registerEscalationRoutes()
+	// §25.12: the MCP management server exposes the §25 operability
+	// surface as MCP tools. It is built last so it can route to the
+	// services registered above.
+	s.mcp = mcpmgmt.NewServer(s.mcpInvoker())
+	s.mux.Handle("/mcp/management", s.mcp)
+	s.mux.Handle("/mcp/management/", s.mcp)
 	return s
 }
 
@@ -158,9 +196,23 @@ func (s *Server) handleOpsHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleConnectivity serves the §25.6 GET /v1/admin/diagnostics/-
-// connectivity endpoint: it runs the dependency probes in parallel and
-// returns the per-dependency report together with an overall verdict.
+// connectivity endpoint: the dependency connectivity checks. When a
+// §25.6 DiagnosticService is configured the connectivity check runs
+// through it (it probes Postgres, Redis, MinIO, the Kubernetes API, the
+// gateway, and registered connectors from outside the cluster). When no
+// DiagnosticService is configured — a deployment without a gateway or
+// Postgres connection — the endpoint falls back to the readiness
+// dependency probes so connectivity diagnosis still works.
 func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
+	if s.diagnostics != nil {
+		report, err := s.diagnostics.CheckConnectivity(r.Context())
+		if err != nil {
+			writeDiagnosticsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+		return
+	}
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"dependencies": dependencyReport(results),
@@ -189,5 +241,12 @@ func dependencyReport(results map[string]probe.Result) map[string]map[string]any
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONValue encodes v to an already-headered response writer. It
+// is used by handlers that set the status code and Content-Type
+// themselves before writing the body.
+func writeJSONValue(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }

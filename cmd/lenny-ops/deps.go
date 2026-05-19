@@ -7,6 +7,9 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/ops/backup"
+	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
+	"github.com/lennylabs/lenny/pkg/ops/driftservice"
+	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
@@ -110,4 +113,86 @@ func buildBackupService(production bool) (*backup.Service, []opsservice.Schedule
 		},
 	}
 	return svc, jobs
+}
+
+// logEmitter is the §25.4 escalation Emitter used until the §25.5 event
+// stream is wired into lenny-ops. Creating an escalation must emit an
+// escalation_created event to the Redis stream and the gateway buffer;
+// until those destinations are wired the emission is logged and
+// reported as not-yet-delivered, so the escalation's emitted flag stays
+// false and the §25.4 background retry re-attempts the publish once a
+// destination exists.
+type logEmitter struct{}
+
+// EmitEscalationCreated logs the §25.4 escalation_created event and
+// reports false: with no event-stream destination wired the publish has
+// not been delivered, so the escalation stays un-emitted for the retry.
+func (logEmitter) EmitEscalationCreated(esc escalation.Escalation) bool {
+	log.Printf("lenny-ops: escalation %s created (severity=%s) — escalation_created emission "+
+		"pending the event-stream wiring", esc.ID, esc.Severity)
+	return false
+}
+
+// buildEscalationService constructs the §25.4 escalation service over
+// the in-memory Tier 3 buffer. The Postgres ops_escalations table and
+// the Redis tier are documented seams: until they land the service runs
+// the in-memory buffer so the §25.4 escalation endpoints serve and an
+// agent can exercise them in a single-process degraded mode.
+func buildEscalationService() *escalation.Service {
+	return escalation.NewService(logEmitter{})
+}
+
+// buildDriftService constructs the §25.10 configuration-drift service.
+// The Postgres-backed bootstrap_seed_snapshot store and the
+// gateway-client running-state reader are documented seams: until they
+// land the service runs the in-memory snapshot store and an empty
+// running-state reader, so the §25.10 drift endpoints serve and an
+// agent can exercise the validate and snapshot-refresh paths in a
+// single-process degraded mode.
+func buildDriftService() *driftservice.Service {
+	return driftservice.NewService(driftservice.NewMemSnapshotStore(), emptyRunningState{})
+}
+
+// emptyRunningState is the §25.10 RunningStateReader used until the
+// gateway-client running-state collector is wired. It reports an empty
+// running state, so a drift report against a stored snapshot shows
+// every desired field as removed — the correct cold-start behavior
+// before a gateway connection exists.
+type emptyRunningState struct{}
+
+// RunningState returns an empty running state.
+func (emptyRunningState) RunningState(context.Context, string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
+
+// buildDiagnosticService constructs the §25.6 DiagnosticService. The
+// Postgres + Kubernetes API data source is a documented seam: until it
+// lands the service runs the unconfigured data source, which reports
+// sessions and pools as not-found. The §25.6 connectivity endpoint runs
+// from the dependency probes regardless, so connectivity diagnosis
+// works even in this degraded mode.
+func buildDiagnosticService() diagnostics.DiagnosticService {
+	return diagnostics.NewService(unconfiguredDiagnosticSource{})
+}
+
+// unconfiguredDiagnosticSource is the §25.6 DataSource used until the
+// Postgres + Kubernetes API source is wired. It reports every session,
+// pool, and credential pool as not-found and runs no connectivity
+// probes — the correct cold-start behavior before a data source exists.
+type unconfiguredDiagnosticSource struct{}
+
+func (unconfiguredDiagnosticSource) Session(context.Context, string) (diagnostics.SessionRecord, error) {
+	return diagnostics.SessionRecord{Found: false}, nil
+}
+
+func (unconfiguredDiagnosticSource) Pool(context.Context, string) (diagnostics.PoolRecord, error) {
+	return diagnostics.PoolRecord{Found: false}, nil
+}
+
+func (unconfiguredDiagnosticSource) CredentialPool(context.Context, string) (diagnostics.CredentialPoolRecord, error) {
+	return diagnostics.CredentialPoolRecord{Found: false}, nil
+}
+
+func (unconfiguredDiagnosticSource) Connectivity(context.Context) ([]diagnostics.ConnectivityDependency, error) {
+	return nil, nil
 }
