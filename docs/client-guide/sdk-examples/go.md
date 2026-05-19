@@ -6,641 +6,301 @@ grand_parent: "Client Guide"
 nav_order: 3
 ---
 
-# Go Client Examples
+# Go Client SDK
 
-Go examples for interacting with the Lenny REST API using `net/http`.
+The Go client SDK wraps the gateway REST session API. It covers the session
+lifecycle, decodes the typed error envelope, retries retryable errors with
+exponential backoff, supports per-request idempotency keys, and verifies
+webhook signatures. This page covers installation, constructing a client,
+running a session, and verifying a webhook.
 
-## Prerequisites
+The SDK depends only on the Go standard library.
 
+---
+
+## Install
+
+The SDK lives in the Lenny repository module. Add it to a project with
+`go get`:
+
+```bash
+go get github.com/lennylabs/lenny/sdks/client/go/lenny
 ```
-// go.mod
-module lenny-go-client
 
-go 1.21
+The package import path is `github.com/lennylabs/lenny/sdks/client/go/lenny`.
+The webhook signature verifier is in the sub-package
+`github.com/lennylabs/lenny/sdks/client/go/webhook`.
 
-require (
-    // No external dependencies; uses only the standard library.
+---
+
+## Construct a client
+
+`lenny.New` returns a client bound to a gateway base URL. The base URL is the
+gateway origin; the SDK appends the `/v1` path prefix. `New` returns an error
+when the URL is empty or is not absolute.
+
+```go fragment
+import "github.com/lennylabs/lenny/sdks/client/go/lenny"
+
+client, err := lenny.New(
+    "https://gateway.acme.com",
+    lenny.WithAuth(lenny.BearerToken(token)),
 )
+if err != nil {
+    return err
+}
+```
+
+A `Client` is safe for concurrent use by multiple goroutines.
+
+### Authentication
+
+`WithAuth` sets the credential the client attaches to every request. The SDK
+ships three authenticators.
+
+| Constructor | Header sent | Use it for |
+|---|---|---|
+| `lenny.BearerToken(token)` | `Authorization: Bearer <token>` | An OIDC ID token, a Lenny-issued access token, or a service-account token. |
+| `lenny.APIKey(key)` | `X-Lenny-API-Key: <key>` | A static API key. |
+| `lenny.RefreshingToken(source)` | `Authorization: Bearer <token>` | A token that the SDK fetches fresh before each request. |
+
+`RefreshingToken` takes a `TokenSource`. The SDK calls `Token()` before each
+request, so an implementation refreshes the token when it is close to expiry
+and returns the current value:
+
+```go fragment
+type cachedSource struct{ /* token and expiry fields */ }
+
+func (s *cachedSource) Token() (string, error) {
+    // Refresh when the cached token is close to expiry, then return it.
+    return s.current, nil
+}
+
+client, err := lenny.New(
+    "https://gateway.acme.com",
+    lenny.WithAuth(lenny.RefreshingToken(&cachedSource{})),
+)
+```
+
+### Other client options
+
+| Option | Effect |
+|---|---|
+| `lenny.WithHTTPClient(hc)` | Sets the underlying `*http.Client`. The default has a 30-second timeout. |
+| `lenny.WithRetryPolicy(p)` | Overrides `lenny.DefaultRetryPolicy`. Unset fields are filled from the default. |
+| `lenny.WithTenant(id)` | Sets the development `X-Lenny-Tenant-ID` header. The minimal gateway honors this header when no OIDC principal is present. Production deployments derive the tenant from the authenticated principal and ignore the header. |
+
+---
+
+## Run a session
+
+The client methods cover the session lifecycle. Each one calls a single REST
+endpoint.
+
+| Method | Endpoint | Transition |
+|---|---|---|
+| `CreateSession` | `POST /v1/sessions` | Creates a session in the `created` state. |
+| `GetSession` | `GET /v1/sessions/{id}` | Reads the current session envelope. |
+| `ListSessions` | `GET /v1/sessions` | Returns one page of sessions. |
+| `IterateSessions` | `GET /v1/sessions` | Walks every page of a listing. |
+| `Finalize` | `POST /v1/sessions/{id}/finalize` | `created` to `ready`. |
+| `Start` | `POST /v1/sessions/{id}/start` | `ready` to `running`. |
+| `Interrupt` | `POST /v1/sessions/{id}/interrupt` | `running` to `suspended`. |
+| `Resume` | `POST /v1/sessions/{id}/resume` | A session awaiting client action back to `running`. |
+| `Terminate` | `POST /v1/sessions/{id}/terminate` | A non-terminal session to `completed`. |
+| `DeleteSession` | `DELETE /v1/sessions/{id}` | A non-terminal session to `cancelled`. |
+
+The following program creates a session, finalizes it, starts it, and
+terminates it:
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/lennylabs/lenny/sdks/client/go/lenny"
+)
+
+func main() {
+	client, err := lenny.New(
+		os.Getenv("LENNY_GATEWAY_URL"),
+		lenny.WithAuth(lenny.BearerToken(os.Getenv("LENNY_TOKEN"))),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
+		RuntimeRef: "chat",
+		UserID:     "alice@acme.com",
+	}, lenny.WithIdempotencyKey("alice-session-2026-05-19-001"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("created %s in state %s\n", created.ID, created.State)
+
+	if _, err := client.Finalize(ctx, created.ID); err != nil {
+		log.Fatal(err)
+	}
+	started, err := client.Start(ctx, created.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("session %s is %s\n", started.ID, started.State)
+
+	final, err := client.Terminate(ctx, created.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("session %s ended in state %s\n", final.ID, final.State)
+}
+```
+
+`CreateSession` returns a `*CreateSessionResult`, which embeds the session
+envelope and adds the single-use `UploadToken` and the
+`IsolationLevel`. Treat the upload token as a secret. The transition methods
+each return the updated `*Session`.
+
+### Idempotency keys
+
+`WithIdempotencyKey` attaches an `Idempotency-Key` header. When the same key
+is presented again with the same body within the key's TTL, the gateway
+replays the cached response. Pass an idempotency key on `CreateSession` so a
+retried create collapses to one session rather than producing a duplicate.
+
+### Listing sessions
+
+`ListSessions` returns one `SessionPage`. `IterateSessions` walks every page,
+invoking a callback once per session. Iteration stops when the callback
+returns `false`, when a page returns an error, or when the listing is
+exhausted:
+
+```go fragment
+err := client.IterateSessions(ctx, lenny.ListOptions{
+    State:   lenny.StateRunning,
+    Runtime: "chat",
+}, func(s lenny.Session) bool {
+    fmt.Println(s.ID, s.State)
+    return true
+})
 ```
 
 ---
 
-## Full Session Lifecycle
+## Handle errors
+
+The gateway returns a typed error envelope on every non-2xx response. The SDK
+decodes it into an `*APIError` and returns it from the request method.
+`APIError` implements the `error` interface, so `errors.As` recovers the
+structured fields.
+
+```go fragment
+session, err := client.GetSession(ctx, sessionID)
+if err != nil {
+    var apiErr *lenny.APIError
+    if errors.As(err, &apiErr) {
+        fmt.Printf("code=%s category=%s retryable=%t\n",
+            apiErr.Code, apiErr.Category, apiErr.Retryable)
+    }
+    return err
+}
+```
+
+The `Category` field carries one of four values: `TRANSIENT`, `PERMANENT`,
+`POLICY`, or `UPSTREAM`. `lenny.IsRetryable(err)` reports whether the error is
+a retryable `APIError`. `lenny.AsAPIError(err)` narrows an error to an
+`*APIError`.
+
+### Retries
+
+The client retries a retryable error on its own, following the retry policy.
+`DefaultRetryPolicy` retries up to three times with exponential backoff,
+jitter, a 200-millisecond base delay, and a 5-second cap. A transport-level
+failure such as a connection refusal or a DNS error is retried the same way.
+Override the policy with `WithRetryPolicy`:
+
+```go fragment
+client, err := lenny.New(
+    "https://gateway.acme.com",
+    lenny.WithAuth(lenny.BearerToken(token)),
+    lenny.WithRetryPolicy(lenny.RetryPolicy{
+        MaxAttempts: 5,
+        BaseDelay:   500 * time.Millisecond,
+        MaxDelay:    10 * time.Second,
+        Jitter:      true,
+    }),
+)
+```
+
+Set `MaxAttempts` to 1 to disable retries.
+
+---
+
+## Verify a webhook
+
+A webhook delivery carries an `X-Lenny-Signature` header of the form
+`t=<unix_seconds>,v1=<hex_signature>`, where the signature is an HMAC-SHA256
+over `<unix_seconds>.<raw_body>`. The `webhook` sub-package verifies the
+signature with the `callbackSecret` supplied at session creation.
+
+Construct a `Verifier` with `webhook.NewWithSecret` for a single secret, or
+`webhook.New` for a secret set during a rotation overlap. `VerifyRequest`
+reads the signature header from an `*http.Request` and checks it against the
+raw body. Read the body before calling, because the verifier hashes the exact
+bytes the gateway signed:
 
 ```go
-// main.go: Lenny session lifecycle in Go.
-//
-// Run with: go run main.go
-//
-// Set environment variables:
-//   LENNY_URL          - Lenny gateway URL (default: https://lenny.example.com)
-//   OIDC_TOKEN_URL     - OIDC token endpoint
-//   OIDC_CLIENT_ID     - OAuth client ID
-//   OIDC_CLIENT_SECRET - OAuth client secret
-
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"io"
-	"math"
-	"math/rand"
-	"mime/multipart"
+	"log"
 	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"time"
+
+	"github.com/lennylabs/lenny/sdks/client/go/webhook"
 )
-
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-var (
-	lennyURL        = envOr("LENNY_URL", "https://lenny.example.com")
-	oidcTokenURL    = envOr("OIDC_TOKEN_URL", "https://auth.example.com/oauth/token")
-	oidcClientID    = envOr("OIDC_CLIENT_ID", "your-client-id")
-	oidcClientSecret = envOr("OIDC_CLIENT_SECRET", "your-client-secret")
-)
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// ---------------------------------------------------------------------------
-// API Response Types
-// ---------------------------------------------------------------------------
-
-type Session struct {
-	SessionID             string                 `json:"sessionId"`
-	State                 string                 `json:"state"`
-	Runtime               string                 `json:"runtime,omitempty"`
-	Pool                  string                 `json:"pool,omitempty"`
-	CreatedAt             string                 `json:"createdAt,omitempty"`
-	StartedAt             string                 `json:"startedAt,omitempty"`
-	UploadToken           string                 `json:"uploadToken,omitempty"`
-	SessionIsolationLevel *SessionIsolationLevel `json:"sessionIsolationLevel,omitempty"`
-	Labels                map[string]string      `json:"labels,omitempty"`
-}
-
-type SessionIsolationLevel struct {
-	ExecutionMode    string `json:"executionMode"`
-	IsolationProfile string `json:"isolationProfile"`
-	PodReuse         bool   `json:"podReuse"`
-}
-
-type PaginatedResponse[T any] struct {
-	Items   []T    `json:"items"`
-	Cursor  string `json:"cursor"`
-	HasMore bool   `json:"hasMore"`
-	Total   *int   `json:"total,omitempty"`
-}
-
-type Runtime struct {
-	Name         string            `json:"name"`
-	Type         string            `json:"type"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Capabilities map[string]bool   `json:"capabilities,omitempty"`
-}
-
-type Artifact struct {
-	Path     string `json:"path"`
-	Size     int64  `json:"size"`
-	MimeType string `json:"mimeType"`
-}
-
-type Usage struct {
-	InputTokens            int64      `json:"inputTokens"`
-	OutputTokens           int64      `json:"outputTokens"`
-	WallClockSeconds       float64    `json:"wallClockSeconds"`
-	PodMinutes             float64    `json:"podMinutes"`
-	CredentialLeaseMinutes float64    `json:"credentialLeaseMinutes"`
-	TreeUsage              *TreeUsage `json:"treeUsage,omitempty"`
-}
-
-type TreeUsage struct {
-	InputTokens  int64   `json:"inputTokens"`
-	OutputTokens int64   `json:"outputTokens"`
-	TotalTasks   int     `json:"totalTasks"`
-	PodMinutes   float64 `json:"podMinutes"`
-}
-
-type LennyError struct {
-	Code      string                 `json:"code"`
-	Category  string                 `json:"category"`
-	Message   string                 `json:"message"`
-	Retryable bool                   `json:"retryable"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-}
-
-func (e *LennyError) Error() string {
-	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
-}
-
-type DeliveryReceipt struct {
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
-}
-
-type MessageResponse struct {
-	MessageID       string          `json:"messageId"`
-	DeliveryReceipt DeliveryReceipt `json:"deliveryReceipt"`
-}
-
-type UploadResponse struct {
-	Uploaded []struct {
-		Path string `json:"path"`
-		Size int64  `json:"size"`
-	} `json:"uploaded"`
-}
-
-// ---------------------------------------------------------------------------
-// Lenny Client
-// ---------------------------------------------------------------------------
-
-type LennyClient struct {
-	httpClient *http.Client
-	token      string
-}
-
-func NewLennyClient(token string) *LennyClient {
-	return &LennyClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		token:      token,
-	}
-}
-
-// Request makes an API call with automatic retry for TRANSIENT errors.
-func (c *LennyClient) Request(method, path string, body interface{}, result interface{}) error {
-	return c.RequestWithHeaders(method, path, body, nil, result)
-}
-
-func (c *LennyClient) RequestWithHeaders(method, path string, body interface{}, extraHeaders map[string]string, result interface{}) error {
-	const maxRetries = 5
-	baseDelay := 1.0
-	maxDelay := 60.0
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		var bodyReader io.Reader
-		if body != nil {
-			data, err := json.Marshal(body)
-			if err != nil {
-				return fmt.Errorf("marshal body: %w", err)
-			}
-			bodyReader = bytes.NewReader(data)
-		}
-
-		req, err := http.NewRequest(method, lennyURL+path, bodyReader)
-		if err != nil {
-			return fmt.Errorf("create request: %w", err)
-		}
-
-		req.Header.Set("Authorization", "Bearer "+c.token)
-		if body != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		for k, v := range extraHeaders {
-			req.Header.Set(k, v)
-		}
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			if attempt == maxRetries {
-				return fmt.Errorf("request failed: %w", err)
-			}
-			wait := math.Min(baseDelay*math.Pow(2, float64(attempt))+rand.Float64(), maxDelay)
-			fmt.Printf("  Retrying in %.1fs (network error, attempt %d/%d)\n", wait, attempt+1, maxRetries)
-			time.Sleep(time.Duration(wait * float64(time.Second)))
-			continue
-		}
-		defer resp.Body.Close()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("read response: %w", err)
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if result != nil && len(respBody) > 0 {
-				return json.Unmarshal(respBody, result)
-			}
-			return nil
-		}
-
-		// Parse error
-		var errResp struct {
-			Error LennyError `json:"error"`
-		}
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		if !errResp.Error.Retryable || attempt == maxRetries {
-			return &errResp.Error
-		}
-
-		// Calculate wait
-		wait := baseDelay*math.Pow(2, float64(attempt)) + rand.Float64()
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			fmt.Sscanf(ra, "%f", &wait)
-		}
-		wait = math.Min(wait, maxDelay)
-
-		fmt.Printf("  Retrying in %.1fs (%s, attempt %d/%d)\n",
-			wait, errResp.Error.Code, attempt+1, maxRetries)
-		time.Sleep(time.Duration(wait * float64(time.Second)))
-	}
-
-	return fmt.Errorf("max retries exceeded")
-}
-
-// UploadFiles uploads files using multipart/form-data.
-func (c *LennyClient) UploadFiles(sessionID, uploadToken string, files map[string][]byte) (*UploadResponse, error) {
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	for name, content := range files {
-		part, err := writer.CreateFormFile("files", name)
-		if err != nil {
-			return nil, fmt.Errorf("create form file: %w", err)
-		}
-		if _, err := part.Write(content); err != nil {
-			return nil, fmt.Errorf("write file content: %w", err)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", lennyURL+"/v1/sessions/"+sessionID+"/upload", &buf)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-Upload-Token", uploadToken)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("upload failed: %s", string(body))
-	}
-
-	var result UploadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// StreamSession connects to the SSE stream and prints agent output.
-func (c *LennyClient) StreamSession(sessionID string) error {
-	var lastCursor string
-
-	for {
-		u := lennyURL + "/v1/sessions/" + sessionID + "/logs"
-		if lastCursor != "" {
-			u += "?cursor=" + url.QueryEscape(lastCursor)
-		}
-
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
-		req.Header.Set("Accept", "text/event-stream")
-
-		// Use a client without timeout for SSE
-		sseClient := &http.Client{}
-		resp, err := sseClient.Do(req)
-		if err != nil {
-			fmt.Println("\n[Connection lost, reconnecting...]")
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		scanner := bufio.NewScanner(resp.Body)
-		// SSE payloads can exceed the default 64 KB bufio scanner buffer
-		// (e.g., agent_output with embedded base64 screenshots). Raise the
-		// token ceiling to 10 MB to prevent silent truncation.
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-		var eventType string
-		var dataLines []string
-
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			if strings.HasPrefix(line, "event: ") {
-				eventType = line[7:]
-			} else if strings.HasPrefix(line, "data: ") {
-				dataLines = append(dataLines, line[6:])
-			} else if strings.HasPrefix(line, "id: ") {
-				lastCursor = line[4:]
-			} else if line == "" {
-				if eventType != "" && len(dataLines) > 0 {
-					data := strings.Join(dataLines, "\n")
-
-					switch eventType {
-					case "agent_output":
-						var event struct {
-							Parts []struct {
-								Type   string `json:"type"`
-								Inline string `json:"inline"`
-							} `json:"parts"`
-						}
-						if err := json.Unmarshal([]byte(data), &event); err == nil {
-							for _, part := range event.Parts {
-								if part.Type == "text" {
-									fmt.Print(part.Inline)
-								}
-							}
-						}
-					case "status_change":
-						var sc struct{ State string `json:"state"` }
-						json.Unmarshal([]byte(data), &sc)
-						fmt.Printf("\n[Status: %s]\n", sc.State)
-					case "error":
-						var e struct {
-							Code    string `json:"code"`
-							Message string `json:"message"`
-						}
-						json.Unmarshal([]byte(data), &e)
-						fmt.Printf("\n[Error: %s - %s]\n", e.Code, e.Message)
-					case "session_complete":
-						fmt.Println("\n[Session complete]")
-						resp.Body.Close()
-						return nil
-					case "checkpoint_boundary":
-						var cb struct{ EventsLost int `json:"events_lost"` }
-						json.Unmarshal([]byte(data), &cb)
-						if cb.EventsLost > 0 {
-							fmt.Printf("\n[WARNING: %d events lost]\n", cb.EventsLost)
-						}
-					}
-				}
-				eventType = ""
-				dataLines = nil
-			}
-		}
-
-		resp.Body.Close()
-
-		if err := scanner.Err(); err != nil {
-			fmt.Println("\n[Stream error, reconnecting...]")
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		break
-	}
-
-	return nil
-}
-
-// Paginate iterates through all pages of a paginated endpoint.
-func Paginate[T any](c *LennyClient, path string, limit int) ([]T, error) {
-	var all []T
-	cursor := ""
-
-	for {
-		queryPath := fmt.Sprintf("%s?limit=%d", path, limit)
-		if cursor != "" {
-			queryPath += "&cursor=" + url.QueryEscape(cursor)
-		}
-
-		var page PaginatedResponse[T]
-		if err := c.Request("GET", queryPath, nil, &page); err != nil {
-			return nil, err
-		}
-
-		all = append(all, page.Items...)
-
-		if !page.HasMore || page.Cursor == "" {
-			break
-		}
-		cursor = page.Cursor
-	}
-
-	return all, nil
-}
-
-// ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
-
-func getAccessToken() (string, error) {
-	data := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {oidcClientID},
-		"client_secret": {oidcClientSecret},
-		"scope":         {"openid profile"},
-	}
-
-	resp, err := http.PostForm(oidcTokenURL, data)
-	if err != nil {
-		return "", fmt.Errorf("token request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token request failed (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", err
-	}
-	return tokenResp.AccessToken, nil
-}
-
-// rotateLennyToken rotates the current Lenny access token via RFC 8693 token
-// exchange. Call shortly before `exp` to avoid a gap in authorization. For
-// delegation child-token minting, additionally set `actor_token` to the parent
-// session token and narrow `scope`.
-func rotateLennyToken(currentToken string) (string, error) {
-	data := url.Values{
-		"grant_type":           {"urn:ietf:params:oauth:grant-type:token-exchange"},
-		"subject_token":        {currentToken},
-		"subject_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
-		"requested_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
-	}
-
-	resp, err := http.PostForm(lennyURL+"/v1/oauth/token", data)
-	if err != nil {
-		return "", fmt.Errorf("token rotation failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token rotation failed (%d): %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", err
-	}
-	return tokenResp.AccessToken, nil
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 func main() {
-	fmt.Println("=== Lenny Go Client Example ===\n")
-
-	// 1. Authenticate
-	fmt.Println("1. Authenticating...")
-	token, err := getAccessToken()
+	verifier, err := webhook.NewWithSecret([]byte("the-callback-secret"))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auth failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("   Token: %s...\n", token[:20])
-
-	client := NewLennyClient(token)
-
-	// 2. Discover runtimes
-	fmt.Println("\n2. Discovering runtimes...")
-	var runtimes PaginatedResponse[Runtime]
-	if err := client.Request("GET", "/v1/runtimes", nil, &runtimes); err != nil {
-		fmt.Fprintf(os.Stderr, "List runtimes: %v\n", err)
-		os.Exit(1)
-	}
-	for _, rt := range runtimes.Items {
-		fmt.Printf("   - %s (%s)\n", rt.Name, rt.Type)
+		log.Fatal(err)
 	}
 
-	runtimeName := "claude-worker"
-	if len(runtimes.Items) > 0 {
-		runtimeName = runtimes.Items[0].Name
-	}
-
-	// 3. Create session
-	fmt.Printf("\n3. Creating session with '%s'...\n", runtimeName)
-	var session Session
-	if err := client.Request("POST", "/v1/sessions", map[string]interface{}{
-		"runtime": runtimeName,
-		"labels":  map[string]string{"example": "go-client"},
-	}, &session); err != nil {
-		fmt.Fprintf(os.Stderr, "Create session: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("   Session: %s\n", session.SessionID)
-
-	// 4. Upload files
-	fmt.Println("\n4. Uploading files...")
-	uploaded, err := client.UploadFiles(session.SessionID, session.UploadToken, map[string][]byte{
-		"main.go":   []byte("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"Hello\")\n}\n"),
-		"README.md": []byte("# Example\n\nA simple Go program.\n"),
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Upload: %v\n", err)
-		os.Exit(1)
-	}
-	for _, f := range uploaded.Uploaded {
-		fmt.Printf("   - %s (%d bytes)\n", f.Path, f.Size)
-	}
-
-	// 5. Finalize
-	fmt.Println("\n5. Finalizing workspace...")
-	var finalized Session
-	if err := client.RequestWithHeaders("POST",
-		"/v1/sessions/"+session.SessionID+"/finalize",
-		nil, map[string]string{"X-Upload-Token": session.UploadToken},
-		&finalized); err != nil {
-		fmt.Fprintf(os.Stderr, "Finalize: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("   State: %s\n", finalized.State)
-
-	// 6. Start
-	fmt.Println("\n6. Starting session...")
-	var started Session
-	if err := client.Request("POST", "/v1/sessions/"+session.SessionID+"/start", nil, &started); err != nil {
-		fmt.Fprintf(os.Stderr, "Start: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("   State: %s\n", started.State)
-
-	// 7. Send message
-	fmt.Println("\n7. Sending message...")
-	var msg MessageResponse
-	if err := client.Request("POST", "/v1/sessions/"+session.SessionID+"/messages", map[string]interface{}{
-		"input": []map[string]string{
-			{"type": "text", "inline": "Review the Go code in main.go. Suggest idiomatic improvements."},
-		},
-	}, &msg); err != nil {
-		fmt.Fprintf(os.Stderr, "Send message: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("   Delivery: %s\n", msg.DeliveryReceipt.Status)
-
-	// 8. Stream output
-	fmt.Println("\n8. Streaming output:")
-	fmt.Println(strings.Repeat("-", 40))
-	if err := client.StreamSession(session.SessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "Stream: %v\n", err)
-	}
-	fmt.Println(strings.Repeat("-", 40))
-
-	// 9. Artifacts
-	fmt.Println("\n9. Artifacts:")
-	artifacts, err := Paginate[Artifact](client, "/v1/sessions/"+session.SessionID+"/artifacts", 50)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Artifacts: %v\n", err)
-	}
-	for _, a := range artifacts {
-		fmt.Printf("   - %s (%d bytes)\n", a.Path, a.Size)
-	}
-
-	// 10. Usage
-	fmt.Println("\n10. Usage:")
-	var usage Usage
-	if err := client.Request("GET", "/v1/sessions/"+session.SessionID+"/usage", nil, &usage); err != nil {
-		fmt.Fprintf(os.Stderr, "Usage: %v\n", err)
-	} else {
-		fmt.Printf("    Input tokens:  %d\n", usage.InputTokens)
-		fmt.Printf("    Output tokens: %d\n", usage.OutputTokens)
-		fmt.Printf("    Wall clock:    %.0fs\n", usage.WallClockSeconds)
-	}
-
-	// 11. Final state
-	fmt.Println("\n11. Final state:")
-	var final Session
-	if err := client.Request("GET", "/v1/sessions/"+session.SessionID, nil, &final); err != nil {
-		fmt.Fprintf(os.Stderr, "Get session: %v\n", err)
-	} else {
-		fmt.Printf("    State: %s\n", final.State)
-		switch final.State {
-		case "completed", "failed", "cancelled", "expired":
-			// Already terminal
-		default:
-			fmt.Println("    Terminating...")
-			client.Request("POST", "/v1/sessions/"+session.SessionID+"/terminate", nil, nil)
+	http.HandleFunc("/webhooks/lenny", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read body", http.StatusBadRequest)
+			return
 		}
-	}
+		if err := verifier.VerifyRequest(r, body); err != nil {
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+		// The signature is valid. Process the delivery.
+		w.WriteHeader(http.StatusNoContent)
+	})
 
-	fmt.Println("\n=== Done ===")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 ```
+
+`Verify` returns `webhook.ErrMissingSignature` when the header is absent,
+`webhook.ErrMalformedSignature` when the header does not parse,
+`webhook.ErrReplayWindow` when the delivery timestamp is more than five
+minutes from the receiver's clock, and `webhook.ErrSignatureMismatch` when the
+HMAC matches no configured secret. Match a specific failure with `errors.Is`.
+
+---
+
+## See also
+
+- [Wire Format](../wire-format.html) for the canonical JSON envelopes and headers.
+- [Session Lifecycle](../session-lifecycle.html) for the session state machine.
+- [Error Handling](../error-handling.html) for the error codes and retry strategy.
+- [Webhooks](../webhooks.html) for the webhook event catalog and delivery model.

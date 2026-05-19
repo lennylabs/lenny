@@ -6,595 +6,270 @@ grand_parent: "Client Guide"
 nav_order: 2
 ---
 
-# TypeScript Client Examples
+# TypeScript Client SDK
 
-TypeScript/Node.js examples for interacting with the Lenny REST API using the built-in `fetch` API.
+The TypeScript client SDK wraps the gateway REST session API. It covers the
+session lifecycle, parses the typed error envelope, retries retryable errors
+with exponential backoff, supports per-request idempotency keys, and verifies
+webhook signatures. This page covers installation, constructing a client,
+running a session, and verifying a webhook.
 
-## Prerequisites
+The SDK is published as an ECMAScript module with a CommonJS build alongside
+it. The REST client uses the global `fetch`. The webhook verifier uses the
+Node.js `crypto` module, so webhook verification requires Node.js 18 or later.
 
-```json
-{
-  "name": "lenny-typescript-client",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "start": "ts-node --esm lenny_client.ts"
-  },
-  "dependencies": {
-    "typescript": "^5.4",
-    "ts-node": "^10.9"
-  }
-}
-```
+---
+
+## Install
 
 ```bash
-npm install
+npm install @lennylabs/client-sdk
+```
+
+The package exports the REST client, the authenticators, the typed error, the
+wire types, and the webhook verifier from a single entry point:
+
+```ts fragment
+import { newClient, bearerToken, ApiError, newVerifier } from '@lennylabs/client-sdk';
 ```
 
 ---
 
-## Type Definitions
+## Construct a client
 
-```typescript
-// types.ts: type definitions for Lenny API responses
+`newClient` returns a client bound to a gateway base URL. The base URL is the
+gateway origin; the SDK appends the `/v1` path prefix. The constructor throws
+when the URL is empty or is not absolute.
 
-export interface Session {
-  sessionId: string;
-  state: SessionState;
-  runtime: string;
-  pool?: string;
-  createdAt: string;
-  startedAt?: string;
-  labels?: Record<string, string>;
-  uploadToken?: string;
-  sessionIsolationLevel?: SessionIsolationLevel;
-  retryPolicy?: RetryPolicy;
-}
+```ts fragment
+import { newClient, bearerToken } from '@lennylabs/client-sdk';
 
-export type SessionState =
-  | "created"
-  | "finalizing"
-  | "ready"
-  | "starting"
-  | "running"
-  | "suspended"
-  | "resume_pending"
-  | "awaiting_client_action"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "expired";
-
-export interface SessionIsolationLevel {
-  executionMode: "session" | "task" | "concurrent";
-  isolationProfile: "runc" | "gvisor" | "microvm";
-  podReuse: boolean;
-  scrubPolicy?: string;
-  residualStateWarning?: boolean;
-}
-
-export interface RetryPolicy {
-  mode: "auto_then_client" | "auto" | "manual";
-  maxRetries: number;
-  retryableFailures?: string[];
-  maxSessionAgeSeconds?: number;
-  maxResumeWindowSeconds?: number;
-}
-
-export interface CreateSessionResponse {
-  sessionId: string;
-  uploadToken: string;
-  sessionIsolationLevel: SessionIsolationLevel;
-  state: SessionState;
-  createdAt: string;
-}
-
-export interface UploadResponse {
-  uploaded: Array<{ path: string; size: number }>;
-}
-
-export interface MessageResponse {
-  messageId: string;
-  deliveryReceipt: {
-    status: "delivered" | "queued" | "dropped";
-    timestamp: string;
-  };
-}
-
-export interface Usage {
-  inputTokens: number;
-  outputTokens: number;
-  wallClockSeconds: number;
-  podMinutes: number;
-  credentialLeaseMinutes: number;
-  treeUsage?: TreeUsage;
-}
-
-export interface TreeUsage {
-  inputTokens: number;
-  outputTokens: number;
-  wallClockSeconds: number;
-  podMinutes: number;
-  credentialLeaseMinutes: number;
-  totalTasks: number;
-}
-
-export interface Artifact {
-  path: string;
-  size: number;
-  mimeType: string;
-}
-
-export interface PaginatedResponse<T> {
-  items: T[];
-  cursor: string | null;
-  hasMore: boolean;
-  total?: number;
-}
-
-export interface LennyError {
-  code: string;
-  category: "TRANSIENT" | "PERMANENT" | "POLICY" | "UPSTREAM";
-  message: string;
-  retryable: boolean;
-  details: Record<string, any>;
-}
-
-export interface Runtime {
-  name: string;
-  type: string;
-  capabilities?: Record<string, boolean>;
-  labels?: Record<string, string>;
-}
-
-export interface TaskTreeNode {
-  taskId: string;
-  sessionId: string;
-  state: string;
-  runtimeRef: string;
-  children: TaskTreeNode[];
-}
+const client = newClient('https://gateway.acme.com', {
+  auth: bearerToken(token),
+});
 ```
+
+### Authentication
+
+The `auth` option sets the credential the client attaches to every request.
+The SDK ships three authenticators.
+
+| Function | Header sent | Use it for |
+|---|---|---|
+| `bearerToken(token)` | `Authorization: Bearer <token>` | An OIDC ID token, a Lenny-issued access token, or a service-account token. |
+| `apiKey(key)` | `X-Lenny-API-Key: <key>` | A static API key. |
+| `refreshingToken(source)` | `Authorization: Bearer <token>` | A token that the SDK fetches fresh before each request. |
+
+`refreshingToken` takes a `TokenSource`. The SDK calls `token()` before each
+request, so an implementation refreshes the token when it is close to expiry
+and returns the current value. The `token()` method may return a promise:
+
+```ts fragment
+import { newClient, refreshingToken } from '@lennylabs/client-sdk';
+
+const client = newClient('https://gateway.acme.com', {
+  auth: refreshingToken({
+    async token(): Promise<string> {
+      // Refresh when the cached token is close to expiry, then return it.
+      return currentToken;
+    },
+  }),
+});
+```
+
+### Other client options
+
+| Option | Effect |
+|---|---|
+| `retryPolicy` | Overrides `defaultRetryPolicy`. Unset fields are filled from the default. |
+| `timeoutMs` | The per-request timeout in milliseconds. The default is 30000. |
+| `fetch` | The `fetch` implementation. The default is the global `fetch`. |
+| `tenantId` | Sets the development `X-Lenny-Tenant-ID` header. The minimal gateway honors this header when no OIDC principal is present. Production deployments derive the tenant from the authenticated principal and ignore the header. |
 
 ---
 
-## Full Session Lifecycle
+## Run a session
 
-```typescript
-// lenny_client.ts: Lenny session lifecycle
+The client methods cover the session lifecycle. Each one calls a single REST
+endpoint and returns a promise.
 
-import type {
-  CreateSessionResponse,
-  LennyError,
-  PaginatedResponse,
-  Runtime,
-  Session,
-  Artifact,
-  Usage,
-} from "./types.js";
+| Method | Endpoint | Transition |
+|---|---|---|
+| `createSession` | `POST /v1/sessions` | Creates a session in the `created` state. |
+| `getSession` | `GET /v1/sessions/{id}` | Reads the current session envelope. |
+| `listSessions` | `GET /v1/sessions` | Returns one page of sessions. |
+| `iterateSessions` | `GET /v1/sessions` | An async generator over every page. |
+| `finalize` | `POST /v1/sessions/{id}/finalize` | `created` to `ready`. |
+| `start` | `POST /v1/sessions/{id}/start` | `ready` to `running`. |
+| `interrupt` | `POST /v1/sessions/{id}/interrupt` | `running` to `suspended`. |
+| `resume` | `POST /v1/sessions/{id}/resume` | A session awaiting client action back to `running`. |
+| `terminate` | `POST /v1/sessions/{id}/terminate` | A non-terminal session to `completed`. |
+| `deleteSession` | `DELETE /v1/sessions/{id}` | A non-terminal session to `cancelled`. |
 
-// Configuration
-const LENNY_URL = process.env.LENNY_URL ?? "https://lenny.example.com";
-const OIDC_TOKEN_URL =
-  process.env.OIDC_TOKEN_URL ?? "https://auth.example.com/oauth/token";
-const OIDC_CLIENT_ID = process.env.OIDC_CLIENT_ID ?? "your-client-id";
-const OIDC_CLIENT_SECRET =
-  process.env.OIDC_CLIENT_SECRET ?? "your-client-secret";
+The following program creates a session, finalizes it, starts it, and
+terminates it:
 
-// ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
+```ts fragment
+import { newClient, bearerToken } from '@lennylabs/client-sdk';
 
-async function getAccessToken(): Promise<string> {
-  const response = await fetch(OIDC_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: OIDC_CLIENT_ID,
-      client_secret: OIDC_CLIENT_SECRET,
-      scope: "openid profile",
-    }),
+async function main(): Promise<void> {
+  const client = newClient(process.env.LENNY_GATEWAY_URL ?? '', {
+    auth: bearerToken(process.env.LENNY_TOKEN ?? ''),
   });
 
-  if (!response.ok) {
-    throw new Error(`Auth failed: ${response.status} ${response.statusText}`);
-  }
+  const created = await client.createSession(
+    { runtimeRef: 'chat', userId: 'alice@acme.com' },
+    { idempotencyKey: 'alice-session-2026-05-19-001' },
+  );
+  console.log(`created ${created.id} in state ${created.state}`);
 
-  const data = await response.json();
-  return data.access_token;
+  await client.finalize(created.id);
+  const started = await client.start(created.id);
+  console.log(`session ${started.id} is ${started.state}`);
+
+  const final = await client.terminate(created.id);
+  console.log(`session ${final.id} ended in state ${final.state}`);
 }
 
-// Rotate the current Lenny access token via RFC 8693 token exchange.
-// Call shortly before `exp` to avoid a gap in authorization. For delegation
-// child-token minting, pass the parent session token via `actor_token` and a
-// narrowed `scope` string.
-async function rotateLennyToken(currentToken: string): Promise<string> {
-  const response = await fetch(`${LENNY_URL}/v1/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-      subject_token: currentToken,
-      subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
-      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Token rotation failed: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data.access_token;
-}
-
-// ---------------------------------------------------------------------------
-// API Client with Retry
-// ---------------------------------------------------------------------------
-
-class LennyClient {
-  private token: string;
-
-  constructor(token: string) {
-    this.token = token;
-  }
-
-  async request<T = any>(
-    method: string,
-    path: string,
-    options: {
-      body?: any;
-      headers?: Record<string, string>;
-      maxRetries?: number;
-    } = {}
-  ): Promise<T> {
-    const maxRetries = options.maxRetries ?? 5;
-    const baseDelay = 1000;
-    const maxDelay = 60000;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${this.token}`,
-        ...options.headers,
-      };
-
-      if (options.body && !options.headers?.["Content-Type"]) {
-        headers["Content-Type"] = "application/json";
-      }
-
-      const fetchOptions: RequestInit = {
-        method,
-        headers,
-      };
-
-      if (options.body) {
-        fetchOptions.body =
-          typeof options.body === "string"
-            ? options.body
-            : JSON.stringify(options.body);
-      }
-
-      const response = await fetch(`${LENNY_URL}${path}`, fetchOptions);
-
-      if (response.ok) {
-        const text = await response.text();
-        return text ? JSON.parse(text) : ({} as T);
-      }
-
-      let error: LennyError;
-      try {
-        const body = await response.json();
-        error = body.error;
-      } catch {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      if (!error.retryable || attempt === maxRetries) {
-        throw error;
-      }
-
-      const retryAfter = response.headers.get("Retry-After");
-      const wait = retryAfter
-        ? parseFloat(retryAfter) * 1000
-        : Math.min(
-            baseDelay * Math.pow(2, attempt) + Math.random() * 1000,
-            maxDelay
-          );
-
-      console.log(
-        `  Retrying in ${(wait / 1000).toFixed(1)}s ` +
-          `(${error.code}, attempt ${attempt + 1}/${maxRetries})`
-      );
-      await new Promise((r) => setTimeout(r, wait));
-    }
-
-    throw new Error("Unreachable");
-  }
-
-  // -------------------------------------------------------------------------
-  // File Upload (multipart/form-data)
-  // -------------------------------------------------------------------------
-
-  async uploadFiles(
-    sessionId: string,
-    uploadToken: string,
-    files: Array<{ name: string; content: string | Buffer }>
-  ): Promise<any> {
-    const formData = new FormData();
-    for (const file of files) {
-      const blob = new Blob([file.content], {
-        type: "application/octet-stream",
-      });
-      formData.append("files", blob, file.name);
-    }
-
-    const response = await fetch(
-      `${LENNY_URL}/v1/sessions/${sessionId}/upload`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          "X-Upload-Token": uploadToken,
-        },
-        body: formData,
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.json();
-      throw body.error;
-    }
-
-    return response.json();
-  }
-
-  // -------------------------------------------------------------------------
-  // SSE Streaming
-  // -------------------------------------------------------------------------
-
-  async streamSession(sessionId: string): Promise<void> {
-    let lastCursor: string | null = null;
-
-    while (true) {
-      const url = new URL(`${LENNY_URL}/v1/sessions/${sessionId}/logs`);
-      if (lastCursor) url.searchParams.set("cursor", lastCursor);
-
-      let response: Response;
-      try {
-        response = await fetch(url.toString(), {
-          headers: {
-            Authorization: `Bearer ${this.token}`,
-            Accept: "text/event-stream",
-          },
-        });
-      } catch {
-        console.log("\n[Connection lost, reconnecting...]");
-        await new Promise((r) => setTimeout(r, 1000));
-        continue;
-      }
-
-      if (!response.ok || !response.body) break;
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let eventType: string | null = null;
-      let dataLines: string[] = [];
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop()!;
-
-          for (const line of lines) {
-            if (line.startsWith("event: ")) {
-              eventType = line.slice(7);
-            } else if (line.startsWith("data: ")) {
-              dataLines.push(line.slice(6));
-            } else if (line.startsWith("id: ")) {
-              lastCursor = line.slice(4);
-            } else if (line === "") {
-              if (eventType && dataLines.length > 0) {
-                const data = JSON.parse(dataLines.join("\n"));
-
-                switch (eventType) {
-                  case "agent_output":
-                    for (const part of data.parts ?? []) {
-                      if (part.type === "text") {
-                        process.stdout.write(part.inline);
-                      }
-                    }
-                    break;
-                  case "status_change":
-                    console.log(`\n[Status: ${data.state}]`);
-                    break;
-                  case "tool_use_requested":
-                    console.log(`\n[Tool: ${data.tool}]`);
-                    break;
-                  case "error":
-                    console.log(`\n[Error: ${data.code} - ${data.message}]`);
-                    break;
-                  case "session_complete":
-                    console.log("\n[Session complete]");
-                    return;
-                  case "checkpoint_boundary":
-                    if (data.events_lost > 0) {
-                      console.log(
-                        `\n[WARNING: ${data.events_lost} events lost]`
-                      );
-                    }
-                    break;
-                }
-              }
-              eventType = null;
-              dataLines = [];
-            }
-          }
-        }
-      } catch {
-        console.log("\n[Stream interrupted, reconnecting...]");
-        continue;
-      }
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Pagination Helper
-  // -------------------------------------------------------------------------
-
-  async *paginate<T>(
-    path: string,
-    limit = 50,
-    params: Record<string, string> = {}
-  ): AsyncGenerator<T> {
-    let cursor: string | null = null;
-
-    while (true) {
-      const query = new URLSearchParams({ ...params, limit: String(limit) });
-      if (cursor) query.set("cursor", cursor);
-
-      const data = await this.request<PaginatedResponse<T>>(
-        "GET",
-        `${path}?${query}`
-      );
-
-      for (const item of data.items) {
-        yield item;
-      }
-
-      cursor = data.cursor;
-      if (!data.hasMore || !cursor) break;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-async function main() {
-  console.log("=== Lenny TypeScript Client Example ===\n");
-
-  // 1. Authenticate
-  console.log("1. Authenticating...");
-  const token = await getAccessToken();
-  console.log(`   Token: ${token.slice(0, 20)}...`);
-
-  const client = new LennyClient(token);
-
-  // 2. Discover runtimes
-  console.log("\n2. Discovering runtimes...");
-  const runtimes = await client.request<PaginatedResponse<Runtime>>(
-    "GET",
-    "/v1/runtimes"
-  );
-  for (const rt of runtimes.items) {
-    console.log(`   - ${rt.name} (${rt.type})`);
-  }
-
-  const runtimeName = runtimes.items[0]?.name ?? "claude-worker";
-
-  // 3. Create session
-  console.log(`\n3. Creating session with '${runtimeName}'...`);
-  const session = await client.request<CreateSessionResponse>(
-    "POST",
-    "/v1/sessions",
-    {
-      body: {
-        runtime: runtimeName,
-        labels: { example: "typescript-client" },
-      },
-    }
-  );
-  const { sessionId, uploadToken } = session;
-  console.log(`   Session: ${sessionId}`);
-
-  // 4. Upload files
-  console.log("\n4. Uploading files...");
-  const uploaded = await client.uploadFiles(sessionId, uploadToken, [
-    {
-      name: "example.ts",
-      content: 'function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
-    },
-    {
-      name: "README.md",
-      content: "# Example\n\nA simple greeting function.\n",
-    },
-  ]);
-  console.log(`   Uploaded: ${uploaded.uploaded.map((f: any) => f.path)}`);
-
-  // 5. Finalize
-  console.log("\n5. Finalizing workspace...");
-  const finalized = await client.request("POST", `/v1/sessions/${sessionId}/finalize`, {
-    headers: { "X-Upload-Token": uploadToken },
-  });
-  console.log(`   State: ${finalized.state}`);
-
-  // 6. Start
-  console.log("\n6. Starting session...");
-  const started = await client.request("POST", `/v1/sessions/${sessionId}/start`);
-  console.log(`   State: ${started.state}`);
-
-  // 7. Send message
-  console.log("\n7. Sending message...");
-  const msg = await client.request("POST", `/v1/sessions/${sessionId}/messages`, {
-    body: {
-      input: [
-        {
-          type: "text",
-          inline: "Review the TypeScript code in example.ts. Suggest type safety improvements.",
-        },
-      ],
-    },
-  });
-  console.log(`   Delivery: ${msg.deliveryReceipt.status}`);
-
-  // 8. Stream output
-  console.log("\n8. Streaming output:");
-  console.log("-".repeat(40));
-  await client.streamSession(sessionId);
-  console.log("-".repeat(40));
-
-  // 9. Retrieve artifacts
-  console.log("\n9. Artifacts:");
-  for await (const artifact of client.paginate<Artifact>(
-    `/v1/sessions/${sessionId}/artifacts`
-  )) {
-    console.log(`   - ${artifact.path} (${artifact.size} bytes)`);
-  }
-
-  // 10. Usage
-  console.log("\n10. Usage:");
-  const usage = await client.request<Usage>(
-    "GET",
-    `/v1/sessions/${sessionId}/usage`
-  );
-  console.log(`    Input tokens:  ${usage.inputTokens}`);
-  console.log(`    Output tokens: ${usage.outputTokens}`);
-  console.log(`    Wall clock:    ${usage.wallClockSeconds}s`);
-
-  // 11. Check final state
-  console.log("\n11. Final state:");
-  const final = await client.request<Session>(
-    "GET",
-    `/v1/sessions/${sessionId}`
-  );
-  console.log(`    State: ${final.state}`);
-
-  if (
-    !["completed", "failed", "cancelled", "expired"].includes(final.state)
-  ) {
-    console.log("    Terminating...");
-    await client.request("POST", `/v1/sessions/${sessionId}/terminate`);
-  }
-
-  console.log("\n=== Done ===");
-}
-
-main().catch(console.error);
+void main();
 ```
+
+`createSession` resolves to a `CreateSessionResult`, which extends the session
+envelope with the single-use `uploadToken` and the `sessionIsolationLevel`.
+Treat the upload token as a secret. The transition methods each resolve to the
+updated `Session`.
+
+### Idempotency keys
+
+The `idempotencyKey` request option attaches an `Idempotency-Key` header. When
+the same key is presented again with the same body within the key's TTL, the
+gateway replays the cached response. Pass an idempotency key on
+`createSession` so a retried create collapses to one session rather than
+producing a duplicate.
+
+### Listing sessions
+
+`listSessions` resolves to one `SessionPage`. `iterateSessions` is an async
+generator that walks every page, yielding one session at a time:
+
+```ts fragment
+for await (const session of client.iterateSessions({
+  state: 'running',
+  runtime: 'chat',
+})) {
+  console.log(session.id, session.state);
+}
+```
+
+### Cancellation
+
+Each request method accepts an `AbortSignal` in the `signal` request option.
+The SDK aborts the request when the signal fires or when the per-request
+timeout elapses, whichever is first.
+
+---
+
+## Handle errors
+
+The gateway returns a typed error envelope on every non-2xx response. The SDK
+parses it into an `ApiError` and throws it from the request method. `ApiError`
+extends the built-in `Error`, so a caller can either `instanceof`-check it or
+read the structured fields.
+
+```ts fragment
+import { ApiError } from '@lennylabs/client-sdk';
+
+try {
+  await client.getSession(sessionId);
+} catch (err) {
+  if (err instanceof ApiError) {
+    console.error(`code=${err.code} category=${err.category} retryable=${err.retryable}`);
+  }
+  throw err;
+}
+```
+
+The `category` field carries one of four values: `TRANSIENT`, `PERMANENT`,
+`POLICY`, or `UPSTREAM`. `isRetryable(err)` reports whether the error is a
+retryable `ApiError`. `asApiError(err)` narrows an error to an `ApiError` or
+returns `undefined`.
+
+### Retries
+
+The client retries a retryable error on its own, following the retry policy.
+`defaultRetryPolicy` retries up to three times with exponential backoff,
+jitter, a 200-millisecond base delay, and a 5-second cap. A transport-level
+failure such as a connection refusal or a DNS error is retried the same way.
+An abort is surfaced rather than retried. Override the policy with the
+`retryPolicy` option:
+
+```ts fragment
+const client = newClient('https://gateway.acme.com', {
+  auth: bearerToken(token),
+  retryPolicy: {
+    maxAttempts: 5,
+    baseDelayMs: 500,
+    maxDelayMs: 10_000,
+    jitter: true,
+  },
+});
+```
+
+Set `maxAttempts` to 1 to disable retries.
+
+---
+
+## Verify a webhook
+
+A webhook delivery carries an `X-Lenny-Signature` header of the form
+`t=<unix_seconds>,v1=<hex_signature>`, where the signature is an HMAC-SHA256
+over `<unix_seconds>.<raw_body>`. The `Verifier` checks the signature with the
+`callbackSecret` supplied at session creation.
+
+Construct a `Verifier` with `verifierWithSecret` for a single secret, or
+`newVerifier` for a secret set during a rotation overlap. `verify` checks a
+raw body against the signature header value. Pass the exact bytes the gateway
+signed:
+
+```ts fragment
+import { verifierWithSecret, WebhookError, signatureHeader } from '@lennylabs/client-sdk';
+import { createServer } from 'node:http';
+
+const verifier = verifierWithSecret('the-callback-secret');
+
+createServer((req, res) => {
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk) => chunks.push(chunk));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks);
+    const header = req.headers[signatureHeader.toLowerCase()];
+    try {
+      verifier.verify(body, typeof header === 'string' ? header : '');
+    } catch (err) {
+      if (err instanceof WebhookError) {
+        res.writeHead(401).end('invalid signature');
+        return;
+      }
+      throw err;
+    }
+    // The signature is valid. Process the delivery.
+    res.writeHead(204).end();
+  });
+}).listen(8080);
+```
+
+`verify` throws a `WebhookError` when verification fails. The `reason` field
+carries `missing_signature` when the header is absent, `malformed_signature`
+when the header does not parse, `replay_window` when the delivery timestamp is
+more than five minutes from the receiver's clock, and `signature_mismatch`
+when the HMAC matches no configured secret. The HMAC comparison is
+constant-time.
+
+---
+
+## See also
+
+- [Wire Format](../wire-format.html) for the canonical JSON envelopes and headers.
+- [Session Lifecycle](../session-lifecycle.html) for the session state machine.
+- [Error Handling](../error-handling.html) for the error codes and retry strategy.
+- [Webhooks](../webhooks.html) for the webhook event catalog and delivery model.

@@ -14,7 +14,7 @@ There are three ways to install. Pick based on what you're doing:
 | Path | Use it for | Starting point |
 |------|------------|----------------|
 | **`lenny up`** | Evaluation, developer laptops, demos, smoke-testing a new runtime before you touch a real cluster. Runs the entire platform as a single binary. Never for production. | [`lenny up` quickstart](#lenny-up-for-local-evaluation) |
-| **`lenny-ctl install` wizard** | New production installs. Detects your cluster, asks a small set of questions, then runs Helm and bootstrap for you. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
+| **`lenny-ctl install` wizard** | New production installs. Asks a set of questions, composes Helm values on a capacity-tier preset, then runs Helm for you. | [Installer wizard](#interactive-installer-lenny-ctl-install) |
 | **Direct Helm** | GitOps or infrastructure-as-code setups. Hand-write `values.yaml` (or start from an answer-file base) and run Helm yourself. | [Helm chart installation](#helm-chart-installation) |
 
 All three paths use the same chart, the same preflight checks, and the same bootstrap. The wizard is a friendlier layer over Helm.
@@ -47,49 +47,37 @@ lenny down --purge  # stop everything and wipe ~/.lenny/
 
 ## Interactive installer (`lenny-ctl install`)
 
-For production installs, the interactive wizard handles detection, questions, composing `values.yaml`, running preflight, invoking `helm install`, bootstrap, and a final smoke test against the `chat` runtime:
+For production installs, the `lenny-ctl install` wizard collects a set of installation answers, composes them into a Helm values document, layers a capacity-tier preset under that document, and runs `helm install`:
 
 ```bash
 lenny-ctl install
 ```
 
-It runs in five phases:
+With no `--answer-file` flag the wizard prompts for each answer on standard input, showing each default in brackets. It asks for the release name and namespace, the target environment, the capacity tier, the gateway domain and TLS strategy, the data-store connection details, the auth mode, the agent namespaces, and the optional admission-webhook feature flags. After collecting the answers, the wizard validates them, prints the composed values and the `helm install` command, and then runs Helm.
 
-1. **Detection** -- probes the cluster: CNI, `RuntimeClass` availability, admission controllers, cert-manager, Prometheus Operator, storage classes, cloud provider. The results seed default answers and skip questions that don't apply.
-2. **Questions** -- around 10 prompts: environment (production / staging / dev), cluster type (EKS / GKE / AKS / on-prem / k3s), database and cache options (managed or self-hosted), deployment size, isolation profile, auth setup, and a few tenant/runtime/pool seed entries.
-3. **Preview** -- shows the composed `values.yaml` and diffs it against any existing install. Nothing is applied yet.
-4. **Preflight + install** -- runs `lenny-ctl preflight`, then `helm install` (or `helm upgrade`), then `lenny-ctl bootstrap --from-values`.
-5. **Smoke test** -- creates a session against the `chat` reference runtime and confirms the full round trip works.
+The same preflight Job, schema migrations, and bootstrap Job described in [Helm Chart Installation](#helm-chart-installation) run as Helm hooks during the `helm install` the wizard invokes.
 
 ### Answer files
 
-Any interactive session can be saved to an answer file:
+Any interactive run can be saved to an answer file with `--save-answers`:
 
 ```bash
 lenny-ctl install --save-answers ./answers.yaml
 ```
 
-The saved file is plain YAML. Replay it non-interactively in CI:
+The saved file is plain YAML. Replay it non-interactively in CI with `--non-interactive`:
 
 ```bash
-lenny-ctl install --non-interactive --answers ./answers.yaml
+lenny-ctl install --non-interactive --answer-file ./answers.yaml
 ```
 
-The chart also ships answer-file bases for common scenarios -- `answers/eks-small-team.yaml`, `answers/gke-growth.yaml`, `answers/laptop.yaml`, and others. If you'd rather hand-write values, skip the wizard entirely and run `helm install -f answers/<base>.yaml -f values-<size>.yaml -f overrides.yaml`. Both paths are supported equally.
+The chart ships answer files under `charts/lenny/answers/`, one per capacity tier: `tier1-local.yaml`, `tier2-prod.yaml`, and `tier3-prod.yaml`. Use one directly, or copy it as a starting point. To hand-write values instead, skip the wizard and run `helm install -f presets/values-<tier>.yaml -f overrides.yaml`.
 
-### Upgrades
-
-Upgrades replay the answer file against the existing release:
-
-```bash
-lenny-ctl upgrade --answers ./answers.yaml
-```
-
-That runs preflight, diffs the composed values against the live release, and invokes `helm upgrade` once you approve.
+For the full wizard reference, the answer-file schema, and the tier presets, see [Install Wizard](install-wizard.html).
 
 ### Airgapped clusters
 
-`lenny-ctl install --offline` skips the cluster-reachability probes during detection. Preflight still runs against the target cluster; only detection is affected.
+`lenny-ctl install --offline` skips the cluster-reachability detection probes. The preflight Job still runs against the target cluster as part of `helm install`.
 
 ---
 
