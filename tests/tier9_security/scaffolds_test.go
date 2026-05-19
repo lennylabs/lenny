@@ -75,20 +75,9 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // pods. The remaining §12.9.3 scaffolds below name a control the live
 // cluster cannot exercise.
 
-// spec: 12.9.3
-// diagnosis: §12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD is implemented in
-// podsecurity.ValidateAgentPod, which rejects a non-adapter,
-// non-agent container that declares the lenny-cred-readers GID in
-// runAsGroup, and is unit-tested in pkg/podsecurity. The
-// lenny-pod-security webhook translates the per-container runAsGroup
-// into the validator. This e2e adversarial dry-run additionally needs
-// the lenny-webhook image on the Kind cluster rebuilt with the new
-// validator and the webhook redeployed.
-func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
-	t.Skip("§12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD is implemented in podsecurity.ValidateAgentPod " +
-		"and unit-tested in pkg/podsecurity; the e2e adversarial dry-run needs the lenny-webhook " +
-		"image on the Kind cluster rebuilt with the new validator and the webhook redeployed.")
-}
+// §12.9.3 Admission policy — cred-group overbroad rejection is
+// implemented in admission_cred_test.go against the live
+// lenny-pod-security webhook.
 
 // §12.9.3 Admission policy — sandboxclaim concurrency guard.
 func TestAdmissionSandboxClaimGuard(t *testing.T) {

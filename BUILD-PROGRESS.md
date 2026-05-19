@@ -133,9 +133,8 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   `ContainerSpec.RunAsGroup` and `PodSpec.CredentialContainerNames` carry the inputs, the
   `lenny-pod-security` webhook populates them from the agent-pod container convention (the
   containers named `adapter` and `runtime`), and `pkg/podsecurity` unit tests cover the
-  accept and reject paths. The tier-9 e2e `TestAdmissionPolicyCredGroupOverbroad` dry-run
-  still skips: it needs the `lenny-webhook` image on the Kind cluster rebuilt with the new
-  validator and the webhook redeployed.
+  accept and reject paths. The tier-9 e2e `TestAdmissionPolicyCredGroupOverbroad` drives an
+  adversarial dry-run through the live webhook on the Kind cluster and passes.
 
 ## Test status
 
