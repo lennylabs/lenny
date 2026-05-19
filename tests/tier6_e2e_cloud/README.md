@@ -114,13 +114,17 @@ and the GKE Sandbox node pool, `sqladmin` for `multi_zone_dr`, `cloudkms` for
 `bigquery` for `cloud_billing_export`, `iam` for the `cloud_oidc`
 service-account bindings, and `iamcredentials` and `sts` for CI federation.
 
-### Choose a region and check quotas
+### Region and quotas
 
-Use `us-central1`. It has multiple zones, supports GKE Sandbox, and supports
-Cloud SQL high availability. A new project's default quota covers a 3-node
-cluster. Check the `CPUS` and `SSD_TOTAL_GB` quotas for the region in the
-IAM and Admin console, and request an increase if a bring-up later reports a
-quota error.
+The cluster region is set by the Terraform under `deploy/terraform/cloud/gke/`.
+The test harness takes no region argument; the region lives in that Terraform
+configuration. Until it exists, `us-central1` is the proposed default: it has
+multiple zones, supports GKE Sandbox, and supports Cloud SQL high availability.
+
+The quota check is region-bound. `CPUS` and `SSD_TOTAL_GB` quotas are
+per-region, so check them for the region the Terraform targets in the IAM and
+Admin console, and request an increase if a bring-up later reports a quota
+error. A new project's default quota covers a 3-node cluster.
 
 ### Local authentication
 
@@ -210,13 +214,20 @@ account exists, and access is granted through IAM. The tier-6 suites use:
 The local SSO role and the CI role described below both need permissions for
 these services.
 
-### Choose a region and check quotas
+### Region and quotas
 
-Use `us-west-2` or `us-east-1`. Both have at least three Availability Zones,
-which `multi_zone_dr` requires. New accounts have low EC2 limits. In the
-Service Quotas console, request an increase for "Running On-Demand Standard
-instances" to at least 64 vCPU so the cluster and the sandbox node pool fit.
-EKS cluster count needs no increase.
+The cluster region is set by the Terraform under `deploy/terraform/cloud/eks/`.
+The test harness takes no region argument; the region lives in that Terraform
+configuration. Until it exists, `us-west-2` or `us-east-1` is the proposed
+default. Both have at least three Availability Zones, which `multi_zone_dr`
+requires.
+
+Two manual steps are region-bound and must use the same region as the
+Terraform: the region you enable IAM Identity Center in, and the `AWS_REGION`
+you export. New accounts have low EC2 limits, so in the Service Quotas console
+for that region request an increase for "Running On-Demand Standard instances"
+to at least 64 vCPU, enough for the cluster and the sandbox node pool. EKS
+cluster count needs no increase.
 
 ### Local authentication
 
@@ -325,12 +336,17 @@ sink of `cloud_billing_export`, `ManagedIdentity` for the `cloud_oidc` workload
 identity, `ContainerRegistry` for the runtime images, and `OperationalInsights`
 and `Insights` for `cloud_observability`.
 
-### Choose a region and check quotas
+### Region and quotas
 
-Use `eastus2` or `westus3`. Both have availability zones, which `multi_zone_dr`
-requires. Check the regional vCPU quota for the chosen VM family in the
-Quotas console, and request an increase if a bring-up later reports a quota
-error.
+The cluster region is set by the Terraform under `deploy/terraform/cloud/aks/`.
+The test harness takes no region argument; the region lives in that Terraform
+configuration. Until it exists, `eastus2` or `westus3` is the proposed
+default. Both have availability zones, which `multi_zone_dr` requires.
+
+The resource group created earlier with `az group create --location` is
+region-bound, so set its location to the same region the Terraform targets.
+Check the regional vCPU quota for the chosen VM family in the Quotas console,
+and request an increase if a bring-up later reports a quota error.
 
 ### Local authentication
 
