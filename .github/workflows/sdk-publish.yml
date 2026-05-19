@@ -199,7 +199,7 @@ jobs:
           python3 -m build --outdir "${GITHUB_WORKSPACE}/dist/python"
 
       - name: Publish to PyPI with Sigstore provenance
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1 (release branch HEAD)
         with:
           packages-dir: dist/python
           # PEP 740 attestations are generated and uploaded by default;
