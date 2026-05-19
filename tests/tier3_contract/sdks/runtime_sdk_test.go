@@ -20,17 +20,22 @@
 // interpreter against the example entrypoint; lenny-compliance execs
 // that wrapper exactly as it would a native binary. When the Node or
 // Python toolchain is absent the matching tests skip with a reason.
-// The quick-start scaffold test is skipped pending the
-// `lenny runtime init` subcommand.
+// The quick-start scaffold test exercises the §24.18 lenny runtime
+// init scaffolder.
 
 package sdks_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/cmd/lenny-ctl/runtimescaffold"
 )
 
 // runtimeRepoRoot walks up from the working directory to the module
@@ -423,8 +428,45 @@ func TestRuntimeSDKTelemetryPassThrough(t *testing.T) {
 }
 
 // spec: 15.7, 24.18 (runtime SDK quick-start)
-// diagnosis: the timed quick-start mirror needs the `lenny runtime
-// init` scaffold subcommand, which is not implemented.
+// diagnosis: the §24.18 lenny runtime init quick-start does not emit a
+// usable runtime skeleton. The test scaffolds a Go minimal runtime
+// through runtimescaffold.Generate, asserts it emits the §24.18 file
+// set, and asserts the generated entrypoint imports the runtime-author
+// SDK so the quick-start produces an SDK-based runtime rather than an
+// empty stub. The scaffold-then-build path for every Go cell is
+// covered by the cmd/lenny-ctl/runtimescaffold unit tests.
 func TestRuntimeSDKQuickStartTTHW(t *testing.T) {
-	t.Skip("not implemented: §24.18 runtime SDK quick-start TTHW — requires the `lenny runtime init` scaffold subcommand")
+	dir := t.TempDir()
+	start := time.Now()
+	var out, errb bytes.Buffer
+	code := runtimescaffold.Generate(runtimescaffold.Spec{
+		Name:     "tthw-demo",
+		Language: runtimescaffold.LangGo,
+		Template: runtimescaffold.TemplateMinimal,
+	}, dir, &out, &errb)
+	if code != 0 {
+		t.Fatalf("runtime init scaffold failed (exit %d): %s", code, errb.String())
+	}
+	elapsed := time.Since(start)
+	// The §24.18 quick-start is an offline scaffold; the five-minute
+	// time-to-hello-world target has ample headroom.
+	if elapsed > 5*time.Minute {
+		t.Errorf("scaffold took %s, over the five-minute quick-start target", elapsed)
+	}
+
+	root := filepath.Join(dir, "tthw-demo")
+	for _, f := range runtimescaffold.EmittedFiles(runtimescaffold.LangGo, runtimescaffold.TemplateMinimal) {
+		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
+			t.Errorf("the quick-start scaffold did not emit %s: %v", f, err)
+		}
+	}
+
+	mainGo, err := os.ReadFile(filepath.Join(root, "main.go"))
+	if err != nil {
+		t.Fatalf("read the scaffolded main.go: %v", err)
+	}
+	if !strings.Contains(string(mainGo), "github.com/lennylabs/runtime-sdk-go") {
+		t.Errorf("the scaffolded main.go does not import the runtime-author SDK")
+	}
+	t.Logf("§24.18 quick-start scaffolded a Go minimal runtime in %s", elapsed)
 }
