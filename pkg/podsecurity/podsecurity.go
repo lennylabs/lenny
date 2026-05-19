@@ -51,6 +51,15 @@ type PodSpec struct {
 	// cross-UID file-delivery path works.
 	SupplementalGroups []int64
 
+	// CredentialContainerNames lists the containers that legitimately
+	// carry the lenny-cred-readers GID: the adapter container, which
+	// writes the credential file, and the agent container, which reads
+	// it. §13.1 keeps that group membership deliberately narrow and
+	// rejects any other container that declares the GID. The webhook
+	// populates this from the agent-pod container convention; when the
+	// list is empty every container is treated as non-credential.
+	CredentialContainerNames []string
+
 	// Containers describes every container in the pod (init + main
 	// + sidecars). Each must satisfy the §13.1 container-level
 	// SecurityContext invariants.
@@ -67,6 +76,14 @@ type ContainerSpec struct {
 	Privileged               *bool
 	ReadOnlyRootFilesystem   *bool
 	RunAsNonRoot             *bool
+
+	// RunAsGroup is the container-level securityContext.runAsGroup.
+	// §13.1 forbids a non-adapter, non-agent container from declaring
+	// the lenny-cred-readers GID here: that GID is the credential-file
+	// read boundary and its container membership is deliberately narrow.
+	// supplementalGroups has no container-level field in the Kubernetes
+	// API, so runAsGroup is the per-container vector for this control.
+	RunAsGroup *int64
 
 	// SeccompProfileType is the container-level
 	// securityContext.seccompProfile.type. An empty string means the
@@ -119,6 +136,14 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 		violations = append(violations, "runAsNonRoot must be true (§13.1 User row)")
 	}
 
+	// §13.1 lenny-cred-readers membership boundary: only the adapter
+	// and agent containers may carry that GID. Build the allow-set the
+	// per-container cred-group check consults.
+	credentialContainer := make(map[string]bool, len(spec.CredentialContainerNames))
+	for _, name := range spec.CredentialContainerNames {
+		credentialContainer[name] = true
+	}
+
 	// §13.1 per-container invariants.
 	if len(spec.Containers) == 0 {
 		violations = append(violations, "pod must contain at least one container")
@@ -146,6 +171,15 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64) error {
 			violations = append(violations, fmt.Sprintf(
 				"container %q: seccompProfile.type must be %s, got %s (§13.1 pod-security baseline)",
 				c.Name, SeccompRuntimeDefault, describeSeccomp(effective),
+			))
+		}
+		// §13.1 lenny-cred-readers membership boundary: a container that
+		// is not the adapter or agent must not declare the cred-readers
+		// GID in runAsGroup.
+		if c.RunAsGroup != nil && *c.RunAsGroup == lennyCredReadersGID && !credentialContainer[c.Name] {
+			violations = append(violations, fmt.Sprintf(
+				"container %q declares the lenny-cred-readers GID %d in runAsGroup but is not the adapter or agent container (POD_SPEC_CRED_GROUP_OVERBROAD)",
+				c.Name, lennyCredReadersGID,
 			))
 		}
 	}

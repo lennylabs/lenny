@@ -75,14 +75,19 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // pods. The remaining §12.9.3 scaffolds below name a control the live
 // cluster cannot exercise.
 
-// §12.9.3 Admission policy — cred-group overbroad rejection.
+// spec: 12.9.3
+// diagnosis: §12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD is implemented in
+// podsecurity.ValidateAgentPod, which rejects a non-adapter,
+// non-agent container that declares the lenny-cred-readers GID in
+// runAsGroup, and is unit-tested in pkg/podsecurity. The
+// lenny-pod-security webhook translates the per-container runAsGroup
+// into the validator. This e2e adversarial dry-run additionally needs
+// the lenny-webhook image on the Kind cluster rebuilt with the new
+// validator and the webhook redeployed.
 func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
-	t.Skip("not implemented: §12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD — the live lenny-pod-security webhook " +
-		"validates the pod-level fsGroup and the per-container §13.1 invariants, but it does not reject a " +
-		"pod whose non-adapter, non-agent container declares the lenny-cred-readers GID via runAsGroup or " +
-		"supplementalGroups: podsecurity.ValidateAgentPod has no per-container cred-group check, and a " +
-		"server dry-run of such a pod is admitted. Exercising this control as an adversarial case needs " +
-		"the cred-group check added to the pod-security validator first")
+	t.Skip("§12.9.3 POD_SPEC_CRED_GROUP_OVERBROAD is implemented in podsecurity.ValidateAgentPod " +
+		"and unit-tested in pkg/podsecurity; the e2e adversarial dry-run needs the lenny-webhook " +
+		"image on the Kind cluster rebuilt with the new validator and the webhook redeployed.")
 }
 
 // §12.9.3 Admission policy — sandboxclaim concurrency guard.

@@ -126,13 +126,16 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   blocker; the live double-claim race is covered by `tests/tier8_chaos/concurrency_test.go`
   against the API server.
 
-- **§13.1 `POD_SPEC_CRED_GROUP_OVERBROAD` control not implemented** (found in Wave 6,
-  Phase 14 work). §13.1 requires the `lenny-pod-security` webhook to reject an agent-pod
-  template whose non-adapter, non-agent container declares the `lenny-cred-readers` GID in
-  `runAsGroup` or `supplementalGroups`. `podsecurity.ValidateAgentPod` has no per-container
-  cred-group check and `ContainerSpec` carries no `RunAsGroup` or `SupplementalGroups`
-  field, so a pod with an over-broad cred-group is admitted. This is unfinished Phase 14
-  hardening; the tier-9 `TestAdmissionPolicyCredGroupOverbroad` scaffold names it.
+- **§13.1 `POD_SPEC_CRED_GROUP_OVERBROAD` control** (found in Wave 6) — RESOLVED.
+  `podsecurity.ValidateAgentPod` now rejects a non-adapter, non-agent container that
+  declares the `lenny-cred-readers` GID in `runAsGroup`. That is the per-container vector;
+  `supplementalGroups` has no container-level field in the Kubernetes API.
+  `ContainerSpec.RunAsGroup` and `PodSpec.CredentialContainerNames` carry the inputs, the
+  `lenny-pod-security` webhook populates them from the agent-pod container convention (the
+  containers named `adapter` and `runtime`), and `pkg/podsecurity` unit tests cover the
+  accept and reject paths. The tier-9 e2e `TestAdmissionPolicyCredGroupOverbroad` dry-run
+  still skips: it needs the `lenny-webhook` image on the Kind cluster rebuilt with the new
+  validator and the webhook redeployed.
 
 ## Test status
 

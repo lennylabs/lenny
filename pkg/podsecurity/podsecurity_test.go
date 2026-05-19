@@ -39,6 +39,43 @@ func TestValidateAcceptsWellFormedAgentPod(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsCredGroupOverbroad asserts §13.1
+// POD_SPEC_CRED_GROUP_OVERBROAD: a container that is not the adapter or
+// agent must not declare the lenny-cred-readers GID in runAsGroup.
+func TestValidateRejectsCredGroupOverbroad(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.Containers = append(spec.Containers, ContainerSpec{
+		Name:                     "sidecar",
+		AllowPrivilegeEscalation: Ptr(false),
+		Privileged:               Ptr(false),
+		ReadOnlyRootFilesystem:   Ptr(true),
+		CapabilitiesDrop:         []string{"ALL"},
+		RunAsGroup:               Ptr[int64](lennyCredReadersGID),
+	})
+	err := ValidateAgentPod(spec, lennyCredReadersGID)
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *PodSecurityError, got %v", err)
+	}
+	if !pe.HasViolation("POD_SPEC_CRED_GROUP_OVERBROAD") {
+		t.Errorf("expected POD_SPEC_CRED_GROUP_OVERBROAD, got %v", pe.Violations)
+	}
+}
+
+// TestValidateAcceptsCredGroupOnCredentialContainer asserts the adapter
+// and agent containers MAY declare the lenny-cred-readers GID: they are
+// the §13.1 credential containers and the cross-UID file-delivery path
+// depends on their membership.
+func TestValidateAcceptsCredGroupOnCredentialContainer(t *testing.T) {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "agent"}
+	spec.Containers[0].RunAsGroup = Ptr[int64](lennyCredReadersGID)
+	if err := ValidateAgentPod(spec, lennyCredReadersGID); err != nil {
+		t.Errorf("the adapter container may carry the cred-readers GID, got %v", err)
+	}
+}
+
 func TestValidateRejectsHostSharing(t *testing.T) {
 	cases := []struct {
 		name string

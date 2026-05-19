@@ -43,6 +43,16 @@ func PodSecurity(credReadersGID int64) Decider {
 	}
 }
 
+// Agent-pod credential-container names. The Sandbox podspec builder
+// names the §4.7 adapter container "adapter" and the agent runtime
+// container "runtime"; §13.1 confines the lenny-cred-readers GID to
+// exactly those two. The sidecar deployment model emits both; the
+// embedded model emits only "runtime".
+const (
+	adapterContainerName = "adapter"
+	agentContainerName   = "runtime"
+)
+
 // translatePodSpec projects a Kubernetes Pod into the transport-agnostic
 // podsecurity.PodSpec the §13.1 validator consults. Init containers and
 // regular containers are both flattened into the validator's container
@@ -68,6 +78,9 @@ func translatePodSpec(pod *corev1.Pod) podsecurity.PodSpec {
 	}
 	for _, c := range pod.Spec.Containers {
 		spec.Containers = append(spec.Containers, translateContainer(c))
+		if c.Name == adapterContainerName || c.Name == agentContainerName {
+			spec.CredentialContainerNames = append(spec.CredentialContainerNames, c.Name)
+		}
 	}
 	return spec
 }
@@ -81,6 +94,7 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 		out.Privileged = sc.Privileged
 		out.ReadOnlyRootFilesystem = sc.ReadOnlyRootFilesystem
 		out.RunAsNonRoot = sc.RunAsNonRoot
+		out.RunAsGroup = sc.RunAsGroup
 		out.SeccompProfileType = seccompType(sc.SeccompProfile)
 		if caps := sc.Capabilities; caps != nil {
 			out.CapabilitiesDrop = capabilityStrings(caps.Drop)
