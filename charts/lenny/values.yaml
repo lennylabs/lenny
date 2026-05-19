@@ -305,6 +305,10 @@ adapter:
 # HPA-compatible posture.
 gateway:
   replicas: 2
+  # noEnvironmentPolicy is the §10.6 platform default applied when a
+  # session names no environment. It MUST be "deny-all" or "allow-all";
+  # the gateway refuses to start when it is unset (LENNY_CONFIG_MISSING).
+  noEnvironmentPolicy: deny-all
   # grpcPort is the pod-to-gateway gRPC control-channel port (§13.2),
   # admitted by the agent-namespace allow-pod-egress-base NetworkPolicy.
   # The gateway serves the §8.6 GatewayControl listener on this port.

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT
+#
+# Helm values overlay for the tier-5 e2e Kind cluster. It points every
+# workload at the locally-built `lenny-*:e2e` images (loaded onto the
+# cluster nodes by `kind load docker-image`) with `pullPolicy: Never`
+# so the install never reaches a remote registry, and runs the gateway
+# in dev mode so it starts without external Postgres, Redis, or MinIO.
+#
+# This overlay is for the e2e test harness only. Production installs
+# use the chart defaults with real images and external data stores.
+
+controller:
+  image:
+    repository: lenny-controller
+    tag: e2e
+    pullPolicy: Never
+
+admissionWebhooks:
+  image:
+    repository: lenny-webhook
+    tag: e2e
+    pullPolicy: Never
+
+tokenService:
+  image:
+    repository: lenny-token-service
+    tag: e2e
+    pullPolicy: Never
+
+gateway:
+  image:
+    repository: lenny-gateway
+    tag: e2e
+    pullPolicy: Never
+
+ops:
+  image:
+    repository: lenny-ops
+    tag: e2e
+    pullPolicy: Never
+
+preflight:
+  image:
+    repository: lenny-preflight
+    tag: e2e
+    pullPolicy: Never
+
+backups:
+  image:
+    repository: lenny-backup
+    tag: e2e
+    pullPolicy: Never
+
+bootstrap:
+  image:
+    repository: lenny-ctl
+    tag: e2e
+    pullPolicy: Never
+
+# Dev mode: the gateway falls back to in-memory stores when no
+# Postgres/Redis/MinIO connection is configured, which is the e2e
+# default for the control-plane-only smoke install.
+global:
+  devMode: true

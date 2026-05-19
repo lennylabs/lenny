@@ -110,6 +110,10 @@ spec:
           args:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
+            - --no-environment-policy={{ .Values.gateway.noEnvironmentPolicy }}
+            {{- if .Values.global.devMode }}
+            - --dev-mode
+            {{- end }}
             {{- if .Values.features.llmProxy }}
             - --llm-proxy-addr=:{{ .Values.gateway.llmProxyPort }}
             {{- end }}
