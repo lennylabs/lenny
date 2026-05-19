@@ -2,21 +2,26 @@
 
 //go:build contract
 
-// Tier-3 SDK contract suite for the Go runtime-author SDK
-// (sdks/runtime/go). The SDK wraps the §15.4.1 adapter binary
+// Tier-3 SDK contract suite for the Lenny runtime-author SDKs in Go
+// (sdks/runtime/go), Python (sdks/runtime/python), and TypeScript
+// (sdks/runtime/typescript). Each SDK wraps the §15.4.1 adapter binary
 // protocol, the §15.4.3 intra-pod MCP integration, the §8.5 platform
 // MCP tool surface, and the Full-level lifecycle channel.
 //
 // The implemented tests build an SDK-based example runtime
-// (sdks/runtime/go/example/{echo,delegate,lifecycle}) and the
-// lenny-compliance conformance harness, then run the harness against
-// the runtime at the integration level the example claims. A passing
-// run with zero failed checks is the contract.
+// (echo at Basic level, delegate at Standard level, lifecycle at Full
+// level) and the lenny-compliance conformance harness, then run the
+// harness against the runtime at the integration level the example
+// claims. A passing run with zero failed checks is the contract.
 //
-// The Python and TypeScript runtime SDKs are not part of this
-// repository; their tests remain skipped with a skip reason naming the
-// missing package. The quick-start scaffold test is skipped pending
-// the `lenny runtime init` subcommand.
+// The Go example runtimes compile to a single binary. The Python and
+// TypeScript example runtimes are interpreted, so the suite builds the
+// package and emits a small executable wrapper that execs the
+// interpreter against the example entrypoint; lenny-compliance execs
+// that wrapper exactly as it would a native binary. When the Node or
+// Python toolchain is absent the matching tests skip with a reason.
+// The quick-start scaffold test is skipped pending the
+// `lenny runtime init` subcommand.
 
 package sdks_test
 
@@ -54,6 +59,115 @@ func buildRuntimeBinary(t *testing.T, pkg string) string {
 		t.Fatalf("build %s: %v\n%s", pkg, err, combined)
 	}
 	return out
+}
+
+// writeWrapper writes an executable POSIX shell script that runs
+// command and returns its path. lenny-compliance execs a single
+// program; a Python or TypeScript example needs the interpreter
+// prepended, so the suite wraps the invocation in a one-line script.
+func writeWrapper(t *testing.T, name, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper %s: %v", name, err)
+	}
+	return path
+}
+
+// pythonRuntimeRoot is the Python runtime-author SDK package root.
+func pythonRuntimeRoot(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(runtimeRepoRoot(t), "sdks", "runtime", "python")
+}
+
+// typeScriptRuntimeRoot is the TypeScript runtime-author SDK package
+// root.
+func typeScriptRuntimeRoot(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(runtimeRepoRoot(t), "sdks", "runtime", "typescript")
+}
+
+// requireTool resolves a toolchain binary on PATH or skips the test
+// with a reason. The runtime SDK conformance tests for an interpreted
+// language cannot run when its toolchain is not installed.
+func requireTool(t *testing.T, tool string) string {
+	t.Helper()
+	path, err := exec.LookPath(tool)
+	if err != nil {
+		t.Skipf("not implemented here: %s is not on PATH; the runtime SDK conformance test for this language needs it", tool)
+	}
+	return path
+}
+
+// buildPythonRuntime verifies the Python runtime-author SDK imports and
+// returns an executable wrapper that execs the named example runtime
+// module (echo, delegate, lifecycle) under the SDK package root. The
+// SDK is standard-library-only, so no install step is required; the
+// wrapper sets PYTHONPATH to the package root.
+func buildPythonRuntime(t *testing.T, python, example string) string {
+	t.Helper()
+	root := pythonRuntimeRoot(t)
+	module := "lenny_runtime.examples." + example
+
+	// A compile + import check fails fast with a clear message when the
+	// package has a syntax or import error, rather than surfacing it as
+	// an opaque lenny-compliance check failure.
+	check := exec.Command(python, "-c", "import "+module)
+	check.Dir = root
+	check.Env = append(os.Environ(), "PYTHONPATH="+root)
+	if combined, err := check.CombinedOutput(); err != nil {
+		t.Fatalf("python import %s: %v\n%s", module, err, combined)
+	}
+
+	script := "#!/bin/sh\n" +
+		"export PYTHONPATH=" + shellQuote(root) + "\n" +
+		"exec " + shellQuote(python) + " -m " + module + " \"$@\"\n"
+	return writeWrapper(t, "py-"+example, script)
+}
+
+// buildTypeScriptRuntime installs the TypeScript runtime-author SDK
+// dependencies, compiles it to runnable JavaScript, and returns an
+// executable wrapper that execs the named example runtime (echo,
+// delegate, lifecycle) with Node. The build runs once per test; it is
+// the dominant cost of the TypeScript cases.
+func buildTypeScriptRuntime(t *testing.T, node, npm, example string) string {
+	t.Helper()
+	root := typeScriptRuntimeRoot(t)
+
+	install := exec.Command(npm, "install", "--no-audit", "--no-fund")
+	install.Dir = root
+	if combined, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("npm install: %v\n%s", err, combined)
+	}
+	build := exec.Command(npm, "run", "build")
+	build.Dir = root
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("npm run build: %v\n%s", err, combined)
+	}
+
+	entry := filepath.Join(root, "dist", "examples", example, "main.js")
+	if _, err := os.Stat(entry); err != nil {
+		t.Fatalf("built example %s missing: %v", entry, err)
+	}
+	script := "#!/bin/sh\n" +
+		"exec " + shellQuote(node) + " " + shellQuote(entry) + " \"$@\"\n"
+	return writeWrapper(t, "ts-"+example, script)
+}
+
+// shellQuote wraps s in single quotes for safe inclusion in a POSIX
+// shell script, escaping any embedded single quote.
+func shellQuote(s string) string {
+	out := make([]rune, 0, len(s)+2)
+	out = append(out, '\'')
+	for _, r := range s {
+		if r == '\'' {
+			out = append(out, '\'', '\\', '\'', '\'')
+			continue
+		}
+		out = append(out, r)
+	}
+	out = append(out, '\'')
+	return string(out)
 }
 
 // complianceReport is the lenny-compliance JSON report. Only the
@@ -140,18 +254,33 @@ func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	assertAllPassed(t, report)
 }
 
-// spec: 15.7 (Python runtime SDK)
-// diagnosis: the Python runtime SDK (lenny-runtime / runtime-sdk-python)
-// is not part of this repository; there is no package to exercise.
+// spec: 15.4.1, 15.7 (Python runtime SDK, Basic level)
+// diagnosis: the Python SDK echo runtime
+// (sdks/runtime/python, lenny_runtime.examples.echo) must clear every
+// Basic-level lenny-compliance check. A failed check means the Python
+// SDK §15.4.1 frame loop does not honor the contract. The test skips
+// when python3 is not on PATH.
 func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
-	t.Skip("not implemented: §15.7 Python runtime SDK — requires the lenny-runtime PyPI package, which is not in this repository")
+	python := requireTool(t, "python3")
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+	runtimeBin := buildPythonRuntime(t, python, "echo")
+	report := runCompliance(t, compliance, runtimeBin, "basic")
+	assertAllPassed(t, report)
 }
 
-// spec: 15.7 (TypeScript runtime SDK)
-// diagnosis: the TypeScript runtime SDK (@lennylabs/runtime-sdk) is not
-// part of this repository; there is no package to exercise.
+// spec: 15.4.1, 15.7 (TypeScript runtime SDK, Basic level)
+// diagnosis: the TypeScript SDK echo runtime
+// (sdks/runtime/typescript, examples/echo) must clear every Basic-level
+// lenny-compliance check. A failed check means the TypeScript SDK
+// §15.4.1 frame loop does not honor the contract. The test skips when
+// the Node toolchain is not on PATH.
 func TestRuntimeSDKAdapterBinaryProtocolTypeScript(t *testing.T) {
-	t.Skip("not implemented: §15.7 TypeScript runtime SDK — requires the @lennylabs/runtime-sdk npm package, which is not in this repository")
+	node := requireTool(t, "node")
+	npm := requireTool(t, "npm")
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+	runtimeBin := buildTypeScriptRuntime(t, node, npm, "echo")
+	report := runCompliance(t, compliance, runtimeBin, "basic")
+	assertAllPassed(t, report)
 }
 
 // spec: 15.4.3, 15.7 (Go runtime SDK, Standard level)
@@ -165,6 +294,35 @@ func TestRuntimeSDKAdapterBinaryProtocolTypeScript(t *testing.T) {
 func TestRuntimeSDKMCPSocketStandardLevel(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/delegate")
+	report := runCompliance(t, compliance, runtimeBin, "standard")
+	assertAllPassed(t, report)
+}
+
+// spec: 15.4.3, 15.7 (Python runtime SDK, Standard level)
+// diagnosis: the Python SDK delegate runtime
+// (lenny_runtime.examples.delegate) is started at the Standard level.
+// It must complete the §15.4.3 nonce handshake against the platform and
+// connector MCP servers and invoke the §8.5 platform tools through the
+// SDK helpers. The test skips when python3 is not on PATH.
+func TestRuntimeSDKMCPSocketStandardLevelPython(t *testing.T) {
+	python := requireTool(t, "python3")
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+	runtimeBin := buildPythonRuntime(t, python, "delegate")
+	report := runCompliance(t, compliance, runtimeBin, "standard")
+	assertAllPassed(t, report)
+}
+
+// spec: 15.4.3, 15.7 (TypeScript runtime SDK, Standard level)
+// diagnosis: the TypeScript SDK delegate runtime (examples/delegate) is
+// started at the Standard level. It must complete the §15.4.3 nonce
+// handshake against the platform and connector MCP servers and invoke
+// the §8.5 platform tools through the SDK helpers. The test skips when
+// the Node toolchain is not on PATH.
+func TestRuntimeSDKMCPSocketStandardLevelTypeScript(t *testing.T) {
+	node := requireTool(t, "node")
+	npm := requireTool(t, "npm")
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+	runtimeBin := buildTypeScriptRuntime(t, node, npm, "delegate")
 	report := runCompliance(t, compliance, runtimeBin, "standard")
 	assertAllPassed(t, report)
 }
@@ -183,30 +341,54 @@ func TestRuntimeSDKLifecycleFullLevel(t *testing.T) {
 	assertAllPassed(t, report)
 }
 
-// spec: 15.4.1, 15.7 (Go runtime SDK workspace helpers)
-// diagnosis: the SDK exposes the §15.4.1 adapter-local tool helpers
-// (ReadFile, WriteFile, ListDir, DeleteFile via AdapterTools). The
-// lenny-compliance harness does not ship an adversarial path-traversal
-// corpus that drives the helpers; the helpers are unit-tested in
-// sdks/runtime/go/runtime instead.
-func TestRuntimeSDKWorkspaceHelpers(t *testing.T) {
-	t.Skip("not implemented: §15.7 runtime SDK workspace helpers — the AdapterTools helpers ship in sdks/runtime/go/runtime, but the lenny-compliance harness has no path-traversal corpus to drive them")
+// spec: 15.4.3, 15.7 (Python and TypeScript runtime SDK, Full level)
+// diagnosis: the Python (lenny_runtime.examples.lifecycle) and
+// TypeScript (examples/lifecycle) SDK lifecycle runtimes are started at
+// the Full level. Each must open the lifecycle channel, complete the
+// handshake, and answer the checkpoint, interrupt, credential-rotation,
+// and deadline events. A subtest skips when its toolchain is absent.
+func TestRuntimeSDKLifecycleFullLevelInterpreted(t *testing.T) {
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+	t.Run("python", func(t *testing.T) {
+		python := requireTool(t, "python3")
+		runtimeBin := buildPythonRuntime(t, python, "lifecycle")
+		report := runCompliance(t, compliance, runtimeBin, "full")
+		assertAllPassed(t, report)
+	})
+	t.Run("typescript", func(t *testing.T) {
+		node := requireTool(t, "node")
+		npm := requireTool(t, "npm")
+		runtimeBin := buildTypeScriptRuntime(t, node, npm, "lifecycle")
+		report := runCompliance(t, compliance, runtimeBin, "full")
+		assertAllPassed(t, report)
+	})
 }
 
-// spec: 8.5, 15.7 (Go runtime SDK delegation tools)
+// spec: 15.4.1, 15.7 (runtime SDK workspace helpers)
+// diagnosis: each SDK exposes the §15.4.1 adapter-local tool helpers
+// (read_file, write_file, list_dir, delete_file). The lenny-compliance
+// harness does not ship an adversarial path-traversal corpus that
+// drives the helpers; the helpers ship in every SDK and are exercised
+// by the SDKs' own unit tests instead.
+func TestRuntimeSDKWorkspaceHelpers(t *testing.T) {
+	t.Skip("not implemented: §15.7 runtime SDK workspace helpers — the adapter-local tool helpers ship in each SDK, but the lenny-compliance harness has no path-traversal corpus to drive them")
+}
+
+// spec: 8.5, 15.7 (runtime SDK delegation tools)
 // diagnosis: the SDK lenny/delegate_task wrapper, budget metadata
 // propagation, and child-result decoding are exercised by the
-// Standard-level delegate runtime and by the unit tests in
-// sdks/runtime/go/runtime. This dedicated case is covered there.
+// Standard-level delegate runtimes in all three languages. This
+// dedicated case is covered by the Standard-level tests above.
 func TestRuntimeSDKDelegationTools(t *testing.T) {
-	t.Skip("covered: §8.5 runtime SDK delegation is exercised by TestRuntimeSDKMCPSocketStandardLevel and the sdks/runtime/go/runtime unit tests")
+	t.Skip("covered: §8.5 runtime SDK delegation is exercised by the Go, Python, and TypeScript Standard-level tests")
 }
 
-// spec: 15.4.1, 15.7 (Go runtime SDK heartbeat handling)
-// diagnosis: the SDK answers a §15.4.1 heartbeat with heartbeat_ack
+// spec: 15.4.1, 15.7 (runtime SDK heartbeat handling)
+// diagnosis: each SDK answers a §15.4.1 heartbeat with heartbeat_ack
 // without runtime-author intervention. The Basic-level heartbeat check
-// in lenny-compliance asserts this; a failure means the SDK loop drops
-// the heartbeat frame.
+// in lenny-compliance asserts this for the Go SDK; a failure means the
+// SDK loop drops the heartbeat frame. The Python and TypeScript SDKs
+// are checked by their Basic-level tests above.
 func TestRuntimeSDKHeartbeatHandling(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/echo")
@@ -216,11 +398,12 @@ func TestRuntimeSDKHeartbeatHandling(t *testing.T) {
 	}
 }
 
-// spec: 15.4.1, 15.7 (Go runtime SDK graceful shutdown)
-// diagnosis: the SDK exits cleanly within deadline_ms of a §15.4.1
+// spec: 15.4.1, 15.7 (runtime SDK graceful shutdown)
+// diagnosis: each SDK exits cleanly within deadline_ms of a §15.4.1
 // shutdown frame. The Basic-level shutdown check in lenny-compliance
-// asserts this; a failure means the SDK loop does not honor the
-// shutdown deadline.
+// asserts this for the Go SDK; a failure means the SDK loop does not
+// honor the shutdown deadline. The Python and TypeScript SDKs are
+// checked by their Basic-level tests above.
 func TestRuntimeSDKGracefulShutdown(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/echo")
@@ -230,16 +413,16 @@ func TestRuntimeSDKGracefulShutdown(t *testing.T) {
 	}
 }
 
-// spec: 16.3, 15.7 (Go runtime SDK telemetry pass-through)
-// diagnosis: the SDK exposes lenny/set_tracing_context through the
-// Tools.SetTracingContext helper. The lenny-compliance harness does not
-// verify OTel context propagation end to end; that path is not driven
-// by an automated check.
+// spec: 16.3, 15.7 (runtime SDK telemetry pass-through)
+// diagnosis: each SDK exposes lenny/set_tracing_context through the
+// platform tool helpers. The lenny-compliance harness does not verify
+// OTel context propagation end to end; that path is not driven by an
+// automated check.
 func TestRuntimeSDKTelemetryPassThrough(t *testing.T) {
-	t.Skip("not implemented: §15.7 runtime SDK telemetry — Tools.SetTracingContext ships in sdks/runtime/go/runtime, but lenny-compliance has no OTel context-propagation check")
+	t.Skip("not implemented: §15.7 runtime SDK telemetry — the set_tracing_context helper ships in each SDK, but lenny-compliance has no OTel context-propagation check")
 }
 
-// spec: 15.7, 24.18 (Go runtime SDK quick-start)
+// spec: 15.7, 24.18 (runtime SDK quick-start)
 // diagnosis: the timed quick-start mirror needs the `lenny runtime
 // init` scaffold subcommand, which is not implemented.
 func TestRuntimeSDKQuickStartTTHW(t *testing.T) {

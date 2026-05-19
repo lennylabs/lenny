@@ -1,0 +1,40 @@
+{
+  "name": "@lennylabs/runtime-sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript runtime-author SDK for the Lenny agent-session platform",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lennylabs/runtime-sdk-ts.git"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "bin": {
+    "lenny-runtime-example-echo": "./dist/examples/echo/main.js",
+    "lenny-runtime-example-delegate": "./dist/examples/delegate/main.js",
+    "lenny-runtime-example-lifecycle": "./dist/examples/lifecycle/main.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
