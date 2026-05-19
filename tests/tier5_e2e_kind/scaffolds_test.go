@@ -142,7 +142,8 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = c.KubectlOut(t, "uncordon", node)
 	})
-	if out, err := c.KubectlOut(t,
+	if out, err := c.KubectlOut(
+		t,
 		"drain", node,
 		"--delete-emptydir-data", "--ignore-daemonsets", "--force",
 		"--grace-period=10", "--timeout=60s",
@@ -295,7 +296,8 @@ func TestCrossEnvironmentDelegation(t *testing.T) {
 // install runs without --agent-namespace.
 func lookupBoundPodForSession(t *testing.T, c *kind.Cluster, sessionID string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", scaffoldsAgentNamespace, "get", "sandboxclaim",
 		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.sandboxRef}{\"\\n\"}{end}",
 	)
@@ -320,7 +322,8 @@ func lookupBoundPodForSession(t *testing.T, c *kind.Cluster, sessionID string) s
 // kubectl read failure).
 func lookupPodNode(t *testing.T, c *kind.Cluster, podName string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", scaffoldsAgentNamespace, "get", "pod", podName,
 		"-o", "jsonpath={.spec.nodeName}",
 	)
@@ -334,7 +337,8 @@ func lookupPodNode(t *testing.T, c *kind.Cluster, podName string) string {
 // read from the pod's lenny.dev/pool label.
 func lookupPodPoolLabel(t *testing.T, c *kind.Cluster, podName string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", scaffoldsAgentNamespace, "get", "pod", podName,
 		"-o", "jsonpath={.metadata.labels.lenny\\.dev/pool}",
 	)
@@ -350,7 +354,8 @@ func lookupPodPoolLabel(t *testing.T, c *kind.Cluster, podName string) string {
 // signal.
 func countIdleSandboxesInPool(t *testing.T, c *kind.Cluster, pool string) int {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", scaffoldsAgentNamespace, "get", "sandbox",
 		"-l", "lenny.dev/pool="+pool,
 		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\n\"}{end}",

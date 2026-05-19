@@ -142,7 +142,8 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 // the gateway's §4.6 binder during session start.
 func lookupBoundPod(t *testing.T, c *kind.Cluster, sessionID string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", agentNamespace, "get", "sandboxclaim",
 		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.sandboxRef}{\"\\n\"}{end}",
 	)
@@ -165,7 +166,8 @@ func lookupBoundPod(t *testing.T, c *kind.Cluster, sessionID string) string {
 // from the pod's lenny.dev/pool label.
 func lookupPodPool(t *testing.T, c *kind.Cluster, podName string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", agentNamespace, "get", "pod", podName,
 		"-o", "jsonpath={.metadata.labels.lenny\\.dev/pool}",
 	)
@@ -180,7 +182,8 @@ func lookupPodPool(t *testing.T, c *kind.Cluster, podName string) string {
 // minWarm idle Sandboxes per pool.
 func countIdlePodsInPool(t *testing.T, c *kind.Cluster, pool string) int {
 	t.Helper()
-	out, err := c.KubectlOut(t,
+	out, err := c.KubectlOut(
+		t,
 		"-n", agentNamespace, "get", "sandbox",
 		"-l", "lenny.dev/pool="+pool,
 		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\n\"}{end}",

@@ -187,7 +187,8 @@ func TestQuotaEvaluator_InChain(t *testing.T) {
 func TestAuditSink_RecordsRejection(t *testing.T) {
 	chains := audit.NewChainSet()
 	sink := NewAuditSink(NewChainSetAppender(chains, nil), nil)
-	err := sink.RecordRejection(context.Background(),
+	err := sink.RecordRejection(
+		context.Background(),
 		RejectionContext{TenantID: "acme", CallerSub: "alice", Phase: interceptor.PhasePostAuth},
 		interceptor.Result{Action: interceptor.ActionReject, Code: CodeQuotaExceeded, Reason: "quota exhausted"},
 	)

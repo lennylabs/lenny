@@ -54,13 +54,17 @@ func TestStateTamperedSignatureRejected(t *testing.T) {
 	}
 	nonce, sig, _ := strings.Cut(state, ".")
 
-	// Flip the last character of the signature segment.
+	// Flip the FIRST character of the signature segment. The last
+	// character of a base64.RawURLEncoding string carries fewer bits
+	// than a middle character (its low bits are padding-zero), so
+	// flipping the last char can decode to the same bytes; the first
+	// character is always meaningful and a flip always changes the
+	// decoded signature.
 	sigRunes := []rune(sig)
-	last := len(sigRunes) - 1
-	if sigRunes[last] == 'A' {
-		sigRunes[last] = 'B'
+	if sigRunes[0] == 'A' {
+		sigRunes[0] = 'B'
 	} else {
-		sigRunes[last] = 'A'
+		sigRunes[0] = 'A'
 	}
 	tampered := nonce + "." + string(sigRunes)
 	if err := s.Verify(tampered); err != ErrStateSignatureInvalid {

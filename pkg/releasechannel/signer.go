@@ -51,7 +51,8 @@ const envelopeVersion = "v1"
 
 // Marshal returns the envelope's wire form.
 func (e SignatureEnvelope) Marshal() string {
-	return fmt.Sprintf("%s;keyId=%s;alg=ed25519;sig=%s",
+	return fmt.Sprintf(
+		"%s;keyId=%s;alg=ed25519;sig=%s",
 		envelopeVersion, e.KeyID,
 		base64.StdEncoding.EncodeToString(e.Signature),
 	)

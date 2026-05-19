@@ -298,7 +298,8 @@ func (r *CARotation) RetireOldCA() error {
 				"overlap window still open: now=%s, closes at %s (remaining %s)",
 				now.UTC().Format(time.RFC3339),
 				closes.UTC().Format(time.RFC3339),
-				closes.Sub(now)),
+				closes.Sub(now),
+			),
 		}
 	}
 	prev := r.stage

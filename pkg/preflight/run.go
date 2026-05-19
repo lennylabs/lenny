@@ -133,7 +133,8 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			})
 		}
 	} else {
-		report = append(report,
+		report = append(
+			report,
 			CheckResult{Name: "networkpolicy-selector-consistency", Decision: CheckSelectorConsistency(policies)},
 			CheckResult{Name: "networkpolicy-dns-podselector-parity", Decision: CheckDNSPodSelectorParity(policies)},
 			CheckResult{Name: "networkpolicy-ipblock-family-parity", Decision: CheckIPBlockFamilyParity(policies)},
@@ -152,7 +153,8 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 			})
 		}
 	} else {
-		report = append(report,
+		report = append(
+			report,
 			CheckResult{
 				Name:     "spiffe-trust-domain-uniqueness",
 				Decision: CheckSPIFFETrustDomainUniqueness(cfg.SPIFFETrustDomain, cfg.Namespace, gws),

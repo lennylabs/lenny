@@ -11,6 +11,7 @@
 package tier5_e2e_kind_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -94,28 +95,44 @@ func TestBootstrapFirstInstall(t *testing.T) {
 	t.Logf("Lenny Helm release status is %q; bootstrap hook chain present", status)
 }
 
-// helmReleaseStatus returns the deployment status of the `lenny` Helm
-// release in lenny-system by reading `helm status -o json`.
+// helmReleaseStatus returns the deployment status of the highest-
+// revision `lenny` Helm release in lenny-system. Helm stores one
+// release Secret per revision labelled with a monotonic `version`; the
+// highest-version row carries the current status. A re-installed
+// cluster has older revisions labelled `superseded`, so a simple "last
+// line" of kubectl output picks the wrong row when alphabetic name
+// ordering does not match the version order (v10 sorts before v2).
 func helmReleaseStatus(t *testing.T, c *kind.Cluster) (string, error) {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t, "get", "secret",
 		"-n", "lenny-system",
 		"-l", "owner=helm,name=lenny",
-		"-o", "jsonpath={range .items[*]}{.metadata.labels.status}{\"\\n\"}{end}",
+		"-o", "jsonpath={range .items[*]}{.metadata.labels.version}{\" \"}{.metadata.labels.status}{\"\\n\"}{end}",
 	)
 	if err != nil {
 		return "", err
 	}
-	// Helm stores one release Secret per revision; the label `status`
-	// on the highest-revision Secret is the current release status.
-	// For a clean first install there is a single Secret labelled
-	// status=deployed.
-	lines := strings.Fields(out)
-	if len(lines) == 0 {
+	var highestVersion int
+	var status string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		v, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		if v >= highestVersion {
+			highestVersion = v
+			status = fields[1]
+		}
+	}
+	if status == "" {
 		return "", errNoReleaseSecret
 	}
-	return lines[len(lines)-1], nil
+	return status, nil
 }
 
 // errNoReleaseSecret is returned when no Helm release Secret for the
