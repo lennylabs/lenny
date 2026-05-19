@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT
+
+// Command {{.Name}} is a Standard-level Lenny agent runtime built on the
+// Go runtime-author SDK. It echoes every inbound message back. Replace
+// the body of OnMessage with a model call to build a real agent.
+//
+// The handler implements the three Handler methods. The SDK drives the
+// adapter binary protocol around it: it reads inbound message frames,
+// invokes OnMessage, serializes the returned Reply into a response
+// frame, answers heartbeats, and exits on shutdown.
+//
+// This skeleton is generated at the Standard integration level: Run is
+// called with WithStandardLevel, so the SDK dials the platform MCP
+// server and connector MCP servers advertised in the adapter manifest.
+//
+// Exit codes: 0 success, 1 runtime error, 2 protocol error.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync/atomic"
+
+	runtime "github.com/lennylabs/runtime-sdk-go"
+)
+
+const (
+	exitOK            = 0
+	exitRuntimeError  = 1
+	exitProtocolError = 2
+)
+
+// handler is a Standard-level runtime.Handler. It holds a per-process
+// sequence counter so multi-message sessions can be correlated.
+type handler struct {
+	seq atomic.Uint64
+}
+
+// OnCreate receives the task-scoped context snapshot. This skeleton has
+// no task-scoped setup.
+func (h *handler) OnCreate(context.Context, runtime.CreateRequest) error {
+	return nil
+}
+
+// OnMessage echoes the inbound parts. Text parts are prefixed with the
+// per-session sequence number; non-text parts are returned unchanged.
+func (h *handler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
+	n := h.seq.Add(1)
+	in := msg.Envelope.Input
+	out := make([]runtime.OutputPart, 0, len(in))
+	for _, p := range in {
+		if p.Type == "text" && p.Inline != "" {
+			out = append(out, runtime.Text(fmt.Sprintf("[{{.Name}} seq=%d] %s", n, p.Inline)))
+			continue
+		}
+		out = append(out, p)
+	}
+	return runtime.Reply{Parts: out, Final: true}, nil
+}
+
+// OnTerminate runs once when the session ends. This skeleton has no
+// teardown.
+func (h *handler) OnTerminate(context.Context, runtime.TerminationReason) error {
+	return nil
+}
+
+func main() {
+	err := runtime.Run(&handler{}, runtime.WithStandardLevel())
+	if err == nil {
+		os.Exit(exitOK)
+	}
+	fmt.Fprintln(os.Stderr, err)
+	if runtime.ErrIsProtocol(err) {
+		os.Exit(exitProtocolError)
+	}
+	os.Exit(exitRuntimeError)
+}

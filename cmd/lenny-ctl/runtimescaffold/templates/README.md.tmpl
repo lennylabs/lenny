@@ -1,0 +1,43 @@
+# {{.Name}}
+
+A Lenny agent runtime, scaffolded by `lenny runtime init`.
+
+- Language: {{.Language}}
+- Template: {{.Template}}
+- Integration level: {{.IntegrationLevel}}
+
+## Layout
+
+| File | Purpose |
+|---|---|
+| `{{.EntrypointFile}}` | Runtime entrypoint. The message handler is an echo placeholder; replace it with the agent logic. |
+| `runtime.yaml` | Runtime definition (§5.1). Declares `integrationLevel: {{.IntegrationLevel}}`. |
+| `Dockerfile` | Container image build. |
+| `Makefile` | `build`, `test`, and `push` targets. |
+| `.github/workflows/ci.yml` | CI workflow that builds, tests, and publishes the image. |
+
+## Build and test
+
+```
+make build IMAGE={{.Image}}
+make test
+```
+
+## Validate
+
+`lenny runtime validate` checks the repository against the Runtime
+Adapter Specification (§15.4) and the `runtime.yaml` contract:
+
+```
+lenny runtime validate
+```
+
+## Publish
+
+`lenny runtime publish` pushes the image and registers the runtime with
+a gateway. It requires `LENNY_API_URL` and an admin token:
+
+```
+make push IMAGE={{.Image}}
+lenny runtime publish {{.Name}} --image {{.Image}}
+```

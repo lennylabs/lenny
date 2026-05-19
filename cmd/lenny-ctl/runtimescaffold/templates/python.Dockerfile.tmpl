@@ -1,0 +1,21 @@
+# Container image for the {{.Name}} runtime.
+#
+# The build stage installs the runtime and its dependencies into a
+# virtual environment; the runtime stage copies that environment and
+# runs as a non-root user.
+FROM python:3.12-slim AS build
+WORKDIR /src
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+FROM python:3.12-slim
+WORKDIR /app
+ENV PATH="/opt/venv/bin:$PATH"
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build /src/main.py ./main.py
+RUN useradd --create-home --uid 10001 runtime
+USER runtime
+ENTRYPOINT ["python", "main.py"]

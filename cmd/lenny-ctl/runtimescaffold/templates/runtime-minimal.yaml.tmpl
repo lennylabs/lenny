@@ -1,0 +1,27 @@
+# Runtime definition for {{.Name}} (§5.1).
+#
+# This is a Standard-level agent runtime: it speaks the adapter binary
+# protocol and connects to the platform MCP server. It declares
+# integrationLevel: standard. Register it with the gateway using
+# `lenny runtime publish {{.Name}} --image <ref>`.
+name: {{.Name}}
+image: {{.Image}}
+type: agent
+integrationLevel: standard
+capabilities:
+  interaction: multi_turn
+  injection:
+    supported: true
+    modes: [immediate, queued]
+  preConnect: false
+executionMode: session
+isolationProfile: sandboxed
+allowedResourceClasses: [small]
+limits:
+  maxSessionAge: 3600
+  maxUploadSize: 10MB
+  maxRequestInputWaitSeconds: 600
+defaultPoolConfig:
+  warmCount: 1
+  resourceClass: small
+  egressProfile: restricted

@@ -82,6 +82,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// shells out to helm. It is dispatched here so it shares the
 		// global-flag parsing but ignores the gateway client.
 		return cmdInstall(rest[1:], os.Stdin, stdout, stderr)
+	case "runtime":
+		// runtime init and validate are local; runtime publish reaches
+		// the gateway. The group is dispatched with the gateway client
+		// and ignores it for the local subcommands.
+		return cmdRuntime(ctx, client, rest[1:], stdout, stderr)
 	case "admin":
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
@@ -133,11 +138,15 @@ Gateway commands:
   version                               Print the gateway version
   bootstrap --from-values <f>           Apply a seed file (tenants/runtimes/users)
   install [--answer-file <f>]           Run the installation wizard (§17.6)
+  runtime init <name> --language <l> --template <t>   Scaffold a runtime repo
+  runtime validate [<path>]             Statically validate a runtime repo
+  runtime publish <name> --image <ref>  Push and register a runtime
   admin tenants list                    List tenants
   admin tenants get <id>                Get a tenant
   admin tenants create <id> [name]      Create a tenant
   admin runtimes list                   List runtimes
   admin runtimes get <name>             Get a runtime
+  admin runtimes register --manifest <f>  Register a runtime from a runtime.yaml
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
   admin circuit-breakers close <name>   Close a circuit breaker
@@ -311,7 +320,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 
 func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "lenny-ctl: runtimes requires a subcommand (list|get)")
+		fmt.Fprintln(stderr, "lenny-ctl: runtimes requires a subcommand (list|get|register)")
 		return 2
 	}
 	switch args[0] {
@@ -333,11 +342,60 @@ func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 			return 1
 		}
 		printJSON(stdout, out)
+	case "register":
+		// register creates a runtime definition from a runtime.yaml
+		// (POST /v1/admin/runtimes). `lenny runtime publish` wraps the
+		// same path, adding a docker push (§24.18).
+		return cmdRuntimesRegister(ctx, c, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown runtimes subcommand %q\n", args[0])
 		return 2
 	}
 	return 0
+}
+
+// cmdRuntimesRegister implements `lenny-ctl admin runtimes register`.
+// It reads a runtime.yaml manifest, optionally overrides the image, and
+// registers the runtime against the gateway via registerRuntime.
+func cmdRuntimesRegister(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
+	var manifestPath, image string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--manifest", "--from-file":
+			if i+1 >= len(args) {
+				fmt.Fprintf(stderr, "lenny-ctl: %s requires a path\n", args[i])
+				return 2
+			}
+			manifestPath, i = args[i+1], i+1
+		case "--image":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "lenny-ctl: --image requires a value")
+				return 2
+			}
+			image, i = args[i+1], i+1
+		default:
+			fmt.Fprintf(stderr, "lenny-ctl: unknown runtimes register flag %q\n", args[i])
+			return 2
+		}
+	}
+	if manifestPath == "" {
+		fmt.Fprintln(stderr, "lenny-ctl: runtimes register requires --manifest <runtime.yaml>")
+		return 2
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny-ctl: read %s: %v\n", manifestPath, err)
+		return 1
+	}
+	var body map[string]any
+	if err := yaml.Unmarshal(raw, &body); err != nil {
+		fmt.Fprintf(stderr, "lenny-ctl: %s is not valid YAML: %v\n", manifestPath, err)
+		return 1
+	}
+	if image != "" {
+		body["image"] = image
+	}
+	return registerRuntime(ctx, c, body, stdout, stderr)
 }
 
 // cmdCircuitBreakers implements the §24.7 circuit-breaker commands.

@@ -1,0 +1,30 @@
+# Makefile for the {{.Name}} runtime.
+#
+# IMAGE is the container reference the build, push, and publish targets
+# operate on. Override it on the command line:
+#
+#   make build IMAGE=ghcr.io/acme/runtime-{{.Name}}:dev
+
+IMAGE ?= {{.Image}}
+
+.PHONY: build test push publish
+
+# build compiles TypeScript to JavaScript and the container image.
+build:
+	npm ci
+	npm run build
+	docker build -t $(IMAGE) .
+
+# test type-checks the project. Add a test runner and replace this
+# target when the runtime grows a test suite.
+test:
+	npm run typecheck
+
+# push pushes the built image to its registry.
+push:
+	docker push $(IMAGE)
+
+# publish pushes the image and registers the runtime with the gateway.
+# It requires LENNY_API_URL and an admin token in LENNY_API_TOKEN.
+publish:
+	lenny runtime publish {{.Name}} --image $(IMAGE)

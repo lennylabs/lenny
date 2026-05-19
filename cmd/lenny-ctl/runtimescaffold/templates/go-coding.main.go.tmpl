@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: MIT
+
+// Command {{.Name}} is a Full-level coding-agent runtime built on the Go
+// runtime-author SDK. It follows the shared coding-agent pattern: the
+// session workspace is the repository root at /workspace/current, and
+// artifacts that must survive teardown are written to /workspace/output.
+//
+// The runtime is started with WithFullLevel, so the SDK opens the
+// lifecycle channel and completes the lifecycle_capabilities /
+// lifecycle_support handshake in addition to the Standard-level MCP
+// setup. The lifecycle hooks below are where a real coding agent
+// quiesces output for a checkpoint, reaches a safe interrupt point, and
+// rebinds rotated credentials.
+//
+// The message handler is an echo placeholder. Replace OnMessage with
+// the agent loop: read the workspace under workspaceCurrent, run the
+// model and tools, and write artifacts under workspaceOutput.
+//
+// Exit codes: 0 success, 1 runtime error, 2 protocol error.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync/atomic"
+
+	runtime "github.com/lennylabs/runtime-sdk-go"
+)
+
+const (
+	exitOK            = 0
+	exitRuntimeError  = 1
+	exitProtocolError = 2
+)
+
+// Workspace paths for the shared coding-agent pattern. The gateway
+// materializes the session workspace under workspaceCurrent before the
+// first message; the agent writes durable artifacts under
+// workspaceOutput.
+const (
+	workspaceCurrent = "/workspace/current"
+	workspaceOutput  = "/workspace/output"
+)
+
+// handler is a Full-level coding-agent runtime.Handler. The message path
+// is an echo placeholder; the coding behavior belongs in OnMessage.
+type handler struct {
+	seq atomic.Uint64
+}
+
+// OnCreate receives the task-scoped context snapshot. A coding agent
+// reads CreateRequest.WorkspacePlan here to learn which sources were
+// staged and which setup commands ran.
+func (h *handler) OnCreate(context.Context, runtime.CreateRequest) error {
+	return nil
+}
+
+// OnMessage echoes the inbound parts. Replace this body with the agent
+// loop over the workspace at workspaceCurrent.
+func (h *handler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
+	n := h.seq.Add(1)
+	in := msg.Envelope.Input
+	out := make([]runtime.OutputPart, 0, len(in))
+	for _, p := range in {
+		if p.Type == "text" && p.Inline != "" {
+			out = append(out, runtime.Text(fmt.Sprintf("[{{.Name}} seq=%d] %s", n, p.Inline)))
+			continue
+		}
+		out = append(out, p)
+	}
+	return runtime.Reply{Parts: out, Final: true}, nil
+}
+
+// OnTerminate runs once when the session ends. Flush pending artifacts
+// to workspaceOutput before returning.
+func (h *handler) OnTerminate(context.Context, runtime.TerminationReason) error {
+	return nil
+}
+
+func main() {
+	err := runtime.Run(
+		&handler{},
+		runtime.WithFullLevel(),
+		runtime.WithLifecycleHandlers(
+			// A checkpoint quiesces output before the SDK replies
+			// checkpoint_ready. Stop writing to the workspace here.
+			runtime.OnCheckpoint(func(string) error { return nil }),
+			// An interrupt brings the runtime to a safe stop point
+			// before the SDK replies interrupt_acknowledged.
+			runtime.OnInterrupt(func(string) error { return nil }),
+			// On rotation the SDK has already re-read the credential
+			// file; rebind the upstream client to the refreshed bundle.
+			runtime.OnCredentialsRotated(func(*runtime.CredentialBundle) {}),
+		),
+	)
+	if err == nil {
+		os.Exit(exitOK)
+	}
+	fmt.Fprintln(os.Stderr, err)
+	if runtime.ErrIsProtocol(err) {
+		os.Exit(exitProtocolError)
+	}
+	os.Exit(exitRuntimeError)
+}

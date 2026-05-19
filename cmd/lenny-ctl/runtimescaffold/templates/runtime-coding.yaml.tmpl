@@ -1,0 +1,53 @@
+# Runtime definition for {{.Name}} (§5.1).
+#
+# This is a Full-level coding-agent runtime. It follows the shared
+# coding-agent pattern: sandboxed isolation, the /workspace/current and
+# /workspace/output conventions, an allowlist setup-command policy, and
+# proxy-mode credential delivery. It declares integrationLevel: full
+# because clean interrupt, checkpoint/restore, and in-place credential
+# rotation depend on the lifecycle channel. Register it with the gateway
+# using `lenny runtime publish {{.Name}} --image <ref>`.
+name: {{.Name}}
+image: {{.Image}}
+type: agent
+integrationLevel: full
+capabilities:
+  interaction: multi_turn
+  injection:
+    supported: true
+    modes: [immediate, queued]
+  preConnect: false
+executionMode: session
+isolationProfile: sandboxed
+allowedResourceClasses: [small, medium]
+supportedProviders:
+  - anthropic_direct
+  - openai_direct
+credentialCapabilities:
+  hotRotation: true
+  proxyDialect: [anthropic, openai]
+limits:
+  maxSessionAge: 14400
+  maxUploadSize: 500MB
+  maxRequestInputWaitSeconds: 1800
+setupCommandPolicy:
+  mode: allowlist
+  shell: false
+  allowlist:
+    - npm ci
+    - npm install
+    - pnpm install
+    - yarn install
+    - pip install
+    - poetry install
+    - go mod download
+    - cargo fetch
+    - make
+  maxCommands: 10
+setupPolicy:
+  timeoutSeconds: 300
+  onTimeout: fail
+defaultPoolConfig:
+  warmCount: 1
+  resourceClass: medium
+  egressProfile: restricted

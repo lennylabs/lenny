@@ -1,0 +1,27 @@
+# Runtime definition for {{.Name}} (§5.1).
+#
+# This is a Basic-level agent runtime: it speaks the adapter binary
+# protocol over stdin/stdout only, with no platform MCP access and no
+# lifecycle channel. It declares integrationLevel: basic. Register it
+# with the gateway using `lenny runtime publish {{.Name}} --image <ref>`.
+name: {{.Name}}
+image: {{.Image}}
+type: agent
+integrationLevel: basic
+capabilities:
+  interaction: multi_turn
+  injection:
+    supported: true
+    modes: [immediate]
+  preConnect: false
+executionMode: session
+isolationProfile: sandboxed
+allowedResourceClasses: [small]
+limits:
+  maxSessionAge: 3600
+  maxUploadSize: 10MB
+  maxRequestInputWaitSeconds: 600
+defaultPoolConfig:
+  warmCount: 1
+  resourceClass: small
+  egressProfile: restricted

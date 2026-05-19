@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: MIT
+
+// Command {{.Name}} is a Full-level chat runtime built on the Go
+// runtime-author SDK. It follows the chat reference pattern: an empty
+// workspace, no shell, and LLM-proxy credential delivery. The runtime
+// turns each inbound message into a provider request and streams the
+// response back.
+//
+// The runtime is started with WithFullLevel, so the SDK opens the
+// lifecycle channel. The credentials-rotated hook is where the runtime
+// rebinds its provider client after the credential lease rotates; the
+// SDK has already re-read /run/lenny/credentials.json by the time the
+// hook runs.
+//
+// The message handler is an echo placeholder. Replace OnMessage with a
+// provider call: read the current credential bundle, send a
+// provider-dialect request through the LLM proxy, and return the
+// response as output parts.
+//
+// Exit codes: 0 success, 1 runtime error, 2 protocol error.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"sync/atomic"
+
+	runtime "github.com/lennylabs/runtime-sdk-go"
+)
+
+const (
+	exitOK            = 0
+	exitRuntimeError  = 1
+	exitProtocolError = 2
+)
+
+// handler is a Full-level chat runtime.Handler. The message path is an
+// echo placeholder; the chat behavior belongs in OnMessage.
+type handler struct {
+	seq atomic.Uint64
+}
+
+// OnCreate receives the task-scoped context snapshot. CreateRequest
+// carries the initial credential bundle for the provider lease.
+func (h *handler) OnCreate(context.Context, runtime.CreateRequest) error {
+	return nil
+}
+
+// OnMessage echoes the inbound parts. Replace this body with a provider
+// call routed through the LLM proxy.
+func (h *handler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
+	n := h.seq.Add(1)
+	in := msg.Envelope.Input
+	out := make([]runtime.OutputPart, 0, len(in))
+	for _, p := range in {
+		if p.Type == "text" && p.Inline != "" {
+			out = append(out, runtime.Text(fmt.Sprintf("[{{.Name}} seq=%d] %s", n, p.Inline)))
+			continue
+		}
+		out = append(out, p)
+	}
+	return runtime.Reply{Parts: out, Final: true}, nil
+}
+
+// OnTerminate runs once when the session ends. This skeleton has no
+// teardown.
+func (h *handler) OnTerminate(context.Context, runtime.TerminationReason) error {
+	return nil
+}
+
+func main() {
+	err := runtime.Run(
+		&handler{},
+		runtime.WithFullLevel(),
+		runtime.WithLifecycleHandlers(
+			// A checkpoint quiesces output before the SDK replies
+			// checkpoint_ready. A chat runtime stops streaming here.
+			runtime.OnCheckpoint(func(string) error { return nil }),
+			// An interrupt brings the runtime to a safe stop point
+			// before the SDK replies interrupt_acknowledged.
+			runtime.OnInterrupt(func(string) error { return nil }),
+			// On rotation the SDK has already re-read the credential
+			// file; rebind the provider client to the refreshed bundle.
+			runtime.OnCredentialsRotated(func(*runtime.CredentialBundle) {}),
+		),
+	)
+	if err == nil {
+		os.Exit(exitOK)
+	}
+	fmt.Fprintln(os.Stderr, err)
+	if runtime.ErrIsProtocol(err) {
+		os.Exit(exitProtocolError)
+	}
+	os.Exit(exitRuntimeError)
+}

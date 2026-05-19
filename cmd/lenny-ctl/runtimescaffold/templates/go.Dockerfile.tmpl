@@ -1,0 +1,16 @@
+# Container image for the {{.Name}} runtime.
+#
+# The build stage compiles a static binary; the runtime stage is a
+# distroless non-root base with no shell and no package manager,
+# matching the platform pod-security posture (non-root, read-only root
+# filesystem, all capabilities dropped).
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/{{.Name}} .
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /out/{{.Name}} /usr/local/bin/{{.Name}}
+ENTRYPOINT ["/usr/local/bin/{{.Name}}"]

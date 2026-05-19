@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: MIT
+
+// Command {{.Name}} is a Basic-level Lenny agent runtime. It implements
+// the adapter binary protocol directly, with no Lenny SDK dependency:
+// read a JSON Lines frame from stdin, switch on the frame type, write a
+// response frame to stdout, and flush.
+//
+// Basic level is the smallest viable runtime. It has no platform MCP
+// access and no lifecycle channel. The contract is the four frame types
+// handled below: message, heartbeat, shutdown, and unknown (ignored for
+// forward compatibility).
+//
+// Replace the body of handleMessage with a model call to build a real
+// agent. The rest of the loop is the protocol and stays unchanged.
+//
+// Exit codes: 0 success, 1 runtime error, 2 protocol error.
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+const (
+	exitOK            = 0
+	exitRuntimeError  = 1
+	exitProtocolError = 2
+)
+
+// frame is the common envelope for every inbound JSON Lines frame. Only
+// the type field is read first; the typed decode happens per branch.
+type frame struct {
+	Type string `json:"type"`
+}
+
+// message is the inbound message frame. Basic-level runtimes read only
+// the id and the input parts.
+type message struct {
+	ID    string `json:"id"`
+	Input []part `json:"input"`
+}
+
+// part is one content part of a message or response. Basic-level
+// runtimes need only the type and inline fields.
+type part struct {
+	Type   string `json:"type"`
+	Inline string `json:"inline,omitempty"`
+}
+
+// shutdownFrame is the inbound shutdown frame. The runtime exits before
+// deadlineMs elapses.
+type shutdownFrame struct {
+	DeadlineMS int `json:"deadlineMs"`
+}
+
+// response is the outbound response frame for a message.
+type response struct {
+	Type   string `json:"type"`
+	Output []part `json:"output"`
+}
+
+// heartbeatAck is the outbound acknowledgement for a heartbeat frame.
+type heartbeatAck struct {
+	Type string `json:"type"`
+}
+
+func main() {
+	if err := run(os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		if _, ok := err.(protocolError); ok {
+			os.Exit(exitProtocolError)
+		}
+		os.Exit(exitRuntimeError)
+	}
+	os.Exit(exitOK)
+}
+
+// protocolError marks a non-recoverable inbound-format violation.
+type protocolError struct{ msg string }
+
+func (e protocolError) Error() string { return "protocol error: " + e.msg }
+
+// run is the Basic-level frame loop. It reads newline-delimited JSON
+// from in and writes newline-delimited JSON to out, flushing after
+// every write. It returns when in reaches EOF or a shutdown frame
+// arrives.
+func run(in *os.File, out *os.File) error {
+	scanner := bufio.NewScanner(in)
+	// Raise the scanner buffer ceiling: a message frame may carry a
+	// large inline part.
+	scanner.Buffer(make([]byte, 64*1024), 50*1024*1024)
+	w := bufio.NewWriter(out)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+
+	seq := 0
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var f frame
+		if err := json.Unmarshal(line, &f); err != nil {
+			return protocolError{msg: fmt.Sprintf("malformed JSON Lines frame: %v", err)}
+		}
+		switch f.Type {
+		case "message":
+			seq++
+			if err := handleMessage(enc, w, line, seq); err != nil {
+				return err
+			}
+		case "heartbeat":
+			// A heartbeat must be acknowledged within 10 seconds or the
+			// adapter escalates the runtime as unresponsive.
+			if err := writeFrame(enc, w, heartbeatAck{Type: "heartbeat_ack"}); err != nil {
+				return err
+			}
+		case "shutdown":
+			var sd shutdownFrame
+			if err := json.Unmarshal(line, &sd); err != nil {
+				return protocolError{msg: fmt.Sprintf("malformed shutdown frame: %v", err)}
+			}
+			// Exit cleanly. A real runtime flushes pending work within
+			// sd.DeadlineMS before returning.
+			return nil
+		default:
+			// Ignore unknown frame types for forward compatibility.
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return protocolError{msg: fmt.Sprintf("stdin read error: %v", err)}
+	}
+	return nil
+}
+
+// handleMessage decodes one message frame and writes the response. This
+// echo placeholder prefixes each text part with the sequence number;
+// replace the body with a model call to build a real agent.
+func handleMessage(enc *json.Encoder, w *bufio.Writer, line []byte, seq int) error {
+	var m message
+	if err := json.Unmarshal(line, &m); err != nil {
+		return protocolError{msg: fmt.Sprintf("malformed message frame: %v", err)}
+	}
+	out := make([]part, 0, len(m.Input))
+	for _, p := range m.Input {
+		if p.Type == "text" && p.Inline != "" {
+			out = append(out, part{
+				Type:   "text",
+				Inline: fmt.Sprintf("[{{.Name}} seq=%d] %s", seq, p.Inline),
+			})
+			continue
+		}
+		out = append(out, p)
+	}
+	return writeFrame(enc, w, response{Type: "response", Output: out})
+}
+
+// writeFrame serializes one frame and flushes it. The adapter binary
+// protocol requires a flush after every write so the frame reaches the
+// adapter before the next read.
+func writeFrame(enc *json.Encoder, w *bufio.Writer, v any) error {
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf("write frame: %w", err)
+	}
+	return w.Flush()
+}

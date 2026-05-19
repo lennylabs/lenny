@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: MIT
+
+"""Standard-level Lenny agent runtime built on the Python runtime-author
+SDK (``lenny-runtime``).
+
+It echoes every inbound message back. Replace the body of
+:meth:`on_message` with a model call to build a real agent.
+
+The handler implements the three :class:`Handler` methods. The SDK
+drives the adapter binary protocol around it: it reads inbound message
+frames, invokes :meth:`on_message`, serializes the returned
+:class:`Reply` into a response frame, answers heartbeats, and exits on
+shutdown.
+
+This skeleton is generated at the Standard integration level:
+:func:`run` is called with ``level="standard"``, so the SDK dials the
+platform MCP server and connector MCP servers advertised in the adapter
+manifest.
+
+Exit codes: 0 success, 1 runtime error, 2 protocol error.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from lenny_runtime import (
+    CreateRequest,
+    HandlerTools,
+    Message,
+    ProtocolError,
+    Reply,
+    RunOptions,
+    TerminationReason,
+    run,
+    text,
+)
+
+_EXIT_OK = 0
+_EXIT_RUNTIME_ERROR = 1
+_EXIT_PROTOCOL_ERROR = 2
+
+
+class RuntimeHandler:
+    """Standard-level handler.
+
+    It holds a per-process sequence counter so multi-message sessions
+    can be correlated.
+    """
+
+    def __init__(self) -> None:
+        self._seq = 0
+
+    def on_create(self, req: CreateRequest) -> None:
+        """Receive the task-scoped context snapshot.
+
+        This skeleton has no task-scoped setup.
+        """
+
+    def on_message(self, msg: Message, tools: HandlerTools) -> Reply:
+        """Echo the inbound parts.
+
+        Text parts are prefixed with the per-session sequence number;
+        non-text parts are returned unchanged.
+        """
+        self._seq += 1
+        out = []
+        for part in msg.envelope.input:
+            if part.type == "text" and part.inline:
+                out.append(text(f"[{{.Name}} seq={self._seq}] {part.inline}"))
+            else:
+                out.append(part)
+        return Reply(parts=out, final=True)
+
+    def on_terminate(self, reason: TerminationReason) -> None:
+        """Run once when the session ends. This skeleton has no teardown."""
+
+
+def main() -> None:
+    """Entry point: run the handler at the Standard level."""
+    try:
+        run(RuntimeHandler(), RunOptions(level="standard"))
+    except ProtocolError as err:
+        sys.stderr.write(f"{err}\n")
+        sys.exit(_EXIT_PROTOCOL_ERROR)
+    except Exception as err:  # noqa: BLE001 — top-level exit boundary
+        sys.stderr.write(f"{err}\n")
+        sys.exit(_EXIT_RUNTIME_ERROR)
+    sys.exit(_EXIT_OK)
+
+
+if __name__ == "__main__":
+    main()

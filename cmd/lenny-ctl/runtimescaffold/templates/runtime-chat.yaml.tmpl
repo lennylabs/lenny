@@ -1,0 +1,40 @@
+# Runtime definition for {{.Name}} (§5.1).
+#
+# This is a Full-level chat runtime. It follows the chat reference
+# pattern: an empty workspace, no shell, no setup commands, and
+# proxy-mode credential delivery. It declares integrationLevel: full
+# because in-place credential rotation depends on the lifecycle channel.
+# Register it with the gateway using
+# `lenny runtime publish {{.Name}} --image <ref>`.
+name: {{.Name}}
+image: {{.Image}}
+type: agent
+integrationLevel: full
+capabilities:
+  interaction: multi_turn
+  injection:
+    supported: true
+    modes: [immediate]
+  preConnect: false
+executionMode: session
+isolationProfile: sandboxed
+allowedResourceClasses: [small]
+supportedProviders:
+  - anthropic_direct
+  - openai_direct
+  - gcp_vertex_gemini
+credentialCapabilities:
+  hotRotation: true
+  proxyDialect: [anthropic, openai, google]
+limits:
+  maxSessionAge: 3600
+  maxUploadSize: 10MB
+  maxRequestInputWaitSeconds: 600
+setupCommandPolicy:
+  mode: none
+setupPolicy:
+  timeoutSeconds: 0
+defaultPoolConfig:
+  warmCount: 1
+  resourceClass: small
+  egressProfile: restricted
