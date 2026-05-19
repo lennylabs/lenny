@@ -395,12 +395,14 @@ func requireSandboxClaimGuardReachable(t *testing.T, c *kind.Cluster) {
 	}
 	if strings.Contains(out, "context deadline exceeded") ||
 		strings.Contains(out, "failed calling webhook") {
-		t.Skipf("not exercisable on this cluster: the lenny-sandboxclaim-guard webhook backend cannot "+
-			"reach the kube-apiserver to list sibling SandboxClaims — the rendered allow-admission-webhooks "+
-			"NetworkPolicy grants the admission-webhook pods egress to DNS (port 53) only, not to the "+
-			"API server, so the §4.6.1 guard's client.Reader call hangs and the failurePolicy: Fail webhook "+
-			"times out on every SandboxClaim write. Granting the admission-webhook pods egress to the "+
-			"kube-apiserver Service makes this scenario exercisable.\nprobe output:\n%s", out)
+		t.Skipf("not exercisable on this cluster: the lenny-sandboxclaim-guard webhook's admission "+
+			"call does not complete within its 5s budget. The webhook is deployed fail-closed and its "+
+			"configuration is verified by the tier-5 inventory test; its ServiceAccount has list/watch "+
+			"RBAC on sandboxclaims and the allow-admission-webhooks NetworkPolicy admits kube-apiserver "+
+			"egress (a labelled probe pod reaches the apiserver). The §4.6.1 guard's client.Reader List "+
+			"of sibling SandboxClaims nonetheless exceeds the 5s webhook timeout on this Kind cluster — "+
+			"the direct client's first-call API discovery latency is the likely cause. The double-claim "+
+			"runtime path needs that List to return inside the webhook budget.\nprobe output:\n%s", out)
 	}
 	t.Fatalf("the lenny-sandboxclaim-guard webhook rejected a trivial probe SandboxClaim for an "+
 		"unexpected reason; cannot establish the webhook is healthy before the test.\noutput:\n%s", out)
