@@ -1,0 +1,55 @@
+# Capacity Tier 1 preset (§17.8.2, §17.8.4).
+#
+# Tier 1 is the smallest published capacity envelope. It targets local
+# clusters, development environments, and small single-team production
+# installs. Layer this file on top of the base values.yaml:
+#
+#   helm install lenny charts/lenny -f values.yaml -f presets/values-tier1.yaml
+#
+# Base values.yaml keys this preset overrides:
+#   capacityPlanning.tier            — selects the Tier 1 ResourceQuota row
+#   gateway.replicas                 — gateway Deployment replica count
+#   controller.replicas              — warm-pool controller replica count
+#   tokenService.replicas            — token service replica count
+#   ops.replicas                     — lenny-ops replica count
+#   backups.retention.*              — backup retention policy
+#   backups.restoreTest.enabled      — periodic test-restore CronJob gate
+#
+# Every other base value is left at its default.
+
+capacityPlanning:
+  tier: tier1
+
+# Gateway replica floor of 2 (§17.8.2 gateway table: min 2, max 4). Two
+# replicas survive a single pod failure without dropping below the
+# minimum healthy count.
+gateway:
+  replicas: 2
+
+# Controllers run 2 replicas with leader election at every tier
+# (§17.8.2 controller tuning table).
+controller:
+  replicas: 2
+
+# Token service runs 2 replicas at Tier 1 (§17.8.2 operational defaults
+# table).
+tokenService:
+  replicas: 2
+
+# lenny-ops runs 2 replicas (§25.4 default). One leader runs the
+# background loops; both replicas serve the HTTP surface.
+ops:
+  replicas: 2
+
+# Backup retention at Tier 1 is the shortest published window (§25.11):
+# 7-day age floor, 3 backups retained, 2 full backups kept.
+backups:
+  retention:
+    retainDays: 7
+    retainCount: 3
+    retainMinFull: 2
+    preRestoreRetainDays: 7
+  # Tier 1 leaves the periodic test-restore CronJob disabled. A small
+  # install does not run scheduled restores without an explicit opt-in.
+  restoreTest:
+    enabled: false

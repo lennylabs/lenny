@@ -23,6 +23,7 @@
 //	lenny-ctl health
 //	lenny-ctl version
 //	lenny-ctl bootstrap --from-values <file>
+//	lenny-ctl install [--answer-file <file>]
 //
 // Auth: pass --bearer <token> for a clustered gateway, or rely on
 // the dev-header path (--dev-tenant / --dev-roles) for Embedded
@@ -76,6 +77,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdVersion(ctx, client, stdout, stderr)
 	case "bootstrap":
 		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr)
+	case "install":
+		// install runs no gateway calls during values composition; it
+		// shells out to helm. It is dispatched here so it shares the
+		// global-flag parsing but ignores the gateway client.
+		return cmdInstall(rest[1:], os.Stdin, stdout, stderr)
 	case "admin":
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
@@ -126,6 +132,7 @@ Gateway commands:
   health                                Print the platform health report
   version                               Print the gateway version
   bootstrap --from-values <f>           Apply a seed file (tenants/runtimes/users)
+  install [--answer-file <f>]           Run the installation wizard (§17.6)
   admin tenants list                    List tenants
   admin tenants get <id>                Get a tenant
   admin tenants create <id> [name]      Create a tenant

@@ -1,0 +1,161 @@
+suite: §17.8.4 capacity tier presets
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  # Tier 1 preset.
+  - it: tier1 preset sizes the gateway Deployment to 2 replicas
+    values:
+      - ../presets/values-tier1.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: tier1 preset sizes the token service to 2 replicas
+    values:
+      - ../presets/values-tier1.yaml
+    template: token-service-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: tier1 preset applies the Tier 1 ResourceQuota row
+    values:
+      - ../presets/values-tier1.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    template: resourcequota.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "200"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "800Gi"
+
+  - it: tier1 preset leaves the periodic test-restore CronJob disabled
+    values:
+      - ../presets/values-tier1.yaml
+    template: restore-test-cronjob.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Tier 2 preset.
+  - it: tier2 preset sizes the gateway Deployment to 3 replicas
+    values:
+      - ../presets/values-tier2.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: tier2 preset applies the Tier 2 ResourceQuota row
+    values:
+      - ../presets/values-tier2.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    template: resourcequota.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "2500"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "10Ti"
+
+  - it: tier2 preset enables the production posture on lenny-ops
+    values:
+      - ../presets/values-tier2.yaml
+    template: ops-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --production=true
+
+  # Tier 3 preset.
+  - it: tier3 preset sizes the gateway Deployment to 5 replicas
+    values:
+      - ../presets/values-tier3.yaml
+    template: gateway-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 5
+
+  - it: tier3 preset sizes the token service to 4 replicas
+    values:
+      - ../presets/values-tier3.yaml
+    template: token-service-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 4
+
+  - it: tier3 preset sizes the controller to 3 replicas
+    values:
+      - ../presets/values-tier3.yaml
+    template: controller-deployment.yaml
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: tier3 preset applies the Tier 3 ResourceQuota row
+    values:
+      - ../presets/values-tier3.yaml
+    set:
+      agentNamespaces:
+        - name: lenny-agents
+    template: resourcequota.yaml
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.hard.pods
+          value: "15000"
+      - equal:
+          path: spec.hard["requests.cpu"]
+          value: "30000"
+      - equal:
+          path: spec.hard["requests.memory"]
+          value: "60Ti"
+
+  - it: tier3 preset enables the periodic test-restore CronJob
+    values:
+      - ../presets/values-tier3.yaml
+    template: restore-test-cronjob.yaml
+    asserts:
+      - hasDocuments:
+          count: 6
+      - documentIndex: 5
+        isKind:
+          of: CronJob

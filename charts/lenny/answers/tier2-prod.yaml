@@ -1,0 +1,55 @@
+# Answer file for `lenny-ctl install --answer-file` — Tier 2, prod.
+#
+# This drives a Tier 2 production install. The wizard layers
+# presets/values-tier2.yaml under the per-question overrides composed
+# from this file.
+#
+# Run:
+#   export LENNY_PG_DSN=...   LENNY_REDIS_URL=...
+#   lenny-ctl install --answer-file charts/lenny/answers/tier2-prod.yaml
+#
+# The ${VAR} references below are resolved against the process
+# environment at read time, so connection secrets are not committed in
+# plaintext. The answer-file schema is documented in
+# charts/lenny/answers/README.md.
+
+release:
+  name: lenny
+  namespace: lenny-system
+
+# Target environment. prod requires an OIDC issuer and rejects the dev
+# auth mode.
+environment: prod
+
+# Capacity tier. tier2 is the mid-range envelope (§17.8.2).
+tier: tier2
+
+profile: eks-production
+
+# Gateway DNS name and TLS strategy. cert-manager issues the gateway
+# certificate from a cluster ClusterIssuer.
+domain: lenny.acme.com
+tls: cert-manager
+
+# Data-store connections. The DSNs reference environment variables so
+# the answer file carries no plaintext credentials.
+postgres:
+  dsn: "${LENNY_PG_DSN}"
+redis:
+  url: "${LENNY_REDIS_URL}"
+objectStorage:
+  endpoint: "https://s3.us-east-1.amazonaws.com"
+  bucket: "acme-lenny-prod"
+
+# OIDC auth is required for a prod environment.
+auth:
+  mode: oidc
+  oidcIssuer: "https://auth.acme.com"
+  oidcClientId: "lenny"
+
+# Optional admission webhooks. The LLM-proxy webhook is enabled for a
+# production install that routes provider traffic through the gateway.
+features:
+  llmProxy: true
+  drainReadiness: false
+  compliance: false

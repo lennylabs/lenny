@@ -1,0 +1,61 @@
+# Capacity Tier 2 preset (§17.8.2, §17.8.4).
+#
+# Tier 2 is the mid-range capacity envelope. It targets multi-team
+# production installs with steady traffic. Layer this file on top of
+# the base values.yaml:
+#
+#   helm install lenny charts/lenny -f values.yaml -f presets/values-tier2.yaml
+#
+# Base values.yaml keys this preset overrides:
+#   capacityPlanning.tier            — selects the Tier 2 ResourceQuota row
+#   gateway.replicas                 — gateway Deployment replica count
+#   controller.replicas              — warm-pool controller replica count
+#   tokenService.replicas            — token service replica count
+#   ops.replicas                     — lenny-ops replica count
+#   ops.production                   — enables the §25.11 backup confirm guard
+#   backups.retention.*              — backup retention policy
+#   backups.restoreTest.enabled      — periodic test-restore CronJob gate
+#
+# Every other base value is left at its default. The base values.yaml
+# backup retention block already carries the Tier 2 defaults; this
+# preset restates them so the layering is explicit.
+
+capacityPlanning:
+  tier: tier2
+
+# Gateway replica floor of 3 (§17.8.2 gateway table: min 3, max 10).
+# Three replicas keep the deployment above the Tier 2 minimum healthy
+# count of 3 during a single voluntary disruption.
+gateway:
+  replicas: 3
+
+# Controllers run 2 replicas with leader election at every tier
+# (§17.8.2 controller tuning table).
+controller:
+  replicas: 2
+
+# Token service runs 2 replicas at Tier 2 (§17.8.2 operational defaults
+# table).
+tokenService:
+  replicas: 2
+
+# lenny-ops runs 2 replicas (§25.4 default).
+ops:
+  replicas: 2
+  # Tier 2 is a production posture. Enabling ops.production turns on the
+  # §25.11 confirm:true requirement for full backups.
+  production: true
+
+# Backup retention at Tier 2 (§25.11): 30-day age floor, 10 backups
+# retained, 3 full backups kept.
+backups:
+  retention:
+    retainDays: 30
+    retainCount: 10
+    retainMinFull: 3
+    preRestoreRetainDays: 7
+  # Tier 2 leaves the periodic test-restore CronJob disabled by default.
+  # §25.11 recommends the scheduled test restore at Tier 3; a Tier 2
+  # operator can enable it explicitly.
+  restoreTest:
+    enabled: false

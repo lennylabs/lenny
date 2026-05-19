@@ -1,0 +1,66 @@
+# Capacity Tier 3 preset (§17.8.2, §17.8.4).
+#
+# Tier 3 is the largest published capacity envelope. It targets
+# high-traffic production installs and assumes a KEDA-driven gateway
+# autoscaler (§17.8.2). Layer this file on top of the base values.yaml:
+#
+#   helm install lenny charts/lenny -f values.yaml -f presets/values-tier3.yaml
+#
+# Base values.yaml keys this preset overrides:
+#   capacityPlanning.tier            — selects the Tier 3 ResourceQuota row
+#   gateway.replicas                 — gateway Deployment replica count
+#   controller.replicas              — warm-pool controller replica count
+#   tokenService.replicas            — token service replica count
+#   ops.replicas                     — lenny-ops replica count
+#   ops.production                   — enables the §25.11 backup confirm guard
+#   backups.retention.*              — backup retention policy
+#   backups.restoreTest.*            — periodic test-restore CronJob config
+#
+# Every other base value is left at its default.
+
+capacityPlanning:
+  tier: tier3
+
+# Gateway replica floor of 5 (§17.8.2 gateway table: min 5, max 30).
+# Five replicas keep the deployment above the Tier 3 minimum healthy
+# count of 5 during a single voluntary disruption. The §17.8.2
+# burst-absorption formula yields 5 for the KEDA scaling path.
+gateway:
+  replicas: 5
+
+# Controllers run 3 replicas at Tier 3 (§17.8.2 controller tuning
+# table) so a controller node failure leaves a quorum for leader
+# election.
+controller:
+  replicas: 3
+
+# Token service runs 4 replicas at Tier 3 (§17.8.2 operational defaults
+# table).
+tokenService:
+  replicas: 4
+
+# lenny-ops runs 3 replicas at Tier 3, matching the controller HA
+# posture so the operability surface stays available during a node
+# failure.
+ops:
+  replicas: 3
+  # Tier 3 is a production posture. Enabling ops.production turns on the
+  # §25.11 confirm:true requirement for full backups.
+  production: true
+
+# Backup retention at Tier 3 (§25.11): 90-day age floor, 30 backups
+# retained, 7 full backups kept. The longer window supports forensics
+# and common audit requirements.
+backups:
+  retention:
+    retainDays: 90
+    retainCount: 30
+    retainMinFull: 7
+    preRestoreRetainDays: 7
+  # Tier 3 enables the periodic test-restore CronJob (§25.11 recommends
+  # a monthly test restore at Tier 3). The default schedule restores the
+  # latest full backup on the first day of each month at 04:00 UTC.
+  restoreTest:
+    enabled: true
+    schedule: "0 4 1 * *"
+    backupSelector: "latest-full"

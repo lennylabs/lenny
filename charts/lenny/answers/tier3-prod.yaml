@@ -1,0 +1,56 @@
+# Answer file for `lenny-ctl install --answer-file` — Tier 3, prod.
+#
+# This drives a Tier 3 production install, the largest published
+# capacity envelope. The wizard layers presets/values-tier3.yaml under
+# the per-question overrides composed from this file.
+#
+# Run:
+#   export LENNY_PG_DSN=...   LENNY_REDIS_URL=...
+#   lenny-ctl install --answer-file charts/lenny/answers/tier3-prod.yaml
+#
+# The ${VAR} references below are resolved against the process
+# environment at read time. The answer-file schema is documented in
+# charts/lenny/answers/README.md.
+
+release:
+  name: lenny
+  namespace: lenny-system
+
+# Target environment. prod requires an OIDC issuer and rejects the dev
+# auth mode.
+environment: prod
+
+# Capacity tier. tier3 is the largest envelope (§17.8.2) and assumes a
+# KEDA-driven gateway autoscaler.
+tier: tier3
+
+profile: eks-production
+
+domain: lenny.acme.com
+tls: cert-manager
+
+postgres:
+  dsn: "${LENNY_PG_DSN}"
+redis:
+  url: "${LENNY_REDIS_URL}"
+objectStorage:
+  endpoint: "https://s3.us-east-1.amazonaws.com"
+  bucket: "acme-lenny-prod"
+
+auth:
+  mode: oidc
+  oidcIssuer: "https://auth.acme.com"
+  oidcClientId: "lenny"
+
+# A Tier 3 deployment splits agent pods across a sandboxed namespace
+# and a Kata-isolated namespace.
+agentNamespaces:
+  - lenny-agents
+  - lenny-agents-kata
+
+# Optional admission webhooks. A Tier 3 production install enables the
+# LLM-proxy, drain-readiness, and compliance webhooks.
+features:
+  llmProxy: true
+  drainReadiness: true
+  compliance: true
