@@ -214,6 +214,21 @@ tests:
           path: spec.policyTypes
           content: Egress
 
+  - it: allows ops egress to the kube-apiserver for leader election
+    documentSelector:
+      path: metadata.name
+      value: allow-ops
+    asserts:
+      # §25.4: lenny-ops is leader-elected and needs kube-apiserver egress.
+      - equal:
+          path: spec.egress[0].to[0].ipBlock.cidr
+          value: "0.0.0.0/0"
+      - contains:
+          path: spec.egress[0].ports
+          content:
+            port: 443
+            protocol: TCP
+
   - it: allows ops egress to the gateway internal TLS and HTTP ports
     documentSelector:
       path: metadata.name
@@ -221,15 +236,15 @@ tests:
     asserts:
       # §13.2 NET-051/NET-070: lenny-ops reaches the gateway admin API.
       - equal:
-          path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
           value: gateway
       - contains:
-          path: spec.egress[0].ports
+          path: spec.egress[1].ports
           content:
             port: 8443
             protocol: TCP
       - contains:
-          path: spec.egress[0].ports
+          path: spec.egress[1].ports
           content:
             port: 8080
             protocol: TCP
@@ -240,13 +255,13 @@ tests:
       value: allow-ops
     asserts:
       - equal:
-          path: spec.egress[1].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: kube-system
       - equal:
-          path: spec.egress[1].to[1].podSelector.matchLabels["lenny.dev/component"]
+          path: spec.egress[2].to[1].podSelector.matchLabels["lenny.dev/component"]
           value: coredns
       - contains:
-          path: spec.egress[1].ports
+          path: spec.egress[2].ports
           content:
             port: 53
             protocol: UDP

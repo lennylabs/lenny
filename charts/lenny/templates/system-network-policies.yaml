@@ -633,6 +633,17 @@ spec:
         - port: {{ .Values.ops.metricsPort }}
           protocol: TCP
   egress:
+    # lenny-ops is leader-elected (§25.4): it holds a coordination.k8s.io
+    # Lease and reconciles platform state, so it needs kube-apiserver
+    # egress. Without it the lenny-ops pods cannot acquire their Lease
+    # and never report Ready. The CIDR is operator-tunable, bounded by
+    # the per-port (443) rule, as in allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        - port: 443
+          protocol: TCP
     - to:
         - podSelector:
             matchLabels:
