@@ -1,0 +1,108 @@
+{{- /*
+lenny-bootstrap post-install/post-upgrade Job (§17.6 Day-1 seed
+mechanism). After the gateway Deployment is Ready and the database
+migrations have run, the Job seeds the tenants, runtimes, and users
+declared in .Values.bootstrap. It runs
+`lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml`
+against the admin API; the bootstrap upsert is idempotent, so the Job
+runs safely on every `helm install` and `helm upgrade`.
+
+The Job is a post-install/post-upgrade hook at weight 10, after the
+lenny-bootstrap-values ConfigMap at weight 5, so the seed file is
+mounted when the pod starts. Because the hook is post-install it runs
+after the gateway becomes Ready; the container additionally polls
+GET /healthz on the gateway internal Service before applying seeds, so
+a gateway still completing migrations does not race the seed.
+
+Authentication follows the chart's admin-API convention: when
+bootstrap.auth.operatorTokenSecret.name is set, the Job mounts that
+Secret and passes the token as `--bearer`. Otherwise, when
+global.devMode is true, it uses the dev-header path
+(--dev-tenant / --dev-roles), which the gateway honors only in dev
+mode.
+*/ -}}
+{{- if .Values.bootstrap.enabled }}
+{{- $b := .Values.bootstrap -}}
+{{- $gateway := printf "http://lenny-gateway.%s.svc:%v" .Release.Namespace .Values.gateway.internalPort -}}
+{{- $tokenSecret := $b.auth.operatorTokenSecret -}}
+{{- $useBearer := and $tokenSecret $tokenSecret.name (ne $tokenSecret.name "") -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "lenny.labels" . | nindent 8 }}
+        lenny.dev/component: bootstrap
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: "{{ $b.image.repository }}:{{ $b.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ $b.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              deadline=$(( $(date +%s) + {{ int $b.waitTimeoutSeconds }} ))
+              echo "lenny-bootstrap: waiting for {{ $gateway }}/healthz"
+              until lenny-ctl --api-url "{{ $gateway }}" health >/dev/null 2>&1; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "lenny-bootstrap: gateway not ready after {{ int $b.waitTimeoutSeconds }}s" >&2
+                  exit 1
+                fi
+                sleep 3
+              done
+              echo "lenny-bootstrap: gateway ready, applying seed"
+              exec lenny-ctl \
+                --api-url "{{ $gateway }}" \
+              {{- if $useBearer }}
+                --bearer "$(cat /var/run/lenny/operator-token/{{ $tokenSecret.key }})" \
+              {{- else }}
+                --dev-tenant "{{ $b.auth.devTenant }}" \
+                --dev-roles "{{ $b.auth.devRoles }}" \
+              {{- end }}
+                bootstrap --from-values /etc/lenny/bootstrap-values.yaml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: bootstrap-values
+              mountPath: /etc/lenny
+              readOnly: true
+            {{- if $useBearer }}
+            - name: operator-token
+              mountPath: /var/run/lenny/operator-token
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml $b.resources | nindent 12 }}
+      volumes:
+        - name: bootstrap-values
+          configMap:
+            name: lenny-bootstrap-values
+        {{- if $useBearer }}
+        - name: operator-token
+          secret:
+            secretName: {{ $tokenSecret.name }}
+        {{- end }}
+{{- end }}

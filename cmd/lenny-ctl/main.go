@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/ctl"
+	"sigs.k8s.io/yaml"
 )
 
 func main() {
@@ -420,9 +421,13 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 		fmt.Fprintf(stderr, "lenny-ctl: read %s: %v\n", fromValues, err)
 		return 1
 	}
+	// sigs.k8s.io/yaml.Unmarshal accepts both YAML and JSON: it
+	// converts YAML to JSON internally before decoding. The spec names
+	// a bootstrap-values.yaml file (§17.6); pre-existing JSON seed
+	// files keep parsing unchanged.
 	var body any
-	if err := json.Unmarshal(raw, &body); err != nil {
-		fmt.Fprintf(stderr, "lenny-ctl: %s is not valid JSON: %v\n", fromValues, err)
+	if err := yaml.Unmarshal(raw, &body); err != nil {
+		fmt.Fprintf(stderr, "lenny-ctl: %s is not valid YAML or JSON: %v\n", fromValues, err)
 		return 1
 	}
 	var out map[string]any

@@ -1,0 +1,182 @@
+suite: lenny-bootstrap Job and ConfigMap
+release:
+  name: lenny
+  namespace: lenny-system
+tests:
+  - it: renders nothing when bootstrap is disabled
+    templates:
+      - bootstrap-job.yaml
+      - bootstrap-configmap.yaml
+    set:
+      bootstrap:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the Job and the ConfigMap when bootstrap is enabled
+    templates:
+      - bootstrap-job.yaml
+      - bootstrap-configmap.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: names the bootstrap-values ConfigMap and places it in the release namespace
+    template: bootstrap-configmap.yaml
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: lenny-bootstrap-values
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+
+  - it: renders the seed lists into the bootstrap-values.yaml data key
+    template: bootstrap-configmap.yaml
+    set:
+      bootstrap:
+        tenants:
+          - id: acme
+            displayName: Acme Corp
+        runtimes:
+          - name: echo
+            image: ghcr.io/lennylabs/echo:latest
+        users:
+          - subject: alice@acme.com
+            tenantId: acme
+    asserts:
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "id: acme"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "name: echo"
+      - matchRegex:
+          path: data["bootstrap-values.yaml"]
+          pattern: "subject: alice@acme.com"
+
+  - it: annotates the ConfigMap as a post-install,post-upgrade hook before the Job
+    template: bootstrap-configmap.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "5"
+
+  - it: names the bootstrap Job and places it in the release namespace
+    template: bootstrap-job.yaml
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.name
+          value: lenny-bootstrap
+      - equal:
+          path: metadata.namespace
+          value: lenny-system
+
+  - it: annotates the Job as a post-install,post-upgrade hook at weight 10
+    template: bootstrap-job.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: post-install,post-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-weight"]
+          value: "10"
+      - equal:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+          value: before-hook-creation,hook-succeeded
+
+  - it: runs the lenny-ctl image
+    template: bootstrap-job.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/lennylabs/lenny-ctl:0.1.0
+
+  - it: runs lenny-ctl bootstrap with the spec-mandated from-values path
+    template: bootstrap-job.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml|bootstrap --from-values /etc/lenny/bootstrap-values.yaml"
+
+  - it: polls the gateway internal Service for readiness before seeding
+    template: bootstrap-job.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "http://lenny-gateway.lenny-system.svc:8080"
+
+  - it: mounts the bootstrap-values ConfigMap at /etc/lenny
+    template: bootstrap-job.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: bootstrap-values
+      - equal:
+          path: spec.template.spec.volumes[0].configMap.name
+          value: lenny-bootstrap-values
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /etc/lenny
+
+  - it: applies the restricted pod security posture
+    template: bootstrap-job.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+
+  - it: uses the dev-header auth path when no operator token is configured
+    template: bootstrap-job.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--dev-tenant"
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--bearer"
+
+  - it: mounts the operator-token Secret and passes --bearer when configured
+    template: bootstrap-job.yaml
+    set:
+      bootstrap:
+        auth:
+          operatorTokenSecret:
+            name: lenny-operator-token
+            key: token
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--bearer"
+      - equal:
+          path: spec.template.spec.volumes[1].name
+          value: operator-token
+      - equal:
+          path: spec.template.spec.volumes[1].secret.secretName
+          value: lenny-operator-token
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].mountPath
+          value: /var/run/lenny/operator-token

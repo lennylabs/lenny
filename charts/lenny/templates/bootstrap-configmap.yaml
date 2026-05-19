@@ -1,0 +1,29 @@
+{{- /*
+lenny-bootstrap-values ConfigMap (§17.6 Day-1 seed mechanism). Renders
+the .Values.bootstrap tenants, runtimes, and users lists into a single
+bootstrap-values.yaml data key. The lenny-bootstrap Job mounts this
+ConfigMap at /etc/lenny/ and runs
+`lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml`.
+
+The ConfigMap is a post-install/post-upgrade hook at weight 5, lower
+than the lenny-bootstrap Job at weight 10, so it exists before the Job
+pod starts — the same ordering the lenny-preflight Job uses for its
+ServiceAccount and RBAC.
+*/ -}}
+{{- if .Values.bootstrap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-bootstrap-values
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  bootstrap-values.yaml: |
+    {{- dict "tenants" .Values.bootstrap.tenants "runtimes" .Values.bootstrap.runtimes "users" .Values.bootstrap.users | toYaml | nindent 4 }}
+{{- end }}

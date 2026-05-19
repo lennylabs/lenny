@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -149,6 +151,103 @@ func TestAdminUnknownResource(t *testing.T) {
 	code := run([]string{"admin", "widgets"}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("unknown admin resource: exit code %d, want 2", code)
+	}
+}
+
+// writeSeedFile writes a bootstrap seed file into a temp dir and
+// returns its path.
+func writeSeedFile(t *testing.T, name, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	return path
+}
+
+func TestBootstrapRequiresFromValues(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	// No gateway needed: the flag validation fails before any request.
+	code := run([]string{"bootstrap"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("bootstrap without --from-values: exit code %d, want 2", code)
+	}
+}
+
+func TestBootstrapAppliesJSONSeedFile(t *testing.T) {
+	path := writeSeedFile(t, "bootstrap-values.json",
+		`{"tenants":[{"id":"acme","displayName":"Acme Corp"}]}`)
+	code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`,
+		"bootstrap", "--from-values", path)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/bootstrap" {
+		t.Fatalf("request: %s %s, want POST /v1/admin/bootstrap", got.method, got.path)
+	}
+	tenants, _ := got.body["tenants"].([]any)
+	if len(tenants) != 1 {
+		t.Fatalf("tenants: %+v", got.body)
+	}
+	tenant, _ := tenants[0].(map[string]any)
+	if tenant["id"] != "acme" || tenant["displayName"] != "Acme Corp" {
+		t.Errorf("tenant payload: %+v", tenant)
+	}
+}
+
+func TestBootstrapAppliesYAMLSeedFile(t *testing.T) {
+	// sigs.k8s.io/yaml decodes the bootstrap-values.yaml form the
+	// Helm chart renders; the gateway receives the same JSON body a
+	// JSON seed file would have produced.
+	path := writeSeedFile(t, "bootstrap-values.yaml", `tenants:
+  - id: acme
+    displayName: Acme Corp
+runtimes:
+  - name: echo
+    image: ghcr.io/lennylabs/echo:latest
+users:
+  - subject: alice@acme.com
+    tenantId: acme
+    roles:
+      - user
+`)
+	code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":{"createdCount":1}}`,
+		"bootstrap", "--from-values", path)
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if got.method != http.MethodPost || got.path != "/v1/admin/bootstrap" {
+		t.Fatalf("request: %s %s, want POST /v1/admin/bootstrap", got.method, got.path)
+	}
+	tenants, _ := got.body["tenants"].([]any)
+	runtimes, _ := got.body["runtimes"].([]any)
+	users, _ := got.body["users"].([]any)
+	if len(tenants) != 1 || len(runtimes) != 1 || len(users) != 1 {
+		t.Fatalf("seed body: %+v", got.body)
+	}
+	tenant, _ := tenants[0].(map[string]any)
+	if tenant["id"] != "acme" {
+		t.Errorf("tenant from YAML: %+v", tenant)
+	}
+	runtime, _ := runtimes[0].(map[string]any)
+	if runtime["name"] != "echo" || runtime["image"] != "ghcr.io/lennylabs/echo:latest" {
+		t.Errorf("runtime from YAML: %+v", runtime)
+	}
+	user, _ := users[0].(map[string]any)
+	if user["subject"] != "alice@acme.com" || user["tenantId"] != "acme" {
+		t.Errorf("user from YAML: %+v", user)
+	}
+}
+
+func TestBootstrapRejectsMalformedSeedFile(t *testing.T) {
+	path := writeSeedFile(t, "bootstrap-values.yaml", "tenants: [unterminated")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"bootstrap", "--from-values", path}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("malformed seed file: exit code %d, want 1", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("not valid YAML or JSON")) {
+		t.Errorf("stderr: %q, want a YAML-or-JSON parse error", stderr.String())
 	}
 }
 

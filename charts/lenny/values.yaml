@@ -478,3 +478,73 @@ backups:
       limits:
         cpu: 500m
         memory: 512Mi
+
+# bootstrap configures the §17.6 Day-1 seed mechanism. The chart renders
+# the values below into the lenny-bootstrap-values ConfigMap, and the
+# lenny-bootstrap post-install/post-upgrade Job runs
+# `lenny-ctl bootstrap --from-values /etc/lenny/bootstrap-values.yaml`
+# against the admin API. The Job is idempotent (upsert by name), so it
+# runs safely on every `helm install` and `helm upgrade`.
+bootstrap:
+  # enabled gates the bootstrap-values ConfigMap and the lenny-bootstrap
+  # Job. Leave it true to seed Day-1 configuration; set it false to skip
+  # the post-install hook entirely.
+  enabled: true
+  image:
+    repository: ghcr.io/lennylabs/lenny-ctl
+    # tag defaults to the chart appVersion when left empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  # waitTimeoutSeconds bounds how long the Job polls the gateway
+  # GET /healthz endpoint for readiness before it gives up.
+  waitTimeoutSeconds: 120
+  # auth selects how the Job authenticates to the admin API. When
+  # operatorTokenSecret.name is set, the Job mounts that Secret and
+  # passes the token as `--bearer`. Otherwise, when global.devMode is
+  # true, the Job falls back to the dev-header path (--dev-tenant /
+  # --dev-roles); the gateway honors X-Lenny-Roles only when dev mode
+  # is on. A non-dev install with no operatorTokenSecret renders the
+  # Job with the dev-header fallback, which the gateway rejects — set
+  # operatorTokenSecret for any clustered deployment.
+  auth:
+    # operatorTokenSecret references an existing Secret holding a
+    # platform-admin bearer token. The Job reads the token from the
+    # named key and sends it as `Authorization: Bearer <token>`.
+    operatorTokenSecret:
+      name: ""
+      key: token
+    # devTenant and devRoles drive the dev-header fallback used when no
+    # operatorTokenSecret is set and global.devMode is true.
+    devTenant: platform
+    devRoles: platform-admin
+  # tenants, runtimes, and users are the seed resources. Each list
+  # matches the POST /v1/admin/bootstrap BootstrapRequest schema. All
+  # three are optional and idempotent (upsert by name).
+  #
+  # Example seed (uncomment and adapt for a Day-1 install):
+  #
+  # tenants:
+  #   - id: acme
+  #     displayName: Acme Corp
+  #     workspaceTier: standard
+  # runtimes:
+  #   - name: echo
+  #     type: agent
+  #     image: ghcr.io/lennylabs/echo:latest
+  #     executionMode: direct
+  # users:
+  #   - subject: alice@acme.com
+  #     tenantId: acme
+  #     email: alice@acme.com
+  #     roles:
+  #       - user
+  tenants: []
+  runtimes: []
+  users: []
