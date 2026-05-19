@@ -599,6 +599,30 @@ func isComplianceDowngrade(current, requested string) bool {
 	return req < cur
 }
 
+// workspaceTierRank maps the §12.9 storage-classification tier to an
+// ordinal. The tenant-settable workspaceTier is T3 or T4; an unset
+// value defaults to T3, so the empty string ranks with T3. A value
+// outside the ladder is absent from the map and is not ratcheted.
+var workspaceTierRank = map[string]int{
+	"":   1,
+	"T3": 1,
+	"T4": 2,
+}
+
+// isWorkspaceTierDowngrade reports whether a transition from current to
+// requested lowers the §12.9 storage-classification tier. §15.1 states
+// that workspaceTier is ratcheted stricter-only, exactly as the §11.7
+// complianceProfile is. The ratchet is evaluated only between ladder
+// tiers.
+func isWorkspaceTierDowngrade(current, requested string) bool {
+	cur, curOnLadder := workspaceTierRank[current]
+	req, reqOnLadder := workspaceTierRank[requested]
+	if !curOnLadder || !reqOnLadder {
+		return false
+	}
+	return req < cur
+}
+
 // emitBillingErasureExemptRegulated emits the §12.8
 // compliance.billing_erasure_exempt_regulated audit event when a tenant
 // combines billingErasurePolicy=exempt with a regulated compliance
@@ -846,9 +870,10 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	// §11.7 compliance ratchet: complianceProfile may be tightened in
-	// place but never lowered through the generic update endpoint.
-	if body.ComplianceProfile != nil {
+	// §11.7 / §12.9 ratchet checks: complianceProfile and workspaceTier
+	// may be tightened in place but never lowered through the generic
+	// update endpoint. Both compare against the tenant's current row.
+	if body.ComplianceProfile != nil || body.WorkspaceTier != nil {
 		current, err := r.tenants.Get(req.Context(), id)
 		if err != nil {
 			if errors.Is(err, tenantstore.ErrNotFound) {
@@ -858,13 +883,32 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 			return
 		}
-		if isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
+		if body.ComplianceProfile != nil &&
+			isComplianceDowngrade(current.ComplianceProfile, *body.ComplianceProfile) {
 			writeError(w, http.StatusUnprocessableEntity, "COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED",
 				"complianceProfile may be tightened in place but not lowered through this endpoint; "+
 					"use POST /v1/admin/tenants/{id}/compliance-profile/decommission for a legitimate wind-down",
 				map[string]any{
 					"currentProfile":   current.ComplianceProfile,
 					"requestedProfile": *body.ComplianceProfile,
+				})
+			return
+		}
+		// §12.9 workspaceTier ratchet. §15.1 names §12.9 as the authority
+		// for the stricter-only rule but the §15.1 error-code table
+		// defines no workspaceTier-specific code. The rejection therefore
+		// reuses CLASSIFICATION_CONTROL_VIOLATION — the §12.9-owned
+		// storage-classification control code, whose details.reason field
+		// the spec leaves open — with reason tier_downgrade_prohibited.
+		if body.WorkspaceTier != nil &&
+			isWorkspaceTierDowngrade(current.WorkspaceTier, *body.WorkspaceTier) {
+			writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+				"workspaceTier may be tightened in place but not lowered; lowering a tenant's "+
+					"storage classification tier would weaken its data-classification controls",
+				map[string]any{
+					"tenantId": id,
+					"tier":     *body.WorkspaceTier,
+					"reason":   "tier_downgrade_prohibited",
 				})
 			return
 		}

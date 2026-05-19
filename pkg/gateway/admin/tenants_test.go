@@ -892,6 +892,73 @@ func TestUpdateTenantComplianceRatchetIgnoresOffLadderProfile(t *testing.T) {
 	}
 }
 
+// spec: §12.9 / §15.1 workspaceTier stricter-only ratchet (T3 < T4).
+
+// putWorkspaceTier issues a PUT that sets only workspaceTier.
+func putWorkspaceTier(t *testing.T, h http.Handler, id, tier string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(admin.UpdateTenantRequest{WorkspaceTier: &tier})
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodPut, "/v1/admin/tenants/"+id, bytes.NewReader(body)))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestUpdateTenantRejectsWorkspaceTierDowngrade(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", WorkspaceTier: "T4"})
+
+	rr := putWorkspaceTier(t, router.Handler(), "acme", "T3")
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("T4->T3 downgrade: status %d, want 422; body %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+	if env.Error.Code != "CLASSIFICATION_CONTROL_VIOLATION" {
+		t.Errorf("error code = %q, want CLASSIFICATION_CONTROL_VIOLATION", env.Error.Code)
+	}
+	if env.Error.Details["reason"] != "tier_downgrade_prohibited" {
+		t.Errorf("details.reason = %v, want tier_downgrade_prohibited", env.Error.Details["reason"])
+	}
+	// §12.9: the stored tier is unchanged by a rejected downgrade.
+	row, _ := store.Get(context.Background(), "acme")
+	if row.WorkspaceTier != "T4" {
+		t.Errorf("stored workspaceTier = %q, want T4 (unchanged)", row.WorkspaceTier)
+	}
+}
+
+func TestUpdateTenantAllowsWorkspaceTierUpgrade(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", WorkspaceTier: "T3"})
+
+	rr := putWorkspaceTier(t, router.Handler(), "acme", "T4")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("T3->T4 upgrade: status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+	row, _ := store.Get(context.Background(), "acme")
+	if row.WorkspaceTier != "T4" {
+		t.Errorf("stored workspaceTier = %q, want T4", row.WorkspaceTier)
+	}
+}
+
+func TestUpdateTenantAllowsSameWorkspaceTier(t *testing.T) {
+	router, store := newAdminServer(t)
+	_ = store.Create(nil, tenantstore.Tenant{ID: "acme", WorkspaceTier: "T4"})
+
+	// Re-asserting the same tier is not a downgrade; the §12.5 idempotent
+	// T4 re-assert path depends on this.
+	if rr := putWorkspaceTier(t, router.Handler(), "acme", "T4"); rr.Code != http.StatusOK {
+		t.Errorf("T4->T4 re-assert: status %d, want 200; body %s", rr.Code, rr.Body.String())
+	}
+}
+
 // spec: §11.7 / §15.1 compliance-profile decommission endpoint.
 
 func newComplianceAdminServer(t *testing.T) (*admin.Router, *tenantstore.Memory, *recordingAudit) {
