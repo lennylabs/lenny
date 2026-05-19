@@ -9,6 +9,7 @@
 //
 //	/label-immutability             — lenny-label-immutability (§17.2, §5.2 NET-003)
 //	/sandboxclaim-guard             — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
+//	/pool-config-validator          — lenny-pool-config-validator (§4.6.3)
 //	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
 //	/direct-mode-isolation          — lenny-direct-mode-isolation (§4.9, §13.2)
 //	/drain-readiness                — lenny-drain-readiness (§12.5)
@@ -76,6 +77,11 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
 	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
+	// §4.6.3 pool-config-validator: the sole admission gate for the
+	// §4.6.2/§4.6.3 semantic budget invariants on SandboxWarmPool and
+	// SandboxTemplate spec writes. Pure in-process validation, so it
+	// needs no API-server reader.
+	mux.Handle("/pool-config-validator", webhook.Handler(webhook.PoolConfigValidator()))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
 		podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName,
 	)))

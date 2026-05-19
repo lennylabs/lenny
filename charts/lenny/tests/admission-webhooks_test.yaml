@@ -104,6 +104,51 @@ tests:
           path: webhooks[0].rules[0].operations[0]
           value: CREATE
 
+  - it: renders the workload and webhook config for pool-config-validator
+    template: admission-policies/pool-config-validator-webhook.yaml
+    asserts:
+      - hasDocuments:
+          count: 5
+
+  - it: configures the pool-config-validator webhook fail-closed with a 5s timeout
+    template: admission-policies/pool-config-validator-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail
+      - equal:
+          path: webhooks[0].timeoutSeconds
+          value: 5
+      - equal:
+          path: webhooks[0].clientConfig.service.path
+          value: /pool-config-validator
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: lenny-system/lenny-pool-config-validator
+
+  - it: targets warm pools and templates from the pool-config-validator webhook
+    template: admission-policies/pool-config-validator-webhook.yaml
+    documentIndex: 4
+    asserts:
+      - equal:
+          path: webhooks[0].rules[0].apiGroups[0]
+          value: lenny.dev
+      - contains:
+          path: webhooks[0].rules[0].resources
+          content: sandboxwarmpools
+      - contains:
+          path: webhooks[0].rules[0].resources
+          content: sandboxtemplates
+      - contains:
+          path: webhooks[0].rules[0].operations
+          content: CREATE
+      - contains:
+          path: webhooks[0].rules[0].operations
+          content: UPDATE
+
   - it: renders a self-signed issuer for webhook certificates
     template: admission-policies/webhook-cert-issuer.yaml
     asserts:

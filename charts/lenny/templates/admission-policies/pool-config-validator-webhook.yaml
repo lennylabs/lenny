@@ -1,0 +1,47 @@
+{{- /*
+lenny-pool-config-validator ValidatingAdmissionWebhook (§4.6.3). The
+sole admission gate for the §4.6.2/§4.6.3 semantic budget invariants of
+pool configuration (rule set 1) and a defense-in-depth backstop for the
+field-ownership authorization path (rule set 2). Rejects SandboxWarmPool
+and SandboxTemplate spec writes that violate a semantic budget
+invariant with 422 INVALID_POOL_CONFIGURATION. Scoped to the
+sandboxwarmpools and sandboxtemplates resources on CREATE and UPDATE;
+fail-closed with a 5s timeout so an unreachable webhook denies both
+manual edits and PoolScalingController reconciliation writes rather
+than admitting an unvalidated pool configuration. Part of the Phase 3.5
+baseline — rendered unconditionally, no feature-flag gate.
+*/ -}}
+{{- include "lenny.admissionWebhookWorkload" (dict "root" $ "name" "lenny-pool-config-validator") }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-pool-config-validator
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/lenny-pool-config-validator
+webhooks:
+  - name: pool-config-validator.lenny.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - key: lenny.dev/agent-namespace
+          operator: In
+          values: ["true"]
+    rules:
+      - apiGroups: ["lenny.dev"]
+        apiVersions: ["v1"]
+        resources: ["sandboxwarmpools", "sandboxtemplates"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+    clientConfig:
+      service:
+        name: lenny-pool-config-validator
+        namespace: {{ .Release.Namespace }}
+        path: /pool-config-validator
+        port: 443
