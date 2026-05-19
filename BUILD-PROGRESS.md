@@ -74,15 +74,24 @@ table defines no workspaceTier-specific code, so the tenant-update rejection in
 storage-classification control, whose `details.reason` field the spec leaves open) with
 `details.reason: tier_downgrade_prohibited`.
 
-- **Helm chart workload Deployments** (Wave 5). The chart renders `controller-deployment.yaml`
-  but no Deployment or Service for the gateway, the Token Service, or `lenny-ops`, and it
-  treats Postgres, Redis, and MinIO as bring-your-own external services (connection config
-  only). Wave 5's "complete the Helm chart" task list did not enumerate these workloads; it
-  assumed they already existed. They are a prerequisite for installing Lenny on a Kind
-  cluster, so the tier-5 e2e suite cannot exercise a gateway-dependent path until they land.
-  Route-around: build the gateway, Token Service, and `lenny-ops` Deployments and Services
-  as part of Wave 5, and provide an e2e values overlay that brings up in-cluster Postgres,
-  Redis, and MinIO for the Kind tier.
+- **Helm chart workload Deployments** (Wave 5) — RESOLVED. The chart now renders the
+  gateway, Token Service, and `lenny-ops` Deployments and Services (commit `chart: gateway,
+  Token Service, and lenny-ops workloads`). Postgres, Redis, and MinIO stay bring-your-own
+  external services in the production chart.
+
+- **Tier-5/8/9 e2e suite bring-up** (Wave 5, in progress). The exit gate runs
+  `lenny-test --group nightly` against a real Kind cluster. Infrastructure progress: the
+  `lenny-e2e` Kind cluster is up, cert-manager is installed, and all seven Lenny images
+  (`lenny-{controller,gateway,webhook,token-service,ops,migrate,adapter}:e2e`) are built and
+  loaded onto the cluster nodes. Environment note: this host's Docker Desktop builds images
+  that `kind load docker-image` rejects unless each image is built as a standalone
+  `DOCKER_BUILDKIT=0 docker build` invocation — buildx output and `for`-loop builds did not
+  land in the daemon store reliably. Remaining: a working `helm install` needs the
+  gateway/controller binaries' Postgres/Redis/MinIO/KMS/JWT connection configuration modeled
+  in chart values (the `postgres`/`redis`/`minio` sections currently carry only NetworkPolicy
+  CIDR/port config, not connection strings), in-cluster data-store manifests for the Kind
+  tier, the migration Job, and then the conversion of the tier-5/8/9 `scaffolds_test.go`
+  stubs into real cluster assertions.
 
 ## Test status
 
