@@ -40,7 +40,67 @@ const (
 	// EventSessionCompleted is emitted when a session reaches a
 	// terminal state (completed, failed, cancelled, or expired).
 	EventSessionCompleted EventType = "session.completed"
+
+	// EventBillingCorrection corrects a previously emitted billing
+	// event. A correction carries its own SequenceNumber and references
+	// the original event via CorrectsSequence; the original event is
+	// never mutated (§11.2.1 correction semantics).
+	EventBillingCorrection EventType = "billing_correction"
 )
+
+// ReasonCode is a §11.2.1 correction_reason_code. The closed enum below
+// is the built-in set; deployers extend it via the admin API. Each code
+// is classified as gateway-emitted (Category 1) or operator-initiated
+// (Category 2); a deployer-added code is always Category 2.
+type ReasonCode string
+
+const (
+	// ReasonMeteringBug — Category 1: the gateway self-corrects a
+	// metering inconsistency.
+	ReasonMeteringBug ReasonCode = "METERING_BUG"
+	// ReasonRetryOvercounting — Category 1: the gateway removes a
+	// double-count from retried requests.
+	ReasonRetryOvercounting ReasonCode = "RETRY_OVERCOUNTING"
+	// ReasonTestSessionCleanup — Category 2: an operator removes the
+	// cost of a test session.
+	ReasonTestSessionCleanup ReasonCode = "TEST_SESSION_CLEANUP"
+	// ReasonGatewayCrashReconstruction — Category 1: the gateway
+	// reconciles billing from pod-reported totals after crash recovery.
+	ReasonGatewayCrashReconstruction ReasonCode = "GATEWAY_CRASH_RECONSTRUCTION"
+	// ReasonOperatorManualAdjustment — Category 2: an operator records a
+	// manual revenue adjustment.
+	ReasonOperatorManualAdjustment ReasonCode = "OPERATOR_MANUAL_ADJUSTMENT"
+)
+
+// gatewayEmittedReasons is the §11.2.1 Category 1 set: corrections the
+// gateway emits as an automated consequence of crash recovery, retry
+// deduplication, or self-healing metering. These are written through
+// the normal EventStore path and never require operator approval.
+var gatewayEmittedReasons = map[ReasonCode]bool{
+	ReasonMeteringBug:                true,
+	ReasonRetryOvercounting:          true,
+	ReasonGatewayCrashReconstruction: true,
+}
+
+// operatorReasons is the §11.2.1 Category 2 built-in set: corrections a
+// human operator issues through POST /v1/admin/billing-corrections.
+var operatorReasons = map[ReasonCode]bool{
+	ReasonTestSessionCleanup:       true,
+	ReasonOperatorManualAdjustment: true,
+}
+
+// IsGatewayEmittedReason reports whether code is a §11.2.1 Category 1
+// (gateway-emitted automated reconciliation) reason code.
+func IsGatewayEmittedReason(code ReasonCode) bool {
+	return gatewayEmittedReasons[code]
+}
+
+// IsBuiltinReason reports whether code is one of the built-in §11.2.1
+// reason codes. A code that is well-formed but not built-in is a
+// deployer-added code, which is always operator-initiated.
+func IsBuiltinReason(code ReasonCode) bool {
+	return gatewayEmittedReasons[code] || operatorReasons[code]
+}
 
 // defaultSchemaVersion is the §15.5 billing-event schema revision
 // stamped on an event whose SchemaVersion is left zero.
@@ -60,11 +120,38 @@ type Event struct {
 	EventType      EventType
 	TokensInput    uint64
 	TokensOutput   uint64
+	PodMinutes     float64
 	CreatedAt      time.Time
+
+	// CorrectsSequence references the original event a billing_correction
+	// adjusts (§11.2.1). It is zero for every non-correction event;
+	// sequence numbers start at 1, so zero is never a valid reference.
+	CorrectsSequence uint64
+
+	// CorrectionReasonCode is the structured §11.2.1 reason code carried
+	// on a billing_correction event. It is empty for every other event
+	// type and required for a billing_correction.
+	CorrectionReasonCode ReasonCode
+
+	// CorrectionDetail is the optional free-text detail supplementing the
+	// structured reason code on a billing_correction event.
+	CorrectionDetail string
+}
+
+// IsCorrection reports whether e is a §11.2.1 billing_correction event.
+func (e Event) IsCorrection() bool {
+	return e.EventType == EventBillingCorrection
 }
 
 // ErrInvalidEvent — the event is missing a tenant id or event type.
 var ErrInvalidEvent = errors.New("billingstore: event requires a tenant id and event type")
+
+// ErrInvalidCorrection — a billing_correction event is missing its
+// corrects_sequence reference or its correction_reason_code, or a
+// non-correction event carries correction-only fields. §11.2.1 makes
+// both fields mandatory on a correction and absent on every other
+// event type.
+var ErrInvalidCorrection = errors.New("billingstore: a billing_correction event requires corrects_sequence and correction_reason_code")
 
 // ErrPseudonymizeArg — PseudonymizeUser was called without a tenant id,
 // a user id, or a salt. Pseudonymizing with no salt would produce a
@@ -101,9 +188,25 @@ type Store interface {
 
 // Validate reports the §11.2.1 minimum-field requirements. Every Store
 // implementation runs it before committing an event.
+//
+// For a billing_correction event, §11.2.1 additionally requires a
+// non-zero corrects_sequence and a correction_reason_code. The
+// correction-only fields must not appear on any other event type — the
+// null/absent field contract makes event_type the discriminant — so a
+// non-correction event carrying them is rejected as well.
 func Validate(e Event) error {
 	if e.TenantID == "" || e.EventType == "" {
 		return ErrInvalidEvent
+	}
+	if e.IsCorrection() {
+		if e.CorrectsSequence == 0 || e.CorrectionReasonCode == "" {
+			return ErrInvalidCorrection
+		}
+		return nil
+	}
+	// A non-correction event must carry no correction-only field.
+	if e.CorrectsSequence != 0 || e.CorrectionReasonCode != "" || e.CorrectionDetail != "" {
+		return ErrInvalidCorrection
 	}
 	return nil
 }
@@ -212,3 +315,55 @@ func (m *Memory) Since(_ context.Context, tenantID string, since uint64, limit i
 }
 
 var _ Store = (*Memory)(nil)
+
+// ReconcileLedger applies the §11.2.1 correction semantics to a stream
+// of billing events read in sequence-number order. For each
+// billing_correction it encounters, the correction's tokens_input,
+// tokens_output, and pod_minutes supersede the referenced original
+// event's corresponding fields. Multiple corrections to the same
+// original are applied in sequence-number order, so the latest
+// correction wins. The original event is never mutated; ReconcileLedger
+// returns a new slice carrying the reconciled originals and drops the
+// correction records, which is the accurate billing ledger a consumer
+// computes from the immutable stream.
+//
+// A correction that references an unknown sequence number is retained
+// in the output unchanged: the consumer cannot reconcile it, and
+// dropping it would hide a billing adjustment.
+func ReconcileLedger(events []Event) []Event {
+	// Index the originals by sequence number so a correction can be
+	// applied in place on a copy.
+	byseq := make(map[uint64]int, len(events))
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if !e.IsCorrection() {
+			byseq[e.SequenceNumber] = len(out)
+			out = append(out, e)
+		}
+	}
+	// Apply corrections in ascending sequence order so the latest
+	// correction to a given original takes precedence.
+	corrections := make([]Event, 0)
+	for _, e := range events {
+		if e.IsCorrection() {
+			corrections = append(corrections, e)
+		}
+	}
+	sort.Slice(corrections, func(i, j int) bool {
+		return corrections[i].SequenceNumber < corrections[j].SequenceNumber
+	})
+	for _, c := range corrections {
+		idx, ok := byseq[c.CorrectsSequence]
+		if !ok {
+			// The referenced original is not in this window; surface the
+			// correction so the consumer does not silently lose it.
+			out = append(out, c)
+			continue
+		}
+		out[idx].TokensInput = c.TokensInput
+		out[idx].TokensOutput = c.TokensOutput
+		out[idx].PodMinutes = c.PodMinutes
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SequenceNumber < out[j].SequenceNumber })
+	return out
+}

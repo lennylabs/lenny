@@ -30,8 +30,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/experiment"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/delegationpolicystore"
@@ -119,6 +121,9 @@ type Router struct {
 	userTokens         UserTokenRevoker
 	erasureRunner      ErasureRunner
 	erasureJobs        erasurejob.Store
+	billing            billingstore.Store
+	corrections        correctionstore.Store
+	dualControlThresh  float64
 	sessions           sessionstore.Store
 	interactions       interactionstore.Store
 	experiments        experimentstore.Store
@@ -268,6 +273,25 @@ func (r *Router) Handler() http.Handler {
 		// §12.8 legal hold set / clear.
 		mux.Handle("POST /v1/admin/legal-hold",
 			r.requireAdmin(http.HandlerFunc(r.handleSetLegalHold)))
+	}
+	if r.corrections != nil && r.billing != nil {
+		// §11.2.1 operator-initiated billing corrections (Category 2).
+		// Gated on the issue_billing_corrections permission, which the
+		// §10.2 matrix grants to platform-admin only — tenant-admin and
+		// user receive 403. The approve/reject endpoints carry the same
+		// gate; the four-eyes rule (a second, distinct platform-admin)
+		// is enforced inside the handler.
+		billingCorrectionAdmin := r.requirePermission(auth.PermIssueBillingCorrections)
+		mux.Handle("POST /v1/admin/billing-corrections",
+			billingCorrectionAdmin(http.HandlerFunc(r.handleCreateBillingCorrection)))
+		mux.Handle("GET /v1/admin/billing-corrections",
+			billingCorrectionAdmin(http.HandlerFunc(r.handleListBillingCorrections)))
+		mux.Handle("GET /v1/admin/billing-corrections/{id}",
+			billingCorrectionAdmin(http.HandlerFunc(r.handleGetBillingCorrection)))
+		mux.Handle("POST /v1/admin/billing-corrections/{id}/approve",
+			billingCorrectionAdmin(http.HandlerFunc(r.handleApproveBillingCorrection)))
+		mux.Handle("POST /v1/admin/billing-corrections/{id}/reject",
+			billingCorrectionAdmin(http.HandlerFunc(r.handleRejectBillingCorrection)))
 	}
 	if r.experiments != nil {
 		// §10.7 / §15.1 experiment admin CRUD.

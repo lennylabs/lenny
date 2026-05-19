@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -67,6 +68,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover"
+	"github.com/lennylabs/lenny/pkg/gateway/billingstore/failover/redisstream"
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/breakerstore/cachingstore"
@@ -76,6 +79,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectorstore"
 	connectorpg "github.com/lennylabs/lenny/pkg/gateway/connectorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
@@ -231,6 +235,10 @@ func main() {
 		"§9.3 absolute URL the connector OAuth provider redirects back to (the gateway's GET /v1/admin/connectors/oauth/callback). Wiring the connector OAuth 2.1 flow requires it. Override via LENNY_CONNECTOR_OAUTH_CALLBACK_URL.")
 	connectorOAuthCA := flag.String("connector-oauth-ca", os.Getenv("LENNY_CONNECTOR_OAUTH_CA"),
 		"path to a CA bundle that verifies the §9.3 connector OAuth provider's token-endpoint TLS certificate. Empty uses the system trust store. Set this for a provider behind a private CA. Override via LENNY_CONNECTOR_OAUTH_CA.")
+	opsServiceURL := flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
+		"§25.14 public URL of the lenny-ops service (the ops.ingress.host Helm value). Advertised in GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops endpoint. Override via LENNY_OPS_SERVICE_URL.")
+	billingDualControlThreshold := flag.Float64("billing-dual-control-threshold", envFloat("LENNY_BILLING_DUAL_CONTROL_THRESHOLD", 0),
+		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
 	flag.Parse()
 
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
@@ -385,6 +393,43 @@ func main() {
 		securityBus = pubsub.New(redisClient)
 		log.Printf("lenny-gateway: security caches converge across replicas over Redis pub/sub")
 	}
+
+	// ----- §11.2.1 two-tier billing failover pipeline -----
+	// The billing ledger is wrapped in the failover Pipeline so a
+	// transient Postgres outage never drops a billing event: on a
+	// primary write failure the event routes to the Tier 1 durable
+	// stream, then to the bounded Tier 2 in-memory write-ahead buffer.
+	// The Tier 1 stream is Redis-backed when a Postgres ledger and Redis
+	// are both wired (the durable, multi-replica path); otherwise it is
+	// the in-process MemStream, which gives a single-replica deployment
+	// the same two-tier code path without a Redis dependency.
+	var billingStream failover.StreamTier
+	if pgStore, ok := billing.(*billingpg.Store); ok && redisClient != nil {
+		tier, err := redisstream.New(redisstream.Options{
+			Client:       redisClient,
+			ConsumerName: replica,
+			Inserter:     pgStore,
+		})
+		if err != nil {
+			log.Fatalf("lenny-gateway: billing failover stream: %v", err)
+		}
+		billingStream = tier
+		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 backed by the Redis stream (consumer %s)", replica)
+	} else {
+		billingStream = failover.NewMemStream()
+	}
+	billingPipeline := failover.New(failover.Options{
+		Primary: billing,
+		Stream:  billingStream,
+	})
+	// The pipeline is a billingstore.Store, so it replaces the bare
+	// ledger everywhere downstream — billing emission, the metering API,
+	// and the billing-correction workflow all write through the failover
+	// path. billingLedger keeps a handle to the un-wrapped store for the
+	// erasure job's pseudonymize path, which operates on the durable
+	// store directly.
+	billingLedger := billing
+	billing = billingPipeline
 
 	// ----- §7.1 uploadToken KeyRing -----
 	// One ephemeral signing key per process. Production deployers
@@ -914,7 +959,9 @@ func main() {
 		// billing store's pseudonymize path is deferred (it needs an
 		// UPDATE under the lenny_erasure role), so this attaches the
 		// BillingEraser only when the in-memory billing store is wired.
-		if be, ok := billing.(erasurejob.BillingErasureStore); ok {
+		// The pseudonymize path operates on the durable ledger directly,
+		// so it asserts against billingLedger, not the failover pipeline.
+		if be, ok := billingLedger.(erasurejob.BillingErasureStore); ok {
 			erasureRunner = erasureRunner.WithBilling(erasurejob.NewBillingEraser(be, tenants))
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
@@ -958,17 +1005,29 @@ func main() {
 		adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)
 	}
 	adminRouter = adminRouter.WithPlatformInfo(
-		admin.PlatformInfo{Version: buildVersion, GitCommit: buildCommit, BuildDate: buildDate},
+		admin.PlatformInfo{
+			Version:       buildVersion,
+			GitCommit:     buildCommit,
+			BuildDate:     buildDate,
+			OpsServiceURL: *opsServiceURL,
+		},
 		map[string]string{
-			"gateway.addr":        *addr,
-			"gateway.multiTenant": boolStr(*multiTenant),
-			"gateway.devMode":     boolStr(*devMode),
-			"gateway.runtimeBin":  *runtimeBin,
-			"gateway.postgres":    boolStr(*postgresDSN != ""),
-			"gateway.redis":       boolStr(*redisURL != ""),
-			"gateway.replicaId":   replica,
+			"gateway.addr":          *addr,
+			"gateway.multiTenant":   boolStr(*multiTenant),
+			"gateway.devMode":       boolStr(*devMode),
+			"gateway.runtimeBin":    *runtimeBin,
+			"gateway.postgres":      boolStr(*postgresDSN != ""),
+			"gateway.redis":         boolStr(*redisURL != ""),
+			"gateway.replicaId":     replica,
+			"gateway.opsServiceURL": *opsServiceURL,
 		},
 	)
+	// §11.2.1 operator-initiated billing-correction workflow. The
+	// correction endpoints write through the failover billing pipeline
+	// and hold pending dual-control requests in the in-memory
+	// correction registry.
+	adminRouter = adminRouter.WithBillingCorrections(
+		billing, correctionstore.NewMemory(), *billingDualControlThreshold)
 
 	// ----- Compose the mux -----
 	mux := http.NewServeMux()
@@ -1230,6 +1289,13 @@ func main() {
 	if breakerCache != nil {
 		go breakerCache.Run(watchdogCtx)
 	}
+
+	// ----- §11.2.1 billing failover Tier 2 flusher -----
+	// Drains the in-memory write-ahead buffer into the primary billing
+	// ledger once Postgres connectivity is restored, preserving the
+	// monotonic ordering guarantee. The Tier 1 Redis stream drains
+	// itself through its own consumer-group flusher.
+	go billingPipeline.RunFlusher(watchdogCtx)
 
 	// ----- §4.9 / §10.3 / §13.3 security-cache pub/sub subscribers -----
 	// Active only with Redis: each subscribe loop applies a peer
@@ -1713,4 +1779,19 @@ func envFlag(name string) bool {
 	default:
 		return false
 	}
+}
+
+// envFloat returns the env var name parsed as a float64, or def when
+// the var is unset or does not parse. Used to default the
+// --billing-dual-control-threshold flag from the environment.
+func envFloat(name string, def float64) float64 {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	return f
 }

@@ -36,7 +36,9 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 var _ billingstore.Store = (*Store)(nil)
 
 const selectList = `sequence_number, schema_version, user_id, session_id,
-	experiment_id, variant_id, event_type, tokens_input, tokens_output, created_at`
+	experiment_id, variant_id, event_type, tokens_input, tokens_output,
+	pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
+	created_at`
 
 // Append commits a billing event to the tenant's ledger and returns
 // the sealed event. The per-tenant advisory lock makes the tail read
@@ -64,11 +66,15 @@ func (s *Store) Append(ctx context.Context, e billingstore.Event) (billingstore.
 		e.SequenceNumber = uint64(tail) + 1
 		if _, err := tx.Exec(ctx, `INSERT INTO billing_events (
 			tenant_id, sequence_number, schema_version, user_id, session_id,
-			experiment_id, variant_id, event_type, tokens_input, tokens_output, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			experiment_id, variant_id, event_type, tokens_input, tokens_output,
+			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
+			created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
 			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
-			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput), e.CreatedAt); err != nil {
+			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
+			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
+			e.CorrectionDetail, e.CreatedAt); err != nil {
 			return err
 		}
 		committed = e
@@ -116,16 +122,20 @@ func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit 
 // scanEvent reads one row in selectList order into an Event.
 func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	var (
-		e         billingstore.Event
-		seq       int64
-		schemaVer int32
-		sessionID *string
-		eventType string
-		tokensIn  int64
-		tokensOut int64
+		e          billingstore.Event
+		seq        int64
+		schemaVer  int32
+		sessionID  *string
+		eventType  string
+		tokensIn   int64
+		tokensOut  int64
+		correctsTo *int64
+		reasonCode string
+		detail     string
 	)
 	if err := row.Scan(&seq, &schemaVer, &e.UserID, &sessionID,
-		&e.ExperimentID, &e.VariantID, &eventType, &tokensIn, &tokensOut, &e.CreatedAt); err != nil {
+		&e.ExperimentID, &e.VariantID, &eventType, &tokensIn, &tokensOut,
+		&e.PodMinutes, &correctsTo, &reasonCode, &detail, &e.CreatedAt); err != nil {
 		return billingstore.Event{}, err
 	}
 	e.TenantID = tenantID
@@ -137,6 +147,68 @@ func scanEvent(row pgx.Row, tenantID string) (billingstore.Event, error) {
 	e.EventType = billingstore.EventType(eventType)
 	e.TokensInput = uint64(tokensIn)
 	e.TokensOutput = uint64(tokensOut)
+	if correctsTo != nil {
+		e.CorrectsSequence = uint64(*correctsTo)
+	}
+	e.CorrectionReasonCode = billingstore.ReasonCode(reasonCode)
+	e.CorrectionDetail = detail
 	e.CreatedAt = e.CreatedAt.UTC()
 	return e, nil
+}
+
+// correctsSequence maps a billing event's CorrectsSequence to the
+// nullable column value: NULL for a non-correction event (sequence
+// numbers start at 1, so zero is never a real reference), the integer
+// value otherwise.
+func correctsSequence(e billingstore.Event) any {
+	if e.CorrectsSequence == 0 {
+		return nil
+	}
+	return int64(e.CorrectsSequence)
+}
+
+// InsertFromStream commits a billing event reclaimed from the §11.2.1
+// failover Redis stream, keyed by the Redis stream entry id for
+// idempotency. It is the redisstream.Inserter implementation: the
+// INSERT ... ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING means a
+// reclaimed entry a crashed consumer had already inserted is a no-op, so
+// the reclaiming consumer can safely acknowledge and delete the entry.
+//
+// The flusher acquires the authoritative per-tenant sequence number at
+// flush time (§11.2.1) — the provisional number stamped during the
+// outage is discarded — so InsertFromStream re-derives the sequence
+// under the per-tenant advisory lock exactly like Append.
+func (s *Store) InsertFromStream(ctx context.Context, e billingstore.Event, streamEntryID string) error {
+	if err := billingstore.Validate(e); err != nil {
+		return err
+	}
+	e = billingstore.Normalize(e, time.Now())
+	return pgtenant.InTx(ctx, s.pool, e.TenantID, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtext($1))`, "billing:"+e.TenantID); err != nil {
+			return err
+		}
+		var tail int64
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE(MAX(sequence_number), 0) FROM billing_events WHERE tenant_id = $1`,
+			e.TenantID).Scan(&tail); err != nil {
+			return err
+		}
+		e.SequenceNumber = uint64(tail) + 1
+		// §11.2.1: ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING
+		// makes a redelivered stream entry idempotent.
+		_, err := tx.Exec(ctx, `INSERT INTO billing_events (
+			tenant_id, sequence_number, schema_version, user_id, session_id,
+			experiment_id, variant_id, event_type, tokens_input, tokens_output,
+			pod_minutes, corrects_sequence, correction_reason_code, correction_detail,
+			stream_entry_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		ON CONFLICT (tenant_id, stream_entry_id) DO NOTHING`,
+			e.TenantID, int64(e.SequenceNumber), int32(e.SchemaVersion), e.UserID,
+			pgtenant.NullString(e.SessionID), e.ExperimentID, e.VariantID,
+			string(e.EventType), int64(e.TokensInput), int64(e.TokensOutput),
+			e.PodMinutes, correctsSequence(e), string(e.CorrectionReasonCode),
+			e.CorrectionDetail, streamEntryID, e.CreatedAt)
+		return err
+	})
 }

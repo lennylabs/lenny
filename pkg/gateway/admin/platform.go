@@ -13,11 +13,19 @@ import (
 // response — the gateway's own compiled-in metadata. Component
 // versions that need a K8s / Postgres query are aggregated by
 // lenny-ops (§25.8), not here.
+//
+// OpsServiceURL is the §25.14 lenny-ctl auto-discovery field: the
+// public URL of the lenny-ops service (configured via the
+// ops.ingress.host Helm value). lenny-ctl reads it on first use so an
+// operator does not have to configure the gateway URL and the ops URL
+// separately. It is omitted when the deployment did not configure an
+// ops Ingress.
 type PlatformVersion struct {
 	GatewayVersion string `json:"gatewayVersion"`
 	GitCommit      string `json:"gitCommit"`
 	BuildDate      string `json:"buildDate"`
 	GoVersion      string `json:"goVersion"`
+	OpsServiceURL  string `json:"opsServiceURL,omitempty"`
 }
 
 // PlatformInfo carries the build metadata the gateway was compiled
@@ -27,6 +35,11 @@ type PlatformInfo struct {
 	Version   string
 	GitCommit string
 	BuildDate string
+
+	// OpsServiceURL is the §25.14 public lenny-ops URL, configured via
+	// the ops.ingress.host Helm value. Empty when no ops Ingress is
+	// configured.
+	OpsServiceURL string
 }
 
 // PlatformConfigEntry is one effective-config key/value. Secret
@@ -66,6 +79,7 @@ func (r *Router) handlePlatformVersion(w http.ResponseWriter, _ *http.Request) {
 		GitCommit:      commit,
 		BuildDate:      build,
 		GoVersion:      runtime.Version(),
+		OpsServiceURL:  r.platformInfo.OpsServiceURL,
 	})
 }
 

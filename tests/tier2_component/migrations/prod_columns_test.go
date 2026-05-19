@@ -61,6 +61,12 @@ var prodMigrationSchema = []struct {
 	// processing-restriction trigger it also installs is covered by
 	// TestProcessingRestrictionTrigger.
 	{migration: "0042", table: "erasure_jobs", create: true},
+	// 0043 adds the §11.2.1 billing-correction columns and the
+	// stream-dedup column to billing_events.
+	{migration: "0043", table: "billing_events", columns: []string{
+		"corrects_sequence", "correction_reason_code", "correction_detail",
+		"pod_minutes", "stream_entry_id",
+	}},
 }
 
 // spec: 12.2, 18.5

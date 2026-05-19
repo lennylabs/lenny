@@ -264,3 +264,165 @@ func TestPseudonymizeUserScopedToTenant(t *testing.T) {
 		t.Errorf("globex's event must be untouched, got %+v", globex)
 	}
 }
+
+// spec: §11.2.1 billing_correction events and correction semantics.
+
+// correction builds a billing_correction event referencing original
+// sequence orig with the given replacement token counts.
+func correction(tenant string, orig uint64, tokensIn, tokensOut uint64) billingstore.Event {
+	return billingstore.Event{
+		TenantID:             tenant,
+		EventType:            billingstore.EventBillingCorrection,
+		CorrectsSequence:     orig,
+		CorrectionReasonCode: billingstore.ReasonOperatorManualAdjustment,
+		TokensInput:          tokensIn,
+		TokensOutput:         tokensOut,
+	}
+}
+
+func TestValidateAcceptsWellFormedCorrection(t *testing.T) {
+	if err := billingstore.Validate(correction("acme", 1, 50, 10)); err != nil {
+		t.Errorf("a well-formed correction should validate, got %v", err)
+	}
+}
+
+func TestValidateRejectsCorrectionMissingFields(t *testing.T) {
+	// A correction with no corrects_sequence.
+	noSeq := correction("acme", 0, 10, 0)
+	if err := billingstore.Validate(noSeq); !errors.Is(err, billingstore.ErrInvalidCorrection) {
+		t.Errorf("a correction with no corrects_sequence: got %v, want ErrInvalidCorrection", err)
+	}
+	// A correction with no reason code.
+	noReason := correction("acme", 1, 10, 0)
+	noReason.CorrectionReasonCode = ""
+	if err := billingstore.Validate(noReason); !errors.Is(err, billingstore.ErrInvalidCorrection) {
+		t.Errorf("a correction with no reason code: got %v, want ErrInvalidCorrection", err)
+	}
+}
+
+func TestValidateRejectsCorrectionFieldsOnNormalEvent(t *testing.T) {
+	// The §11.2.1 null/absent contract: a non-correction event must not
+	// carry correction-only fields.
+	e := sessionCreated("acme", "s1")
+	e.CorrectsSequence = 3
+	if err := billingstore.Validate(e); !errors.Is(err, billingstore.ErrInvalidCorrection) {
+		t.Errorf("a session.created carrying corrects_sequence: got %v, want ErrInvalidCorrection", err)
+	}
+}
+
+func TestAppendCorrectionDoesNotMutateOriginal(t *testing.T) {
+	store := billingstore.NewMemory()
+	ctx := context.Background()
+	// Original event: 100 input tokens.
+	original := billed("acme", "alice@acme", 100)
+	if _, err := store.Append(ctx, original); err != nil {
+		t.Fatalf("Append original: %v", err)
+	}
+	// A correction restating the input tokens as 40.
+	corr := correction("acme", 1, 40, 0)
+	committed, err := store.Append(ctx, corr)
+	if err != nil {
+		t.Fatalf("Append correction: %v", err)
+	}
+	// §11.2.1: the correction is an appended event with its own
+	// sequence number; the original stays in the ledger unchanged.
+	if committed.SequenceNumber != 2 {
+		t.Errorf("correction sequence: got %d, want 2", committed.SequenceNumber)
+	}
+	events, _ := store.Since(ctx, "acme", 0, 0)
+	if len(events) != 2 {
+		t.Fatalf("ledger should hold the original and the correction, has %d events", len(events))
+	}
+	if events[0].TokensInput != 100 {
+		t.Errorf("the original event was mutated: TokensInput=%d, want 100", events[0].TokensInput)
+	}
+	if events[0].IsCorrection() {
+		t.Error("the original event must not become a correction")
+	}
+	if !events[1].IsCorrection() || events[1].CorrectsSequence != 1 {
+		t.Errorf("the correction should reference sequence 1, got %+v", events[1])
+	}
+}
+
+func TestReconcileLedgerAppliesCorrection(t *testing.T) {
+	events := []billingstore.Event{
+		{TenantID: "acme", SequenceNumber: 1, EventType: billingstore.EventSessionCreated, TokensInput: 100, TokensOutput: 20},
+		correctionAt("acme", 2, 1, 40, 5),
+	}
+	ledger := billingstore.ReconcileLedger(events)
+	if len(ledger) != 1 {
+		t.Fatalf("ReconcileLedger should drop the correction record, got %d events", len(ledger))
+	}
+	// §11.2.1: the correction's values supersede the original's.
+	if ledger[0].TokensInput != 40 || ledger[0].TokensOutput != 5 {
+		t.Errorf("reconciled original: tokensIn=%d tokensOut=%d, want 40/5",
+			ledger[0].TokensInput, ledger[0].TokensOutput)
+	}
+}
+
+func TestReconcileLedgerLatestCorrectionWins(t *testing.T) {
+	events := []billingstore.Event{
+		{TenantID: "acme", SequenceNumber: 1, EventType: billingstore.EventSessionCreated, TokensInput: 100},
+		correctionAt("acme", 2, 1, 40, 0),
+		correctionAt("acme", 3, 1, 75, 0),
+	}
+	ledger := billingstore.ReconcileLedger(events)
+	if len(ledger) != 1 {
+		t.Fatalf("ReconcileLedger should keep one reconciled original, got %d", len(ledger))
+	}
+	// §11.2.1: multiple corrections apply in sequence order; the latest
+	// (sequence 3, 75 tokens) takes precedence.
+	if ledger[0].TokensInput != 75 {
+		t.Errorf("latest correction should win: TokensInput=%d, want 75", ledger[0].TokensInput)
+	}
+}
+
+func TestReconcileLedgerKeepsOrphanCorrection(t *testing.T) {
+	// A correction referencing a sequence absent from the window is
+	// retained so the consumer does not silently lose the adjustment.
+	events := []billingstore.Event{
+		{TenantID: "acme", SequenceNumber: 5, EventType: billingstore.EventSessionCreated, TokensInput: 10},
+		correctionAt("acme", 6, 99, 1, 0),
+	}
+	ledger := billingstore.ReconcileLedger(events)
+	if len(ledger) != 2 {
+		t.Fatalf("an orphan correction should be retained, got %d events", len(ledger))
+	}
+}
+
+func TestReasonCodeClassification(t *testing.T) {
+	// §11.2.1 Category 1 (gateway-emitted) codes.
+	for _, code := range []billingstore.ReasonCode{
+		billingstore.ReasonMeteringBug,
+		billingstore.ReasonRetryOvercounting,
+		billingstore.ReasonGatewayCrashReconstruction,
+	} {
+		if !billingstore.IsGatewayEmittedReason(code) {
+			t.Errorf("%s should classify as gateway-emitted", code)
+		}
+	}
+	// §11.2.1 Category 2 (operator-initiated) codes.
+	for _, code := range []billingstore.ReasonCode{
+		billingstore.ReasonTestSessionCleanup,
+		billingstore.ReasonOperatorManualAdjustment,
+	} {
+		if billingstore.IsGatewayEmittedReason(code) {
+			t.Errorf("%s should not classify as gateway-emitted", code)
+		}
+		if !billingstore.IsBuiltinReason(code) {
+			t.Errorf("%s should be a built-in reason code", code)
+		}
+	}
+	// A deployer-added code is well-formed but not built-in.
+	if billingstore.IsBuiltinReason(billingstore.ReasonCode("ACME_CUSTOM")) {
+		t.Error("a deployer-added code must not classify as built-in")
+	}
+}
+
+// correctionAt builds a billing_correction with an explicit sequence
+// number, for ReconcileLedger tests that supply pre-sequenced events.
+func correctionAt(tenant string, seq, orig, tokensIn, tokensOut uint64) billingstore.Event {
+	c := correction(tenant, orig, tokensIn, tokensOut)
+	c.SequenceNumber = seq
+	return c
+}

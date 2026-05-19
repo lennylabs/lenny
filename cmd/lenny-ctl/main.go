@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: MIT
 
 // Command lenny-ctl is the operator CLI for the Lenny gateway. It
-// wraps the §15.1 admin API surface with the §24 command tree.
+// wraps the §15.1 admin API surface with the §24 command tree and the
+// §25.14 operability command groups.
 //
 // Resource management lives under the `admin` group:
 //
 //	lenny-ctl admin tenants list|get|create
 //	lenny-ctl admin runtimes list|get
 //	lenny-ctl admin circuit-breakers list|open|close
+//
+// The §25.14 operability groups wrap the lenny-ops API:
+//
+//	lenny-ctl runbooks list|get
+//	lenny-ctl locks list|acquire|release
+//	lenny-ctl escalations list|create|resolve
+//	lenny-ctl diagnose session|pool|connectivity|credential-pool
+//	lenny-ctl drift report|validate|reconcile
 //
 // Standalone commands:
 //
@@ -19,6 +28,11 @@
 // the dev-header path (--dev-tenant / --dev-roles) for Embedded
 // Mode. The target gateway is --api-url (default
 // http://localhost:8080).
+//
+// Routing (§25.14): health and version target the gateway directly.
+// The operability groups target lenny-ops. The ops URL comes from the
+// --ops-server flag, or is auto-discovered from the gateway's
+// GET /v1/admin/platform/version response (the opsServiceURL field).
 package main
 
 import (
@@ -61,6 +75,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr)
 	case "admin":
 		return cmdAdmin(ctx, client, rest[1:], stdout, stderr)
+	// §25.14 operability command groups — these target lenny-ops, not
+	// the gateway. opsClient resolves the ops URL (the --ops-server flag
+	// or auto-discovery) on first use.
+	case "runbooks":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdRunbooks(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "locks":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdLocks(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "escalations":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdEscalations(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "diagnose":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdDiagnose(ctx, ops, rest[1:], stdout, stderr)
+		})
+	case "drift":
+		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
+			return cmdDrift(ctx, ops, rest[1:], stdout, stderr)
+		})
 	case "help", "-h", "--help":
 		fmt.Fprintln(stdout, usage)
 		return 0
@@ -77,11 +114,12 @@ Usage:
 
 Global flags:
   --api-url <url>      Gateway base URL (default http://localhost:8080)
+  --ops-server <url>   lenny-ops base URL (auto-discovered when omitted)
   --bearer <token>     Operator bearer token
   --dev-tenant <id>    Dev-header tenant (Embedded Mode)
   --dev-roles <roles>  Dev-header roles, comma-separated (Embedded Mode)
 
-Commands:
+Gateway commands:
   health                                Print the platform health report
   version                               Print the gateway version
   bootstrap --from-values <f>           Apply a seed file (tenants/runtimes/users)
@@ -92,10 +130,28 @@ Commands:
   admin runtimes get <name>             Get a runtime
   admin circuit-breakers list           List circuit breakers
   admin circuit-breakers open <name> --limit-tier <t> --scope <k>=<v> --reason <text>
-  admin circuit-breakers close <name>   Close a circuit breaker`
+  admin circuit-breakers close <name>   Close a circuit breaker
+
+Operability commands (§25.14, target lenny-ops):
+  runbooks list [--alert <name>]        List runbooks (optionally by alert)
+  runbooks get <name>                   Print a runbook
+  locks list                            List remediation locks
+  locks acquire --scope <s> --op <op>   Acquire a remediation lock
+  locks release <id>                    Release a remediation lock
+  escalations list                      List escalations
+  escalations create --severity <s> --summary <text>
+  escalations resolve <id>              Mark an escalation resolved
+  diagnose session <id>                 Diagnose a session
+  diagnose pool <name>                  Diagnose a pool
+  diagnose connectivity                 Check dependency connectivity
+  diagnose credential-pool <name>       Diagnose a credential pool
+  drift report [--scope <s>] [--against <live|target|both>]
+  drift validate --desired <file>       Validate desired state
+  drift reconcile [--scope <s>] [--confirm]`
 
 type globalFlags struct {
 	apiURL    string
+	opsServer string
 	bearer    string
 	devTenant string
 	devRoles  string
@@ -111,6 +167,12 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 		case "--api-url":
 			if i+1 < len(args) {
 				f.apiURL = args[i+1]
+				i += 2
+				continue
+			}
+		case "--ops-server":
+			if i+1 < len(args) {
+				f.opsServer = args[i+1]
 				i += 2
 				continue
 			}
