@@ -23,9 +23,7 @@
 package observability_test
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,9 +87,6 @@ func helmTemplatePrometheusRule(t *testing.T, root string, setArgs ...string) re
 		t.Skipf("helm not on PATH: %v", err)
 	}
 	chart := filepath.Join(root, "charts", "lenny")
-	if _, err := os.Stat(chart); errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("charts/lenny/ not present")
-	}
 	args := []string{"template", chart, "--show-only", "templates/prometheusrule.yaml"}
 	args = append(args, setArgs...)
 	out, err := exec.Command(helm, args...).CombinedOutput()
