@@ -1,18 +1,17 @@
 {
   "scenario": "session_throughput",
   "version": "0.1.0",
-  "recorded_at": "2026-05-14T00:00:00Z",
-  "duration": "10m",
-  "vus": 500,
+  "recorded_at": "2026-05-19T20:21:04Z",
+  "duration": "25s",
+  "vus": 20,
   "metric_ms": {
-    "avg": 95.0,
-    "p50": 80.0,
-    "p90": 220.0,
-    "p95": 280.0,
-    "p99": 480.0,
-    "p999": 720.0
+    "avg": 52.32011897274645,
+    "p50": 42.759,
+    "p90": 88.0711,
+    "p95": 132.30065000000002,
+    "p99": 203.39299,
+    "p999": 488.2777500000008
   },
-  "error_rate": 0.0,
-  "throughput_per_sec": 0.0,
-  "notes": "Placeholder baseline. Real numbers land after the gateway boots and session creation hits the §12.7 SLO target (P99 < 500ms). Update via `LENNY_UPDATE_BASELINE=1 go test ./tests/tier7_load/...`."
+  "error_rate": 0,
+  "throughput_per_sec": 381.1892152540736
 }

@@ -1,18 +1,17 @@
 {
   "scenario": "delegation_fanout",
   "version": "0.1.0",
-  "recorded_at": "2026-05-14T00:00:00Z",
-  "duration": "5m",
-  "vus": 10,
+  "recorded_at": "2026-05-19T20:21:31Z",
+  "duration": "25s",
+  "vus": 20,
   "metric_ms": {
-    "avg": 800.0,
-    "p50": 650.0,
-    "p90": 1800.0,
-    "p95": 2400.0,
-    "p99": 4500.0,
-    "p999": 8500.0
+    "avg": 53.701897666452886,
+    "p50": 40.016999999999996,
+    "p90": 83.93780000000001,
+    "p95": 114.27264999999994,
+    "p99": 295.5687999999999,
+    "p999": 826.1764830000112
   },
-  "error_rate": 0.0,
-  "throughput_per_sec": 0.0,
-  "notes": "Placeholder baseline. SLO: tree (depth=10, fanout=50) completes within 30 seconds; budget enforcement correct."
+  "error_rate": 0,
+  "throughput_per_sec": 371.13994788785135
 }

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 //
-// k6 scenario: session_throughput
+// k6 scenario: pod_claim_latency
 //
-// TESTING.md 12.7 target: ramp to 500 concurrent on Kind / 5000 on
-// cloud, sustained 10 minutes. SLO: session creation P99 < 500ms; pod
-// startup P95 < 2s (runc) and < 5s (gVisor).
+// TESTING.md 12.7 target: 100 concurrent pod claims. SLO: P99 < 100ms
+// cache-warm; SandboxClaim CAS under 50ms.
 //
-// The script POSTs /v1/sessions repeatedly with a fresh idempotency
-// key. Each request carries the dev-mode auth headers the e2e gateway
-// honours (X-Lenny-Tenant-ID / X-Lenny-Roles / X-Lenny-User-ID).
+// POST /v1/sessions/start is the create-and-start path: the gateway
+// creates the session and claims a warm pod for it in one request, so
+// its latency is the end-to-end pod-claim cost the SLO bounds. The
+// script drives that endpoint under a constant VU pool.
 //
 // The Tier-7 Go wrapper picks duration and VU count. The PR-cadence
 // smoke run is ~60 seconds at low VU count; the production run uses
-// the 12.7 ramp.
+// 100 concurrent claims.
 //
 // Environment:
 //   LENNY_BASE_URL   Gateway base URL. Default http://127.0.0.1:8080.
@@ -20,11 +20,6 @@
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
 //   LENNY_RUNTIME    runtimeRef on the create body. Default claude-code.
-//
-// Usage:
-//   k6 run --vus 500 --duration 10m \
-//          --env LENNY_BASE_URL=http://gateway:8080 \
-//          tests/tier7_load/scenarios/session_throughput/main.js
 
 import http from 'k6/http';
 import { check } from 'k6';
@@ -40,7 +35,7 @@ export const options = {
   // diff has the percentiles the §12.7 SLOs are stated at.
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
-    'http_req_duration{name:create_session}': ['p(99)<500'],
+    'http_req_duration{name:claim_pod}': ['p(99)<100'],
     'http_req_failed': ['rate<0.01'],
   },
 };
@@ -59,17 +54,14 @@ function authHeaders(extra) {
 
 export default function () {
   const idem = `${__VU}-${__ITER}-${Date.now()}`;
-  const payload = JSON.stringify({
-    runtimeRef: RUNTIME,
-    userId: `vu-${__VU}@${TENANT}.com`,
-  });
+  const payload = JSON.stringify({ runtimeRef: RUNTIME });
   const params = {
     headers: authHeaders({ 'Idempotency-Key': idem }),
-    tags: { name: 'create_session' },
+    tags: { name: 'claim_pod' },
   };
-  const res = http.post(`${BASE}/v1/sessions`, payload, params);
+  const res = http.post(`${BASE}/v1/sessions/start`, payload, params);
   check(res, {
     'status is 201': (r) => r.status === 201,
-    'has id': (r) => r.body && r.body.includes('"id"'),
+    'session running': (r) => r.body && r.body.includes('"running"'),
   });
 }

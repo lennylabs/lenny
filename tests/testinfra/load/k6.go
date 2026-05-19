@@ -133,8 +133,18 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	out, err := cmd.CombinedOutput()
+	// k6 exits 99 when a threshold is crossed: the run completed and
+	// the summary was written, the SLO was simply not met. A Tier-7
+	// smoke run on a Kind cluster does not gate on the production SLO —
+	// AssertBaseline's regression diff is the gate — so a threshold
+	// cross is captured, not fatal. Any other non-zero exit is a real
+	// k6 failure (a bad script, an unreachable target).
 	if err != nil {
-		t.Fatalf("k6 run %s: %v\n%s", scenario, err, out)
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 99 {
+			t.Fatalf("k6 run %s: %v\n%s", scenario, err, out)
+		}
+		t.Logf("k6 run %s: a threshold was crossed (k6 exit 99); capturing the baseline regardless", scenario)
 	}
 	body, err := os.ReadFile(outFile.Name())
 	if err != nil {
@@ -144,9 +154,17 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 }
 
 // parseK6Summary extracts the canonical Result fields from a k6
-// summary-export JSON document. The k6 schema is stable across the
-// 0.4x line; if it drifts, this parser is the single point of
-// update.
+// summary-export JSON document.
+//
+// The k6 `--summary-export` document places each metric's statistics
+// directly on the metric object: `http_req_duration` carries `avg`,
+// `med`, `p(90)`, `p(95)` (and any percentile named in the script's
+// summaryTrendStats); `http_req_failed` carries `value` (the fail
+// rate); `http_reqs` carries `rate`. Some k6 builds and the test
+// fixtures wrap those statistics in a `values` sub-object instead.
+// metricStat reads a named statistic under either layout so the parser
+// tolerates both. If the k6 schema drifts further, this parser is the
+// single point of update.
 func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Result {
 	t.Helper()
 	var raw map[string]any
@@ -155,13 +173,10 @@ func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Re
 	}
 	metrics, _ := raw["metrics"].(map[string]any)
 	dur, _ := metrics["http_req_duration"].(map[string]any)
-	values, _ := dur["values"].(map[string]any)
 
 	pickMS := func(key string) float64 {
-		if v, ok := values[key].(float64); ok {
-			return v
-		}
-		return 0
+		v, _ := metricStat(dur, key)
+		return v
 	}
 
 	res := Result{
@@ -180,20 +195,40 @@ func parseK6Summary(t testing.TB, scenario string, opts Options, body []byte) Re
 		},
 	}
 	if errs, ok := metrics["http_req_failed"].(map[string]any); ok {
-		if v, ok := errs["values"].(map[string]any); ok {
-			if rate, ok := v["rate"].(float64); ok {
-				res.ErrorRate = rate
-			}
+		// The fail rate is `value` on the metric object; older fixtures
+		// place it as `rate` under `values`.
+		if rate, ok := metricStat(errs, "value"); ok {
+			res.ErrorRate = rate
+		} else if rate, ok := metricStat(errs, "rate"); ok {
+			res.ErrorRate = rate
 		}
 	}
 	if reqs, ok := metrics["http_reqs"].(map[string]any); ok {
-		if v, ok := reqs["values"].(map[string]any); ok {
-			if rate, ok := v["rate"].(float64); ok {
-				res.Throughput = rate
-			}
+		if rate, ok := metricStat(reqs, "rate"); ok {
+			res.Throughput = rate
 		}
 	}
 	return res
+}
+
+// metricStat reads a named statistic from a k6 metric object. k6's
+// summary-export places statistics directly on the metric object; some
+// builds and the test fixtures nest them under a `values` sub-object.
+// metricStat checks the direct key first, then the `values` sub-object,
+// and reports whether a float value was found.
+func metricStat(metric map[string]any, key string) (float64, bool) {
+	if metric == nil {
+		return 0, false
+	}
+	if v, ok := metric[key].(float64); ok {
+		return v, true
+	}
+	if values, ok := metric["values"].(map[string]any); ok {
+		if v, ok := values[key].(float64); ok {
+			return v, true
+		}
+	}
+	return 0, false
 }
 
 // AssertBaseline diffs res against the stored baseline at

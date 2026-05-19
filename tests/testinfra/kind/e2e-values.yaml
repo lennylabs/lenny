@@ -35,6 +35,19 @@ gateway:
     repository: lenny-gateway
     tag: e2e
     pullPolicy: Never
+  # The tier-7 load smoke suite drives sustained session creation
+  # against the e2e gateway. The chart's 512Mi default limit is sized
+  # for a quiet control plane; a load run accumulates session and
+  # billing state and OOM-kills the pod at that limit. The e2e cluster
+  # has headroom, so the overlay raises the gateway limit for the
+  # benefit of tests/tier7_load.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
 
 ops:
   image:

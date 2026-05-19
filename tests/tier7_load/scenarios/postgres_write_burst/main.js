@@ -1,30 +1,26 @@
 // SPDX-License-Identifier: MIT
 //
-// k6 scenario: session_throughput
+// k6 scenario: postgres_write_burst
 //
-// TESTING.md 12.7 target: ramp to 500 concurrent on Kind / 5000 on
-// cloud, sustained 10 minutes. SLO: session creation P99 < 500ms; pod
-// startup P95 < 2s (runc) and < 5s (gVisor).
+// TESTING.md 12.7 target: quota-flush burst pattern at Tier 3. SLO:
+// sustained IOPS within postgres.writeCeilingIops; burst within 3x
+// ceiling.
 //
-// The script POSTs /v1/sessions repeatedly with a fresh idempotency
-// key. Each request carries the dev-mode auth headers the e2e gateway
-// honours (X-Lenny-Tenant-ID / X-Lenny-Roles / X-Lenny-User-ID).
+// Every POST /v1/sessions commits a row to the Postgres sessions
+// table, so a burst of session creation is a Postgres write burst
+// driven through the gateway. The scenario drives that write path at
+// the VU count the Go wrapper picks and baselines the write latency.
 //
 // The Tier-7 Go wrapper picks duration and VU count. The PR-cadence
-// smoke run is ~60 seconds at low VU count; the production run uses
-// the 12.7 ramp.
+// smoke run is ~60 seconds at low VU count; the production run uses the
+// Tier-3 quota-flush burst pattern with the IOPS ceiling asserted.
 //
 // Environment:
 //   LENNY_BASE_URL   Gateway base URL. Default http://127.0.0.1:8080.
 //   LENNY_TENANT     Tenant ID for X-Lenny-Tenant-ID. Default acme.
 //   LENNY_ROLES      Roles for X-Lenny-Roles. Default tenant-admin.
 //   LENNY_USER       User ID for X-Lenny-User-ID. Default alice.
-//   LENNY_RUNTIME    runtimeRef on the create body. Default claude-code.
-//
-// Usage:
-//   k6 run --vus 500 --duration 10m \
-//          --env LENNY_BASE_URL=http://gateway:8080 \
-//          tests/tier7_load/scenarios/session_throughput/main.js
+//   LENNY_RUNTIME    runtimeRef on every session. Default claude-code.
 
 import http from 'k6/http';
 import { check } from 'k6';
@@ -40,7 +36,7 @@ export const options = {
   // diff has the percentiles the §12.7 SLOs are stated at.
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
-    'http_req_duration{name:create_session}': ['p(99)<500'],
+    'http_req_duration{name:pg_write}': ['p(95)<2000'],
     'http_req_failed': ['rate<0.01'],
   },
 };
@@ -58,18 +54,11 @@ function authHeaders(extra) {
 }
 
 export default function () {
-  const idem = `${__VU}-${__ITER}-${Date.now()}`;
-  const payload = JSON.stringify({
-    runtimeRef: RUNTIME,
-    userId: `vu-${__VU}@${TENANT}.com`,
-  });
-  const params = {
-    headers: authHeaders({ 'Idempotency-Key': idem }),
-    tags: { name: 'create_session' },
-  };
-  const res = http.post(`${BASE}/v1/sessions`, payload, params);
-  check(res, {
-    'status is 201': (r) => r.status === 201,
-    'has id': (r) => r.body && r.body.includes('"id"'),
-  });
+  // One session row committed to Postgres per iteration.
+  const res = http.post(
+    `${BASE}/v1/sessions`,
+    JSON.stringify({ runtimeRef: RUNTIME }),
+    { headers: authHeaders({ 'Idempotency-Key': `${__VU}-${__ITER}-${Date.now()}` }), tags: { name: 'pg_write' } },
+  );
+  check(res, { 'row committed': (r) => r.status === 201 });
 }
