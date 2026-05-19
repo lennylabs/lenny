@@ -5,14 +5,16 @@
 // Tier-8 chaos test scaffolds. Each test in this file corresponds to a
 // TESTING.md-named chaos scenario that cannot be genuinely exercised
 // against the e2e install on the Kind cluster: the scenario needs a
-// live gateway session driven onto the warm agent-pod workload, a true
-// HA / multi-AZ store topology, a network-partition or clock-injection
-// harness, or a KMS adapter — none of which the e2e install provides.
-// The install does run a two-pool warm agent-pod workload, so the
-// scenarios are no longer blocked on the absence of agent pods; they
-// are blocked on a live session running on those pods. Each test calls
-// t.Skip with a diagnosis naming the spec section and the precise
-// missing infrastructure.
+// true HA / multi-AZ store topology, a network-partition or
+// clock-injection harness, a KMS adapter, or §8 delegation / §9.2
+// elicitation primitives — none of which the e2e install provides.
+// The sessiondriver harness now drives live sessions onto the warm
+// agent-pod workload (used by TestPodKillDuringActiveSession in
+// live_session_test.go), so the "no live session" half of the prior
+// blocker is resolved; the remaining blockers are the specific
+// fault-injection layer or production-code primitive each scenario
+// names. Each test calls t.Skip with a diagnosis naming the spec
+// section and the precise missing infrastructure.
 //
 // The chaos scenarios whose subject is the live control plane, the
 // in-cluster data stores, the CRDs, the NetworkPolicies, the migration
@@ -84,21 +86,20 @@ func TestDNSOutage(t *testing.T) {
 //
 // TestSandboxFinalizerHang is implemented against the live SandboxClaim
 // CRD in concurrency_test.go.
-
-func TestPodKillDuringActiveSession(t *testing.T) {
-	t.Skip("not implemented: §12.8 lifecycle failure / pod kill during session — the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it; the §4.4 checkpoint pipeline can only be exercised against a live agent pod with an attached session")
-}
+// TestPodKillDuringActiveSession is implemented against a live gateway
+// session driven onto the warm pool through the sessiondriver harness
+// in live_session_test.go.
 
 func TestNodeDrainDuringMinIOOutage(t *testing.T) {
-	t.Skip("not implemented: §12.8 lifecycle failure / node drain during MinIO outage — needs an active agent-pod workload on the drained node so the §12.5 drain-readiness webhook gates a real eviction; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 lifecycle failure / node drain during MinIO outage — the sessiondriver harness now drives live sessions, but a faithful node-drain test also needs a cordon + drain step against the e2e Kind node that runs the active session, plus the §12.5 drain-readiness webhook installed (enabled by features.drainReadiness in the e2e overlay). The combined drain + MinIO-outage scenario is not yet automated against the e2e cluster")
 }
 
 func TestRuntimeUpgradeStuck(t *testing.T) {
-	t.Skip("not implemented: §12.8 lifecycle failure / runtime upgrade stuck — needs the runtime upgrade pipeline driving real agent pods through a rolling runtime-image change; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 lifecycle failure / runtime upgrade stuck — the sessiondriver harness drives live sessions, but the runtime upgrade pipeline (rolling runtime-image change with mid-roll stuck-pod detection) is not yet wired in the e2e gateway. Driving a stuck-upgrade scenario needs the runtime upgrade controller plus a fault-injection knob")
 }
 
 func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
-	t.Skip("not implemented: §12.8 lifecycle failure / pool upgrade rollback during expanding — needs the pool upgrade state machine warming real agent pods so a mid-expand rollback can be triggered; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 lifecycle failure / pool upgrade rollback during expanding — the pool upgrade state machine (Phase, ExpansionTarget) and the rollback path are not yet wired in the e2e WarmPoolController. The sessiondriver harness can drive sessions onto the pool, but there is no expanding-phase pool to roll back from on this install")
 }
 
 // --- Network failures ---
@@ -107,11 +108,11 @@ func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
 // NetworkPolicies in config_drift_test.go.
 
 func TestGatewayToPodPartition(t *testing.T) {
-	t.Skip("not implemented: §12.8 network failure / gateway-to-pod partition — needs a network-partition injector (toxiproxy or a Chaos Mesh NetworkChaos) to sever the gateway-to-pod path during a live session; the e2e overlay runs a warm agent-pod workload but deploys no partition injector and drives no live gateway session")
+	t.Skip("blocked: §12.8 network failure / gateway-to-pod partition — the sessiondriver harness now drives live sessions, but the partition itself needs a network-traffic injector (toxiproxy or a Chaos Mesh NetworkChaos custom resource) on the gateway-to-pod path. The e2e overlay deploys no such injector; without it the test cannot distinguish a real partition from any other connectivity loss")
 }
 
 func TestAgentToLLMProviderPartition(t *testing.T) {
-	t.Skip("not implemented: §12.8 network failure / agent-to-LLM partition — needs an external-provider partition injector severing a live session's LLM-proxy egress; the e2e overlay runs a warm agent-pod workload but deploys no partition injector and drives no live gateway session")
+	t.Skip("blocked: §12.8 network failure / agent-to-LLM partition — the sessiondriver harness drives live sessions, but the §10.1 LLM-proxy egress requires the lenny-llmproxy egress pod and an external-provider partition injector. The e2e overlay enables features.llmProxy but stands up no fault-injection layer on the proxy-to-provider hop")
 }
 
 func TestCrossZonePartition(t *testing.T) {
@@ -121,37 +122,37 @@ func TestCrossZonePartition(t *testing.T) {
 // --- Credential failures ---
 
 func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
-	t.Skip("not implemented: §12.8 credential failure / emergency revocation — needs an active streaming session on a live agent pod so the Token Service revocation propagates to a running consumer; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 credential failure / emergency revocation — the sessiondriver harness drives live sessions, but the §10.4 emergency-revocation flow requires a credential lease held by the session (the echo runtime declares no credentials) and the Token Service RevokeCredentials gRPC. Driving the revocation against an empty lease set would assert nothing. Needs a runtime with declared credentials plus the lease-holding session")
 }
 
 func TestRotationFailure(t *testing.T) {
-	t.Skip("not implemented: §12.8 credential failure / rotation failure — needs the RotateCredentials RPC exercised against a live credential lease plus a fault-injection harness; the e2e overlay runs a warm agent-pod workload but drives no live session that holds a credential lease")
+	t.Skip("blocked: §12.8 credential failure / rotation failure — the sessiondriver harness drives live sessions, but the rotation path requires a credential lease (the echo runtime declares none) and a fault-injection knob on the Token Service RotateCredentials RPC. Neither is wired in the e2e install")
 }
 
 func TestDenyListPropagationUnderRedisOutage(t *testing.T) {
-	t.Skip("not implemented: §12.8 credential failure / deny-list under Redis outage — needs an active session consuming the deny-list propagation path while Redis is down; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 credential failure / deny-list under Redis outage — the sessiondriver harness drives live sessions and tests/tier8_chaos/store_failure_test.go injects Redis outages, but the deny-list propagation path requires the §10.4 deny-list publish/consume primitive driven by a credential-holding session. The echo runtime declares no credentials")
 }
 
 func TestCredentialPoolExhaustion(t *testing.T) {
-	t.Skip("not implemented: §12.8 credential failure / pool exhaustion — needs the credential pool with finite leases driven by real agent pods plus an over-allocation harness; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 credential failure / pool exhaustion — the sessiondriver harness can drive multiple concurrent sessions, but the credential-pool exhaustion scenario requires a finite-lease credential pool (the e2e gateway runs with an empty credentialpoolstore) plus an over-allocation harness. Needs the pool seeded with a small lease ceiling")
 }
 
 // --- Delegation failures ---
 
 func TestChildCrashMidTask(t *testing.T) {
-	t.Skip("not implemented: §12.8 delegation failure / child crash — needs a parent and child agent pod in a live delegation; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 delegation failure / child crash — the sessiondriver harness drives single sessions, but the §8 delegation chain (parent → child sessions, await_children, lease tracking) is not wired in the e2e gateway. There is no DelegateTask RPC and no child-session orchestration to exercise. Needs the §8 delegation primitive shipped first")
 }
 
 func TestParentCrashDuringAwaitChildren(t *testing.T) {
-	t.Skip("not implemented: §12.8 delegation failure / parent crash during await_children — needs a live parent agent pod blocked in await_children with the §8 lease held; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 delegation failure / parent crash during await_children — depends on the §8 delegation primitive (parent / child sessions, await_children, lease state machine) which is not wired in the e2e gateway. Same root cause as TestChildCrashMidTask")
 }
 
 func TestDelegationBudgetExhaustion(t *testing.T) {
-	t.Skip("not implemented: §12.8 delegation failure / budget exhaustion — needs the §8 budget primitives exercised by a live delegation tree plus a budget-burn harness; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 delegation failure / budget exhaustion — depends on the §8 delegation primitives (budget, lease, delegate_task) which are not wired in the e2e gateway")
 }
 
 func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
-	t.Skip("not implemented: §12.8 delegation failure / cool-off persistence — needs a live delegation holding a lease through a gateway restart; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 delegation failure / cool-off persistence — depends on the §8 delegation lease state machine which is not wired in the e2e gateway. The sessiondriver harness can survive a gateway restart for a regular session, but there is no lease to extend on the echo runtime")
 }
 
 // --- Compliance failures ---
@@ -178,11 +179,11 @@ func TestT3T4SLABreach(t *testing.T) {
 // lenny-sandboxclaim-guard webhook in concurrency_test.go.
 
 func TestElicitationDeadlockDetection(t *testing.T) {
-	t.Skip("not implemented: §12.8 concurrency / elicitation deadlock — needs the §9.2 elicitation chain exercised across live agent pods plus a deadlock-construction harness; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 concurrency / elicitation deadlock — the sessiondriver harness can drive sessions, but the §9.2 elicitation chain (lenny/request_elicitation, the responder agent, the chained respondent agent) requires runtime support for elicitations. The echo runtime does not emit elicitations, so there is no chain to deadlock")
 }
 
 func TestDelegationDepthDeadlockDetection(t *testing.T) {
-	t.Skip("not implemented: §12.8 concurrency / delegation depth deadlock — needs the §8 cycle detector exercised by a live delegation tree built to maximum depth; the e2e overlay runs a warm agent-pod workload but does not drive a live gateway session onto it")
+	t.Skip("blocked: §12.8 concurrency / delegation depth deadlock — depends on the §8 delegation primitives (delegate_task, cycle detector) which are not wired in the e2e gateway")
 }
 
 // --- Time ---

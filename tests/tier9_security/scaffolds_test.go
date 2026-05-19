@@ -4,18 +4,21 @@
 
 // Tier-9 security test scaffolds. Each test here corresponds to a
 // TESTING.md-named security check whose subject is infrastructure the
-// e2e Kind cluster does not provide: a live gateway session driven onto
-// an agent pod, an egress-capture harness, a runtime sandbox (gVisor,
-// Kata), a TLS-configured data store, a packaged fuzzing driver, or an
-// external pen-test partner. Each calls t.Skip with a diagnosis naming
-// the spec section and the exact missing infrastructure.
+// e2e Kind cluster does not provide: an egress-capture harness, a
+// runtime sandbox (gVisor, Kata), a TLS-configured data store, a
+// packaged fuzzing driver, or an external pen-test partner. Each calls
+// t.Skip with a diagnosis naming the spec section and the exact
+// missing infrastructure.
 //
 // The e2e install runs a real agent-pod workload in the lenny-agents
 // namespace (the two §4.7 deployment-model warm pools install.sh
-// applies from agent-workload.yaml). The warm pods reach the idle phase
-// but no live session is driven onto them, so security checks whose
-// subject is an active session, an egress flow, or an elicitation
-// exchange remain scaffolded below.
+// applies from agent-workload.yaml), and the sessiondriver harness
+// drives live sessions onto those pods. Security checks that need a
+// running session are no longer blocked on the session itself; the
+// remaining blockers are the specific in-pod inspection step (the echo
+// runtime image is distroless with no shell), the egress-capture layer,
+// the elicitation chain runtime, or the release-pipeline-only artifact
+// (SBOM, ZAP).
 //
 // The security checks whose subject is a resource the e2e install
 // actually runs are implemented against the live cluster:
@@ -109,12 +112,13 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 // TestNetworkPolicyAdversarial; this scaffold is the agent-pod egress
 // half.
 func TestNetworkPolicyAgentEgress(t *testing.T) {
-	t.Skip("not implemented: §12.9.4 agent-pod egress probes — exercising forbidden agent-pod egress " +
-		"(arbitrary internet, kube-system CoreDNS, the LLM proxy port from a non-proxy pool) needs a " +
-		"connectivity-probe step run from inside a lenny-agents pod. The e2e warm-pool pods run an echo " +
-		"runtime image with no shell or curl, and the agent-workload overlay deploys no egress-probe " +
-		"sidecar, so there is no in-namespace vantage point to issue the probes from. The lenny-system " +
-		"default-deny enforcement is covered by TestNetworkPolicyAdversarial")
+	t.Skip("blocked: §12.9.4 agent-pod egress probes — the sessiondriver harness can drive live " +
+		"sessions onto the lenny-agents pods, but a forbidden-egress probe must run from inside the " +
+		"agent pod itself (arbitrary internet, kube-system CoreDNS, the LLM proxy port from a non-proxy " +
+		"pool). The e2e warm-pool pods run an echo runtime distroless image with no shell or curl, and " +
+		"the agent-workload overlay deploys no egress-probe sidecar. Without an in-namespace vantage " +
+		"point there is no way to issue the probes. The lenny-system default-deny enforcement is " +
+		"covered by TestNetworkPolicyAdversarial")
 }
 
 // §12.9.6 Input fuzzing. OWASP ZAP runs against the REST and MCP
@@ -128,56 +132,50 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 
 // §12.9.8 Credential leakage — environment variables.
 func TestCredentialLeakageEnvironment(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / env vars — inspecting an agent process's " +
-		"/proc/<pid>/environ for leaked upstream credentials needs a live gateway session bound onto an " +
-		"agent pod so the credential-delivery path has run. The e2e warm-pool pods reach the idle phase " +
-		"but no session is driven onto them, and the distroless runtime image has no shell to read " +
-		"/proc from. Exercising this needs the gateway session drive plus an in-pod inspection step")
+	t.Skip("blocked: §12.9.8 credential leakage / env vars — the sessiondriver harness can drive live " +
+		"sessions onto the warm agent pods, but two factors block the assertion. The echo runtime " +
+		"declares no credentials, so the credential-delivery path never runs against it. The distroless " +
+		"runtime image has no shell, so `kubectl exec ... cat /proc/<pid>/environ` returns nothing. " +
+		"Exercising this needs a runtime image with a shell plus a runtime that declares credentials")
 }
 
 // §12.9.8 Credential leakage — filesystem.
 func TestCredentialLeakageFilesystem(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / filesystem — asserting the documented 0440 " +
-		"group-owned /run/lenny/credentials.json needs a live gateway session bound onto an agent pod " +
-		"so the credential file has been materialized. The e2e warm-pool pods reach the idle phase with " +
-		"no session, so the credential tmpfs is not populated, and the distroless runtime image has no " +
-		"shell to stat the file. Exercising this needs the gateway session drive plus an in-pod " +
-		"file-mode inspection step")
+	t.Skip("blocked: §12.9.8 credential leakage / filesystem — the sessiondriver harness drives live " +
+		"sessions, but the echo runtime declares no credentials so /run/lenny/credentials.json is not " +
+		"materialized, and the distroless runtime image has no shell to stat it. Exercising this needs " +
+		"a runtime image with a shell plus a runtime declaring credentials so the credential tmpfs is " +
+		"populated")
 }
 
 // §12.9.8 Credential leakage — network egress.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
-	t.Skip("not implemented: §12.9.8 credential leakage / network egress — inspecting agent LLM-call " +
-		"traffic for credential material needs an egress-capture harness on the agent-pod network path " +
-		"and a live session issuing LLM calls. The e2e overlay deploys no traffic-capture sidecar or " +
-		"proxy, and the warm-pool pods run no session. Exercising this needs the capture harness and a " +
-		"gateway session driven onto an agent pod")
+	t.Skip("blocked: §12.9.8 credential leakage / network egress — the sessiondriver harness drives " +
+		"live sessions, but the LLM-call egress assertion needs an egress-capture sidecar or proxy on " +
+		"the agent-pod network path. The e2e overlay deploys neither; without a capture layer there is " +
+		"no traffic record to inspect for credential material")
 }
 
 // §12.9.9 Elicitation content integrity — enforce mode.
 func TestElicitationTamperEnforceMode(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation tamper / enforce mode — observing the SHA-256 " +
-		"integrity check reject a tampered payload with ELICITATION_CONTENT_TAMPERED needs the §9.2 " +
-		"elicitation chain driven end to end: a seeded session and an intermediate agent that replays a " +
-		"tampered payload. The e2e cluster runs warm agent pods but drives no session and no elicitation " +
-		"exchange, so the elicitation chain is never entered")
+	t.Skip("blocked: §12.9.9 elicitation tamper / enforce mode — the sessiondriver harness drives " +
+		"live sessions, but the §9.2 elicitation chain requires a runtime that emits elicitations and " +
+		"an intermediate agent that can replay a tampered payload. The echo runtime does not emit " +
+		"elicitations, so no elicitation chain is entered against the e2e install")
 }
 
 // §12.9.9 Elicitation content integrity — detect-only mode.
 func TestElicitationTamperDetectOnlyMode(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation tamper / detect-only mode — asserting the " +
-		"ElicitationContentIntegrityPermissiveTamper alert on a tampered payload needs the elicitation " +
-		"chain driven with a tampering intermediary plus the alerting pipeline wired. The e2e cluster " +
-		"runs warm agent pods but drives no session and no elicitation exchange, and the e2e overlay " +
-		"deploys no alerting pipeline to assert the alert against")
+	t.Skip("blocked: §12.9.9 elicitation tamper / detect-only mode — depends on the §9.2 elicitation " +
+		"chain (an elicitation-emitting runtime, a tampering intermediary, the alerting pipeline). " +
+		"Same root cause as TestElicitationTamperEnforceMode plus the absent alerting pipeline")
 }
 
 // §12.9.9 Elicitation content integrity — platform floor.
 func TestElicitationPlatformFloor(t *testing.T) {
-	t.Skip("not implemented: §12.9.9 elicitation platform floor — exercising the " +
-		"max(platform_floor, tenant_stored_mode) resolver and the clamp-event emission path needs a " +
-		"per-tenant elicitation flow driven end to end. The e2e cluster runs warm agent pods but drives " +
-		"no session and no elicitation exchange, so the resolver is never reached on a live request")
+	t.Skip("blocked: §12.9.9 elicitation platform floor — depends on the §9.2 elicitation flow: a " +
+		"runtime that emits elicitations is required to reach the max(platform_floor, " +
+		"tenant_stored_mode) resolver on a live request. The echo runtime emits none")
 }
 
 // §12.9.11 SBOM generation. Pre-release only.

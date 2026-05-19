@@ -16,6 +16,8 @@ func TestHasNotImplementedSkipAfter(t *testing.T) {
 	}{
 		{"not-implemented exact", `t.Skip("not implemented: §11.7")`, true},
 		{"not-implemented Skipf", `t.Skipf("not implemented: §11.7 reason: %v", err)`, true},
+		{"blocked exact", `t.Skip("blocked: §12.8 needs a KMS adapter")`, true},
+		{"blocked Skipf", `t.Skipf("blocked: §12.8 needs %s", missing)`, true},
 		{"phase-gated", `t.Skip("phase-gated: §13.4 ships in phase 13.4")`, true},
 		{"not yet applicable (space)", `t.Skip("not yet applicable: phase 5")`, true},
 		{"not-yet-applicable (hyphen)", `t.Skip("not-yet-applicable: phase 5")`, true},

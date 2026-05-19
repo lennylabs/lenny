@@ -609,6 +609,10 @@ func hasAnnotationBefore(lines []string, idx int, marker string) bool {
 //
 //   - t.Skip("not implemented: …")        → standard scaffold
 //   - t.Skipf("not implemented: …", …)    → Skipf variant
+//   - t.Skip("blocked: …")                 → scaffold blocked on
+//     missing infrastructure (e.g. no KMS adapter, no delegation
+//     primitive, no clock-injection harness). The reason text names
+//     the missing infrastructure precisely.
 //   - t.Skip("phase-gated: …")            → blocked behind a phase
 //   - t.Skip("flaky-time: …")              → §17.10 quarantine
 //   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
@@ -632,6 +636,7 @@ func hasNotImplementedSkipAfter(lines []string, idx int) bool {
 	// list names every reason category §17.9 allows on a scaffold.
 	prefixes := []string{
 		"\"not implemented:",
+		"\"blocked:",
 		"\"phase-gated:",
 		"\"not-yet-applicable:",
 		"\"not yet applicable:",
