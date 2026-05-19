@@ -111,6 +111,29 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   assertions; those still skipping name a different gap (a live gateway session driven
   onto the pod, a partition or clock-injection harness, or an HA store topology).
 
+- **`lenny-sandboxclaim-guard` webhook unreachable on the e2e cluster** (found in Wave 6,
+  needs an out-of-band fix). A `SandboxClaim` CREATE against the e2e Kind cluster fails
+  with `failed calling webhook "sandboxclaim-guard.lenny.dev": context deadline exceeded`.
+  The webhook is `failurePolicy: Fail`. The webhook pods are Ready, the cert-manager
+  serving Certificate is Ready, the Service and endpoints resolve, and the
+  `allow-admission-webhooks` NetworkPolicy admits API-server ingress on 8443 and egress on
+  443. The sibling webhooks served by the same `lenny-webhook` image and the same chart
+  template (`pod-security`, `ephemeral-container-cred-guard`, `label-immutability`) are
+  reachable and their tier-9 tests pass. `sandboxclaim-guard` is the one webhook whose
+  handler performs an API-server callback (the §4.6.1 / ADR-007 duplicate-claim check), so
+  the 5-second timeout points at that callback hanging rather than at API-server-to-pod
+  ingress. Route-around: the tier-9 `TestAdmissionSandboxClaimGuard` scaffold names this
+  blocker; the live double-claim race is covered by `tests/tier8_chaos/concurrency_test.go`
+  against the API server.
+
+- **§13.1 `POD_SPEC_CRED_GROUP_OVERBROAD` control not implemented** (found in Wave 6,
+  Phase 14 work). §13.1 requires the `lenny-pod-security` webhook to reject an agent-pod
+  template whose non-adapter, non-agent container declares the `lenny-cred-readers` GID in
+  `runAsGroup` or `supplementalGroups`. `podsecurity.ValidateAgentPod` has no per-container
+  cred-group check and `ContainerSpec` carries no `RunAsGroup` or `SupplementalGroups`
+  field, so a pod with an over-broad cred-group is admitted. This is unfinished Phase 14
+  hardening; the tier-9 `TestAdmissionPolicyCredGroupOverbroad` scaffold names it.
+
 ## Test status
 
 `lenny-test --group pr` reports PASS. Tiers 0 through 4 (static, unit, component,
