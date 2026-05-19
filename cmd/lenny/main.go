@@ -62,6 +62,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdLogs(args[1:], stdout, stderr)
 	case "token":
 		return cmdToken(args[1:], stdout, stderr)
+	case "image":
+		return cmdImage(args[1:], stdout, stderr)
 	case "__supervise":
 		// Reachable only via the env-gated path above; a direct
 		// invocation is rejected.
@@ -88,6 +90,7 @@ Embedded Mode commands (§17.4):
   logs [<component>]       Tail merged logs, or one of: gateway, controller,
                            k3s, supervisor
   token print [--ttl <d>]  Print a bearer token for the built-in user
+  image <import|list|rm>   Manage images in the embedded containerd store
 
 Flags:
   up    --http-port <n>    Gateway plaintext port (default 8080)
