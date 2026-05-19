@@ -37,6 +37,15 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingwebhookconfigurations"]
     verbs: ["get", "list"]
+  # The §13.2 NetworkPolicy parity audits list NetworkPolicies and
+  # read the gateway Deployment's SPIFFE / SA-token-audience
+  # annotations cluster-wide.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
