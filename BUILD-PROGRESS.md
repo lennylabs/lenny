@@ -111,20 +111,22 @@ storage-classification control, whose `details.reason` field the spec leaves ope
   assertions; those still skipping name a different gap (a live gateway session driven
   onto the pod, a partition or clock-injection harness, or an HA store topology).
 
-- **`lenny-sandboxclaim-guard` webhook unreachable on the e2e cluster** (found in Wave 6,
-  needs an out-of-band fix). A `SandboxClaim` CREATE against the e2e Kind cluster fails
-  with `failed calling webhook "sandboxclaim-guard.lenny.dev": context deadline exceeded`.
-  The webhook is `failurePolicy: Fail`. The webhook pods are Ready, the cert-manager
-  serving Certificate is Ready, the Service and endpoints resolve, and the
-  `allow-admission-webhooks` NetworkPolicy admits API-server ingress on 8443 and egress on
-  443. The sibling webhooks served by the same `lenny-webhook` image and the same chart
-  template (`pod-security`, `ephemeral-container-cred-guard`, `label-immutability`) are
-  reachable and their tier-9 tests pass. `sandboxclaim-guard` is the one webhook whose
-  handler performs an API-server callback (the §4.6.1 / ADR-007 duplicate-claim check), so
-  the 5-second timeout points at that callback hanging rather than at API-server-to-pod
-  ingress. Route-around: the tier-9 `TestAdmissionSandboxClaimGuard` scaffold names this
-  blocker; the live double-claim race is covered by `tests/tier8_chaos/concurrency_test.go`
-  against the API server.
+- **`lenny-sandboxclaim-guard` webhook unreachable on the e2e cluster** (found in Wave 6)
+  — RESOLVED. The root cause was the §13.2 control-plane egress NetworkPolicy. The
+  `allow-admission-webhooks`, `allow-controller-egress`, `allow-gateway-egress`, and
+  `allow-ops` policies admitted kube-apiserver egress on port 443 only. The in-cluster
+  `kubernetes` Service is published on 443, but on kubeadm-, k3s-, and kind-provisioned
+  clusters that Service DNATs to the apiserver endpoint on 6443, and kindnet evaluates
+  egress NetworkPolicy after the DNAT rewrite. The port-443 rule therefore blocked the
+  post-DNAT traffic: the `sandboxclaim-guard` handler's §4.6.1 / ADR-007 duplicate-claim
+  callback hung until the fail-closed webhook timed out, `lenny-ops` could not acquire its
+  leader-election Lease and never reported Ready, and the controller's lease renewal timed
+  out. The fix (commit `chart: admit the post-DNAT kube-apiserver port in §13.2 egress
+  rules`) adds a `kubeApiServerPorts` value, default `[443, 6443]`, and renders every
+  kube-apiserver egress rule over it. Managed control planes (GKE, EKS, AKS) publish the
+  endpoint on 443 and leave the 6443 rule inert. With the fix the tier-8
+  `TestDoubleClaimVerification` and `TestSandboxClaimRaceUnder100Goroutines` pass against
+  the live guard; the tier-9 `TestAdmissionSandboxClaimGuard` scaffold is now unblocked.
 
 - **§13.1 `POD_SPEC_CRED_GROUP_OVERBROAD` control** (found in Wave 6) — RESOLVED.
   `podsecurity.ValidateAgentPod` now rejects a non-adapter, non-agent container that
