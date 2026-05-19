@@ -2180,7 +2180,9 @@
     "17.4": {
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
-      "tests": [],
+      "tests": [
+        "tests/tier11_docs/time_to_hello_world_test.go"
+      ],
       "packages": [
         "cmd/lenny-dev"
       ],
@@ -2564,7 +2566,8 @@
       "title": "Runtime Scaffolding",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier11_docs/time_to_hello_world_test.go"
       ],
       "packages": [
         "cmd/lenny-ctl"
@@ -2588,7 +2591,8 @@
       "title": "Installation Wizard",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "tests/tier11_docs/time_to_hello_world_test.go"
       ],
       "packages": [
         "cmd/lenny-ctl"

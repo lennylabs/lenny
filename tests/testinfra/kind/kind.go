@@ -11,12 +11,9 @@
 // name is reused) and returns a *Cluster handle. The handle exposes
 // the kubeconfig path and helpers for applying manifests.
 //
-// The Helm chart that installs Lenny itself is a Phase 3+
-// deliverable. When that chart lands, EnsureCluster grows an
-// InstallChart helper. For Phase 0 the harness only provisions the
-// raw cluster — tests that need the chart should still call
-// SkipUnlessAvailable + EnsureCluster + assert that the namespace
-// is reachable, then t.Skip the chart-dependent assertions.
+// The Lenny Helm chart lives in charts/lenny/. InstallLenny renders
+// and applies it against an EnsureCluster cluster so tier-5 tests can
+// drive the platform end-to-end.
 //
 // # Environment variables
 //
@@ -58,17 +55,43 @@ type Cluster struct {
 	KubeconfigPath string
 }
 
-// SkipUnlessAvailable is the legacy entry point existing tier-5
-// scaffolds call. It skips when prerequisites are missing AND when
-// the Lenny Helm chart that the tests assert against has not yet
-// shipped (Phase 3 deliverable).
+// SkipUnlessAvailable is the entry point existing tier-5 scaffolds
+// call. It skips when a tier-5 prerequisite is missing — docker, kind,
+// kubectl, the docker daemon, or the Lenny Helm chart directory the
+// tests render — and otherwise returns so the caller can proceed.
 //
 // Tests that want to drive a raw Kind cluster without expecting the
 // chart should call PrerequisitesAvailable + EnsureCluster directly.
 func SkipUnlessAvailable(t testing.TB) {
 	t.Helper()
 	PrerequisitesAvailable(t)
-	t.Skip("kind cluster bring-up succeeds; Lenny Helm chart is a Phase 3 deliverable. Use EnsureCluster directly for raw-cluster tests.")
+	if path, err := findChartDir(); err != nil {
+		t.Skipf("Lenny Helm chart not on disk: %v", err)
+	} else if path == "" {
+		t.Skip("Lenny Helm chart not on disk: charts/lenny/Chart.yaml missing")
+	}
+}
+
+// findChartDir resolves the path to charts/lenny/ by walking upward
+// from the working directory until it locates a Chart.yaml. It returns
+// the empty string when the chart is absent, and an error when the
+// walk itself fails.
+func findChartDir() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for dir := wd; ; {
+		candidate := filepath.Join(dir, "charts", "lenny", "Chart.yaml")
+		if _, err := os.Stat(candidate); err == nil {
+			return filepath.Dir(candidate), nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil
+		}
+		dir = parent
+	}
 }
 
 // PrerequisitesAvailable skips when docker / kind / kubectl are
