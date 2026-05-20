@@ -319,10 +319,262 @@ Broader coverage (lower urgency, larger infra surface):
     container; cloud-side managed Postgres has different
     statement-level timing.
 
+#### Postgres-on-RDS expansion
+
+The cloud Postgres backing surface is materially different from
+the in-cluster fixture. RDS enforces TLS by default, exposes
+IAM database authentication, has hard per-instance connection
+limits, runs PgBouncer-in-front for any non-trivial deployment,
+and ships Multi-AZ failover with DNS-based reconnection. The
+in-cluster `lenny-postgres` Deployment covers none of these. The
+suites below close the corner-case set the §17.3 / §12.3 / §11.7
+invariants depend on; each is additive to the twelve above. Some
+(noted *expands #N*) refine an entry in that list rather than
+duplicating it.
+
+Authentication and transport:
+
+13. **`TestCloudRDSTLSRequired`** (§13.2). Attempt a non-TLS
+    connection to the RDS endpoint and assert the connection is
+    refused at the `sslmode=disable` boundary. Configure the
+    gateway with `sslmode=require` and assert the connection
+    succeeds. Validates the deployment's `rds.force_ssl=1`
+    parameter group is wired and that the gateway does not
+    silently fall through to plaintext.
+
+14. **`TestCloudRDSIAMAuth`** (§13.3). Swap the gateway's
+    DSN-password authentication for the IAM authentication
+    token path (`AWSAuthenticationPlugin`), assert the IRSA
+    role's `rds-db:connect` permission resolves at connect
+    time, and verify the 15-minute token lifetime does not
+    drop long-running sessions (the SDK refreshes
+    automatically through the connection pool's reconnect
+    hook).
+
+15. **`TestCloudRDSPasswordRotation`** (§13.3, §17.6). Trigger a
+    Secrets Manager rotation against the master password, assert
+    the gateway's secret-watcher reloads the credential without
+    pod restart (or, when reload is not supported, assert the
+    rolling restart completes within the §17.6 budget).
+
+16. **`TestCloudRDSCertificateValidation`** (§13.2). Configure
+    the gateway with the global RDS CA bundle
+    (`rds-global-bundle.pem`), reject a forged-CA cert presented
+    by a man-in-the-middle proxy, and surface the failure as a
+    fail-closed connect error rather than a silent
+    re-connect-with-no-validation.
+
+PgBouncer routing (the chart's PgBouncer mode is the only safe
+configuration for RDS's connection budget):
+
+17. **`TestCloudRDSPgBouncerSessionMode`** (§12.3, §12.2.2)
+    *(expands #12)*. Drive RLS-bound traffic through PgBouncer
+    in session pool mode against RDS, assert the
+    `app.current_tenant` GUC survives a `RESET ALL` between
+    sessions and never leaks across the pool boundary.
+
+18. **`TestCloudRDSPgBouncerStatementModeRejectsRLS`** (§12.3).
+    Negative test. Configure PgBouncer in statement pool mode
+    and assert the gateway's startup health check rejects the
+    DSN with a clear diagnostic, rather than silently mis-
+    routing tenants. PgBouncer statement / transaction pool
+    modes break the RLS GUC pattern; the gateway must refuse to
+    boot against either.
+
+19. **`TestCloudRDSPgBouncerReloadDuringSession`** (§12.8).
+    Inject a PgBouncer config reload mid-session, assert
+    in-flight queries fail-fast with a retriable error code that
+    the gateway's retry middleware handles, then assert post-
+    reload queries succeed.
+
+20. **`TestCloudRDSConnectionLimitRespected`** (§11.2, §12.2.2).
+    Probe the gateway's pool sizing under N concurrent sessions
+    when the RDS instance class enforces a small `max_connections`,
+    assert the gateway never exhausts the pool, and assert any
+    rejected connection surfaces a `503 QUOTA_PRESSURE` rather
+    than an opaque 5xx.
+
+High availability and failover (expands the existing
+`TestMultiZoneDR` placeholder with the RDS-specific concrete
+form):
+
+21. **`TestCloudRDSMultiAZFailoverPreservesSessions`** (§17.3)
+    *(expands `TestMultiZoneDR`)*. Trigger an RDS reboot with
+    failover (`aws rds reboot-db-instance --force-failover`),
+    measure RTO from API call to the gateway re-issuing a write
+    against the standby endpoint, and assert a session that
+    held an open transaction at the failover instant either
+    succeeds or surfaces a retriable error the gateway's middle-
+    ware catches.
+
+22. **`TestCloudRDSDNSTTLBoundsRTO`** (§17.3). Validate the
+    chart-rendered Postgres DSN uses the RDS endpoint
+    (`<id>.<region>.rds.amazonaws.com`) rather than a baked IP,
+    so DNS re-resolution finds the promoted standby within the
+    60s endpoint TTL. A baked-IP DSN is a §17.3 RTO regression.
+
+23. **`TestCloudRDSReadReplicaRouting`** (§10.7, §12.2.2). When
+    the gateway is configured with a read-replica DSN
+    (`postgres.readDSN`), assert read-only routes (transcript
+    fetch, audit query, billing report) land on the replica
+    while writes (session create, audit append) land on the
+    primary. Validates the chart's optional read-replica
+    routing wiring once it ships.
+
+24. **`TestCloudRDSReplicaLagBudget`** (§12.2.2). Inject load
+    against the primary, sample
+    `aws_rds_read_replica_lag_seconds`, assert the §12.2.2
+    replica-lag budget (eventually-consistent reads are admitted
+    only when lag < X seconds; otherwise reads route back to the
+    primary). Without this gate, a stale replica returns
+    yesterday's session state under load.
+
+Backup and point-in-time recovery (expands #4
+`TestCloudBackupRestore` with the RDS-side forms):
+
+25. **`TestCloudRDSAutomatedBackup`** (§17.7) *(expands #4)*.
+    Verify the RDS instance's automated-backup retention window
+    is set to the §17.7 floor (7 days minimum). Trigger a manual
+    `aws rds create-db-snapshot`, restore it into a fresh
+    `<release>-restore` instance, point a fresh gateway at it,
+    and assert the restored session lifecycle reads back
+    correctly.
+
+26. **`TestCloudRDSPointInTimeRestore`** (§17.7). After a known
+    sequence of writes, run `aws rds restore-db-instance-to-point-in-time`
+    to a timestamp inside the write window, assert the restored
+    database contains the rows from the window and not the rows
+    written after. Validates the §17.7 PITR claim against real
+    RDS, not against `pg_basebackup`.
+
+27. **`TestCloudRDSCrossRegionSnapshot`** (§17.5, §17.7).
+    Configure cross-region snapshot copy (us-west-2 → us-east-1),
+    trigger a manual snapshot, assert the copy appears in the
+    second region, restore into a fresh instance there, assert
+    a session create against the restored instance returns
+    `201`. Validates the §17.5 cross-region DR claim against the
+    storage tier.
+
+Schema migration:
+
+28. **`TestCloudRDSMigrationApplies`** (§12.2, §12.3). Run the
+    `lenny-migrate up` Job against the RDS endpoint with an
+    IAM-authenticated DSN, assert every migration applies, and
+    assert the migration's IAM role has the documented minimum
+    set of grants (`CREATE`, `ALTER`, `INSERT`, `SELECT` on the
+    target schema; no `SUPERUSER`).
+
+29. **`TestCloudRDSMigrationDirtyFlagRecovery`** (§12.2). Force
+    a failed migration mid-run (kill the Job pod between two
+    migrations), assert `golang-migrate`'s dirty flag is set,
+    re-run the Job with the documented recovery procedure
+    (`force <version>`), assert the schema lands clean. A dirty
+    flag on RDS is the most common §17.7 incident; the recovery
+    procedure must be tested.
+
+30. **`TestCloudRDSMajorVersionUpgrade`** (§12.2, §17.6). Pin the
+    RDS instance to Postgres 15, install the chart, run a
+    session round-trip, then trigger
+    `aws rds modify-db-instance --engine-version 16.x`. Assert
+    the gateway re-establishes connections, the schema stays
+    intact, and any extension-version updates (pgvector,
+    pg_stat_statements) apply cleanly.
+
+Aurora variants (skip when the deployment uses standard RDS,
+not Aurora):
+
+31. **`TestCloudAuroraServerlessV2ColdStart`** (§17.1). Configure
+    Aurora Serverless v2 with `min_capacity=0.5 ACU`, idle the
+    instance, then create a session, measure cold-start latency
+    against the §6.3 budget. If the cold-start blows the
+    budget, the deployment must pin to `min_capacity >= 1` or
+    fall back to provisioned mode.
+
+32. **`TestCloudAuroraGlobalDatabaseWriteForwarding`** (§17.5).
+    Configure an Aurora Global Database with a secondary region,
+    write through the secondary's write-forwarder, assert the
+    write surfaces in the primary within the documented
+    cross-region replication latency.
+
+Performance and limits:
+
+33. **`TestCloudRDSStorageAutoscaling`** (§12.5). With
+    `allocated_storage=20G` and `max_allocated_storage=100G`,
+    write past 20G of artifact metadata + session rows, assert
+    RDS auto-scales storage and the gateway sees no write
+    failures during the resize. A misconfigured
+    `max_allocated_storage` is a silent prod incident.
+
+34. **`TestCloudRDSQueryLatencyBudget`** (§12.7, §16.5). Probe
+    P99 query latency under sustained tier-7 load against the
+    RDS endpoint, assert the value stays under the §12.7 budget
+    (network-round-trip latency to RDS is materially higher than
+    to the in-cluster fixture). Bound the assertion at the
+    chart-rendered `monitoring.databaseLatencyP99Budget` value.
+
+Security and isolation:
+
+35. **`TestCloudRDSCustomKMSAtRest`** (§12.5, §12.9). Provision
+    RDS with the per-release Lenny KMS key as the at-rest
+    encryption key (not the AWS-managed key), assert
+    `aws rds describe-db-instances` reports the right KMS key
+    ID, and assert that a Phase 4a tenant-deletion that destroys
+    the KMS key renders the RDS instance unreadable (the §12.9
+    cryptographic-erasure invariant against managed storage).
+
+36. **`TestCloudRDSNetworkIsolation`** (§13.2). Assert the RDS
+    security group admits only the EKS pod CIDR (or the VPC
+    PrivateLink endpoint), and reject a connection attempt from
+    a non-allowlisted source IP. The §13.2 NetworkPolicy story
+    inside the cluster is undermined if RDS accepts public
+    connections.
+
+37. **`TestCloudRDSPerformanceInsightsTenantPrivacy`** (§12.3,
+    §11.7). With Performance Insights enabled, sample the
+    captured query text, assert no tenant payload bytes appear
+    in the captured statements (the gateway uses parameterised
+    queries; this is a regression test for any path that
+    string-formats tenant data into SQL). Performance Insights
+    is a documented operator feature; tenant-data leakage there
+    is a §13 finding waiting to surface.
+
+Operational scenarios:
+
+38. **`TestCloudRDSMaintenanceWindow`** (§17.6). Schedule an RDS
+    maintenance task inside the configured maintenance window,
+    assert the gateway either (a) re-connects through the
+    documented short outage, or (b) surfaces the
+    `DatabaseMaintenance` alert before the window opens so the
+    operator knows. Either is acceptable; silent session loss
+    is not.
+
+39. **`TestCloudRDSCloudWatchAlerts`** (§16.5). Configure the
+    chart-rendered Prometheus alerts that mirror the §16.5
+    catalog against the RDS CloudWatch metrics
+    (`CPUUtilization`, `FreeStorageSpace`, `DatabaseConnections`,
+    `ReplicaLag`). Trigger each threshold with a synthetic
+    workload, assert the alert fires, assert the matching
+    runbook resolves to a `docs/runbooks/*.md` page.
+
+40. **`TestCloudRDSConnectionTermination`** (§12.8). Force-
+    terminate every active connection through
+    `pg_terminate_backend`, assert the gateway's reconnect path
+    fires within the §12.8 connection-loss recovery budget and
+    that the audit chain has the
+    `database_connection_terminated` event recorded.
+
+The expansion brings the tier-6 suite from twelve to forty
+tests. Sequencing recommendation: land the four critical
+suites (1-4), then the high-value seven (5-9 plus the RDS
+expansions #13, #17, #21), then the broader set. The Aurora
+variants (#31-32) skip when the deployment is on standard RDS;
+the suite uses an `LENNY_RDS_ENGINE=aurora-postgresql`
+environment guard for the Aurora-only tests.
+
 #### Out of scope
 
 The following deliberately stay outside tier-6 even after the
-twelve land. Cost telemetry / billing accuracy is a feature spec,
+forty land. Cost telemetry / billing accuracy is a feature spec,
 not a test concern. Cluster upgrade compatibility is an operator
 concern covered by the chart-test matrix against Kind. Helm
 rollback is the same shape — not cloud-specific.
