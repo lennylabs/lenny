@@ -320,8 +320,11 @@ identified.
   fallback (the EvictionStateStore is the target store; the
   blobstore-side fallback router is unbuilt), and the MinIO-side
   soft-delete implementation that the catalog table backs — are
-  unbuilt. Blocks `TestArtifactStoreContract` and the tier-4
-  checkpoint flow.
+  unbuilt. `pkg/blobstore/miniostore` now ships the §12.5
+  SSE-KMS resolver hook (Config.SSEKeyResolver) and the §12.8
+  SetLegalHold / ClearLegalHold guard on DeleteBySession; the
+  remaining §12.5 sub-features still block `TestArtifactStoreContract`
+  and the full tier-4 checkpoint flow.
 
 ### Delegation and elicitation
 
