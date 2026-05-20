@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/events"
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
@@ -556,9 +557,11 @@ type errorEnvelope struct {
 }
 
 type errorBody struct {
-	Code    string         `json:"code"`
-	Message string         `json:"message"`
-	Details map[string]any `json:"details,omitempty"`
+	Code      string         `json:"code"`
+	Category  string         `json:"category"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 // handleCreate implements POST /v1/sessions. Returns 201 with the
@@ -971,14 +974,20 @@ func (s *Server) writeSession(w http.ResponseWriter, code int, row sessionstore.
 	_ = json.NewEncoder(w).Encode(toResponse(row))
 }
 
-// writeError writes a §15.1 error envelope.
+// writeError writes a §15.1 error envelope. The category and
+// retryable fields are populated from the shared §15.2.1
+// errorclassify table so REST and MCP report the same values for the
+// same code.
 func (s *Server) writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
+	cat, retryable := errorclassify.Classify(code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorBody{
-		Code:    code,
-		Message: message,
-		Details: details,
+		Code:      code,
+		Category:  string(cat),
+		Message:   message,
+		Retryable: retryable,
+		Details:   details,
 	}})
 }
 

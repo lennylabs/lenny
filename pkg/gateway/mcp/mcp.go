@@ -25,6 +25,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+
+	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
 )
 
 // ProtocolVersion is the MCP protocol revision this adapter
@@ -52,6 +54,33 @@ type jsonRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
+}
+
+// LennyErrorDetail is the §15.2.1 / §15.2 lenny error envelope the
+// MCP transport carries inside jsonRPCError.Data. It mirrors the REST
+// errorBody field-for-field so a parity test can compare the same
+// fields on both surfaces. The shared §15.2.1 errorclassify table
+// drives the category and retryable values.
+type LennyErrorDetail struct {
+	Code      string         `json:"code"`
+	Category  string         `json:"category"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
+}
+
+// NewLennyErrorDetail builds the parity envelope from a lenny code
+// and message, consulting the shared classifier so REST and MCP
+// agree on the category and retryable values.
+func NewLennyErrorDetail(code, message string, details map[string]any) LennyErrorDetail {
+	cat, retryable := errorclassify.Classify(code)
+	return LennyErrorDetail{
+		Code:      code,
+		Category:  string(cat),
+		Message:   message,
+		Retryable: retryable,
+		Details:   details,
+	}
 }
 
 // JSON-RPC 2.0 + MCP error codes.
@@ -207,6 +236,22 @@ func (s *Server) writeError(w http.ResponseWriter, id json.RawMessage, code int,
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &jsonRPCError{Code: code, Message: message},
+	})
+}
+
+// WriteLennyError writes a JSON-RPC error response whose Data field
+// carries the §15.2.1 lenny error envelope (code, category, message,
+// retryable, details). The JSON-RPC code stays the generic
+// errInvalidRequest for client-side errors and errInternal for
+// server-side ones; the lenny code identifies the domain reason on
+// both REST and MCP surfaces so the parity contract holds.
+func (s *Server) WriteLennyError(w http.ResponseWriter, id json.RawMessage, jsonRPCCode int, lennyCode, message string, details map[string]any) {
+	envelope := NewLennyErrorDetail(lennyCode, message, details)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &jsonRPCError{Code: jsonRPCCode, Message: message, Data: envelope},
 	})
 }
 

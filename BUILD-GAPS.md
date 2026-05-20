@@ -95,10 +95,12 @@ seven scaffolds.
 All TESTING.md §12.3 contract subdirectories exist. The largest gap is
 `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go`: of nine
 tests, only `TestRESTMCPSessionLifecycle` and `TestRESTMCPTasks` are live.
-The other seven skip because the MCP side lacks a workspace-upload tool,
+Six others skip because the MCP side lacks a workspace-upload tool,
 respond and dismiss elicitation tools, a memory REST surface, a delegation
-REST surface, webhook subscription CRUD on either side, admin MCP tools,
-or the `retryable` and `category` error-envelope flags.
+REST surface, webhook subscription CRUD on either side, or admin MCP
+tools. The `retryable` / `category` parity surface is now built
+(`pkg/gateway/errorclassify` plus `mcp.NewLennyErrorDetail`); the
+`TestRESTMCPRetryableFlags` scaffold can convert to a real assertion.
 
 `tests/tier3_contract/rest_openai_chat/` and `rest_openai_responses/` cover
 envelope-structure and field-preservation contracts. Streaming, tool calls,
@@ -423,12 +425,6 @@ identified.
   at `tests/tier7_load/scaffolds_test.go:220`. The handler is at
   `pkg/gateway/sessionserver/upload.go:76`.
 
-- **`errorBody` lacks `retryable` and `category` flags.**
-  `pkg/gateway/sessionserver/sessionserver.go:558-562` declares
-  `errorBody{Code, Message, Details}` only. TESTING.md §15.2.1 rule
-  5(d) requires `retryable` and `category` for REST↔MCP error-envelope
-  parity. The MCP JSON-RPC error response also lacks them.
-
 ### MCP and REST parity
 
 - **Memory operations lack a REST surface.** MCP tools
@@ -685,16 +681,12 @@ unblocks disproportionately many tests.
    `/v1/sessions/{id}/upload` error path. Restores the tier-4
    streaming reconnect integration and the tier-7 streaming-reconnect
    and checkpoint-duration baselines.
-5. Add `retryable` and `category` to
-   `pkg/gateway/sessionserver/sessionserver.go:558` `errorBody` and
-   the matching MCP JSON-RPC error response. Unblocks the tier-3
-   REST↔MCP retryable-flags parity test.
-6. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
+5. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
    `tests/tier11_docs/runbooks_test.go` and
    `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
    `docs/runbooks/` against `tests/tier8_chaos/runbook-map.yaml` by
    either mapping the 44 unmapped runbooks or deleting the docs.
-7. Enable `features.drainReadiness` in the e2e overlay so the drain-
+6. Enable `features.drainReadiness` in the e2e overlay so the drain-
    readiness webhook is exercisable by the existing tier-5 admission-
    feature-gated suite and the tier-8 node-drain scenario.
 
