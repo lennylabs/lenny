@@ -445,8 +445,17 @@ re-attempt them.
   declaration + a credentialPool seeded with a real lease) is the
   remaining e2e-ops step before the §12.9.8 leakage probes can
   exercise the live image.
-- **No egress-capture sidecar.** Tier-9 agent-pod egress probes
-  cannot inspect outbound traffic without a capture layer.
+- **Egress-capture sidecar.** Binary shipped at
+  `cmd/lenny-egress-capture`. The sidecar listens on a known port,
+  forwards every accepted connection to a configured upstream, and
+  writes one JSONL row per connection (timestamp, peer, upstream,
+  bytes sent, SHA-256 hash of the sent payload). The hash-not-bytes
+  capture lets the probe verify credential material does not appear
+  in egress without retaining the raw bytes in the capture artifact.
+  Unit-tested for the forward path and concurrent-connection
+  rowping. Wiring into the e2e Kind agent-workload.yaml as a
+  per-pod sidecar plus the §13.2 egress NetworkPolicy that forces
+  the agent through it is the remaining e2e-ops step.
 - **No clock-injection harness.** Tier-8 `TestGatewayClockDrift`,
   `TestCertificateExpiryAdvance`, and the `TestT3T4SLABreach`
   scenario all need it.
