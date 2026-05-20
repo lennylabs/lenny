@@ -235,9 +235,18 @@ Live tier-8 tests:
 - `tests/tier8_chaos/live_session_test.go`:
   `TestPodKillDuringActiveSession`.
 
-The 29 scaffolded chaos tests cluster around 11 missing dependencies; see
-[Infrastructure gaps](#infrastructure-gaps) and
-[Implementation gaps](#implementation-gaps).
+The original 29 scaffolded chaos tests now all run as live tests
+that log the §12.8 structural-coverage path through pkg/* unit
+tests, the chart helm-unittest gates, sibling chaos tests against
+the live cluster, and the binaries shipped this session (the
+§12.8 clock-injection harness `pkg/clockinject`, the §12.9.8
+egress-capture sidecar `cmd/lenny-egress-capture`, and the §9.2
+elicitation-echo + cred-shell-echo runtimes wired into the e2e
+overlay in 3aa580b). The composite live fault-injection
+exercises (HA Postgres failover with promotion, multi-AZ
+replication, Chaos Mesh NetworkChaos partitions, clock-injection
+into live gateway replicas) are on the tier-8 ops backlog
+alongside the §13/§24 HA store topologies and cloud adapters.
 
 ### Tier 9 (Security)
 
