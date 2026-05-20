@@ -30,14 +30,7 @@ func TestRLSAllTenantsContext(t *testing.T) {
 	t.Skip("blocked: §12.2.2 __all__ tenant-context bypass — neither the RLS policy nor the gateway-side cross_tenant_read audit emission tied to it exist; lenny_tenant_guard accepts no documented bypass value today")
 }
 
-// TestRLSPoolerReuseDoesNotLeakContext — connection-pooler reuse does
-// not leak the previous transaction's app.current_tenant.
-//
-// spec: 12.2.2
-// diagnosis: the compose profile carries no pgbouncer (or equivalent
-// connection pooler) configured for session pooling, so the harness
-// cannot reproduce the connection-reuse leak the test exists to
-// prevent.
-func TestRLSPoolerReuseDoesNotLeakContext(t *testing.T) {
-	t.Skip("blocked: §12.2.2 connection-pooler context-leak guard — pgbouncer (or equivalent) with the documented session-pooling configuration is not present in the compose profile")
-}
+// TestRLSPoolerReuseDoesNotLeakContext is implemented in
+// pgbouncer_test.go, which exercises the §12.2.2 connection-pooler
+// reuse invariant against the compose-profile PgBouncer in
+// session-pooling mode.

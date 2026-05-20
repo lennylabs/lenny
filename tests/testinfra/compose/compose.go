@@ -115,7 +115,10 @@ func Up(t testing.TB, profile Profile) *Stack {
 // WaitReady polls each service's healthcheck until all report
 // healthy or the deadline expires.
 func (s *Stack) WaitReady(timeout time.Duration) error {
-	services := []string{"lenny-postgres", "lenny-redis", "lenny-minio"}
+	services := []string{
+		"lenny-postgres", "lenny-redis", "lenny-minio",
+		"lenny-pgbouncer", "lenny-redis-replica",
+	}
 	deadline := time.Now().Add(timeout)
 	lastStatus := map[string]string{}
 	for {

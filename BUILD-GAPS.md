@@ -379,13 +379,15 @@ topologies, the published Homebrew tap) are recorded under the
 Blocked section because they are external infrastructure the
 repository does not yet provision.
 
-- **PgBouncer (session pooling) and Redis Sentinel topology are now
-  wired** in `compose/default.yml`, reachable via
-  `Stack.PgBouncerDSN()` and `Stack.RedisSentinelAddrs()` /
-  `Stack.RedisSentinelMasterName()`. The
-  `TestRLSPoolerReuseDoesNotLeakContext` (tier 2 RLS) and
-  `TestRedisSentinelFailover` (tier 8 chaos) scaffolds can convert
-  to live tests against this compose profile.
+- **Redis Sentinel-aware client in the gateway.** The
+  `compose/default.yml` profile ships a one-master / one-replica /
+  three-sentinel topology and `Stack.RedisSentinelAddrs()` /
+  `Stack.RedisSentinelMasterName()` expose the endpoints, but
+  `pkg/store/redis` has no `redis.FailoverClient` or Sentinel
+  discovery path. `TestRedisSentinelFailover` (tier 8 chaos) cannot
+  assert Lenny's behavior under Sentinel failover until the gateway
+  is wired to discover the master via Sentinel rather than direct
+  connection.
 
 ## Cross-cutting findings
 

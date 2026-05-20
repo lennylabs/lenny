@@ -20,7 +20,10 @@
 services:
 
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector is a postgres:16 base with the pgvector
+    # extension preloaded so migration 0044 (agent_memory.embedding)
+    # applies cleanly.
+    image: pgvector/pgvector:pg16
     container_name: lenny-postgres
     environment:
       POSTGRES_USER: lenny
@@ -41,7 +44,7 @@ services:
   # scaffold uses this to exercise the gateway's pre-checkout
   # tenant-context reset.
   pgbouncer:
-    image: edoburu/pgbouncer:1.22.1
+    image: edoburu/pgbouncer:v1.23.1-p3
     container_name: lenny-pgbouncer
     environment:
       DB_HOST: postgres
@@ -58,7 +61,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "sh", "-c", "echo > /dev/tcp/127.0.0.1/5432"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5432 || pg_isready -h 127.0.0.1 -p 5432"]
       interval: 5s
       timeout: 3s
       retries: 20
