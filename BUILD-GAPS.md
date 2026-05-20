@@ -435,10 +435,16 @@ re-attempt them.
   catalog-row hook-up.
 - **No published Homebrew tap (`lennylabs/tap`).** Tier-11 TTHW
   step 1 cannot run until the tap and formula are published.
-- **No credential-carrying runtime image with a shell.** The default
-  echo runtime is distroless; tier-9 credential-leakage probes need
-  a runtime variant that declares credentials and an image with a
-  shell so `kubectl exec ... cat /proc/<pid>/environ` works.
+- **Credential-carrying runtime image with a shell.** Binary +
+  Dockerfile shipped at `cmd/runtimes/cred-shell-echo/`. The image
+  is Alpine-based with a non-root user, retains /bin/sh for the
+  `kubectl exec ... cat /proc/<pid>/environ` probe, and runs the
+  Basic echocore loop. Marked TEST-ONLY in the Dockerfile header
+  (production install rejects via lenny-pod-security webhook).
+  Wiring into the e2e Kind overlay (agent-workload.yaml Runtime
+  declaration + a credentialPool seeded with a real lease) is the
+  remaining e2e-ops step before the §12.9.8 leakage probes can
+  exercise the live image.
 - **No egress-capture sidecar.** Tier-9 agent-pod egress probes
   cannot inspect outbound traffic without a capture layer.
 - **No clock-injection harness.** Tier-8 `TestGatewayClockDrift`,
