@@ -165,67 +165,17 @@ kubectl wait -n lenny-system --for=condition=available --timeout=300s \
 echo "==[4b/6] apply Lenny CRDs==" >&2
 kubectl apply -f "${REPO_ROOT}/charts/lenny/crds/"
 
-# Pre-pull the Lenny images to every node in parallel via a tiny
-# DaemonSet. ECR cold-pull on a freshly provisioned EKS node is
-# 60-120s per image, and the migrate Job + helm install would
-# otherwise hit each image's first pull serially. Running the pulls
-# in parallel up front shaves multiple minutes off the rest of the
-# cycle and surfaces image-pull failures (private registry auth,
-# image-not-found) at a single observable point.
-echo "==[4d/6] pre-pull Lenny images on every node==" >&2
-cat <<PREPULL | kubectl apply -f -
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: lenny-e2e-image-prepull
-  namespace: lenny-system
-spec:
-  selector:
-    matchLabels: {app: lenny-e2e-image-prepull}
-  template:
-    metadata:
-      labels: {app: lenny-e2e-image-prepull}
-    spec:
-      restartPolicy: Always
-      terminationGracePeriodSeconds: 1
-      initContainers:
-        - name: pull-gateway
-          image: ${ECR_REGISTRY}/lenny-gateway:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-controller
-          image: ${ECR_REGISTRY}/lenny-controller:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-token-service
-          image: ${ECR_REGISTRY}/lenny-token-service:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-ops
-          image: ${ECR_REGISTRY}/lenny-ops:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-webhook
-          image: ${ECR_REGISTRY}/lenny-webhook:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-preflight
-          image: ${ECR_REGISTRY}/lenny-preflight:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-backup
-          image: ${ECR_REGISTRY}/lenny-backup:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-ctl
-          image: ${ECR_REGISTRY}/lenny-ctl:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-adapter
-          image: ${ECR_REGISTRY}/lenny-adapter:${TAG}
-          command: ["/bin/sh","-c","true"]
-        - name: pull-migrate
-          image: ${ECR_REGISTRY}/lenny-migrate:${TAG}
-          command: ["/bin/sh","-c","true"]
-      containers:
-        - name: pause
-          image: registry.k8s.io/pause:3.10
-PREPULL
-# Distroless's pause image is also handy here; the init containers
-# do the actual pulls.
-kubectl -n lenny-system rollout status daemonset/lenny-e2e-image-prepull --timeout=600s
+# Pre-pull strategy update. The original DaemonSet-with-init-
+# containers approach broke because the Lenny images are distroless/
+# static (no /bin/sh), and the kubectl rollout-status wait stalls
+# forever on Init:CrashLoopBackOff even though kubelet has already
+# pulled the image. Kubelet's own image-pull queue + the bumped
+# timeouts in steps 4c (600s migrate) and 5 (10m helm wait) are
+# sufficient on a 2-node cluster. The first wave of pods serially
+# triggers the pulls; later pods get cache hits. If a future
+# iteration needs faster cold-start, the right pattern is a Job per
+# image that mounts the node's containerd socket and runs
+# `crictl pull`, but that's more complex than the current target.
 
 # Run the schema migration against the in-cluster Postgres before
 # helm install brings the gateway / controller up. The Kind path uses
