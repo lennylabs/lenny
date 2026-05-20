@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbus"
+	"github.com/lennylabs/lenny/pkg/gateway/pgtenant"
 )
 
 // PendingRepublish implements eventbus.RetranscribeStore. It returns up
@@ -27,7 +30,9 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 	if limit <= 0 {
 		limit = 256
 	}
-	rows, err := s.pool.Query(ctx, `
+	var out []eventbus.RetranscribeRow
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
 		SELECT a.tenant_id, a.sequence_number, a.id, a.event_type,
 		       a.event_schema_version, a.created_at, a.payload,
 		       a.prev_hash, a.retry_count, t.genesis_nonce
@@ -39,47 +44,59 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 		  AND a.retry_count < $1
 		ORDER BY a.created_at ASC, a.tenant_id, a.sequence_number
 		LIMIT $2`, maxRetryAttempts, limit)
-	if err != nil {
-		return nil, fmt.Errorf("auditstore: query pending republish: %w", err)
-	}
-	defer rows.Close()
-	var out []eventbus.RetranscribeRow
-	for rows.Next() {
-		var (
-			tenantID, eventType, schemaVer  string
-			seq                             int64
-			id                              string
-			createdAt                       time.Time
-			payload, prevHash, genesisNonce []byte
-			retryCount                      int
-		)
-		if err := rows.Scan(&tenantID, &seq, &id, &eventType, &schemaVer,
-			&createdAt, &payload, &prevHash, &retryCount, &genesisNonce); err != nil {
-			return nil, fmt.Errorf("auditstore: scan pending republish: %w", err)
-		}
-		ev, err := s.rebuildEnvelope(canonicalView{
-			tenantID:     tenantID,
-			seq:          uint64(seq),
-			id:           id,
-			eventType:    eventType,
-			schemaVer:    schemaVer,
-			createdAt:    createdAt,
-			payload:      payload,
-			prevHash:     prevHash,
-			genesisNonce: genesisNonce,
-		})
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("auditstore: query pending republish: %w", err)
 		}
-		out = append(out, eventbus.RetranscribeRow{
-			TenantID:   tenantID,
-			Seq:        uint64(seq),
-			Topic:      translationTopic,
-			Event:      ev,
-			RetryCount: retryCount,
-		})
+		defer rows.Close()
+		var inner []eventbus.RetranscribeRow
+		for rows.Next() {
+			var (
+				tenantID, eventType, schemaVer  string
+				seq                             int64
+				id                              string
+				createdAt                       time.Time
+				payload, prevHash, genesisNonce []byte
+				retryCount                      int
+			)
+			if err := rows.Scan(&tenantID, &seq, &id, &eventType, &schemaVer,
+				&createdAt, &payload, &prevHash, &retryCount, &genesisNonce); err != nil {
+				return fmt.Errorf("auditstore: scan pending republish: %w", err)
+			}
+			ev, err := s.rebuildEnvelope(canonicalView{
+				tenantID:     tenantID,
+				seq:          uint64(seq),
+				id:           id,
+				eventType:    eventType,
+				schemaVer:    schemaVer,
+				createdAt:    createdAt,
+				payload:      payload,
+				prevHash:     prevHash,
+				genesisNonce: genesisNonce,
+			})
+			if err != nil {
+				return err
+			}
+			inner = append(inner, eventbus.RetranscribeRow{
+				TenantID:   tenantID,
+				Seq:        uint64(seq),
+				Topic:      translationTopic,
+				Event:      ev,
+				RetryCount: retryCount,
+			})
+		}
+		out = inner
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	// §12.3 line 141: emit one cross_tenant_read per worker
+	// invocation. The EventBus retranscribe worker category is
+	// `audit_event_retranscribe_worker`.
+	if err := s.emitCrossTenantRead(ctx, "audit_event_retranscribe_worker", len(out)); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // canonicalView is the audit-row tuple rebuildEnvelope reads.

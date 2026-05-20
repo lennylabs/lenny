@@ -378,15 +378,14 @@ and the directory disagree and need separate alignment.
 
 The §12.3 line 141 `cross_tenant_read` audit emission applies to
 every code path that sets `app.current_tenant = '__all__'`.
+RESOLVED for the background-worker readers:
 `pkg/gateway/auditstore.PendingTranslation` and
-`pkg/gateway/auditstore.PendingRepublish` currently SELECT across
-tenants without setting the sentinel; they rely on the gateway
-pool's superuser connection bypassing RLS. The lenny_app-role
-code path on those readers would now fail the spec line 165
-`current_setting('app.current_tenant', false) = '__all__'` raise.
-Both readers need to switch to `pgtenant.InAllTenants` and emit
-a `cross_tenant_read` audit event keyed to the worker (`category:
-audit_ocsf_translation` and `audit_event_retranscribe`).
+`pkg/gateway/auditstore.PendingRepublish` now run inside
+`pgtenant.InAllTenants` and emit one cross_tenant_read row to
+the `platform` audit chain per invocation, with the worker
+category in the event payload
+(`audit_ocsf_translation_worker` and
+`audit_event_retranscribe_worker`).
 
 ## Blocked
 

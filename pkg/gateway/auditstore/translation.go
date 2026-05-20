@@ -28,14 +28,19 @@ const translationTopic = eventbus.TopicSessionLifecycle
 // retry_pending, oldest-first across all tenants, as ocsf.Input values
 // built from the canonical Postgres tuple (§11.7).
 //
-// The query reads across tenants, so it runs without the per-tenant
-// guard transaction — the lenny_tenant_guard trigger gates writes, not
-// the cross-tenant read the translator needs.
+// The query is a platform-admin cross-tenant read: it runs inside a
+// pgtenant.InAllTenants transaction so the §4.2 `__all__` sentinel
+// satisfies the §12.3 lenny_tenant_isolation RLS policy under the
+// non-superuser lenny_app role, and a cross_tenant_read audit event
+// is emitted (§12.3 line 141) recording the worker identity and the
+// query category (audit_ocsf_translation_worker).
 func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.TranslatableRow, error) {
 	if limit <= 0 {
 		limit = 256
 	}
-	rows, err := s.pool.Query(ctx, `
+	var out []ocsf.TranslatableRow
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
 		SELECT a.tenant_id, a.sequence_number, a.id, a.event_type,
 		       a.event_schema_version, a.created_at, a.payload,
 		       a.prev_hash, a.ocsf_translation_state, a.retry_count,
@@ -47,48 +52,73 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 		WHERE a.ocsf_translation_state IN ('pending', 'retry_pending')
 		ORDER BY a.created_at ASC, a.tenant_id, a.sequence_number
 		LIMIT $1`, limit)
+		if err != nil {
+			return fmt.Errorf("auditstore: query pending translations: %w", err)
+		}
+		defer rows.Close()
+		var inner []ocsf.TranslatableRow
+		for rows.Next() {
+			var (
+				tenantID, eventType, schemaVer, state string
+				seq                                   int64
+				id                                    string
+				createdAt                             time.Time
+				payload, prevHash, genesisNonce       []byte
+				retryCount                            int
+			)
+			if err := rows.Scan(&tenantID, &seq, &id, &eventType, &schemaVer,
+				&createdAt, &payload, &prevHash, &state, &retryCount, &genesisNonce); err != nil {
+				return fmt.Errorf("auditstore: scan pending translation: %w", err)
+			}
+			in := ocsf.Input{
+				ID:                 id,
+				Sequence:           uint64(seq),
+				TenantID:           tenantID,
+				EventType:          eventType,
+				EventSchemaVersion: schemaVer,
+				CreatedAtUnixMs:    createdAt.UTC().UnixMilli(),
+				Payload:            json.RawMessage(payload),
+				PrevHash:           hex.EncodeToString(prevHash),
+				ChainIntegrity:     audit.ChainUnchecked,
+			}
+			if seq == 1 && len(genesisNonce) > 0 {
+				in.GenesisNonce = hex.EncodeToString(genesisNonce)
+			}
+			inner = append(inner, ocsf.TranslatableRow{
+				Input:      in,
+				Topic:      string(translationTopic),
+				State:      audit.OCSFTranslationState(state),
+				RetryCount: retryCount,
+			})
+		}
+		out = inner
+		return rows.Err()
+	})
 	if err != nil {
-		return nil, fmt.Errorf("auditstore: query pending translations: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-	var out []ocsf.TranslatableRow
-	for rows.Next() {
-		var (
-			tenantID, eventType, schemaVer, state string
-			seq                                   int64
-			id                                    string
-			createdAt                             time.Time
-			payload, prevHash, genesisNonce       []byte
-			retryCount                            int
-		)
-		if err := rows.Scan(&tenantID, &seq, &id, &eventType, &schemaVer,
-			&createdAt, &payload, &prevHash, &state, &retryCount, &genesisNonce); err != nil {
-			return nil, fmt.Errorf("auditstore: scan pending translation: %w", err)
-		}
-		in := ocsf.Input{
-			ID:                 id,
-			Sequence:           uint64(seq),
-			TenantID:           tenantID,
-			EventType:          eventType,
-			EventSchemaVersion: schemaVer,
-			CreatedAtUnixMs:    createdAt.UTC().UnixMilli(),
-			Payload:            json.RawMessage(payload),
-			PrevHash:           hex.EncodeToString(prevHash),
-			ChainIntegrity:     audit.ChainUnchecked,
-		}
-		// The genesis nonce is surfaced on the first row of a tenant
-		// chain only (§11.7 field mapping).
-		if seq == 1 && len(genesisNonce) > 0 {
-			in.GenesisNonce = hex.EncodeToString(genesisNonce)
-		}
-		out = append(out, ocsf.TranslatableRow{
-			Input:      in,
-			Topic:      string(translationTopic),
-			State:      audit.OCSFTranslationState(state),
-			RetryCount: retryCount,
-		})
+	// §12.3 line 141: every code path that sets app.current_tenant
+	// = '__all__' MUST emit one cross_tenant_read audit event per
+	// API/worker invocation. The OCSF translation worker uses the
+	// `audit_ocsf_translation_worker` category.
+	if err := s.emitCrossTenantRead(ctx, "audit_ocsf_translation_worker", len(out)); err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// emitCrossTenantRead writes the §12.3 line 141 cross_tenant_read
+// audit event to the `platform` audit chain. category names the
+// background worker category that ran the cross-tenant SELECT;
+// rowCount records how many rows the worker observed (purely
+// observability — it is not load-bearing for the audit chain).
+func (s *Store) emitCrossTenantRead(ctx context.Context, category string, rowCount int) error {
+	payload := []byte(fmt.Sprintf(`{"category":%q,"row_count":%d}`, category, rowCount))
+	_, err := s.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{})
+	if err != nil {
+		return fmt.Errorf("auditstore: emit cross_tenant_read (%s): %w", category, err)
+	}
+	return nil
 }
 
 // SetTranslationState implements ocsf.TranslationStore. It transitions
