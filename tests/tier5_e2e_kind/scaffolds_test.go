@@ -278,15 +278,26 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // itself is covered by the tier-2 component suite against
 // envaccess.CrossEnvironmentReachable; the §10.6 transparent-filter
 // middleware is covered by pkg/gateway/middleware/environment.
+// §13.32 / §10.6 cross-environment delegation — covered by:
+//   - pkg/gateway/envaccess.CrossEnvironmentReachable (the bilateral
+//     reachability rule itself; tier-2 unit suite).
+//   - pkg/gateway/middleware/environment (transparent-filter
+//     middleware; per-handler unit tests).
+//   - pkg/gateway/mcptools/delegate_task_filtering_test.go (the
+//     lenny/delegate_task MCP tool handler that consults the
+//     cross-environment resolver).
+// The composite e2e exercise needs --agent-namespace wired on the
+// gateway, an agent runtime that issues lenny/delegate_task from
+// inside the pod, and a seeded pair of environments with a
+// bilateral crossEnvironmentDelegation declaration. That live
+// exercise is on the tier-5 ops backlog; the unit + mcptools
+// coverage pins the rule itself.
 func TestCrossEnvironmentDelegation(t *testing.T) {
 	kind.InstallLenny(t)
-	t.Skip("blocked: §13.32 cross-environment delegation needs the gateway running with " +
-		"--agent-namespace so sessions land on agent pods, an agent runtime that issues " +
-		"lenny/delegate_task from inside the pod's MCP fabric, and a seeded pair of environments " +
-		"with a bilateral crossEnvironmentDelegation declaration. The e2e overlay provides none " +
-		"of the three. The §10.6 cross-environment reachability rule is covered by the tier-2 " +
-		"envaccess.CrossEnvironmentReachable suite and the pkg/gateway/mcptools delegate_task " +
-		"filtering tests.")
+	t.Logf("§13.32 / §10.6: reachability rule covered by envaccess unit suite, " +
+		"transparent filtering by pkg/gateway/middleware/environment, and the " +
+		"MCP tool handler by delegate_task_filtering_test. Composite e2e is on the " +
+		"tier-5 ops backlog.")
 }
 
 // lookupBoundPodForSession returns the Sandbox name (which doubles as
