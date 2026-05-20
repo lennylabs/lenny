@@ -64,6 +64,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdToken(args[1:], stdout, stderr)
 	case "image":
 		return cmdImage(args[1:], stdout, stderr)
+	case "session":
+		return cmdSession(args[1:], stdout, stderr)
 	case "__supervise":
 		// Reachable only via the env-gated path above; a direct
 		// invocation is rejected.
@@ -91,6 +93,9 @@ Embedded Mode commands (§17.4):
                            k3s, supervisor
   token print [--ttl <d>]  Print a bearer token for the built-in user
   image <import|list|rm>   Manage images in the embedded containerd store
+  session new --runtime <name>
+                           Start a session against the running gateway
+                           and print the new session id
 
 Flags:
   up    --http-port <n>    Gateway plaintext port (default 8080)

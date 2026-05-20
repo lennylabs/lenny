@@ -86,6 +86,35 @@ func removeState(path string) error {
 	return nil
 }
 
+// ErrNoRunningStack is returned by RunningGateway when no Embedded
+// Mode stack is recorded as running.
+var ErrNoRunningStack = errors.New("embedded: no running stack")
+
+// RunningGateway returns the plaintext HTTP URL of the running
+// Embedded Mode gateway (the value `lenny up` recorded in the stack
+// state file). It returns ErrNoRunningStack when no stack is
+// recorded, so callers can present a precise diagnostic instead of a
+// connect-refused error. The root argument selects the LENNY_HOME-
+// equivalent state directory; an empty root uses the default.
+func RunningGateway(root string) (string, error) {
+	resolved, err := resolveRoot(root)
+	if err != nil {
+		return "", err
+	}
+	paths := NewPaths(resolved)
+	st, ok, err := readState(paths.StateFile())
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrNoRunningStack
+	}
+	if st.HTTPAddr == "" {
+		return "", fmt.Errorf("embedded: stack state at %s has no httpAddr", paths.StateFile())
+	}
+	return "http://" + st.HTTPAddr, nil
+}
+
 // processAlive reports whether a process with the given PID is
 // currently running. A zero or negative PID is treated as not
 // running.

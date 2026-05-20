@@ -452,11 +452,6 @@ identified.
 
 ### CLI and reference runtimes
 
-- **`cmd/lenny` has no `session` subcommand.** The dispatch in
-  `cmd/lenny/main.go` handles `up`, `down`, `status`, `logs`, `token`,
-  `image`, `__supervise`, and `help`. Blocks tier-11 time-to-hello-
-  world sub-steps 3, 4, 5, and 6.
-
 - **`cmd/lenny-compliance` has no `RegisterAdapterUnderTest` API.** A
   grep across `cmd/lenny-compliance/` returns no matches. Blocks
   tier-10 `TestThirdPartyRegistration`.
