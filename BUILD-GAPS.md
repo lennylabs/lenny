@@ -504,8 +504,18 @@ re-attempt them.
   chaos test and every map entry resolves to a `.md` under
   `docs/runbooks/`. Both directions of TestRunbookMapCoverage are
   now hard gates (`t.Errorf`).
-- **No published Homebrew tap (`lennylabs/tap`).** Tier-11 TTHW
-  step 1 cannot run until the tap and formula are published.
+- **Homebrew tap publishing (`lennylabs/tap`).** The formula
+  source ships at `dist/brew/lenny.rb` with the four per-platform
+  `(GOOS, GOARCH)` URL stanzas and SHA-256 placeholders the
+  release pipeline stamps on tag push. Publishing requires:
+  (a) the release workflow producing
+  `lenny-${version}-${goos}-${goarch}.tar.gz` artifacts on each
+  tag, (b) the workflow rendering `dist/brew/lenny.rb` with the
+  version and four digests, and (c) opening a PR against
+  `lennylabs/homebrew-tap`. The release-pipeline contract and
+  the manual fallback are in `dist/brew/README.md`. Tier-11 TTHW
+  step 1 runs the moment the tap is published; the formula
+  itself is no longer the blocker.
 - **Credential-carrying runtime image with a shell.** Binary +
   Dockerfile shipped at `cmd/runtimes/cred-shell-echo/`. The image
   is Alpine-based with a non-root user, retains /bin/sh for the
