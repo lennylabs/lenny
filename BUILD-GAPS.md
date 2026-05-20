@@ -76,9 +76,8 @@ where some or every test in the group still skips:
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
   legal-hold, CRDPodRegistry, mandatory `DeleteByUser` /
   `DeleteByTenant`).
-- `tests/tier2_component/controllers/scaffolds_test.go` (2 tests: Pool
-  Scaling Controller admission-retry harness and Token Service gRPC
-  controller).
+- `tests/tier2_component/controllers/scaffolds_test.go` (1 test:
+  Pool Scaling Controller admission-retry harness).
 - `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5 tests:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).
@@ -411,17 +410,16 @@ re-attempt them.
   the missing adapter precisely. Unblocking needs cloud-provider
   credentials and provider-specific Terraform under
   `deploy/terraform/cloud/<provider>/`.
-- **Token Service gRPC controller scope.** The scaffold at
-  `tests/tier2_component/controllers/scaffolds_test.go:43` wants
-  `pkg/tokenservice` to implement gRPC server methods that today
-  live on the Adapter service (`pkg/proto/adapter/v1`) and are
-  consumed by the gateway as a client (`pkg/gateway/adapterclient`).
-  Resolving the gap needs a spec-anchored decision about whether
-  `pkg/tokenservice` should be a controller hosting those RPCs, or
-  whether the scaffold's premise is wrong because the
-  responsibilities are distributed by design across
-  `pkg/gateway/credrenewal`, `pkg/gateway/credleasestore`,
-  `pkg/credential`, and `pkg/connectoroauth`.
+- **Gateway client migration to the Token Service gRPC.** The
+  §4.3 trust boundary requires the gateway to call the Token
+  Service over mTLS for lease materialization rather than running
+  `pkg/credential.MintLease` in-process. `pkg/tokenservice.GRPCServer`
+  (lenny.tokenservice.v1.TokenService — AssignCredentials,
+  RotateCredentials, RevokeCredentials) is now built and tier-2
+  covered, but the gateway still calls `pkg/gateway/credassign`
+  in-process. Cutting over needs a `cmd/lenny-token-service` binary
+  that serves the gRPC, an mTLS-aware client in the gateway, and a
+  Helm chart Deployment with `PodDisruptionBudget(minAvailable: 1)`.
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
   Recorded above under Gateway request handling. Resolution needs
   captured k6 output from a Kind run.

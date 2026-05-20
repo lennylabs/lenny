@@ -1,0 +1,133 @@
+// §4.3 / §12.2.4 Token Service gRPC contract. The gateway calls these
+// RPCs over mTLS to materialize, rotate, and revoke credential leases.
+// The Token Service runs as a separate Deployment with KMS access; the
+// gateway has no KMS decrypt grants and cannot mint leases in-process
+// once the credential boundary is fully enforced.
+//
+// The three RPCs intentionally share the AssignCredentials,
+// RotateCredentials, and RevokeCredentials names with the gateway↔pod
+// Adapter service (`lenny.adapter.v1.Adapter`); the layers differ:
+// these RPCs flow gateway → Token Service and produce a freshly
+// materialized lease set, while the Adapter RPCs flow gateway → pod
+// and deliver an already-materialized lease set to the runtime.
+//
+// See spec/04_system-components.md §4.3 and §4.9.
+
+syntax = "proto3";
+
+package lenny.tokenservice.v1;
+
+option go_package = "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1;tokenservicev1";
+
+import "google/protobuf/timestamp.proto";
+
+// TokenService is the §4.3 credential-materialization service.
+// The service is fully stateless: every replica can serve every
+// request and durable state lives in Postgres (encrypted credential
+// material) plus the KMS the Token Service has decrypt rights to.
+service TokenService {
+  // AssignCredentials materializes a credential lease per requested
+  // pool for a session. The Token Service selects a credential from
+  // each pool per the §4.9 assignment strategy, mints the lease,
+  // records it in the credential-lease store, and returns the
+  // materialized lease map keyed by provider id.
+  rpc AssignCredentials(AssignCredentialsRequest) returns (AssignCredentialsResponse) {}
+
+  // RotateCredentials replaces a previously assigned lease with a
+  // fresh one from the same pool (or, for a user-backed lease, the
+  // same credential ref). The old lease is released; the new lease
+  // is recorded and returned.
+  rpc RotateCredentials(RotateCredentialsRequest) returns (RotateCredentialsResponse) {}
+
+  // RevokeCredentials releases a lease and drops the credential's
+  // session-slot accounting. The lease becomes invalid immediately.
+  rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
+}
+
+message AssignCredentialsRequest {
+  // tenant_id is the §4.2 tenant that owns the session.
+  string tenant_id = 1;
+  // session_id is the §4.6 session the lease is bound to.
+  string session_id = 2;
+  // user_id is the end-user identifier (optional, for user-scoped pools).
+  string user_id = 3;
+  // pod_spiffe_uri is the issuing pod's SPIFFE URI used for proxy-mode
+  // SPIFFE-binding (§4.9). Empty disables binding.
+  string pod_spiffe_uri = 4;
+  // pool_ids names the §4.9 credential pools to materialize. The
+  // response carries one entry per successfully materialized pool.
+  repeated string pool_ids = 5;
+}
+
+message AssignCredentialsResponse {
+  // leases is the materialized lease set, keyed by provider id.
+  map<string, CredentialLease> leases = 1;
+}
+
+message RotateCredentialsRequest {
+  // tenant_id is the tenant that owns the lease.
+  string tenant_id = 1;
+  // lease_id identifies the lease to rotate.
+  string lease_id = 2;
+}
+
+message RotateCredentialsResponse {
+  // lease is the freshly minted replacement.
+  CredentialLease lease = 1;
+}
+
+message RevokeCredentialsRequest {
+  // tenant_id is the tenant that owns the lease.
+  string tenant_id = 1;
+  // lease_id identifies the lease to revoke.
+  string lease_id = 2;
+  // reason is the operator-supplied revocation reason recorded on the
+  // §4.9.2 credential audit event.
+  string reason = 3;
+}
+
+message RevokeCredentialsResponse {}
+
+// CredentialLease mirrors the §4.9 in-process credential.Lease on the
+// wire. Pod-facing delivery uses the lenny.adapter.v1.CredentialLease
+// projection; this gateway↔Token-Service shape carries the full lease
+// record so the gateway can record it and route proxy traffic.
+message CredentialLease {
+  // lease_id is the opaque per-mint identifier (cl-…).
+  string lease_id = 1;
+  // session_id is the bound session.
+  string session_id = 2;
+  // provider is the §4.9 upstream provider (anthropic_direct, …).
+  string provider = 3;
+  // source is the §4.9 lease source (pool, user).
+  string source = 4;
+  // pool_id is the §4.9 pool the lease was minted from (source=pool).
+  string pool_id = 5;
+  // credential_id identifies the pool credential the lease maps to.
+  string credential_id = 6;
+  // tenant_id is the tenant for a user-scoped lease (source=user).
+  string tenant_id = 7;
+  // credential_ref is the user-supplied credential reference (source=user).
+  string credential_ref = 8;
+  // delivery_mode is the §4.9 delivery mode (proxy, direct).
+  string delivery_mode = 9;
+  // expires_at is the synthetic TTL expiry instant.
+  google.protobuf.Timestamp expires_at = 10;
+  // renew_before is the §4.9 proactive-renewal trigger instant.
+  google.protobuf.Timestamp renew_before = 11;
+  // fallback_allowed reports whether the §4.9 fallback rotation may
+  // replace the lease without LLM-proxy circuit involvement.
+  bool fallback_allowed = 12;
+  // spiffe_uri is the issuing pod's SPIFFE URI when proxy SPIFFE
+  // binding is in effect.
+  string spiffe_uri = 13;
+  // proxy_url is the §4.9 LLM-proxy endpoint for a proxy-mode lease.
+  string proxy_url = 14;
+  // proxy_dialect is the §4.9 LLM-proxy dialect for a proxy-mode lease.
+  string proxy_dialect = 15;
+  // lease_token is the opaque bearer the pod's SDK uses on the proxy
+  // endpoint. Empty for direct-mode leases.
+  string lease_token = 16;
+  // upstream_model is the optional proxy-mode upstream model hint.
+  string upstream_model = 17;
+}

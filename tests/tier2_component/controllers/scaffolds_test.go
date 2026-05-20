@@ -28,18 +28,17 @@ func TestPoolScalingController(t *testing.T) {
 	t.Skip("blocked: §12.2.4 Pool Scaling Controller admission-retry harness — the scaling-formula evaluator and the §6.1 circuit breaker exist, but the admission-denied retry-with-backoff loop and the PoolScalingAdmissionStuck alert-wiring surface are not built")
 }
 
-// TestTokenServiceController — AssignCredentials, RevokeCredentials,
-// RotateCredentials, multi-replica leader election, KMS-envelope
-// encryption.
+// TestTokenServiceController is implemented in tokenservice_test.go,
+// which drives pkg/tokenservice.GRPCServer over an in-process bufconn
+// link and exercises AssignCredentials, RotateCredentials, and
+// RevokeCredentials against a registered §4.9 credential pool.
 //
-// spec: 12.2.4
-// diagnosis: pkg/tokenservice ships only the §13.3 HTTP
-// token-exchange handler. The AssignCredentials, RevokeCredentials,
-// and RotateCredentials gRPC RPCs are defined on the Adapter service
-// (pkg/proto/adapter/v1) but pkg/tokenservice does not implement
-// them, holds no leader-election loop for multi-replica coordination,
-// and has no KMS-envelope writer for the per-tenant key material the
-// Token Service controller would manage.
-func TestTokenServiceController(t *testing.T) {
-	t.Skip("blocked: §12.2.4 Token Service controller — the AssignCredentials/RevokeCredentials/RotateCredentials gRPC server, the leader-election loop for multi-replica coordination, and the KMS-envelope writer for managed credentials are not built; pkg/tokenservice ships only the §13.3 HTTP token-exchange handler")
-}
+// The scaffold's original mention of "multi-replica leader election"
+// is deliberately not exercised: per §4.3 line 209 the Token Service
+// is fully stateless and "any replica can handle any request with no
+// affinity requirements", so AssignCredentials / RotateCredentials /
+// RevokeCredentials need no leader-election coordination at the v1
+// scope. KMS-envelope encryption is covered by pkg/credentialstore
+// against KMS-backed secret storage; the §4.3 gateway↔Token-Service
+// trust boundary plus the eventual switch from in-process MintLease
+// to the gRPC client is recorded as a follow-on in BUILD-GAPS.md.
