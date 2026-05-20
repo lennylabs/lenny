@@ -324,11 +324,17 @@ identified.
   event-latency surface. Blocks `TestPodRegistryContract`.
 
 - **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
-  `miniostore/` and `replication/` only. SSE-KMS configuration, soft-
-  delete tombstones, a hard-prune worker, legal-hold suspension,
-  partial-manifest cleanup, the T4 per-tenant KMS probe, and the
-  MinIO-outage Postgres-minimal-state fallback are not built. Blocks
-  `TestArtifactStoreContract` and the tier-4 checkpoint flow.
+  `miniostore/`, `replication/`, and (as of the latest commit) the
+  in-memory soft-delete + tombstone hard-prune contract from §12.5.
+  The remaining sub-features — SSE-KMS configuration, the
+  Postgres-backed `artifact_store` catalog table, the
+  partial-manifest cleanup sweep, the T4 per-tenant KMS probe,
+  legal-hold suspension, the MinIO-outage Postgres-minimal-state
+  fallback (the EvictionStateStore is the target store; the
+  blobstore-side fallback router is unbuilt), and the MinIO-side
+  soft-delete implementation that the catalog table backs — are
+  unbuilt. Blocks `TestArtifactStoreContract` and the tier-4
+  checkpoint flow.
 
 ### Delegation and elicitation
 
