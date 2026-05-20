@@ -87,14 +87,13 @@ five scaffolds.
 
 All TESTING.md §12.3 contract subdirectories exist. The
 `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go` mix is:
-seven tests live (`TestRESTMCPSessionLifecycle`, `TestRESTMCPTasks`,
-`TestRESTMCPRetryableFlags`, `TestRESTMCPMemory`, plus the three
-§15.2.1 by-design no-parity acknowledgements:
-`TestRESTMCPElicitation`, `TestRESTMCPDelegation`,
-`TestRESTMCPAdmin`). Two tests still skip on missing surfaces:
-`TestRESTMCPWorkspaceUpload` (MCP upload tool unbuilt) and
-`TestRESTMCPWebhookSubscription` (webhook CRUD unbuilt on either
-surface).
+all nine tests live. Four exercise real parity
+(`TestRESTMCPSessionLifecycle`, `TestRESTMCPTasks`,
+`TestRESTMCPRetryableFlags`, `TestRESTMCPMemory`); five document
+§15.2.1 by-design no-parity acknowledgements
+(`TestRESTMCPElicitation`, `TestRESTMCPDelegation`,
+`TestRESTMCPAdmin`, `TestRESTMCPWebhookSubscription`,
+`TestRESTMCPWorkspaceUpload`).
 
 `tests/tier3_contract/rest_openai_chat/` and `rest_openai_responses/` cover
 envelope-structure and field-preservation contracts. Streaming, tool calls,

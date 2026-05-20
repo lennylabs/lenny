@@ -243,8 +243,17 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 // REST surface's POST /v1/sessions/{id}/upload has no MCP equivalent
 // in mcptools.Register. The consistency test cannot drive the same
 // payload through both surfaces until the MCP upload tool ships.
+// spec: §15.2 (workspace upload is REST-only by design)
+// diagnosis: §15.1 POST /v1/sessions/{id}/upload accepts multipart
+// bodies (file streams, archives, the gitClone materializer kicks
+// off bytes via the §14 staging-area extractor). §15.2 MCP is a
+// JSON-RPC channel — multipart payloads do not fit the JSON-RPC
+// envelope. The §15.4 adapter binary protocol carries file
+// transfer separately; there is no MCP counterpart and the spec
+// deliberately leaves upload REST-only. The REST upload handler
+// is covered by pkg/gateway/sessionserver/upload_test.go.
 func TestRESTMCPWorkspaceUpload(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP workspace upload — the platform MCP server registers no upload tool; mcptools/mcptools.go has create_session/send_message/delegate but no upload counterpart to compare against POST /v1/sessions/{id}/upload")
+	t.Logf("§15.1 / §15.2: workspace upload is REST-only by design (multipart payloads do not fit JSON-RPC)")
 }
 
 // spec: §15.2.1
@@ -484,8 +493,17 @@ func TestRESTMCPDelegation(t *testing.T) {
 // platform MCP server registers webhook-subscription routes today.
 // The consistency test cannot drive the same payload through either
 // surface.
+// spec: §15.1 / §15.2.1 / §25.5 (webhook subscription is REST-only by design)
+// diagnosis: §15.1 line 763 states "Webhook delivery (callbackUrl)
+// is a per-session field, not a platform-admin-managed
+// subscription resource", and §25.5 ships the event-subscription
+// CRUD on lenny-ops, not the gateway:
+//   POST/GET/DELETE /v1/admin/event-subscriptions on
+//   pkg/ops/opsserver. There is no MCP counterpart — by design.
+// The §25.5 lenny-ops surface has its own per-handler unit tests
+// in pkg/ops/opsserver/event_subscriptions_test.go.
 func TestRESTMCPWebhookSubscription(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP webhook subscriptions — neither pkg/gateway/sessionserver nor pkg/gateway/mcptools registers webhook subscription CRUD routes; the §14 webhook subscription store has no public REST or MCP surface yet")
+	t.Logf("§15.1 / §25.5: webhook subscription CRUD is the lenny-ops REST surface (no MCP parity)")
 }
 
 // spec: §15.2.1
