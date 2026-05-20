@@ -151,6 +151,68 @@ kubectl wait -n lenny-system --for=condition=available --timeout=300s \
 echo "==[4b/6] apply Lenny CRDs==" >&2
 kubectl apply -f "${REPO_ROOT}/charts/lenny/crds/"
 
+# Pre-pull the Lenny images to every node in parallel via a tiny
+# DaemonSet. ECR cold-pull on a freshly provisioned EKS node is
+# 60-120s per image, and the migrate Job + helm install would
+# otherwise hit each image's first pull serially. Running the pulls
+# in parallel up front shaves multiple minutes off the rest of the
+# cycle and surfaces image-pull failures (private registry auth,
+# image-not-found) at a single observable point.
+echo "==[4d/6] pre-pull Lenny images on every node==" >&2
+cat <<PREPULL | kubectl apply -f -
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: lenny-e2e-image-prepull
+  namespace: lenny-system
+spec:
+  selector:
+    matchLabels: {app: lenny-e2e-image-prepull}
+  template:
+    metadata:
+      labels: {app: lenny-e2e-image-prepull}
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 1
+      initContainers:
+        - name: pull-gateway
+          image: ${ECR_REGISTRY}/lenny-gateway:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-controller
+          image: ${ECR_REGISTRY}/lenny-controller:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-token-service
+          image: ${ECR_REGISTRY}/lenny-token-service:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-ops
+          image: ${ECR_REGISTRY}/lenny-ops:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-webhook
+          image: ${ECR_REGISTRY}/lenny-webhook:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-preflight
+          image: ${ECR_REGISTRY}/lenny-preflight:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-backup
+          image: ${ECR_REGISTRY}/lenny-backup:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-ctl
+          image: ${ECR_REGISTRY}/lenny-ctl:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-adapter
+          image: ${ECR_REGISTRY}/lenny-adapter:${TAG}
+          command: ["/bin/sh","-c","true"]
+        - name: pull-migrate
+          image: ${ECR_REGISTRY}/lenny-migrate:${TAG}
+          command: ["/bin/sh","-c","true"]
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+PREPULL
+# Distroless's pause image is also handy here; the init containers
+# do the actual pulls.
+kubectl -n lenny-system rollout status daemonset/lenny-e2e-image-prepull --timeout=600s
+
 # Run the schema migration against the in-cluster Postgres before
 # helm install brings the gateway / controller up. The Kind path uses
 # tests/testinfra/kind/migrate-job.yaml with a kind-loaded image; on
@@ -186,7 +248,24 @@ spec:
             capabilities:
               drop: [ALL]
 MIGRATE
-kubectl -n lenny-system wait --for=condition=complete job/lenny-e2e-migrate --timeout=300s
+# Bumped to 600s: ECR cold-pull on a freshly provisioned EKS node
+# is materially slower than Kind's pre-loaded image cache. The first
+# pull of each Lenny image on a node typically takes 60-120s; a
+# concurrent first-pull plus pod scheduling can spend most of the
+# previous 300s window before the migrate command even runs.
+if ! kubectl -n lenny-system wait --for=condition=complete job/lenny-e2e-migrate --timeout=600s; then
+  echo "==[4c/6] migrate Job did not complete; capturing diagnostics==" >&2
+  kubectl -n lenny-system describe job/lenny-e2e-migrate >&2 || true
+  for pod in $(kubectl -n lenny-system get pods -l job-name=lenny-e2e-migrate -o name 2>/dev/null); do
+    echo "--- ${pod} describe ---" >&2
+    kubectl -n lenny-system describe "${pod}" >&2 || true
+    echo "--- ${pod} logs ---" >&2
+    kubectl -n lenny-system logs "${pod}" --tail=200 >&2 || true
+  done
+  echo "--- recent lenny-system events ---" >&2
+  kubectl -n lenny-system get events --sort-by=.lastTimestamp 2>&1 | tail -30 >&2 || true
+  exit 1
+fi
 
 # 5. Helm install (the chart enforces a few install-time invariants;
 #    --skip-tests skips the operator's chart-test hooks which assume
