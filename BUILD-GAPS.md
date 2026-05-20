@@ -411,10 +411,17 @@ identified.
 
 ### Gateway request handling
 
-- **`POST /v1/sessions/{id}/upload` returns errors on every request in
-  the checkpoint-duration scenario.** Reported by the tier-7 scaffold
-  at `tests/tier7_load/scaffolds_test.go:220`. The handler is at
-  `pkg/gateway/sessionserver/upload.go:76`.
+- **`POST /v1/sessions/{id}/upload` returns errors against the Kind
+  e2e gateway in the checkpoint-duration scenario.** Blocked on
+  observation: the same flow (POST `/v1/sessions` followed by POST
+  `/v1/sessions/{id}/upload` with `X-Lenny-Upload-Token`) works
+  against an in-process gateway subprocess in dev-mode (verified by
+  running the request shape under `testinfra/gateway.StartWith`). The
+  failure is Kind-specific. Resolving needs either the k6 scenario
+  output from a Kind run, or a live cluster session to capture the
+  upload-handler 4xx/5xx response. The handler is at
+  `pkg/gateway/sessionserver/upload.go:76`; the scenario at
+  `tests/tier7_load/scenarios/checkpoint_duration/main.js`.
 
 ### MCP and REST parity
 
@@ -664,10 +671,9 @@ unblocks disproportionately many tests.
    Unblocks one tier-3 contract test, one tier-8 chaos test, and
    three tier-9 security tests.
 4. Fix the `/v1/sessions/{id}/upload` 100% error rate so the
-   checkpoint-duration k6 scenario can baseline. The `http.Flusher`
-   wrapper that previously paired with this item is resolved by
-   adding `Flush()` to the gatewaymetrics statusRecorder; the tier-7
-   `TestStreamingReconnectLoad` scaffold is converted.
+   checkpoint-duration k6 scenario can baseline. Currently blocked on
+   reproducing the Kind-specific failure; the dev-mode subprocess
+   handles the same request shape correctly.
 5. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
    `tests/tier11_docs/runbooks_test.go` and
    `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
