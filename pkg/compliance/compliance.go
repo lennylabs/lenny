@@ -29,6 +29,12 @@ const (
 	LevelFull     Level = "full"
 )
 
+// IsValid reports whether l is one of the three documented §15.4
+// integration levels.
+func (l Level) IsValid() bool {
+	return l == LevelBasic || l == LevelStandard || l == LevelFull
+}
+
 // Adapter is the contract a third-party runtime implements to
 // register itself against the conformance harness. The runtime test
 // constructs an Adapter (typically by building its binary in

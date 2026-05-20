@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: MIT
+#
+# §26 reference-runtime catalog. The nine first-party runtimes ship
+# from github.com/lennylabs/runtime-templates and are published as
+# OCI images the nightly conformance run pulls and exercises against
+# the harness. This manifest is the catalog of record consulted by:
+#
+#   - tier-10 TestReferenceCatalogNightly to verify the §26 catalog
+#     is structurally complete (every runtime listed in spec §26.1
+#     appears here with its declared integration level);
+#   - `lenny-test conformance --image` to drive each runtime through
+#     the matching battery when the operator passes
+#     LENNY_REFERENCE_IMAGE_REGISTRY at the registry hosting the
+#     images.
+#
+# Field reference:
+#   - name:    the canonical runtime identifier (§5.1 Runtime.name).
+#   - category: §26.1 catalog category. Informational.
+#   - level:   §15.4.3 integration level. One of basic|standard|full.
+#   - image:   OCI image reference relative to the configured
+#              registry (or absolute when the registry includes the
+#              full image path). Concrete `imageDigest` values land
+#              with the §17.5 image-pin rotation; until then this
+#              field carries the canonical tag.
+#   - notes:   short human description.
+
+version: 1
+
+runtimes:
+  - name: claude-code
+    category: coding-agent
+    level: full
+    image: lennylabs/claude-code:v1
+    notes: "Anthropic's Claude Code CLI inside a Lenny-managed sandbox (§26.3)."
+
+  - name: gemini-cli
+    category: coding-agent
+    level: full
+    image: lennylabs/gemini-cli:v1
+    notes: "Google's Gemini CLI inside a Lenny-managed sandbox (§26.4)."
+
+  - name: codex
+    category: coding-agent
+    level: full
+    image: lennylabs/codex:v1
+    notes: "OpenAI's Codex CLI inside a Lenny-managed sandbox (§26.5)."
+
+  - name: cursor-cli
+    category: coding-agent
+    level: full
+    image: lennylabs/cursor-cli:v1
+    notes: "Cursor's agent CLI inside a Lenny-managed sandbox (§26.6)."
+
+  - name: chat
+    category: general-purpose
+    level: standard
+    image: lennylabs/chat:v1
+    notes: "Talk-to-an-LLM runtime with no tools — the minimum useful runtime (§26.7)."
+
+  - name: langgraph
+    category: framework
+    level: full
+    image: lennylabs/langgraph:v1
+    notes: "LangGraph graph-based agents in Python (§26.8)."
+
+  - name: mastra
+    category: framework
+    level: full
+    image: lennylabs/mastra:v1
+    notes: "Mastra agent framework in TypeScript (§26.9)."
+
+  - name: openai-assistants
+    category: framework
+    level: full
+    image: lennylabs/openai-assistants:v1
+    notes: "OpenAI Assistants API-compatible runtime (§26.10)."
+
+  - name: crewai
+    category: framework
+    level: full
+    image: lennylabs/crewai:v1
+    notes: "CrewAI multi-agent framework with delegation wired to lenny/delegate_task (§26.11)."

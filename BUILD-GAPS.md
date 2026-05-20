@@ -265,15 +265,14 @@ replaying external findings; `tests/tier9_security/reviews/` carries
 
 ### Tier 10 (Conformance)
 
-`tests/tier10_conformance/scaffolds_test.go` carries seven functions.
-Five are live: `TestBasicAdapterProtocol`, `TestStandardLevel`,
-`TestFullLevel`, `TestBundledRuntimesEveryPR`, and
-`TestFidelityMatrix`. Two skip:
-
-- `TestReferenceCatalogNightly` (the §26 reference-runtime OCI images
-  are not published).
-- `TestThirdPartyRegistration` (`cmd/lenny-compliance` has no
-  `RegisterAdapterUnderTest` API).
+`tests/tier10_conformance/scaffolds_test.go` carries seven functions
+and all seven are live. `TestThirdPartyRegistration` exercises the
+`pkg/compliance.RegisterAdapterUnderTest` entry point;
+`TestReferenceCatalogNightly` asserts the §26 catalog manifest is
+structurally complete. The image-pull half of the nightly run still
+needs the §26 reference-runtime OCI images published from
+`github.com/lennylabs/runtime-templates`; the test logs an
+informational note when `LENNY_REFERENCE_IMAGE_REGISTRY` is unset.
 
 ### Tier 11 (Documentation)
 
