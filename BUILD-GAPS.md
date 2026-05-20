@@ -351,16 +351,16 @@ identified.
 
 ### MCP and REST parity
 
-- **Webhook subscription CRUD REST endpoints are absent.** Spec §25.5
-  documents `/v1/admin/event-subscriptions` as the list / create /
-  delete surface for webhook subscriptions, and `lenny-ctl events
-  subscriptions` is documented in §24 against those endpoints. The
-  `pkg/ops/opsservice/webhookloop.go` delivery loop and its
-  `SubscriptionSource` interface exist, but no opsserver route serves
-  the CRUD endpoints. Closing the gap needs the
-  `ops_event_subscriptions` Postgres table, a subscriptionstore, and
-  the CRUD handlers in `pkg/ops/opsserver/`. Blocks
-  `TestRESTMCPWebhookSubscription` and `TestWebhookDeliveryLoad`.
+- **Webhook subscription CRUD: Postgres backend follow-on.** The
+  CRUD REST endpoints (POST / GET / GET-by-id / DELETE on
+  `/v1/admin/event-subscriptions`) are now wired in `pkg/ops/opsserver`
+  against `pkg/ops/eventsubscription`. The v1 in-memory `MemoryStore`
+  backs the developer-mode deployment and the unit tests; a
+  Postgres-backed store (with the `ops_event_subscriptions` migration
+  and an adapter to `pkg/ops/opsservice/webhookloop.SubscriptionSource`)
+  is the follow-on that converts the
+  `TestRESTMCPWebhookSubscription` and `TestWebhookDeliveryLoad`
+  scaffolds to live tests against a durable backend.
 
 ### Delegation and elicitation
 

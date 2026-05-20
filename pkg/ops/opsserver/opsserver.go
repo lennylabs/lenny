@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/diagnostics"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/mcpmgmt"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 	"github.com/lennylabs/lenny/pkg/releasechannel"
@@ -56,19 +57,20 @@ type LeaderReporter interface {
 // Server is the lenny-ops HTTP handler. It routes the operability
 // endpoints and the Kubernetes liveness and readiness probes.
 type Server struct {
-	mux            *http.ServeMux
-	probes         map[string]probe.Func
-	runbooks       RunbookSource
-	selfHealth     SelfHealthReporter
-	leader         LeaderReporter
-	backups        backup.BackupService
-	diagnostics    diagnostics.DiagnosticService
-	drift          *driftservice.Service
-	locks          coordination.RemediationLockService
-	escalations    *escalation.Service
-	mcp            *mcpmgmt.Server
-	releaseChannel *releasechannel.Publisher
-	production     bool
+	mux                *http.ServeMux
+	probes             map[string]probe.Func
+	runbooks           RunbookSource
+	selfHealth         SelfHealthReporter
+	leader             LeaderReporter
+	backups            backup.BackupService
+	diagnostics        diagnostics.DiagnosticService
+	drift              *driftservice.Service
+	locks              coordination.RemediationLockService
+	escalations        *escalation.Service
+	eventSubscriptions *eventsubscription.Service
+	mcp                *mcpmgmt.Server
+	releaseChannel     *releasechannel.Publisher
+	production         bool
 }
 
 // Options configures a lenny-ops Server.
@@ -103,6 +105,13 @@ type Options struct {
 	// Escalations is the §25.4 escalation service. A nil service reports
 	// the escalation endpoints as unavailable.
 	Escalations *escalation.Service
+	// EventSubscriptions is the §25.5 webhook-subscription service.
+	// When non-nil the Server registers the
+	// /v1/admin/event-subscriptions CRUD routes; when nil the routes
+	// are unmapped (404), so a developer-mode deployment that runs
+	// without webhook delivery does not advertise a surface it cannot
+	// serve.
+	EventSubscriptions *eventsubscription.Service
 	// ReleaseChannel is the §25.8 release-channel manifest publisher.
 	// When non-nil the Server registers GET /v1/latest backed by the
 	// publisher; when nil the path is unmapped (404). A nil publisher
@@ -124,18 +133,19 @@ type Options struct {
 // and restore endpoints, and the §25.12 MCP management server.
 func New(opts Options) *Server {
 	s := &Server{
-		mux:            http.NewServeMux(),
-		probes:         opts.Probes,
-		runbooks:       opts.Runbooks,
-		selfHealth:     opts.SelfHealth,
-		leader:         opts.Leader,
-		backups:        opts.Backups,
-		diagnostics:    opts.Diagnostics,
-		drift:          opts.Drift,
-		locks:          opts.Locks,
-		escalations:    opts.Escalations,
-		releaseChannel: opts.ReleaseChannel,
-		production:     opts.Production,
+		mux:                http.NewServeMux(),
+		probes:             opts.Probes,
+		runbooks:           opts.Runbooks,
+		selfHealth:         opts.SelfHealth,
+		leader:             opts.Leader,
+		backups:            opts.Backups,
+		diagnostics:        opts.Diagnostics,
+		drift:              opts.Drift,
+		locks:              opts.Locks,
+		escalations:        opts.Escalations,
+		eventSubscriptions: opts.EventSubscriptions,
+		releaseChannel:     opts.ReleaseChannel,
+		production:         opts.Production,
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -148,6 +158,7 @@ func New(opts Options) *Server {
 	s.registerDriftRoutes()
 	s.registerLockRoutes()
 	s.registerEscalationRoutes()
+	s.registerEventSubscriptionRoutes()
 	s.registerReleaseChannelRoutes()
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
