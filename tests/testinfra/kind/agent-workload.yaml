@@ -85,3 +85,77 @@ spec:
   templateRef: echo-template-embedded
   minWarm: 1
   maxWarm: 2
+---
+# §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
+# image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ
+# works, and the runtime declares credentialPoolRefs so the §4.9
+# credential delivery path actually runs against it. Production
+# installs reject this runtime via the lenny-pod-security webhook;
+# the e2e overlay deploys it explicitly for the tier-9 scaffolds.
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: cred-shell-echo-runtime
+spec:
+  type: agent
+  image: lenny-runtime-cred-shell-echo:e2e
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: embedded
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: cred-shell-echo-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: cred-shell-echo-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: cred-shell-echo-pool
+  namespace: lenny-agents
+spec:
+  templateRef: cred-shell-echo-template
+  minWarm: 1
+  maxWarm: 1
+---
+# §9.2 tier-9 tamper-detect probe runtime. The elicitation-echo
+# Standard-level runtime calls lenny/request_elicitation on every
+# inbound message so the §9.2 chain walker exercises the
+# tamper-detect path end to end.
+apiVersion: lenny.dev/v1
+kind: Runtime
+metadata:
+  name: elicitation-echo-runtime
+spec:
+  type: agent
+  image: lenny-runtime-elicitation-echo:e2e
+  integrationLevel: standard
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+apiVersion: lenny.dev/v1
+kind: SandboxTemplate
+metadata:
+  name: elicitation-echo-template
+  namespace: lenny-agents
+spec:
+  runtimeRef: elicitation-echo-runtime
+  isolationProfile: standard
+  executionMode: session
+---
+apiVersion: lenny.dev/v1
+kind: SandboxWarmPool
+metadata:
+  name: elicitation-echo-pool
+  namespace: lenny-agents
+spec:
+  templateRef: elicitation-echo-template
+  minWarm: 1
+  maxWarm: 1

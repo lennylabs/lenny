@@ -90,6 +90,11 @@ BINARIES=(
 RUNTIME_IMAGES=(
   "lenny-runtime-echo=runtimes/echo"
   "lenny-runtime-echo-embedded=runtimes/echo-embedded"
+  # §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
+  # /bin/sh for the credential-leakage probes; elicitation-echo
+  # raises §9.2 elicitations through the platform MCP fabric.
+  "lenny-runtime-cred-shell-echo=runtimes/cred-shell-echo"
+  "lenny-runtime-elicitation-echo=runtimes/elicitation-echo"
 )
 
 log() { printf '==> %s\n' "$*"; }
