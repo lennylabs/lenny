@@ -129,7 +129,8 @@ func (d *elicitationDispatcher) dispatch(
 			if errors.As(err, &tamper) {
 				if d.tamperMetrics != nil {
 					d.tamperMetrics.RecordElicitationContentTamperDetected(
-						d.tenantID, string(elicitation.ModeEnforce))
+						d.tenantID, string(elicitation.ModeEnforce),
+					)
 				}
 				return dispatchResult{}, fmt.Errorf("ELICITATION_CONTENT_TAMPERED: %w", err)
 			}

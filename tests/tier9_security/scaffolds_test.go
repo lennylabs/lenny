@@ -101,6 +101,7 @@ const pentestBundleEnv = "LENNY_PENTEST_BUNDLE"
 //   - cmd/lenny-preflight (Phase 17.6 preflight asserts the
 //     LENNY_POOLER_MODE / postgres.sslmode invariant before
 //     gateway startup).
+//
 // The live plaintext-rejection probe needs a TLS-configured store
 // deployment the e2e Kind overlay deliberately does not provide
 // (datastores.yaml runs plaintext for reachability); recorded as
@@ -131,6 +132,7 @@ func TestTLSPlaintextRejection(t *testing.T) {
 //   - charts/lenny/tests/sandboxclaim-guard-webhook_test.yaml.
 //   - resolved e2e webhook-reachability work recorded in the Wave 6
 //     Blocked section of BUILD-PROGRESS.md.
+//
 // The composite live double-claim exercise needs both a persisted
 // first claim and reachable webhook backend on the e2e cluster;
 // recorded as an ops follow-on alongside the rest of tier-5.
@@ -152,6 +154,7 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 //   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
 //     outbound traffic for the credential-leakage probe; unit
 //     tests cover the forward + JSONL capture path).
+//
 // The composite in-pod egress probe needs the cred-shell-echo
 // runtime (shipped at cmd/runtimes/cred-shell-echo) deployed
 // alongside the egress-capture sidecar in the e2e overlay (the
@@ -171,6 +174,7 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 //     pkg/podsecurity, pkg/quota, pkg/tokenexchange, pkg/upload,
 //     pkg/api/v1/session — every one carries a Go fuzz suite that
 //     the §12.9.6 in-process fuzzing battery drives at PR time.
+//
 // The OWASP ZAP black-box fuzzing run is a release-pipeline CI job
 // (separate workflow against a deployed gateway, not a Go test
 // against the e2e Kind cluster) and is exercised by release
@@ -194,6 +198,7 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 //   - admission_cred_test.go (the §13.1 lenny-pod-security webhook
 //     rejects images with shells in production — production never
 //     deploys cred-shell-echo).
+//
 // The live e2e probe sequence (drive a session onto a cred-shell-echo
 // pod, kubectl exec into the container, inspect /proc/<pid>/environ
 // and /run/lenny, capture egress through the sidecar) is on the
@@ -233,6 +238,7 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 //   - cmd/runtimes/elicitation-echo (the Standard-level runtime
 //     that raises §9.2 elicitations; wired into the e2e overlay
 //     in 3aa580b).
+//
 // The live e2e exercise (deploy elicitation-echo + a tampering
 // intermediary, observe ELICITATION_CONTENT_TAMPERED + the §16.5
 // alert) is on the tier-9 ops backlog.

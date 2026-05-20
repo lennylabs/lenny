@@ -118,7 +118,7 @@ func TestLLMProxyTranslatorOpenAIResponses(t *testing.T) {
 			// check above already proves the id field is preserved on
 			// the wire. This sub-assertion pins the field's presence
 			// in the corpus so a future translator change that strips
-            // it is caught.
+			// it is caught.
 			var withID struct {
 				ID string `json:"id"`
 			}

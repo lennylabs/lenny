@@ -552,21 +552,21 @@ func (r *Router) requirePermission(perm auth.Permission) func(http.Handler) http
 
 // TenantPayload is the §15.1 admin-tenant request/response body.
 type TenantPayload struct {
-	ID                       string                      `json:"id"`
-	DisplayName              string                      `json:"displayName,omitempty"`
-	ComplianceProfile        string                      `json:"complianceProfile,omitempty"`
-	DataResidencyRegion      string                      `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier            string                      `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions    int                         `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes        int64                       `json:"storageQuotaBytes,omitempty"`
-	TokenQuotaPerWindow      int64                       `json:"tokenQuotaPerWindow,omitempty"`
-	MinIsolationProfile      string                      `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy     string                      `json:"billingErasurePolicy,omitempty"`
-	ExperimentTargeting      *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
-	CreatedAt                string                      `json:"createdAt,omitempty"`
-	UpdatedAt                string                      `json:"updatedAt,omitempty"`
-	DeletedAt                string                      `json:"deletedAt,omitempty"`
-	T4KmsLastProbeSuccessAt  string                      `json:"t4KmsLastProbeSuccessAt,omitempty"`
+	ID                      string                      `json:"id"`
+	DisplayName             string                      `json:"displayName,omitempty"`
+	ComplianceProfile       string                      `json:"complianceProfile,omitempty"`
+	DataResidencyRegion     string                      `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier           string                      `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions   int                         `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes       int64                       `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow     int64                       `json:"tokenQuotaPerWindow,omitempty"`
+	MinIsolationProfile     string                      `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy    string                      `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting     *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
+	CreatedAt               string                      `json:"createdAt,omitempty"`
+	UpdatedAt               string                      `json:"updatedAt,omitempty"`
+	DeletedAt               string                      `json:"deletedAt,omitempty"`
+	T4KmsLastProbeSuccessAt string                      `json:"t4KmsLastProbeSuccessAt,omitempty"`
 }
 
 // fromTenant maps a stored row to the wire payload. If probe is

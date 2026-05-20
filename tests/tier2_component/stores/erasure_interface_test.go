@@ -54,7 +54,7 @@ type userEraserNoCount interface {
 // Compile-time assertions — `var _ tenantEraser = (*X)(nil)` would
 // fail to compile if X stops satisfying the interface.
 var (
-	_ tenantEraser = (*memstore.Store)(nil)         // sessionstore
+	_ tenantEraser = (*memstore.Store)(nil) // sessionstore
 	_ tenantEraser = (*userstore.Memory)(nil)
 	_ tenantEraser = (*customrolestore.Memory)(nil)
 	_ tenantEraser = (*environmentstore.Memory)(nil)

@@ -13,17 +13,17 @@
 //
 //   - timestamp: RFC 3339 nanos
 //   - peer:      "{remote IP}:{remote port}" (the agent pod's
-//                outbound socket)
+//     outbound socket)
 //   - upstream:  "{host}:{port}" (the upstream the sidecar
-//                forwarded the connection to)
+//     forwarded the connection to)
 //   - bytes:     a hex SHA-256 of every byte the agent sent.
-//                The capture stores the digest, not the raw bytes,
-//                so credential material is not retained in the
-//                capture artifact itself. The probe matches the
-//                hash against a stored set of "expected" hashes
-//                and fails on a new hash that contains the
-//                credential string (the probe knows the credential
-//                because the test fixture supplied it).
+//     The capture stores the digest, not the raw bytes,
+//     so credential material is not retained in the
+//     capture artifact itself. The probe matches the
+//     hash against a stored set of "expected" hashes
+//     and fails on a new hash that contains the
+//     credential string (the probe knows the credential
+//     because the test fixture supplied it).
 //
 // The sidecar is TEST-ONLY: forwarding cleartext on the cluster
 // network weakens the §13.2 NetworkPolicy default-deny posture; the

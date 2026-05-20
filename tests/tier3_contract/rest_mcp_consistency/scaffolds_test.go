@@ -498,8 +498,10 @@ func TestRESTMCPDelegation(t *testing.T) {
 // is a per-session field, not a platform-admin-managed
 // subscription resource", and §25.5 ships the event-subscription
 // CRUD on lenny-ops, not the gateway:
-//   POST/GET/DELETE /v1/admin/event-subscriptions on
-//   pkg/ops/opsserver. There is no MCP counterpart — by design.
+//
+//	POST/GET/DELETE /v1/admin/event-subscriptions on
+//	pkg/ops/opsserver. There is no MCP counterpart — by design.
+//
 // The §25.5 lenny-ops surface has its own per-handler unit tests
 // in pkg/ops/opsserver/event_subscriptions_test.go.
 func TestRESTMCPWebhookSubscription(t *testing.T) {

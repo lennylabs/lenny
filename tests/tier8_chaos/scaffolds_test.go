@@ -43,6 +43,7 @@ import "testing"
 //   - charts/lenny/values.yaml postgres.ha settings (operator-managed
 //     HA Postgres is a deployer-driven topology, not a tier-8 fault
 //     to inject).
+//
 // HA Postgres failover with automatic promotion is on the tier-8 ops
 // backlog alongside the HA store topologies; the failure mode itself
 // is covered by TestPostgresUnavailable.
@@ -65,6 +66,7 @@ func TestRedisSentinelFailover(t *testing.T) {
 // §12.8 MinIO replication lag — covered by:
 //   - pkg/blobstore/replication (replication primitives + unit tests).
 //   - pkg/blobstore/miniostore (single-replica round-trip).
+//
 // Live cross-zone replication requires a multi-AZ overlay; on the ops
 // backlog with the HA store topologies.
 func TestMinIOReplicationLag(t *testing.T) {
@@ -77,6 +79,7 @@ func TestMinIOReplicationLag(t *testing.T) {
 //   - pkg/kms/envelope (Seal/Open/Reseal property tests).
 //   - cmd/lenny-preflight startup gate that refuses install when the
 //     KEK alias is unreachable.
+//
 // Live cloud-KMS outage probe needs a cloud KMS adapter (deferred via
 // the CloudProviderSeam per BUILD-PROGRESS Phase 12a).
 func TestKMSUnavailable(t *testing.T) {
@@ -86,6 +89,7 @@ func TestKMSUnavailable(t *testing.T) {
 // §12.8 KMS probe stale — covered by:
 //   - pkg/tenantkms (the per-tenant probe interval logic).
 //   - pkg/alerting/rules (the §16.5 T4KmsKeyUnusable alert rule).
+//
 // Same blocker as TestKMSUnavailable: a deployed cloud KMS adapter.
 func TestKMSKeyProbeStale(t *testing.T) {
 	t.Logf("§12.8: pkg/tenantkms probe + §16.5 T4KmsKeyUnusable alert rule; cloud-KMS adapter on the ops backlog.")
@@ -95,6 +99,7 @@ func TestKMSKeyProbeStale(t *testing.T) {
 //   - tests/tier2_component/rls/pgbouncer_test.go (the §12.2.2
 //     PgBouncer session-pooling reuse invariant against the compose
 //     profile's PgBouncer).
+//
 // Live saturation injector under PgBouncer is on the ops backlog
 // alongside the HA store topologies.
 func TestPgBouncerSaturation(t *testing.T) {
@@ -105,6 +110,7 @@ func TestPgBouncerSaturation(t *testing.T) {
 
 // §12.8 DNS outage — covered structurally by:
 //   - pkg/gateway/redisconn DNS retry handling.
+//
 // A safe live exercise needs a dedicated, isolatable CoreDNS — the
 // e2e cluster shares kube-system/coredns and scaling it to zero
 // would break every other test sharing the cluster (cert-manager,
@@ -121,6 +127,7 @@ func TestDNSOutage(t *testing.T) {
 //   - tests/tier8_chaos/store_failure_test.go::TestMinIOUnavailable
 //     (the MinIO-down half).
 //   - pkg/admission/drain_readiness webhook (the §12.5 readiness gate).
+//
 // The combined drain + outage scenario is a tier-8 ops follow-on.
 func TestNodeDrainDuringMinIOOutage(t *testing.T) {
 	t.Logf("§12.8: drain half covered by tier-5 TestNodeDrainDuringActiveSession; outage half by tier-8 TestMinIOUnavailable. Combined scenario on the ops backlog.")
@@ -130,6 +137,7 @@ func TestNodeDrainDuringMinIOOutage(t *testing.T) {
 //   - pkg/controller/runtimeupgrade (the runtime-upgrade state
 //     substrate; Phase 3 Done per BUILD-PROGRESS).
 //   - pkg/alerting/rules (§16.5 RuntimeUpgradeStuck alert).
+//
 // Live stuck-roll fault injection is on the ops backlog.
 func TestRuntimeUpgradeStuck(t *testing.T) {
 	t.Logf("§12.8: pkg/controller/runtimeupgrade state machine + §16.5 alert; live stuck-roll injection on the ops backlog.")
@@ -138,6 +146,7 @@ func TestRuntimeUpgradeStuck(t *testing.T) {
 // §12.8 pool upgrade rollback during expanding — covered structurally by:
 //   - pkg/controller/poolscaling (pool-upgrade state machine).
 //   - charts/lenny/tests pool-scaling helm-unittest.
+//
 // Live expanding-phase rollback is on the ops backlog.
 func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
 	t.Logf("§12.8: pkg/controller/poolscaling state machine; live rollback exercise on the ops backlog.")
@@ -149,6 +158,7 @@ func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
 //   - pkg/gateway/adapterclient (the §4.7 retry/backoff path on
 //     transport failures).
 //   - pkg/circuitbreaker (the per-subsystem breaker).
+//
 // Live partition needs toxiproxy or Chaos Mesh NetworkChaos; on the
 // tier-8 ops backlog.
 func TestGatewayToPodPartition(t *testing.T) {
@@ -177,6 +187,7 @@ func TestCrossZonePartition(t *testing.T) {
 //   - pkg/gateway/credrenewal (proactive renewal loop).
 //   - pkg/gateway/revocation/propagator (cross-replica deny-list
 //     propagation; unit-tested).
+//
 // Live exercise needs cred-shell-echo deployed to hold a real lease
 // (wired in 3aa580b); on the tier-8 ops backlog.
 func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
@@ -188,6 +199,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 //     credentials_acknowledged handshake; unit tests).
 //   - pkg/adapter/lifecyclechannel.go (lifecycle channel).
 //   - sdks/runtime/go/runtime/lifecycle.go.
+//
 // Live rotation-failure exercise needs the fault-injection knob on
 // RotateCredentials; ops follow-on.
 func TestRotationFailure(t *testing.T) {
@@ -205,6 +217,7 @@ func TestDenyListPropagationUnderRedisOutage(t *testing.T) {
 //   - pkg/gateway/credassign (the §4.9 pool selector with
 //     ErrPoolExhausted; unit tests).
 //   - pkg/credential/select.go (StrategyLeastLoaded etc.; unit tests).
+//
 // Live exhaustion exercise needs a seeded finite-lease pool; on the
 // ops backlog.
 func TestCredentialPoolExhaustion(t *testing.T) {
@@ -248,6 +261,7 @@ func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
 //   - pkg/gateway/erasurejob (registry + runner unit tests).
 //   - tests/tier2_component/auditstore (cross_tenant_read on
 //     background workers — the erasure orchestrator's parity path).
+//
 // Live mid-sequence fault injection on the ops backlog.
 func TestErasureJobFailureMidSequence(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/erasure + erasurejob unit coverage; live mid-sequence injection on the ops backlog.")
@@ -258,6 +272,7 @@ func TestErasureJobFailureMidSequence(t *testing.T) {
 //   - pkg/gateway/admin POST /v1/admin/legal-hold handler tests.
 //   - pkg/blobstore/miniostore SetLegalHold + DeleteBySession guard
 //     (commit 831eb37).
+//
 // Live region-scoped escrow path needs a cloud-region-scoped escrow
 // bucket; on the ops backlog with the cloud adapter work.
 func TestLegalHoldOverrideFlow(t *testing.T) {
@@ -268,6 +283,7 @@ func TestLegalHoldOverrideFlow(t *testing.T) {
 //   - pkg/gateway/erasurejob deadline tracking.
 //   - pkg/clockinject (the §12.8 clock-injection harness; unit
 //     tests pin the offset behavior; commit b0d9371).
+//
 // Live SLA-breach exercise wires pkg/clockinject into the gateway's
 // time-sensitive call sites; ops follow-on.
 func TestT3T4SLABreach(t *testing.T) {
@@ -282,6 +298,7 @@ func TestT3T4SLABreach(t *testing.T) {
 //     ELICITATION_DEADLOCK detection on circular chains).
 //   - cmd/runtimes/elicitation-echo (wired into the e2e overlay in
 //     3aa580b).
+//
 // Live deadlock exercise on the ops backlog.
 func TestElicitationDeadlockDetection(t *testing.T) {
 	t.Logf("§12.8: pkg/elicitation + pkg/gateway/mcptools dispatcher + elicitation-echo runtime; live deadlock on the ops backlog.")
@@ -290,6 +307,7 @@ func TestElicitationDeadlockDetection(t *testing.T) {
 // §8 delegation depth deadlock — covered structurally by:
 //   - pkg/delegation/cycle (cycle detector with property tests).
 //   - pkg/gateway/mcptools/predelegation_test.go.
+//
 // Live depth-deadlock exercise on the ops backlog.
 func TestDelegationDepthDeadlockDetection(t *testing.T) {
 	t.Logf("§12.8: pkg/delegation/cycle property tests + predelegation; live depth-deadlock on the ops backlog.")
@@ -299,6 +317,7 @@ func TestDelegationDepthDeadlockDetection(t *testing.T) {
 
 // §13 clock drift — covered structurally by:
 //   - pkg/clockinject (the §12.8 clock-injection harness; commit b0d9371).
+//
 // Live drift exercise wires pkg/clockinject into a gateway replica's
 // time source; ops follow-on.
 func TestGatewayClockDrift(t *testing.T) {
@@ -309,6 +328,7 @@ func TestGatewayClockDrift(t *testing.T) {
 //   - pkg/mtls/rotation.go (CA-rotation state machine; unit tests).
 //   - pkg/auth/jwt/jwks (rotating-verifier + JWKS publication).
 //   - pkg/clockinject (clock harness).
+//
 // Live expiry exercise pairs the clock harness with a deployed
 // cert-manager Certificate; ops follow-on.
 func TestCertificateExpiryAdvance(t *testing.T) {
@@ -323,6 +343,7 @@ func TestCertificateExpiryAdvance(t *testing.T) {
 //     BUILD-PROGRESS Phase 3.5).
 //   - charts/lenny/tests crd-conversion-webhook helm-unittest
 //     (verifies the conversion webhook is unwired by design).
+//
 // A live multi-version conversion exercise needs the v2 CRDs to
 // ship first; recorded as a v2 follow-on.
 func TestCRDUpgradeImmutableFieldChange(t *testing.T) {

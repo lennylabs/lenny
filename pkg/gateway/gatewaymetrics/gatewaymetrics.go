@@ -23,21 +23,21 @@ import (
 type Metrics struct {
 	reg *prometheus.Registry
 
-	requestsTotal       *prometheus.CounterVec
-	requestDuration     *prometheus.HistogramVec
-	activeSessions      prometheus.Gauge
-	activeStreams       prometheus.Gauge
-	requestQueueDepth   prometheus.Gauge
-	rejectionRate       prometheus.Gauge
-	storageQuotaUsed    *prometheus.GaugeVec
-	storageQuotaLimit   *prometheus.GaugeVec
-	circuitBreakerOpen  *prometheus.GaugeVec
-	cbCacheStale        prometheus.Gauge
-	cbCacheInitialized  prometheus.Gauge
+	requestsTotal             *prometheus.CounterVec
+	requestDuration           *prometheus.HistogramVec
+	activeSessions            prometheus.Gauge
+	activeStreams             prometheus.Gauge
+	requestQueueDepth         prometheus.Gauge
+	rejectionRate             prometheus.Gauge
+	storageQuotaUsed          *prometheus.GaugeVec
+	storageQuotaLimit         *prometheus.GaugeVec
+	circuitBreakerOpen        *prometheus.GaugeVec
+	cbCacheStale              prometheus.Gauge
+	cbCacheInitialized        prometheus.Gauge
 	elicitationDropped        *prometheus.CounterVec
 	elicitationTamperDetected *prometheus.CounterVec
 	experimentIsoRej          *prometheus.CounterVec
-	noEnvPolicyAllowAll *prometheus.CounterVec
+	noEnvPolicyAllowAll       *prometheus.CounterVec
 }
 
 // New constructs and registers the gateway metric set against a
@@ -172,18 +172,18 @@ func New() (*Metrics, error) {
 		rejectionRate, cbCacheStale, cbCacheInitialized)
 
 	return &Metrics{
-		reg:                 reg,
-		requestsTotal:       requestsTotal,
-		requestDuration:     requestDuration,
-		activeSessions:      gauge,
-		activeStreams:       streams,
-		requestQueueDepth:   queueDepth,
-		rejectionRate:       rejections,
-		storageQuotaUsed:    storageQuotaUsed,
-		storageQuotaLimit:   storageQuotaLimit,
-		circuitBreakerOpen:  circuitBreakerOpen,
-		cbCacheStale:        cbStale,
-		cbCacheInitialized:  cbInit,
+		reg:                       reg,
+		requestsTotal:             requestsTotal,
+		requestDuration:           requestDuration,
+		activeSessions:            gauge,
+		activeStreams:             streams,
+		requestQueueDepth:         queueDepth,
+		rejectionRate:             rejections,
+		storageQuotaUsed:          storageQuotaUsed,
+		storageQuotaLimit:         storageQuotaLimit,
+		circuitBreakerOpen:        circuitBreakerOpen,
+		cbCacheStale:              cbStale,
+		cbCacheInitialized:        cbInit,
 		elicitationDropped:        elicitationDropped,
 		elicitationTamperDetected: elicitationTamperDetected,
 		experimentIsoRej:          experimentIsoRej,

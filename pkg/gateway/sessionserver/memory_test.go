@@ -80,7 +80,8 @@ func TestMemoryWriteIngestsRecords(t *testing.T) {
 // spec: §9.4 (empty body, no-content, missing user, missing session
 // are all rejected with the documented envelopes)
 func TestMemoryWriteRejectsInvalid(t *testing.T) {
-	h, _ := memoryServer(t,
+	h, _ := memoryServer(
+		t,
 		memorySession("sess_user", "alice"),
 		sessionstore.Session{ID: "sess_no_user", TenantID: "default", State: session.StateRunning},
 	)
@@ -91,20 +92,30 @@ func TestMemoryWriteRejectsInvalid(t *testing.T) {
 		want int
 		code string
 	}{
-		{"empty body", "/v1/sessions/sess_user/memory", []byte(`{}`),
-			http.StatusBadRequest, "VALIDATION_ERROR"},
-		{"no content", "/v1/sessions/sess_user/memory",
+		{
+			"empty body", "/v1/sessions/sess_user/memory", []byte(`{}`),
+			http.StatusBadRequest, "VALIDATION_ERROR",
+		},
+		{
+			"no content", "/v1/sessions/sess_user/memory",
 			[]byte(`{"memories":[{"content":""}]}`),
-			http.StatusBadRequest, "VALIDATION_ERROR"},
-		{"unknown session", "/v1/sessions/missing/memory",
+			http.StatusBadRequest, "VALIDATION_ERROR",
+		},
+		{
+			"unknown session", "/v1/sessions/missing/memory",
 			[]byte(`{"memories":[{"content":"x"}]}`),
-			http.StatusNotFound, "RESOURCE_NOT_FOUND"},
-		{"no user", "/v1/sessions/sess_no_user/memory",
+			http.StatusNotFound, "RESOURCE_NOT_FOUND",
+		},
+		{
+			"no user", "/v1/sessions/sess_no_user/memory",
 			[]byte(`{"memories":[{"content":"x"}]}`),
-			http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED"},
-		{"malformed JSON", "/v1/sessions/sess_user/memory",
+			http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
+		},
+		{
+			"malformed JSON", "/v1/sessions/sess_user/memory",
 			[]byte(`{not-json}`),
-			http.StatusBadRequest, "INVALID_REQUEST"},
+			http.StatusBadRequest, "INVALID_REQUEST",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

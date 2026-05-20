@@ -278,12 +278,12 @@ func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID strin
 		defer rows.Close()
 		for rows.Next() {
 			var (
-				cred                connectorcredstore.ConnectorCredential
-				accBlob, refBlob    []byte
-				accVer              int
-				refVer              *int
-				scopesJSON          []byte
-				expiresAt           *time.Time
+				cred             connectorcredstore.ConnectorCredential
+				accBlob, refBlob []byte
+				accVer           int
+				refVer           *int
+				scopesJSON       []byte
+				expiresAt        *time.Time
 			)
 			if err := rows.Scan(&cred.UserID,
 				&accBlob, &accVer,
@@ -329,13 +329,13 @@ func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID strin
 // decrypting every credential under the tenant.
 func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash []byte) (connectorcredstore.ConnectorCredential, error) {
 	var (
-		connectorID, userID string
-		accBlob, refBlob    []byte
-		accVer              int
-		refVer              *int
-		tokenType           string
-		scopesJSON          []byte
-		expiresAt           *time.Time
+		connectorID, userID  string
+		accBlob, refBlob     []byte
+		accVer               int
+		refVer               *int
+		tokenType            string
+		scopesJSON           []byte
+		expiresAt            *time.Time
 		createdAt, updatedAt time.Time
 	)
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {

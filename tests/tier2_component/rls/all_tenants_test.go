@@ -101,7 +101,8 @@ func TestRLSAllTenantsContext(t *testing.T) {
 		// tenants).
 		store := auditstore.New(pg.Pool)
 		payload := json.RawMessage(
-			`{"actor_subject":"alice@acme.com","endpoint":"/v1/admin/tenants","category":"tenant_list"}`)
+			`{"actor_subject":"alice@acme.com","endpoint":"/v1/admin/tenants","category":"tenant_list"}`,
+		)
 		row, err := store.Append(ctx, "platform", "cross_tenant_read", payload, time.Time{})
 		if err != nil {
 			t.Fatalf("emit cross_tenant_read: %v", err)

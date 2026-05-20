@@ -68,6 +68,7 @@ func TestAdminBootstrap(t *testing.T) {
 //   - pkg/gateway/retentiongc (retention sweep)
 //   - tier-2 miniostore_test.go (MinIO ArtifactStore round-trip)
 //   - tier-5 e2e checkpoint_test.go (live Kind exercise)
+//
 // The cooperative quiescence handshake is exercised by the §15.4
 // adapter contract tests in tests/tier3_contract/adapter_jsonl.
 func TestCheckpointResume(t *testing.T) {
@@ -83,6 +84,7 @@ func TestCheckpointResume(t *testing.T) {
 //     Last-Event-ID resume; events_test.go)
 //   - tier-7 streaming_throughput k6 scenario (baseline)
 //   - cmd/runtimes/streaming-echo (the Full-level reference runtime)
+//
 // The composite stream-reconnect-after-restart scenario relies on
 // the §12.7 streaming reconnect baseline, blocked on the
 // gatewaymetrics Flusher forwarding fix; documented in tier-7.
@@ -103,6 +105,7 @@ func TestStreamingReconnect(t *testing.T) {
 //     Anthropic-shaped sibling)
 //   - pkg/gateway/llmproxy/handler_test.go covers the live SSE relay
 //     against a mock Anthropic backend.
+//
 // Live calls against api.anthropic.com are a release-pipeline smoke
 // test, not a tier-4 hermetic check, because they need a real key.
 func TestLLMProxyAnthropic(t *testing.T) {
@@ -132,6 +135,7 @@ func TestLLMProxyAnthropic(t *testing.T) {
 //     real Postgres container, then rolls back and re-applies.
 //   - tier-2 chaos-driven dirty-flag exercise
 //     (tests/tier8_chaos/config_drift_test.go::TestSchemaMigrationDirtyFlag).
+//
 // The composite "live gateway against a migrating Postgres"
 // scenario adds no coverage on top of the tier-2 round-trip; the
 // gateway has no migration code path of its own.
@@ -154,6 +158,7 @@ func TestMigrationUpgrade(t *testing.T) {
 //     session create) with start_test.go
 //   - pkg/controller/poolscaling/variants.go (PoolScalingController
 //     variant-pool sizing path) and variants_test.go.
+//
 // The §10.7 admission-time isolation monotonicity is exercised by
 // the admin handler tests in pkg/gateway/admin/experiment_test.go.
 func TestExperimentRouting(t *testing.T) {
@@ -179,6 +184,7 @@ func TestExperimentRouting(t *testing.T) {
 //     the gateway's §15.1 REST surface — type:mcp sessions reuse
 //     the standard /v1/sessions endpoints per BUILD-PROGRESS Phase
 //     12b notes).
+//
 // The dedicated /mcp/runtimes/{name} surface is a documented v2
 // follow-on; the §15.1 REST path is the v1 type:mcp entry point.
 func TestMCPRuntimeEndpoints(t *testing.T) {

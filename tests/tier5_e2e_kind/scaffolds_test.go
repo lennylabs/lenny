@@ -286,6 +286,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 //   - pkg/gateway/mcptools/delegate_task_filtering_test.go (the
 //     lenny/delegate_task MCP tool handler that consults the
 //     cross-environment resolver).
+//
 // The composite e2e exercise needs --agent-namespace wired on the
 // gateway, an agent runtime that issues lenny/delegate_task from
 // inside the pod, and a seeded pair of environments with a

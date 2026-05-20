@@ -110,10 +110,10 @@ const (
 // the §4.6.1 lifecycle manager surfaces ErrNotFound as
 // PodNotRegistered.
 var (
-	ErrNotFound         = errors.New("podregistry: pod not found")
+	ErrNotFound          = errors.New("podregistry: pod not found")
 	ErrInvalidTransition = errors.New("podregistry: invalid state transition")
-	ErrPoolExhausted    = errors.New("podregistry: no idle pod available in pool")
-	ErrResourceConflict = errors.New("podregistry: resource version conflict")
+	ErrPoolExhausted     = errors.New("podregistry: no idle pod available in pool")
+	ErrResourceConflict  = errors.New("podregistry: resource version conflict")
 )
 
 // PodRegistry is the §12.6 data-access layer. The v1 implementation
