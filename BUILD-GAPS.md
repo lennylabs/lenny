@@ -184,20 +184,12 @@ populated baseline JSON files. The five scenarios without baselines are
 `credential_lifecycle`, `delegation_fanout_mcp`, `experiment_load`,
 `post_hardening_slo`, and `streaming_throughput`.
 
-Scenarios blocked by production-code defects:
+Scenarios that skip due to gateway / overlay configuration:
 
-- `TestStreamingReconnectLoad` is blocked because the
-  `gatewaymetrics` middleware's `statusRecorder` at
-  `pkg/gateway/gatewaymetrics/gatewaymetrics.go:296` does not forward
-  `http.Flusher`. The SSE handler at
-  `pkg/gateway/sessionserver/events.go:50` requires `http.Flusher` and
-  returns 500 when the assertion fails.
 - `TestCheckpointDuration` is blocked because
   `POST /v1/sessions/{id}/upload` returns errors on every request in the
   rate-bounded scenario. The handler exists at
   `pkg/gateway/sessionserver/upload.go:76` (`handleUpload`).
-- `TestWebhookDeliveryLoad` has no surface to test because no webhook
-  subscription endpoint is registered.
 - `TestPlaygroundRevocation` skips because the §27 web playground is
   disabled on the e2e gateway.
 - `TestConcurrentWorkspaceSlots` skips because per-slot workspace
