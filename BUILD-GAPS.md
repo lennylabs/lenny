@@ -498,8 +498,8 @@ topologies, the published Homebrew tap) are recorded under the
 Blocked section because they are external infrastructure the
 repository does not yet provision.
 
-The two in-repo placeholders that can become real once their
-upstream dependencies land:
+The in-repo items that can become real once their upstream
+dependencies land:
 
 - **`tests/testinfra/chaos/chaos.go` has a chaos-mesh placeholder.**
   The toxiproxy code path is fully implemented.
@@ -507,12 +507,6 @@ upstream dependencies land:
   cleanup. `PartitionService` via chaos-mesh at line 124 does the same.
   TESTING.md §12.8 chaos scenarios that need network-partition
   injection therefore have no working harness on Kind.
-
-- **`tests/testinfra/security/zap/zap.go` defers report parsing.** The
-  helper runs `zap.sh -quickout <report>` and returns
-  `Result{ReportPath: report}`. A comment near line 98 confirms
-  "Parsing is deferred." Tier-9 ZAP fuzzing has no programmatic
-  assertion path.
 
 - **The compose profile lacks PgBouncer and Redis Sentinel.**
   `compose/default.yml` provisions neither. Blocks the

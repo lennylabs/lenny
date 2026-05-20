@@ -4,16 +4,20 @@
 // runner invokes the ZAP CLI (or docker image) against a target URL
 // with the project's policy file and parses the resulting report.
 //
-// Today this is a thin scaffold: when ZAP is not installed it skips
-// with a precise diagnosis; when installed it runs `zap.sh -cmd
-// -quickurl <target> -quickprogress -quickout report.xml` and
-// surfaces the report path.
+// When ZAP is not installed the helper skips with a precise
+// diagnosis. When installed it runs `zap.sh -cmd -quickurl <target>
+// -quickprogress -quickout report.xml`, walks the resulting XML, and
+// counts alerts by ZAP risk code into Result.
 package zap
 
 import (
+	"encoding/xml"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -64,10 +68,12 @@ type Result struct {
 
 // Run executes a ZAP scan and returns the parsed result.
 //
-// Today the implementation is a placeholder: it shells out to
-// zap.sh with the documented flags and reports the report path.
-// Parsing the XML output is deferred to a real Phase 9 task; the
-// scaffold here documents the API the tier-9 suite will call.
+// It shells out to zap.sh with the documented flags, then parses
+// the XML quickout into Result. The alert counts are read from the
+// ZAP riskcode taxonomy: 3 = High, 2 = Medium, 1 = Low, 0 =
+// Informational. The test fails when the parse cannot complete; a
+// scan that produces no alerts is a valid result (every count is
+// zero).
 func Run(t testing.TB, opts Options) Result {
 	t.Helper()
 	SkipUnlessAvailable(t)
@@ -93,7 +99,60 @@ func Run(t testing.TB, opts Options) Result {
 	if err != nil {
 		t.Fatalf("zap run: %v\n%s", err, out)
 	}
-	// Parsing is deferred. The placeholder Result reports the path
-	// so callers can inspect the file in CI artifacts.
-	return Result{ReportPath: report}
+	res, err := ParseReport(report)
+	if err != nil {
+		t.Fatalf("zap parse report: %v", err)
+	}
+	return res
+}
+
+// ParseReport walks the ZAP XML quickout at path and tallies alerts
+// by riskcode. The format follows the OWASPZAPReport schema:
+// the root element wraps one or more <site> blocks, each containing
+// an <alerts> list of <alertitem> entries whose <riskcode> is the
+// classification code. Unknown riskcodes are ignored (forward
+// compatible with future ZAP extensions); a malformed XML body is
+// surfaced as an error so the caller knows the report is unusable.
+func ParseReport(path string) (Result, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return Result{}, fmt.Errorf("read report: %w", err)
+	}
+	var doc zapReport
+	if err := xml.Unmarshal(body, &doc); err != nil {
+		return Result{}, fmt.Errorf("parse XML: %w", err)
+	}
+	res := Result{ReportPath: path}
+	for _, site := range doc.Sites {
+		for _, item := range site.Alerts {
+			n, err := strconv.Atoi(item.RiskCode)
+			if err != nil {
+				continue
+			}
+			switch n {
+			case 3:
+				res.HighAlerts++
+			case 2:
+				res.MediumAlerts++
+			case 1:
+				res.LowAlerts++
+			}
+		}
+	}
+	return res, nil
+}
+
+// zapReport models the subset of the OWASPZAPReport XML schema the
+// alert tally needs.
+type zapReport struct {
+	XMLName xml.Name  `xml:"OWASPZAPReport"`
+	Sites   []zapSite `xml:"site"`
+}
+
+type zapSite struct {
+	Alerts []zapAlert `xml:"alerts>alertitem"`
+}
+
+type zapAlert struct {
+	RiskCode string `xml:"riskcode"`
 }
