@@ -89,13 +89,11 @@ five scaffolds.
 
 All TESTING.md §12.3 contract subdirectories exist. The largest gap is
 `tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go`: of nine
-tests, only `TestRESTMCPSessionLifecycle` and `TestRESTMCPTasks` are live.
-Six others skip because the MCP side lacks a workspace-upload tool,
-respond and dismiss elicitation tools, a memory REST surface, a delegation
-REST surface, webhook subscription CRUD on either side, or admin MCP
-tools. The `retryable` / `category` parity surface is now built
-(`pkg/gateway/errorclassify` plus `mcp.NewLennyErrorDetail`); the
-`TestRESTMCPRetryableFlags` scaffold can convert to a real assertion.
+tests, `TestRESTMCPSessionLifecycle`, `TestRESTMCPTasks`, and
+`TestRESTMCPRetryableFlags` are live. Six others skip because the MCP
+side lacks a workspace-upload tool, respond and dismiss elicitation
+tools, a memory REST surface, a delegation REST surface, webhook
+subscription CRUD on either side, or admin MCP tools.
 
 `tests/tier3_contract/rest_openai_chat/` and `rest_openai_responses/` cover
 envelope-structure and field-preservation contracts. Streaming, tool calls,

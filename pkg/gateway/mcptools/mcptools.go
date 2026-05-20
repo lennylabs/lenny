@@ -239,10 +239,13 @@ func Register(srv *mcp.Server, deps Deps) {
 			Environment string `json:"environment"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
+			return mcp.ToolResult{}, mcp.NewToolError("INVALID_REQUEST",
+				fmt.Sprintf("invalid arguments: %v", err), nil)
 		}
 		if in.RuntimeRef == "" {
-			return mcp.ToolResult{}, errors.New("runtimeRef is required")
+			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+				"runtimeRef is required",
+				map[string]any{"field": "runtimeRef"})
 		}
 		now := clock()
 		row := sessionstore.Session{

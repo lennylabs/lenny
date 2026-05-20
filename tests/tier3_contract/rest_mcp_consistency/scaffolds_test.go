@@ -384,15 +384,75 @@ func TestRESTMCPAdmin(t *testing.T) {
 	t.Skip("blocked: §15.2.1 REST↔MCP admin — pkg/gateway/admin exposes the §13.9 REST admin surface (runtimes/pools/connectors/tenants/credentialPools/audit query) but pkg/gateway/mcptools registers no corresponding admin tools; admin is REST-only and has no MCP counterpart to compare against")
 }
 
-// spec: §15.2.1
-// diagnosis: §15.2.1 rule 5(d) requires identical `retryable` and
-// `category` flags across surfaces for the same error condition. The
-// REST sessionserver's errorBody envelope (sessionserver.go) carries
-// `code`/`message`/`details` only — no `category` or `retryable`
-// fields are present, and the MCP server's JSON-RPC error response
-// has no parallel fields either. The shared error-classifier
-// package the spec calls out is not yet wired into either transport;
-// the test cannot assert parity on fields that neither surface emits.
+// spec: §15.2.1 rule 5(d)
+// diagnosis: §15.2.1 requires identical `retryable` and `category`
+// flags across surfaces for the same error. The REST errorBody
+// carries (code, category, message, retryable, details); the MCP
+// tool-error path surfaces the same envelope as a `lenny/error`
+// content block inside the tool result. Both transports consult the
+// shared pkg/gateway/errorclassify table, so the same lenny code
+// resolves to the same (category, retryable) pair on each surface.
+// This test triggers the same VALIDATION_ERROR through each surface
+// (POST /v1/sessions and lenny/create_session, both with the
+// required runtimeRef missing) and asserts the triples match.
 func TestRESTMCPRetryableFlags(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP error envelope parity — the REST errorBody at pkg/gateway/sessionserver/sessionserver.go carries {code, message, details} only; neither it nor the MCP JSON-RPC error response surfaces the `retryable` / `category` flags §15.2.1 rule 5(d) requires for parity testing")
+	tsREST, tsMCP, _ := newConsistencyServers(t, "acme")
+
+	restResp, restRaw := postJSON(t, tsREST.URL+"/v1/sessions", "acme", []byte(`{}`))
+	if restResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("REST status = %d, want 400; body=%s", restResp.StatusCode, restRaw)
+	}
+	var restBody struct {
+		Error struct {
+			Code      string `json:"code"`
+			Category  string `json:"category"`
+			Message   string `json:"message"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(restRaw, &restBody); err != nil {
+		t.Fatalf("REST body decode: %v\nbody=%s", err, restRaw)
+	}
+	if restBody.Error.Code != "VALIDATION_ERROR" {
+		t.Errorf("REST code = %q, want VALIDATION_ERROR", restBody.Error.Code)
+	}
+
+	res := mcpCall(t, tsMCP.URL+"/mcp", "lenny/create_session", map[string]any{})
+	if _, isErr := res["_error"]; isErr {
+		t.Fatalf("MCP returned a JSON-RPC transport error rather than a tool error: %v", res)
+	}
+	if res["isError"] != true {
+		t.Fatalf("MCP tool result missing isError=true: %v", res)
+	}
+	contents, _ := res["content"].([]any)
+	var mcpEnvelopeJSON string
+	for _, c := range contents {
+		block, _ := c.(map[string]any)
+		if block["type"] == "lenny/error" {
+			mcpEnvelopeJSON, _ = block["text"].(string)
+			break
+		}
+	}
+	if mcpEnvelopeJSON == "" {
+		t.Fatalf("MCP tool result missing lenny/error content block: %v", contents)
+	}
+	var mcpBody struct {
+		Code      string `json:"code"`
+		Category  string `json:"category"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
+	}
+	if err := json.Unmarshal([]byte(mcpEnvelopeJSON), &mcpBody); err != nil {
+		t.Fatalf("MCP lenny/error JSON decode: %v\nbody=%s", err, mcpEnvelopeJSON)
+	}
+
+	if mcpBody.Code != restBody.Error.Code {
+		t.Errorf("code parity: REST=%q, MCP=%q", restBody.Error.Code, mcpBody.Code)
+	}
+	if mcpBody.Category != restBody.Error.Category {
+		t.Errorf("category parity: REST=%q, MCP=%q", restBody.Error.Category, mcpBody.Category)
+	}
+	if mcpBody.Retryable != restBody.Error.Retryable {
+		t.Errorf("retryable parity: REST=%v, MCP=%v", restBody.Error.Retryable, mcpBody.Retryable)
+	}
 }

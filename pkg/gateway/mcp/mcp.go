@@ -24,6 +24,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/errorclassify"
@@ -113,9 +114,41 @@ type ToolContent struct {
 
 // ToolHandler executes a tool call. arguments is the raw JSON
 // `arguments` object from the `tools/call` params. The handler
-// returns the tool result or an error; a returned error is mapped
-// to a JSON-RPC error response.
+// returns the tool result or an error; a returned error becomes an
+// isError=true ToolResult whose first content block carries the
+// human-readable message and second content block carries the
+// §15.2.1 lenny error envelope (JSON-encoded LennyErrorDetail). A
+// returned *ToolError supplies the lenny code, message, and
+// details; any other error falls back to INTERNAL_ERROR with the
+// error's String() as the message.
 type ToolHandler func(ctx context.Context, arguments json.RawMessage) (ToolResult, error)
+
+// LennyErrorContentType is the §15.2.1 / §15.2 content-block type the
+// MCP tool-error path uses to surface the structured lenny error
+// envelope alongside the human-readable text. The block's Text field
+// holds the JSON-encoded LennyErrorDetail; MCP clients that do not
+// know this extension type continue to read the first text block.
+const LennyErrorContentType = "lenny/error"
+
+// ToolError is the structured error a tool handler returns to drive
+// the §15.2.1 REST↔MCP error envelope parity. The lenny Code is the
+// canonical error code (e.g., "VALIDATION_ERROR"); the classifier
+// (pkg/gateway/errorclassify) derives (category, retryable) from it
+// so REST and MCP return identical pairs for the same code.
+type ToolError struct {
+	Code    string
+	Msg     string
+	Details map[string]any
+}
+
+// Error implements error.
+func (e *ToolError) Error() string { return e.Msg }
+
+// NewToolError returns a ToolError with the given code, message, and
+// optional details.
+func NewToolError(code, msg string, details map[string]any) *ToolError {
+	return &ToolError{Code: code, Msg: msg, Details: details}
+}
 
 // Server is the §15.2 MCP adapter.
 type Server struct {
@@ -206,12 +239,30 @@ func (s *Server) handleToolCall(w http.ResponseWriter, ctx context.Context, req 
 	}
 	result, err := handler(ctx, params.Arguments)
 	if err != nil {
-		// A tool execution failure is surfaced as an MCP tool result
-		// with isError=true rather than a JSON-RPC transport error,
-		// matching the MCP spec — the call reached the tool, the tool
-		// reported failure.
+		// A tool execution failure surfaces as an MCP tool result with
+		// isError=true (the call reached the tool, the tool reported
+		// failure) plus the §15.2.1 lenny error envelope so the REST
+		// and MCP transports report identical (code, category,
+		// retryable) triples for the same error. A *ToolError supplies
+		// the lenny code; any other error falls back to INTERNAL_ERROR.
+		lennyCode := "INTERNAL_ERROR"
+		msg := err.Error()
+		var details map[string]any
+		var te *ToolError
+		if errors.As(err, &te) {
+			if te.Code != "" {
+				lennyCode = te.Code
+			}
+			msg = te.Msg
+			details = te.Details
+		}
+		envelope := NewLennyErrorDetail(lennyCode, msg, details)
+		envelopeJSON, _ := json.Marshal(envelope)
 		s.writeResult(w, req.ID, ToolResult{
-			Content: []ToolContent{{Type: "text", Text: err.Error()}},
+			Content: []ToolContent{
+				{Type: "text", Text: msg},
+				{Type: LennyErrorContentType, Text: string(envelopeJSON)},
+			},
 			IsError: true,
 		})
 		return
