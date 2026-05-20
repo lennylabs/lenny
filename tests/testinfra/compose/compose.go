@@ -168,6 +168,15 @@ func (s *Stack) PostgresDSN() string {
 	return "postgres://lenny:lenny@127.0.0.1:15432/lenny?sslmode=disable"
 }
 
+// PgBouncerDSN returns a connection string that points at the
+// PgBouncer connection-pooler in session pooling mode. The §12.2.2
+// connection-reuse leak test reaches Postgres through this endpoint
+// so a returned connection retains its SET LOCAL state, exposing any
+// gateway-side failure to reset the tenant context before reuse.
+func (s *Stack) PgBouncerDSN() string {
+	return "postgres://lenny:lenny@127.0.0.1:16432/lenny?sslmode=disable"
+}
+
 // RedisAddr returns the host:port for the Redis service.
 func (s *Stack) RedisAddr() string {
 	return "127.0.0.1:16379"

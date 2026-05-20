@@ -476,10 +476,12 @@ dependencies land:
   TESTING.md §12.8 chaos scenarios that need network-partition
   injection therefore have no working harness on Kind.
 
-- **The compose profile lacks PgBouncer and Redis Sentinel.**
-  `compose/default.yml` provisions neither. Blocks the
-  `TestRLSPgBouncerGuard` tier-2 RLS scaffold and the
-  `TestPgBouncerSaturation` tier-8 chaos scaffold.
+- **The compose profile lacks Redis Sentinel.** `compose/default.yml`
+  runs a single Redis node. The tier-8 `TestRedisSentinelFailover`
+  chaos scaffold needs a Sentinel topology to exercise. PgBouncer is
+  wired in session pooling mode and reachable via
+  `Stack.PgBouncerDSN()`; the `TestRLSPoolerReuseDoesNotLeakContext`
+  scaffold can convert to a live test.
 
 ## Cross-cutting findings
 

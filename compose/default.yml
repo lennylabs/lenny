@@ -35,6 +35,34 @@ services:
     volumes:
       - lenny-postgres-data:/var/lib/postgresql/data
 
+  # §12.2.2 connection-pooler context-leak harness. The pooler runs
+  # in session pooling mode so a returned connection retains its
+  # SET LOCAL state. The tier-2 TestRLSPoolerReuseDoesNotLeakContext
+  # scaffold uses this to exercise the gateway's pre-checkout
+  # tenant-context reset.
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.1
+    container_name: lenny-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: lenny
+      DB_PASSWORD: lenny
+      DB_NAME: lenny
+      POOL_MODE: session
+      MAX_CLIENT_CONN: "50"
+      DEFAULT_POOL_SIZE: "10"
+      AUTH_TYPE: scram-sha-256
+    ports: ["16432:5432"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo > /dev/tcp/127.0.0.1/5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis:7-alpine
     container_name: lenny-redis
