@@ -406,6 +406,8 @@ func TestRESTMCPElicitation(t *testing.T) {
 // writes one memory per surface against the same session and
 // asserts the REST session read returns both, and the MCP
 // user-scoped query (which is a superset) returns at least both.
+// spec: 15.2.1
+// diagnosis: §15.2.1 REST/MCP parity contract — each test pins parity or documents an explicit no-parity acknowledgement.
 func TestRESTMCPMemory(t *testing.T) {
 	tsREST, tsMCP, store := newConsistencyServers(t, "acme")
 
@@ -504,6 +506,8 @@ func TestRESTMCPDelegation(t *testing.T) {
 //
 // The §25.5 lenny-ops surface has its own per-handler unit tests
 // in pkg/ops/opsserver/event_subscriptions_test.go.
+// spec: 15.2.1
+// diagnosis: webhook subscription CRUD is REST-only on the lenny-ops control plane; no MCP parity surface exists.
 func TestRESTMCPWebhookSubscription(t *testing.T) {
 	t.Logf("§15.1 / §25.5: webhook subscription CRUD is the lenny-ops REST surface (no MCP parity)")
 }
@@ -536,6 +540,8 @@ func TestRESTMCPAdmin(t *testing.T) {
 // This test triggers the same VALIDATION_ERROR through each surface
 // (POST /v1/sessions and lenny/create_session, both with the
 // required runtimeRef missing) and asserts the triples match.
+// spec: 15.2.1
+// diagnosis: §15.2.1 rule 5(d) — REST + MCP must surface identical (code, category, retryable) for the same lenny error code; both transports consult pkg/gateway/errorclassify.
 func TestRESTMCPRetryableFlags(t *testing.T) {
 	tsREST, tsMCP, _ := newConsistencyServers(t, "acme")
 

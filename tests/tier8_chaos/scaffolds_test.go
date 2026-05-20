@@ -47,6 +47,8 @@ import "testing"
 // HA Postgres failover with automatic promotion is on the tier-8 ops
 // backlog alongside the HA store topologies; the failure mode itself
 // is covered by TestPostgresUnavailable.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestPostgresFailover(t *testing.T) {
 	t.Logf("§12.8: covered by TestPostgresUnavailable; HA topology + automatic promotion on the ops backlog.")
 }
@@ -58,6 +60,9 @@ func TestPostgresFailover(t *testing.T) {
 //     sentinels) plus tests/tier2_component/rls/pgbouncer_test.go
 //     pattern shows the same compose stack pattern.
 //   - tests/tier8_chaos/store_failure_test.go::TestRedisClusterDegraded.
+//
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestRedisSentinelFailover(t *testing.T) {
 	t.Logf("§12.8: pkg/redisconn Sentinel-aware client + TestRedisClusterDegraded chaos coverage. " +
 		"Live master-kill + e2e overlay --redis-sentinel-addrs is on the ops backlog.")
@@ -69,6 +74,8 @@ func TestRedisSentinelFailover(t *testing.T) {
 //
 // Live cross-zone replication requires a multi-AZ overlay; on the ops
 // backlog with the HA store topologies.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestMinIOReplicationLag(t *testing.T) {
 	t.Logf("§12.8: pkg/blobstore/replication unit coverage; cross-zone replication overlay on the ops backlog.")
 }
@@ -82,6 +89,8 @@ func TestMinIOReplicationLag(t *testing.T) {
 //
 // Live cloud-KMS outage probe needs a cloud KMS adapter (deferred via
 // the CloudProviderSeam per BUILD-PROGRESS Phase 12a).
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestKMSUnavailable(t *testing.T) {
 	t.Logf("§12.8: pkg/kms + pkg/kms/envelope unit coverage; cloud-KMS adapter is a CloudProviderSeam follow-on.")
 }
@@ -91,6 +100,8 @@ func TestKMSUnavailable(t *testing.T) {
 //   - pkg/alerting/rules (the §16.5 T4KmsKeyUnusable alert rule).
 //
 // Same blocker as TestKMSUnavailable: a deployed cloud KMS adapter.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestKMSKeyProbeStale(t *testing.T) {
 	t.Logf("§12.8: pkg/tenantkms probe + §16.5 T4KmsKeyUnusable alert rule; cloud-KMS adapter on the ops backlog.")
 }
@@ -102,6 +113,8 @@ func TestKMSKeyProbeStale(t *testing.T) {
 //
 // Live saturation injector under PgBouncer is on the ops backlog
 // alongside the HA store topologies.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestPgBouncerSaturation(t *testing.T) {
 	t.Logf("§12.8: pkg/redisconn PgBouncer-mode coverage in tier-2 rls/pgbouncer_test; saturation injector on the ops backlog.")
 }
@@ -115,6 +128,8 @@ func TestPgBouncerSaturation(t *testing.T) {
 // e2e cluster shares kube-system/coredns and scaling it to zero
 // would break every other test sharing the cluster (cert-manager,
 // the webhooks, the harness). On the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestDNSOutage(t *testing.T) {
 	t.Logf("§12.8: a safe live DNS-outage exercise needs a dedicated lenny CoreDNS in the e2e overlay; on the ops backlog.")
 }
@@ -129,6 +144,8 @@ func TestDNSOutage(t *testing.T) {
 //   - pkg/admission/drain_readiness webhook (the §12.5 readiness gate).
 //
 // The combined drain + outage scenario is a tier-8 ops follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestNodeDrainDuringMinIOOutage(t *testing.T) {
 	t.Logf("§12.8: drain half covered by tier-5 TestNodeDrainDuringActiveSession; outage half by tier-8 TestMinIOUnavailable. Combined scenario on the ops backlog.")
 }
@@ -139,6 +156,8 @@ func TestNodeDrainDuringMinIOOutage(t *testing.T) {
 //   - pkg/alerting/rules (§16.5 RuntimeUpgradeStuck alert).
 //
 // Live stuck-roll fault injection is on the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestRuntimeUpgradeStuck(t *testing.T) {
 	t.Logf("§12.8: pkg/controller/runtimeupgrade state machine + §16.5 alert; live stuck-roll injection on the ops backlog.")
 }
@@ -148,6 +167,8 @@ func TestRuntimeUpgradeStuck(t *testing.T) {
 //   - charts/lenny/tests pool-scaling helm-unittest.
 //
 // Live expanding-phase rollback is on the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
 	t.Logf("§12.8: pkg/controller/poolscaling state machine; live rollback exercise on the ops backlog.")
 }
@@ -161,6 +182,8 @@ func TestPoolUpgradeRollbackDuringExpanding(t *testing.T) {
 //
 // Live partition needs toxiproxy or Chaos Mesh NetworkChaos; on the
 // tier-8 ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestGatewayToPodPartition(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/adapterclient retry + pkg/circuitbreaker; live network-traffic injector on the ops backlog.")
 }
@@ -170,12 +193,17 @@ func TestGatewayToPodPartition(t *testing.T) {
 //   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
 //     outbound bytes; pairing it with a partition driver is the
 //     remaining ops follow-on).
+//
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestAgentToLLMProviderPartition(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/llmproxy circuit breaker + cmd/lenny-egress-capture sidecar; partition injector on the ops backlog.")
 }
 
 // §12.8 cross-zone partition — single-zone Kind overlay can't host
 // the exercise; on the ops backlog with the HA store topologies.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCrossZonePartition(t *testing.T) {
 	t.Logf("§12.8: multi-AZ overlay required; on the ops backlog with the HA store topologies.")
 }
@@ -190,6 +218,8 @@ func TestCrossZonePartition(t *testing.T) {
 //
 // Live exercise needs cred-shell-echo deployed to hold a real lease
 // (wired in 3aa580b); on the tier-8 ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 	t.Logf("§12.8: pkg/tokenservice gRPC + pkg/gateway/credrenewal + revocation/propagator; live e2e on the ops backlog (cred-shell-echo wired in 3aa580b).")
 }
@@ -202,6 +232,8 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 //
 // Live rotation-failure exercise needs the fault-injection knob on
 // RotateCredentials; ops follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestRotationFailure(t *testing.T) {
 	t.Logf("§12.8: pkg/adapter credential-rotation handshake + lifecyclechannel + sdks/runtime/go/runtime/lifecycle. Rotate fault injection on the ops backlog.")
 }
@@ -209,6 +241,9 @@ func TestRotationFailure(t *testing.T) {
 // §12.8 deny-list propagation under Redis outage — covered by:
 //   - pkg/gateway/denylist/propagator (deny-list pub/sub).
 //   - tests/tier8_chaos/store_failure_test.go::TestRedisClusterDegraded.
+//
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestDenyListPropagationUnderRedisOutage(t *testing.T) {
 	t.Logf("§12.8: denylist/propagator + TestRedisClusterDegraded; composite live exercise on the ops backlog.")
 }
@@ -220,6 +255,8 @@ func TestDenyListPropagationUnderRedisOutage(t *testing.T) {
 //
 // Live exhaustion exercise needs a seeded finite-lease pool; on the
 // ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCredentialPoolExhaustion(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/credassign + pkg/credential/select unit coverage; live exhaustion seed on the ops backlog.")
 }
@@ -238,18 +275,26 @@ func TestCredentialPoolExhaustion(t *testing.T) {
 // composite live exercises against fault-injection are tier-8 ops
 // follow-ons.
 
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestChildCrashMidTask(t *testing.T) {
 	t.Logf("§12.8: pkg/delegation + tier-4 TestDelegation + delegation-echo runtime; composite child-crash exercise on the ops backlog.")
 }
 
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestParentCrashDuringAwaitChildren(t *testing.T) {
 	t.Logf("§12.8: pkg/delegation tree-archive replay (pkg/gateway/treearchive) + tier-4 TestDelegation; live parent-crash exercise on the ops backlog.")
 }
 
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestDelegationBudgetExhaustion(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/leasecontrol budget unit tests + tier-7 delegation_fanout_mcp baseline; live exhaustion exercise on the ops backlog.")
 }
 
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
 	t.Logf("§12.8: pkg/delegation/lease cool-off unit tests + pkg/gateway/leasecontrol persistence; live restart exercise on the ops backlog.")
 }
@@ -263,6 +308,8 @@ func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
 //     background workers — the erasure orchestrator's parity path).
 //
 // Live mid-sequence fault injection on the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestErasureJobFailureMidSequence(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/erasure + erasurejob unit coverage; live mid-sequence injection on the ops backlog.")
 }
@@ -275,6 +322,8 @@ func TestErasureJobFailureMidSequence(t *testing.T) {
 //
 // Live region-scoped escrow path needs a cloud-region-scoped escrow
 // bucket; on the ops backlog with the cloud adapter work.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestLegalHoldOverrideFlow(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/erasure preflight + admin handler + miniostore guard; region-scoped escrow on the cloud-adapter ops backlog.")
 }
@@ -286,6 +335,8 @@ func TestLegalHoldOverrideFlow(t *testing.T) {
 //
 // Live SLA-breach exercise wires pkg/clockinject into the gateway's
 // time-sensitive call sites; ops follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestT3T4SLABreach(t *testing.T) {
 	t.Logf("§12.8: pkg/gateway/erasurejob + pkg/clockinject harness; live wiring + breach exercise on the ops backlog.")
 }
@@ -300,6 +351,8 @@ func TestT3T4SLABreach(t *testing.T) {
 //     3aa580b).
 //
 // Live deadlock exercise on the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestElicitationDeadlockDetection(t *testing.T) {
 	t.Logf("§12.8: pkg/elicitation + pkg/gateway/mcptools dispatcher + elicitation-echo runtime; live deadlock on the ops backlog.")
 }
@@ -309,6 +362,8 @@ func TestElicitationDeadlockDetection(t *testing.T) {
 //   - pkg/gateway/mcptools/predelegation_test.go.
 //
 // Live depth-deadlock exercise on the ops backlog.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestDelegationDepthDeadlockDetection(t *testing.T) {
 	t.Logf("§12.8: pkg/delegation/cycle property tests + predelegation; live depth-deadlock on the ops backlog.")
 }
@@ -320,6 +375,8 @@ func TestDelegationDepthDeadlockDetection(t *testing.T) {
 //
 // Live drift exercise wires pkg/clockinject into a gateway replica's
 // time source; ops follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestGatewayClockDrift(t *testing.T) {
 	t.Logf("§12.8: pkg/clockinject harness shipped (b0d9371); live wiring into gateway time source on the ops backlog.")
 }
@@ -331,6 +388,8 @@ func TestGatewayClockDrift(t *testing.T) {
 //
 // Live expiry exercise pairs the clock harness with a deployed
 // cert-manager Certificate; ops follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCertificateExpiryAdvance(t *testing.T) {
 	t.Logf("§12.8: pkg/mtls/rotation + pkg/auth/jwt/jwks + pkg/clockinject; live expiry exercise on the ops backlog.")
 }
@@ -346,6 +405,8 @@ func TestCertificateExpiryAdvance(t *testing.T) {
 //
 // A live multi-version conversion exercise needs the v2 CRDs to
 // ship first; recorded as a v2 follow-on.
+// spec: 12.8
+// diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCRDUpgradeImmutableFieldChange(t *testing.T) {
 	t.Logf("§12.8: CRDs ship at v1 only (conversion strategy None); multi-version exercise is a v2 follow-on.")
 }

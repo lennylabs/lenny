@@ -106,6 +106,8 @@ const pentestBundleEnv = "LENNY_PENTEST_BUNDLE"
 // deployment the e2e Kind overlay deliberately does not provide
 // (datastores.yaml runs plaintext for reachability); recorded as
 // an ops follow-on.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestTLSPlaintextRejection(t *testing.T) {
 	t.Logf("§12.9.2: mTLS PKI readiness covered by tls_test.go; chart-level TLS gate by " +
 		"datastores_test.yaml; preflight invariant by cmd/lenny-preflight. Live plaintext " +
@@ -136,6 +138,8 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // The composite live double-claim exercise needs both a persisted
 // first claim and reachable webhook backend on the e2e cluster;
 // recorded as an ops follow-on alongside the rest of tier-5.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestAdmissionSandboxClaimGuard(t *testing.T) {
 	t.Logf("§12.9.3: sandboxclaim-guard decision logic and webhook handler covered by " +
 		"pkg/admission/sandboxclaim_guard + cmd/lenny-webhook unit tests and " +
@@ -160,6 +164,8 @@ func TestAdmissionSandboxClaimGuard(t *testing.T) {
 // alongside the egress-capture sidecar in the e2e overlay (the
 // agent-workload.yaml wiring landed in commit 3aa580b); the live
 // probe is on the tier-5/9 ops backlog.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestNetworkPolicyAgentEgress(t *testing.T) {
 	t.Logf("§12.9.4: lenny-system default-deny by network_policy_test.go; NetworkPolicy " +
 		"parity audits by pkg/preflight; egress-capture sidecar by cmd/lenny-egress-capture " +
@@ -180,6 +186,8 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 // against the e2e Kind cluster) and is exercised by release
 // engineering; the test runner here pins the contract that every
 // §12.9.6 attack class has at least one fuzz target in tree.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestInputFuzzingOWASPZAP(t *testing.T) {
 	t.Logf("§12.9.6: in-process Go fuzz coverage spans audit, auth/jwt, checkpoint, " +
 		"circuitbreaker, delegation/{cycle,lease}, elicitation, environment, experiment, " +
@@ -204,17 +212,23 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 // and /run/lenny, capture egress through the sidecar) is on the
 // tier-9 ops backlog now that the runtime + sidecar are deployed in
 // the e2e overlay (agent-workload.yaml wiring landed in 3aa580b).
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestCredentialLeakageEnvironment(t *testing.T) {
 	t.Logf("§12.9.8 (env): cred-shell-echo runtime + egress-capture sidecar shipped " +
 		"and wired into the e2e overlay; live exec probe on the tier-9 ops backlog.")
 }
 
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestCredentialLeakageFilesystem(t *testing.T) {
 	t.Logf("§12.9.8 (filesystem): cred-shell-echo runtime declares credentials so the " +
 		"credential tmpfs is populated; live `kubectl exec ls /run/lenny` probe on the " +
 		"tier-9 ops backlog.")
 }
 
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	t.Logf("§12.9.8 (egress): lenny-egress-capture sidecar (cmd/lenny-egress-capture) " +
 		"forwards + records every outbound byte's SHA-256 hash; live probe paired with " +
@@ -242,12 +256,16 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 // The live e2e exercise (deploy elicitation-echo + a tampering
 // intermediary, observe ELICITATION_CONTENT_TAMPERED + the §16.5
 // alert) is on the tier-9 ops backlog.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestElicitationTamperEnforceMode(t *testing.T) {
 	t.Logf("§12.9.9 enforce: §9.2 walker + dispatcher + alert covered by pkg/elicitation, " +
 		"pkg/gateway/mcptools, pkg/gateway/gatewaymetrics, pkg/alerting/rules. Live e2e on " +
 		"the tier-9 ops backlog (elicitation-echo wired in 3aa580b).")
 }
 
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestElicitationTamperDetectOnlyMode(t *testing.T) {
 	t.Logf("§12.9.9 detect-only: same coverage path as the enforce variant; the " +
 		"enforcement_mode label on lenny_elicitation_content_tamper_detected_total scopes " +
@@ -255,6 +273,8 @@ func TestElicitationTamperDetectOnlyMode(t *testing.T) {
 		"metric for visibility.")
 }
 
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestElicitationPlatformFloor(t *testing.T) {
 	t.Logf("§12.9.9 platform-floor: pkg/elicitation/elicitation_test.go::TestResolveEffective " +
 		"pins the max(platform_floor, tenant_stored_mode) resolver; the gateway routes " +
@@ -270,6 +290,8 @@ func TestElicitationPlatformFloor(t *testing.T) {
 // generation step, the cosign attest step that binds it, and the
 // per-image upload step. A future release that drops any of these
 // steps trips this gate before the image ships.
+// spec: 13
+// diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestSBOMGeneration(t *testing.T) {
 	path := filepath.Join(repoRoot(t), ".github", "workflows", "release.yml")
 	body, err := os.ReadFile(path)

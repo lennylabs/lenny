@@ -33,6 +33,8 @@ func TestStartCombinedReturnsRunningSession(t *testing.T) {
 	}
 }
 
+// spec: 15.1
+// diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestStartCombinedRejectsMissingRuntimeRef(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{"userId": "alice"})
@@ -224,6 +226,7 @@ func TestToolUseApproveUnknownSession(t *testing.T) {
 }
 
 // spec: §15.1 (POST /v1/sessions/{id}/tool-use/{tool_call_id}/deny)
+// diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestToolUseDenyUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
 	resp, _ := do(t, ts, "POST", "/v1/sessions/missing/tool-use/call_1/deny", nil)
@@ -248,6 +251,7 @@ func TestElicitationRespondUnknownSession(t *testing.T) {
 }
 
 // spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitation_id}/dismiss)
+// diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestElicitationDismissUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST",

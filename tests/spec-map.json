@@ -1390,7 +1390,8 @@
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/issuedtokenstore_test.go",
         "tests/tier2_component/stores/sessionstore_test.go",
-        "tests/tier2_component/stores/evictionstatestore_test.go"
+        "tests/tier2_component/stores/evictionstatestore_test.go",
+        "tests/tier2_component/stores/erasure_interface_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -1442,6 +1443,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier2_component/stores/miniostore_test.go",
+        "tests/tier2_component/stores/artifactcatalog_test.go",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO"
       ],
       "packages": [
@@ -1653,7 +1655,8 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestUnsupportedGrantTypeRejected",
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
         "tests/tier3_contract/oauth_token/...",
-        "tests/tier2_component/securitycaches/propagation_test.go"
+        "tests/tier2_component/securitycaches/propagation_test.go",
+        "tests/tier2_component/stores/connectorcredstore_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1863,7 +1866,10 @@
         "tests/tier2_component/stores/tenantstore_test.go",
         "tests/tier2_component/stores/transcriptstore_test.go",
         "tests/tier4_integration/...",
-        "tests/tier2_component/stores/usagestore_test.go"
+        "tests/tier2_component/stores/usagestore_test.go",
+        "tests/tier2_component/translators/openai_chat_translator_test.go",
+        "tests/tier2_component/translators/openai_responses_translator_test.go",
+        "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",

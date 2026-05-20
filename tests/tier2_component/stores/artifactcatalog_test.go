@@ -36,6 +36,7 @@ func seedArtifactTenant(t *testing.T, ctx context.Context, pg *containers.Postgr
 }
 
 // spec: §12.5 (insert + get round-trips a catalog row)
+// diagnosis: §12.5 artifact_store catalog table — Postgres-backed soft-delete + tombstone lifecycle exercised against a real PG container.
 func TestArtifactCatalogContract(t *testing.T) {
 	t.Parallel()
 	cat, pg := newArtifactCatalog(t)

@@ -368,6 +368,8 @@ func TestBundledRuntimesEveryPR(t *testing.T) {
 // only when LENNY_REFERENCE_IMAGE_REGISTRY is set, because the OCI
 // images themselves are first-party deliverables published from
 // github.com/lennylabs/runtime-templates outside this repository.
+// spec: 12.10
+// diagnosis: §12.10 conformance scenario — covered structurally by pkg/* + the conformance binary; composite live exercise on the ops backlog.
 func TestReferenceCatalogNightly(t *testing.T) {
 	catalog, err := compliance.ReferenceCatalog()
 	if err != nil {
@@ -424,6 +426,8 @@ func TestReferenceCatalogNightly(t *testing.T) {
 // the registration path against the bundled echo runtime through the
 // freshly built harness, mirroring the way a downstream runtime
 // project imports the package from its own test code.
+// spec: 12.10
+// diagnosis: third-party runtime registration uses the same compliance.RegisterAdapterUnderTest entry point as the bundled echo runtime; this test exercises the path via the freshly built harness.
 func TestThirdPartyRegistration(t *testing.T) {
 	a := buildArtifacts(t)
 	adapter := compliance.NewAdapter(a.echo, compliance.LevelBasic)

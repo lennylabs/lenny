@@ -293,6 +293,8 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // bilateral crossEnvironmentDelegation declaration. That live
 // exercise is on the tier-5 ops backlog; the unit + mcptools
 // coverage pins the rule itself.
+// spec: 15.1
+// diagnosis: §15.1 e2e scenario — covered structurally by pkg/* + tier-2/3 suites; live Kind exercise on the ops backlog.
 func TestCrossEnvironmentDelegation(t *testing.T) {
 	kind.InstallLenny(t)
 	t.Logf("§13.32 / §10.6: reachability rule covered by envaccess unit suite, " +

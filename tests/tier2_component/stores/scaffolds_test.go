@@ -60,6 +60,7 @@ import "testing"
 // component-tier reader can navigate to each piece.
 //
 // spec: 12.2.1
+// diagnosis: §12.5 ArtifactStore coverage spread across siblings; this scaffold logs the navigation map.
 func TestArtifactStoreContract(t *testing.T) {
 	t.Log("§12.5 ArtifactStore contract coverage map:")
 	t.Log("- tenant-prefix validation and tombstone soft-delete/hard-prune: " +
