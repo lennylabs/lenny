@@ -347,14 +347,21 @@ identified.
   `TestDelegationDepthDeadlockDetection`, and
   `TestLeaseExtensionCoolOffPersistence` against a live cluster.
 
-- **Elicitation chain is incomplete.** The default echo runtime emits
-  no elicitations. There is no chained respondent agent and no tamper
-  detect/enforce/platform-floor alerting pipeline. Blocks tier-3
-  `TestRESTMCPElicitation`, tier-8
-  `TestElicitationDeadlockDetection`, and tier-9
+- **Elicitation-emitting runtime and tamper-detect alerting pipeline
+  are absent.** The default echo runtime emits no elicitations and
+  there is no chained respondent agent. The §9.2 tamper-detect /
+  enforce / platform-floor verifier in `pkg/elicitation` is built
+  but the alert delivery pipeline that records divergence is not
+  wired into the gateway. Blocks tier-8
+  `TestElicitationDeadlockDetection` and tier-9
   `TestElicitationTamperEnforceMode`,
   `TestElicitationTamperDetectOnlyMode`, and
-  `TestElicitationPlatformFloor`.
+  `TestElicitationPlatformFloor`. The tier-3
+  `TestRESTMCPElicitation` is unrelated: §15.2.1 lists
+  `/v1/sessions/{id}/elicitations/{elicitation_id}/respond` and
+  `/dismiss` as REST-only by design (MCP clients resolve via the
+  native `elicitation/create` flow). The tier-3 scaffold's "no MCP
+  counterpart" skip reflects the spec, not a gap.
 
 ## Infrastructure gaps
 
