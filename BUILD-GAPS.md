@@ -445,12 +445,6 @@ identified.
 
 ### CLI and reference runtimes
 
-- **`cmd/lenny-compliance` has no `RegisterAdapterUnderTest` API.** A
-  grep across `cmd/lenny-compliance/` returns no matches. Closing
-  needs extracting the per-level batteries into an importable
-  package; today the harness is `package main`. Blocks tier-10
-  `TestThirdPartyRegistration`.
-
 - **Per-OutputPart fidelity table is absent.** TESTING.md §12.10
   specifies a table-driven test that asserts which fields are
   preserved or dropped per `(model, role, type)` tuple. The table and
