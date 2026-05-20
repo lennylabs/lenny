@@ -35,6 +35,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/compliance"
 	"github.com/lennylabs/lenny/pkg/gateway/outputpartfidelity"
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
@@ -376,15 +377,28 @@ func TestReferenceCatalogNightly(t *testing.T) {
 // diagnosis: A third-party runtime cannot register itself with the
 //
 //	conformance harness, so its adapter never enters the battery.
+//
+// pkg/compliance is the importable third-party entry point:
+// RegisterAdapterUnderTest drives the lenny-compliance harness
+// against any runtime binary the caller supplies. This test exercises
+// the registration path against the bundled echo runtime through the
+// freshly built harness, mirroring the way a downstream runtime
+// project imports the package from its own test code.
 func TestThirdPartyRegistration(t *testing.T) {
-	// §12.10 specifies a RegisterAdapterUnderTest(adapter) entry point
-	// so a third-party runtime project can register its adapter with
-	// the harness from its own test code. cmd/lenny-compliance today
-	// exposes only the --binary CLI surface and the per-level
-	// runBasicBattery / runStandardBattery / runFullBattery functions;
-	// it has no exported RegisterAdapterUnderTest registration API.
-	t.Skip("blocked: cmd/lenny-compliance has no RegisterAdapterUnderTest " +
-		"entry point; the third-party self-registration API in §12.10 is unbuilt")
+	a := buildArtifacts(t)
+	adapter := compliance.NewAdapter(a.echo, compliance.LevelBasic)
+	report := compliance.RegisterAdapterUnderTest(t, adapter, compliance.Options{
+		HarnessPath: a.compliance,
+	})
+	if report.Binary != a.echo {
+		t.Errorf("report.Binary = %q, want %q", report.Binary, a.echo)
+	}
+	if report.Level != "basic" {
+		t.Errorf("report.Level = %q, want basic", report.Level)
+	}
+	if report.Summary.Total == 0 {
+		t.Errorf("third-party registration ran no checks against %s", a.echo)
+	}
 }
 
 // spec: 12.10 (translation fidelity matrix)
