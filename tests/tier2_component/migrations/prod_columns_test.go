@@ -78,6 +78,19 @@ var prodMigrationSchema = []struct {
 	// lenny-ops control plane. Platform-scoped (no RLS, no tenant
 	// column).
 	{migration: "0046", table: "ops_event_subscriptions", create: true},
+	// 0047 extends lenny_tenant_guard() with the §4.2 platform-admin
+	// __all__ cross-tenant bypass and the §12.3 line 53 tenant-id
+	// format validation. The trigger behavior is covered by the
+	// pgtenant.InAllTenants suite under
+	// tests/tier2_component/rls/all_tenants_test.go.
+	// 0048 creates the §9.3 connector_credentials table — the
+	// per-(tenant, connector, user) OAuth refresh-token store wrapped
+	// under the tenant KMS key.
+	{migration: "0048", table: "connector_credentials", create: true},
+	// 0049 creates the §12.5 artifact_store catalog table tracking
+	// every MinIO blob with its tenant, session, lifecycle state,
+	// SSE-KMS key alias, legal-hold flag, and tombstone deadline.
+	{migration: "0049", table: "artifact_store", create: true},
 }
 
 // spec: 12.2, 18.5
