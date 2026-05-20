@@ -49,15 +49,17 @@ func TestPostgresFailover(t *testing.T) {
 	t.Skip("not implemented: §12.8 store failure / Postgres failover — the e2e cluster runs a single-replica lenny-postgres Deployment; a failover test needs an HA Postgres topology (primary + standby with automatic promotion), which is not deployed")
 }
 
+// spec: 12.8
+// diagnosis: §12.8 store failure / Redis Sentinel failover — pkg/redisconn
+//
+//	now ships the Sentinel-aware client used by the gateway and
+//	lenny-ops: `--redis-sentinel-addrs` plus `--redis-sentinel-master`
+//	builds a go-redis FailoverClient that follows automatic master
+//	promotion transparently. The chaos round-trip still needs the e2e
+//	Kind overlay to deploy lenny-gateway with those flags and a
+//	master-kill driver before the failover assertion can run.
 func TestRedisSentinelFailover(t *testing.T) {
-	// The compose profile now ships a Redis Sentinel topology (one
-	// master, one replica, three sentinels) per BUILD-GAPS, but the
-	// gateway has no Sentinel-aware Redis client wired and the
-	// chaos tier targets the Kind e2e cluster; the Sentinel
-	// failover round-trip from §12.8 cannot be asserted against
-	// Lenny's behavior until a redis.FailoverClient is plumbed into
-	// pkg/store/redis and exposed through the production overlay.
-	t.Skip("blocked: §12.8 store failure / Redis Sentinel failover — the compose profile ships a Sentinel topology but the gateway carries no Sentinel-aware Redis client, so a failover test cannot assert Lenny's behavior end-to-end")
+	t.Skip("blocked: §12.8 store failure / Redis Sentinel failover — the gateway client side now lives in pkg/redisconn, but the chaos tier needs a Kind overlay deploying lenny-gateway with --redis-sentinel-addrs plus a master-kill driver before the failover round-trip can be asserted")
 }
 
 func TestMinIOReplicationLag(t *testing.T) {

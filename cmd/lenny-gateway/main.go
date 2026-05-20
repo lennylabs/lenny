@@ -174,6 +174,7 @@ import (
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -204,7 +205,15 @@ func main() {
 	postgresDSN := flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
-		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used.")
+		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used. Mutually exclusive with --redis-sentinel-addrs.")
+	redisSentinelAddrs := flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
+		"Comma-separated list of §12.8 Redis Sentinel host:port pairs. When set with --redis-sentinel-master, the gateway discovers the master via Sentinel and follows automatic failover. Mutually exclusive with --redis-url.")
+	redisSentinelMaster := flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
+		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when --redis-sentinel-addrs is set.")
+	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password applied to both direct and Sentinel modes. Empty leaves authentication off.")
+	redisSentinelPassword := flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
+		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
 	coordInterval := flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
@@ -382,13 +391,28 @@ func main() {
 		storageCounter storagequota.Counter = storagequota.NewMemory()
 		rateLimiter    ratelimit.Counter    = ratelimit.NewMemory()
 	)
-	if *redisURL != "" {
-		opts, err := redis.ParseURL(*redisURL)
-		if err != nil {
-			log.Fatalf("lenny-gateway: redis url: %v", err)
+	if *redisURL != "" || *redisSentinelAddrs != "" {
+		if *redisURL != "" && *redisSentinelAddrs != "" {
+			log.Fatalf("lenny-gateway: --redis-url and --redis-sentinel-addrs are mutually exclusive")
 		}
-		redisClient = redis.NewClient(opts)
-		if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		var rcfg redisconn.Config
+		switch {
+		case *redisURL != "":
+			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword}
+		default:
+			rcfg = redisconn.Config{
+				SentinelAddrs:    splitAndTrim(*redisSentinelAddrs),
+				MasterName:       *redisSentinelMaster,
+				Password:         *redisPassword,
+				SentinelPassword: *redisSentinelPassword,
+			}
+		}
+		client, err := redisconn.NewClient(rcfg)
+		if err != nil {
+			log.Fatalf("lenny-gateway: redis client: %v", err)
+		}
+		redisClient = client
+		if err := redisconn.PingWithTimeout(redisClient, 5*time.Second); err != nil {
 			log.Fatalf("lenny-gateway: redis: %v", err)
 		}
 		// The §11.6 breaker registry lives in Redis; the cachingstore
@@ -406,7 +430,13 @@ func main() {
 		// The §11.1 rate-limit counter is Redis-backed so requests-per-
 		// minute limits hold across replicas.
 		rateLimiter = ratelimitredis.New(redisClient)
-		log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
+		switch {
+		case *redisSentinelAddrs != "":
+			log.Printf("lenny-gateway: Redis via Sentinel master=%q sentinels=%d; coordination replica %s",
+				*redisSentinelMaster, len(splitAndTrim(*redisSentinelAddrs)), replica)
+		default:
+			log.Printf("lenny-gateway: circuit-breaker state in Redis; coordination replica %s", replica)
+		}
 	} else {
 		breakers = breakerstore.NewMemory()
 	}
@@ -2090,4 +2120,21 @@ func envInt(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// splitAndTrim splits a comma-separated string and drops empty entries
+// after trimming whitespace. Used to parse the --redis-sentinel-addrs
+// list.
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

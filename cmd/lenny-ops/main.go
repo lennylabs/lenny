@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -49,6 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 func main() {
@@ -58,7 +60,19 @@ func main() {
 			"and upgrade state; when empty those features degrade. Override via LENNY_POSTGRES_DSN.")
 	redisURL := flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis connection URL for the §25.5 operational event stream. When empty the "+
-			"event stream falls back to the gateway buffer. Override via LENNY_REDIS_URL.")
+			"event stream falls back to the gateway buffer. Mutually exclusive with "+
+			"--redis-sentinel-addrs. Override via LENNY_REDIS_URL.")
+	redisSentinelAddrs := flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
+		"Comma-separated list of §12.8 Redis Sentinel host:port pairs. When set with "+
+			"--redis-sentinel-master, lenny-ops discovers the master via Sentinel and follows "+
+			"automatic failover. Mutually exclusive with --redis-url.")
+	redisSentinelMaster := flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
+		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when "+
+			"--redis-sentinel-addrs is set.")
+	redisPassword := flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
+		"Redis AUTH password applied to both direct and Sentinel modes.")
+	redisSentinelPassword := flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
+		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
 	gatewayURL := flag.String("gateway-url", os.Getenv("LENNY_GATEWAY_URL"),
 		"§25.4 gateway admin API base URL (the internal ClusterIP Service). Used for the "+
 			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
@@ -126,14 +140,29 @@ func main() {
 	}
 
 	// Redis: optional. The §25.5 event stream falls back to the gateway
-	// buffer when Redis is absent.
+	// buffer when Redis is absent. Direct mode (--redis-url) and
+	// Sentinel mode (--redis-sentinel-addrs) are mutually exclusive.
 	var redisClient redis.UniversalClient
-	if *redisURL != "" {
-		opts, err := redis.ParseURL(*redisURL)
-		if err != nil {
-			log.Fatalf("lenny-ops: redis URL: %v", err)
+	if *redisURL != "" && *redisSentinelAddrs != "" {
+		log.Fatalf("lenny-ops: --redis-url and --redis-sentinel-addrs are mutually exclusive")
+	}
+	if *redisURL != "" || *redisSentinelAddrs != "" {
+		var rcfg redisconn.Config
+		switch {
+		case *redisURL != "":
+			rcfg = redisconn.Config{URL: *redisURL, Password: *redisPassword}
+		default:
+			rcfg = redisconn.Config{
+				SentinelAddrs:    splitAndTrim(*redisSentinelAddrs),
+				MasterName:       *redisSentinelMaster,
+				Password:         *redisPassword,
+				SentinelPassword: *redisSentinelPassword,
+			}
 		}
-		client := redis.NewClient(opts)
+		client, err := redisconn.NewClient(rcfg)
+		if err != nil {
+			log.Fatalf("lenny-ops: redis client: %v", err)
+		}
 		defer func() { _ = client.Close() }()
 		redisClient = client
 	}
@@ -347,4 +376,20 @@ func envBool(name string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+// splitAndTrim splits a comma-separated string and drops empty entries
+// after trimming whitespace. Used to parse --redis-sentinel-addrs.
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

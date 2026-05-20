@@ -1426,13 +1426,16 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier2_component/breakers/breakerstore_test.go",
-        "tests/tier2_component/quota/quotastore_test.go"
+        "tests/tier2_component/quota/quotastore_test.go",
+        "pkg/redisconn/redisconn_test.go"
       ],
       "packages": [
         "pkg/store/lease",
-        "pkg/store/quota"
+        "pkg/store/quota",
+        "pkg/redisconn"
       ],
-      "blocked_until_phase": "4"
+      "blocked_until_phase": "4",
+      "notes": "pkg/redisconn is the gateway/ops Redis client constructor: it accepts either a direct redis-url or a §12.8 Sentinel failover configuration (sentinel addrs + master name) and returns a go-redis client that follows automatic Sentinel failover transparently. The cmd/lenny-gateway and cmd/lenny-ops binaries call into it."
     },
     "12.5": {
       "title": "Artifact Store",
