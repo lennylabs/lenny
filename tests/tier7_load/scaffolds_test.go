@@ -159,16 +159,6 @@ func TestSessionThroughput(t *testing.T) {
 	assertScenarioRan(t, "session_throughput", res)
 }
 
-// spec: 12.7 (streaming_reconnect_under_load — SSE reconnect latency)
-// diagnosis: the §12.7 streaming_reconnect smoke run regressed or
-// failed. The scenario drives GET /v1/sessions/{id}/events with
-// Last-Event-ID reconnects; a failure means the SSE proxy errored
-// under load (5xx response, dropped event) or its latency regressed
-// beyond the baseline budget. The previous blocker — the
-// gatewaymetrics statusRecorder dropping http.Flusher — was resolved
-// by adding Flush() to the recorder. Inspect the k6 output for the
-// failing check.
-//
 // SSE smoke note: k6's http.get records http_req_failed=true for
 // every request whose per-iteration timeout fires, even when the
 // server delivered the 200 status header on time. A long-lived SSE
@@ -179,6 +169,9 @@ func TestSessionThroughput(t *testing.T) {
 // thresholds gate on. The wrapper-side assertion below skips the
 // generic assertScenarioRan error-rate bound and asserts the
 // scenario completed without a transport error.
+//
+// spec: 12.7 (streaming_reconnect_under_load — SSE reconnect latency)
+// diagnosis: the §12.7 streaming_reconnect smoke run regressed; the SSE proxy errored under load (5xx response, dropped event) or the k6 stream_opened / stream_connect_ms thresholds tripped. Previous blocker (gatewaymetrics statusRecorder Flusher) is resolved.
 func TestStreamingReconnectLoad(t *testing.T) {
 	_, baseURL := prepareGateway(t)
 	res := load.RunScenario(t, "streaming_reconnect", smokeOptions(baseURL, nil))
