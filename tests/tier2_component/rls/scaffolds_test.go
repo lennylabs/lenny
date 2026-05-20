@@ -8,27 +8,18 @@
 // B on every tenant-scoped table, and asserts the documented RLS
 // invariants.
 //
-// Implemented entries have moved to rls_test.go:
+// Implemented entries have moved to sibling files:
 // TestRLSRequiresTenantContext, TestRLSPreventsCrossTenantRead, and
-// TestSchemaLinterIdentifiesTenantScopedTables. The two below remain
-// scaffolds because they depend on surfaces not yet built.
+// TestSchemaLinterIdentifiesTenantScopedTables in rls_test.go;
+// TestRLSAllTenantsContext in all_tenants_test.go; and
+// TestRLSPoolerReuseDoesNotLeakContext in pgbouncer_test.go.
 
 package rls_test
 
-import "testing"
-
-// TestRLSAllTenantsContext — a query with app.current_tenant =
-// '__all__' succeeds and emits a cross_tenant_read audit event.
-//
-// spec: 12.2.2
-// diagnosis: the __all__ tenant-context bypass is not implemented in
-// the §12.2.2 RLS migrations. The lenny_tenant_guard trigger rejects
-// every write whose app.current_tenant differs from the row's
-// tenant_id, with no documented escape value, and no gateway-side
-// cross_tenant_read audit emission exists for the bypass either.
-func TestRLSAllTenantsContext(t *testing.T) {
-	t.Skip("blocked: §12.2.2 __all__ tenant-context bypass — neither the RLS policy nor the gateway-side cross_tenant_read audit emission tied to it exist; lenny_tenant_guard accepts no documented bypass value today")
-}
+// TestRLSAllTenantsContext is implemented in all_tenants_test.go,
+// which exercises the §4.2 / §12.3 platform-admin __all__
+// cross-tenant bypass (trigger + RLS policy) and the §12.3 line 141
+// cross_tenant_read audit emission tied to it.
 
 // TestRLSPoolerReuseDoesNotLeakContext is implemented in
 // pgbouncer_test.go, which exercises the §12.2.2 connection-pooler

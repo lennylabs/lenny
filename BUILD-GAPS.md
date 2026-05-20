@@ -76,8 +76,6 @@ where some or every test in the group still skips:
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
   legal-hold, CRDPodRegistry, mandatory `DeleteByUser` /
   `DeleteByTenant`).
-- `tests/tier2_component/rls/scaffolds_test.go` (2 tests: `__all__`
-  tenant-context bypass and PgBouncer connection-pooler leakage).
 - `tests/tier2_component/controllers/scaffolds_test.go` (2 tests: Pool
   Scaling Controller admission-retry harness and Token Service gRPC
   controller).
@@ -385,6 +383,18 @@ them needs a §17.7 design decision plus multi-hour reconciliation of
 the 59 on-disk runbook files. TESTING.md §1834 claims 56 runbooks
 against the on-disk count of 59 (excluding `index.md`); the spec
 and the directory disagree and need separate alignment.
+
+The §12.3 line 141 `cross_tenant_read` audit emission applies to
+every code path that sets `app.current_tenant = '__all__'`.
+`pkg/gateway/auditstore.PendingTranslation` and
+`pkg/gateway/auditstore.PendingRepublish` currently SELECT across
+tenants without setting the sentinel; they rely on the gateway
+pool's superuser connection bypassing RLS. The lenny_app-role
+code path on those readers would now fail the spec line 165
+`current_setting('app.current_tenant', false) = '__all__'` raise.
+Both readers need to switch to `pgtenant.InAllTenants` and emit
+a `cross_tenant_read` audit event keyed to the worker (`category:
+audit_ocsf_translation` and `audit_event_retranscribe`).
 
 ## Blocked
 

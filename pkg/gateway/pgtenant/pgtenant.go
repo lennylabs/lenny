@@ -40,6 +40,42 @@ func InTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(pgx.
 	return nil
 }
 
+// AllTenantsSentinel is the §4.2 platform-admin cross-tenant value
+// for app.current_tenant. The lenny_tenant_guard trigger allows it
+// (skipping the per-row tenant_id match check); every
+// lenny_tenant_isolation RLS policy includes an OR-clause that lets
+// the value bypass per-tenant filtering on SELECT. The gateway sets
+// this only on a code path that has verified the caller holds the
+// platform-admin role, and per §12.3 line 141 every such call MUST
+// also emit a cross_tenant_read audit event.
+const AllTenantsSentinel = "__all__"
+
+// InAllTenants runs fn inside a transaction that has set
+// app.current_tenant = '__all__'. The platform-admin RBAC check
+// and the §12.3 cross_tenant_read audit emission are the caller's
+// responsibility; InAllTenants only establishes the DB-level
+// sentinel. Use this on any code path that needs to SELECT, INSERT,
+// UPDATE, or DELETE rows across tenants (tenant list, usage
+// dashboards, erasure jobs).
+func InAllTenants(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pgtenant: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.current_tenant', $1, true)", AllTenantsSentinel); err != nil {
+		return fmt.Errorf("pgtenant: set all-tenants context: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pgtenant: commit: %w", err)
+	}
+	return nil
+}
+
 // NullTime maps a zero time.Time to a SQL NULL, so a nullable
 // TIMESTAMPTZ column distinguishes "unset" from a real instant.
 func NullTime(t time.Time) *time.Time {

@@ -86,7 +86,9 @@ func TestRLSPoolerReuseDoesNotLeakContext(t *testing.T) {
 		t.Fatalf("connect direct postgres: %v", err)
 	}
 	t.Cleanup(func() { _ = bootstrap.Close(context.Background()) })
-	tenant := "pooler-leak-" + time.Now().UTC().Format("150405.000000")
+	// §12.3 line 53 constrains tenant ids to ^[A-Za-z0-9_-]{1,128}$;
+	// avoid the dot the Go time-format layout would otherwise inject.
+	tenant := "pooler-leak-" + time.Now().UTC().Format("150405_000000")
 	if _, err := bootstrap.Exec(ctx,
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')
 		 ON CONFLICT (id) DO NOTHING`, tenant); err != nil {
