@@ -450,13 +450,25 @@ They are listed separately so the loop's per-gap workflow does not
 re-attempt them.
 
 - **Cloud-provider integrations (`pkg/blobstore` GCS/S3/Azure,
-  `pkg/kms` cloud variants, per-provider Terraform).** Documented in
-  BUILD-PROGRESS.md Phase 12a as deferred via `CloudProviderSeam`;
-  the §18 build sequence treats cloud adapter implementations as v2
-  deliverables. Tier 6 scaffolds carry "blocked:" reasons that name
-  the missing adapter precisely. Unblocking needs cloud-provider
-  credentials and provider-specific Terraform under
-  `deploy/terraform/cloud/<provider>/`.
+  `pkg/kms` cloud variants).** Documented in BUILD-PROGRESS.md
+  Phase 12a as deferred via `CloudProviderSeam`; the §18 build
+  sequence treats cloud adapter implementations as v2
+  deliverables. Tier 6 scaffolds carry "blocked:" reasons that
+  name the missing adapter precisely. The Go-side implementation
+  needs the per-provider SDKs (aws-sdk-go-v2, google.golang.org/api,
+  azure-sdk-for-go) added to `go.mod`, then `pkg/kms/<provider>/`
+  and `pkg/blobstore/<provider>/` packages that implement the
+  documented seams. Unblocking otherwise needs cloud-provider
+  credentials.
+- **Per-provider Terraform.** `deploy/terraform/cloud/<provider>/`
+  now ships AWS, GCP, and Azure root-module skeletons that
+  provision the per-release resources the chart consumes (KMS KEK
+  + alias, object-storage bucket with versioning + public-access
+  blocks, IRSA / Workload Identity / Federated Identity binding to
+  the cluster's OIDC issuer). The outputs map to the Helm install's
+  expected values. The skeletons intentionally omit cluster / VPC /
+  network layers (operator-specific). See `deploy/terraform/cloud/README.md`
+  for the provider matrix and the release-pipeline contract.
 - **Gateway client migration to the Token Service gRPC.** The
   §4.3 trust boundary requires the gateway to call the Token
   Service over mTLS for lease materialization rather than running
