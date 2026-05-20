@@ -453,14 +453,10 @@ identified.
 ### CLI and reference runtimes
 
 - **`cmd/lenny-compliance` has no `RegisterAdapterUnderTest` API.** A
-  grep across `cmd/lenny-compliance/` returns no matches. Blocks
-  tier-10 `TestThirdPartyRegistration`.
-
-- **§26 reference-runtime OCI images are not published.** The
-  conformance harness drives a local binary path via `--binary`. The
-  image-driven path (`lenny-test conformance --image`) and the
-  registry coordinates do not exist. Blocks tier-10
-  `TestReferenceCatalogNightly`.
+  grep across `cmd/lenny-compliance/` returns no matches. Closing
+  needs extracting the per-level batteries into an importable
+  package; today the harness is `package main`. Blocks tier-10
+  `TestThirdPartyRegistration`.
 
 - **Per-OutputPart fidelity table is absent.** TESTING.md §12.10
   specifies a table-driven test that asserts which fields are
