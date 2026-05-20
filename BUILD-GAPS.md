@@ -380,15 +380,14 @@ identified.
 
 ### LLM Proxy and translators
 
-- **`openai_direct` and `openai_responses` native translators are
-  absent.** `pkg/gateway/llmproxy/` carries `azure_translator.go`,
-  `bedrock_translator.go`, `vertex_translator.go`, and `translator.go`
-  (Anthropic) only. There is no native translator for
-  `api.openai.com` or for the `/v1/responses` dialect. Blocks
-  `TestLLMProxyTranslatorOpenAIChatCompletions`,
-  `TestLLMProxyTranslatorOpenAIResponses`, the tier-3 OpenAI Chat and
-  Responses fidelity matrices, the tier-10 fidelity matrix, and the
-  tier-4 `TestLLMProxyAnthropic` integration test.
+- **`openai_responses` native translator is absent.** The companion
+  `openai_direct` translator now lives at
+  `pkg/gateway/llmproxy/openai_direct_translator.go`. The
+  `/v1/responses` dialect translator is unbuilt; the OpenAI
+  Responses API uses a different request and response shape than
+  Chat Completions and needs a dedicated dialect plus translator.
+  Blocks `TestLLMProxyTranslatorOpenAIResponses`, the tier-3 OpenAI
+  Responses fidelity matrix, and the tier-10 fidelity matrix.
 
 ### Gateway request handling
 
