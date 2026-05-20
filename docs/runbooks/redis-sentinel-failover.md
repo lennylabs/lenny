@@ -1,0 +1,61 @@
+---
+layout: default
+title: "redis-sentinel-failover"
+parent: "Runbooks"
+triggers:
+  - alert: RedisMasterFailover
+    severity: warning
+components:
+  - redis
+  - gateway
+symptoms:
+  - "Redis Sentinel promoted a replica to master"
+  - "the gateway's per-tenant quota counters returned 0 briefly during the handoff"
+  - "the §11.2 MAX-rule reconciliation rolled the in-memory counter forward from the Postgres checkpoint"
+tags:
+  - chaos
+  - store-failure
+  - redis
+related:
+  - postgres-failover
+  - audit-pipeline-degraded
+  - emergency-credential-revocation
+---
+
+# redis-sentinel-failover
+
+Redis Sentinel promoted a replica to master after the previous master became unreachable. The gateway's Sentinel-aware client (`pkg/redisconn`) reconnects to the new master without operator action; the §11.2 MAX-rule reconciliation pipeline replays the Postgres quota checkpoint onto the new master so per-tenant counters do not roll back.
+
+## Trigger
+
+`RedisMasterFailover` fires when Sentinel reports a `+switch-master` event or the gateway's Sentinel client emits the `lenny_redis_master_changed_total` counter.
+
+## Diagnosis
+
+1. Identify the new master.
+
+       kubectl exec -n lenny-system statefulset/lenny-redis-sentinel -- \
+         redis-cli -p 26379 SENTINEL get-master-addr-by-name mymaster
+
+2. Confirm the gateway is using it.
+
+       kubectl exec -n lenny-system deployment/lenny-gateway -- \
+         curl -s localhost:9090/metrics | grep lenny_redis_current_master
+
+3. Inspect the previous master's logs for the failure cause (OOM, network partition, replication lag).
+
+## Remediation
+
+1. Once the failure cause is resolved, restart the demoted master so it rejoins as a replica.
+2. If the §11.2 MAX-rule reconciliation did not catch up, run `lenny-ctl admin quota reconcile --tenant <id>` to force a checkpoint reload.
+3. If repeated failovers occur within an hour, see the Redis Sentinel documentation for split-brain mitigation and add a third Sentinel node.
+
+## Verification
+
+- `redis-cli -p 26379 SENTINEL replicas mymaster` lists the demoted node as a healthy replica.
+- `lenny_redis_master_changed_total` no longer advances.
+- A test write through the gateway succeeds: `lenny-ctl admin quota check --tenant <id>`.
+
+## Escalation
+
+Page the on-call platform engineer when more than one failover occurs in a single Sentinel quorum window — that pattern points at network instability rather than a single-node fault.
