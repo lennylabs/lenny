@@ -357,13 +357,6 @@ identified.
   MinIO-outage Postgres-minimal-state fallback are not built. Blocks
   `TestArtifactStoreContract` and the tier-4 checkpoint flow.
 
-- **Mandatory erasure interface is partial.** Only a subset of
-  tenant-scoped stores expose both `DeleteByUser` and `DeleteByTenant`.
-  Erasure adapters need to land on billing, eval, experiment,
-  environment, runtime, connector, user, custom-role, transcript, and
-  agent-pod-state stores before
-  `TestDeleteByUserAndTenantInterface` becomes meaningful.
-
 ### Token Service and credentials
 
 - **`pkg/tokenservice` ships only HTTP token-exchange.**
