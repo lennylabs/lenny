@@ -22,3 +22,24 @@ tmp/
 /bin/
 
 tests/results/
+
+# Terraform working state — never committed. Operators applying the
+# per-provider modules under deploy/terraform/cloud/<provider>/ end up
+# with these alongside the .tf sources; commit only the .tf files.
+**/.terraform/
+**/.terraform.lock.hcl
+**/.terraform.tfstate.lock.info
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/*.tfstate
+**/*.tfstate.backup
+
+# Per-release tfvars rendered by scripts/cloud/<provider>/up.sh.
+# Filename pattern: <release>.tfvars.json.
+deploy/terraform/cloud/*/*.tfvars.json
+
+# Rendered Helm values overlays produced by
+# scripts/cloud/<provider>/render-values.sh. The committed source is
+# the renderer script + the chart's values.yaml; the rendered file
+# carries per-release URLs / digests and stays out of git.
+scripts/cloud/*/values-cloud-*.yaml
