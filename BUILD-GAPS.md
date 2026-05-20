@@ -436,9 +436,6 @@ identified.
   credentialPools, audit). The MCP side has no matching tools. Blocks
   `TestRESTMCPAdmin`.
 
-- **Delegation lacks a REST counterpart.** The REST adapter advertises
-  `SupportsDelegation: false`. Delegation is MCP-only via
-  `lenny/delegate_task`. Blocks `TestRESTMCPDelegation`.
 
 ### Delegation and elicitation
 
