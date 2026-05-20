@@ -555,22 +555,6 @@ identified.
   formula-install step of the quick-start documentation cannot be
   validated.
 
-## Test infrastructure gaps
-
-- **`tests/testinfra/audit` has no consumers.** The package is real
-  but no test directory imports it. The Phase 11 hash-chain helper is
-  ready and waiting.
-
-- **`tests/testinfra/matrix` has no consumers.** The contract-test
-  matrix harness is real but unused. Tier-3 contract suites that
-  TESTING.md describes as parameterized matrices are written as
-  straight-line tests today.
-
-- **`tests/testinfra/helm` has no consumers.** A grep across `tests/`
-  shows no test imports the helper. `tests/testinfra/kind/install.go`
-  calls `helm status` directly via `exec.LookPath("helm")` rather than
-  through the helper.
-
 ## Cross-cutting findings
 
 - **Runbook coverage is silent in CI.**
