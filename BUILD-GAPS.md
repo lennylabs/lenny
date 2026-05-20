@@ -610,20 +610,6 @@ identified.
   excluding `index.md`. The specification and the on-disk content
   disagree.
 
-- **Spec traceability files are present and populated.**
-  `tests/spec-map.json` is 160 KB, `tests/change-graph.json` is 16 KB,
-  and `tests/groups.yaml` and `tests/groups.subsets.yaml` together
-  cover the group definitions for tier selection. The harness command
-  surface that consumes them (`lenny-test validate-maps`, `--changed`,
-  `--spec`, `--group`) was not exercised in this audit.
-
-- **CI workflows are present.** `.github/workflows/` carries
-  `pr.yml`, `nightly.yml`, `weekly.yml`, `pre-release.yml`,
-  `release.yml`, `phase-gate.yml`, `flake-budget.yml`,
-  `cache-prune.yml`, `dco.yml`, `sdk-publish.yml`, `secret-scan.yml`,
-  and a `reusable/` directory. End-to-end pipeline timing was not
-  measured in this audit.
-
 ## Blocked
 
 Entries here are real gaps that the autonomous loop cannot close
