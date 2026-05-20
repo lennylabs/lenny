@@ -460,13 +460,19 @@ re-attempt them.
 - **Gateway client migration to the Token Service gRPC.** The
   §4.3 trust boundary requires the gateway to call the Token
   Service over mTLS for lease materialization rather than running
-  `pkg/credential.MintLease` in-process. `pkg/tokenservice.GRPCServer`
-  (lenny.tokenservice.v1.TokenService — AssignCredentials,
-  RotateCredentials, RevokeCredentials) is now built and tier-2
-  covered, but the gateway still calls `pkg/gateway/credassign`
-  in-process. Cutting over needs a `cmd/lenny-token-service` binary
-  that serves the gRPC, an mTLS-aware client in the gateway, and a
-  Helm chart Deployment with `PodDisruptionBudget(minAvailable: 1)`.
+  `pkg/credential.MintLease` in-process.
+  `pkg/tokenservice.GRPCServer` (lenny.tokenservice.v1.TokenService —
+  AssignCredentials, RotateCredentials, RevokeCredentials) is
+  built and tier-2 covered. `cmd/lenny-token-service` now serves
+  both the HTTP RFC 8693 token-exchange surface and the gRPC
+  TokenService surface (`--grpc-addr` flag; defaults to disabled
+  for backward compatibility); the Helm chart wires both ports
+  through `tokenService.httpPort` and `tokenService.grpcPort` and
+  ships a `PodDisruptionBudget(minAvailable: 1)`. The remaining
+  step is the gateway-side cutover: an mTLS-aware Token Service
+  gRPC client in `pkg/gateway/credassign` that delegates
+  AssignCredentials / RotateCredentials / RevokeCredentials to the
+  remote, replacing the in-process MintLease call.
 - **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
   Recorded above under Gateway request handling. Resolution needs
   captured k6 output from a Kind run.

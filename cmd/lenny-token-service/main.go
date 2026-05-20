@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: MIT
 
 // Command lenny-token-service is the §13.3 Token Service. It serves
-// POST /v1/oauth/token (RFC 8693) against an in-memory issued-tokens
-// store. It signs with the §4 KMS-envelope-backed signer: the HMAC-
+// two surfaces:
+//
+//   - HTTP `POST /v1/oauth/token` (RFC 8693 token exchange) for the
+//     external dialect-issuing path.
+//   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3 / §12.2.4
+//     credential-assignment trust boundary the gateway calls over mTLS
+//     to materialize, rotate, and revoke credential leases.
+//
+// Both surfaces sign with the §4 KMS-envelope-backed signer: the HMAC-
 // SHA256 signing key is sealed under a KMS key-encryption-key rather
 // than being a plaintext per-process secret. The in-process kms.Local
 // provider is the no-cloud development KEK; a cloud deployment swaps
@@ -13,19 +20,28 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credcache"
+	"github.com/lennylabs/lenny/pkg/gateway/credleasestore"
 	"github.com/lennylabs/lenny/pkg/kms"
+	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 )
 
 func main() {
-	addr := flag.String("addr", ":8081", "address to bind (host:port)")
+	addr := flag.String("addr", ":8081", "address to bind for the HTTP token-exchange surface (host:port)")
+	grpcAddr := flag.String("grpc-addr", "",
+		"address to bind for the §4.3 gRPC TokenService surface (host:port). Empty disables the gRPC listener.")
 	issuer := flag.String("issuer", "https://lenny.dev.local/token", "iss claim stamped on issued tokens")
 	flag.Parse()
 
@@ -57,16 +73,54 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// §4.3 / §12.2.4 gRPC TokenService surface. The credential-
+	// assignment service is the same in-process credassign.Service
+	// pool-selection + lease-minting logic the gateway runs today;
+	// the binary makes it reachable over gRPC so the gateway can
+	// switch its call site from the in-process MintLease to a gRPC
+	// client without re-implementing the lease semantics. Pool
+	// registration runs through the same RegisterPool entry point;
+	// no pools are registered at startup so AssignCredentials fails
+	// fast until an operator configures pools. The in-memory lease
+	// store and credential cache are appropriate for the development
+	// path; a production deployment swaps in Postgres-backed
+	// `credleasestore/pgstore` and a shared credential cache.
+	leases := credleasestore.New()
+	cache := credcache.New()
+	assignSvc := credassign.New(leases, cache)
+	tsGRPC := tokenservice.NewGRPCServer(assignSvc, leases)
+
+	var grpcSrv *grpc.Server
+	if *grpcAddr != "" {
+		grpcSrv = grpc.NewServer()
+		tokensv1.RegisterTokenServiceServer(grpcSrv, tsGRPC)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		log.Printf("lenny-token-service: listening on %s", *addr)
+		log.Printf("lenny-token-service: HTTP token-exchange listening on %s", *addr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			log.Fatalf("listen http: %v", err)
 		}
 	}()
+	if grpcSrv != nil {
+		lis, err := net.Listen("tcp", *grpcAddr)
+		if err != nil {
+			log.Fatalf("listen grpc %s: %v", *grpcAddr, err)
+		}
+		go func() {
+			log.Printf("lenny-token-service: gRPC TokenService listening on %s", *grpcAddr)
+			if err := grpcSrv.Serve(lis); err != nil {
+				log.Fatalf("serve grpc: %v", err)
+			}
+		}()
+	}
 	<-stop
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
+	if grpcSrv != nil {
+		grpcSrv.GracefulStop()
+	}
 }

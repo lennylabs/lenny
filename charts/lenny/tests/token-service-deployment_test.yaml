@@ -2,10 +2,10 @@ suite: lenny-token-service deployment
 templates:
   - token-service-deployment.yaml
 tests:
-  - it: renders the deployment, service account, and service
+  - it: renders the deployment, service account, service, and PDB
     asserts:
       - hasDocuments:
-          count: 3
+          count: 4
 
   - it: renders a Deployment named lenny-token-service
     documentSelector:
@@ -46,19 +46,27 @@ tests:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/lennylabs/lenny-token-service:0.1.0
 
-  - it: binds the listener on the token-service gRPC port
+  - it: binds the gRPC and HTTP token-exchange listeners on the configured ports
     documentSelector:
       path: kind
       value: Deployment
     asserts:
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --addr=:50052
+          content: --grpc-addr=:50052
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --addr=:8081
       - contains:
           path: spec.template.spec.containers[0].ports
           content:
             name: grpc
             containerPort: 50052
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http-token
+            containerPort: 8081
 
   - it: applies the restricted pod security posture
     documentSelector:
@@ -113,3 +121,18 @@ tests:
             name: metrics
             port: 9090
             targetPort: grpc
+
+  - it: protects the token-service with a PodDisruptionBudget
+    documentSelector:
+      path: kind
+      value: PodDisruptionBudget
+    asserts:
+      - equal:
+          path: metadata.name
+          value: lenny-token-service
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["lenny.dev/component"]
+          value: token-service

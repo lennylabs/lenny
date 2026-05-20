@@ -42,11 +42,14 @@ spec:
           image: "{{ .Values.tokenService.image.repository }}:{{ .Values.tokenService.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.tokenService.image.pullPolicy }}
           args:
-            - --addr=:{{ .Values.tokenService.grpcPort }}
+            - --addr=:{{ .Values.tokenService.httpPort }}
+            - --grpc-addr=:{{ .Values.tokenService.grpcPort }}
             - --issuer={{ .Values.tokenService.issuer }}
           ports:
             - name: grpc
               containerPort: {{ .Values.tokenService.grpcPort }}
+            - name: http-token
+              containerPort: {{ .Values.tokenService.httpPort }}
           livenessProbe:
             tcpSocket:
               port: grpc
@@ -93,3 +96,26 @@ spec:
     - name: metrics
       port: {{ .Values.tokenService.metricsPort }}
       targetPort: grpc
+---
+{{- /*
+PodDisruptionBudget for the lenny-token-service. The §4.3 trust
+boundary requires the gateway to reach the Token Service for every
+credential lease materialization; an unprotected voluntary disruption
+(node drain, cluster autoscaler) of both replicas at once would stall
+every new session that needs a fresh lease. minAvailable: 1 ensures
+at least one replica stays serving across rolling node operations.
+*/ -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lenny-token-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "lenny.labels" . | nindent 4 }}
+    lenny.dev/component: token-service
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      lenny.dev/component: token-service
