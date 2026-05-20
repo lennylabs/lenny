@@ -76,8 +76,6 @@ where some or every test in the group still skips:
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
   legal-hold, CRDPodRegistry, mandatory `DeleteByUser` /
   `DeleteByTenant`).
-- `tests/tier2_component/controllers/scaffolds_test.go` (1 test:
-  Pool Scaling Controller admission-retry harness).
 - `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5 tests:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).

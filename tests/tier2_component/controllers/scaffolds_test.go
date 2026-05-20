@@ -8,25 +8,15 @@
 
 package controllers_test
 
-import "testing"
-
 // TestWarmPoolController is implemented in warmpool_test.go: it runs
 // the reconciler against an envtest API server.
 
-// TestPoolScalingController — scaling-formula computation,
-// admission-denied retry-with-backoff, PoolScalingAdmissionStuck alert
-// wiring.
-//
-// spec: 12.2.4
-// diagnosis: pkg/controller/poolscaling has the §4.6.2 scaling-formula
-// evaluator (strategy.go) and the §6.1 SDK-warm circuit breaker
-// (circuitbreaker.go), but no admission-denied retry-with-backoff
-// surface on the Reconciler. A test of "PoolScalingAdmissionStuck
-// alert wiring" requires an admission-denial code path the controller
-// retries against, and that path is not built.
-func TestPoolScalingController(t *testing.T) {
-	t.Skip("blocked: §12.2.4 Pool Scaling Controller admission-retry harness — the scaling-formula evaluator and the §6.1 circuit breaker exist, but the admission-denied retry-with-backoff loop and the PoolScalingAdmissionStuck alert-wiring surface are not built")
-}
+// TestPoolScalingController is implemented in
+// poolscaling_admission_test.go, which exercises the §4.6.2 / §16.5
+// admission-retry harness and the PoolScalingAdmissionStuck alert
+// wiring. The §4.6.2 scaling-formula evaluator and the §6.1 circuit
+// breaker carry their own unit suites under pkg/controller/poolscaling
+// and pkg/controller/poolscaling/strategy.
 
 // TestTokenServiceController is implemented in tokenservice_test.go,
 // which drives pkg/tokenservice.GRPCServer over an in-process bufconn
