@@ -140,6 +140,26 @@ type Router struct {
 	recommendations RecommendationService
 	eventBuffer     EventBufferQuerier
 	eventEmitter    *opsevents.Emitter
+
+	kmsProbe KMSProbe
+}
+
+// KMSProbe is the §12.5 T4 per-tenant KMS availability probe seam.
+// `PUT /v1/admin/tenants/{id}` calls ProbeAvailability before
+// persisting a `workspaceTier: T4` transition; on failure the handler
+// rejects the update with `CLASSIFICATION_CONTROL_VIOLATION`
+// (`details.reason: kms_probe_failed`). `GET /v1/admin/tenants/{id}`
+// reads LastProbeSuccess to surface `t4KmsLastProbeSuccessAt` on the
+// response for T4 tenants. `*tenantkms.Lifecycle` satisfies the
+// interface.
+type KMSProbe interface {
+	// ProbeAvailability runs the per-tenant probe. Non-T4 tiers
+	// return nil without contacting the KMS.
+	ProbeAvailability(ctx context.Context, tenantID, workspaceTier string) error
+	// LastProbeSuccess returns the time of the most recent
+	// successful probe for tenantID. The boolean is false when no
+	// success has been recorded.
+	LastProbeSuccess(tenantID string) (time.Time, bool)
 }
 
 // RecommendationService is the §25.3 capacity-recommendation read
@@ -184,6 +204,19 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &Router{tenants: tenants, clock: clock, audit: opts.Audit, metrics: opts.Metrics}
+}
+
+// WithKMSProbe wires the §12.5 T4 KMS availability probe onto the
+// Router. With it set, `PUT /v1/admin/tenants/{id}` runs the probe
+// before persisting a workspaceTier T4 transition (rejecting with
+// CLASSIFICATION_CONTROL_VIOLATION on failure), and
+// `GET /v1/admin/tenants/{id}` surfaces `t4KmsLastProbeSuccessAt`
+// for T4 tenants. Without it the §15.1 admin handlers behave as
+// before — admin-time probing is documented as best-effort when the
+// gateway has no KMS lifecycle wired.
+func (r *Router) WithKMSProbe(p KMSProbe) *Router {
+	r.kmsProbe = p
+	return r
 }
 
 // emit fires an audit event when an AuditSink is wired. Never
@@ -519,24 +552,31 @@ func (r *Router) requirePermission(perm auth.Permission) func(http.Handler) http
 
 // TenantPayload is the §15.1 admin-tenant request/response body.
 type TenantPayload struct {
-	ID                    string                      `json:"id"`
-	DisplayName           string                      `json:"displayName,omitempty"`
-	ComplianceProfile     string                      `json:"complianceProfile,omitempty"`
-	DataResidencyRegion   string                      `json:"dataResidencyRegion,omitempty"`
-	WorkspaceTier         string                      `json:"workspaceTier,omitempty"`
-	MaxConcurrentSessions int                         `json:"maxConcurrentSessions,omitempty"`
-	StorageQuotaBytes     int64                       `json:"storageQuotaBytes,omitempty"`
-	TokenQuotaPerWindow   int64                       `json:"tokenQuotaPerWindow,omitempty"`
-	MinIsolationProfile   string                      `json:"minIsolationProfile,omitempty"`
-	BillingErasurePolicy  string                      `json:"billingErasurePolicy,omitempty"`
-	ExperimentTargeting   *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
-	CreatedAt             string                      `json:"createdAt,omitempty"`
-	UpdatedAt             string                      `json:"updatedAt,omitempty"`
-	DeletedAt             string                      `json:"deletedAt,omitempty"`
+	ID                       string                      `json:"id"`
+	DisplayName              string                      `json:"displayName,omitempty"`
+	ComplianceProfile        string                      `json:"complianceProfile,omitempty"`
+	DataResidencyRegion      string                      `json:"dataResidencyRegion,omitempty"`
+	WorkspaceTier            string                      `json:"workspaceTier,omitempty"`
+	MaxConcurrentSessions    int                         `json:"maxConcurrentSessions,omitempty"`
+	StorageQuotaBytes        int64                       `json:"storageQuotaBytes,omitempty"`
+	TokenQuotaPerWindow      int64                       `json:"tokenQuotaPerWindow,omitempty"`
+	MinIsolationProfile      string                      `json:"minIsolationProfile,omitempty"`
+	BillingErasurePolicy     string                      `json:"billingErasurePolicy,omitempty"`
+	ExperimentTargeting      *experiment.TargetingConfig `json:"experimentTargeting,omitempty"`
+	CreatedAt                string                      `json:"createdAt,omitempty"`
+	UpdatedAt                string                      `json:"updatedAt,omitempty"`
+	DeletedAt                string                      `json:"deletedAt,omitempty"`
+	T4KmsLastProbeSuccessAt  string                      `json:"t4KmsLastProbeSuccessAt,omitempty"`
 }
 
-// fromTenant maps a stored row to the wire payload.
+// fromTenant maps a stored row to the wire payload. If probe is
+// non-nil and the tenant is at workspaceTier T4, the payload includes
+// `t4KmsLastProbeSuccessAt` per §15.1.
 func fromTenant(t tenantstore.Tenant) TenantPayload {
+	return fromTenantWithProbe(t, nil)
+}
+
+func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 	p := TenantPayload{
 		ID:                    t.ID,
 		DisplayName:           t.DisplayName,
@@ -555,6 +595,11 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 	if t.ExperimentTargeting.Configured() {
 		et := t.ExperimentTargeting.Clone()
 		p.ExperimentTargeting = &et
+	}
+	if probe != nil && t.WorkspaceTier == "T4" {
+		if ts, ok := probe.LastProbeSuccess(t.ID); ok {
+			p.T4KmsLastProbeSuccessAt = rfc3339Nano(ts)
+		}
 	}
 	return p
 }
@@ -821,7 +866,7 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(fromTenant(row))
+	_ = json.NewEncoder(w).Encode(fromTenantWithProbe(row, r.kmsProbe))
 }
 
 // UpdateTenantRequest is the §15.1 admin-tenant update body. Only
@@ -928,6 +973,28 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 				})
 			return
 		}
+		// §12.5 T4 KMS availability probe. A workspaceTier: T4
+		// transition (whether a new T3 → T4 promotion or an
+		// idempotent re-assert) runs a zero-byte encrypt/decrypt
+		// round-trip against the tenant-scoped KMS key before
+		// persisting. The pre-provisioning model is required: the
+		// operator must provision the key before this call. On
+		// probe failure the update is rejected with
+		// CLASSIFICATION_CONTROL_VIOLATION and the tenant remains at
+		// its prior tier — no row update has happened yet.
+		if body.WorkspaceTier != nil && *body.WorkspaceTier == "T4" && r.kmsProbe != nil {
+			if err := r.kmsProbe.ProbeAvailability(req.Context(), id, "T4"); err != nil {
+				writeError(w, http.StatusUnprocessableEntity, "CLASSIFICATION_CONTROL_VIOLATION",
+					"T4 KMS key availability probe failed; the tenant's per-tenant KMS key "+
+						"must be reachable before the tenant can be marked workspaceTier T4",
+					map[string]any{
+						"tenantId": id,
+						"tier":     "T4",
+						"reason":   "kms_probe_failed",
+					})
+				return
+			}
+		}
 	}
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		if body.DisplayName != nil {
@@ -982,7 +1049,7 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	})
 	r.emitBillingErasureExemptRegulated(req.Context(), principal, updated)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(fromTenant(updated))
+	_ = json.NewEncoder(w).Encode(fromTenantWithProbe(updated, r.kmsProbe))
 }
 
 // changedFields returns the list of body fields the caller set so the
