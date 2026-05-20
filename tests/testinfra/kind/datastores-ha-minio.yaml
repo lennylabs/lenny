@@ -1,0 +1,199 @@
+# SPDX-License-Identifier: MIT
+#
+# MinIO multi-node distributed-mode overlay for the tier-8 chaos
+# replication and zonal-failover tests.
+#
+# The base datastores.yaml deploys a single MinIO Deployment with one
+# pod and one emptyDir. This overlay replaces that single-node MinIO
+# with a four-pod StatefulSet running MinIO in distributed mode under
+# default EC:2 erasure coding (two parity blocks per object). The
+# §12.5 cross-zone replication and §17.5 multi-zone-DR chaos exercises
+# need a multi-node deployment to lose a single pod and still serve
+# reads.
+#
+# Apply on top of the base datastores.yaml — the base MinIO
+# Deployment / Service is deleted first so the distributed MinIO can
+# bind the lenny-minio Service name the gateway already targets:
+#
+#   kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   kubectl delete deployment lenny-minio -n lenny-system --ignore-not-found
+#   kubectl delete svc lenny-minio -n lenny-system --ignore-not-found
+#   kubectl apply -f tests/testinfra/kind/datastores-ha-minio.yaml
+#
+# Fixed connection facts:
+#
+#   MinIO API   Service lenny-minio.lenny-system.svc:9000
+#               (the same name the base manifest exposed, so the
+#                gateway's LENNY_MINIO_ENDPOINT does not change)
+#   MinIO Pods  lenny-minio-{0..3}.lenny-minio-headless.lenny-system.svc:9000
+#   Credentials access key "lennyminio", secret key "lennyminio123"
+#               (same as the base manifest)
+#   Bucket      lenny-artifacts (created by the post-start bootstrap)
+#
+# Distributed mode requires every pod to resolve every other pod's
+# stable DNS name; the headless Service is the discovery mechanism.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio-headless
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio-distributed
+spec:
+  clusterIP: None
+  selector:
+    lenny.dev/e2e-datastore: minio-distributed
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9090
+      targetPort: console
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio-distributed
+spec:
+  serviceName: lenny-minio-headless
+  replicas: 4
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: minio-distributed
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: minio-distributed
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          args:
+            - server
+            - --address
+            - :9000
+            - --console-address
+            - :9090
+            - http://lenny-minio-{0...3}.lenny-minio-headless.lenny-system.svc/data
+          env:
+            - name: MINIO_ROOT_USER
+              value: lennyminio
+            - name: MINIO_ROOT_PASSWORD
+              value: lennyminio123
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9090
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: api
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-minio
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: minio-distributed
+spec:
+  selector:
+    lenny.dev/e2e-datastore: minio-distributed
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9090
+      targetPort: console
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-minio-bucket-bootstrap
+  namespace: lenny-system
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2025-04-22T17-32-39Z
+          command:
+            - sh
+            - -c
+            - |
+              # Wait for the distributed cluster to become ready, then
+              # create the lenny-artifacts bucket the gateway writes
+              # workspace blobs into.
+              until mc alias set lenny http://lenny-minio.lenny-system.svc:9000 lennyminio lennyminio123 >/dev/null 2>&1; do
+                sleep 2
+              done
+              mc mb --ignore-existing lenny/lenny-artifacts
+              # Enable bucket versioning so the §12.5 tombstone
+              # hard-prune can rely on object-version histories under
+              # the SSE-S3 default encryption.
+              mc version enable lenny/lenny-artifacts || true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

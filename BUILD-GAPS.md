@@ -533,10 +533,29 @@ re-attempt them.
   follow-on is the inner Postgres / Redis store packages that
   read time directly without an injected clock; passing those
   through the same harness is a per-package refactor.
-- **No HA store topologies in the e2e overlay.** HA Postgres,
-  Redis Sentinel, multi-zone MinIO, and cross-zone cluster
-  topologies are not deployed; the corresponding tier-8 chaos
-  failover tests cannot run.
+- **HA store topology overlays.** `tests/testinfra/kind/`
+  ships three optional overlays the tier-8 chaos failover tests
+  opt into:
+  - `datastores-ha-redis.yaml` adds a Redis replica plus a
+    three-pod Sentinel StatefulSet monitoring the base
+    `lenny-redis` Service (master name `lenny-master`, quorum 2)
+    so `TestRedisSentinelFailover` can drive a master-kill and
+    follow Sentinel-promoted writes.
+  - `datastores-ha-postgres.yaml` adds a `lenny-postgres-replica`
+    Deployment that streams WAL from the base Postgres through a
+    `replicator` role + slot the bootstrap Job provisions, so
+    `TestPostgresFailover` can drive a primary-kill and exec
+    `pg_ctl promote` on the standby. Automatic promotion is
+    operator-managed in v1 (no in-cluster failover controller).
+  - `datastores-ha-minio.yaml` replaces the base single-node
+    MinIO with a four-pod distributed-mode StatefulSet under EC:2
+    erasure coding, so `TestMinIOReplicationLag` can drive a
+    pod-kill and observe two-pod redundancy.
+  Documentation: `tests/testinfra/kind/datastores-ha.md`. The
+  remaining piece is the multi-zone Kind cluster (multiple
+  `topology.kubernetes.io/zone` labels) that `TestCrossZonePartition`
+  needs; that lands with the kind `cluster.yaml` multi-zone
+  rework.
 - **§26 reference-runtime OCI images.** The image registry the
   nightly conformance run pulls from does not exist.
 - **External pen-test bundle.** Tier-9 `TestPentestReplay` now

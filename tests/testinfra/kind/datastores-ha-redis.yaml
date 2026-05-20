@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: MIT
+#
+# Redis Sentinel HA overlay for the tier-8 chaos failover tests.
+#
+# The base datastores.yaml deploys a single Redis Deployment with
+# ClusterIP Service lenny-redis. This overlay augments that baseline
+# with a replica plus a three-sentinel quorum so the §12.8 Redis
+# Sentinel failover chaos test (TestRedisSentinelFailover) can drive
+# a master-kill and observe automatic promotion.
+#
+# Apply on top of the base datastores.yaml:
+#
+#   kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   kubectl apply -f tests/testinfra/kind/datastores-ha-redis.yaml
+#
+# The gateway picks up the Sentinel topology when LENNY_REDIS_SENTINEL_ADDRS
+# and LENNY_REDIS_SENTINEL_MASTER are set in its environment. The
+# e2e Helm overlay's gateway.extraEnv carries the values; the chaos
+# test sets them through the install path's --redis-sentinel-* flags.
+#
+# Fixed connection facts:
+#
+#   Redis master    Service lenny-redis.lenny-system.svc:6379 (existing)
+#   Redis replica   Service lenny-redis-replica.lenny-system.svc:6379
+#   Sentinels       Service lenny-redis-sentinel.lenny-system.svc:26379
+#                   monitored master name: lenny-master
+#                   quorum: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-redis-replica
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-replica
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: redis-replica
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: redis-replica
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            - --appendonly
+            - "no"
+            - --save
+            - ""
+            - --replicaof
+            - lenny-redis.lenny-system.svc
+            - "6379"
+            - --replica-announce-ip
+            - lenny-redis-replica.lenny-system.svc
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-replica
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-replica
+spec:
+  selector:
+    lenny.dev/e2e-datastore: redis-replica
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-redis-sentinel-config
+  namespace: lenny-system
+data:
+  sentinel.conf.tmpl: |
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    sentinel monitor lenny-master lenny-redis.lenny-system.svc 6379 2
+    sentinel down-after-milliseconds lenny-master 2000
+    sentinel failover-timeout lenny-master 5000
+    sentinel parallel-syncs lenny-master 1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: lenny-redis-sentinel
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-sentinel
+spec:
+  serviceName: lenny-redis-sentinel
+  replicas: 3
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: redis-sentinel
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              cp /etc/sentinel/sentinel.conf.tmpl /tmp/sentinel.conf
+              chmod 0644 /tmp/sentinel.conf
+              exec redis-server /tmp/sentinel.conf --sentinel
+          ports:
+            - name: sentinel
+              containerPort: 26379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/sentinel
+          readinessProbe:
+            tcpSocket:
+              port: sentinel
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: sentinel
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: lenny-redis-sentinel-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-redis-sentinel
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: redis-sentinel
+spec:
+  selector:
+    lenny.dev/e2e-datastore: redis-sentinel
+  ports:
+    - name: sentinel
+      port: 26379
+      targetPort: sentinel
+  # ClusterIP None turns this Service into a headless Service so the
+  # gateway can DNS-resolve every Sentinel pod individually. The
+  # go-redis Sentinel client expects to talk to each Sentinel directly.
+  clusterIP: None

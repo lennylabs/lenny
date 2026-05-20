@@ -1,0 +1,226 @@
+# SPDX-License-Identifier: MIT
+#
+# Postgres HA overlay for the tier-8 chaos failover tests.
+#
+# The base datastores.yaml deploys a single Postgres Deployment with
+# emptyDir storage. This overlay augments that baseline with a hot-
+# standby replica that streams WAL from the primary, so the §12.8
+# Postgres failover chaos test (TestPostgresFailover) can drive a
+# primary-kill and observe the gateway continuing to read from the
+# replica through the documented connection-string substitution.
+#
+# The promotion path is operator-managed: there is no in-cluster
+# failover controller. A chaos test that needs automatic promotion
+# uses the same code-pointed primary as the base test, fails it over
+# by `kubectl exec`-ing `pg_ctl promote` on the replica, and rewires
+# the gateway's connection string to the replica's Service. The
+# composite end-to-end exercise (primary-kill + automatic promotion)
+# is the cloud-overlay deliverable; the in-Kind exercise pins the
+# primary-down recovery half.
+#
+# Apply on top of the base datastores.yaml:
+#
+#   kubectl apply -f tests/testinfra/kind/datastores.yaml
+#   kubectl apply -f tests/testinfra/kind/datastores-ha-postgres.yaml
+#
+# Fixed connection facts:
+#
+#   Primary  Service lenny-postgres.lenny-system.svc:5432 (existing base)
+#   Replica  Service lenny-postgres-replica.lenny-system.svc:5432
+#            (read-only; falls into the read-write path after promotion)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-postgres-ha-init
+  namespace: lenny-system
+data:
+  # The replica's postgresql.conf overrides. Streaming-replication
+  # parameters that the §17.3 RPO=0 model requires.
+  postgresql.conf: |
+    hot_standby = on
+    hot_standby_feedback = on
+    primary_conninfo = 'host=lenny-postgres.lenny-system.svc port=5432 user=replicator password=replicator-pw application_name=replica1'
+    max_wal_senders = 4
+    wal_keep_size = 64MB
+  # pg_hba entries the replica reads against the primary. The
+  # replication account is the same one the primary's
+  # pg_hba already admits (see the bootstrap below).
+  pg_hba.conf: |
+    host all     all 0.0.0.0/0   md5
+    host replication replicator 0.0.0.0/0 md5
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-postgres-ha-bootstrap
+  namespace: lenny-system
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: bootstrap
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              # Wait for primary then ensure the replication role and
+              # replication slot exist. The base Postgres image
+              # initialises only the lenny user / db; this Job adds the
+              # replicator credentials the standby uses to stream WAL.
+              until pg_isready -h lenny-postgres.lenny-system.svc -U lenny; do
+                sleep 1
+              done
+              PGPASSWORD=lenny psql -h lenny-postgres.lenny-system.svc -U lenny -d lenny <<SQL
+                DO \$\$
+                BEGIN
+                  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'replicator') THEN
+                    CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator-pw';
+                  END IF;
+                  IF NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = 'replica1') THEN
+                    PERFORM pg_create_physical_replication_slot('replica1');
+                  END IF;
+                END
+                \$\$;
+              SQL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lenny-postgres-replica
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres-replica
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      lenny.dev/e2e-datastore: postgres-replica
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lenny
+        app.kubernetes.io/component: e2e-datastore
+        lenny.dev/e2e-datastore: postgres-replica
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      initContainers:
+        - name: pg-basebackup
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              # Pull a fresh base backup from the primary into
+              # /var/lib/postgresql/data. Re-run is safe because
+              # emptyDir starts empty.
+              if [ -s /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "data dir already initialised; skipping base backup"
+                exit 0
+              fi
+              until pg_isready -h lenny-postgres.lenny-system.svc -U replicator; do
+                sleep 1
+              done
+              PGPASSWORD=replicator-pw pg_basebackup \
+                -h lenny-postgres.lenny-system.svc \
+                -U replicator \
+                -D /var/lib/postgresql/data \
+                -X stream \
+                -P \
+                -R \
+                -S replica1
+              # The standby.signal file is created by pg_basebackup -R
+              # when target Postgres is 12+, so the replica boots in
+              # standby mode automatically.
+          env:
+            - name: PGPASSWORD
+              value: replicator-pw
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data
+          ports:
+            - name: postgres
+              containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, lenny, -d, lenny]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, lenny, -d, lenny]
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lenny-postgres-replica
+  namespace: lenny-system
+  labels:
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/component: e2e-datastore
+    lenny.dev/e2e-datastore: postgres-replica
+spec:
+  selector:
+    lenny.dev/e2e-datastore: postgres-replica
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
