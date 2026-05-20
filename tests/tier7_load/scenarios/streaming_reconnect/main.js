@@ -27,6 +27,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
 
 const BASE = __ENV.LENNY_BASE_URL || 'http://127.0.0.1:8080';
 const TENANT = __ENV.LENNY_TENANT || 'acme';
@@ -34,13 +35,26 @@ const ROLES = __ENV.LENNY_ROLES || 'tenant-admin';
 const USER = __ENV.LENNY_USER || 'alice';
 const RUNTIME = __ENV.LENNY_RUNTIME || 'claude-code';
 
+// k6 records http_req_failed=true for every request whose timeout
+// fires, even when the server sent the 200 status header on time. A
+// long-lived SSE stream always times out by design, so the built-in
+// failure rate is unusable here. The streamOpenRate / streamConnectMs
+// custom metrics carry the smoke signal instead: streamOpenRate=1
+// when the response status is 200 or 206, streamConnectMs records
+// http_req_waiting (time to first byte) as the connect latency the
+// §12.7 reconnect SLO bounds.
+const streamOpenRate = new Rate('stream_opened');
+const streamConnectMs = new Trend('stream_connect_ms', true);
+
 export const options = {
   // Emit p99 and p99.9 in the summary export so the Tier-7 baseline
   // diff has the percentiles the §12.7 SLOs are stated at.
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   thresholds: {
-    'http_req_duration{name:stream_reconnect}': ['p(95)<500'],
-    'http_req_failed': ['rate<0.05'],
+    // Time to first byte stays under the §12.7 P95 reconnect budget.
+    'stream_connect_ms': ['p(95)<500'],
+    // At least 95 % of reconnects return a 200 / 206 status.
+    'stream_opened': ['rate>0.95'],
   },
 };
 
@@ -81,7 +95,12 @@ export default function (data) {
     params.headers['Last-Event-ID'] = `${__ITER - 1}`;
   }
   const res = http.get(`${BASE}/v1/sessions/${data.sessionID}/events`, params);
+  const opened = res.status === 200 || res.status === 206;
+  streamOpenRate.add(opened);
+  if (opened) {
+    streamConnectMs.add(res.timings.waiting);
+  }
   check(res, {
-    'stream opened': (r) => r.status === 200 || r.status === 206,
+    'stream opened': () => opened,
   });
 }
