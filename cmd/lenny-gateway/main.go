@@ -862,6 +862,7 @@ func main() {
 		TreeArchive:     treeArchive,
 		Interceptors:    policyChain,
 		PolicyAuditSink: policyAuditSink,
+		Clock:           clockinject.Now,
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
@@ -1035,7 +1036,7 @@ func main() {
 	if pgPool != nil {
 		delegationPolicies = delegationpolicypg.New(pgPool)
 	}
-	adminRouter := admin.NewRouter(tenants, admin.Options{Audit: auditSink, Metrics: gwMetrics}).
+	adminRouter := admin.NewRouter(tenants, admin.Options{Clock: clockinject.Now, Audit: auditSink, Metrics: gwMetrics}).
 		WithRuntimes(runtimes).
 		WithUsers(users).
 		WithPools(pools).
