@@ -218,6 +218,115 @@ shipped `pkg/credential/connectorcredstore` Postgres-backed
 encrypted TokenStore; routing them through Secrets Manager / Key
 Vault is a future option, not a v1 gap.
 
+#### Tier-6 follow-on suites
+
+The current 11 scaffolds verify configuration shape. They do not
+verify behavior. The list below names twelve additional suites
+that would land in tier-6 to close the configuration-vs-behavior
+gap. Each entry carries the test name, the §spec section it
+covers, what it asserts on the cluster, and the additional infra
+or code the suite depends on.
+
+Critical (cloud-installed Lenny does not yet have a behavioral
+green signal):
+
+1. **`TestCloudSessionLifecycle`** (§15.1, §6.3). POST
+   `/v1/sessions` → POST `/v1/sessions/{id}/messages` → GET
+   `/v1/sessions/{id}/transcript` → POST `/v1/sessions/{id}/terminate`
+   against the EKS-installed gateway via port-forward. Asserts
+   each step's response shape and that the transcript contains
+   the message round-trip. Closes the gap that nothing in tier-6
+   actually exercises a session on EKS.
+
+2. **`TestCloudIRSAResolvesCredentials`** (§13). Exec into the
+   gateway pod and run `aws sts get-caller-identity` (or call
+   the AWS SDK metadata endpoint). Assert the assumed role ARN
+   matches the IRSA role the Terraform produced. Today's
+   `TestCloudOIDC` only checks the SA annotation; an annotation
+   without a working trust policy or projected SA-token is a
+   silent failure mode.
+
+3. **`TestCloudS3ViaIRSA`** (§4.5, §13). Once the gateway's
+   ArtifactStore is wired through IRSA-resolved S3 credentials
+   instead of static MinIO env vars, drive `POST /v1/sessions/{id}/upload`
+   against the EKS gateway and assert the blob lands in the
+   per-release S3 bucket. Depends on a chart change that selects
+   `pkg/blobstore/s3` over MinIO when an `artifactStore.backend=s3`
+   value is set.
+
+4. **`TestCloudBackupRestore`** (§17.7). Run the `lenny-backup`
+   Job, list the per-release S3 bucket, restore from the
+   snapshot into a sidecar Postgres database, assert row counts
+   match the source. Validates the §17.7 RTO claim on cloud, not
+   only against the in-memory fixture.
+
+High value, more wiring (these surface behaviors the current
+suite cannot prove):
+
+5. **`TestCloudPodSecurityRejectsRoot`** (§13). `kubectl apply` a
+   Pod with `runAsUser: 0` to an agent namespace and assert the
+   `lenny-pod-security` admission webhook rejects it. Tier-9
+   exercises the same rejection on Kind; the EKS API server's
+   webhook-latency profile differs and a regression is silent.
+
+6. **`TestCloudCosignVerifyRejectsUnsigned`** (§13, §17.6).
+   `kubectl apply` a Pod whose image is unsigned and assert the
+   `lenny-cosign-verify` webhook rejects it. Skips when
+   `features.cosignVerify=false`. Validates the §17.6 supply-chain
+   gate fires on a real cluster.
+
+7. **`TestCloudNetworkPolicyEnforced`** (§13.2). Apply a probe
+   pod outside the chart's allow-list and assert the connection
+   to the gateway is dropped. AWS VPC CNI does **not** enforce
+   NetworkPolicies by default; the test fail-fast skips with a
+   diagnosis pointing at the operator install of either Calico
+   or the VPC CNI NetworkPolicy add-on. The current suite has no
+   signal at all for this failure mode.
+
+8. **`TestCloudPodClaimLatency`** (§6.3). Create N sessions
+   through `POST /v1/sessions/start` and measure the time from
+   request to pod-ready. Assert P95 stays under the §6.3
+   startup-latency envelope. Essentially a tier-7 scenario
+   driven from tier-6 because the EKS pull / schedule /
+   container-runtime init profile differs materially from Kind.
+
+9. **`TestCloudMTLSRotationSurvivesRestart`** (§13.1, §17.2).
+   Force a cert-manager rotation on the gateway's Certificate,
+   kill the gateway pod, assert in-flight sessions resume after
+   the rollout. The cloud cert-manager rotation timing differs
+   from the Kind fixture; restart-during-rotation is a known
+   failure mode worth a cloud signal.
+
+Broader coverage (lower urgency, larger infra surface):
+
+10. **`TestCloudErasureS3`** (§12.8). POST an upload, run the
+    erasure orchestrator, assert the SoftDelete tag lands on the
+    S3 object, run HardPrune, assert the DeleteObject fires.
+    Validates the §12.5 / §12.8 tombstone-tag semantics against
+    real S3 versioning, not against the in-memory tombstone.
+
+11. **`TestCloudAuditCloudWatch`** (§11.7). Configure the gateway
+    pod's CloudWatch log driver, run a session, query CloudWatch
+    Logs for the audit event. Significant infrastructure work
+    (an OTel collector + a CloudWatch role); landing it brings
+    the §11.7 audit-chain visibility into the cloud-native
+    observability story.
+
+12. **`TestCloudRLSIsolationAgainstRDS`** (§12.3). Swap the
+    in-cluster Postgres for an RDS endpoint, drive multi-tenant
+    load through the gateway, sample queries, assert cross-tenant
+    rows never surface. Tier-2 covers RLS against an ephemeral
+    container; cloud-side managed Postgres has different
+    statement-level timing.
+
+#### Out of scope
+
+The following deliberately stay outside tier-6 even after the
+twelve land. Cost telemetry / billing accuracy is a feature spec,
+not a test concern. Cluster upgrade compatibility is an operator
+concern covered by the chart-test matrix against Kind. Helm
+rollback is the same shape — not cloud-specific.
+
 ### Tier 7 (Load and SLO)
 
 The `tests/tier7_load/scenarios/` directory contains 14 k6 scenario
