@@ -171,9 +171,30 @@ controller. Each scenario's underlying behaviour has unit / tier-2
 
 ### Tier 6 (E2E on cloud)
 
-All 11 tests in `tests/tier6_e2e_cloud/scaffolds_test.go` skip after the
-cloud-availability guard. The blockers are external infrastructure that
-the repository does not yet ship; see [Infrastructure gaps](#infrastructure-gaps).
+All 11 tests in `tests/tier6_e2e_cloud/scaffolds_test.go` skip after
+the cloud-availability guard (`cloud.SkipUnlessAvailable` reads
+`LENNY_CLOUD_PROVIDER`, then probes the provider CLI). The cloud
+guard alone covers the common local-developer path; when a
+provider is configured, the second `t.Skip("blocked: ...")`
+documents the per-suite cloud prerequisite. Two prerequisite
+classes:
+
+- **Code-side (pkg/\* adapters absent).** `TestCloudCSI`
+  (GCS / S3 / Azure Blob adapters next to `pkg/blobstore/miniostore`),
+  `TestCloudKMS` (Cloud KMS / AWS KMS / Azure Key Vault providers
+  next to `pkg/kms/local`), `TestCloudSecretStore` (provider-managed
+  TokenStore adapter in `pkg/credential`), and `TestCloudBillingExport`
+  (BigQuery / Athena / Azure Data Lake billing sink).
+- **Config-side (Terraform / Helm absent).** `TestGvisorIsolation`,
+  `TestKataIsolation`, `TestMultiZoneDR`, `TestManagedIngress`,
+  `TestCloudOIDC`, `TestMultiAZMinIO`, and `TestCloudObservability`
+  need `deploy/terraform/cloud/<provider>/`, the operator-supplied
+  Ingress example, the per-provider IAM binding, and the Helm
+  values that select the per-provider collector.
+
+The aggregate is captured under [Infrastructure gaps](#infrastructure-gaps);
+they unblock together when a Wave-7 implementer lands the
+per-provider Terraform and the cloud adapter set.
 
 ### Tier 7 (Load and SLO)
 
