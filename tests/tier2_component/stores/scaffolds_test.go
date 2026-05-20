@@ -97,18 +97,9 @@ func TestArtifactStoreContract(t *testing.T) {
 // credentialpoolstore_test.go, which exercises the Postgres-backed
 // pkg/gateway/credentialpoolstore/pgstore against a real container.
 
-// TestEvictionStateStoreContract — Postgres eviction state. Coverage:
-// eviction-state CRUD, MinIO context-key storage, terminal-state
-// cleanup, RLS.
-//
-// spec: 12.2.1
-// diagnosis: no EvictionStateStore implementation exists. The
-// migrations carry no eviction-state table, pkg/checkpoint has no
-// eviction-tracking surface, and the MinIO context-key index for the
-// §12.2 eviction-state role is not built.
-func TestEvictionStateStoreContract(t *testing.T) {
-	t.Skip("blocked: §12.2.1 EvictionStateStore — the eviction-state migration, the Postgres-backed store, and the MinIO context-key index are not built")
-}
+// TestEvictionStateStoreContract is implemented in
+// evictionstatestore_test.go, which exercises the Postgres-backed
+// pkg/gateway/evictionstatestore/pgstore against a real container.
 
 // TestMemoryStoreContract is implemented in memorystore_test.go, which
 // exercises the Postgres-backed pkg/gateway/memorystore/pgstore. The

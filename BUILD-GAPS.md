@@ -72,10 +72,10 @@ Property-based suites using `pgregory.net/rapid` exist at
 The tier carries 19 subdirectories. The following are pure-scaffold groups
 where every test in the group skips:
 
-- `tests/tier2_component/stores/scaffolds_test.go` (7 contracts: QuotaStore
+- `tests/tier2_component/stores/scaffolds_test.go` (6 contracts: QuotaStore
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
-  legal-hold, EvictionStateStore, CRDPodRegistry, StoreRouter, mandatory
-  `DeleteByUser` / `DeleteByTenant`).
+  legal-hold, CRDPodRegistry, StoreRouter, mandatory `DeleteByUser` /
+  `DeleteByTenant`).
 - `tests/tier2_component/translators/scaffolds_test.go` (2 tests:
   `openai_direct` and `openai_responses` native translators).
 - `tests/tier2_component/rls/scaffolds_test.go` (2 tests: `__all__`
@@ -87,8 +87,8 @@ where every test in the group skips:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).
 
-The store directory carries 28 live store-contract suites alongside the
-seven scaffolds.
+The store directory carries 29 live store-contract suites alongside the
+six scaffolds.
 
 ### Tier 3 (Contract)
 
@@ -336,16 +336,6 @@ identified.
 - **CRDPodRegistry over the Kubernetes API is absent.**
   `pkg/podsession.Registry` is an in-process map. There is no `WatchPods`
   event-latency surface. Blocks `TestPodRegistryContract`.
-
-- **EvictionStateStore: Postgres backend follow-on.** Migration 0045
-  creates the `session_eviction_state` table with the tenant-scoped
-  RLS policy; `pkg/gateway/evictionstatestore` exposes the Store
-  interface, MemoryStore, and the §12.8 erasure contract
-  (DeleteByUser, DeleteByTenant). The Postgres-backed pgstore (and
-  the MinIO context-key indexer that walks rows with `is_minio_key =
-  true`) is the follow-on commit that flips
-  `TestEvictionStateStoreContract` to a live test against the
-  migration.
 
 - **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
   `miniostore/` and `replication/` only. SSE-KMS configuration, soft-

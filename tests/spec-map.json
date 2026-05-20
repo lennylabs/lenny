@@ -1389,10 +1389,12 @@
         "tests/tier2_component/leases/...",
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/issuedtokenstore_test.go",
-        "tests/tier2_component/stores/sessionstore_test.go"
+        "tests/tier2_component/stores/sessionstore_test.go",
+        "tests/tier2_component/stores/evictionstatestore_test.go"
       ],
       "packages": [
         "pkg/store",
+        "pkg/gateway/evictionstatestore",
         "tests/testinfra/containers",
         "tests/tier2_component/migrations"
       ],
