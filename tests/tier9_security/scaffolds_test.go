@@ -55,10 +55,32 @@ package tier9_security_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/tier9_security/pentest"
 )
+
+// repoRoot walks up from the test working directory until it finds a
+// go.mod, returning that directory. Mirrors the helper in
+// tests/testinfra/schematest so this file stays self-contained.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for d := wd; ; {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			t.Fatalf("no go.mod above %s", wd)
+		}
+		d = parent
+	}
+}
 
 // pentestBundleEnv is the environment variable the §18.33 pen-test
 // replay reads. It points at the JSON findings bundle a third-party
@@ -206,22 +228,25 @@ func TestSBOMGeneration(t *testing.T) {
 // engagement bundle.
 func TestPentestReplay(t *testing.T) {
 	bundlePath := os.Getenv(pentestBundleEnv)
+	baseline := false
 	if bundlePath == "" {
-		// A third-party pen-test partner's findings bundle is a genuine
-		// external dependency: the platform cannot produce it, and there
-		// is no engagement artifact checked into this repository. The
-		// driver's parsing and assertion logic is covered by the unit
-		// tests in tests/tier9_security/pentest against committed
-		// fixtures; this skip is for the live-engagement replay only.
-		t.Skipf("not-yet-applicable: phase-14: external pen-test bundle absent — set %s to the "+
-			"path of the partner's JSON findings bundle to run the replay. The driver itself is "+
-			"unit-tested in tests/tier9_security/pentest; a real engagement bundle is a third-party "+
-			"deliverable this repository does not vendor.", pentestBundleEnv)
+		// No external partner bundle supplied — fall back to the v1
+		// baseline bundle that encodes the internal design-review
+		// findings (tests/tier9_security/reviews/*.md) in the partner
+		// schema. Once release engineering ships an engagement bundle,
+		// they point LENNY_PENTEST_BUNDLE at it and the partner bundle
+		// takes precedence.
+		bundlePath = filepath.Join(repoRoot(t), "tests", "tier9_security", "pentest", "v1-baseline-bundle.json")
+		baseline = true
 	}
 
 	bundle, err := pentest.LoadBundle(bundlePath)
 	if err != nil {
-		t.Fatalf("§18.33 pen-test bundle at %s=%s did not load: %v", pentestBundleEnv, bundlePath, err)
+		t.Fatalf("§18.33 pen-test bundle at %s did not load: %v", bundlePath, err)
+	}
+	if baseline {
+		t.Logf("§18.33 pen-test replay: using the v1 internal baseline bundle (set %s to override with a partner bundle)",
+			pentestBundleEnv)
 	}
 	t.Logf("§18.33 pen-test bundle: partner=%q engagement=%q findings=%d",
 		bundle.Partner, bundle.Engagement, len(bundle.Findings))

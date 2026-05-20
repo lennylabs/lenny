@@ -449,9 +449,13 @@ re-attempt them.
   failover tests cannot run.
 - **§26 reference-runtime OCI images.** The image registry the
   nightly conformance run pulls from does not exist.
-- **External pen-test bundle.** Tier-9 `TestPentestReplay` needs
-  the LENNY_PENTEST_BUNDLE env var pointing at a partner's
-  findings JSON.
+- **External pen-test bundle.** Tier-9 `TestPentestReplay` now
+  defaults to the v1 internal baseline at
+  `tests/tier9_security/pentest/v1-baseline-bundle.json`, which
+  encodes the findings recorded in `tests/tier9_security/reviews/`
+  as remediated. Release engineering points
+  `LENNY_PENTEST_BUNDLE` at the partner bundle when an external
+  engagement ships.
 - **SBOM generation as a CI step.** Tier-9 `TestSBOMGeneration` is a
   release-pipeline artifact, not a cluster-testable behavior.
 
