@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/encrypt"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
@@ -37,14 +39,25 @@ type Config struct {
 	Bucket string
 	// UseSSL selects an HTTPS connection to MinIO.
 	UseSSL bool
+
+	// SSEKeyResolver, when set, supplies the §12.5 SSE-KMS key
+	// identifier for the writing tenant on every Put. Production
+	// T4 tenants require a tenant-scoped key (`tenant:{tenant_id}`);
+	// T3 may share the deployment-wide key. Return ("", false) to
+	// fall back to bucket-level encryption (SSE-S3) or no
+	// encryption. The resolver is the caller's responsibility to
+	// cache if KMS lookups are expensive.
+	SSEKeyResolver func(tenantID string) (keyID string, ok bool)
 }
 
 // Store is the MinIO-backed §4.5 blobstore.Store. It is goroutine-safe;
 // the underlying MinIO client is safe for concurrent use.
 type Store struct {
-	client *minio.Client
-	bucket string
-	clock  func() time.Time
+	client      *minio.Client
+	bucket      string
+	clock       func() time.Time
+	sseResolver func(tenantID string) (string, bool)
+	legalHolds  sync.Map // keyed on objectKey; protects §12.8 holds from DeleteBySession
 }
 
 var _ blobstore.Store = (*Store)(nil)
@@ -67,10 +80,29 @@ func New(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("miniostore: build client: %w", err)
 	}
 	return &Store{
-		client: client,
-		bucket: cfg.Bucket,
-		clock:  func() time.Time { return time.Now().UTC() },
+		client:      client,
+		bucket:      cfg.Bucket,
+		clock:       func() time.Time { return time.Now().UTC() },
+		sseResolver: cfg.SSEKeyResolver,
 	}, nil
+}
+
+// SetLegalHold marks the blob under u as protected by a §12.8
+// legal hold; DeleteBySession refuses to remove it until the hold
+// is cleared.
+func (s *Store) SetLegalHold(u blobstore.URI) {
+	s.legalHolds.Store(objectKey(u), struct{}{})
+}
+
+// ClearLegalHold removes the §12.8 hold from a blob.
+func (s *Store) ClearLegalHold(u blobstore.URI) {
+	s.legalHolds.Delete(objectKey(u))
+}
+
+// hasLegalHold reports whether key is currently under a §12.8 hold.
+func (s *Store) hasLegalHold(key string) bool {
+	_, ok := s.legalHolds.Load(key)
+	return ok
 }
 
 // objectKey maps a §4.5 blob URI to its MinIO object key. It mirrors
@@ -87,8 +119,11 @@ func sessionPrefix(tenantID, sessionID string) string {
 	return tenantID + "/" + sessionID + "/"
 }
 
-// Put implements blobstore.Store. §4.5 blobs are write-once: a key that
-// already names an object yields ErrConflict.
+// Put implements blobstore.Store. §4.5 blobs are write-once: a key
+// that already names an object yields ErrConflict. When an
+// SSEKeyResolver is configured and returns a key id for the writing
+// tenant the Put requests §12.5 SSE-KMS with that key; otherwise
+// the bucket's default encryption (SSE-S3) applies.
 func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, error) {
 	ctx := context.Background()
 	key := objectKey(u)
@@ -98,9 +133,17 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	case !isNotFound(err):
 		return "", fmt.Errorf("miniostore: stat before put %s: %w", key, err)
 	}
-	if _, err := s.client.PutObject(ctx, s.bucket, key, data, -1, minio.PutObjectOptions{
-		ContentType: mimeType,
-	}); err != nil {
+	opts := minio.PutObjectOptions{ContentType: mimeType}
+	if s.sseResolver != nil {
+		if keyID, ok := s.sseResolver(u.TenantID); ok {
+			sse, err := encrypt.NewSSEKMS(keyID, nil)
+			if err != nil {
+				return "", fmt.Errorf("miniostore: build SSE-KMS option for tenant %s: %w", u.TenantID, err)
+			}
+			opts.ServerSideEncryption = sse
+		}
+	}
+	if _, err := s.client.PutObject(ctx, s.bucket, key, data, -1, opts); err != nil {
 		return "", fmt.Errorf("miniostore: put %s: %w", key, err)
 	}
 	return u.String(), nil
@@ -179,6 +222,14 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 	}
 	if len(objects) == 0 {
 		return 0, nil
+	}
+	// §12.8 legal hold: refuse to remove any blob in the session
+	// when at least one object is held. The orchestrator surfaces
+	// the refusal as ERASURE_BLOCKED_BY_LEGAL_HOLD upstream.
+	for _, obj := range objects {
+		if s.hasLegalHold(obj.Key) {
+			return 0, fmt.Errorf("miniostore: %s is under a §12.8 legal hold", obj.Key)
+		}
 	}
 	objectsCh := make(chan minio.ObjectInfo, len(objects))
 	for _, obj := range objects {
