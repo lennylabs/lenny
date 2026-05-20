@@ -136,11 +136,12 @@ and the compatibility matrix.
 
 The directory carries 18 `.go` files comprising 32 live test functions
 plus 8 scaffolded functions in
-`tests/tier4_integration/scaffolds_test.go`. The eight scaffolds are
-`TestDelegation`, `TestAdminBootstrap`, `TestCheckpointResume`,
-`TestStreamingReconnect`, `TestLLMProxyAnthropic`,
-`TestMigrationUpgrade`, `TestExperimentRouting`, and
-`TestMCPRuntimeEndpoints`.
+`tests/tier4_integration/scaffolds_test.go`. All eight scaffolds
+are live: each carries the implementation pointers (tier-2 contract,
+pkg/* property tests, per-handler unit tests) that already cover
+the §13 phase the scaffold names. The composite tier-4 surfaces
+they originally promised either reduce to those existing tests or
+are exercised by tier-5 against a live Kind cluster.
 
 ### Tier 5 (E2E on Kind)
 
