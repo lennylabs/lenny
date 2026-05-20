@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/opsevents"
 	"github.com/lennylabs/lenny/pkg/gateway/podsession"
@@ -119,6 +120,7 @@ type Server struct {
 	treeArchive        treearchive.Store
 	maxOrphanTasks     int
 	evals              evalstore.Store
+	memory             memorystore.Store
 	experiments        experimentstore.Store
 	pools              poolstore.Store
 	experimentReporter ExperimentRejectionReporter
@@ -218,6 +220,11 @@ type Options struct {
 	// POST /v1/sessions/{id}/eval. When nil the endpoint returns
 	// `503 EVAL_UNAVAILABLE`.
 	Evals evalstore.Store
+
+	// Memory is the §9.4 MemoryStore backing the
+	// /v1/sessions/{id}/memory REST surface. When nil those
+	// endpoints return `503 MEMORY_UNAVAILABLE`.
+	Memory memorystore.Store
 
 	// Experiments is the §10.7 experiment registry. When set, the
 	// ExperimentRouter assigns a variant at session creation; when nil
@@ -368,6 +375,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		executor:           opts.Executor,
 		transcripts:        opts.Transcripts,
 		evals:              opts.Evals,
+		memory:             opts.Memory,
 		experiments:        opts.Experiments,
 		pools:              opts.Pools,
 		experimentReporter: opts.ExperimentRejections,
@@ -462,6 +470,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/replay", manage(s.handleReplay))
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manage(s.handleExtendRetention))
 	mux.HandleFunc("POST /v1/sessions/{id}/eval", manage(s.handleEval))
+	mux.HandleFunc("POST /v1/sessions/{id}/memory", manage(s.handleMemoryWrite))
+	mux.HandleFunc("GET /v1/sessions/{id}/memory", read(s.handleMemoryQuery))
+	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))

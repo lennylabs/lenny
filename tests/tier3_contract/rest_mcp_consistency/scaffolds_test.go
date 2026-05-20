@@ -25,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionstore/memstore"
@@ -38,8 +39,9 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	t.Helper()
 	store := memstore.New()
 	exec := executor.NewEchoExecutor()
+	mem := memorystore.NewInMemory(0, nil)
 
-	rest := sessionserver.New(store, sessionserver.Options{})
+	rest := sessionserver.New(store, sessionserver.Options{Memory: mem})
 	tsREST := httptest.NewServer(rest.Handler())
 	t.Cleanup(tsREST.Close)
 
@@ -47,6 +49,7 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:    store,
 		Executor: exec,
+		Memory:   mem,
 		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:   func() string { return "sess_mcp_consistency" },
 		TenantID: tenant,
@@ -127,6 +130,31 @@ func postJSON(t *testing.T, url, tenant string, body []byte) (*http.Response, []
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		if err != nil {
+			break
+		}
+	}
+	return resp, buf
+}
+
+// getJSON issues a GET against url with the X-Lenny-Tenant-ID
+// header and returns the response and body bytes.
+func getJSON(t *testing.T, url, tenant string) (*http.Response, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	if tenant != "" {
+		req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
 	}
 	defer resp.Body.Close()
 	buf := make([]byte, 0, 4096)
@@ -355,8 +383,80 @@ func TestRESTMCPElicitation(t *testing.T) {
 // no memory endpoints — sessionserver.go has no /v1/memories or
 // /v1/sessions/{id}/memory routes. The consistency test cannot pin
 // both surfaces until the REST memory surface ships.
+// spec: §15.2.1 / §9.4 (REST↔MCP memory parity)
+// diagnosis: §15.2.1 names memory write / query as an overlapping
+// operation. The MCP side exposes `lenny/memory_write` /
+// `lenny/memory_query` (sessionId in the tool args, user scope
+// derived from the session row); the REST side now exposes
+// `POST/GET /v1/sessions/{id}/memory` (session id in the URL,
+// user scope derived likewise). Both surfaces share the gateway's
+// memorystore. The MCP query is user-scoped across every session
+// the user has run; the REST query is session-scoped. The parity
+// contract is therefore "a write through one surface is observable
+// via either surface's read on the same session": this test
+// writes one memory per surface against the same session and
+// asserts the REST session read returns both, and the MCP
+// user-scoped query (which is a superset) returns at least both.
 func TestRESTMCPMemory(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP memory — pkg/gateway/sessionserver registers no /v1/memories endpoints; the MCP tools `lenny/memory_write` / `lenny/memory_query` have no REST counterpart in sessionserver.go to compare against")
+	tsREST, tsMCP, store := newConsistencyServers(t, "acme")
+
+	// Seed a user-scoped session so the memory endpoints have a
+	// (tenant, user) scope to bind under.
+	sess := sessionstore.Session{
+		ID: "sess_mem", TenantID: "acme", UserID: "alice@acme.com",
+		State: session.StateRunning,
+	}
+	if err := store.Create(context.Background(), sess); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	// Write one memory through REST.
+	body := []byte(`{"memories":[{"content":"kubectl reaches the cluster"}]}`)
+	resp, raw := postJSON(t, tsREST.URL+"/v1/sessions/sess_mem/memory", "acme", body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("REST memory write: status %d, body %s", resp.StatusCode, raw)
+	}
+
+	// Write one memory through MCP against the same session.
+	mcpRes := mcpCall(t, tsMCP.URL+"/mcp", "lenny/memory_write", map[string]any{
+		"sessionId": "sess_mem",
+		"content":   "lenny up brings up the embedded stack",
+	})
+	if _, isErr := mcpRes["_error"]; isErr {
+		t.Fatalf("lenny/memory_write returned an error envelope: %v", mcpRes)
+	}
+
+	// REST session-scoped read sees both writes.
+	getResp, getRaw := getJSON(t, tsREST.URL+"/v1/sessions/sess_mem/memory", "acme")
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("REST memory query: status %d, body %s", getResp.StatusCode, getRaw)
+	}
+	var restList struct {
+		Memories []map[string]any `json:"memories"`
+	}
+	if err := json.Unmarshal(getRaw, &restList); err != nil {
+		t.Fatalf("REST query decode: %v\n%s", err, getRaw)
+	}
+	if len(restList.Memories) != 2 {
+		t.Errorf("REST memory query returned %d, want 2", len(restList.Memories))
+	}
+
+	// MCP user-scoped query sees at least both. (It is a superset of
+	// the session-scoped read by spec.)
+	mcpQuery := mcpCall(t, tsMCP.URL+"/mcp", "lenny/memory_query", map[string]any{
+		"sessionId": "sess_mem",
+	})
+	payload := mcpToolPayload(t, mcpQuery)
+	var mcpMems []any
+	switch v := payload["memories"].(type) {
+	case []any:
+		mcpMems = v
+	default:
+		t.Fatalf("MCP memory_query payload missing memories array: %v", payload)
+	}
+	if len(mcpMems) < 2 {
+		t.Errorf("MCP memory_query returned %d, want >= 2", len(mcpMems))
+	}
 }
 
 // spec: §15.2.1
