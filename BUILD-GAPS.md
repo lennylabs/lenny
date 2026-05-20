@@ -466,16 +466,6 @@ topologies, the published Homebrew tap) are recorded under the
 Blocked section because they are external infrastructure the
 repository does not yet provision.
 
-The in-repo items that can become real once their upstream
-dependencies land:
-
-- **`tests/testinfra/chaos/chaos.go` has a chaos-mesh placeholder.**
-  The toxiproxy code path is fully implemented.
-  `injectViaChaosMesh` at line 84 emits a log line and returns a no-op
-  cleanup. `PartitionService` via chaos-mesh at line 124 does the same.
-  TESTING.md §12.8 chaos scenarios that need network-partition
-  injection therefore have no working harness on Kind.
-
 - **The compose profile lacks Redis Sentinel.** `compose/default.yml`
   runs a single Redis node. The tier-8 `TestRedisSentinelFailover`
   chaos scaffold needs a Sentinel topology to exercise. PgBouncer is
