@@ -312,19 +312,17 @@ identified.
 
 - **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
   `miniostore/`, `replication/`, and (as of the latest commit) the
-  in-memory soft-delete + tombstone hard-prune contract from §12.5.
-  The remaining sub-features — SSE-KMS configuration, the
-  Postgres-backed `artifact_store` catalog table, the
-  partial-manifest cleanup sweep, the T4 per-tenant KMS probe,
-  legal-hold suspension, the MinIO-outage Postgres-minimal-state
-  fallback (the EvictionStateStore is the target store; the
-  blobstore-side fallback router is unbuilt), and the MinIO-side
-  soft-delete implementation that the catalog table backs — are
-  unbuilt. `pkg/blobstore/miniostore` now ships the §12.5
-  SSE-KMS resolver hook (Config.SSEKeyResolver) and the §12.8
-  SetLegalHold / ClearLegalHold guard on DeleteBySession; the
-  remaining §12.5 sub-features still block `TestArtifactStoreContract`
-  and the full tier-4 checkpoint flow.
+  in-memory soft-delete + tombstone hard-prune contract from §12.5,
+  the §12.5 SSE-KMS resolver hook on `pkg/blobstore/miniostore`
+  (Config.SSEKeyResolver), the §12.8 SetLegalHold / ClearLegalHold
+  guard on DeleteBySession, and migration 0049 + `pkg/blobstore/artifactcatalog`
+  for the Postgres-backed artifact_store catalog table with the
+  live → soft_deleted → tombstoned lifecycle. The remaining
+  sub-features — the partial-manifest cleanup sweep, the T4 per-tenant
+  KMS-availability probe, and the MinIO-outage Postgres-minimal-state
+  fallback router (the EvictionStateStore is the target store; the
+  blobstore-side fallback router is unbuilt) — still block the full
+  `TestArtifactStoreContract` and the tier-4 checkpoint flow.
 
 ### Delegation and elicitation
 
