@@ -85,13 +85,18 @@ five scaffolds.
 
 ### Tier 3 (Contract)
 
-All TESTING.md §12.3 contract subdirectories exist. The largest gap is
-`tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go`: of nine
-tests, `TestRESTMCPSessionLifecycle`, `TestRESTMCPTasks`, and
-`TestRESTMCPRetryableFlags` are live. Six others skip because the MCP
-side lacks a workspace-upload tool, respond and dismiss elicitation
-tools, a memory REST surface, a delegation REST surface, webhook
-subscription CRUD on either side, or admin MCP tools.
+All TESTING.md §12.3 contract subdirectories exist. The
+`tests/tier3_contract/rest_mcp_consistency/scaffolds_test.go` mix is:
+six tests live (`TestRESTMCPSessionLifecycle`, `TestRESTMCPTasks`,
+`TestRESTMCPRetryableFlags`, plus the three §15.2.1 by-design
+no-parity acknowledgements: `TestRESTMCPElicitation` documents that
+respond/dismiss is REST-only, `TestRESTMCPDelegation` documents that
+delegation is MCP-only, `TestRESTMCPAdmin` documents that admin is
+REST-only). Three tests still skip on missing surfaces:
+`TestRESTMCPWorkspaceUpload` (MCP upload tool unbuilt),
+`TestRESTMCPMemory` (memory REST endpoints unbuilt), and
+`TestRESTMCPWebhookSubscription` (webhook CRUD unbuilt on either
+surface).
 
 `tests/tier3_contract/rest_openai_chat/` and `rest_openai_responses/` cover
 envelope-structure and field-preservation contracts. Streaming, tool calls,

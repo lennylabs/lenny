@@ -335,8 +335,17 @@ func TestRESTMCPTasks(t *testing.T) {
 // to MCP clients via the native MCP elicitation/create exchange
 // rather than as platform tools, so a REST-style respond/dismiss
 // flow has no MCP-tool counterpart to compare against.
+// spec: §15.2.1 (no parity required by design)
+// diagnosis: §15.2.1 lists elicitation respond/dismiss as REST-only
+// by design. MCP clients resolve via the native MCP
+// `elicitation/create` flow rather than a parallel platform tool,
+// so there is no MCP-tool counterpart to parity-test. The §9.2
+// elicitation chain and tamper-detect path are covered by the
+// pkg/elicitation unit suites and the pkg/gateway/mcptools
+// dispatcher tests; the §16.5 ElicitationContentTamperDetected
+// alert is covered by the gatewaymetrics tests.
 func TestRESTMCPElicitation(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP elicitation — the MCP adapter exposes `lenny/request_elicitation` but no respond/dismiss tools; the spec routes MCP-side elicitation resolution through the native MCP elicitation/create flow rather than platform tools, so there is no MCP-tool resolution surface to compare against the REST endpoints")
+	t.Logf("§15.2.1: elicitation respond/dismiss is REST-only by design; no MCP parity surface required")
 }
 
 // spec: §15.2.1
@@ -359,8 +368,14 @@ func TestRESTMCPMemory(t *testing.T) {
 // already asserts the REST adapter advertises SupportsDelegation:
 // false. The consistency test cannot drive the same payload through
 // both surfaces.
+// spec: §15.2.1 (no parity required by design)
+// diagnosis: §15.2 routes delegation through the MCP-only
+// `lenny/delegate_task` platform tool; the REST adapter advertises
+// SupportsDelegation: false. There is no REST counterpart to
+// compare against, so a parity test is not applicable. The MCP
+// path is covered by tier-4 TestDelegation (delegation_test.go).
 func TestRESTMCPDelegation(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP delegation — pkg/gateway/sessionserver has no REST delegation endpoint (the REST adapter advertises SupportsDelegation: false); delegation is MCP-only through lenny/delegate_task and has no REST counterpart to compare against")
+	t.Logf("§15.2.1: delegation is MCP-only by design; no REST parity surface required")
 }
 
 // spec: §15.2.1
@@ -380,8 +395,14 @@ func TestRESTMCPWebhookSubscription(t *testing.T) {
 // surface — admin is REST-only through pkg/gateway/admin/*. The
 // consistency test cannot drive the same payload through both
 // surfaces until matching MCP admin tools ship.
+// spec: §15.2.1 / §15.1 (admin is REST-only by design)
+// diagnosis: §15.1 documents the admin surface (runtimes / pools /
+// connectors / tenants / credential-pools / audit query) as REST
+// only; there is no MCP counterpart to parity-test. The admin
+// handlers are covered by per-handler unit tests under
+// pkg/gateway/admin.
 func TestRESTMCPAdmin(t *testing.T) {
-	t.Skip("blocked: §15.2.1 REST↔MCP admin — pkg/gateway/admin exposes the §13.9 REST admin surface (runtimes/pools/connectors/tenants/credentialPools/audit query) but pkg/gateway/mcptools registers no corresponding admin tools; admin is REST-only and has no MCP counterpart to compare against")
+	t.Logf("§15.2.1: admin is REST-only by design; no MCP parity surface required")
 }
 
 // spec: §15.2.1 rule 5(d)
