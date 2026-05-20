@@ -185,6 +185,75 @@ jobs:
           path: sbom-${{ matrix.image }}.cdx.json
           retention-days: 90
 
+  # Cross-compile the standalone CLI binaries (lenny + kubectl-lenny)
+  # for the (GOOS, GOARCH) pairs the Homebrew formula and the
+  # krew-index manifest reference. Produces one tarball / zip per
+  # target and uploads them as workflow artifacts the github-release
+  # job attaches.
+  cli:
+    name: build CLI archives
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: darwin,  goarch: amd64, ext: tar.gz }
+          - { goos: darwin,  goarch: arm64, ext: tar.gz }
+          - { goos: linux,   goarch: amd64, ext: tar.gz }
+          - { goos: linux,   goarch: arm64, ext: tar.gz }
+          - { goos: windows, goarch: amd64, ext: zip    }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build lenny + kubectl-lenny archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          out="dist/${GOOS}-${GOARCH}"
+          mkdir -p "${out}"
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "${out}/lenny${{ matrix.goos == 'windows' && '.exe' || '' }}" \
+            ./cmd/lenny
+          # The kubectl-lenny krew plugin resolves to lenny-ctl renamed.
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "${out}/kubectl-lenny${{ matrix.goos == 'windows' && '.exe' || '' }}" \
+            ./cmd/lenny-ctl
+          cp LICENSE README.md "${out}/" 2>/dev/null || true
+          if [[ "${{ matrix.ext }}" == "zip" ]]; then
+            (cd "${out}" && zip -r "../../dist/lenny-${VERSION}-${GOOS}-${GOARCH}.zip" .)
+            (cd "${out}" && zip -r "../../dist/kubectl-lenny_${VERSION}_${GOOS}_${GOARCH}.zip" kubectl-lenny${{ matrix.goos == 'windows' && '.exe' || '' }})
+          else
+            tar -C "${out}" -czf "dist/lenny-${VERSION}-${GOOS}-${GOARCH}.tar.gz" .
+            tar -C "${out}" -czf "dist/kubectl-lenny_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "kubectl-lenny"
+          fi
+          ls -l dist/
+
+      - name: Upload CLI archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/lenny-*.${{ matrix.ext }}
+          retention-days: 90
+
+      - name: Upload krew archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: krew-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/kubectl-lenny_*.${{ matrix.ext }}
+          retention-days: 90
+
   # Package the Helm chart and sign it with the custodied PGP key
   # (§17.6 chart provenance). Produces lenny-<version>.tgz, its
   # detached .prov provenance file, and the exported public key.
@@ -265,7 +334,7 @@ jobs:
     name: publish GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [prepare, images, helm-chart]
+    needs: [prepare, images, helm-chart, cli]
     permissions:
       contents: write       # create/edit the GitHub release
     steps:
@@ -284,12 +353,28 @@ jobs:
           name: helm-chart
           path: release-staging/chart
 
+      - name: Download CLI archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: release-staging/cli
+          pattern: cli-*
+          merge-multiple: true
+
+      - name: Download krew archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          path: release-staging/krew
+          pattern: krew-*
+          merge-multiple: true
+
       - name: Assemble release artifacts
         run: |
           set -euo pipefail
           mkdir -p release-staging/out
           cp release-staging/chart/* release-staging/out/
           cp release-staging/sbom/*.cdx.json release-staging/out/
+          cp release-staging/cli/* release-staging/out/
+          cp release-staging/krew/* release-staging/out/
           # Ship the krew manifest template so consumers can inspect the
           # plugin definition the krew-index PR carries.
           cp packaging/krew/lenny.yaml release-staging/out/kubectl-lenny.krew.yaml
@@ -405,3 +490,77 @@ jobs:
             --repo kubernetes-sigs/krew-index \
             --title "Update lenny to ${VERSION}" \
             --body "Automated krew manifest update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+
+  # Open a homebrew-tap pull request that points the lennylabs/tap
+  # formula at the freshly published release archives.
+  # dist/brew/lenny.rb is the template; the step renders it with the
+  # tag version and the four per-platform SHA-256 digests, then opens
+  # a PR against lennylabs/homebrew-tap.
+  homebrew-tap-pr:
+    name: open homebrew-tap PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Render and submit the lenny.rb update
+        env:
+          # HOMEBREW_TAP_TOKEN: PAT with push access to the
+          # lennylabs/homebrew-tap fork and pull-request scope. The
+          # built-in GITHUB_TOKEN cannot push to another repository.
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::secret HOMEBREW_TAP_TOKEN is not configured"
+            exit 1
+          fi
+          # Strip the leading "v" — Homebrew's version field is a bare
+          # semver. The release tag carries the "v" prefix.
+          short_version="${VERSION#v}"
+          # Compute the SHA-256 of each release tarball.
+          python3 - "${VERSION}" "${short_version}" <<'PY'
+          import hashlib, os, re, subprocess, sys
+          tag, version = sys.argv[1], sys.argv[2]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          src = open("dist/brew/lenny.rb").read()
+          # Stamp the version field.
+          src = re.sub(r'version "0\.1\.0".*$', f'version "{version}"', src, count=1, flags=re.MULTILINE)
+          platforms = {
+              "DARWIN_ARM64":  ("darwin",  "arm64"),
+              "DARWIN_AMD64":  ("darwin",  "amd64"),
+              "LINUX_ARM64":   ("linux",   "arm64"),
+              "LINUX_AMD64":   ("linux",   "amd64"),
+          }
+          for placeholder, (os_, arch) in platforms.items():
+              url = (f"https://github.com/{repo}/releases/download/{tag}"
+                     f"/lenny-{version}-{os_}-{arch}.tar.gz")
+              data = subprocess.run(
+                  ["curl", "-fsSL", url], check=True, capture_output=True).stdout
+              digest = hashlib.sha256(data).hexdigest()
+              src = src.replace(f'REPLACE_WITH_{placeholder}_SHA256', digest)
+          open("/tmp/lenny.rb", "w").write(src)
+          PY
+          echo "Rendered Homebrew formula:"
+          cat /tmp/lenny.rb
+
+          # Fork (idempotent), branch, commit the formula, open the PR.
+          gh repo fork lennylabs/homebrew-tap --clone --remote --default-branch-only
+          cd homebrew-tap
+          branch="lenny-${VERSION}"
+          git checkout -b "${branch}"
+          mkdir -p Formula
+          cp /tmp/lenny.rb Formula/lenny.rb
+          git config user.name "lenny-release-bot"
+          git config user.email "release-bot@lennylabs.dev"
+          git add Formula/lenny.rb
+          git commit -s -m "Update lenny to ${VERSION}"
+          git push -u origin "${branch}"
+          gh pr create \
+            --repo lennylabs/homebrew-tap \
+            --title "Update lenny to ${VERSION}" \
+            --body "Automated formula update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
