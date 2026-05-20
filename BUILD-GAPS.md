@@ -524,13 +524,15 @@ re-attempt them.
   gateway main (admin audit event timestamp, idempotency cutoff)
   read through `clockinject.Now`. `cmd/lenny-preflight` calls
   `clockinject.AssertProductionDefault` so a production install
-  carrying a non-zero offset fails at install time. The remaining
-  refactor — switching the per-subsystem clocks the gateway hands
-  to constructors at boot (sessionserver, auditstore, breakerstore,
-  etc.) to `clockinject.Now` — is the remaining gateway-refactor
-  step recorded as a follow-on; the subsystems all accept an
-  injected `func() time.Time` already, so the change is constructor
-  call-site only.
+  carrying a non-zero offset fails at install time. The
+  per-subsystem clocks the gateway main passes to constructors
+  (sessionserver, admin, delegation, mcptools, credrenewal,
+  orphancleanup, retentiongc, leasecontrol) now flow through
+  `clockinject.Now`, so a chaos offset propagates to every
+  time-sensitive call site behind those entry points. The narrow
+  follow-on is the inner Postgres / Redis store packages that
+  read time directly without an injected clock; passing those
+  through the same harness is a per-package refactor.
 - **No HA store topologies in the e2e overlay.** HA Postgres,
   Redis Sentinel, multi-zone MinIO, and cross-zone cluster
   topologies are not deployed; the corresponding tier-8 chaos
