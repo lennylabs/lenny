@@ -397,18 +397,6 @@ identified.
   Responses fidelity matrices, the tier-10 fidelity matrix, and the
   tier-4 `TestLLMProxyAnthropic` integration test.
 
-### Cloud-provider integrations
-
-- **`pkg/blobstore` ships only MinIO.** GCS, S3, and Azure Blob
-  adapters and the matching provider-side service-account binding are
-  absent.
-
-- **`pkg/kms` ships only the local provider.** The directory listing is
-  `kms.go`, `local.go`, `local_test.go`, and `envelope/`. Cloud KMS,
-  AWS KMS, and Azure Key Vault providers are documented as
-  CloudProviderSeam but not implemented. The per-tenant KEK allocator
-  is not wired.
-
 ### Gateway request handling
 
 - **`POST /v1/sessions/{id}/upload` returns errors against the Kind
@@ -635,6 +623,71 @@ identified.
   `cache-prune.yml`, `dco.yml`, `sdk-publish.yml`, `secret-scan.yml`,
   and a `reusable/` directory. End-to-end pipeline timing was not
   measured in this audit.
+
+## Blocked
+
+Entries here are real gaps that the autonomous loop cannot close
+without an external decision, observation, or multi-hour reconciliation.
+They are listed separately so the loop's per-gap workflow does not
+re-attempt them.
+
+- **Cloud-provider integrations (`pkg/blobstore` GCS/S3/Azure,
+  `pkg/kms` cloud variants, per-provider Terraform).** Documented in
+  BUILD-PROGRESS.md Phase 12a as deferred via `CloudProviderSeam`;
+  the §18 build sequence treats cloud adapter implementations as v2
+  deliverables. Tier 6 scaffolds carry "blocked:" reasons that name
+  the missing adapter precisely. Unblocking needs cloud-provider
+  credentials and provider-specific Terraform under
+  `deploy/terraform/cloud/<provider>/`.
+- **Token Service gRPC controller scope.** The scaffold at
+  `tests/tier2_component/controllers/scaffolds_test.go:43` wants
+  `pkg/tokenservice` to implement gRPC server methods that today
+  live on the Adapter service (`pkg/proto/adapter/v1`) and are
+  consumed by the gateway as a client (`pkg/gateway/adapterclient`).
+  Resolving the gap needs a spec-anchored decision about whether
+  `pkg/tokenservice` should be a controller hosting those RPCs, or
+  whether the scaffold's premise is wrong because the
+  responsibilities are distributed by design across
+  `pkg/gateway/credrenewal`, `pkg/gateway/credleasestore`,
+  `pkg/credential`, and `pkg/connectoroauth`.
+- **`POST /v1/sessions/{id}/upload` 100% error rate against Kind.**
+  Recorded above under Gateway request handling. Resolution needs
+  captured k6 output from a Kind run.
+- **`docs/runbooks/` structural completion (59 runbooks).** Every
+  runbook in `docs/runbooks/` is missing at least one of the
+  required canonical sections (Symptom, Diagnosis, Procedure,
+  Verification) or its severity / title front matter. The
+  `tests/tier11_docs/runbooks_test.go` gate runs as informational
+  pending Phase 13.5+ when the canonical layout rolls out. Promoting
+  the gate before reconciliation would fail every runbook.
+- **`runbook-map.yaml` coverage of operational runbooks (44 unmapped).**
+  Of 59 runbooks in `docs/runbooks/`, 44 are operational procedures
+  (SLOs, key rotations, etcd operations) that are not yet mapped to
+  chaos tests. The mapping decision (write 44 chaos tests, or
+  redefine the gate to require mappings only for chaos-applicable
+  runbooks) needs a §17.7 / §12.8 design clarification.
+- **No published Homebrew tap (`lennylabs/tap`).** Tier-11 TTHW
+  step 1 cannot run until the tap and formula are published.
+- **No credential-carrying runtime image with a shell.** The default
+  echo runtime is distroless; tier-9 credential-leakage probes need
+  a runtime variant that declares credentials and an image with a
+  shell so `kubectl exec ... cat /proc/<pid>/environ` works.
+- **No egress-capture sidecar.** Tier-9 agent-pod egress probes
+  cannot inspect outbound traffic without a capture layer.
+- **No clock-injection harness.** Tier-8 `TestGatewayClockDrift`,
+  `TestCertificateExpiryAdvance`, and the `TestT3T4SLABreach`
+  scenario all need it.
+- **No HA store topologies in the e2e overlay.** HA Postgres,
+  Redis Sentinel, multi-zone MinIO, and cross-zone cluster
+  topologies are not deployed; the corresponding tier-8 chaos
+  failover tests cannot run.
+- **§26 reference-runtime OCI images.** The image registry the
+  nightly conformance run pulls from does not exist.
+- **External pen-test bundle.** Tier-9 `TestPentestReplay` needs
+  the LENNY_PENTEST_BUNDLE env var pointing at a partner's
+  findings JSON.
+- **SBOM generation as a CI step.** Tier-9 `TestSBOMGeneration` is a
+  release-pipeline artifact, not a cluster-testable behavior.
 
 ## Recommended sequencing
 
