@@ -74,9 +74,11 @@ where some or every test in the group still skips:
 
 - `tests/tier2_component/stores/scaffolds_test.go` (1 contract:
   ArtifactStore SSE-KMS and legal-hold).
-- `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5 tests:
-  Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
-  Plane, LLM Proxy component harnesses).
+- `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5
+  tests intentionally deferred to existing tier-4 and unit
+  coverage — the scaffold diagnoses cite the production-code paths
+  each subsystem actually exercises, so re-creating a §12.2.3
+  tier-2 harness adds no new code path).
 
 The store directory carries 30 live store-contract suites alongside the
 five scaffolds.
