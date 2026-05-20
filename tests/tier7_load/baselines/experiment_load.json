@@ -1,0 +1,18 @@
+{
+  "scenario": "experiment_load",
+  "version": "0.1.0",
+  "recorded_at": "2026-05-20T00:00:00Z",
+  "duration": "2m",
+  "vus": 20,
+  "metric_ms": {
+    "avg": 60.0,
+    "p50": 50.0,
+    "p90": 110.0,
+    "p95": 140.0,
+    "p99": 210.0,
+    "p999": 380.0
+  },
+  "error_rate": 0.0,
+  "throughput_per_sec": 300.0,
+  "notes": "Placeholder §10.7 ExperimentRouter bucketing-overhead baseline against /v1/sessions create with an active experiment configured. Smoke against the e2e Kind cluster is phase-gated: the install starts with empty runtime/pool/experiment stores and the §10.7 admission-time isolation monotonicity check requires every variant pool to be at least as restrictive as the experiment's base runtime; the cloud overlay registers the runtime, pool, and experiment in admission-correct order and runs the strict comparison."
+}

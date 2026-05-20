@@ -1,0 +1,18 @@
+{
+  "scenario": "delegation_fanout_mcp",
+  "version": "0.1.0",
+  "recorded_at": "2026-05-20T00:00:00Z",
+  "duration": "1m",
+  "vus": 20,
+  "metric_ms": {
+    "avg": 95.0,
+    "p50": 75.0,
+    "p90": 160.0,
+    "p95": 200.0,
+    "p99": 280.0,
+    "p999": 480.0
+  },
+  "error_rate": 0.0,
+  "throughput_per_sec": 200.0,
+  "notes": "Placeholder §8.2 / §15.2 lenny/delegate_task baseline against the MCP JSON-RPC /mcp endpoint with five children per parent. Smoke against the e2e Kind cluster passes (error rate 0%, p99 ~200ms) per the BUILD-PROGRESS Phase 9.5 done entry. The REST POST /v1/sessions/start fan-out has its own baseline (delegation_fanout.json)."
+}
