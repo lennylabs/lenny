@@ -167,6 +167,39 @@ type Reconciler struct {
 	// clock the §6.1 circuit breaker compares against minOpenUntil.
 	// When nil, time.Now is used.
 	Now func() time.Time
+
+	// AdmissionDeniedRetryCeiling is the §4.6.2 consecutive-rejection
+	// count at which a pool is marked stuck. The §16.5
+	// PoolScalingAdmissionStuck alert fires when StuckPools reports
+	// the pool key for the alert's `for:` window. A non-positive value
+	// uses DefaultAdmissionDeniedRetryCeiling.
+	AdmissionDeniedRetryCeiling int
+
+	// retryState is the lazily-constructed admission-retry tracker.
+	// It is initialized on the first Sync to honor a Reconciler
+	// constructed with the zero value.
+	retryState *admissionRetryState
+}
+
+// StuckPools returns the list of <namespace>/<name> pool keys whose
+// consecutive admission-rejection count is at or above the configured
+// retry ceiling. A pool exits the list on its first clean Sync. The
+// §16.5 PoolScalingAdmissionStuck alert binds to the same key set.
+func (r *Reconciler) StuckPools() []string {
+	if r.retryState == nil {
+		return nil
+	}
+	return r.retryState.StuckPools()
+}
+
+// ConsecutiveAdmissionDenials returns the current consecutive-denial
+// count for one pool key. Zero when no denial has been recorded or
+// the retry tracker has not yet been initialized.
+func (r *Reconciler) ConsecutiveAdmissionDenials(namespace, name string) int {
+	if r.retryState == nil {
+		return 0
+	}
+	return r.retryState.ConsecutiveDenials(poolKey(namespace, name))
 }
 
 // now returns the reconcile timestamp, honoring an injected clock.
@@ -183,17 +216,34 @@ func (r *Reconciler) now() time.Time {
 // the next tick retries; pools synced before the failure keep their
 // applied state.
 func (r *Reconciler) Sync(ctx context.Context) error {
+	if r.retryState == nil {
+		r.retryState = newAdmissionRetryState(r.AdmissionDeniedRetryCeiling)
+	}
 	configs, err := r.Source.ListPoolConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("list pool configs: %w", err)
 	}
 	for i := range configs {
 		cfg := configs[i]
-		if err := r.syncTemplate(ctx, cfg); err != nil {
-			return fmt.Errorf("sync template %s/%s: %w", cfg.Namespace, cfg.Name, err)
+		key := poolKey(cfg.Namespace, cfg.Name)
+		// syncTemplate and syncWarmPool both call into
+		// controllerutil.CreateOrUpdate; an admission webhook rejection
+		// surfaces as a Forbidden (or Invalid) status error which the
+		// retry tracker counts under the (namespace, name) key.
+		errTmpl := r.syncTemplate(ctx, cfg)
+		errPool := r.syncWarmPool(ctx, cfg)
+		// Roll up the per-pool outcome so a single rejection on either
+		// resource counts under the same key.
+		syncErr := errTmpl
+		if syncErr == nil {
+			syncErr = errPool
 		}
-		if err := r.syncWarmPool(ctx, cfg); err != nil {
-			return fmt.Errorf("sync warm pool %s/%s: %w", cfg.Namespace, cfg.Name, err)
+		r.retryState.recordOutcome(key, syncErr)
+		if errTmpl != nil {
+			return fmt.Errorf("sync template %s: %w", key, errTmpl)
+		}
+		if errPool != nil {
+			return fmt.Errorf("sync warm pool %s: %w", key, errPool)
 		}
 	}
 	return nil

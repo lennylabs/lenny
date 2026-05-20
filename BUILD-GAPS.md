@@ -349,14 +349,6 @@ identified.
   MinIO-outage Postgres-minimal-state fallback are not built. Blocks
   `TestArtifactStoreContract` and the tier-4 checkpoint flow.
 
-### Token Service and credentials
-
-- **Pool Scaling Controller admission-retry is absent.** The
-  scaling-formula evaluator and circuit breaker exist in
-  `pkg/controller/poolscaling/`, but the admission-denied retry-with-
-  backoff loop and the `PoolScalingAdmissionStuck` alert wiring are
-  not built. Blocks `TestPoolScalingControllerAdmissionRetry`.
-
 ### MCP and REST parity
 
 - **Webhook subscription CRUD REST endpoints are absent.** Spec §25.5
