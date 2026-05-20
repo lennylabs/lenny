@@ -69,15 +69,13 @@ Property-based suites using `pgregory.net/rapid` exist at
 
 ### Tier 2 (Component)
 
-The tier carries 19 subdirectories. The following are pure-scaffold groups
-where every test in the group skips:
+The tier carries 19 subdirectories. The following are scaffold groups
+where some or every test in the group still skips:
 
 - `tests/tier2_component/stores/scaffolds_test.go` (5 contracts: QuotaStore
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
   legal-hold, CRDPodRegistry, mandatory `DeleteByUser` /
   `DeleteByTenant`).
-- `tests/tier2_component/translators/scaffolds_test.go` (2 tests:
-  `openai_direct` and `openai_responses` native translators).
 - `tests/tier2_component/rls/scaffolds_test.go` (2 tests: `__all__`
   tenant-context bypass and PgBouncer connection-pooler leakage).
 - `tests/tier2_component/controllers/scaffolds_test.go` (2 tests: Pool
@@ -463,17 +461,15 @@ unblocks disproportionately many tests.
    carrying runtime image with a shell. Unblocks one tier-2 controller
    test, one tier-4 integration test, four tier-8 chaos tests, and
    three tier-9 security tests.
-2. Land the `openai_direct` and `openai_responses` native translators.
-   Unblocks two tier-2 translator tests and two tier-3 fidelity tests.
-3. Ship the elicitation-emitting runtime variant and the tamper-
+2. Ship the elicitation-emitting runtime variant and the tamper-
    detect, tamper-enforce, and platform-floor resolver wiring.
    Unblocks one tier-3 contract test, one tier-8 chaos test, and
    three tier-9 security tests.
-4. Fix the `/v1/sessions/{id}/upload` 100% error rate so the
+3. Fix the `/v1/sessions/{id}/upload` 100% error rate so the
    checkpoint-duration k6 scenario can baseline. Currently blocked on
    reproducing the Kind-specific failure; the dev-mode subprocess
    handles the same request shape correctly.
-5. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
+4. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
    `tests/tier11_docs/runbooks_test.go` and
    `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
    `docs/runbooks/` against `tests/tier8_chaos/runbook-map.yaml` by

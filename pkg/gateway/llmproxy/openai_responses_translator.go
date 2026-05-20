@@ -83,10 +83,12 @@ func (t *OpenAIResponsesTranslator) TranslateRequest(req Request, apiKey string)
 
 // TranslateResponse passes a successful upstream Responses API
 // response back to the pod and extracts the authoritative token
-// usage. The Responses envelope mirrors Chat Completions for the
-// usage block (prompt_tokens, completion_tokens), so the existing
-// extractor handles it without dialect-specific logic. A non-2xx
-// upstream status is mapped through the §4.9 error taxonomy.
+// usage. The Responses API names its usage block input_tokens and
+// output_tokens (the same names §4.9 lists as the canonical
+// normalized output), distinct from Chat Completions' prompt_tokens
+// and completion_tokens; the response is passed through unchanged
+// and the input_tokens/output_tokens pair is read off the wire.
+// A non-2xx upstream status is mapped through the §4.9 error taxonomy.
 func (t *OpenAIResponsesTranslator) TranslateResponse(dialect Dialect, resp UpstreamResponse) (*Response, error) {
 	if dialect != DialectOpenAIResponses {
 		return nil, translationErrorf(ErrUnsupportedField,
@@ -95,11 +97,36 @@ func (t *OpenAIResponsesTranslator) TranslateResponse(dialect Dialect, resp Upst
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, upstreamStatusError(resp.StatusCode, resp.Body)
 	}
-	usage, err := extractOpenAIUsage(resp.Body)
+	usage, err := extractOpenAIResponsesUsage(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	return &Response{Body: resp.Body, Usage: usage}, nil
+}
+
+// openAIResponsesUsageEnvelope is the subset of the OpenAI Responses
+// API response that carries the authoritative token counts. The
+// Responses API field names match §4.9's canonical normalized pair,
+// so no rename happens during extraction.
+type openAIResponsesUsageEnvelope struct {
+	Usage struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// extractOpenAIResponsesUsage parses the authoritative token usage
+// from a non-streaming OpenAI Responses API response body.
+func extractOpenAIResponsesUsage(body []byte) (Usage, error) {
+	var env openAIResponsesUsageEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return Usage{}, translationErrorf(ErrSchemaMismatch,
+			"upstream response is not valid JSON: %v", err)
+	}
+	return Usage{
+		InputTokens:  env.Usage.InputTokens,
+		OutputTokens: env.Usage.OutputTokens,
+	}, nil
 }
 
 // baseURL returns the configured upstream base or the documented

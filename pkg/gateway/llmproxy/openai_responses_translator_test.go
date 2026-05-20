@@ -108,10 +108,37 @@ func TestOpenAIResponsesRejectsMissingKey(t *testing.T) {
 }
 
 // spec: §4.9 (response usage extraction)
-// diagnosis: the Responses API envelope uses the same usage block
-// (prompt_tokens, completion_tokens) as Chat Completions, so the
-// shared extractor populates Usage correctly.
+// diagnosis: the OpenAI Responses API envelope names its token
+// counts input_tokens and output_tokens, which is also §4.9's
+// canonical normalized pair; the Responses-specific extractor
+// reads the wire fields without renaming.
 func TestOpenAIResponsesTranslateResponseExtractsUsage(t *testing.T) {
+	tr := &OpenAIResponsesTranslator{}
+	respBody, _ := json.Marshal(map[string]any{
+		"id":     "resp_123",
+		"output": []any{},
+		"usage": map[string]int{
+			"input_tokens":  100,
+			"output_tokens": 25,
+		},
+	})
+	r, err := tr.TranslateResponse(DialectOpenAIResponses, UpstreamResponse{StatusCode: 200, Body: respBody})
+	if err != nil {
+		t.Fatalf("TranslateResponse: %v", err)
+	}
+	if r.Usage.InputTokens != 100 || r.Usage.OutputTokens != 25 {
+		t.Errorf("Usage = %+v, want {Input:100 Output:25}", r.Usage)
+	}
+}
+
+// spec: §4.9 (response usage extraction — explicit shape isolation)
+// diagnosis: a body that names its tokens with Chat Completions
+// fields (prompt_tokens/completion_tokens) at the Responses endpoint
+// is not the upstream wire shape; the Responses extractor reads
+// input_tokens/output_tokens only, so a Chat-Completions-shaped body
+// yields zero usage. The dispatcher relies on dialect-specific
+// extraction; this test pins that.
+func TestOpenAIResponsesIgnoresChatCompletionsUsageFields(t *testing.T) {
 	tr := &OpenAIResponsesTranslator{}
 	respBody, _ := json.Marshal(map[string]any{
 		"id":     "resp_123",
@@ -125,8 +152,8 @@ func TestOpenAIResponsesTranslateResponseExtractsUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TranslateResponse: %v", err)
 	}
-	if r.Usage.InputTokens != 100 || r.Usage.OutputTokens != 25 {
-		t.Errorf("Usage = %+v, want {Input:100 Output:25}", r.Usage)
+	if r.Usage.InputTokens != 0 || r.Usage.OutputTokens != 0 {
+		t.Errorf("Usage = %+v, want zero from a non-Responses usage shape", r.Usage)
 	}
 }
 
