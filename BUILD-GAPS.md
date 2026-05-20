@@ -348,12 +348,18 @@ identified.
   `TestDelegationDepthDeadlockDetection`, and
   `TestLeaseExtensionCoolOffPersistence` against a live cluster.
 
-- **Elicitation-emitting runtime and tamper-detect alerting pipeline
-  are absent.** The default echo runtime emits no elicitations and
-  there is no chained respondent agent. The §9.2 tamper-detect /
-  enforce / platform-floor verifier in `pkg/elicitation` is built
-  but the alert delivery pipeline that records divergence is not
-  wired into the gateway. Blocks tier-8
+- **Elicitation-emitting runtime and tamper-detect alerting pipeline.**
+  Binary shipped at `cmd/runtimes/elicitation-echo`: a Standard-level
+  runtime that connects to the platform MCP server, calls
+  `lenny/request_elicitation` on every inbound message, and degrades
+  to Basic echo when no manifest is present. The §9.2 tamper-detect
+  metric (`lenny_elicitation_content_tamper_detected_total`) is
+  emitted by `pkg/gateway/mcptools` on every chain-walk tamper
+  catch, and the §16.5 ElicitationContentTamperDetected alert
+  remains bound to the metric. The tier-8/tier-9 scaffolds still
+  need the e2e wiring (deploy elicitation-echo as the raising pod
+  and a tampering intermediary against the e2e Kind cluster).
+  The runtime variant + alert pipeline together unblock tier-8
   `TestElicitationDeadlockDetection` and tier-9
   `TestElicitationTamperEnforceMode`,
   `TestElicitationTamperDetectOnlyMode`, and
