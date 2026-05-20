@@ -370,17 +370,6 @@ identified.
   backoff loop and the `PoolScalingAdmissionStuck` alert wiring are
   not built. Blocks `TestPoolScalingControllerAdmissionRetry`.
 
-### LLM Proxy and translators
-
-- **`openai_responses` native translator is absent.** The companion
-  `openai_direct` translator now lives at
-  `pkg/gateway/llmproxy/openai_direct_translator.go`. The
-  `/v1/responses` dialect translator is unbuilt; the OpenAI
-  Responses API uses a different request and response shape than
-  Chat Completions and needs a dedicated dialect plus translator.
-  Blocks `TestLLMProxyTranslatorOpenAIResponses`, the tier-3 OpenAI
-  Responses fidelity matrix, and the tier-10 fidelity matrix.
-
 ### Gateway request handling
 
 - **`POST /v1/sessions/{id}/upload` returns errors against the Kind

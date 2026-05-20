@@ -30,6 +30,11 @@ const (
 	// DialectOpenAI is the OpenAI Chat Completions dialect, served at
 	// POST {proxyUrl}/v1/chat/completions.
 	DialectOpenAI Dialect = "openai"
+	// DialectOpenAIResponses is the OpenAI Responses API dialect, served
+	// at POST {proxyUrl}/v1/responses. Codex and other Responses-aware
+	// runtimes speak this dialect when the pool's provider identity
+	// advertises Responses support (§26).
+	DialectOpenAIResponses Dialect = "openai_responses"
 )
 
 // ProviderAnthropicDirect is the §4.9 upstream provider identifier for
