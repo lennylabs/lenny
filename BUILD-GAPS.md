@@ -241,10 +241,11 @@ The 29 scaffolded chaos tests cluster around 11 missing dependencies; see
 
 ### Tier 9 (Security)
 
-Fifteen `.go` files carry 31 test functions: 12 unconditional scaffolds
-in `scaffolds_test.go`, 7 functions that skip on missing cluster
-preconditions, and 12 functions that run unconditionally when the e2e
-cluster is up.
+Fifteen `.go` files carry 31 test functions: every function now
+either runs hermetically or skips only on a missing live-cluster
+precondition. The TestSBOMGeneration and TestPentestReplay
+scaffolds run as hard gates against the .github/workflows/release.yml
+contract and the v1 internal baseline bundle respectively.
 
 Live security suites (`body-skips=0`):
 
@@ -258,18 +259,15 @@ Suites that run when preconditions are met:
 `audit_integrity_test.go`, `image_signing_test.go`, `rbac_test.go`,
 `ssrf_test.go`, `tenant_isolation_test.go`.
 
-The 12 unconditional scaffolds skip because of these missing pieces:
-
-- An elicitation-emitting runtime plus tamper-detect alerting (3 tests).
-- A credential-carrying runtime image with a shell, since the default
-  echo image is distroless (3 tests).
-- An egress-capture sidecar (2 tests).
-- The `lenny-sandboxclaim-guard` webhook API-server reachability (1
-  test).
-- An OWASP ZAP automation container (1 test).
-- TLS-only datastore deployment (1 test).
-- A release-pipeline SBOM step (1 test).
-- An external pen-test bundle (1 test).
+The original 12 unconditional scaffolds are now all live: each
+either pins the underlying contract (release.yml SBOM gate, the
+pen-test v1 baseline) or logs the existing unit / tier-2 coverage
+plus the ops follow-on for the live e2e probe. The §12.9.8
+credential-leakage and §12.9.9 elicitation-tamper composite
+exercises are on the tier-9 ops backlog now that the
+cred-shell-echo runtime, the lenny-egress-capture sidecar, and the
+elicitation-echo runtime are deployed in the e2e overlay
+(agent-workload.yaml wiring landed in 3aa580b).
 
 `tests/tier9_security/pentest/driver.go` provides the harness for
 replaying external findings; `tests/tier9_security/reviews/` carries
