@@ -150,9 +150,12 @@ func TestCloudCSI(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	// Best-effort cleanup so the bucket does not accumulate test
-	// objects across runs.
+	// objects across runs. SoftDelete writes the tombstone tag;
+	// HardPrune with zero retention drives the matching DeleteObject
+	// against the object the test just put in.
 	t.Cleanup(func() {
 		_ = store.SoftDelete(u)
+		_ = store.HardPrune(time.Now(), 0)
 	})
 
 	info, body, err := store.Get(u)

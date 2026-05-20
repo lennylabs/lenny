@@ -77,6 +77,11 @@ provider "aws" {
 # KMS keys this module also provisions.
 resource "aws_s3_bucket" "artifacts" {
   bucket = "${var.release}-artifacts"
+  # The tier-6 e2e_cloud suite tears the cluster down at end of run.
+  # force_destroy lets `terraform destroy` purge any objects + object
+  # versions still in the bucket; without it a leftover test object
+  # blocks DeleteBucket and the destroy fails at the very end.
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
