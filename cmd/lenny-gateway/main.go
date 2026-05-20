@@ -931,7 +931,7 @@ func main() {
 	}
 
 	// ----- MCP adapter -----
-	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments})
+	delegationSvc := delegation.NewService(sessions, delegation.Options{Experiments: experiments, Clock: clockinject.Now})
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store:                      sessions,
@@ -951,6 +951,7 @@ func main() {
 		Memory:                     memories,
 		ElicitationMetrics:         gwMetrics,
 		TenantID:                   "default",
+		Clock:                      clockinject.Now,
 	})
 
 	// §13.3 revocation cache: the auth middleware rejects a token
@@ -1015,6 +1016,7 @@ func main() {
 			// fault rotation. The worker drops it; onExhausted clears its
 			// pool binding.
 			OnExhausted: credRenewal.onExhausted,
+			Clock:       clockinject.Now,
 		})
 		// Every §4.9 credential lease the assignment service mints — at
 		// session start and at fault rotation — is tracked by the renewal
@@ -1474,6 +1476,7 @@ func main() {
 	// ----- §8.10 orphan-cleanup job -----
 	orphanSweeper := orphancleanup.New(sessions, tenantsLister{tenants}, orphancleanup.Options{
 		Archive: treeArchive,
+		Clock:   clockinject.Now,
 	})
 	go orphanSweeper.Run(watchdogCtx, func(terminated int, err error) {
 		if err != nil {
@@ -1498,7 +1501,7 @@ func main() {
 		if be, ok := blobs.(sessionArtifactDeleter); ok {
 			arts = append(arts, retentiongc.Artifact{Name: "artifacts", Delete: be.DeleteBySession})
 		}
-		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{})
+		retGC := retentiongc.New(sessions, tenantsLister{tenants}, arts, retentiongc.Options{Clock: clockinject.Now})
 		go retGC.Run(watchdogCtx, func(collected int, err error) {
 			if err != nil {
 				log.Printf("lenny-gateway: retention-GC sweep error: %v", err)
@@ -1743,6 +1746,7 @@ func newGatewayControlServer(addr string) (*grpc.Server, net.Listener, error) {
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets: budgets,
 		Tenants: budgets,
+		Clock:   clockinject.Now,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build GatewayControl service: %w", err)
