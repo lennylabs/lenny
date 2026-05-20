@@ -3,10 +3,34 @@
 package poolscaling
 
 import (
+	"fmt"
 	"sync"
 
+	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
+
+// admissionDeniedTotal is the §16.1
+// lenny_pool_scaling_admission_denied_total counter the §16.5
+// PoolScalingAdmissionStuck alert evaluates against. It is labeled
+// by namespace and pool so the alert and downstream dashboards can
+// pinpoint the stuck row. Registration is package-level so the
+// controller-runtime metrics registry exposes it on the controller's
+// existing /metrics endpoint without extra wiring per Reconciler.
+var admissionDeniedTotal = func() *prometheus.CounterVec {
+	c, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_pool_scaling_admission_denied_total",
+		Help: "PoolScalingController admission rejections by reason.",
+	}, []string{"namespace", "pool"})
+	if err != nil {
+		panic(fmt.Sprintf("poolscaling: build admission_denied counter: %v", err))
+	}
+	ctrlmetrics.Registry.MustRegister(c)
+	return c
+}()
 
 // DefaultAdmissionDeniedRetryCeiling is the §4.6.2 default number of
 // consecutive admission rejections at which a pool is marked stuck.
@@ -50,6 +74,11 @@ func newAdmissionRetryState(retryCeiling int) *admissionRetryState {
 // a recovering pool exits the stuck state on its first clean Sync.
 // When err is an admission rejection the counter is incremented and
 // the returned `stuck` reports whether the ceiling has been reached.
+//
+// Every admission rejection also increments the §16.1
+// lenny_pool_scaling_admission_denied_total Prometheus counter the
+// §16.5 PoolScalingAdmissionStuck alert reads, with the labels
+// (namespace, pool) parsed back out of the key.
 func (s *admissionRetryState) recordOutcome(key string, err error) (stuck bool, count int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,7 +91,19 @@ func (s *admissionRetryState) recordOutcome(key string, err error) (stuck bool, 
 	}
 	s.consecutive[key]++
 	count = s.consecutive[key]
+	ns, name := splitPoolKey(key)
+	admissionDeniedTotal.WithLabelValues(ns, name).Inc()
 	return count >= s.retryCeiling, count
+}
+
+// splitPoolKey reverses poolKey: the key is `<namespace>/<name>`.
+func splitPoolKey(key string) (namespace, name string) {
+	for i := range key {
+		if key[i] == '/' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return "", key
 }
 
 // StuckPools returns the list of pool keys at or over the retry

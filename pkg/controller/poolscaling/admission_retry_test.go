@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	dto "github.com/prometheus/client_model/go"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -118,6 +119,48 @@ func TestAdmissionRetryIsolatesPerPool(t *testing.T) {
 	if got := s.StuckPools(); len(got) != 1 || got[0] != stuckKey {
 		t.Errorf("StuckPools = %v, want [%s]", got, stuckKey)
 	}
+}
+
+// spec: §16.1 (lenny_pool_scaling_admission_denied_total counter)
+// diagnosis: every admission rejection increments the Prometheus
+// counter the §16.5 PoolScalingAdmissionStuck alert reads. The
+// counter is labeled (namespace, pool) so the alert and downstream
+// dashboards can pinpoint the stuck row.
+func TestAdmissionDeniedTotalIncrementsPerDenial(t *testing.T) {
+	s := newAdmissionRetryState(5)
+	key := poolKey("lenny-agents", "metrics-test-pool")
+	forbidden := apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied"))
+
+	before := metricValue(t, "lenny-agents", "metrics-test-pool")
+	for i := 0; i < 3; i++ {
+		_, _ = s.recordOutcome(key, forbidden)
+	}
+	after := metricValue(t, "lenny-agents", "metrics-test-pool")
+	if after-before != 3 {
+		t.Errorf("metric delta = %v, want 3 after 3 denials", after-before)
+	}
+
+	// A clean Sync after denials must not roll back the counter — the
+	// counter is monotonic; only the in-memory stuck-state count
+	// resets on success.
+	_, _ = s.recordOutcome(key, nil)
+	stable := metricValue(t, "lenny-agents", "metrics-test-pool")
+	if stable != after {
+		t.Errorf("counter rolled back on success: before=%v after-reset=%v", after, stable)
+	}
+}
+
+// metricValue reads the current value of the
+// lenny_pool_scaling_admission_denied_total counter for one
+// (namespace, pool) label pair.
+func metricValue(t *testing.T, namespace, pool string) float64 {
+	t.Helper()
+	m := admissionDeniedTotal.WithLabelValues(namespace, pool)
+	pb := &dto.Metric{}
+	if err := m.Write(pb); err != nil {
+		t.Fatalf("read metric: %v", err)
+	}
+	return pb.Counter.GetValue()
 }
 
 // spec: §4.6.2 (zero ceiling falls back to the documented default)
