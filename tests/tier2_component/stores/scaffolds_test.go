@@ -31,25 +31,16 @@ import "testing"
 // in tests/tier2_component/leases against pkg/gateway/leasestore. The
 // §12.4 Redis-outage Postgres advisory-lock fallback is not yet built.
 
-// TestQuotaStoreContract — Redis + Postgres quota store. The
-// fixed-window token-usage counter is implemented in
-// tests/tier2_component/quota against pkg/gateway/quotastore, and the
-// §11.2 arithmetic lives in pkg/quota. The remaining QuotaStore
-// surface — the rolling sliding window, the fail-open per-replica
-// accounting, the cumulative fail-open timer, and the MAX-rule
-// Postgres reconciliation — is not yet built.
-//
-// spec: 12.2.1
-// diagnosis: pkg/gateway/quotastore exposes only the fixed-window
-// counter, and pkg/quota has the §11.2 arithmetic (Check,
-// HierarchicalCheck, FailOpenCeiling, ReconcileMax). The sliding-
-// window counter, the per-replica fail-open accounting layered over
-// it, the cumulative fail-open timer, and the Postgres-checkpoint
-// reconciliation pipeline that drives the §11.2 MAX rule on Redis
-// recovery have no callable code path.
-func TestQuotaStoreContract(t *testing.T) {
-	t.Skip("blocked: §12.2.1 QuotaStore — pkg/gateway/quotastore has only the fixed-window Add/Usage methods; the rolling sliding window, the per-replica fail-open accounting, the cumulative fail-open timer, and the Postgres-checkpoint MAX-rule reconciliation pipeline are not built")
-}
+// TestQuotaStoreContract — Redis-backed token-usage counter contract.
+// Fixed-window counter: tests/tier2_component/quota/quotastore_test.go.
+// Sliding-window counter (SlidingAdd / SlidingUsage):
+// tests/tier2_component/quota/quotastore_sliding_test.go.
+// §11.2 arithmetic (Check, HierarchicalCheck, FailOpenCeiling,
+// PerUserFailOpenCeiling, MaxOvershoot, ReconcileMax) is unit-tested
+// in pkg/quota. The §11.2 per-replica fail-open accounting timer
+// layered over the counter and the Postgres-checkpoint pipeline that
+// invokes ReconcileMax on Redis recovery are the follow-on tracked
+// in BUILD-GAPS.md.
 
 // TestTokenStoreContract — Postgres encrypted token store. Coverage:
 // KMS-envelope encryption, hash storage, revocation lookup, rotation,

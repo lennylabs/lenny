@@ -111,3 +111,91 @@ func window(period quota.ResetPeriod, at time.Time) (string, time.Duration, erro
 		return "", 0, fmt.Errorf("quotastore: unknown reset period %q", period)
 	}
 }
+
+// DefaultBucketResolution is the §11.2 sliding-window bucket size.
+// One minute balances the memory cost of holding window/resolution
+// counters against the granularity an attacker needs to evade
+// the quota with bursty traffic.
+const DefaultBucketResolution = time.Minute
+
+// SlidingAdd accumulates tokens into the bucket containing at and
+// returns the resulting total over the window ending at at. window
+// is the rolling-window length (e.g., 1 hour); resolution is the
+// bucket size used to sum across the window (e.g., 1 minute). The
+// resolution must divide window; a non-positive resolution selects
+// DefaultBucketResolution.
+//
+// The implementation keeps one Redis counter per bucket so a fresh
+// bucket created during a write naturally expires after twice the
+// window length (long enough for late reads and the §11.2
+// Postgres-checkpoint reconciliation).
+func (c *Counter) SlidingAdd(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time, tokens int64) (int64, error) {
+	if tokens < 0 {
+		return 0, fmt.Errorf("quotastore: tokens must be non-negative, got %d", tokens)
+	}
+	if window <= 0 {
+		return 0, errors.New("quotastore: sliding window length must be positive")
+	}
+	if resolution <= 0 {
+		resolution = DefaultBucketResolution
+	}
+	if window%resolution != 0 {
+		return 0, fmt.Errorf("quotastore: sliding window %s is not a multiple of resolution %s", window, resolution)
+	}
+	key := slidingBucketKey(tenantID, userID, resolution, at)
+	if _, err := addScript.Run(ctx, c.client, []string{key},
+		tokens, int64((2 * window).Seconds())).Int64(); err != nil {
+		return 0, err
+	}
+	return c.SlidingUsage(ctx, tenantID, userID, window, resolution, at)
+}
+
+// SlidingUsage returns the recorded token total over the rolling
+// window of length window ending at at, summed in resolution-sized
+// buckets. A bucket with no recorded usage reads as 0.
+func (c *Counter) SlidingUsage(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time) (int64, error) {
+	if window <= 0 {
+		return 0, errors.New("quotastore: sliding window length must be positive")
+	}
+	if resolution <= 0 {
+		resolution = DefaultBucketResolution
+	}
+	if window%resolution != 0 {
+		return 0, fmt.Errorf("quotastore: sliding window %s is not a multiple of resolution %s", window, resolution)
+	}
+	bucketCount := int(window / resolution)
+	keys := make([]string, bucketCount)
+	for i := 0; i < bucketCount; i++ {
+		t := at.Add(-time.Duration(i) * resolution)
+		keys[i] = slidingBucketKey(tenantID, userID, resolution, t)
+	}
+	values, err := c.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, v := range values {
+		if v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		var n int64
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
+			total += n
+		}
+	}
+	return total, nil
+}
+
+// slidingBucketKey returns the §12.4 Redis key for the bucket of
+// resolution that contains at. The label is the bucket start
+// truncated to resolution so two writes inside the same bucket
+// land on the same key.
+func slidingBucketKey(tenantID, userID string, resolution time.Duration, at time.Time) string {
+	bucket := at.UTC().Truncate(resolution).Unix()
+	return fmt.Sprintf("t:%s:quota:tokens:%s:sliding-%d-%d",
+		tenantID, userID, int64(resolution.Seconds()), bucket)
+}

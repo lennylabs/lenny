@@ -72,9 +72,9 @@ Property-based suites using `pgregory.net/rapid` exist at
 The tier carries 19 subdirectories. The following are scaffold groups
 where some or every test in the group still skips:
 
-- `tests/tier2_component/stores/scaffolds_test.go` (4 contracts: QuotaStore
-  sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
-  legal-hold, CRDPodRegistry).
+- `tests/tier2_component/stores/scaffolds_test.go` (3 contracts:
+  TokenStore encrypted Postgres, ArtifactStore SSE-KMS and legal-hold,
+  CRDPodRegistry).
 - `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5 tests:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).
