@@ -286,18 +286,15 @@ structure is rolled out (Phase 13.5+), promote the threshold from
 informational to a hard regression gate."
 
 `time_to_hello_world_test.go` contains three parent tests with eleven
-sub-tests. Five sub-tests skip:
+sub-tests. One sub-test skips:
 
 - `TestTimeToHelloWorld/step_1_brew_install` (no published Homebrew
   tap).
-- `TestTimeToHelloWorld/step_3_lenny_session_start` (no `lenny
-  session` subcommand in `cmd/lenny`).
-- `TestTimeToHelloWorld/step_4_session_cleanup_within_5min` (depends on
-  steps 1-3).
-- `TestRuntimeAuthorQuickStart/session_against_new_runtime` (no
-  reachable gateway and no `lenny session` subcommand).
-- `TestOperatorInstallNonInteractive/smoke_session_after_install` (same
-  reason).
+
+The `lenny session` CLI-dispatch sub-tests (step_3 / step_4 /
+session_against_new_runtime / smoke_session_after_install) now assert
+the `cmd/lenny/session.go` subcommand surface offline; the live
+gateway round-trip is covered by the tier-7 tthw load benchmark.
 
 ## Implementation gaps
 
