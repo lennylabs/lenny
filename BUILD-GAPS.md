@@ -491,15 +491,15 @@ identified.
 
 ## Infrastructure gaps
 
-- **`deploy/` does not exist.** TESTING.md §12.6 and the tier-6
-  scaffold messages reference `deploy/terraform/cloud/<provider>/`.
-  No such directory tree is present.
+The cloud-provider absences (`deploy/terraform/cloud/<provider>/`,
+the cloud bring-up scripts, the runtime image with a shell, the
+egress-capture sidecar, the clock-injection harness, HA store
+topologies, the published Homebrew tap) are recorded under the
+Blocked section because they are external infrastructure the
+repository does not yet provision.
 
-- **Cloud bring-up scripts are placeholders.**
-  `scripts/cloud/gke/up.sh` is 41 lines and prints a "Phase 13+
-  deliverable" notice. `scripts/cloud/aks/up.sh` and
-  `scripts/cloud/eks/up.sh` are 11-line shells with no body. All three
-  exit 0 without doing work.
+The two in-repo placeholders that can become real once their
+upstream dependencies land:
 
 - **`tests/testinfra/chaos/chaos.go` has a chaos-mesh placeholder.**
   The toxiproxy code path is fully implemented.
@@ -517,98 +517,16 @@ identified.
 - **The compose profile lacks PgBouncer and Redis Sentinel.**
   `compose/default.yml` provisions neither. Blocks the
   `TestRLSPgBouncerGuard` tier-2 RLS scaffold and the
-  `TestPgBouncerSaturation` tier-8 chaos scaffold, and prevents Sentinel-
-  failover tests.
-
-- **The e2e cluster runs single-replica datastores by design.**
-  `lenny-postgres`, `lenny-redis`, and `lenny-minio` Deployments have
-  one replica each. HA Postgres, Redis Sentinel, multi-zone MinIO, and
-  cross-zone topologies all need separate deployments.
-
-- **The default runtime image has no shell.** `cmd/runtimes/echo` is
-  distroless. Credential leakage probes that need
-  `kubectl exec ... cat /proc/<pid>/environ` cannot run. Tier-9
-  credential leakage and tier-8 deny-list propagation depend on a
-  runtime image with a shell and a runtime that declares credentials.
-
-- **No egress-capture sidecar is deployed.** Agent-pod egress probes
-  (tier-9 `TestNetworkPolicyAgentEgress` and the credential network-
-  egress test) cannot inspect outbound traffic without a capture layer.
-
-- **No clock-injection harness is deployed.** Tier-8
-  `TestGatewayClockDrift`, `TestCertificateExpiryAdvance`, and the
-  `TestT3T4SLABreach` scenario all need it.
-
-- **No published Homebrew tap.** `lennylabs/tap` does not exist. The
-  formula-install step of the quick-start documentation cannot be
-  validated.
+  `TestPgBouncerSaturation` tier-8 chaos scaffold.
 
 ## Cross-cutting findings
 
-- **Runbook coverage is silent in CI.**
-  `tests/tier11_docs/runbooks_test.go` reports every structural
-  violation with `t.Logf` rather than `t.Errorf`, and
-  `tests/testinfra/chaos/runbook_map_test.go` at line 82 does the same
-  for runbook-map drift. Failures and drift are visible only in test
-  logs.
-
-- **`docs/runbooks/` and `runbook-map.yaml` are out of sync.**
-  `docs/runbooks/` carries 60 files (59 runbooks plus `index.md`).
-  `tests/tier8_chaos/runbook-map.yaml` carries 48 entries. 44
-  runbooks in `docs/runbooks/` have no mapping. The unmapped slugs
-  are:
-
-  ```
-  admission-plane-feature-flag-downgrade
-  audit-grant-drift
-  audit-pipeline-degraded
-  billing-stream-backlog
-  ca-rotation
-  checkpoint-stale
-  circuit-breaker-open
-  coordinator-handoff-slow
-  crd-upgrade
-  credential-revocation
-  cycle-detection-mode-unsafe
-  data-residency-violation
-  delegation-budget-recovery
-  elicitation-backlog
-  elicitation-content-integrity-weakened
-  elicitation-content-tamper-detected
-  ephemeral-container-cred-guard-unavailable
-  erasure-job-failed
-  etcd-key-rotation
-  etcd-operations
-  gateway-capacity
-  gateway-rate-limit-storm
-  gateway-subsystem-extraction
-  jwt-key-rotation
-  legal-hold-quota-pressure
-  llm-egress-anomaly
-  llm-translation-degraded
-  minio-failure
-  pool-bootstrap-mode
-  redis-failure
-  schema-migration-failure
-  sdk-connect-timeout
-  session-eviction-loss
-  slo-session-availability
-  slo-session-creation
-  slo-startup-latency
-  slo-ttft
-  storage-quota-high
-  stuck-finalizer
-  tenant-deletion-overdue
-  tier-promotion
-  token-store-unavailable
-  total-outage
-  warm-pool-exhaustion
-  workspace-seal-stuck
-  ```
-
-  TESTING.md §1834 claims 56 runbooks, against the on-disk count of 59
-  excluding `index.md`. The specification and the on-disk content
-  disagree.
+The runbook-related findings (`t.Logf` silence and 44 unmapped
+runbooks) are recorded under the Blocked section because reconciling
+them needs a §17.7 design decision plus multi-hour reconciliation of
+the 59 on-disk runbook files. TESTING.md §1834 claims 56 runbooks
+against the on-disk count of 59 (excluding `index.md`); the spec
+and the directory disagree and need separate alignment.
 
 ## Blocked
 
