@@ -338,9 +338,15 @@ identified.
   `pkg/podsession.Registry` is an in-process map. There is no `WatchPods`
   event-latency surface. Blocks `TestPodRegistryContract`.
 
-- **EvictionStateStore is absent.** No eviction-state migration, no
-  Postgres store, and no MinIO context-key index. Blocks
-  `TestEvictionStateStoreContract`.
+- **EvictionStateStore: Postgres backend follow-on.** Migration 0045
+  creates the `session_eviction_state` table with the tenant-scoped
+  RLS policy; `pkg/gateway/evictionstatestore` exposes the Store
+  interface, MemoryStore, and the §12.8 erasure contract
+  (DeleteByUser, DeleteByTenant). The Postgres-backed pgstore (and
+  the MinIO context-key indexer that walks rows with `is_minio_key =
+  true`) is the follow-on commit that flips
+  `TestEvictionStateStoreContract` to a live test against the
+  migration.
 
 - **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
   `miniostore/` and `replication/` only. SSE-KMS configuration, soft-
