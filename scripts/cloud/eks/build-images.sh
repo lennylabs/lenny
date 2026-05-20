@@ -57,6 +57,8 @@ aws ecr get-login-password --region "${REGION}" \
   | docker login --username AWS --password-stdin "${ECR_REGISTRY}" >&2
 
 cd "${REPO_ROOT}"
+built=0
+skipped=0
 for entry in "${IMAGES[@]}"; do
   name="${entry%:*}"
   binary="${entry#*:}"
@@ -73,6 +75,17 @@ for entry in "${IMAGES[@]}"; do
       --image-scanning-configuration scanOnPush=true >/dev/null
   fi
 
+  # Skip build + push when the tag already exists in ECR. The caller
+  # uses a content-addressable tag (source-hash.sh) so an existing
+  # tag means the source has not changed since the last build.
+  if aws ecr describe-images --region "${REGION}" \
+      --repository-name "${name}" \
+      --image-ids "imageTag=${TAG}" >/dev/null 2>&1; then
+    echo "build-images.sh: ${name}:${TAG} already in ECR; skipping" >&2
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   echo "build-images.sh: building ${name} (BINARY=${binary})" >&2
   # Build with buildx so cross-arch works the same way the release
   # workflow does. For a single platform a local docker build would
@@ -85,7 +98,8 @@ for entry in "${IMAGES[@]}"; do
     --push \
     --file "${REPO_ROOT}/Dockerfile" \
     "${REPO_ROOT}"
+  built=$((built + 1))
 done
 
-echo "build-images.sh: pushed ${#IMAGES[@]} images at tag ${TAG}" >&2
+echo "build-images.sh: built ${built}, skipped ${skipped} (tag ${TAG})" >&2
 echo "ECR_REGISTRY=${ECR_REGISTRY}"

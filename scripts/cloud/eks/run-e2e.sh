@@ -46,8 +46,15 @@ set -euo pipefail
 SHAPE="${SHAPE:-cloud-small}"
 REGION="${AWS_REGION:-us-west-2}"
 RELEASE="${LENNY_RELEASE:-lenny-e2e}"
-TAG="${IMAGE_TAG:-0.1.0}"
-KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
+# IMAGE_TAG defaults to a content-addressable source hash so a
+# repeat run skips the docker build + ECR push when nothing
+# changed. Set IMAGE_TAG explicitly to override (e.g. to a
+# release tag like 0.1.0 for a known-good build).
+TAG="${IMAGE_TAG:-$(${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/scripts/cloud/eks/source-hash.sh)}"
+# KEEP_CLUSTER=1 leaves the cluster running on exit so the operator
+# can iterate. Default 1 in this script. Set KEEP_CLUSTER=0
+# explicitly when the run should tear the cluster down.
+KEEP_CLUSTER="${KEEP_CLUSTER:-1}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT_DIR="${REPO_ROOT}/scripts/cloud/eks"
@@ -81,20 +88,27 @@ fi
 cleanup() {
   local rc=$?
   if [[ "${KEEP_CLUSTER}" == "1" ]]; then
-    echo "run-e2e.sh: KEEP_CLUSTER=1, leaving the cluster running" >&2
+    echo "run-e2e.sh: KEEP_CLUSTER=1 (default), leaving cluster running. Run scripts/cloud/eks/down.sh to destroy." >&2
     exit "${rc}"
   fi
-  echo "run-e2e.sh: tearing down the cluster (exit code ${rc})" >&2
+  echo "run-e2e.sh: KEEP_CLUSTER=0, tearing down the cluster (exit code ${rc})" >&2
   AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
     "${SCRIPT_DIR}/down.sh" || true
   exit "${rc}"
 }
 trap cleanup EXIT
 
-# 1. terraform apply (VPC + EKS + S3 + KMS + IRSA).
+# 1. terraform apply (VPC + EKS + S3 + KMS + IRSA). Skipped when the
+#    cluster already exists; we just refresh kubeconfig so kubectl
+#    keeps working across iterations.
 echo "==[1/6] terraform apply (shape=${SHAPE})==" >&2
-AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
-  "${SCRIPT_DIR}/up.sh" "${SHAPE}"
+if aws eks describe-cluster --region "${REGION}" --name "${RELEASE}-eks" >/dev/null 2>&1; then
+  echo "run-e2e.sh: cluster ${RELEASE}-eks already exists; skipping terraform apply, refreshing kubeconfig" >&2
+  aws eks --region "${REGION}" update-kubeconfig --name "${RELEASE}-eks"
+else
+  AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
+    "${SCRIPT_DIR}/up.sh" "${SHAPE}"
+fi
 
 # 2. Build + push Lenny images to ECR.
 echo "==[2/6] build + push images (tag=${TAG})==" >&2
@@ -277,6 +291,33 @@ helm upgrade --install "${RELEASE}" "${REPO_ROOT}/charts/lenny" \
   --set gateway.noEnvironmentPolicy=allow-all \
   --wait \
   --timeout 10m
+
+# 5b. Force-restart every chart-managed workload so the run starts
+#     against a clean process state. helm upgrade only restarts pods
+#     when something in the manifest changed; an idempotent re-run
+#     with the same image tag leaves stale process state in place.
+#     The explicit rollout restart bumps the pod-template annotation
+#     and triggers a rolling restart across all chart-managed
+#     Deployments, StatefulSets, and DaemonSets.
+echo "==[5b/6] rollout restart all chart-managed workloads==" >&2
+for kind in deployment statefulset daemonset; do
+  refs="$(kubectl -n lenny-system get "${kind}" \
+    -l "app.kubernetes.io/instance=${RELEASE}" -o name 2>/dev/null || true)"
+  if [[ -n "${refs}" ]]; then
+    # shellcheck disable=SC2086
+    kubectl -n lenny-system rollout restart ${refs}
+  fi
+done
+# Wait for every Deployment + DaemonSet to converge after the
+# restart so step 6's test invocations see a fresh process state.
+for kind in deployment daemonset; do
+  refs="$(kubectl -n lenny-system get "${kind}" \
+    -l "app.kubernetes.io/instance=${RELEASE}" -o name 2>/dev/null || true)"
+  if [[ -n "${refs}" ]]; then
+    # shellcheck disable=SC2086
+    kubectl -n lenny-system rollout status ${refs} --timeout=300s
+  fi
+done
 
 # 6. Run the tier-6 suite.
 echo "==[6/6] lenny-test --tier e2e_cloud==" >&2
