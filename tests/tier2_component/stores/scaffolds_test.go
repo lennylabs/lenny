@@ -130,20 +130,9 @@ func TestPodRegistryContract(t *testing.T) {
 	t.Skip("blocked: §12.2.1 PodRegistry — no CRDPodRegistry over the Kubernetes API exists; pkg/podsession.Registry is an in-process map and there is no WatchPods event-latency surface to assert against")
 }
 
-// TestStoreRouterContract — Postgres + Redis store router. Coverage:
-// session-shard extraction, tenant-shard routing, billing/audit-shard
-// routing (R-03), scatter-gather concurrency and timeout,
-// partial-result semantics.
-//
-// spec: 12.2.1
-// diagnosis: no StoreRouter implementation exists. There is no
-// pkg/storerouter package and no equivalent surface elsewhere; the
-// §12.3 R-03 billing/audit shard routing and the scatter-gather
-// concurrency control the test would exercise have no callable code
-// path.
-func TestStoreRouterContract(t *testing.T) {
-	t.Skip("blocked: §12.2.1 StoreRouter — pkg/storerouter does not exist and no equivalent surface provides session-shard extraction, R-03 billing/audit routing, or scatter-gather concurrency control")
-}
+// TestStoreRouterContract is implemented in storerouter_test.go,
+// which exercises the v1 pkg/storerouter.SingleShardRouter against
+// a real Postgres + Redis container.
 
 // TestEventBusContract is implemented in eventstore_test.go, which
 // exercises the §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a

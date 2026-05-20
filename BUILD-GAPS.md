@@ -72,9 +72,9 @@ Property-based suites using `pgregory.net/rapid` exist at
 The tier carries 19 subdirectories. The following are pure-scaffold groups
 where every test in the group skips:
 
-- `tests/tier2_component/stores/scaffolds_test.go` (6 contracts: QuotaStore
+- `tests/tier2_component/stores/scaffolds_test.go` (5 contracts: QuotaStore
   sliding window, TokenStore encrypted Postgres, ArtifactStore SSE-KMS and
-  legal-hold, CRDPodRegistry, StoreRouter, mandatory `DeleteByUser` /
+  legal-hold, CRDPodRegistry, mandatory `DeleteByUser` /
   `DeleteByTenant`).
 - `tests/tier2_component/translators/scaffolds_test.go` (2 tests:
   `openai_direct` and `openai_responses` native translators).
@@ -87,8 +87,8 @@ where every test in the group skips:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).
 
-The store directory carries 29 live store-contract suites alongside the
-six scaffolds.
+The store directory carries 30 live store-contract suites alongside the
+five scaffolds.
 
 ### Tier 3 (Contract)
 
@@ -326,12 +326,6 @@ filesystem or grep check. Tests that reference these absences are
 identified.
 
 ### Storage and persistence
-
-- **`pkg/storerouter` does not exist.** The TESTING.md §12.2.1 store
-  router (session-shard extraction, tenant-shard routing, R-03
-  billing/audit routing, scatter-gather control) has no implementation.
-  Blocks `TestStoreRouterContract` in
-  `tests/tier2_component/stores/scaffolds_test.go:153`.
 
 - **CRDPodRegistry over the Kubernetes API is absent.**
   `pkg/podsession.Registry` is an in-process map. There is no `WatchPods`

@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: MIT
+
+// Package storerouter is the §12.6 StoreRouter interface and its v1
+// single-shard implementation. The router abstracts Postgres shard
+// routing and per-concern Redis instance selection so call sites
+// never hard-code a specific pool: a future multi-shard topology
+// rotates only the StoreRouter implementation, not every billing,
+// audit, or session-scoped read path.
+//
+// In v1 (`SingleShardRouter`) every accessor returns the same
+// Postgres pool and the same Redis client. The §12.3 R-03 rule still
+// applies — billing and audit writes MUST go through the router so a
+// later split can land without sweeping the codebase.
+//
+// The session-routing prefix lives in the first 32 bits of the §12.6
+// UUIDv8 session ID. SingleShardRouter ignores the prefix; a future
+// router consistent-hashes it across the shard fleet. All sessions
+// in a delegation tree share the same prefix and therefore co-locate
+// on the same shard.
+package storerouter
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+)
+
+// TenantID is the platform-issued tenant identifier.
+type TenantID string
+
+// SessionID is the §12.6 UUIDv8 session identifier.
+type SessionID string
+
+// ShardID names one Postgres shard returned by AllSessionShards or
+// AllAuditShards. v1 routers expose a single shard identified as
+// "default".
+type ShardID string
+
+// RedisConcern selects which Redis instance StoreRouter returns. In
+// v1 every concern maps to the same Redis instance; the names are
+// load-bearing only when an operator splits concerns onto separate
+// instances at tier 3+.
+type RedisConcern string
+
+const (
+	RedisConcernCoordination RedisConcern = "coordination" // session leases, generation counters
+	RedisConcernQuota        RedisConcern = "quota"        // token/rate counters, sliding windows, billing stream
+	RedisConcernCachePubSub  RedisConcern = "cache_pubsub" // routing cache, EventBus channels, semantic cache
+	RedisConcernDelegation   RedisConcern = "delegation"   // budget keys ({root_session_id}:dlg:*)
+	RedisConcernSessionData  RedisConcern = "session_data" // DLQ, durable inbox
+)
+
+// StoreType identifies a Postgres store category for ShardCount.
+type StoreType string
+
+const (
+	StoreTypeSession StoreType = "session" // sessions, session_messages, session_tree_archive
+	StoreTypeTenant  StoreType = "tenant"  // tenants, environments, runtime_definitions, credential_pools, delegation_policies
+	StoreTypeBilling StoreType = "billing" // billing_events (R-03)
+	StoreTypeAudit   StoreType = "audit"   // audit_log (R-03)
+)
+
+// ShardHandle is one Postgres shard plus its connection pool. The
+// scatter-gather scan methods (AllSessionShards, AllAuditShards)
+// return one per shard so callers can iterate without holding a
+// router-level lock.
+type ShardHandle struct {
+	ID   ShardID
+	Pool *pgxpool.Pool
+}
+
+// StoreRouter is the §12.6 interface that abstracts Postgres shard
+// routing and per-concern Redis instance selection.
+type StoreRouter interface {
+	// TenantShard returns the pool for tenant-scoped metadata
+	// tables. Always routes by tenant_id.
+	TenantShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
+
+	// SessionShard returns the pool for session-scoped tables. The
+	// session routing prefix is extracted from the session ID; in
+	// v1 the prefix is ignored and the sole pool is returned.
+	SessionShard(ctx context.Context, sessionID SessionID) (*pgxpool.Pool, error)
+
+	// BillingShard returns the pool for billing event writes (R-03).
+	BillingShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
+
+	// AuditShard returns the pool for audit log writes (R-03).
+	AuditShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
+
+	// RedisShard returns the Redis client for a given concern.
+	RedisShard(ctx context.Context, tenantID TenantID, concern RedisConcern) (redis.UniversalClient, error)
+
+	// PlatformRedis returns the Redis client for platform-scoped
+	// keys (pod slot counters, circuit breakers). Not tenant-routed.
+	PlatformRedis(ctx context.Context) (redis.UniversalClient, error)
+
+	// AllSessionShards returns every session shard for scatter-gather
+	// reads / GDPR erasure / tenant deletion.
+	AllSessionShards(ctx context.Context) ([]ShardHandle, error)
+
+	// PlatformPostgres returns the pool for platform-global tables
+	// not owned by a tenant or session (ops-scoped tables).
+	PlatformPostgres(ctx context.Context) (*pgxpool.Pool, error)
+
+	// AllAuditShards returns every audit shard for scatter-gather
+	// cross-tenant audit queries (§25.9).
+	AllAuditShards(ctx context.Context) ([]ShardHandle, error)
+
+	// ShardCount returns the number of shards for a given store type.
+	ShardCount(storeType StoreType) int
+}
+
+// Errors returned by the router.
+var (
+	// ErrInvalidSessionID reports that a session id is empty or does
+	// not parse as a routable identifier.
+	ErrInvalidSessionID = errors.New("storerouter: session id is required")
+	// ErrInvalidTenantID reports that a tenant id is empty.
+	ErrInvalidTenantID = errors.New("storerouter: tenant id is required")
+	// ErrUnknownRedisConcern reports that the supplied concern is
+	// not one of the documented RedisConcern* constants.
+	ErrUnknownRedisConcern = errors.New("storerouter: unknown redis concern")
+	// ErrUnknownStoreType reports that the supplied store type is
+	// not one of the documented StoreType* constants.
+	ErrUnknownStoreType = errors.New("storerouter: unknown store type")
+)
+
+// SingleShardRouter is the v1 implementation: every Postgres
+// accessor returns the same pool, every RedisConcern resolves to the
+// same Redis client, and AllSessionShards / AllAuditShards return one
+// ShardHandle each.
+//
+// The router enforces the §12.3 R-03 discipline at the type level: a
+// caller that holds the SingleShardRouter has no way to pull the raw
+// pool directly — the BillingShard and AuditShard methods are the
+// only billing/audit accessors.
+type SingleShardRouter struct {
+	pg         *pgxpool.Pool
+	rdb        redis.UniversalClient
+	defaultID  ShardID
+	platformID ShardID
+}
+
+// Config configures NewSingleShardRouter.
+type Config struct {
+	// Postgres is the single pool every accessor returns. Required.
+	Postgres *pgxpool.Pool
+	// Redis is the single Redis client every concern resolves to.
+	// Required.
+	Redis redis.UniversalClient
+	// DefaultShardID is the ShardID assigned to the single shard
+	// returned by AllSessionShards and AllAuditShards. A zero value
+	// defaults to "default".
+	DefaultShardID ShardID
+}
+
+// NewSingleShardRouter constructs a SingleShardRouter against the
+// supplied pool and Redis client.
+func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
+	if cfg.Postgres == nil {
+		return nil, fmt.Errorf("storerouter: Postgres pool is required")
+	}
+	if cfg.Redis == nil {
+		return nil, fmt.Errorf("storerouter: Redis client is required")
+	}
+	id := cfg.DefaultShardID
+	if id == "" {
+		id = "default"
+	}
+	return &SingleShardRouter{
+		pg:         cfg.Postgres,
+		rdb:        cfg.Redis,
+		defaultID:  id,
+		platformID: id,
+	}, nil
+}
+
+var _ StoreRouter = (*SingleShardRouter)(nil)
+
+// TenantShard returns the sole Postgres pool. An empty tenant id is
+// rejected; callers MUST resolve a tenant before reaching the
+// router.
+func (r *SingleShardRouter) TenantShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidTenantID
+	}
+	return r.pg, nil
+}
+
+// SessionShard returns the sole Postgres pool. v1 ignores the
+// routing prefix; the SessionID is validated for non-emptiness so
+// the contract surface is consistent with a future multi-shard
+// implementation that extracts the prefix.
+func (r *SingleShardRouter) SessionShard(_ context.Context, sessionID SessionID) (*pgxpool.Pool, error) {
+	if sessionID == "" {
+		return nil, ErrInvalidSessionID
+	}
+	return r.pg, nil
+}
+
+// BillingShard returns the sole Postgres pool, routed by tenant_id.
+func (r *SingleShardRouter) BillingShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidTenantID
+	}
+	return r.pg, nil
+}
+
+// AuditShard returns the sole Postgres pool, routed by tenant_id.
+func (r *SingleShardRouter) AuditShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidTenantID
+	}
+	return r.pg, nil
+}
+
+// RedisShard returns the sole Redis client. The concern is
+// validated against the documented set so an unknown concern at the
+// call site fails fast.
+func (r *SingleShardRouter) RedisShard(_ context.Context, tenantID TenantID, concern RedisConcern) (redis.UniversalClient, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidTenantID
+	}
+	if !validConcern(concern) {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownRedisConcern, concern)
+	}
+	return r.rdb, nil
+}
+
+// PlatformRedis returns the sole Redis client.
+func (r *SingleShardRouter) PlatformRedis(_ context.Context) (redis.UniversalClient, error) {
+	return r.rdb, nil
+}
+
+// AllSessionShards returns one ShardHandle wrapping the sole
+// Postgres pool.
+func (r *SingleShardRouter) AllSessionShards(_ context.Context) ([]ShardHandle, error) {
+	return []ShardHandle{{ID: r.defaultID, Pool: r.pg}}, nil
+}
+
+// PlatformPostgres returns the sole Postgres pool. v1 routes
+// platform-global tables to the same database; a multi-shard
+// deployment can route them to a dedicated instance.
+func (r *SingleShardRouter) PlatformPostgres(_ context.Context) (*pgxpool.Pool, error) {
+	return r.pg, nil
+}
+
+// AllAuditShards returns one ShardHandle wrapping the sole Postgres
+// pool.
+func (r *SingleShardRouter) AllAuditShards(_ context.Context) ([]ShardHandle, error) {
+	return []ShardHandle{{ID: r.defaultID, Pool: r.pg}}, nil
+}
+
+// ShardCount returns 1 for every documented StoreType. An unknown
+// store type returns 0 — callers MUST handle the zero case to avoid
+// dividing by it.
+func (r *SingleShardRouter) ShardCount(storeType StoreType) int {
+	switch storeType {
+	case StoreTypeSession, StoreTypeTenant, StoreTypeBilling, StoreTypeAudit:
+		return 1
+	}
+	return 0
+}
+
+func validConcern(c RedisConcern) bool {
+	switch c {
+	case RedisConcernCoordination, RedisConcernQuota, RedisConcernCachePubSub,
+		RedisConcernDelegation, RedisConcernSessionData:
+		return true
+	}
+	return false
+}

@@ -1452,15 +1452,18 @@
       "tests": [
         "pkg/gateway/eventbus/cloudevents_test.go",
         "pkg/gateway/eventbus/eventbus_test.go",
+        "pkg/storerouter/storerouter_test.go",
         "tests/tier2_component/stores/eventstore_test.go",
+        "tests/tier2_component/stores/storerouter_test.go",
         "tests/tier3_contract/cloudevents/cloudevents_test.go"
       ],
       "packages": [
         "pkg/store",
+        "pkg/storerouter",
         "pkg/gateway/eventbus"
       ],
       "blocked_until_phase": "2",
-      "notes": "The §12.6 EventBus interface (§12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format."
+      "notes": "The §12.6 EventBus interface (§12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format. pkg/storerouter is the §12.6 StoreRouter interface and its v1 SingleShardRouter; v1 routes every Postgres accessor to a single pool and every RedisConcern to a single Redis client, but maintains the R-03 billing/audit routing discipline so a future split lands without sweeping call sites."
     },
     "12.7": {
       "title": "Extensibility",
