@@ -1917,12 +1917,14 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterSequentialMessagesHandled",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
-        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal"
+        "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
+        "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix"
       ],
       "packages": [
         "cmd/runtimes/echo",
         "cmd/runtimes/streaming-echo",
-        "cmd/lenny-compliance"
+        "cmd/lenny-compliance",
+        "pkg/gateway/outputpartfidelity"
       ],
       "schemas": [
         "schemas/lenny-adapter.proto",
@@ -1931,7 +1933,7 @@
         "schemas/outputpart.schema.json"
       ],
       "blocked_until_phase": "1",
-      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the lifecycle-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
+      "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the lifecycle-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). pkg/gateway/outputpartfidelity encodes the §15.4.1 Translation Fidelity Matrix and ships per-OutputPart translators that the tier-10 TestFidelityMatrix exercises. Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
     },
     "15.4.3": {
       "title": "Runtime Integration Levels \u2014 Full",

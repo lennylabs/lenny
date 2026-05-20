@@ -283,15 +283,14 @@ replaying external findings; `tests/tier9_security/reviews/` carries
 ### Tier 10 (Conformance)
 
 `tests/tier10_conformance/scaffolds_test.go` carries seven functions.
-Four are live: `TestBasicAdapterProtocol`, `TestStandardLevel`,
-`TestFullLevel`, and `TestBundledRuntimesEveryPR`. Three skip:
+Five are live: `TestBasicAdapterProtocol`, `TestStandardLevel`,
+`TestFullLevel`, `TestBundledRuntimesEveryPR`, and
+`TestFidelityMatrix`. Two skip:
 
 - `TestReferenceCatalogNightly` (the §26 reference-runtime OCI images
   are not published).
 - `TestThirdPartyRegistration` (`cmd/lenny-compliance` has no
   `RegisterAdapterUnderTest` API).
-- `TestFidelityMatrix` (the per-OutputPart fidelity table and the
-  OpenAI/Anthropic translators are not built).
 
 ### Tier 11 (Documentation)
 
@@ -394,14 +393,6 @@ identified.
   `TestElicitationTamperDetectOnlyMode`, and
   `TestElicitationPlatformFloor`.
 
-### CLI and reference runtimes
-
-- **Per-OutputPart fidelity table is absent.** TESTING.md §12.10
-  specifies a table-driven test that asserts which fields are
-  preserved or dropped per `(model, role, type)` tuple. The table and
-  the OpenAI/Anthropic Completions/Responses translators it would
-  validate are not built. Blocks tier-10 `TestFidelityMatrix`.
-
 ## Infrastructure gaps
 
 The cloud-provider absences (`deploy/terraform/cloud/<provider>/`,
@@ -503,10 +494,8 @@ unblocks disproportionately many tests.
    carrying runtime image with a shell. Unblocks one tier-2 controller
    test, one tier-4 integration test, four tier-8 chaos tests, and
    three tier-9 security tests.
-2. Land the `openai_direct` and `openai_responses` native translators
-   and the per-OutputPart fidelity table. Unblocks two tier-2
-   translator tests, two tier-3 fidelity tests, and one tier-10
-   fidelity test.
+2. Land the `openai_direct` and `openai_responses` native translators.
+   Unblocks two tier-2 translator tests and two tier-3 fidelity tests.
 3. Ship the elicitation-emitting runtime variant and the tamper-
    detect, tamper-enforce, and platform-floor resolver wiring.
    Unblocks one tier-3 contract test, one tier-8 chaos test, and
