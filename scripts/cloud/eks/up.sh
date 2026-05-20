@@ -70,14 +70,27 @@ cat > "${TFVARS_FILE}" <<JSON
 }
 JSON
 
+# Pick terraform if installed; otherwise fall back to opentofu's
+# `tofu` binary (drop-in replacement for terraform).
+if command -v terraform >/dev/null 2>&1; then
+  TF="terraform"
+elif command -v tofu >/dev/null 2>&1; then
+  TF="tofu"
+else
+  echo "eks/up.sh: neither terraform nor tofu on PATH; install one of:" >&2
+  echo "  brew install hashicorp/tap/terraform" >&2
+  echo "  brew install opentofu" >&2
+  exit 3
+fi
+
 cd "${TF_DIR}"
-terraform init -input=false
-terraform apply -input=false -auto-approve -var-file="${TFVARS_FILE}"
+${TF} init -input=false
+${TF} apply -input=false -auto-approve -var-file="${TFVARS_FILE}"
 
 # Sync kubeconfig so kubectl reaches the cluster.
 aws eks --region "${REGION}" update-kubeconfig --name "${RELEASE}-eks"
 
 echo "eks/up.sh: cluster ${RELEASE}-eks ready in region ${REGION}" >&2
-echo "  artifact_bucket=$(terraform output -raw artifact_bucket)" >&2
-echo "  kms_key_arn=$(terraform output -raw kms_key_arn)" >&2
-echo "  cluster_endpoint=$(terraform output -raw cluster_endpoint)" >&2
+echo "  artifact_bucket=$(${TF} output -raw artifact_bucket)" >&2
+echo "  kms_key_arn=$(${TF} output -raw kms_key_arn)" >&2
+echo "  cluster_endpoint=$(${TF} output -raw cluster_endpoint)" >&2

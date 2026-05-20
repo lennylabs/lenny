@@ -20,9 +20,18 @@ if [[ ! -f "${TFVARS_FILE}" ]]; then
   exit 0
 fi
 
+if command -v terraform >/dev/null 2>&1; then
+  TF="terraform"
+elif command -v tofu >/dev/null 2>&1; then
+  TF="tofu"
+else
+  echo "eks/down.sh: neither terraform nor tofu on PATH" >&2
+  exit 3
+fi
+
 cd "${TF_DIR}"
-terraform init -input=false
-terraform destroy -input=false -auto-approve -var-file="${TFVARS_FILE}"
+${TF} init -input=false
+${TF} destroy -input=false -auto-approve -var-file="${TFVARS_FILE}"
 
 rm -f "${TFVARS_FILE}"
 
