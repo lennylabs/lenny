@@ -344,19 +344,6 @@ identified.
   MinIO-outage Postgres-minimal-state fallback are not built. Blocks
   `TestArtifactStoreContract` and the tier-4 checkpoint flow.
 
-### MCP and REST parity
-
-- **Webhook subscription CRUD: Postgres backend follow-on.** The
-  CRUD REST endpoints (POST / GET / GET-by-id / DELETE on
-  `/v1/admin/event-subscriptions`) are now wired in `pkg/ops/opsserver`
-  against `pkg/ops/eventsubscription`. The v1 in-memory `MemoryStore`
-  backs the developer-mode deployment and the unit tests; a
-  Postgres-backed store (with the `ops_event_subscriptions` migration
-  and an adapter to `pkg/ops/opsservice/webhookloop.SubscriptionSource`)
-  is the follow-on that converts the
-  `TestRESTMCPWebhookSubscription` and `TestWebhookDeliveryLoad`
-  scaffolds to live tests against a durable backend.
-
 ### Delegation and elicitation
 
 - **Tier-8 delegation chaos tests need fault-injection wiring.** The

@@ -2771,12 +2771,21 @@
     "25.5": {
       "title": "Operational Event Stream",
       "spec_file": "spec/25_agent-operability.md",
-      "tests": [],
+      "tests": [
+        "tests/tier2_component/stores/eventsubscriptionstore_test.go::TestEventSubscriptionStoreContract",
+        "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
+        "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
+        "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
+        "pkg/ops/opsserver/event_subscriptions_test.go"
+      ],
       "packages": [
-        "pkg/operability/events"
+        "pkg/operability/events",
+        "pkg/ops/eventsubscription",
+        "pkg/ops/eventsubscription/pgstore",
+        "pkg/ops/opsservice"
       ],
       "blocked_until_phase": "14",
-      "notes": "\u00a725.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan."
+      "notes": "\u00a725.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md \u00a725 for the test plan. pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the \u00a725.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",

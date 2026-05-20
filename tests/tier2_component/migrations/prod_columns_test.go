@@ -74,6 +74,10 @@ var prodMigrationSchema = []struct {
 	// table is tenant-scoped and carries the same RLS policy every
 	// tenant-scoped table uses (see §12.2.1).
 	{migration: "0045", table: "session_eviction_state", create: true},
+	// 0046 creates the §25.5 webhook subscription registry for the
+	// lenny-ops control plane. Platform-scoped (no RLS, no tenant
+	// column).
+	{migration: "0046", table: "ops_event_subscriptions", create: true},
 }
 
 // spec: 12.2, 18.5
