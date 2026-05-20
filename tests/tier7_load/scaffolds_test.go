@@ -160,21 +160,18 @@ func TestSessionThroughput(t *testing.T) {
 }
 
 // spec: 12.7 (streaming_reconnect_under_load — SSE reconnect latency)
-// diagnosis: the §12.7 streaming_reconnect scenario cannot baseline
-// against the current build. GET /v1/sessions/{id}/events returns 500
-// INTERNAL_ERROR "response writer does not support streaming" through
-// the gateway: the gatewaymetrics status-recorder middleware wraps the
-// ResponseWriter without forwarding http.Flusher, so the SSE handler's
-// flusher assertion fails. Until the gateway's metrics middleware
-// preserves the Flusher interface, the reconnect path has no working
-// surface to load-test.
+// diagnosis: the §12.7 streaming_reconnect smoke run regressed or
+// failed. The scenario drives GET /v1/sessions/{id}/events with
+// Last-Event-ID reconnects; a failure means the SSE proxy errored
+// under load (5xx response, dropped event) or its latency regressed
+// beyond the baseline budget. The previous blocker — the
+// gatewaymetrics statusRecorder dropping http.Flusher — was resolved
+// by adding Flush() to the recorder. Inspect the k6 output for the
+// failing check.
 func TestStreamingReconnectLoad(t *testing.T) {
-	kind.InstallLenny(t)
-	load.SkipUnlessAvailable(t)
-	t.Skip("external dependency: GET /v1/sessions/{id}/events returns 500 " +
-		"\"response writer does not support streaming\" — the gatewaymetrics " +
-		"middleware response-writer wrapper does not forward http.Flusher, so " +
-		"the SSE reconnect path cannot be load-tested until that wrapper is fixed")
+	_, baseURL := prepareGateway(t)
+	res := load.RunScenario(t, "streaming_reconnect", smokeOptions(baseURL, nil))
+	assertScenarioRan(t, "streaming_reconnect", res)
 }
 
 // spec: 12.7 (delegation_fanout — fan-out session-spawn latency)

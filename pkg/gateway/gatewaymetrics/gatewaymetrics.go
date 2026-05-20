@@ -313,6 +313,24 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return s.ResponseWriter.Write(b)
 }
 
+// Flush forwards to the underlying http.Flusher when the embedded
+// ResponseWriter supports streaming. The §15.1 SSE event stream at
+// GET /v1/sessions/{id}/events and the §4.9 LLM-proxy streaming
+// translators rely on http.Flusher to push partial bytes to the
+// client; without this forwarder the metrics middleware hides the
+// Flusher and the SSE handler returns 500
+// ("response writer does not support streaming"). The §16.1
+// request-metrics accounting is unaffected because Write already
+// passes through.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		if !s.wroteHeader {
+			s.wroteHeader = true
+		}
+		f.Flush()
+	}
+}
+
 // statusClass collapses an HTTP status to its §16.1.1 low-cardinality
 // class label (2xx, 3xx, 4xx, 5xx) so the metric does not explode
 // into one series per status code.

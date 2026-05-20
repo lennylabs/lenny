@@ -223,3 +223,39 @@ func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {
 		t.Errorf("/metrics output missing %q\n---\n%s", want, body)
 	}
 }
+
+// spec: §15.1 GET /v1/sessions/{id}/events (SSE event stream)
+// diagnosis: the §16.1 metrics middleware wraps the response writer
+// in statusRecorder. When the wrapper does not forward http.Flusher,
+// the SSE handler at pkg/gateway/sessionserver/events.go:50 fails its
+// http.Flusher type assertion and returns 500 "response writer does
+// not support streaming", breaking every streaming surface that
+// passes through the middleware (SSE events, the §4.9 LLM-proxy
+// streaming translators).
+func TestMiddlewareForwardsFlusher(t *testing.T) {
+	m, _ := gatewaymetrics.New()
+	flushed := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("wrapper did not implement http.Flusher; SSE handlers will 500")
+		}
+		w.WriteHeader(http.StatusOK)
+		f.Flush()
+		flushed = true
+	})
+	h := m.Middleware(inner, func(*http.Request) string { return "/v1/sessions/{id}/events" })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x/events", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !flushed {
+		t.Fatal("inner handler did not reach Flush")
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	if !rr.Flushed {
+		t.Error("recorder reports the response was not flushed")
+	}
+}

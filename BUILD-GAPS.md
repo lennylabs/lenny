@@ -411,15 +411,6 @@ identified.
 
 ### Gateway request handling
 
-- **The `gatewaymetrics` middleware drops `http.Flusher`.** The
-  `statusRecorder` declared at
-  `pkg/gateway/gatewaymetrics/gatewaymetrics.go:296-313` embeds
-  `http.ResponseWriter` and overrides `WriteHeader` and `Write` only.
-  Code at `pkg/gateway/sessionserver/events.go:50`,
-  `pkg/gateway/translator/openai_chat.go:251`, and
-  `pkg/gateway/translator/open_responses.go:202` requires `http.Flusher`.
-  Type assertions through the wrapper fail.
-
 - **`POST /v1/sessions/{id}/upload` returns errors on every request in
   the checkpoint-duration scenario.** Reported by the tier-7 scaffold
   at `tests/tier7_load/scaffolds_test.go:220`. The handler is at
@@ -676,11 +667,11 @@ unblocks disproportionately many tests.
    detect, tamper-enforce, and platform-floor resolver wiring.
    Unblocks one tier-3 contract test, one tier-8 chaos test, and
    three tier-9 security tests.
-4. Fix the `http.Flusher` forwarding in
-   `pkg/gateway/gatewaymetrics/gatewaymetrics.go:296` and the
-   `/v1/sessions/{id}/upload` error path. Restores the tier-4
-   streaming reconnect integration and the tier-7 streaming-reconnect
-   and checkpoint-duration baselines.
+4. Fix the `/v1/sessions/{id}/upload` 100% error rate so the
+   checkpoint-duration k6 scenario can baseline. The `http.Flusher`
+   wrapper that previously paired with this item is resolved by
+   adding `Flush()` to the gatewaymetrics statusRecorder; the tier-7
+   `TestStreamingReconnectLoad` scaffold is converted.
 5. Promote runbook-coverage assertions from `t.Logf` to `t.Errorf` in
    `tests/tier11_docs/runbooks_test.go` and
    `tests/testinfra/chaos/runbook_map_test.go`, then reconcile
