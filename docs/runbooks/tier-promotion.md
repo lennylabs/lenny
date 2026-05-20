@@ -30,11 +30,19 @@ related:
 
 Procedure to promote a Lenny installation from tier 1 (single-tenant dev) to tier 2 (multi-tenant prod) or from tier 2 to tier 3 (multi-tenant enterprise) per §17.8.3. Each promotion changes the chart preset, raises the replica counts, and enables additional admission-plane controls; the pre-checks confirm the source posture is healthy and the post-checks confirm the promoted posture is in force.
 
-## When to run
+## Trigger
 
-Run the promotion before flipping production traffic to the upgraded release. The `lenny-tier-promote` CLI runs the gate set in `pkg/tierpromotion` against the live cluster; a failing gate aborts the procedure and reports the offending check.
+Run the promotion before flipping production traffic to the upgraded release. This runbook applies when:
 
-## Pre-checks (run before the upgrade)
+- preparing to upgrade an installation from tier 1 to tier 2
+- preparing to upgrade an installation from tier 2 to tier 3
+- validating the post-upgrade posture of a promoted installation
+
+The `lenny-tier-promote` CLI runs the gate set in `pkg/tierpromotion` against the live cluster; a failing gate aborts the procedure and reports the offending check.
+
+## Diagnosis
+
+The pre-promotion gates verify that the source posture is healthy and that the target posture is reachable. Each check below maps to one `lenny-tier-promote validate` rule; a `FAIL` identifies the offending resource.
 
 1. Confirm the cluster context and namespace.
 
@@ -52,7 +60,11 @@ Run the promotion before flipping production traffic to the upgraded release. Th
 
 3. Take a fresh backup via `POST /v1/admin/backups` (see [backup-and-restore.md](backup-and-restore.md)). Record the backup id; the promotion procedure rolls back to this snapshot on a Phase 4 failure.
 
-## Upgrade
+## Remediation
+
+The upgrade applies the target tier preset, waits for the rolling restart, and re-runs the gates to confirm the promoted posture. A failed post-check rolls back to the pre-promotion release.
+
+### Upgrade
 
 4. Apply the target tier's preset values file.
 
@@ -68,7 +80,7 @@ Run the promotion before flipping production traffic to the upgraded release. Th
        kubectl rollout status -n lenny-system deployment/lenny-gateway
        kubectl rollout status -n lenny-system deployment/lenny-ops
 
-## Post-checks (run after the upgrade)
+### Post-checks (run after the upgrade)
 
 6. Run the same gate set against the promoted release.
 
@@ -89,7 +101,7 @@ Run the promotion before flipping production traffic to the upgraded release. Th
 
        kubectl get prometheusrule -n lenny-system
 
-## Rollback
+### Rollback
 
 If a post-check fails, roll back to the pre-promotion release.
 

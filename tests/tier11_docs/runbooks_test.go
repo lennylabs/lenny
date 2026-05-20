@@ -1,31 +1,34 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-11 §12.11 #5: every runbook has the documented step format
-// and parseable metadata. The conventional runbook layout is:
+// and parseable metadata. The conventional runbook layout is the
+// Trigger → Diagnosis → Remediation structure documented in
+// docs/runbooks/index.md:
 //
 //   ---
-//   title: <Short title>
-//   alert: <PromQL alert name or `none`>
-//   severity: <P0 | P1 | P2 | P3>
+//   layout: default
+//   title: "<short-name>"
+//   parent: "Runbooks"
+//   triggers:
+//     - alert: <PromQL alert name>
+//       severity: <critical | warning | info>
+//   components: [<component-name>, ...]
 //   ---
 //
-//   # <Title>
+//   # <title>
 //
-//   ## Symptom
+//   ## Trigger
 //   ...
 //
 //   ## Diagnosis
 //   ...
 //
-//   ## Procedure
-//   1. ...
-//   2. ...
-//
-//   ## Verification
+//   ## Remediation
 //   ...
 //
 // This test walks docs/runbooks/, parses each .md file's YAML front
 // matter, and asserts the front matter + required sections exist.
+// Issues fail the test (§17.7 / Phase 13.5+ promotion).
 
 package tier11_docs_test
 
@@ -40,10 +43,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type runbookMetadata struct {
-	Title    string `yaml:"title"`
+type runbookTrigger struct {
 	Alert    string `yaml:"alert"`
 	Severity string `yaml:"severity"`
+}
+
+type runbookMetadata struct {
+	Title    string           `yaml:"title"`
+	Triggers []runbookTrigger `yaml:"triggers"`
 }
 
 func parseRunbook(path string) (runbookMetadata, []string, error) {
@@ -87,9 +94,10 @@ func splitFrontMatter(body []byte) ([]byte, []byte, bool) {
 // spec: 12.11 #5 (every runbook has the documented format)
 // diagnosis: A runbook lacked front matter, required metadata, or
 //
-//	one of the canonical sections (Symptom / Diagnosis /
-//	Procedure / Verification). The catalog is the on-call
-//	playbook; missing structure breaks operator runbooks.
+//	one of the canonical Trigger / Diagnosis / Remediation
+//	sections, or carried a triggers entry without a severity. The
+//	catalog is the on-call playbook; missing structure breaks
+//	operator runbooks.
 func TestRunbookStructure(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "docs", "runbooks")
@@ -97,7 +105,7 @@ func TestRunbookStructure(t *testing.T) {
 		t.Skip("docs/runbooks/ does not exist; nothing to validate (runbooks ship per §17.7)")
 	}
 
-	required := []string{"Symptom", "Diagnosis", "Procedure", "Verification"}
+	required := []string{"Trigger", "Diagnosis", "Remediation"}
 
 	count := 0
 	degraded := 0
@@ -115,18 +123,29 @@ func TestRunbookStructure(t *testing.T) {
 		count++
 		meta, sections, perr := parseRunbook(path)
 		if perr != nil {
-			t.Logf("%s: %v", path, perr)
+			t.Errorf("%s: %v", path, perr)
 			degraded++
 			return nil
 		}
 		issues := 0
 		if meta.Title == "" {
-			t.Logf("%s: missing title in front matter", path)
+			t.Errorf("%s: missing title in front matter", path)
 			issues++
 		}
-		if meta.Severity == "" {
-			t.Logf("%s: missing severity in front matter", path)
-			issues++
+		// triggers: [] is the documented marker for scheduled or
+		// procedural runbooks (key rotations, tier promotion). When
+		// the list is present and non-empty, each entry must name an
+		// alert and a severity per the docs/runbooks/index.md
+		// "Alert → runbook map" contract.
+		for i, tr := range meta.Triggers {
+			if tr.Alert == "" {
+				t.Errorf("%s: triggers[%d] missing alert", path, i)
+				issues++
+			}
+			if tr.Severity == "" {
+				t.Errorf("%s: triggers[%d] (%s) missing severity", path, i, tr.Alert)
+				issues++
+			}
 		}
 		for _, want := range required {
 			present := false
@@ -137,7 +156,7 @@ func TestRunbookStructure(t *testing.T) {
 				}
 			}
 			if !present {
-				t.Logf("%s: missing required section %q", path, want)
+				t.Errorf("%s: missing required section %q", path, want)
 				issues++
 			}
 		}
@@ -149,9 +168,12 @@ func TestRunbookStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walk runbooks: %v", err)
 	}
-	t.Logf("validated %d runbook(s); %d degraded", count, degraded)
-	// Informational only today: runbooks ship as placeholders in
-	// Phase 0. When the canonical structure is rolled out (Phase
-	// 13.5+), promote the threshold from informational to a hard
-	// regression gate.
+	if degraded > 0 {
+		t.Errorf("validated %d runbook(s); %d carry structural defects", count, degraded)
+		return
+	}
+	if count == 0 {
+		t.Errorf("found no runbooks under %s; expected docs/runbooks to be populated", dir)
+	}
+	t.Logf("validated %d runbook(s); all structurally conformant", count)
 }
