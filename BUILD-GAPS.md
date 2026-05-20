@@ -178,10 +178,14 @@ the repository does not yet ship; see [Infrastructure gaps](#infrastructure-gaps
 ### Tier 7 (Load and SLO)
 
 The `tests/tier7_load/scenarios/` directory contains 14 k6 scenario
-folders. The `tests/tier7_load/baselines/` directory contains nine
-populated baseline JSON files. The five scenarios without baselines are
+folders and `tests/tier7_load/baselines/` carries 14 baseline JSON
+files — every scenario has a baseline. Five baselines are
+placeholder values pending a recorded cloud-overlay run:
 `credential_lifecycle`, `delegation_fanout_mcp`, `experiment_load`,
-`post_hardening_slo`, and `streaming_throughput`.
+`post_hardening_slo`, and `streaming_throughput`. The placeholder
+`notes` field documents the recorded e2e Kind smoke result and the
+phase gate that drives the cloud comparison; the `recorded_at`
+timestamps re-stamp on each cloud run.
 
 Scenarios that skip due to gateway / overlay configuration:
 
