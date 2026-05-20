@@ -882,13 +882,348 @@ and §12.3.7 paths that the in-cluster fixture cannot exercise
 at all, then the operational set. The IAM auth path (43) skips
 when the deployment is on Redis < 7.1.
 
+#### EKS-vs-Kind cluster-platform expansion
+
+Beyond the managed-data-store differences, the EKS platform
+itself behaves materially differently from the Kind cluster the
+tier-5 / tier-7 / tier-8 suites run against. The suites below
+cover the EKS-platform behaviors that the Kind harness cannot
+exercise even when the chart installs cleanly on both. Many
+apply equally to GKE and AKS; the EKS-specific framing names the
+AWS implementation but the assertion shape generalises.
+
+Storage (EBS-backed PVCs replace Kind's hostPath emptyDir):
+
+75. **`TestCloudEBSPVCAttachLatency`** (§17.1). Create a Pod
+    with an EBS-backed PVC, measure attach + mount latency
+    against the §6.3 startup budget. EBS attach takes
+    materially longer than a hostPath bind; a chart that
+    assumes hostPath-class start-time blows the §6.3 envelope.
+
+76. **`TestCloudEBSPVCAZAffinity`** (§17.3). Schedule a Pod
+    bound to an EBS volume in `us-west-2a`, kill the node,
+    assert the Pod re-schedules on a node in the same AZ (EBS
+    volumes are AZ-pinned; a Pod re-scheduled across AZs
+    detaches indefinitely).
+
+77. **`TestCloudEBSSnapshotLifecycle`** (§17.7). Trigger an EBS
+    snapshot of the gateway's PVC (if one is configured),
+    restore it into a fresh volume in a second AZ, assert the
+    pod reads back the artifact data. Validates the §17.7
+    cross-AZ recovery story against EBS, not against
+    in-cluster emptyDir.
+
+78. **`TestCloudEBSIOPSBudget`** (§12.5, §12.7). Provision the
+    PVC at the documented IOPS floor (gp3 with 3000 IOPS),
+    drive sustained write load through the artifact store,
+    assert IOPS stays under the provisioned ceiling (gp3 burst
+    credits not in use). EBS gp3 silently throttles past
+    burst; Kind's hostPath has no such ceiling.
+
+79. **`TestCloudStorageClassCSIPresent`** (§17.6). Assert the
+    EBS CSI driver addon is installed and the default
+    StorageClass uses it. A missing CSI driver fails PVC
+    attach but the chart's deployments come up regardless;
+    the failure surfaces only when a session needs a
+    workspace volume.
+
+Networking (VPC CNI + AWS Load Balancer Controller replace
+kindnet + Kind's host port mapping):
+
+80. **`TestCloudVPCCNIPodIPFromVPC`** (§13.2). Assert each pod
+    receives an IP from the VPC subnet (not from a CNI
+    overlay). VPC CNI's IP-per-pod model means pod density per
+    node is bounded by the ENI count for the instance type;
+    Kind's kindnet does not have this limit.
+
+81. **`TestCloudPodENILimitRespected`** (§17.1). Schedule the
+    documented per-node maximum number of pods on a single
+    `t3.medium` (ENI-limited to 17), assert further pods
+    Pending rather than crash-loop. The chart's autoscaler
+    must honor this bound, not the higher Kind default.
+
+82. **`TestCloudServiceLoadBalancerProvisioned`** (§17.5)
+    *(expands `TestManagedIngress`)*. Render the gateway
+    Service with Type=LoadBalancer (or annotate an Ingress
+    for the AWS Load Balancer Controller), assert the NLB
+    (or ALB) is provisioned, healthy, and reachable from the
+    public internet within the §17.5 budget. Kind has no
+    cloud LB; this test cannot exist there.
+
+83. **`TestCloudALBControllerInstalled`** (§17.5). Assert the
+    AWS Load Balancer Controller is installed in
+    `kube-system` and that its IRSA role has the documented
+    minimum permissions (`elasticloadbalancing:CreateListener`,
+    `ec2:DescribeSecurityGroups`, etc.). A missing or
+    underprivileged controller leaves Ingress resources
+    Pending forever.
+
+84. **`TestCloudNLBHealthChecks`** (§17.5). Assert the NLB's
+    target-group health check probes the gateway's `/healthz`
+    endpoint and surfaces Unhealthy targets when the gateway
+    pod is killed.
+
+85. **`TestCloudVPCEndpointReachable`** (§13.2). Validate the
+    chart-rendered gateway egresses to S3 / KMS / ECR via VPC
+    endpoints rather than public internet (VPC endpoints
+    bypass NAT charges and stay inside the AWS network).
+    Skips when no VPC endpoints are configured; surfaces the
+    silent fall-through to public internet egress in BUILD-GAPS.
+
+86. **`TestCloudNATGatewayEgress`** (§13.2). Assert egress to
+    a non-AWS host (e.g. an LLM provider) routes through the
+    NAT Gateway in the same AZ as the source pod. Cross-AZ
+    NAT egress doubles the latency budget and quietly bumps
+    cost.
+
+87. **`TestCloudVPCInternalDNSResolution`** (§13.2). Assert
+    pods resolve VPC-internal hostnames (the RDS endpoint,
+    the ElastiCache endpoint, internal Route 53 zones)
+    through the VPC's Route 53 resolver. Kind's CoreDNS has
+    no concept of VPC-internal resolution; an EKS deployment
+    that mis-configures `enableDnsHostnames` on the VPC
+    silently fails name resolution.
+
+Image registry (ECR replaces Kind's `kind load docker-image`):
+
+88. **`TestCloudECRPullCredentialRefresh`** (§17.6). ECR
+    authentication tokens expire after 12 hours. Run the
+    cluster for >12 hours (or simulate by rotating the
+    docker-registry secret), spin up a fresh pod, assert the
+    image pull succeeds. The chart's `imagePullSecrets`
+    must be wired to a credential-refresh source (the EKS
+    addon `aws-secrets-manager-csi-driver` or `ecr-credential-provider`).
+
+89. **`TestCloudECRImageScanGate`** (§17.6, §13.1). On a push
+    of a known-vulnerable image, assert the ECR scan results
+    surface a critical CVE, assert the chart's
+    cosign-verify-webhook (when feature-gated on) rejects the
+    pull. A silent pass on a vulnerable image is a §13.1
+    finding.
+
+90. **`TestCloudPullThroughCacheHit`** (§17.6). When the ECR
+    pull-through cache is configured, assert the second pull
+    of a public-registry image (`docker.io/library/redis:7`)
+    hits the cache and does not egress to public Docker Hub.
+
+Cluster lifecycle (managed node groups + autoscaler replace
+Kind's static three-node config):
+
+91. **`TestCloudManagedNodeGroupRollingUpdate`** (§17.6).
+    Trigger an EKS managed-node-group update (AMI bump or
+    instance-type change). Assert the gateway and controller
+    pods drain + reschedule across the rolling node refresh
+    without losing in-flight sessions (the §10.1 session-
+    coordination lease must survive a node drain).
+
+92. **`TestCloudClusterAutoscalerScaleUp`** (§5, §17.1).
+    Create N pending agent-pool pods that exceed the current
+    node capacity, assert the cluster autoscaler provisions
+    additional nodes within the §17.1 budget, and assert the
+    pending pods schedule.
+
+93. **`TestCloudClusterAutoscalerScaleDown`** (§17.1). Idle
+    the agent-pool to zero pods, assert the autoscaler scales
+    nodes down past the documented idle threshold. A failure
+    to scale down inflates the §17.1 cost story.
+
+94. **`TestCloudSpotInterruptionHandled`** (§17.1, §17.3).
+    The §17.1 cost story uses Spot for warm-pool nodes.
+    Simulate a Spot interruption via the EC2 instance
+    interruption notice (a 2-minute warning), assert active
+    agent pods on the interrupted node checkpoint into the
+    §4.4 EvictionStateStore before the node terminates.
+
+95. **`TestCloudKarpenterProvisioning`** (§17.1). When
+    Karpenter is the cluster's scheduler instead of the
+    cluster autoscaler, assert pending pods get a Karpenter
+    NodeClaim and the NodeClaim resolves to a real node
+    within the documented latency budget. Skips when
+    Karpenter is not installed.
+
+Control plane (EKS API server has stricter quotas + managed
+audit log destinations):
+
+96. **`TestCloudAPIServerThrottlingRespected`** (§17.6).
+    Drive the chart's controllers against the EKS API server
+    at sustained load, assert no controller's reconcile loop
+    trips the `apiserver_requests_too_many_total` budget. The
+    EKS API server's default QPS is materially lower than
+    Kind's; an over-chatty controller hits 429s on EKS that
+    Kind never surfaces.
+
+97. **`TestCloudControlPlaneAuditLogsCloudWatch`** (§11.7).
+    Enable EKS control-plane audit logging to CloudWatch
+    Logs, run a session, query CloudWatch Logs for the
+    audit chain's `lenny_admin_action` events. The §11.7
+    audit-chain visibility on cloud routes through this
+    destination, not the in-cluster fluent-bit.
+
+98. **`TestCloudEtcdEncryptionAtRest`** (§13.1, §12.9). Assert
+    the EKS cluster's etcd encryption is enabled with the
+    per-release KMS key (set via
+    `aws eks associate-encryption-config`). A missing
+    encryption config silently stores Lenny secrets in
+    plaintext in etcd, defeating the §12.9 cryptographic-
+    erasure story.
+
+99. **`TestCloudAdmissionWebhookEKSBudget`** (§17.6) *(expands
+    #5)*. Lenny's admission webhooks must respond inside the
+    EKS API server's stricter 10-second budget (Kind allows
+    30s). Run the chart's webhooks under sustained admission
+    load, sample webhook latency, assert P99 stays under 5s
+    (half the budget). A webhook past the budget fails-closed
+    silently.
+
+Identity (Pod Identity is a newer EKS-specific alternative to
+IRSA with simpler trust):
+
+100. **`TestCloudPodIdentityAlternativePath`** (§13). When the
+     EKS Pod Identity Agent addon is installed, assert the
+     gateway can resolve credentials through Pod Identity
+     (`AWS_CONTAINER_CREDENTIALS_FULL_URI` env) instead of
+     IRSA. Skips when Pod Identity Agent is not installed.
+
+Observability (CloudWatch Container Insights + Fluent Bit
+replace Kind's in-cluster Prometheus + Loki):
+
+101. **`TestCloudContainerInsightsEnabled`** (§16.1). With
+     CloudWatch Container Insights enabled, assert the chart's
+     pods emit the documented Container Insights metrics
+     (`pod_cpu_utilization`, `pod_memory_utilization`,
+     `pod_network_rx_bytes`). A missing addon silently disables
+     the §16.5 capacity-pressure alerts.
+
+102. **`TestCloudFluentBitLogForwarding`** (§16.1, §11.7).
+     Assert the Fluent Bit container in the chart's pod spec
+     forwards application logs to CloudWatch Logs in the
+     documented JSON schema (the §11.7 audit chain consumes
+     the JSON format).
+
+103. **`TestCloudXRayTraceFlow`** (§16.1). When OTLP traces
+     are configured to land in AWS X-Ray (via the ADOT
+     collector), assert a session round-trip surfaces a trace
+     with the documented service-name + segment shape. Without
+     this assertion, traces silently drop on a misconfigured
+     collector endpoint.
+
+Pod density and scheduling (real resource limits + AZ
+constraints replace Kind's lax single-node defaults):
+
+104. **`TestCloudPodDisruptionBudgetEnforced`** (§17.6, §17.1).
+     Run `kubectl drain` against a node hosting two gateway
+     replicas where the PDB requires `minAvailable=2`. Assert
+     the drain blocks rather than evict both replicas, and
+     assert the alternative replicas come up before the drain
+     proceeds. Kind enforces PDBs but the timing is gentler;
+     EKS's eviction loop surfaces races the Kind harness hides.
+
+105. **`TestCloudResourceLimitsEnforced`** (§17.1). Force a
+     gateway pod past its memory limit, assert the kubelet
+     OOM-kills it and the pod restarts. Kind allows soft
+     over-subscription; EKS enforces hard limits.
+
+106. **`TestCloudKubeletEvictionThresholds`** (§17.1). Fill
+     a node's ephemeral storage past the kubelet eviction
+     threshold (`nodefs.available<10%`), assert kubelet
+     evicts the lowest-priority pod first and emits the
+     `NodeHasDiskPressure` condition. A silent ephemeral-
+     storage exhaustion on cloud surfaces as flaky pod
+     restarts.
+
+107. **`TestCloudPodPriorityClassRespected`** (§17.1). Assert
+     the chart's control-plane pods (gateway, controller,
+     token-service) carry a priority class higher than the
+     agent-pool pods, so a node under pressure evicts agent
+     pods before evicting the control plane.
+
+Multi-AZ (real cross-AZ placement replaces Kind's single-zone
+default):
+
+108. **`TestCloudTopologySpreadAcrossAZs`** (§17.3). Assert
+     the chart's gateway / controller / token-service
+     deployments carry `topologySpreadConstraints` that pin
+     pods across AZs. Verify a fresh install lands one
+     replica per AZ across the cluster's three AZs.
+
+109. **`TestCloudCrossAZLatencyBudget`** (§12.4). Probe
+     pod-to-pod latency between an agent pod and a gateway
+     pod in different AZs, assert P99 stays under the §12.4
+     cross-AZ budget (~5 ms on AWS). Kind's single-node
+     latency is 0; the cloud floor is materially different.
+
+110. **`TestCloudAZAwareEBSAttachment`** (§17.3) *(expands #76)*.
+     Verify a Pod whose PVC is in `us-west-2a` schedules on
+     a node in `us-west-2a`. The scheduler's
+     `WaitForFirstConsumer` mode for EBS-backed
+     StorageClasses is the gate; a misconfigured StorageClass
+     loses cross-AZ scheduling correctness.
+
+Lenny-specific differences when the cloud platform is the
+backing (each test surfaces a behavior the Kind harness
+cannot exercise):
+
+111. **`TestCloudWarmPoolLatencyEKS`** (§5, §6.3). Pre-warm
+     pool latency on EKS includes ECR pull (cold-pull
+     latency) + EBS volume attach + the EKS scheduler's
+     placement delay. The §6.3 startup budget is the same;
+     the test asserts the §5 warm-pool size formula accounts
+     for the EKS-side floor (pre-warm 3-5x what Kind needs).
+
+112. **`TestCloudAdapterImageColdPullBudget`** (§4.7, §17.1).
+     On a newly-provisioned node, the first session's pod
+     pulls both the adapter image and the runtime image from
+     ECR; the cold-pull latency must stay under the §6.3
+     envelope. Validates the chart's `imagePullPolicy=IfNotPresent`
+     + ECR-pull-through-cache configuration.
+
+113. **`TestCloudAuditChainThroughputRDS`** (§11.7, §12.4).
+     The §11.7 audit chain's append-to-Postgres latency
+     differs materially when the Postgres is RDS (network
+     round-trip) vs the in-cluster fixture (local socket).
+     Drive sustained admin-API traffic, assert the audit-chain
+     append rate keeps up with the request rate; otherwise the
+     audit-chain back-pressure blocks the admin API.
+
+114. **`TestCloudMTLSRotationWebhookCompat`** (§13.1, §17.6)
+     *(expands #9)*. The cert-manager-driven mTLS rotation
+     restarts the webhook pods; under EKS's stricter
+     webhook-latency budget the restart window must stay
+     under 5s or admission requests fail-closed. Validates
+     the rotation timing on EKS specifically.
+
+115. **`TestCloudVPCFlowLogsCaptureSessionTraffic`** (§13.2,
+     §11.7). When VPC Flow Logs are enabled, assert session
+     traffic between the gateway and an agent pod appears in
+     the Flow Logs. The §13.2 audit story is incomplete
+     without this capture on cloud.
+
+The EKS-vs-Kind expansion adds 41 suites (75-115). Sequencing
+recommendation:
+
+  - First, the four that surface silent-failure modes the Kind
+    harness hides (#80, #84, #88, #98). A misconfigured VPC CNI,
+    NLB, ECR auth, or etcd encryption produces a green install
+    that silently regresses §13 / §17 invariants.
+  - Then the scheduling + lifecycle set (#91, #92, #94, #104,
+    #108) so the deployment behaves correctly under the
+    EKS-managed cluster operations operators run weekly.
+  - Then the observability and Lenny-specific behaviors (#101,
+    #102, #111, #112, #113).
+  - The Karpenter / Pod Identity entries (#95, #100) gate on
+    optional addons; they skip when the addon is not installed.
+
 #### Out of scope
 
 The following deliberately stay outside tier-6 even after the
-forty land. Cost telemetry / billing accuracy is a feature spec,
-not a test concern. Cluster upgrade compatibility is an operator
-concern covered by the chart-test matrix against Kind. Helm
-rollback is the same shape — not cloud-specific.
+115 land. Cost telemetry / billing accuracy is a feature spec,
+not a test concern. Cluster upgrade compatibility (the
+Kubernetes minor-version bump itself, e.g. 1.31 → 1.32) is an
+operator concern covered by the chart-test matrix against Kind.
+Helm rollback is the same shape — not cloud-specific. CloudTrail
+audit log consumption is an operator's SIEM concern; the
+gateway's §11.7 audit chain captures the platform-side actions
+already.
 
 ### Tier 7 (Load and SLO)
 
