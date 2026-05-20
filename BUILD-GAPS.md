@@ -450,16 +450,24 @@ They are listed separately so the loop's per-gap workflow does not
 re-attempt them.
 
 - **Cloud-provider integrations (`pkg/blobstore` GCS/S3/Azure,
-  `pkg/kms` cloud variants).** Documented in BUILD-PROGRESS.md
-  Phase 12a as deferred via `CloudProviderSeam`; the §18 build
-  sequence treats cloud adapter implementations as v2
-  deliverables. Tier 6 scaffolds carry "blocked:" reasons that
-  name the missing adapter precisely. The Go-side implementation
-  needs the per-provider SDKs (aws-sdk-go-v2, google.golang.org/api,
-  azure-sdk-for-go) added to `go.mod`, then `pkg/kms/<provider>/`
-  and `pkg/blobstore/<provider>/` packages that implement the
-  documented seams. Unblocking otherwise needs cloud-provider
-  credentials.
+  `pkg/kms` cloud variants).** Shipped. Per-provider Go
+  adapters live at:
+  - `pkg/kms/aws/`, `pkg/kms/gcp/`, `pkg/kms/azure/` — implement
+    `kms.Provider` over AWS KMS / Cloud KMS / Azure Key Vault.
+    Each binds the Lenny alias into the cloud-side
+    AAD / EncryptionContext field so a wrapped DEK cannot
+    unwrap under a different alias.
+  - `pkg/blobstore/s3/`, `pkg/blobstore/gcs/`,
+    `pkg/blobstore/azureblob/` — implement `blobstore.Store` +
+    `blobstore.Tombstoner` over S3 / GCS / Azure Blob. Each
+    supports a per-tenant key resolver hook for SSE-KMS / CMEK /
+    CPK so the §12.5 SSE-KMS path runs per-tenant. Tombstoning
+    uses object tags (S3) or blob metadata (GCS, Azure).
+  Each adapter ships fake-client tests covering the round-trip,
+  cross-alias / tombstone behavior, and the per-provider error-
+  mapping table. Unblocking the tier-6 cloud scaffolds further
+  needs only the cloud credentials + the per-provider Terraform
+  under `deploy/terraform/cloud/<provider>/` (also shipped).
 - **Per-provider Terraform.** `deploy/terraform/cloud/<provider>/`
   now ships AWS, GCP, and Azure root-module skeletons that
   provision the per-release resources the chart consumes (KMS KEK
@@ -517,17 +525,17 @@ re-attempt them.
   `docs/runbooks/`. Both directions of TestRunbookMapCoverage are
   now hard gates (`t.Errorf`).
 - **Homebrew tap publishing (`lennylabs/tap`).** The formula
-  source ships at `dist/brew/lenny.rb` with the four per-platform
-  `(GOOS, GOARCH)` URL stanzas and SHA-256 placeholders the
-  release pipeline stamps on tag push. Publishing requires:
-  (a) the release workflow producing
-  `lenny-${version}-${goos}-${goarch}.tar.gz` artifacts on each
-  tag, (b) the workflow rendering `dist/brew/lenny.rb` with the
-  version and four digests, and (c) opening a PR against
-  `lennylabs/homebrew-tap`. The release-pipeline contract and
-  the manual fallback are in `dist/brew/README.md`. Tier-11 TTHW
-  step 1 runs the moment the tap is published; the formula
-  itself is no longer the blocker.
+  source ships at `dist/brew/lenny.rb`; the `cli` job in
+  `.github/workflows/release.yml` cross-compiles the four
+  `(GOOS, GOARCH)` archives and attaches them to the GitHub
+  release; the `homebrew-tap-pr` job renders the formula with
+  the tag version + the four SHA-256 digests and opens a PR
+  against `lennylabs/homebrew-tap`. The remaining work is
+  external-only — creating the `lennylabs/homebrew-tap`
+  repository on GitHub, granting the release bot push access to
+  the operator's fork (`HOMEBREW_TAP_TOKEN` secret), and tagging
+  the first release. Tier-11 TTHW step 1 runs the moment the
+  first tap PR merges; nothing else in-repo needs to change.
 - **Credential-carrying runtime image with a shell.** Binary +
   Dockerfile shipped at `cmd/runtimes/cred-shell-echo/`. The image
   is Alpine-based with a non-root user, retains /bin/sh for the
