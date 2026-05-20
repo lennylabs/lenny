@@ -422,17 +422,12 @@ re-attempt them.
   `tests/tier11_docs/runbooks_test.go` gate runs as informational
   pending Phase 13.5+ when the canonical layout rolls out. Promoting
   the gate before reconciliation would fail every runbook.
-- **`runbook-map.yaml` coverage of alert-driven runbooks.**
-  Operational runbooks (`triggers: []` — key rotations, tier
-  promotion) are exempt by the updated gate; alert-driven runbooks
-  still need explicit mapping. The map test counts the unmapped
-  alert-driven runbooks and the orphan map entries (entries pointing
-  at runbook slugs that have no corresponding `.md` under
-  `docs/runbooks/`) and reports both as informational. Promoting
-  either to t.Errorf needs the chaos-test catalog and the runbook
-  catalog reconciled — most unmapped alert-driven runbooks already
-  have a corresponding scaffolded chaos test that just needs a
-  catalog-row hook-up.
+- **`runbook-map.yaml` coverage.** RESOLVED. Operational runbooks
+  (`triggers: []` — key rotations, tier promotion) are exempt by
+  the updated gate; every alert-driven runbook is mapped to a
+  chaos test and every map entry resolves to a `.md` under
+  `docs/runbooks/`. Both directions of TestRunbookMapCoverage are
+  now hard gates (`t.Errorf`).
 - **No published Homebrew tap (`lennylabs/tap`).** Tier-11 TTHW
   step 1 cannot run until the tap and formula are published.
 - **Credential-carrying runtime image with a shell.** Binary +

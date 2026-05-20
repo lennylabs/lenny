@@ -241,3 +241,174 @@ runbooks:
     test: TestCRDUpgradeImmutableFieldChange
     severity: P1
     coverage: extended
+
+  # ---- §16.5 alert-driven runbooks added in BUILD-GAPS reconciliation ----
+  # Each entry maps the alert-driven runbook to its closest existing
+  # chaos test (or a not_yet_built placeholder when the test catalog
+  # has no corresponding scenario). Where a placeholder appears the
+  # follow-on is to ship the chaos test under tests/tier8_chaos/.
+
+  admission-plane-feature-flag-downgrade:
+    test: TestAdmissionWebhookOutage
+    severity: P1
+    coverage: extended
+  audit-grant-drift:
+    test: TestAuditChainGapDetection
+    severity: P0
+    coverage: core
+  audit-pipeline-degraded:
+    test: TestAuditChainGapDetection
+    severity: P1
+    coverage: extended
+  billing-stream-backlog:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  checkpoint-stale:
+    test: TestMinIOUnavailable
+    severity: P1
+    coverage: extended
+  circuit-breaker-open:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  coordinator-handoff-slow:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  crd-upgrade:
+    test: TestCRDUpgradeImmutableFieldChange
+    severity: P1
+    coverage: extended
+  credential-revocation:
+    test: TestEmergencyRevocationDuringActiveSession
+    severity: P1
+    coverage: extended
+  cycle-detection-mode-unsafe:
+    test: TestDelegationDepthDeadlockDetection
+    severity: P1
+    coverage: extended
+  data-residency-violation:
+    test: TestT3T4SLABreach
+    severity: P0
+    coverage: extended
+  delegation-budget-recovery:
+    test: TestDelegationBudgetExhaustion
+    severity: P1
+    coverage: extended
+  elicitation-backlog:
+    test: TestElicitationDeadlockDetection
+    severity: P1
+    coverage: extended
+  elicitation-content-integrity-weakened:
+    test: TestElicitationDeadlockDetection
+    severity: P1
+    coverage: extended
+  elicitation-content-tamper-detected:
+    test: TestElicitationDeadlockDetection
+    severity: P0
+    coverage: extended
+  ephemeral-container-cred-guard-unavailable:
+    test: TestEphemeralContainerCredGuardOutage
+    severity: P0
+    coverage: core
+  erasure-job-failed:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  etcd-operations:
+    test: TestPostgresFailover
+    severity: P1
+    coverage: extended
+  gateway-capacity:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  gateway-rate-limit-storm:
+    test: TestRedisClusterDegraded
+    severity: P1
+    coverage: extended
+  gateway-subsystem-extraction:
+    test: TestGatewayReplicaFailure
+    severity: P2
+    coverage: extended
+  legal-hold-quota-pressure:
+    test: TestLegalHoldOverrideFlow
+    severity: P1
+    coverage: extended
+  llm-egress-anomaly:
+    test: TestAgentToLLMProviderPartition
+    severity: P1
+    coverage: extended
+  llm-translation-degraded:
+    test: TestAgentToLLMProviderPartition
+    severity: P1
+    coverage: extended
+  minio-failure:
+    test: TestMinIOUnavailable
+    severity: P0
+    coverage: core
+  pool-bootstrap-mode:
+    test: TestPoolUpgradeRollbackDuringExpanding
+    severity: P1
+    coverage: extended
+  redis-failure:
+    test: TestRedisClusterDegraded
+    severity: P0
+    coverage: core
+  schema-migration-failure:
+    test: TestSchemaMigrationDirtyFlag
+    severity: P0
+    coverage: extended
+  sdk-connect-timeout:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  session-eviction-loss:
+    test: TestMinIOUnavailable
+    severity: P1
+    coverage: extended
+  slo-session-availability:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  slo-session-creation:
+    test: TestGatewayReplicaFailure
+    severity: P1
+    coverage: extended
+  slo-startup-latency:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  slo-ttft:
+    test: TestRuntimeUpgradeStuck
+    severity: P1
+    coverage: extended
+  storage-quota-high:
+    test: TestMinIOReplicationLag
+    severity: P1
+    coverage: extended
+  stuck-finalizer:
+    test: TestSandboxFinalizerHang
+    severity: P1
+    coverage: extended
+  tenant-deletion-overdue:
+    test: TestErasureJobFailureMidSequence
+    severity: P1
+    coverage: extended
+  token-store-unavailable:
+    test: TestTokenServiceOutage
+    severity: P0
+    coverage: core
+  total-outage:
+    test: TestDualStoreUnavailable
+    severity: P0
+    coverage: core
+  warm-pool-exhaustion:
+    test: TestPoolUpgradeRollbackDuringExpanding
+    severity: P1
+    coverage: extended
+  workspace-seal-stuck:
+    test: TestMinIOUnavailable
+    severity: P1
+    coverage: extended

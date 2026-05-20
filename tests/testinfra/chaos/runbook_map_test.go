@@ -130,23 +130,18 @@ func TestRunbookMapCoverage(t *testing.T) {
 		missing = append(missing, slug)
 	}
 	sort.Strings(missing)
-	// Alert-driven runbooks pending a runbook-map entry are reported
-	// as informational while the chaos-test catalog catches up to the
-	// runbook catalog. The structural check ensures the map is
-	// readable; promoting unmapped-alert-driven to t.Errorf is the
-	// final reconciliation step recorded in BUILD-GAPS.md `runbook-map
-	// coverage`.
+	// Alert-driven runbooks MUST be mapped to a chaos test in
+	// runbook-map.yaml. Operational runbooks (triggers: []) remain
+	// exempt because they document scheduled procedures rather than
+	// incident response, so there is no chaos scenario to map them
+	// to.
 	for _, m := range missing {
-		t.Logf("alert-driven runbook %q has no entry in runbook-map.yaml (informational)", m)
+		t.Errorf("alert-driven runbook %q has no entry in runbook-map.yaml", m)
 	}
 	t.Logf("runbooks=%d  mapped=%d  operational-exempt=%d  unmapped-alert-driven=%d",
 		len(slugs), mapped, exempt, len(missing))
 
-	// Every mapped slug should point at a runbook that exists. The
-	// orphan-map-entry check is informational while the
-	// docs/runbooks/ catalog catches up to the chaos-map slugs the
-	// §12.8 map already names; see BUILD-GAPS.md `runbook-map.yaml
-	// orphan entries` for the followup.
+	// Every mapped slug MUST point at a runbook that exists.
 	orphans := []string{}
 	for slug := range doc.Runbooks {
 		if _, ok := slugs[slug]; !ok {
@@ -155,10 +150,7 @@ func TestRunbookMapCoverage(t *testing.T) {
 	}
 	sort.Strings(orphans)
 	for _, o := range orphans {
-		t.Logf("runbook-map.yaml entry %q has no matching docs/runbooks/%s.md (informational)", o, o)
-	}
-	if len(orphans) > 0 {
-		t.Logf("%d orphan map entry/entries pending runbook stubs", len(orphans))
+		t.Errorf("runbook-map.yaml entry %q has no matching docs/runbooks/%s.md", o, o)
 	}
 }
 
