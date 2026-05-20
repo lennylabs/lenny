@@ -139,6 +139,30 @@ type Store interface {
 	Stat(u URI) (BlobInfo, error)
 }
 
+// Tombstoner extends Store with the §12.5 soft-delete + hard-prune
+// lifecycle. The §12.5 GC sweep soft-deletes a blob by setting a
+// tombstone (the blob's bytes are removed from storage immediately;
+// metadata stays in the catalog for a retention window); the
+// hard-prune sweep physically removes tombstoned entries whose
+// `deleted_at` is older than `gc.tombstoneRetentionSeconds`.
+//
+// A blob backend may implement Tombstoner alongside Store. Backends
+// that do not (legacy / read-only mirrors) appear only as Store and
+// the GC orchestrator's tombstone path is a no-op against them.
+type Tombstoner interface {
+	// SoftDelete marks the blob deleted. Subsequent Get / Stat
+	// return ErrNotFound. SoftDelete is idempotent: calling it on a
+	// blob that is already soft-deleted (or absent) is a no-op
+	// returning nil.
+	SoftDelete(u URI) error
+
+	// HardPrune removes tombstoned entries whose `deleted_at` is at
+	// or before `now - retention`. Returns the count of entries
+	// physically removed. Callers run HardPrune periodically as the
+	// §12.5 tombstone hard-prune sweep.
+	HardPrune(now time.Time, retention time.Duration) int
+}
+
 // BlobInfo carries the metadata fields surfaced to callers.
 type BlobInfo struct {
 	URI       URI
@@ -163,6 +187,10 @@ type MemoryStore struct {
 type memBlob struct {
 	info BlobInfo
 	body []byte
+	// deletedAt is the §12.5 soft-delete tombstone. Zero value means
+	// the blob is live; a non-zero value means SoftDelete has run
+	// and the blob is tombstoned pending hard-prune.
+	deletedAt time.Time
 }
 
 // NewMemoryStore returns an empty MemoryStore. Pass nil for `clock`
@@ -212,6 +240,9 @@ func (s *MemoryStore) Get(u URI) (BlobInfo, io.ReadCloser, error) {
 	if !ok {
 		return BlobInfo{}, nil, ErrNotFound
 	}
+	if !b.deletedAt.IsZero() {
+		return BlobInfo{}, nil, ErrNotFound
+	}
 	if s.clock().After(b.info.ExpiresAt) {
 		return BlobInfo{}, nil, ErrNotFound
 	}
@@ -226,10 +257,63 @@ func (s *MemoryStore) Stat(u URI) (BlobInfo, error) {
 	if !ok {
 		return BlobInfo{}, ErrNotFound
 	}
+	if !b.deletedAt.IsZero() {
+		return BlobInfo{}, ErrNotFound
+	}
 	if s.clock().After(b.info.ExpiresAt) {
 		return BlobInfo{}, ErrNotFound
 	}
 	return b.info, nil
+}
+
+// SoftDelete implements Tombstoner. It marks the blob as tombstoned
+// and clears the in-memory body so subsequent reads return
+// ErrNotFound, mirroring the §12.5 soft-delete contract (the bytes
+// are gone from storage; the row stays in the catalog for the
+// retention window). Idempotent.
+func (s *MemoryStore) SoftDelete(u URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.blobs[s.key(u)]
+	if !ok {
+		return nil
+	}
+	if !b.deletedAt.IsZero() {
+		return nil
+	}
+	b.deletedAt = s.clock()
+	b.body = nil
+	s.blobs[s.key(u)] = b
+	return nil
+}
+
+// HardPrune implements Tombstoner. It removes tombstoned entries
+// whose deletedAt is at or before `now - retention`. Returns the
+// count removed.
+func (s *MemoryStore) HardPrune(now time.Time, retention time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := now.Add(-retention)
+	removed := 0
+	for k, b := range s.blobs {
+		if b.deletedAt.IsZero() {
+			continue
+		}
+		if !b.deletedAt.After(cutoff) {
+			delete(s.blobs, k)
+			removed++
+		}
+	}
+	return removed
+}
+
+// Tombstoned reports whether the blob is currently soft-deleted.
+// Used by tests to assert the SoftDelete state machine.
+func (s *MemoryStore) Tombstoned(u URI) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, ok := s.blobs[s.key(u)]
+	return ok && !b.deletedAt.IsZero()
 }
 
 // Sweep drops every blob whose ExpiresAt is at or before `now`.

@@ -154,6 +154,115 @@ func TestMemoryStoreSweepDropsExpired(t *testing.T) {
 	}
 }
 
+// spec: 12.5
+// diagnosis: SoftDelete did not honor the §12.5 tombstone contract.
+// After SoftDelete, Get and Stat must return ErrNotFound; the body
+// must be cleared so the stored bytes are gone from memory at
+// soft-delete time (not deferred to HardPrune). SoftDelete must be
+// idempotent against absent and already-tombstoned blobs.
+func TestMemoryStoreSoftDeleteContract(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := blobstore.NewMemoryStore(clock)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "a", TTL: time.Hour}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("payload")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := s.SoftDelete(u); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+	if !s.Tombstoned(u) {
+		t.Error("Tombstoned: should be true after SoftDelete")
+	}
+	if _, _, err := s.Get(u); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("Get post-SoftDelete: got %v, want ErrNotFound", err)
+	}
+	if _, err := s.Stat(u); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("Stat post-SoftDelete: got %v, want ErrNotFound", err)
+	}
+
+	// SoftDelete is idempotent on the same row.
+	if err := s.SoftDelete(u); err != nil {
+		t.Errorf("SoftDelete twice: got %v, want nil", err)
+	}
+
+	// SoftDelete on a missing row is a no-op.
+	missing := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "missing", TTL: time.Hour}
+	if err := s.SoftDelete(missing); err != nil {
+		t.Errorf("SoftDelete missing: got %v, want nil", err)
+	}
+}
+
+// spec: 12.5
+// diagnosis: HardPrune did not respect the §12.5 tombstone-retention
+// window. The sweep must physically remove tombstones whose
+// deleted_at is older than `now - retention` and leave live blobs +
+// fresh tombstones alone.
+func TestMemoryStoreHardPruneRespectsRetention(t *testing.T) {
+	var now time.Time
+	clock := func() time.Time { return now }
+	s := blobstore.NewMemoryStore(clock)
+	uOld := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "old", TTL: time.Hour}
+	uFresh := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "fresh", TTL: time.Hour}
+	uLive := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "live", TTL: time.Hour}
+
+	now = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := s.Put(uOld, "text/plain", strings.NewReader("o")); err != nil {
+		t.Fatalf("Put old: %v", err)
+	}
+	if err := s.SoftDelete(uOld); err != nil {
+		t.Fatalf("SoftDelete old: %v", err)
+	}
+
+	now = now.Add(25 * time.Hour)
+	if _, err := s.Put(uFresh, "text/plain", strings.NewReader("f")); err != nil {
+		t.Fatalf("Put fresh: %v", err)
+	}
+	if err := s.SoftDelete(uFresh); err != nil {
+		t.Fatalf("SoftDelete fresh: %v", err)
+	}
+	if _, err := s.Put(uLive, "text/plain", strings.NewReader("l")); err != nil {
+		t.Fatalf("Put live: %v", err)
+	}
+
+	// HardPrune with a 24h retention window: uOld is older than the
+	// retention threshold; uFresh and uLive are not.
+	removed := s.HardPrune(now, 24*time.Hour)
+	if removed != 1 {
+		t.Errorf("HardPrune removed: got %d, want 1 (uOld)", removed)
+	}
+	if s.Tombstoned(uFresh) != true {
+		t.Errorf("uFresh should still be tombstoned post-HardPrune")
+	}
+	if _, _, err := s.Get(uLive); err != nil {
+		t.Errorf("uLive should still be readable: %v", err)
+	}
+
+	// A second HardPrune at the same time is a no-op.
+	if r := s.HardPrune(now, 24*time.Hour); r != 0 {
+		t.Errorf("HardPrune second pass: got %d, want 0", r)
+	}
+}
+
+// spec: 12.5
+// diagnosis: HardPrune mistakenly removed live (non-tombstoned)
+// blobs. Live blobs must survive every HardPrune pass regardless of
+// the retention window.
+func TestMemoryStoreHardPrunePreservesLiveBlobs(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := blobstore.NewMemoryStore(clock)
+	u := blobstore.URI{TenantID: "acme", SessionID: "sess_1", PartID: "live", TTL: time.Hour}
+	if _, err := s.Put(u, "text/plain", strings.NewReader("l")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if r := s.HardPrune(clock().Add(48*time.Hour), time.Hour); r != 0 {
+		t.Errorf("HardPrune removed a live blob: %d", r)
+	}
+	if _, _, err := s.Get(u); err != nil {
+		t.Errorf("live blob lost: %v", err)
+	}
+}
+
 func TestNewPartIDFormat(t *testing.T) {
 	got := blobstore.NewPartID()
 	if !strings.HasPrefix(got, "part_") || len(got) != 5+16 {
