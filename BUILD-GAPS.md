@@ -413,22 +413,16 @@ identified.
 
 ### MCP and REST parity
 
-- **Webhook subscription CRUD is absent on both sides.** A grep for
-  `/v1/webhooks`, `WebhookSubscription`, and `webhook_subscription`
-  returns no matches in `pkg/gateway/` or `pkg/api/`. Blocks
+- **Webhook subscription CRUD REST endpoints are absent.** Spec §25.5
+  documents `/v1/admin/event-subscriptions` as the list / create /
+  delete surface for webhook subscriptions, and `lenny-ctl events
+  subscriptions` is documented in §24 against those endpoints. The
+  `pkg/ops/opsservice/webhookloop.go` delivery loop and its
+  `SubscriptionSource` interface exist, but no opsserver route serves
+  the CRUD endpoints. Closing the gap needs the
+  `ops_event_subscriptions` Postgres table, a subscriptionstore, and
+  the CRUD handlers in `pkg/ops/opsserver/`. Blocks
   `TestRESTMCPWebhookSubscription` and `TestWebhookDeliveryLoad`.
-
-- **Workspace upload has no MCP tool.** `pkg/gateway/mcptools` registers
-  `create_session`, `send_message`, `lenny/delegate_task`,
-  `lenny/request_elicitation`, `lenny/get_task_tree`,
-  `lenny/memory_write`, and `lenny/memory_query`. There is no upload
-  tool. Blocks `TestRESTMCPWorkspaceUpload`.
-
-- **Admin operations have no MCP tools.** `pkg/gateway/admin` exposes
-  REST admin handlers (runtimes, pools, connectors, tenants,
-  credentialPools, audit). The MCP side has no matching tools. Blocks
-  `TestRESTMCPAdmin`.
-
 
 ### Delegation and elicitation
 
