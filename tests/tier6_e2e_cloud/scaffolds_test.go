@@ -98,33 +98,11 @@ func TestManagedIngress(t *testing.T) {
 		"under deploy/terraform/cloud/<provider>/ is absent")
 }
 
-// spec: 4.5 (artifact store: provider-native object storage backend)
-// diagnosis: the §4.5 ArtifactStore backend for the per-provider
-// native object store (GCS, S3, Azure Blob) is not wired. The
-// TESTING.md §12.6 cloud_csi suite asserts that the same interface
-// tests that pass against MinIO also pass against the cloud-managed
-// backend with provider-side service-account binding.
-func TestCloudCSI(t *testing.T) {
-	_ = requireCloud(t)
-	t.Skip("blocked: pkg/blobstore ships only the MinIO backend " +
-		"(pkg/blobstore/miniostore); the GCS, S3, and Azure Blob " +
-		"adapters and the provider-side service-account binding are not built")
-}
-
-// spec: 4.3 (Token Service: cloud KMS-backed KEK provider)
-// diagnosis: the §4.3 / §12.9 T4 per-tenant KEK is not allocated
-// against the provider's native KMS. The TESTING.md §12.6 cloud_kms
-// suite asserts the KMS probe, KEK rotation, and the
-// key-unavailable fail-closed posture against Cloud KMS, AWS KMS,
-// or Azure Key Vault, where pkg/kms today ships only the Local
-// provider plus the documented CloudProviderSeam.
-func TestCloudKMS(t *testing.T) {
-	_ = requireCloud(t)
-	t.Skip("blocked: pkg/kms ships only the in-process Local provider " +
-		"and documents the cloud-KMS path as CloudProviderSeam; no " +
-		"Cloud KMS, AWS KMS, or Azure Key Vault Provider implementation " +
-		"exists, and the per-tenant KEK allocator wiring is not built")
-}
+// TestCloudCSI and TestCloudKMS now live in aws_resources_test.go as
+// real round-trip exercises against the Terraform-provisioned S3
+// bucket and KMS key. The cluster-only suites (TestGvisorIsolation,
+// TestKataIsolation, TestCloudOIDC, etc.) remain skip-stubs below
+// pending the Helm chart install against the cluster.
 
 // spec: 13 (security model: workload identity / IRSA / Workload Identity Federation)
 // diagnosis: the §13 cloud-identity binding does not issue
