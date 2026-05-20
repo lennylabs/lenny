@@ -496,6 +496,7 @@ func main() {
 	billingPipeline := failover.New(failover.Options{
 		Primary: billing,
 		Stream:  billingStream,
+		Clock:   clockinject.Now,
 	})
 	// The pipeline is a billingstore.Store, so it replaces the bare
 	// ledger everywhere downstream — billing emission, the metering API,
@@ -866,8 +867,8 @@ func main() {
 	})
 
 	// ----- OpenAI Chat + Open Responses translators -----
-	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{})
-	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{})
+	openaiHandler := translator.NewOpenAIChatHandler(sessions, exec, translator.OpenAIChatOptions{Clock: clockinject.Now})
+	responsesHandler := translator.NewOpenResponsesHandler(sessions, exec, translator.OpenResponsesOptions{Clock: clockinject.Now})
 
 	// ----- §4.9 end-user credential registry -----
 	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret
