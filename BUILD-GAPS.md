@@ -571,6 +571,317 @@ variants (#31-32) skip when the deployment is on standard RDS;
 the suite uses an `LENNY_RDS_ENGINE=aurora-postgresql`
 environment guard for the Aurora-only tests.
 
+#### Redis-on-ElastiCache expansion
+
+The cloud Redis backing surface differs from the in-cluster
+`lenny-redis` fixture in cluster-mode sharding (keyspace
+hashing, MOVED redirection, cross-slot rejection), pub/sub
+behavior across shards (the §13.3 revocation propagator and the
+§12.3.7 EventBus both depend on pub/sub fan-out), TLS + auth-
+token transport, automatic failover within a replication group,
+strict eviction-policy semantics (Lenny's circuit-breaker
+counters must be `noeviction`), and snapshot-to-S3 backups. The
+in-cluster fixture is a single-node Redis with no TLS, no auth,
+no cluster mode, no eviction pressure, and no failover. The
+suites below cover the corner cases Lenny's six Redis-backed
+subsystems (`breakerstore`, `quotastore`, `coordination`,
+`semanticcache`, `revocation/propagator`, `eventbus`) expose
+when the deployment swaps in an ElastiCache replication group.
+
+Authentication and transport:
+
+41. **`TestCloudElastiCacheTLSRequired`** (§13.2). Attempt a
+    non-TLS connection to the ElastiCache primary endpoint and
+    assert it is refused. Configure the gateway with
+    `rediss://` (TLS) and assert the connection succeeds.
+    ElastiCache enforces TLS only when `TransitEncryptionEnabled`
+    is set on the replication group; the test asserts the chart
+    refuses to boot against a non-TLS endpoint when the operator
+    has marked the deployment compliance-tier T3+.
+
+42. **`TestCloudElastiCacheAuthToken`** (§13.3). Configure
+    ElastiCache with an AUTH token rotated through Secrets
+    Manager, assert the gateway reads the secret + presents the
+    token on connect, and assert a manual AUTH rotation
+    triggers a reconnect path that never drops in-flight
+    requests below the §17.6 budget.
+
+43. **`TestCloudElastiCacheIAMAuth`** (§13.3). On Redis 7.1+,
+    swap the AUTH-token path for IAM authentication
+    (`ELASTICACHE_AUTH_MECHANISM=iam`), assert the IRSA role's
+    `elasticache:Connect` permission resolves at connect time,
+    and assert the 15-minute token refresh hook drives a
+    reconnect that does not interrupt long-running session
+    coordination leases.
+
+44. **`TestCloudElastiCacheCertificateValidation`** (§13.2).
+    Configure the gateway with the AWS-published ElastiCache CA
+    bundle, reject a forged-CA cert presented by a man-in-the-
+    middle proxy, and surface the failure as fail-closed rather
+    than fall through to plaintext.
+
+Cluster mode (the production deployment mode; the in-cluster
+fixture is single-node and exercises none of this):
+
+45. **`TestCloudElastiCacheClusterModeKeyHashing`** (§12.4).
+    Drive each Redis-backed subsystem against an ElastiCache
+    replication group with cluster mode enabled (multiple
+    shards), sample the keys each subsystem writes
+    (`t:{tenant}:scache:...` for §4.9 semantic cache,
+    `lenny:cb:{subsystem}:...` for circuit breakers, etc.),
+    assert the keys hash into the documented shard distribution
+    via the hash-tag pattern. A subsystem whose keys land on a
+    different shard than its companion keys cannot run atomic
+    multi-key operations against them.
+
+46. **`TestCloudElastiCacheClusterModeMovedRedirection`**
+    (§12.4). Trigger a slot migration mid-traffic (the
+    operator's `aws elasticache modify-replication-group
+    --apply-immediately` reshard path), assert the gateway's
+    Redis client follows the `MOVED` redirection without
+    surfacing a 5xx to the caller, and assert no in-flight
+    request loses its target key.
+
+47. **`TestCloudElastiCacheCrossSlotOpsRejected`** (§12.4).
+    Negative test. Issue a `MGET` against keys that hash into
+    different shards from the gateway's tier-9 test harness,
+    assert ElastiCache returns `CROSSSLOT`, assert the gateway
+    never issues such a command in normal operation (the
+    semantic-cache + quota-store + breakerstore paths each use
+    hash tags to keep related keys co-located).
+
+48. **`TestCloudElastiCacheMultiKeyHashTag`** (§12.4). Verify
+    the chart-rendered key prefixes carry hash tags
+    (`t:{<tenant>}:...`) for every multi-key access pattern.
+    A missing hash tag silently degrades a cluster-mode
+    deployment to per-shard semantics; the test reads the
+    documented key list out of the running gateway's metrics
+    and asserts each pattern.
+
+49. **`TestCloudElastiCacheLuaScriptSingleSlot`** (§4.9, §12.4).
+    The §4.9 credential-leasing path runs a Lua script for the
+    atomic check-and-lease step. Assert the script's KEYS list
+    only references keys in a single hash slot, and assert the
+    fail-fast `CROSSSLOT` rejection fires on the test path
+    that forces a multi-slot script.
+
+High availability and failover:
+
+50. **`TestCloudElastiCacheMultiAZFailoverPreservesSessions`**
+    (§17.3). Trigger a primary-node failover via
+    `aws elasticache test-failover`, measure RTO from the API
+    call to the gateway re-issuing a write against the
+    promoted replica, and assert in-flight session-coordination
+    leases either succeed or surface a retriable error code.
+
+51. **`TestCloudElastiCacheReaderEndpointRouting`** (§12.4).
+    When the gateway is configured with both
+    `redis.primaryEndpoint` and `redis.readerEndpoint`, assert
+    read-only commands (the §4.9 semantic-cache `GET`, the
+    breakerstore read-only state probe) route to the reader
+    endpoint while writes (`INCR`, `SET`, `PUBLISH`) route to
+    the primary.
+
+52. **`TestCloudElastiCacheReplicaLagBudget`** (§12.4). Inject
+    write load against the primary, sample
+    `ElastiCacheReplicationLag`, assert the §12.4 replica-lag
+    budget (eventually-consistent reads admitted when
+    lag < X seconds; otherwise fall back to the primary). A
+    stale replica returns a stale §4.9 cache hit otherwise.
+
+53. **`TestCloudElastiCacheEndpointDNSTTL`** (§17.3). Validate
+    the chart-rendered Redis endpoint uses the ElastiCache
+    DNS name
+    (`<release>.serverless.<region>.cache.amazonaws.com`)
+    rather than a baked IP, so DNS re-resolution finds the
+    promoted primary within the endpoint TTL. A baked-IP DSN
+    is a §17.3 RTO regression.
+
+Pub/Sub fan-out across the cluster (the §13.3 revocation
+propagator and the §12.3.7 EventBus both depend on pub/sub):
+
+54. **`TestCloudElastiCachePubSubAcrossShards`** (§13.3,
+    §12.3.7). The §13.3 revocation propagator publishes a
+    deny-list event on one Redis node; every gateway replica
+    subscribes on a different node. Verify the chart's
+    `SSUBSCRIBE` configuration (or, in cluster-mode-disabled
+    deployments, the plain `SUBSCRIBE`) drives the publish to
+    every subscriber within the §13.3 propagation-latency
+    budget (200 ms). Cluster mode silently drops pub/sub
+    across shards in older Redis versions; the test surfaces
+    that mode mismatch.
+
+55. **`TestCloudElastiCachePubSubResumeAfterFailover`** (§13.3,
+    §17.3). Trigger a primary failover during a sustained
+    pub/sub stream, assert the subscriber's reconnect path
+    re-subscribes against the promoted primary, and assert no
+    revocation event is lost in the window (the §13.3
+    revocation-cache rehydration loop is the recovery path for
+    events lost during the gap).
+
+56. **`TestCloudElastiCacheEventBusReplay`** (§12.3.7). The
+    §12.3.7 EventBus retranscribe worker consumes events from
+    the audit chain and republishes them via pub/sub. Drive a
+    multi-event burst, force a pub/sub disconnect mid-burst,
+    assert the worker re-publishes the missed events without
+    duplicating already-delivered ones (the CloudEvents
+    `lenny-extension-attempt` field carries the dedupe key).
+
+Persistence and backup:
+
+57. **`TestCloudElastiCacheSnapshotToS3`** (§17.7). Configure
+    automated snapshots on the replication group, trigger a
+    manual snapshot, assert the snapshot appears in the
+    documented S3 location, and verify the snapshot contains a
+    sample circuit-breaker counter set (the breakerstore data
+    must survive a §17.7 restore).
+
+58. **`TestCloudElastiCacheRestoreFromSnapshot`** (§17.7).
+    Restore a previous snapshot into a fresh ElastiCache
+    replication group, point a fresh gateway at the restored
+    endpoint, assert the §4.9 semantic-cache hits replay
+    correctly and the circuit-breaker state matches the
+    pre-snapshot reading.
+
+Memory and eviction (Lenny's circuit-breaker correctness
+requires `noeviction`; a `volatile-lru` default would silently
+drop counters under memory pressure and disable the §11.6
+admission controller):
+
+59. **`TestCloudElastiCacheEvictionPolicyNoeviction`** (§11.6).
+    Assert the ElastiCache parameter group sets
+    `maxmemory-policy=noeviction`. Otherwise circuit-breaker
+    INCR-and-set-TTL counters drop under memory pressure and
+    the §11.6 admission rate-limit fail-opens.
+
+60. **`TestCloudElastiCacheMemoryPressureFailClosed`** (§11.6,
+    §11.7). Push Redis into the maxmemory boundary, attempt a
+    write, assert the gateway surfaces `503 QUOTA_PRESSURE`
+    rather than silently dropping the rate-limit counter. The
+    §11.7 audit chain records the memory-pressure event.
+
+61. **`TestCloudElastiCacheReservedMemoryHeadroom`** (§17.1).
+    Assert the chart-rendered parameter group reserves the
+    documented memory headroom (`reserved-memory-percent=25`)
+    so background fork-for-snapshot does not OOM the node.
+
+Performance and engine:
+
+62. **`TestCloudElastiCacheEngineVersionFloor`** (§13.3). Assert
+    the deployment uses Redis engine >= 7.0. Lenny relies on
+    ACLs, the `RESET` command, and the cluster-mode pub/sub
+    sharding fix that landed in Redis 7.0. A 6.x deployment
+    silently weakens the §13.3 auth posture.
+
+63. **`TestCloudElastiCacheSlowlogSurfaced`** (§16.5). Verify
+    `aws elasticache describe-events` and the chart-rendered
+    Prometheus rule both pick up Redis slow-log entries above
+    the §16.5 budget. A silent slow query is a §12.8 latency
+    regression.
+
+64. **`TestCloudElastiCacheLatencyBudget`** (§12.4, §16.5).
+    Probe P99 round-trip latency under sustained tier-7 load
+    against the ElastiCache endpoint, assert the value stays
+    under the §12.4 budget (network round-trip to ElastiCache
+    is materially higher than to the in-cluster fixture). Bound
+    the assertion at the chart-rendered
+    `monitoring.redisLatencyP99Budget` value.
+
+Security and isolation:
+
+65. **`TestCloudElastiCacheNetworkIsolation`** (§13.2). Assert
+    the ElastiCache security group admits only the EKS pod
+    CIDR (or the VPC endpoint), and reject a connection
+    attempt from a non-allowlisted source IP. The §13.2 story
+    inside the cluster is undermined if ElastiCache accepts
+    public connections.
+
+66. **`TestCloudElastiCacheCustomKMSAtRest`** (§12.9). Provision
+    ElastiCache with the per-release Lenny KMS key as the
+    at-rest encryption key (not the AWS-managed key), assert
+    `aws elasticache describe-replication-groups` reports the
+    right KMS key ID, and assert the §12.9 cryptographic-erasure
+    invariant (destroying the KMS key renders the snapshot
+    unreadable) holds.
+
+Operational scenarios:
+
+67. **`TestCloudElastiCacheMaintenanceWindow`** (§17.6).
+    Schedule a maintenance task inside the configured
+    maintenance window, assert the gateway either re-connects
+    through the documented short outage or surfaces the
+    `RedisMaintenance` alert before the window opens.
+
+68. **`TestCloudElastiCacheCloudWatchAlerts`** (§16.5).
+    Configure the chart-rendered Prometheus alerts that mirror
+    the §16.5 catalog against the ElastiCache CloudWatch
+    metrics (`CPUUtilization`, `EngineCPUUtilization`,
+    `DatabaseMemoryUsagePercentage`,
+    `ReplicationLag`, `Evictions`). Trigger each threshold with
+    a synthetic workload, assert the alert fires, assert the
+    matching runbook resolves to a `docs/runbooks/*.md` page.
+
+69. **`TestCloudElastiCacheParameterGroupReboot`** (§17.6).
+    Change a parameter that requires a reboot
+    (`maxmemory-policy` from `noeviction` to `allkeys-lru`,
+    then back), trigger the reboot, assert the gateway
+    re-establishes the connection within the §12.8 recovery
+    budget and that the parameter change is observable through
+    a probe `CONFIG GET`.
+
+Lenny-specific subsystem coverage under cluster mode (each
+test drives the corresponding pkg/ subsystem against a
+cluster-mode ElastiCache; the in-cluster single-node fixture
+covers none of these in cluster-aware mode):
+
+70. **`TestCloudElastiCacheCircuitBreakerSurvivesFailover`**
+    (§11.6). Drive sustained traffic that increments the §11.6
+    circuit-breaker counters, trigger a primary failover at
+    the half-open transition, assert the counter survives the
+    failover (its state lives in the replication group), and
+    assert the gateway's breaker state machine resumes the
+    transition correctly.
+
+71. **`TestCloudElastiCacheQuotaStoreSlidingWindow`** (§11.2).
+    Drive multi-tenant traffic against the sliding-window
+    quota store on cluster mode, assert the §11.2 fail-open
+    accounting reconciles to the configured ceiling under
+    replication lag, and assert no counter is silently
+    evicted (the noeviction parameter group is the gate).
+
+72. **`TestCloudElastiCacheSessionCoordinationLease`** (§10.1).
+    The §10.1 session-coordination lease uses `SET NX EX` to
+    elect a replica as the lease holder. Trigger a primary
+    failover during a sustained lease, assert exactly one
+    replica holds the lease at all times across the failover
+    (no split-brain), and assert the lease renewal heartbeat
+    reconverges within the §10.1 budget.
+
+73. **`TestCloudElastiCacheSemanticCacheCluster`** (§4.9). The
+    §4.9 semantic cache uses `t:{tenant}:scache:<scope>` keys.
+    Drive multi-tenant cache traffic against cluster mode,
+    assert the hash-tag pattern keeps a given tenant's keys
+    on a single shard, and assert the §12.2 DeleteByUser /
+    DeleteByTenant erasure path completes in the documented
+    fan-out window across the shards holding tenant keys.
+
+74. **`TestCloudElastiCacheRevocationCacheClusterFanout`**
+    (§13.3). Publish a deny-list revocation on the chart-
+    rendered revocation channel and assert every gateway
+    replica observes it within the §13.3 propagation budget,
+    regardless of which shard hosts the channel. The test runs
+    three gateway replicas to surface the cross-shard pub/sub
+    behavior that single-replica deployments hide.
+
+The ElastiCache expansion adds 34 suites (41-74). Sequencing
+recommendation: land the auth + cluster-mode set first (41,
+44, 45, 47, 48) because they expose the silent-failure modes
+that hide behind the single-node fixture, then the
+pub/sub-across-shards trio (54-56) because it covers the §13.3
+and §12.3.7 paths that the in-cluster fixture cannot exercise
+at all, then the operational set. The IAM auth path (43) skips
+when the deployment is on Redis < 7.1.
+
 #### Out of scope
 
 The following deliberately stay outside tier-6 even after the
