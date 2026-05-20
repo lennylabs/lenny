@@ -324,3 +324,8 @@ func (m *recordingManager) DestroyKey(ctx context.Context, alias string) (tenant
 func (m *recordingManager) KeyInfoFor(ctx context.Context, alias string) (tenantkms.KeyInfo, error) {
 	return m.inner.KeyInfoFor(ctx, alias)
 }
+
+func (m *recordingManager) Probe(ctx context.Context, alias string) error {
+	m.calls = append(m.calls, "Probe")
+	return m.inner.Probe(ctx, alias)
+}

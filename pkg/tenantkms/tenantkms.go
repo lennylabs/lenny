@@ -45,6 +45,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/kms"
 )
@@ -69,6 +70,14 @@ var (
 	// names a tenant key that was never provisioned. The lifecycle
 	// treats it as a no-op for the idempotent Destroy path.
 	ErrKeyNotFound = errors.New("tenantkms: tenant key not found")
+
+	// ErrKeyUnavailable is returned by Probe when a provisioned key
+	// is not in a state that can wrap new data — the key has been
+	// disabled, scheduled for deletion, or destroyed. The §12.5
+	// admin-time and continuous probes treat it as the fail-closed
+	// signal that raises the T4KmsKeyUnusable alert and rejects T4
+	// writes with CLASSIFICATION_CONTROL_VIOLATION.
+	ErrKeyUnavailable = errors.New("tenantkms: tenant key not available")
 )
 
 // KeyState is the lifecycle state of a tenant KMS key.
@@ -134,19 +143,58 @@ type KeyManager interface {
 	// KeyInfoFor returns the current KeyInfo for alias, or
 	// ErrKeyNotFound when no key was provisioned.
 	KeyInfoFor(ctx context.Context, alias string) (KeyInfo, error)
+
+	// Probe runs the §12.5 KMS availability round-trip against the
+	// key for alias. A cloud KeyManager performs a zero-byte
+	// encrypt/decrypt round-trip against the cloud-side resource so
+	// the probe observes provider-side outages (key disabled,
+	// resource quota exhausted, network partition to the KMS
+	// endpoint). LocalManager performs an in-process wrap/unwrap of
+	// a fixed DEK so a test can drive both the success and the
+	// state-degraded paths.
+	//
+	// Probe returns ErrKeyNotFound when the alias was never
+	// provisioned, ErrKeyUnavailable when the key is not in a state
+	// that can wrap new data, or a wrapped backend error on any
+	// other transport-layer failure. Probe is read-only: it neither
+	// rotates the key nor changes its lifecycle state.
+	Probe(ctx context.Context, alias string) error
 }
 
 // Lifecycle drives the §12.9 per-tenant KMS key lifecycle over a
 // KeyManager. It is the call surface the tenant admin path
-// (provision / upgrade), the §4.9.1 rotation hook, and the §12.8
-// tenant-deletion controller (Phase 4a destroy) use.
+// (provision / upgrade), the §4.9.1 rotation hook, the §12.8
+// tenant-deletion controller (Phase 4a destroy), and the §12.5
+// admin-time + continuous KMS availability probe use.
 type Lifecycle struct {
 	mgr KeyManager
+
+	now func() time.Time
+
+	mu               sync.RWMutex
+	lastProbeSuccess map[string]time.Time
 }
 
-// New returns a Lifecycle over the given KeyManager.
+// New returns a Lifecycle over the given KeyManager. The clock used
+// for the §12.5 last-probe-success timestamps is time.Now().UTC. Use
+// NewWithClock to inject a clock for tests.
 func New(mgr KeyManager) *Lifecycle {
-	return &Lifecycle{mgr: mgr}
+	return NewWithClock(mgr, func() time.Time { return time.Now().UTC() })
+}
+
+// NewWithClock returns a Lifecycle with an injected clock. The §12.5
+// admin-time and continuous probes stamp the last-success time using
+// the clock, so a deterministic test clock yields deterministic
+// staleness assertions.
+func NewWithClock(mgr KeyManager, now func() time.Time) *Lifecycle {
+	if now == nil {
+		now = func() time.Time { return time.Now().UTC() }
+	}
+	return &Lifecycle{
+		mgr:              mgr,
+		now:              now,
+		lastProbeSuccess: map[string]time.Time{},
+	}
 }
 
 // EnsureForTenant provisions the §12.9 per-tenant KMS key for a tenant
@@ -201,6 +249,65 @@ func (l *Lifecycle) RotateForTenant(ctx context.Context, tenantID, workspaceTier
 		return KeyInfo{}, fmt.Errorf("tenantkms: rotate key for tenant %q: %w", tenantID, err)
 	}
 	return info, nil
+}
+
+// ProbeAvailability runs the §12.5 KMS availability probe against the
+// tenant's per-tenant KMS key. It is the admin-time check the
+// `PUT /v1/admin/tenants/{id}` handler runs before persisting a
+// `workspaceTier: T4` transition and the per-iteration step the
+// continuous probe runnable runs. A non-T4 tier returns a nil error
+// without touching the manager — only T4 tenants have a tenant-scoped
+// key. A T4 tier returns the manager's Probe result; on success the
+// Lifecycle records the probe time for LastProbeSuccess so the
+// `lenny_t4_kms_probe_last_success_timestamp` gauge and the
+// `t4KmsLastProbeSuccessAt` admin-API field stay in sync.
+//
+// ProbeAvailability returns ErrKeyNotFound when the key was never
+// provisioned, ErrKeyUnavailable when the key is no longer in a
+// wrap-capable state, or a wrapped backend error for any other
+// failure. Callers map every non-nil return to the
+// CLASSIFICATION_CONTROL_VIOLATION (`details.reason: kms_probe_failed`)
+// admin-API rejection.
+func (l *Lifecycle) ProbeAvailability(ctx context.Context, tenantID, workspaceTier string) error {
+	if tenantID == "" {
+		return ErrEmptyTenantID
+	}
+	if workspaceTier != WorkspaceTierT4 {
+		return nil
+	}
+	alias := AliasFor(tenantID)
+	if err := l.mgr.Probe(ctx, alias); err != nil {
+		return fmt.Errorf("tenantkms: probe availability for tenant %q: %w", tenantID, err)
+	}
+	l.mu.Lock()
+	l.lastProbeSuccess[tenantID] = l.now()
+	l.mu.Unlock()
+	return nil
+}
+
+// LastProbeSuccess returns the time of the most recent successful
+// ProbeAvailability for tenantID, and whether such a success has been
+// recorded. The §15.1 admin API surfaces this as
+// `t4KmsLastProbeSuccessAt` on `GET /v1/admin/tenants/{id}`; the §16.1
+// continuous probe runnable writes it to the
+// `lenny_t4_kms_probe_last_success_timestamp` gauge.
+func (l *Lifecycle) LastProbeSuccess(tenantID string) (time.Time, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	t, ok := l.lastProbeSuccess[tenantID]
+	return t, ok
+}
+
+// ForgetProbeSuccess drops the recorded last-probe-success entry for
+// tenantID. The §12.8 tenant-deletion controller calls this during
+// Phase 4a so the tenant's gauge sample stops being exported once the
+// tenant is gone; the §12.9 T3 → T4 downgrade path is not legal
+// (workspaceTier is a one-way ratchet) so the call site is
+// deletion-only.
+func (l *Lifecycle) ForgetProbeSuccess(tenantID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.lastProbeSuccess, tenantID)
 }
 
 // DestroyForTenant destroys the tenant's §12.9 KMS key. It is the
@@ -347,4 +454,34 @@ func (m *LocalManager) KeyInfoFor(_ context.Context, alias string) (KeyInfo, err
 		return KeyInfo{}, ErrKeyNotFound
 	}
 	return info, nil
+}
+
+// probeDEK is the fixed 32-byte plaintext LocalManager.Probe wraps and
+// unwraps. The value is irrelevant — Probe asserts the round-trip
+// completes, not the bytes it recovers.
+var probeDEK = make([]byte, kms.DEKSize)
+
+// Probe implements KeyManager. LocalManager performs an in-process
+// WrapDEK + UnwrapDEK round-trip on the embedded kms.Local provider.
+// A key in KeyStatePendingDeletion or KeyStateDestroyed returns
+// ErrKeyUnavailable so the §12.5 admin-time probe and the continuous
+// probe both surface the operator-initiated tear-down as a failure.
+func (m *LocalManager) Probe(ctx context.Context, alias string) error {
+	m.mu.Lock()
+	info, ok := m.keys[alias]
+	m.mu.Unlock()
+	if !ok {
+		return ErrKeyNotFound
+	}
+	if info.State != KeyStateActive {
+		return fmt.Errorf("%w: alias %q state %q", ErrKeyUnavailable, alias, info.State)
+	}
+	wrapped, err := m.local.WrapDEK(ctx, alias, probeDEK)
+	if err != nil {
+		return fmt.Errorf("tenantkms: probe wrap %q: %w", alias, err)
+	}
+	if _, err := m.local.UnwrapDEK(ctx, alias, wrapped); err != nil {
+		return fmt.Errorf("tenantkms: probe unwrap %q: %w", alias, err)
+	}
+	return nil
 }

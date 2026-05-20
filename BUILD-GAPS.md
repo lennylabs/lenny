@@ -359,12 +359,19 @@ identified.
   (Config.SSEKeyResolver), the §12.8 SetLegalHold / ClearLegalHold
   guard on DeleteBySession, and migration 0049 + `pkg/blobstore/artifactcatalog`
   for the Postgres-backed artifact_store catalog table with the
-  live → soft_deleted → tombstoned lifecycle. The remaining
-  sub-features — the partial-manifest cleanup sweep, the T4 per-tenant
-  KMS-availability probe, and the MinIO-outage Postgres-minimal-state
-  fallback router (the EvictionStateStore is the target store; the
-  blobstore-side fallback router is unbuilt) — still block the full
-  `TestArtifactStoreContract` and the tier-4 checkpoint flow.
+  live → soft_deleted → tombstoned lifecycle. The §12.5 T4 KMS
+  availability probe ships in `pkg/tenantkms`
+  (`Lifecycle.ProbeAvailability`, `LastProbeSuccess`, and the
+  `Prober` controller-runtime Runnable) and exports the
+  `lenny_t4_kms_probe_last_success_timestamp` gauge plus the
+  `lenny_t4_kms_probe_result_total` counter labeled by
+  `(tenant_id, result)`. The remaining sub-features — the
+  partial-manifest cleanup sweep (gated on the Postgres-backed
+  checkpoint metadata table) and the MinIO-outage
+  Postgres-minimal-state fallback router (the EvictionStateStore is
+  the target store; the blobstore-side fallback router is unbuilt) —
+  still block the full `TestArtifactStoreContract` and the tier-4
+  checkpoint flow.
 
 ### Delegation and elicitation
 
