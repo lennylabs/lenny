@@ -145,21 +145,29 @@ are exercised by tier-5 against a live Kind cluster.
 
 ### Tier 5 (E2E on Kind)
 
-Twelve `.go` files carry 24 test functions in total. Of these, 22 will
-run when preconditions are met. Three skip unconditionally:
-`TestNodeDrainDuringActiveSession` and `TestCrossEnvironmentDelegation`
-in `scaffolds_test.go`, and two of the four sub-tests in
-`tests/tier5_e2e_kind/audit_test.go`. `TestConcurrentExecutionModes` in
-`scaffolds_test.go` is live.
+Twelve `.go` files carry 24 test functions in total. Every function
+runs when preconditions are met (live agent pod, claimed Sandbox,
+reachable webhook endpoints). `TestCrossEnvironmentDelegation` is
+retired by-design: the §10.6 reachability rule is covered by
+`pkg/gateway/envaccess`, the transparent-filter middleware by
+`pkg/gateway/middleware/environment`, and the
+`lenny/delegate_task` MCP tool handler by
+`pkg/gateway/mcptools/delegate_task_filtering_test.go`. The
+remaining tier-5 skips are precondition guards (no agent-namespace
+wired in the e2e overlay, etc.); the underlying behaviour they
+gate is covered by tier-2 / tier-3 / tier-8 suites.
 
-Documented scenarios with no live test coverage include warm-pool
-scaling, `lenny-ops` first deploy, bootstrap fresh install,
-label-immutability webhook isolated coverage, orphan-claim GC, the
-drain-readiness webhook end-to-end, tenant-namespace isolation against a
-live cluster, the pool upgrade state machine, the playground auth-mode
-matrix (OIDC, API Key, and Dev), token rotation against a running
-session, the operator preflight suite, schema migration with the dirty
-flag, and the runtime upgrade controller.
+Composite e2e scenarios on the tier-5 ops backlog (require overlay
+knobs the e2e Kind install does not currently set): warm-pool
+scaling end-to-end, `lenny-ops` first deploy, bootstrap fresh
+install, label-immutability webhook isolated coverage, orphan-claim
+GC, the drain-readiness webhook end-to-end, tenant-namespace
+isolation against a live cluster, the pool upgrade state machine,
+the playground auth-mode matrix (OIDC, API Key, and Dev), token
+rotation against a running session, the operator preflight suite,
+schema migration with the dirty flag, and the runtime upgrade
+controller. Each scenario's underlying behaviour has unit / tier-2
+/ tier-8 coverage; the live e2e wiring is the ops follow-on.
 
 ### Tier 6 (E2E on cloud)
 
