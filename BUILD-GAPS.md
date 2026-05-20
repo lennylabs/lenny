@@ -413,13 +413,6 @@ identified.
 
 ### MCP and REST parity
 
-- **Memory operations lack a REST surface.** MCP tools
-  `lenny/memory_write`, `lenny/memory_query`, and
-  `lenny/memory_delete` are registered at
-  `pkg/gateway/mcptools/mcptools.go:1024-1093` with
-  `pkg/gateway/memorystore` backing. No `/v1/memories` endpoint is
-  registered in `pkg/gateway/sessionserver/`.
-
 - **Webhook subscription CRUD is absent on both sides.** A grep for
   `/v1/webhooks`, `WebhookSubscription`, and `webhook_subscription`
   returns no matches in `pkg/gateway/` or `pkg/api/`. Blocks
