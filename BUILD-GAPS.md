@@ -456,9 +456,17 @@ re-attempt them.
   rowping. Wiring into the e2e Kind agent-workload.yaml as a
   per-pod sidecar plus the §13.2 egress NetworkPolicy that forces
   the agent through it is the remaining e2e-ops step.
-- **No clock-injection harness.** Tier-8 `TestGatewayClockDrift`,
-  `TestCertificateExpiryAdvance`, and the `TestT3T4SLABreach`
-  scenario all need it.
+- **Clock-injection harness.** Shipped as `pkg/clockinject`. The
+  package reads `LENNY_CLOCK_OFFSET_SECONDS` at process start and
+  exposes `clockinject.Now` plus a `Wrap` helper that turns any
+  `func() time.Time` into an offset-applied source. Chaos tests
+  set the env var on the gateway-under-test pod's Deployment;
+  the chaos driver's own clock is unaffected (the offset is
+  per-process). The §17.6 preflight Job will call
+  `AssertProductionDefault` to refuse install when the env var
+  is non-zero in a production cluster. Wiring time-sensitive call
+  sites in the gateway to read through `clockinject.Now` is the
+  remaining gateway-refactor step recorded as a follow-on.
 - **No HA store topologies in the e2e overlay.** HA Postgres,
   Redis Sentinel, multi-zone MinIO, and cross-zone cluster
   topologies are not deployed; the corresponding tier-8 chaos
