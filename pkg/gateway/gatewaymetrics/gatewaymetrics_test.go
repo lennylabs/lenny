@@ -204,6 +204,32 @@ func TestRecordElicitationDropExposesCounter(t *testing.T) {
 	}
 }
 
+func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.RecordElicitationContentTamperDetected("acme", "enforce")
+	m.RecordElicitationContentTamperDetected("acme", "enforce")
+	m.RecordElicitationContentTamperDetected("acme", "detect-only")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "lenny_elicitation_content_tamper_detected_total") {
+		t.Fatalf("/metrics output missing lenny_elicitation_content_tamper_detected_total:\n%s", body)
+	}
+	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce",tenant_id="acme"} 2`) {
+		t.Errorf("/metrics output missing enforce-mode count of 2:\n%s", body)
+	}
+	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",tenant_id="acme"} 1`) {
+		t.Errorf("/metrics output missing detect-only count of 1:\n%s", body)
+	}
+}
+
 func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {

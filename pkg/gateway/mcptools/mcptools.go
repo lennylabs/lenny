@@ -152,6 +152,13 @@ type Deps struct {
 	// every elicitation the gateway drops. Optional.
 	ElicitationMetrics ElicitationDropRecorder
 
+	// ElicitationTamperMetrics, when set, receives a §9.2 / §16.5
+	// content-tamper-detected notification each time the chain walk
+	// catches a forwarding hop that mutated the elicitation payload.
+	// *gatewaymetrics.Metrics satisfies the
+	// ElicitationTamperRecorder interface.
+	ElicitationTamperMetrics ElicitationTamperRecorder
+
 	// ElicitationDepthPolicy is the §9.2 depth policy applied to an
 	// agent-initiated elicitation. An unset or invalid value resolves
 	// to `allow_all` (no depth suppression).
@@ -636,6 +643,7 @@ func Register(srv *mcp.Server, deps Deps) {
 			urlModeAllowlist: deps.ElicitationURLModeAllowlist,
 			intercepts:       deps.ElicitationIntercepts,
 			audit:            deps.Audit,
+			tamperMetrics:    deps.ElicitationTamperMetrics,
 		}
 		srv.RegisterTool(mcp.Tool{
 			Name:        "lenny/request_elicitation",

@@ -34,8 +34,9 @@ type Metrics struct {
 	circuitBreakerOpen  *prometheus.GaugeVec
 	cbCacheStale        prometheus.Gauge
 	cbCacheInitialized  prometheus.Gauge
-	elicitationDropped  *prometheus.CounterVec
-	experimentIsoRej    *prometheus.CounterVec
+	elicitationDropped        *prometheus.CounterVec
+	elicitationTamperDetected *prometheus.CounterVec
+	experimentIsoRej          *prometheus.CounterVec
 	noEnvPolicyAllowAll *prometheus.CounterVec
 }
 
@@ -135,6 +136,13 @@ func New() (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	elicitationTamperDetected, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_elicitation_content_tamper_detected_total",
+		Help: "Total §9.2 elicitation chain walks that detected tampered content at a forwarding hop. Labelled by tenant and enforcement_mode (off | detect-only | enforce) so the §16.5 alert can fire on enforce-mode catches only.",
+	}, []string{"tenant_id", "enforcement_mode"})
+	if err != nil {
+		return nil, err
+	}
 	experimentIsoRej, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_experiment_isolation_rejections_total",
 		Help: "Total sessions the §10.7 ExperimentRouter rejected closed because the variant pool's isolation profile was weaker than the session's.",
@@ -151,7 +159,8 @@ func New() (*Metrics, error) {
 	}
 
 	reg.MustRegister(requestsTotal, requestDuration, storageQuotaUsed,
-		storageQuotaLimit, circuitBreakerOpen, elicitationDropped, experimentIsoRej,
+		storageQuotaLimit, circuitBreakerOpen, elicitationDropped,
+		elicitationTamperDetected, experimentIsoRej,
 		noEnvPolicyAllowAll)
 	gauge := activeSessions.WithLabelValues()
 	streams := activeStreams.WithLabelValues()
@@ -175,9 +184,10 @@ func New() (*Metrics, error) {
 		circuitBreakerOpen:  circuitBreakerOpen,
 		cbCacheStale:        cbStale,
 		cbCacheInitialized:  cbInit,
-		elicitationDropped:  elicitationDropped,
-		experimentIsoRej:    experimentIsoRej,
-		noEnvPolicyAllowAll: noEnvPolicyAllowAll,
+		elicitationDropped:        elicitationDropped,
+		elicitationTamperDetected: elicitationTamperDetected,
+		experimentIsoRej:          experimentIsoRej,
+		noEnvPolicyAllowAll:       noEnvPolicyAllowAll,
 	}, nil
 }
 
@@ -185,6 +195,18 @@ func New() (*Metrics, error) {
 // counter for the given drop reason (for example `budget_exceeded`).
 func (m *Metrics) RecordElicitationDrop(reason string) {
 	m.elicitationDropped.WithLabelValues(reason).Inc()
+}
+
+// RecordElicitationContentTamperDetected increments the §9.2 /
+// §16.5 lenny_elicitation_content_tamper_detected_total counter
+// when the §9.2 chain walk catches a forwarding hop that mutated
+// the elicitation payload. Labelled by tenant and enforcement_mode
+// so the §16.5 ElicitationContentTamperDetected alert (which
+// matches enforcement_mode="enforce") fires only when a tamper
+// caused a hard drop; detect-only catches still bump the metric
+// for visibility without firing the alert.
+func (m *Metrics) RecordElicitationContentTamperDetected(tenantID, enforcementMode string) {
+	m.elicitationTamperDetected.WithLabelValues(tenantID, enforcementMode).Inc()
 }
 
 // RecordExperimentIsolationRejection increments the §16.1

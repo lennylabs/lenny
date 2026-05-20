@@ -41,6 +41,23 @@ type elicitationDispatcher struct {
 
 	// audit records the §11.7 url-mode rejection audit event. Optional.
 	audit DelegationAuditor
+
+	// tamperMetrics, when non-nil, receives a notification every time
+	// the §9.2 chain walk catches a tamper at a forwarding hop. The
+	// observer is responsible for incrementing
+	// lenny_elicitation_content_tamper_detected_total{tenant_id}.
+	tamperMetrics ElicitationTamperRecorder
+}
+
+// ElicitationTamperRecorder is the metric-emission hook the gateway
+// wires into the elicitation dispatcher so the §9.2 chain walker
+// reports tamper detections without depending on the gateway's
+// metrics package directly. *gatewaymetrics.Metrics satisfies it.
+// enforcementMode is the §9.2 mode that was in force at the time
+// the tamper was caught (off | detect-only | enforce); the §16.5
+// alert scopes to enforce-mode catches.
+type ElicitationTamperRecorder interface {
+	RecordElicitationContentTamperDetected(tenantID, enforcementMode string)
 }
 
 // dispatchResult is the outcome of dispatching one elicitation up the
@@ -104,11 +121,16 @@ func (d *elicitationDispatcher) dispatch(
 	})
 	if err != nil {
 		// A chain walk error is a §9.2 content-integrity divergence or a
-		// malformed chain. Surface it to the originating pod.
+		// malformed chain. Surface it to the originating pod and, on a
+		// tamper, increment the §16.5 content-tamper-detected counter.
 		var chainErr *elicitation.ChainError
 		if errors.As(err, &chainErr) {
 			var tamper *elicitation.TamperError
 			if errors.As(err, &tamper) {
+				if d.tamperMetrics != nil {
+					d.tamperMetrics.RecordElicitationContentTamperDetected(
+						d.tenantID, string(elicitation.ModeEnforce))
+				}
 				return dispatchResult{}, fmt.Errorf("ELICITATION_CONTENT_TAMPERED: %w", err)
 			}
 		}
