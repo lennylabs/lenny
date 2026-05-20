@@ -77,9 +77,22 @@ The chaos test drives a pod-kill on `lenny-minio-0`; the cluster
 serves reads through the remaining three pods, and the failed pod
 re-joins on restart.
 
-## Composite multi-zone overlay
+## Multi-zone Kind cluster
 
-Cross-zone failover (`TestCrossZonePartition`) needs the Kind
-cluster's nodes labelled into multiple `topology.kubernetes.io/zone`
-domains. The base Kind `cluster.yaml` uses a single node; a
-multi-zone cluster is the next step in the ops backlog.
+Cross-zone failover (`TestCrossZonePartition`, `TestMultiZoneDR`)
+needs the Kind cluster's nodes labelled into multiple
+`topology.kubernetes.io/zone` domains.
+`tests/testinfra/kind/cluster-multi-zone.yaml` ships a three-worker
+cluster with `us-fake-a`, `us-fake-b`, `us-fake-c` zone labels. The
+`install.sh` script reads `LENNY_CLUSTER_CONFIG` to select the
+cluster config; the chaos test that opts in sets it before invoking
+the install:
+
+```bash
+LENNY_CLUSTER_CONFIG=tests/testinfra/kind/cluster-multi-zone.yaml \
+  tests/testinfra/kind/install.sh
+```
+
+A Deployment that pins `topologySpreadConstraints` on the well-known
+zone label then lands one pod per zone — the precondition every
+cross-zone partition or replication chaos test depends on.

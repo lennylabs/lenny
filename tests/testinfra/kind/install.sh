@@ -50,7 +50,7 @@ INGRESS_NGINX_VERSION="controller-v1.11.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
-KIND_CONFIG="${REPO_ROOT}/tests/testinfra/kind/cluster.yaml"
+KIND_CONFIG="${LENNY_CLUSTER_CONFIG:-${REPO_ROOT}/tests/testinfra/kind/cluster.yaml}"
 E2E_VALUES="${REPO_ROOT}/tests/testinfra/kind/e2e-values.yaml"
 DATASTORES_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
 MIGRATE_JOB_MANIFEST="${REPO_ROOT}/tests/testinfra/kind/migrate-job.yaml"

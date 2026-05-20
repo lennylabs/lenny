@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+
+# Multi-zone Kind cluster configuration for the tier-8 chaos
+# cross-zone failover tests (TestCrossZonePartition,
+# TestMultiZoneDR).
+#
+# Three workers labelled into three topology.kubernetes.io/zone
+# domains (us-fake-a / us-fake-b / us-fake-c). The standard Kind
+# scheduler honours the well-known zone label, so a Deployment with
+# topologySpreadConstraints lands one pod per zone — the precondition
+# every cross-zone partition / replication chaos test depends on.
+#
+# Apply this in place of cluster.yaml when the tier-8 cross-zone
+# suite is the target:
+#
+#   kind create cluster --config tests/testinfra/kind/cluster-multi-zone.yaml
+#
+# The base tests/testinfra/kind/install.sh accepts a
+# LENNY_CLUSTER_CONFIG environment override that points it at this
+# file when set.
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lenny-e2e-multi-zone
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.4
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "lenny.dev/role=control-plane,ingress-ready=true,topology.kubernetes.io/zone=us-fake-a"
+    extraPortMappings:
+      - containerPort: 30443
+        hostPort: 30443
+        protocol: TCP
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+    image: kindest/node:v1.31.4
+    labels:
+      lenny.dev/pool: "default-runc"
+      topology.kubernetes.io/zone: "us-fake-a"
+  - role: worker
+    image: kindest/node:v1.31.4
+    labels:
+      lenny.dev/pool: "sandbox-gvisor"
+      topology.kubernetes.io/zone: "us-fake-b"
+  - role: worker
+    image: kindest/node:v1.31.4
+    labels:
+      lenny.dev/pool: "default-runc"
+      topology.kubernetes.io/zone: "us-fake-c"
+
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+  disableDefaultCNI: false

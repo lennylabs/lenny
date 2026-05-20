@@ -551,11 +551,13 @@ re-attempt them.
     MinIO with a four-pod distributed-mode StatefulSet under EC:2
     erasure coding, so `TestMinIOReplicationLag` can drive a
     pod-kill and observe two-pod redundancy.
-  Documentation: `tests/testinfra/kind/datastores-ha.md`. The
-  remaining piece is the multi-zone Kind cluster (multiple
-  `topology.kubernetes.io/zone` labels) that `TestCrossZonePartition`
-  needs; that lands with the kind `cluster.yaml` multi-zone
-  rework.
+  The multi-zone Kind cluster
+  (`tests/testinfra/kind/cluster-multi-zone.yaml`) ships three
+  workers labelled into `us-fake-a / us-fake-b / us-fake-c`. The
+  install script reads `LENNY_CLUSTER_CONFIG` to select between the
+  single-zone baseline and the multi-zone cluster, so
+  `TestCrossZonePartition` and `TestMultiZoneDR` can opt in. Apply
+  notes are in `tests/testinfra/kind/datastores-ha.md`.
 - **§26 reference-runtime OCI images.** The image registry the
   nightly conformance run pulls from does not exist.
 - **External pen-test bundle.** Tier-9 `TestPentestReplay` now
