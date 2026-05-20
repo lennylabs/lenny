@@ -53,7 +53,8 @@ func TestBinaryServesGRPC(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin,
+	cmd := exec.CommandContext(
+		ctx, bin,
 		"--addr="+httpAddr,
 		"--grpc-addr="+grpcAddr,
 		"--issuer=https://test.local/token",
