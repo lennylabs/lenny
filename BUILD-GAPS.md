@@ -351,38 +351,11 @@ identified.
 
 ### Token Service and credentials
 
-- **`pkg/tokenservice` ships only HTTP token-exchange.**
-  `pkg/tokenservice/tokenservice.go` declares `NewServer`, `Handler`,
-  `handle`, `parseRequest`, and supporting helpers; none of
-  `AssignCredentials`, `RotateCredentials`, or `RevokeCredentials` is
-  served. The gRPC stubs from `pkg/proto/adapter/v1` have client-side
-  consumers in `pkg/adapter`, `pkg/gateway/credassign`, and
-  `pkg/gateway/credrenewal`, but no server-side implementation.
-  Blocks `TestTokenServiceController` and four tier-8 chaos tests
-  (`TestEmergencyRevocationDuringActiveSession`,
-  `TestRotationFailure`, `TestDenyListPropagationUnderRedisOutage`,
-  `TestCredentialPoolExhaustion`) and three tier-9 credential-leakage
-  tests.
-
 - **Pool Scaling Controller admission-retry is absent.** The
   scaling-formula evaluator and circuit breaker exist in
   `pkg/controller/poolscaling/`, but the admission-denied retry-with-
   backoff loop and the `PoolScalingAdmissionStuck` alert wiring are
   not built. Blocks `TestPoolScalingControllerAdmissionRetry`.
-
-### Gateway request handling
-
-- **`POST /v1/sessions/{id}/upload` returns errors against the Kind
-  e2e gateway in the checkpoint-duration scenario.** Blocked on
-  observation: the same flow (POST `/v1/sessions` followed by POST
-  `/v1/sessions/{id}/upload` with `X-Lenny-Upload-Token`) works
-  against an in-process gateway subprocess in dev-mode (verified by
-  running the request shape under `testinfra/gateway.StartWith`). The
-  failure is Kind-specific. Resolving needs either the k6 scenario
-  output from a Kind run, or a live cluster session to capture the
-  upload-handler 4xx/5xx response. The handler is at
-  `pkg/gateway/sessionserver/upload.go:76`; the scenario at
-  `tests/tier7_load/scenarios/checkpoint_duration/main.js`.
 
 ### MCP and REST parity
 
