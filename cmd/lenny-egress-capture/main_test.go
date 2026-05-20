@@ -66,7 +66,10 @@ func startSidecar(t *testing.T, upstream string, enc *captureEncoder) string {
 func TestSidecarForwardsAndHashes(t *testing.T) {
 	upstreamAddr, upstreamRx := upstreamServer(t)
 	var capBuf bytes.Buffer
-	enc := newCaptureEncoder(&capBuf)
+	var capMu sync.Mutex
+	// syncWriter mediates the capBuf so the sidecar's writer goroutine
+	// and the test's Len/Bytes reads do not race under -race.
+	enc := newCaptureEncoder(&syncWriter{w: &capBuf, mu: &capMu})
 
 	sidecarAddr := startSidecar(t, upstreamAddr, enc)
 
@@ -98,15 +101,21 @@ func TestSidecarForwardsAndHashes(t *testing.T) {
 	}
 
 	// Drain the capture file and verify the recorded hash matches the
-	// hash of the payload the client sent.
+	// hash of the payload the client sent. The mutex pair-wise serialises
+	// each Len() poll with the sidecar's write goroutine.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if capBuf.Len() > 0 {
+		capMu.Lock()
+		ready := capBuf.Len() > 0
+		capMu.Unlock()
+		if ready {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	capBytes := capBuf.Bytes()
+	capMu.Lock()
+	capBytes := append([]byte(nil), capBuf.Bytes()...)
+	capMu.Unlock()
 	if !strings.Contains(string(capBytes), "sent_hash") {
 		t.Errorf("capture JSONL missing sent_hash field:\n%s", string(capBytes))
 	}
