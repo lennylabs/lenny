@@ -72,8 +72,8 @@ Property-based suites using `pgregory.net/rapid` exist at
 The tier carries 19 subdirectories. The following are scaffold groups
 where some or every test in the group still skips:
 
-- `tests/tier2_component/stores/scaffolds_test.go` (2 contracts:
-  ArtifactStore SSE-KMS and legal-hold, CRDPodRegistry).
+- `tests/tier2_component/stores/scaffolds_test.go` (1 contract:
+  ArtifactStore SSE-KMS and legal-hold).
 - `tests/tier2_component/gateway_subsystems/scaffolds_test.go` (5 tests:
   Session Orchestrator, File Fabric, MCP Fabric platform tools, Admin
   Plane, LLM Proxy component harnesses).
@@ -304,9 +304,11 @@ identified.
 
 ### Storage and persistence
 
-- **CRDPodRegistry over the Kubernetes API is absent.**
-  `pkg/podsession.Registry` is an in-process map. There is no `WatchPods`
-  event-latency surface. Blocks `TestPodRegistryContract`.
+- **CRDPodRegistry over the Kubernetes API.** RESOLVED. `pkg/podregistry`
+  implements the §12.6 PodRegistry interface over controller-runtime
+  client. The in-memory `pkg/podsession.Registry` keeps its
+  per-replica session-binding role; `pkg/podregistry.CRDPodRegistry`
+  is the §4.6.1 / §12.6 data-access layer over Sandbox CRD status.
 
 - **ArtifactStore extensions are absent.** `pkg/blobstore/` ships
   `miniostore/`, `replication/`, and (as of the latest commit) the

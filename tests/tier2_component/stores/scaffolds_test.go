@@ -100,20 +100,15 @@ func TestArtifactStoreContract(t *testing.T) {
 // key scheme, per-tenant and per-user isolation, the §4.9 similarity
 // lookup and TTL, and the §12.2 DeleteByUser / DeleteByTenant erasure.
 
-// TestPodRegistryContract — Kubernetes API CRDPodRegistry. Coverage:
-// all ops listed in spec §12.6, optimistic locking via
-// resource_version, WatchPods events within 500 ms P99.
-//
-// spec: 12.2.1
-// diagnosis: no CRDPodRegistry implementation backed by the
-// Kubernetes API exists. pkg/podsession.Registry is the in-process
-// per-session pod-binding map used by sessionserver; the §12.6
-// PodRegistry surface (optimistic locking via resource_version,
-// WatchPods with bounded event latency, the documented CRUD ops) is
-// not built.
-func TestPodRegistryContract(t *testing.T) {
-	t.Skip("blocked: §12.2.1 PodRegistry — no CRDPodRegistry over the Kubernetes API exists; pkg/podsession.Registry is an in-process map and there is no WatchPods event-latency surface to assert against")
-}
+// TestPodRegistryContract is implemented in
+// pkg/podregistry/crd_test.go, which exercises the §12.6
+// CRDPodRegistry over the controller-runtime fake client: every
+// PodRegistry method (GetPod, UpdatePodState with mismatched-From
+// rejection, ClaimPod with ErrPoolExhausted, ReleasePod by reason,
+// ListPodsByPool with state filtering, CountByState, CreatePod,
+// DeletePod, WatchPods) is covered. The §12.6 optimistic-locking
+// CAS uses Sandbox.metadata.resourceVersion; the watch loop polls
+// at the §12.6 P99 event-latency budget.
 
 // TestStoreRouterContract is implemented in storerouter_test.go,
 // which exercises the v1 pkg/storerouter.SingleShardRouter against
