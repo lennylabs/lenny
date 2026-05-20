@@ -14,6 +14,7 @@ package transcriptstore
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -133,4 +134,29 @@ func (m *Memory) DeleteBySession(_ context.Context, tenantID, sessionID string) 
 	n := len(m.transcripts[k])
 	delete(m.transcripts, k)
 	return n, nil
+}
+
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Transcripts are session-scoped, not user-scoped; the erasure
+// orchestrator walks the user's sessions and calls DeleteBySession
+// per session. DeleteByUser at this layer is a no-op that returns
+// 0 erased rows.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every transcript whose key prefix matches the tenant id.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := tenantID + "/"
+	deleted := 0
+	for k, entries := range m.transcripts {
+		if strings.HasPrefix(k, prefix) {
+			deleted += len(entries)
+			delete(m.transcripts, k)
+		}
+	}
+	return deleted, nil
 }

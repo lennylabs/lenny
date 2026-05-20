@@ -259,3 +259,22 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	m.connectors[id] = row
 	return nil
 }
+
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Connectors are platform-scoped resources keyed by id; the
+// Visibility field discriminates platform vs tenant exposure but
+// the Connector struct carries no tenant id, so per-user erasure
+// has nothing to scope on at this layer. The orchestrator skips
+// connectorstore on user-scoped runs.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// A platform-visibility connector survives tenant erasure; tenant-
+// visibility connectors carry no tenant_id today, so the per-tenant
+// sweep is also a no-op at this layer. A follow-on Connector.TenantID
+// migration enables real per-tenant cleanup (see BUILD-GAPS.md).
+func (m *Memory) DeleteByTenant(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}

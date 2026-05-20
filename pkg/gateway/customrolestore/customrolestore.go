@@ -194,6 +194,24 @@ func (m *Memory) Delete(_ context.Context, tenantID, name string) error {
 	return nil
 }
 
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Custom roles are tenant-scoped, not user-scoped, so DeleteByUser
+// is a no-op that returns 0 erased rows; the role definition itself
+// is not removed when a user inside the tenant is erased.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every custom role belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.roles[tenantID])
+	delete(m.roles, tenantID)
+	return n, nil
+}
+
 // cloneRole deep-copies the permission slice so a stored role and a
 // returned copy never share mutable state.
 func cloneRole(r CustomRole) CustomRole {

@@ -185,6 +185,30 @@ func (m *Memory) DeleteBySession(_ context.Context, tenantID, sessionID string) 
 	return deleted, nil
 }
 
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Eval results carry no user_id directly; user-scoped erasure walks
+// the user's sessions via the orchestrator's session lister and then
+// calls DeleteBySession per session. DeleteByUser at this layer is
+// therefore a no-op that returns 0 erased rows.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every eval result belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for id, e := range m.results {
+		if e.TenantID == tenantID {
+			delete(m.results, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // cloneResult deep-copies the Score pointer and the Scores/Metadata
 // maps so a stored record and a returned copy never share state.
 func cloneResult(r EvalResult) EvalResult {

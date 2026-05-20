@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -196,6 +197,29 @@ func (m *Memory) Delete(_ context.Context, tenantID, id string) error {
 	}
 	delete(m.experiments, k)
 	return nil
+}
+
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Experiment definitions are tenant-scoped and not user-owned;
+// DeleteByUser is a no-op that returns 0 erased rows.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every experiment definition belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := tenantID + "/"
+	n := 0
+	for k := range m.experiments {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.experiments, k)
+			n++
+		}
+	}
+	return n, nil
 }
 
 // cloneExperiment deep-copies the Variants slice so a stored

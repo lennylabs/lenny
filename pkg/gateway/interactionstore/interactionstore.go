@@ -192,6 +192,21 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 	return deleted, nil
 }
 
+// DeleteByTenant implements the §12.2.1 / §14.10 mandatory-erasure
+// interface. Removes every interaction belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, in := range m.interactions {
+		if in.TenantID == tenantID {
+			delete(m.interactions, k)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // DismissByUser implements Store — the §11.4 full_revoke adapter.
 func (m *Memory) DismissByUser(_ context.Context, tenantID, userID string) (int, error) {
 	m.mu.Lock()

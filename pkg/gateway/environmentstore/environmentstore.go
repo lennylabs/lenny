@@ -249,6 +249,29 @@ func (m *Memory) Delete(_ context.Context, tenantID, name string) error {
 	return nil
 }
 
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Environments are tenant-scoped and do not record user-owned rows;
+// DeleteByUser is therefore a no-op that returns 0 erased rows.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every environment belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := tenantID + "/"
+	n := 0
+	for k := range m.environments {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.environments, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
 // clone deep-copies an Environment so a stored value and a returned
 // copy never share the nested member, selector, or cross-environment
 // slices and maps.

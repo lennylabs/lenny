@@ -297,6 +297,27 @@ func (m *Memory) CountUser(_ context.Context, tenantID, userID string) (int, err
 	return n, nil
 }
 
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Billing events are append-only per §11.2.1; the §12.8 erasure path
+// pseudonymizes rather than deletes them so the chain stays intact.
+// DeleteByUser at this layer is a no-op that returns 0 erased rows;
+// the orchestrator runs PseudonymizeUser for the user-scoped phase.
+func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Tenant deletion is the only path that removes billing events; the
+// §11.2.1 immutability constraint does not apply to a tenant being
+// torn down.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := len(m.events[tenantID])
+	delete(m.events, tenantID)
+	return n, nil
+}
+
 // Since implements Store.
 func (m *Memory) Since(_ context.Context, tenantID string, since uint64, limit int) ([]Event, error) {
 	m.mu.Lock()

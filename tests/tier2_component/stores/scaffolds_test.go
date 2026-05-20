@@ -139,18 +139,7 @@ func TestPodRegistryContract(t *testing.T) {
 // real Redis container: the CloudEvents v1.0.2 envelope, the
 // tenant-prefixed channels, and at-most-once delivery isolation.
 
-// TestDeleteByUserAndTenantInterface — every tenant-scoped store MUST
-// expose DeleteByUser(ctx, tenantID, userID) error and
-// DeleteByTenant(ctx, tenantID) error. Today only sessionstore,
-// memorystore, interactionstore, and semanticcache expose both;
-// billing, eval, experiment, environment, runtime, connector, user,
-// custom-role, transcript, agent-pod-state, etc. carry no erasure
-// adapter, so a compile-time interface assertion fails today.
-//
-// spec: 12.2.1
-// diagnosis: only a subset of tenant-scoped stores implement both
-// DeleteByUser and DeleteByTenant; the remaining stores need
-// erasure adapters before a single compile-time check is meaningful.
-func TestDeleteByUserAndTenantInterface(t *testing.T) {
-	t.Skip("blocked: §12.2.1 / §14.10 mandatory-erasure interface — only a subset of tenant-scoped stores expose DeleteByUser and DeleteByTenant today; the remaining stores need erasure adapters before a single compile-time interface check is meaningful")
-}
+// TestDeleteByUserAndTenantInterface is implemented in
+// erasure_interface_test.go, which compile-checks the §12.2.1 /
+// §14.10 mandatory-erasure interface against every tenant-scoped
+// store the gateway depends on.

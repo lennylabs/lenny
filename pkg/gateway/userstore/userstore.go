@@ -227,3 +227,33 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, subject string, at time
 	m.users[k] = row
 	return nil
 }
+
+// DeleteByUser implements the §12.2.1 mandatory-erasure interface.
+// Removes the user row identified by (tenantID, userID); the user
+// is the primary entity of this store, so DeleteByUser purges the
+// row hard rather than soft-deleting.
+func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(tenantID, userID)
+	if _, ok := m.users[k]; !ok {
+		return 0, nil
+	}
+	delete(m.users, k)
+	return 1, nil
+}
+
+// DeleteByTenant implements the §12.2.1 mandatory-erasure interface.
+// Removes every user row belonging to tenantID.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k, row := range m.users {
+		if row.TenantID == tenantID {
+			delete(m.users, k)
+			n++
+		}
+	}
+	return n, nil
+}
