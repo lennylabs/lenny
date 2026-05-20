@@ -512,11 +512,19 @@ re-attempt them.
   `func() time.Time` into an offset-applied source. Chaos tests
   set the env var on the gateway-under-test pod's Deployment;
   the chaos driver's own clock is unaffected (the offset is
-  per-process). The §17.6 preflight Job will call
-  `AssertProductionDefault` to refuse install when the env var
-  is non-zero in a production cluster. Wiring time-sensitive call
-  sites in the gateway to read through `clockinject.Now` is the
-  remaining gateway-refactor step recorded as a follow-on.
+  per-process). `cmd/lenny-gateway` calls
+  `clockinject.FromEnv` once at startup (failing loudly on a
+  non-integer value) and the two direct `time.Now()` sites in the
+  gateway main (admin audit event timestamp, idempotency cutoff)
+  read through `clockinject.Now`. `cmd/lenny-preflight` calls
+  `clockinject.AssertProductionDefault` so a production install
+  carrying a non-zero offset fails at install time. The remaining
+  refactor — switching the per-subsystem clocks the gateway hands
+  to constructors at boot (sessionserver, auditstore, breakerstore,
+  etc.) to `clockinject.Now` — is the remaining gateway-refactor
+  step recorded as a follow-on; the subsystems all accept an
+  injected `func() time.Time` already, so the change is constructor
+  call-site only.
 - **No HA store topologies in the e2e overlay.** HA Postgres,
   Redis Sentinel, multi-zone MinIO, and cross-zone cluster
   topologies are not deployed; the corresponding tier-8 chaos

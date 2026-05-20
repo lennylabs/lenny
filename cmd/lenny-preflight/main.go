@@ -38,6 +38,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
@@ -68,6 +69,16 @@ func main() {
 	saTokenAudience := flag.String("sa-token-audience", "",
 		"value of the global.saTokenAudience chart value (NET-064 uniqueness check)")
 	flag.Parse()
+
+	// §12.8 clock-injection harness production-default gate. A
+	// production install that carries a non-zero
+	// LENNY_CLOCK_OFFSET_SECONDS in its environment is a
+	// misconfiguration: the variable is TEST-ONLY and must be unset
+	// outside chaos runs. Fail the install loudly here so the offset
+	// cannot reach a live gateway.
+	if err := clockinject.AssertProductionDefault(); err != nil {
+		log.Fatalf("lenny-preflight: %v", err)
+	}
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {

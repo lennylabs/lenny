@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
+	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/admin"
@@ -283,6 +284,16 @@ func main() {
 	playgroundGatewayHost := flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	flag.Parse()
+
+	// §12.8 clock-injection harness. Read LENNY_CLOCK_OFFSET_SECONDS
+	// once at startup so the gateway and every clock-using subsystem
+	// pick up a chaos-test offset. A non-integer value fails loudly
+	// here rather than silently behaving as production. Production
+	// installs run with the variable unset; the §17.6 preflight Job
+	// asserts that separately via AssertProductionDefault.
+	if err := clockinject.FromEnv(); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 
 	// §10.6: the platform-wide noEnvironmentPolicy must be set
 	// explicitly. Dev mode derives allow-all for local convenience;
@@ -1851,7 +1862,7 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 	if a.sink == nil {
 		return
 	}
-	ev := admin.AuditEvent{Type: eventType, Detail: detail, At: time.Now().UTC()}
+	ev := admin.AuditEvent{Type: eventType, Detail: detail, At: clockinject.Now().UTC()}
 	if p, ok := authmw.FromContext(ctx); ok {
 		ev.ActorSubject = p.Subject
 		ev.ActorTenantID = p.TenantID
@@ -1950,7 +1961,7 @@ func sweepIdempotencyKeys(ctx context.Context, gc *idempgstore.Store, lister ten
 		log.Printf("lenny-gateway: idempotency GC: listing tenants failed: %v", err)
 		return
 	}
-	cutoff := time.Now().Add(-idempotency.TTL)
+	cutoff := clockinject.Now().Add(-idempotency.TTL)
 	for _, tenant := range tenants {
 		if _, err := gc.DeleteExpired(ctx, tenant, cutoff); err != nil && ctx.Err() == nil {
 			log.Printf("lenny-gateway: idempotency GC: tenant %q sweep failed: %v", tenant, err)
