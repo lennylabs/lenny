@@ -112,15 +112,81 @@ echo "==[3/6] render cloud values overlay==" >&2
 ECR_REGISTRY="${ECR_REGISTRY}" IMAGE_TAG="${TAG}" \
   "${SCRIPT_DIR}/render-values.sh" "${VALUES_OUT}"
 
-# 4. In-cluster datastores: Postgres + Redis + MinIO fixtures. The
-#    same manifest the Kind e2e overlay uses works inside EKS too —
-#    the storage tier is emptyDir which is correct for an ephemeral
-#    test cluster.
-echo "==[4/6] apply in-cluster datastores==" >&2
+# 4. Prerequisites + in-cluster datastores. The chart's templates
+#    render cert-manager Certificate / Issuer resources and
+#    prometheus-operator PrometheusRule resources; those CRDs must
+#    exist on the cluster before `helm install` parses the manifest.
+#    Apply them out of band, matching what
+#    tests/testinfra/kind/install.sh does on Kind. The datastore
+#    fixtures follow.
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.16.2}"
+PROM_OPERATOR_VERSION="${PROM_OPERATOR_VERSION:-v0.79.2}"
+echo "==[4/6] install cert-manager ${CERT_MANAGER_VERSION} + prometheus-operator CRDs + datastores==" >&2
+
+if ! kubectl -n cert-manager get deploy cert-manager >/dev/null 2>&1; then
+  echo "  installing cert-manager ${CERT_MANAGER_VERSION}" >&2
+  kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+fi
+kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=300s
+
+PROM_CRD_BASE="https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd"
+for crd in prometheusrules servicemonitors podmonitors; do
+  if ! kubectl get crd "${crd}.monitoring.coreos.com" >/dev/null 2>&1; then
+    echo "  installing prometheus-operator CRD ${crd}" >&2
+    kubectl apply --server-side -f "${PROM_CRD_BASE}/monitoring.coreos.com_${crd}.yaml"
+  fi
+done
+
+# The monitoring namespace the chart's PrometheusRule lands in must
+# exist before the apply.
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl create namespace lenny-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -n lenny-system -f "${REPO_ROOT}/tests/testinfra/kind/datastores.yaml"
 kubectl wait -n lenny-system --for=condition=available --timeout=300s \
   deployment/lenny-postgres deployment/lenny-redis deployment/lenny-minio
+
+# Apply the chart's CRDs out of band. helm install installs them on
+# first invoke; this step keeps a re-run idempotent.
+echo "==[4b/6] apply Lenny CRDs==" >&2
+kubectl apply -f "${REPO_ROOT}/charts/lenny/crds/"
+
+# Run the schema migration against the in-cluster Postgres before
+# helm install brings the gateway / controller up. The Kind path uses
+# tests/testinfra/kind/migrate-job.yaml with a kind-loaded image; on
+# EKS we render an equivalent Job that pulls the lenny-migrate image
+# from ECR.
+echo "==[4c/6] run lenny-migrate Job==" >&2
+kubectl -n lenny-system delete job lenny-e2e-migrate --ignore-not-found --wait=true >/dev/null
+cat <<MIGRATE | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lenny-e2e-migrate
+  namespace: lenny-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: migrate
+          image: ${ECR_REGISTRY}/lenny-migrate:${TAG}
+          imagePullPolicy: IfNotPresent
+          args: ["up"]
+          env:
+            - name: LENNY_POSTGRES_DSN
+              value: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+MIGRATE
+kubectl -n lenny-system wait --for=condition=complete job/lenny-e2e-migrate --timeout=300s
 
 # 5. Helm install (the chart enforces a few install-time invariants;
 #    --skip-tests skips the operator's chart-test hooks which assume

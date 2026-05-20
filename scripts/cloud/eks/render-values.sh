@@ -103,13 +103,15 @@ bootstrap:
     tag: "${TAG}"
     pullPolicy: IfNotPresent
 
-# Point the chart at the Terraform-provisioned ArtifactStore.
-# Connection strings flow through the same env vars the in-cluster
-# fixtures use; the tier-6 driver applies the base
-# tests/testinfra/kind/datastores.yaml so Postgres / Redis are
-# available in-cluster while MinIO falls back to MinIO too. A future
-# revision wires the S3 bucket below + the KMS key into the gateway's
-# §4.5 / §12.5 paths.
+# Point the gateway + controller at the in-cluster data-store
+# fixtures (tests/testinfra/kind/datastores.yaml). A future revision
+# routes the gateway through RDS / ElastiCache / S3 directly.
+postgres:
+  dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+
+redis:
+  url: "redis://lenny-redis.lenny-system.svc:6379"
+
 minio:
   endpoint: "lenny-minio.lenny-system.svc:9000"
   accessKey: "lennyminio"
